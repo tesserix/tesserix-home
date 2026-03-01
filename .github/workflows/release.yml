@@ -24,7 +24,7 @@ env:
   GCP_PROJECT_ID: tesseracthub-480811
   GAR_REGISTRY: asia-south1-docker.pkg.dev
   GAR_REPOSITORY: cloud-run-source-deploy
-  CLOUD_RUN_SERVICE: marketplace-tesserix-home
+  CLOUD_RUN_SERVICE: tesserix-home
 
 jobs:
   # =============================================================================

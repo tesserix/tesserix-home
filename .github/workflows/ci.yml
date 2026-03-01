@@ -36,7 +36,7 @@ env:
   GCP_REGION: australia-southeast1
   GAR_REGISTRY: asia-south1-docker.pkg.dev
   GAR_REPOSITORY: cloud-run-source-deploy
-  CLOUD_RUN_SERVICE: marketplace-tesserix-home
+  CLOUD_RUN_SERVICE: tesserix-home
 
 jobs:
   # =============================================================================
