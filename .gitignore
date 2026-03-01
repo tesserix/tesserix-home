@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.dev
+.env.production
+.env*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+
+# Playwright E2E Tests
+.playwright/
+playwright/.cache/
+**/test-results/
+**/playwright-report/
+playwright/blob-report/
+playwright/html-report/
+playwright/.auth/
+
+# TypeScript
+*.tsbuildinfo
+*.d.ts.map
+next-env.d.ts
+
+# Misc
+*.pem
+.vercel
+
+# Secrets
+**/secret.json
+**/secret.yaml
+**/secrets.json
+**/secrets.yaml
+
+# Playwright MCP
+.playwright-mcp/
+
+# Images (prevent accidental large asset commits)
+**.png
+# Allow public assets
+!public/*.png
