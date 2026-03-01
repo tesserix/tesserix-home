@@ -33,7 +33,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   GCP_PROJECT_ID: tesseracthub-480811
-  GCP_REGION: australia-southeast1
+  GCP_REGION: asia-south1
   GAR_REGISTRY: asia-south1-docker.pkg.dev
   GAR_REPOSITORY: cloud-run-source-deploy
   CLOUD_RUN_SERVICE: tesserix-home
