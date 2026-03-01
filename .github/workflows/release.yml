@@ -139,7 +139,7 @@ jobs:
           build-args: |
             NODE_ENV=production
           secrets: |
-            NODE_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
+            NODE_AUTH_TOKEN=${{ secrets.PKG_READ_TOKEN }}
           cache-from: type=gha,scope=release
           cache-to: type=gha,mode=max,scope=release
           platforms: linux/amd64,linux/arm64
