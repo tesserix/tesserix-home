@@ -21,6 +21,10 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  GCP_PROJECT_ID: tesseracthub-480811
+  GAR_REGISTRY: asia-south1-docker.pkg.dev
+  GAR_REPOSITORY: cloud-run-source-deploy
+  CLOUD_RUN_SERVICE: marketplace-tesserix-home
 
 jobs:
   # =============================================================================
@@ -110,11 +114,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          token_format: access_token
+
+      - name: Log in to Google Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_REGISTRY }}
+          username: oauth2accesstoken
+          password: ${{ steps.gcp-auth.outputs.access_token }}
+
+      - name: Compute GAR image tag
+        id: gar-tag
+        run: |
+          GAR_IMAGE="${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}"
+          echo "gar_image=$GAR_IMAGE" >> $GITHUB_OUTPUT
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}
           tags: |
             type=raw,value=latest
             type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
@@ -419,20 +447,20 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy marketplace-tesserix-home \
-            --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }} \
+          gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
+            --image "${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ needs.release.outputs.version }}" \
             --region asia-south1 \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --project ${{ env.GCP_PROJECT_ID }} \
             --quiet
 
       - name: Deploy Summary
         run: |
           echo "## Cloud Run Deployment" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service:** marketplace-tesserix-home" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ env.CLOUD_RUN_SERVICE }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** asia-south1" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**Approved by:** ${{ needs.approve-prod.outputs.approved_by }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Deployed to Cloud Run!" >> $GITHUB_STEP_SUMMARY
