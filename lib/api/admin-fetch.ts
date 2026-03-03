@@ -99,7 +99,7 @@ async function getAccessToken(sessionCookieValue: string): Promise<TokenResponse
       headers: {
         'Cookie': `bff_home_session=${sessionCookieValue}`,
         'X-Session-ID': sessionCookieValue,
-        'x-forwarded-host': 'company.tesserix.app',
+        'x-forwarded-host': 'tesserix.app',
         ...(INTERNAL_SERVICE_KEY ? { 'X-Internal-Service-Key': INTERNAL_SERVICE_KEY } : {}),
       },
     });
@@ -240,7 +240,7 @@ export async function getSessionContext(): Promise<{
       headers: {
         'Cookie': `bff_home_session=${sessionCookie.value}`,
         'X-Session-ID': sessionCookie.value,
-        'x-forwarded-host': 'company.tesserix.app',
+        'x-forwarded-host': 'tesserix.app',
       },
     });
 

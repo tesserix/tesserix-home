@@ -179,8 +179,8 @@ function AppearanceTab() {
 function PlatformTab() {
   const environment =
     process.env.NEXT_PUBLIC_ENVIRONMENT ||
-    (typeof window !== "undefined" && window.location.hostname.includes("devtest")
-      ? "devtest"
+    (typeof window !== "undefined" && window.location.hostname.includes("dev")
+      ? "dev"
       : "production");
 
   const links = [
