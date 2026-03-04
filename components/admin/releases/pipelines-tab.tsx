@@ -10,10 +10,17 @@ import {
   Loader2,
   CheckCircle2,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -49,16 +56,14 @@ function FilterChip({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-        active
-          ? "bg-primary text-primary-foreground"
-          : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"
-      }`}
+      variant={active ? "default" : "outline"}
+      size="sm"
+      className="h-8 rounded-full"
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -160,98 +165,85 @@ function PipelineRow({
   const canRollout = !!internalName;
 
   return (
-    <div className="rounded-lg border p-3 hover:bg-muted/30 transition-colors space-y-2">
-      {/* Main row */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="font-medium text-sm truncate">
-                {run.serviceName}
-              </p>
-              <WorkflowTypeBadge type={run.workflowType} />
+    <TableRow className="align-top">
+      <TableCell>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-sm truncate">{run.serviceName}</p>
+            <WorkflowTypeBadge type={run.workflowType} />
+          </div>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">
+            {run.displayTitle}
+          </p>
+        </div>
+      </TableCell>
+      <TableCell>
+        <StatusBadge status={run.status} />
+      </TableCell>
+      <TableCell>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>{relativeTime(run.createdAt)}</p>
+          {run.duration !== null && (
+            <div className="flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              <span>{formatDuration(run.duration)}</span>
             </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5">
-              {run.displayTitle}
-            </p>
-          </div>
+          )}
         </div>
-
-        <div className="flex items-center gap-4 shrink-0">
-          <StatusBadge status={run.status} />
-
-          <div className="text-right hidden sm:block min-w-[80px]">
-            <p className="text-xs text-muted-foreground">
-              {relativeTime(run.createdAt)}
-            </p>
-            {run.duration !== null && (
-              <div className="flex items-center gap-1 justify-end">
-                <Clock className="h-3 w-3 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground">
-                  {formatDuration(run.duration)}
-                </p>
-              </div>
-            )}
-          </div>
-
-          <a
-            href={run.commitUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {run.commitSha}
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        </div>
-      </div>
-
-      {/* Action buttons */}
-      <div className="flex items-center gap-1.5 border-t pt-2">
-        {canRerun && repoName && (
-          <ActionButton
-            icon={RotateCcw}
-            label="Re-run"
-            onClick={async () => {
-              const res = await rerunPipeline(run.id, repoName);
-              if (res.error) throw new Error(res.error);
-              onRefresh();
-            }}
-          />
-        )}
-        {canSync && (
-          <ActionButton
-            icon={RefreshCw}
-            label="Sync"
-            onClick={async () => {
-              const res = await syncService(internalName);
-              if (res.error) throw new Error(res.error);
-            }}
-          />
-        )}
-        {canRollout && (
-          <ActionButton
-            icon={Play}
-            label="Rollout"
-            onClick={async () => {
-              const res = await rolloutService(internalName);
-              if (res.error) throw new Error(res.error);
-            }}
-          />
-        )}
+      </TableCell>
+      <TableCell>
         <a
-          href={run.runUrl}
+          href={run.commitUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="ml-auto"
+          className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-            <ExternalLink className="h-3 w-3" />
-            GitHub
-          </Button>
+          {run.commitSha}
+          <ExternalLink className="h-3 w-3" />
         </a>
-      </div>
-    </div>
+      </TableCell>
+      <TableCell>
+        <div className="flex flex-wrap items-center gap-1.5 justify-end">
+          {canRerun && repoName && (
+            <ActionButton
+              icon={RotateCcw}
+              label="Re-run"
+              onClick={async () => {
+                const res = await rerunPipeline(run.id, repoName);
+                if (res.error) throw new Error(res.error);
+                onRefresh();
+              }}
+            />
+          )}
+          {canSync && (
+            <ActionButton
+              icon={RefreshCw}
+              label="Sync"
+              onClick={async () => {
+                const res = await syncService(internalName);
+                if (res.error) throw new Error(res.error);
+              }}
+            />
+          )}
+          {canRollout && (
+            <ActionButton
+              icon={Play}
+              label="Rollout"
+              onClick={async () => {
+                const res = await rolloutService(internalName);
+                if (res.error) throw new Error(res.error);
+              }}
+            />
+          )}
+          <a href={run.runUrl} target="_blank" rel="noopener noreferrer">
+            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+              <ExternalLink className="h-3 w-3" />
+              GitHub
+            </Button>
+          </a>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -341,11 +333,26 @@ export function PipelinesTab({
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((run) => (
-            <PipelineRow key={run.id} run={run} onRefresh={onRefresh} />
-          ))}
-        </div>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Commit</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((run) => (
+                  <PipelineRow key={run.id} run={run} onRefresh={onRefresh} />
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

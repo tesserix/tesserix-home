@@ -6,6 +6,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, ChefHat, Hospital, Trophy } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
+import { HeroTitle, HeroDescription, HeroActions } from "@tesserix/web";
 
 const upcomingProducts = [
   {
@@ -97,12 +98,12 @@ export function Hero() {
             className="text-center mb-12"
             variants={prefersReducedMotion ? undefined : itemVariants}
           >
-            <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl gradient-text">
+            <HeroTitle className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl gradient-text">
               Build what&apos;s next
-            </h1>
-            <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
+            </HeroTitle>
+            <HeroDescription className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
               We build the software so you can focus on the business.
-            </p>
+            </HeroDescription>
           </motion.div>
 
           {/* Bento: Mark8ly left + Upcoming right */}
@@ -173,7 +174,7 @@ export function Hero() {
                     </div>
                   </div>
 
-                  <div className="mt-6 flex flex-col gap-2 flex-1 justify-end">
+                  <HeroActions className="mt-6 flex flex-col gap-2 flex-1 justify-end">
                     <span className="text-sm text-muted-foreground">
                       No credit card required
                     </span>
@@ -185,7 +186,7 @@ export function Hero() {
                         </a>
                       </Button>
                     </div>
-                  </div>
+                  </HeroActions>
 
                 </div>
               </div>

@@ -2,6 +2,13 @@
 
 import { Zap, Shield, Globe, Headphones, TrendingUp, Code } from "lucide-react";
 import { AnimateOnScroll, StaggerContainer, StaggerItem } from "@/components/ui/animate-on-scroll";
+import {
+  FeatureGrid,
+  FeatureCard,
+  FeatureIcon,
+  FeatureTitle,
+  FeatureDescription,
+} from "@tesserix/web";
 
 const features = [
   {
@@ -49,20 +56,22 @@ export function FeaturesSection() {
           </p>
         </AnimateOnScroll>
 
-        <StaggerContainer className="mx-auto mt-12 grid max-w-5xl grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <StaggerContainer className="mx-auto mt-12 max-w-5xl">
+          <FeatureGrid className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {features.map((feature) => (
             <StaggerItem key={feature.title}>
-              <div className="rounded-lg border bg-card p-6 card-hover-scale transition-colors hover:border-foreground/10">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted transition-colors">
+              <FeatureCard className="card-hover-scale transition-colors hover:border-foreground/10">
+                <FeatureIcon className="bg-muted transition-colors">
                   <feature.icon className="h-5 w-5 text-foreground" />
-                </div>
-                <h3 className="mt-4 font-semibold text-foreground">{feature.title}</h3>
-                <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+                </FeatureIcon>
+                <FeatureTitle>{feature.title}</FeatureTitle>
+                <FeatureDescription className="leading-relaxed">
                   {feature.description}
-                </p>
-              </div>
+                </FeatureDescription>
+              </FeatureCard>
             </StaggerItem>
           ))}
+          </FeatureGrid>
         </StaggerContainer>
       </div>
     </section>

@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import {
   useContentPages,
@@ -315,33 +316,36 @@ function ContentEditorForm({
                 <CardTitle className="text-sm font-medium">Display Options</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="show-in-menu" className="text-sm">
+                    Show in navigation menu
+                  </Label>
+                  <Switch
+                    id="show-in-menu"
                     checked={showInMenu}
                     onChange={(e) => setShowInMenu(e.target.checked)}
-                    className="rounded border-border"
                   />
-                  <span className="text-sm">Show in navigation menu</span>
-                </label>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="show-in-footer" className="text-sm">
+                    Show in footer
+                  </Label>
+                  <Switch
+                    id="show-in-footer"
                     checked={showInFooter}
                     onChange={(e) => setShowInFooter(e.target.checked)}
-                    className="rounded border-border"
                   />
-                  <span className="text-sm">Show in footer</span>
-                </label>
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="is-featured-page" className="text-sm">
+                    Featured page
+                  </Label>
+                  <Switch
+                    id="is-featured-page"
                     checked={isFeatured}
                     onChange={(e) => setIsFeatured(e.target.checked)}
-                    className="rounded border-border"
                   />
-                  <span className="text-sm">Featured page</span>
-                </label>
+                </div>
               </CardContent>
             </Card>
 

@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface ProductCardProps {
   title: string;
@@ -22,38 +25,41 @@ export function ProductCard({
   const isComingSoon = status === "coming-soon";
 
   return (
-    <div
+    <Card
       className={cn(
-        "group relative rounded-lg border p-6 transition-colors hover:border-foreground/20",
+        "group relative transition-colors hover:border-foreground/20",
         featured && "border-foreground/20",
         isComingSoon && "opacity-60"
       )}
     >
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg border bg-background">
-          {icon}
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg border bg-background">
+            {icon}
+          </div>
+          <div>
+            <h3 className="font-medium text-foreground">{title}</h3>
+            {isComingSoon && (
+              <Badge variant="secondary" className="mt-1 text-[10px] uppercase tracking-wide">
+                Coming soon
+              </Badge>
+            )}
+          </div>
         </div>
-        <div>
-          <h3 className="font-medium text-foreground">{title}</h3>
-          {isComingSoon && (
-            <span className="text-xs text-muted-foreground">Coming soon</span>
-          )}
-        </div>
-      </div>
 
-      <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
-        {description}
-      </p>
+        <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
+          {description}
+        </p>
 
-      {!isComingSoon && (
-        <Link
-          href={href}
-          className="mt-4 inline-flex items-center text-sm font-medium text-foreground hover:underline"
-        >
-          Learn more
-          <ArrowRight className="ml-1 h-3 w-3" />
-        </Link>
-      )}
-    </div>
+        {!isComingSoon && (
+          <Button asChild variant="link" className="mt-3 h-auto px-0">
+            <Link href={href}>
+              Learn more
+              <ArrowRight className="ml-1 h-3 w-3" />
+            </Link>
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
