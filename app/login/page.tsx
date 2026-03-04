@@ -29,7 +29,7 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/auth/direct/platform/login", {
+      const response = await fetch("/auth/direct/platform/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -66,7 +66,7 @@ export default function LoginPage() {
     // Pass prompt param if present (e.g., select_account from error page to force account picker)
     const prompt = searchParams.get("prompt");
     const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : "";
-    const loginUrl = `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}&kc_idp_hint=google${promptParam}`;
+    const loginUrl = `/auth/login?returnTo=${encodeURIComponent(returnTo)}&kc_idp_hint=google${promptParam}`;
     window.location.href = loginUrl;
   }
 

@@ -29,6 +29,7 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(path =>
     pathname.startsWith(path + '/') ||
     pathname.startsWith('/_next') ||
+    pathname.startsWith('/auth/error') ||
     pathname.startsWith('/api/auth')
   );
 }
