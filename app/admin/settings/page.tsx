@@ -20,25 +20,23 @@ import {
   EyeOff,
   Loader2,
 } from "lucide-react";
-import { useToast } from "@tesserix/web";
-import { AdminHeader } from "@/components/admin/header";
 import {
+  useToast,
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
+  Badge,
+  Button,
+  Input,
+  Label,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
-} from "@/components/ui/tabs";
+} from "@tesserix/web";
+import { AdminHeader } from "@/components/admin/header";
 import { useAuth } from "@/lib/auth/auth-context";
 
 type Theme = "light" | "dark" | "system";

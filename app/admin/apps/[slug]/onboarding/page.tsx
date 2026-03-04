@@ -17,41 +17,42 @@ import {
   MessageSquare,
 } from "lucide-react";
 import Link from "next/link";
-import { useToast } from "@tesserix/web";
-import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
+  useToast,
+  Button,
+  Input,
+  Badge,
+  Label,
+  Textarea,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
   DialogFooter,
-} from "@/components/ui/dialog";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  ErrorState,
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDescription,
+  ConfirmDialog,
+} from "@tesserix/web";
+import { AdminHeader } from "@/components/admin/header";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useOnboardingContent,
   createOnboardingItem,

@@ -3,11 +3,9 @@
 import { useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Button } from "@/components/ui/button";
 import { ArrowRight, ChefHat, Hospital, Trophy } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
-import { HeroTitle, HeroDescription, HeroActions } from "@tesserix/web";
-
+import { HeroTitle, HeroDescription, HeroActions, Button } from "@tesserix/web";
 const upcomingProducts = [
   {
     title: "HomeChef",

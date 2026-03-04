@@ -4,9 +4,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
 import { AlertTriangle, ArrowLeft, RefreshCw, LogIn } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
+import { Button, Card, CardContent, CardHeader, CardTitle } from "@tesserix/web";
 const ERROR_MESSAGES: Record<string, { title: string; description: string }> = {
   access_denied: {
     title: "Access Denied",

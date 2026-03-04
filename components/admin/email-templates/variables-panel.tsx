@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type CategoryConfig } from "@/lib/api/email-template-categories";
+import { Card, CardContent, CardHeader, CardTitle } from "@tesserix/web";
 
 interface VariablesPanelProps {
   category: CategoryConfig | undefined;

@@ -1,15 +1,15 @@
 "use client";
 
 import { useTenants, type Tenant } from "@/lib/api/tenants";
+import { Store } from "lucide-react";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Store } from "lucide-react";
+  Skeleton,
+} from "@tesserix/web";
 
 interface TenantSelectorProps {
   value: string | null;

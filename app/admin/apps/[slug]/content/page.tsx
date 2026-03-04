@@ -16,35 +16,7 @@ import {
 import Link from "next/link";
 import { AdminHeader } from "@/components/admin/header";
 import { TenantSelector } from "@/components/admin/tenant-selector";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useContentPages,
   saveContentPages,
@@ -56,6 +28,32 @@ import {
   type ContentPageType,
   type ContentPageStatus,
 } from "@/lib/api/content";
+import {
+  Button,
+  Input,
+  Badge,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  ErrorState,
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDescription,
+  ConfirmDialog,
+} from "@tesserix/web";
 
 const APP_NAMES: Record<string, string> = {
   mark8ly: "Mark8ly",

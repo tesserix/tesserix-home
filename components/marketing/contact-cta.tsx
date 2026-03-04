@@ -1,9 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { AnimateOnScroll } from "@/components/ui/animate-on-scroll";
-
+import { Button, AnimateOnScroll } from "@tesserix/web";
 export function ContactCTA() {
   return (
     <section className="py-14 sm:py-16 bg-foreground relative overflow-hidden">

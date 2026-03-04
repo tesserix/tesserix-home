@@ -12,15 +12,11 @@ import {
   ExternalLink,
   X,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "./status-badge";
 import { VersionChips } from "./version-chips";
 import { promoteService, promoteGroup, type ServiceInfo, type BuildStatus } from "@/lib/api/releases";
 import type { ServiceType, AppGroup } from "@/lib/releases/services";
+import { Badge, Button, Card, CardContent, Input, Skeleton } from "@tesserix/web";
 
 type TypeFilter = "all" | ServiceType;
 

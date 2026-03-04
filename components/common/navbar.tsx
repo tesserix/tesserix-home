@@ -4,8 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Hospital, Trophy } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Button } from "@tesserix/web";
 
 const products = [
   {

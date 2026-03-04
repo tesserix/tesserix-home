@@ -4,13 +4,6 @@ import { use, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, Mail, Calendar, Building2, Globe, CreditCard, FileText, RefreshCw, ChevronRight } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useTenant } from "@/lib/api/tenants";
 import {
   useTenantSubscription,
@@ -21,6 +14,22 @@ import {
   type TenantSubscription,
   type SubscriptionInvoice,
 } from "@/lib/api/subscriptions";
+import {
+  Button,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Skeleton,
+  ErrorState,
+  ConfirmDialog,
+} from "@tesserix/web";
 
 const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || "tesserix.app";
 

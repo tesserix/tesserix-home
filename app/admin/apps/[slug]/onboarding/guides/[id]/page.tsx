@@ -3,16 +3,21 @@
 import { useState, use, useCallback } from "react";
 import { ArrowLeft, Plus, Trash2, GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import Link from "next/link";
-import { useToast } from "@tesserix/web";
+import {
+  useToast,
+  Button,
+  Input,
+  Label,
+  Textarea,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Skeleton,
+  ErrorState,
+  ConfirmDialog,
+} from "@tesserix/web";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useOnboardingItem,
   updateOnboardingItem,

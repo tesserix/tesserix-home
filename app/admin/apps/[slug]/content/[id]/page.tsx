@@ -12,25 +12,6 @@ import {
   Clock,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { RichTextEditor } from "@/components/ui/rich-text-editor";
 import {
   useContentPages,
@@ -42,6 +23,23 @@ import {
   type ContentPageType,
   type ContentPageStatus,
 } from "@/lib/api/content";
+import {
+  Button,
+  Input,
+  Label,
+  Textarea,
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
+} from "@tesserix/web";
 
 function ContentEditorForm({
   existingPage,

@@ -4,11 +4,6 @@ import { useState, use } from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
 import {
   useFeatureFlags,
   useExperiments,
@@ -17,6 +12,7 @@ import {
   type FeatureFlag,
   type ExperimentStatus,
 } from "@/lib/api/feature-flags";
+import { Button, Badge, Card, CardContent, Skeleton, ErrorState } from "@tesserix/web";
 
 const APP_NAMES: Record<string, string> = {
   mark8ly: "Mark8ly",

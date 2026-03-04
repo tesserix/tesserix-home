@@ -1,10 +1,10 @@
 "use client";
 
 import { Search } from "lucide-react";
-import { Input } from "@/components/ui/input";
 import { type TemplateStatus, type EmailTemplate } from "@/lib/api/email-templates";
 import { type CategoryConfig } from "@/lib/api/email-template-categories";
 import { cn } from "@/lib/utils";
+import { Input } from "@tesserix/web";
 
 interface TemplateFiltersProps {
   templates: EmailTemplate[];

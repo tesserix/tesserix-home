@@ -1,10 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-
+import { Card, CardContent, Badge, Button } from "@tesserix/web";
 interface ProductCardProps {
   title: string;
   description: string;

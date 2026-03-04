@@ -18,22 +18,27 @@ import {
   Paperclip,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useTicket, updateTicketStatus, addTicketComment, type TicketComment } from "@/lib/api/tickets";
 import {
+  Button,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Textarea,
+  Separator,
+  Skeleton,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { ErrorState } from "@/components/admin/error-state";
-import { useTicket, updateTicketStatus, addTicketComment, type TicketComment } from "@/lib/api/tickets";
+  Avatar,
+  AvatarFallback,
+  ErrorState,
+} from "@tesserix/web";
 
 function getStatusColor(status: string) {
   switch (status?.toLowerCase()) {

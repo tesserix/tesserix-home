@@ -1,6 +1,7 @@
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+"use client";
 
+import Link from "next/link";
+import { Button } from "@tesserix/web";
 export default function NotFound() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">

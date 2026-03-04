@@ -11,11 +11,6 @@ import {
   Activity,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
 import {
   useSystemHealth,
   groupServicesByApp,
@@ -25,6 +20,7 @@ import {
   type Incident,
   type AppGroup,
 } from "@/lib/api/system-health";
+import { Button, Badge, Card, CardContent, Skeleton, ErrorState } from "@tesserix/web";
 
 type StatusFilter = "all" | ServiceHealth;
 

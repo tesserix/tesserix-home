@@ -1,15 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
-import { Badge } from "@/components/ui/badge";
+import { type EmailTemplate } from "@/lib/api/email-templates";
 import {
+  Badge,
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogDescription,
-} from "@/components/ui/dialog";
-import { type EmailTemplate } from "@/lib/api/email-templates";
+} from "@tesserix/web";
 
 interface TemplatePreviewDialogProps {
   open: boolean;

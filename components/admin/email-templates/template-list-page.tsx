@@ -4,10 +4,6 @@ import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { Plus, ChevronRight } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TemplateFilters } from "./template-filters";
 import { CategoryAccordion } from "./category-accordion";
 import { NotificationLog } from "./notification-log";
@@ -23,6 +19,7 @@ import {
   getCategoriesForScope,
   type CategoryConfig,
 } from "@/lib/api/email-template-categories";
+import { Button, Skeleton, ErrorState, ConfirmDialog } from "@tesserix/web";
 
 interface TemplateListPageProps {
   scope: TemplateScope;

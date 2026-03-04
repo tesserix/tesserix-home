@@ -1,8 +1,7 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { type Notification, type NotificationStatus } from "@/lib/api/email-templates";
+import { Badge, Button } from "@tesserix/web";
 
 function notificationStatusVariant(
   status: NotificationStatus

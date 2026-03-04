@@ -16,36 +16,35 @@ import {
   User,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { TableSkeleton } from "@/components/admin/table-skeleton";
+import { useTickets, updateTicketStatus, type Ticket } from "@/lib/api/tickets";
 import {
+  Button,
+  Input,
+  Badge,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Card, CardContent } from "@/components/ui/card";
-import { TableSkeleton } from "@/components/admin/table-skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
-import { useTickets, updateTicketStatus, type Ticket } from "@/lib/api/tickets";
+  Card,
+  CardContent,
+  ErrorState,
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDescription,
+} from "@tesserix/web";
 
 const APP_NAMES: Record<string, string> = {
   mark8ly: "Mark8ly",

@@ -3,10 +3,6 @@
 import { useEffect, useRef } from "react";
 import { Rocket, RefreshCw } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ErrorState } from "@/components/admin/error-state";
 import {
   ServicesTab,
   ServicesTabSkeleton,
@@ -16,6 +12,7 @@ import {
   PipelinesTabSkeleton,
 } from "@/components/admin/releases/pipelines-tab";
 import { useServices, usePipelines } from "@/lib/api/releases";
+import { Button, Badge, Tabs, TabsContent, TabsList, TabsTrigger, ErrorState } from "@tesserix/web";
 
 export default function ReleasesPage() {
   const {

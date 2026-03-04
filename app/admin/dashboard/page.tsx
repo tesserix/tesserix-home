@@ -18,23 +18,26 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { AdminHeader } from "@/components/admin/header";
-import { Stat, StatLabel, StatValue, StatMeta } from "@/components/admin/stats-card";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
 import { useTenants, type Tenant } from "@/lib/api/tenants";
 import { useTickets } from "@/lib/api/tickets";
 import { useSubscriptionStats } from "@/lib/api/subscriptions";
 import { useSystemHealth } from "@/lib/api/system-health";
 import { useAuditLogs, type AuditLog, type AuditSeverity } from "@/lib/api/audit-logs";
+import {
+  Stat,
+  StatLabel,
+  StatValue,
+  StatMeta,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Badge,
+  Button,
+  Skeleton,
+  ErrorState,
+} from "@tesserix/web";
 
 function getStatusColor(status: string) {
   switch (status?.toLowerCase()) {

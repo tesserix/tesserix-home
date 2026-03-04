@@ -14,14 +14,23 @@ import {
   Building2,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Stat, StatLabel, StatValue, StatMeta } from "@/components/admin/stats-card";
-import { ErrorState } from "@/components/admin/error-state";
 import { useTenants, type Tenant } from "@/lib/api/tenants";
 import { useTickets, type Ticket as TicketType } from "@/lib/api/tickets";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Badge,
+  Button,
+  Skeleton,
+  Stat,
+  StatLabel,
+  StatValue,
+  StatMeta,
+  ErrorState,
+} from "@tesserix/web";
 
 const APP_NAMES: Record<string, string> = {
   mark8ly: "Mark8ly",

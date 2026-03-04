@@ -4,11 +4,16 @@ import { use } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
 import { useExperiment, type ExperimentStatus } from "@/lib/api/feature-flags";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Skeleton,
+  ErrorState,
+} from "@tesserix/web";
 
 function experimentStatusVariant(status: ExperimentStatus): "success" | "destructive" | "warning" | "secondary" {
   switch (status) {

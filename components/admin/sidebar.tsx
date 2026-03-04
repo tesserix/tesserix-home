@@ -21,15 +21,15 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
+  Button,
+  ScrollArea,
+  Separator,
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@tesserix/web";
 import { useAuth } from "@/lib/auth/auth-context";
 
 type NavItem = {

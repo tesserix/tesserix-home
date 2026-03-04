@@ -3,17 +3,17 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Lock, MoreHorizontal, Pencil, Copy, Send, Trash2, Eye, Mail } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { TemplatePreviewDialog } from "./template-preview-dialog";
+import { type EmailTemplate, type TemplateStatus } from "@/lib/api/email-templates";
 import {
+  Badge,
+  Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { TemplatePreviewDialog } from "./template-preview-dialog";
-import { type EmailTemplate, type TemplateStatus } from "@/lib/api/email-templates";
+} from "@tesserix/web";
 
 function statusVariant(status: TemplateStatus): "success" | "destructive" | "secondary" {
   switch (status) {

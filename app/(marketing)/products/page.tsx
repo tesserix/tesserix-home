@@ -1,8 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { ShoppingBag, ChefHat, Hospital, Trophy, ArrowRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { AnimateOnScroll } from "@/components/ui/animate-on-scroll";
-
+import { Button, AnimateOnScroll } from "@tesserix/web";
 const products = [
   {
     title: "Mark8ly",

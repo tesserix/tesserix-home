@@ -3,11 +3,10 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, Plus } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { TemplateCard } from "./template-card";
 import { type EmailTemplate } from "@/lib/api/email-templates";
 import { type CategoryConfig } from "@/lib/api/email-template-categories";
+import { Badge, Button } from "@tesserix/web";
 
 interface CategoryAccordionProps {
   category: CategoryConfig;

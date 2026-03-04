@@ -10,12 +10,6 @@ import {
   Trash2,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Input } from "@/components/ui/input";
-import { ErrorState } from "@/components/admin/error-state";
 import {
   useAuditLogs,
   useAuditLogSummary,
@@ -28,6 +22,18 @@ import {
   type AuditLogFilters,
   type RetentionSettings,
 } from "@/lib/api/audit-logs";
+import {
+  Button,
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  Skeleton,
+  Input,
+  ErrorState,
+} from "@tesserix/web";
 
 function severityColor(severity: AuditSeverity) {
   switch (severity) {

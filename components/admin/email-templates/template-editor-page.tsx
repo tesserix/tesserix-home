@@ -5,13 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Save, Trash2, Send, Lock, ChevronDown, Eye } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { VariablesPanel } from "./variables-panel";
 import { TemplatePreviewDialog } from "./template-preview-dialog";
 import {
@@ -29,6 +22,18 @@ import {
   getCategoryConfig,
   type CategoryConfig,
 } from "@/lib/api/email-template-categories";
+import {
+  Button,
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Input,
+  Skeleton,
+  ErrorState,
+  ConfirmDialog,
+} from "@tesserix/web";
 
 function statusVariant(status: TemplateStatus): "success" | "destructive" | "secondary" {
   switch (status) {

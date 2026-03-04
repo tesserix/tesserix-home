@@ -1,6 +1,8 @@
-import { Badge } from "@/components/ui/badge";
+"use client";
+
 import { Loader2 } from "lucide-react";
 import type { BuildStatus } from "@/lib/api/releases";
+import { Badge } from "@tesserix/web";
 
 const STATUS_CONFIG: Record<
   BuildStatus,

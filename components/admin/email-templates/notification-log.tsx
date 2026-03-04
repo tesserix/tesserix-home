@@ -1,16 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState } from "@/components/admin/error-state";
 import { NotificationDetailDialog } from "./notification-detail-dialog";
 import {
   useNotifications,
   type Notification,
   type NotificationStatus,
 } from "@/lib/api/email-templates";
+import { Badge, Card, CardContent, Skeleton, ErrorState } from "@tesserix/web";
 
 function notificationStatusVariant(
   status: NotificationStatus

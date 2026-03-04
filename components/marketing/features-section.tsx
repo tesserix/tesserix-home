@@ -1,15 +1,16 @@
 "use client";
 
 import { Zap, Shield, Globe, Headphones, TrendingUp, Code } from "lucide-react";
-import { AnimateOnScroll, StaggerContainer, StaggerItem } from "@/components/ui/animate-on-scroll";
 import {
   FeatureGrid,
   FeatureCard,
   FeatureIcon,
   FeatureTitle,
   FeatureDescription,
+  AnimateOnScroll,
+  StaggerContainer,
+  StaggerItem,
 } from "@tesserix/web";
-
 const features = [
   {
     icon: Zap,

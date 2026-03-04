@@ -2,40 +2,38 @@
 
 import { useState, useEffect, use, useCallback } from "react";
 import Link from "next/link";
-import { useToast } from "@tesserix/web";
-import { Search, Filter, MoreHorizontal, ExternalLink, ChevronRight, Globe, Trash2 } from "lucide-react";
-import { AdminHeader } from "@/components/admin/header";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
+  useToast,
+  Button,
+  Input,
+  Badge,
+  Label,
+  Textarea,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  ErrorState,
+  EmptyState,
+  EmptyStateTitle,
+  EmptyStateDescription,
+  ConfirmDialog,
+} from "@tesserix/web";
+import { Search, Filter, MoreHorizontal, ExternalLink, ChevronRight, Globe, Trash2 } from "lucide-react";
+import { AdminHeader } from "@/components/admin/header";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
-import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
-import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useTenants,
   deleteTenant,

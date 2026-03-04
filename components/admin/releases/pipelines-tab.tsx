@@ -10,24 +10,6 @@ import {
   Loader2,
   CheckCircle2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { StatusBadge, WorkflowTypeBadge } from "./status-badge";
 import {
   rerunPipeline,
@@ -36,6 +18,23 @@ import {
   type PipelineRun,
 } from "@/lib/api/releases";
 import { SERVICE_REGISTRY } from "@/lib/releases/services";
+import {
+  Button,
+  Card,
+  CardContent,
+  Skeleton,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
 
 type StatusFilter = "all" | "success" | "failure" | "in_progress";
 
