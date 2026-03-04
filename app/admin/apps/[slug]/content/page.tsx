@@ -304,16 +304,17 @@ export default function AppContentPage({ params }: { params: Promise<{ slug: str
                       {filteredPages.map((page: ContentPage) => (
                         <TableRow key={page.id}>
                           <TableCell>
-                            <button
+                            <Button
+                              variant="link"
                               onClick={() =>
                                 router.push(
                                   `/admin/apps/${slug}/content/${page.id}?tenantId=${selectedTenantId}`
                                 )
                               }
-                              className="text-left font-medium hover:underline"
+                              className="h-auto p-0 text-left font-medium"
                             >
                               {page.title}
-                            </button>
+                            </Button>
                             <p className="text-sm text-muted-foreground">
                               /{page.slug}
                             </p>

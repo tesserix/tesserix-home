@@ -229,27 +229,22 @@ function FilterChip({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-        active
-          ? "bg-primary text-primary-foreground"
-          : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"
-      }`}
+      variant={active ? "default" : "outline"}
+      size="sm"
+      className="h-8 gap-1.5 rounded-full"
     >
       {label}
       {count !== undefined && (
-        <span
-          className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-xs ${
-            active
-              ? "bg-primary-foreground/20 text-primary-foreground"
-              : "bg-background text-muted-foreground"
-          }`}
+        <Badge
+          variant={active ? "secondary" : "outline"}
+          className="h-5 min-w-5 rounded-full px-1 text-[10px]"
         >
           {count}
-        </span>
+        </Badge>
       )}
-    </button>
+    </Button>
   );
 }
 

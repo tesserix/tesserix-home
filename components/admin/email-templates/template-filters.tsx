@@ -3,8 +3,7 @@
 import { Search } from "lucide-react";
 import { type TemplateStatus, type EmailTemplate } from "@/lib/api/email-templates";
 import { type CategoryConfig } from "@/lib/api/email-template-categories";
-import { cn } from "@/lib/utils";
-import { Input } from "@tesserix/web";
+import { Input, Button, Badge } from "@tesserix/web";
 
 interface TemplateFiltersProps {
   templates: EmailTemplate[];
@@ -51,29 +50,21 @@ export function TemplateFilters({
         <div className="flex items-center gap-1.5">
           {statusOptions.map((opt) => {
             const count = countByStatus(templates, opt.value);
+            const isActive = statusFilter === opt.value;
             return (
-              <button
+              <Button
                 key={opt.value}
+                type="button"
+                size="sm"
+                variant={isActive ? "default" : "outline"}
                 onClick={() => onStatusFilterChange(opt.value)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                  statusFilter === opt.value
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground hover:bg-muted/80"
-                )}
+                className="h-7 gap-1.5 rounded-full px-3 text-xs"
               >
                 {opt.label}
-                <span
-                  className={cn(
-                    "text-[10px]",
-                    statusFilter === opt.value
-                      ? "text-primary-foreground/70"
-                      : "text-muted-foreground/70"
-                  )}
-                >
+                <Badge variant={isActive ? "secondary" : "outline"} className="text-[10px]">
                   {count}
-                </span>
-              </button>
+                </Badge>
+              </Button>
             );
           })}
         </div>
@@ -91,52 +82,38 @@ export function TemplateFilters({
 
       {/* Category filter chips */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <button
+        <Button
+          type="button"
+          size="sm"
+          variant={categoryFilter === "all" ? "default" : "outline"}
           onClick={() => onCategoryFilterChange("all")}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-            categoryFilter === "all"
-              ? "bg-primary text-primary-foreground"
-              : "bg-muted text-muted-foreground hover:bg-muted/80"
-          )}
+          className="h-7 gap-1.5 rounded-full px-3 text-xs"
         >
           All Groups
-          <span
-            className={cn(
-              "text-[10px]",
-              categoryFilter === "all"
-                ? "text-primary-foreground/70"
-                : "text-muted-foreground/70"
-            )}
+          <Badge
+            variant={categoryFilter === "all" ? "secondary" : "outline"}
+            className="text-[10px]"
           >
             {templates.length}
-          </span>
-        </button>
+          </Badge>
+        </Button>
         {categories.map((cat) => {
           const count = countByCategory(templates, cat.value);
+          const isActive = categoryFilter === cat.value;
           return (
-            <button
+            <Button
               key={cat.value}
+              type="button"
+              size="sm"
+              variant={isActive ? "default" : "outline"}
               onClick={() => onCategoryFilterChange(cat.value)}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                categoryFilter === cat.value
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              )}
+              className="h-7 gap-1.5 rounded-full px-3 text-xs"
             >
               {cat.label}
-              <span
-                className={cn(
-                  "text-[10px]",
-                  categoryFilter === cat.value
-                    ? "text-primary-foreground/70"
-                    : "text-muted-foreground/70"
-                )}
-              >
+              <Badge variant={isActive ? "secondary" : "outline"} className="text-[10px]">
                 {count}
-              </span>
-            </button>
+              </Badge>
+            </Button>
           );
         })}
       </div>

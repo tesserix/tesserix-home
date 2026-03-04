@@ -1,3 +1,5 @@
+import { Badge, Button } from "@tesserix/web";
+
 interface VersionChipsProps {
   currentVersion: string | null;
   onSelect: (version: string) => void;
@@ -32,15 +34,19 @@ export function VersionChips({ currentVersion, onSelect }: VersionChipsProps) {
   return (
     <div className="flex flex-wrap gap-2">
       {suggestions.map((s) => (
-        <button
+        <Button
           key={s.label}
           type="button"
+          size="sm"
+          variant="outline"
           onClick={() => onSelect(s.version)}
-          className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          className="h-7 gap-1.5 rounded-full px-3 text-xs"
         >
           <span>{s.label}</span>
-          <span className="font-mono">{s.version}</span>
-        </button>
+          <Badge variant="secondary" className="font-mono text-[10px]">
+            {s.version}
+          </Badge>
+        </Button>
       ))}
     </div>
   );

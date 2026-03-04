@@ -33,6 +33,7 @@ import {
   Skeleton,
   Input,
   ErrorState,
+  Checkbox,
 } from "@tesserix/web";
 
 function severityColor(severity: AuditSeverity) {
@@ -244,8 +245,10 @@ export default function AuditLogsPage() {
 
         {/* Tabs */}
         <div className="flex gap-2 border-b">
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`rounded-none border-b-2 px-4 py-2 ${
               activeTab === "events"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -253,9 +256,11 @@ export default function AuditLogsPage() {
             onClick={() => setActiveTab("events")}
           >
             Event Log
-          </button>
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`rounded-none border-b-2 px-4 py-2 ${
               activeTab === "compliance"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -263,7 +268,7 @@ export default function AuditLogsPage() {
             onClick={() => setActiveTab("compliance")}
           >
             Compliance
-          </button>
+          </Button>
         </div>
 
         {activeTab === "events" && (
@@ -524,12 +529,10 @@ function RetentionCard({
             />
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Checkbox
               id="autoCleanup"
               checked={autoCleanup}
               onChange={(e) => setAutoCleanup(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300"
             />
             <label htmlFor="autoCleanup" className="text-sm">
               Auto cleanup

@@ -154,18 +154,15 @@ function AppearanceTab() {
           <p className="text-sm font-medium mb-3">Theme</p>
           <div className="grid grid-cols-3 gap-3">
             {themes.map(({ value, label, icon: Icon }) => (
-              <button
+              <Button
                 key={value}
+                variant={theme === value ? "default" : "outline"}
                 onClick={() => handleThemeChange(value)}
-                className={`flex flex-col items-center gap-2 rounded-lg border p-4 transition-colors ${
-                  theme === value
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:bg-muted/50"
-                }`}
+                className="h-auto flex-col gap-2 p-4"
               >
                 <Icon className="h-5 w-5" />
                 <span className="text-sm font-medium">{label}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -541,13 +538,15 @@ function PaymentTab() {
                   }}
                   className="pr-10"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => setShowSecretKey(!showSecretKey)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
                 >
                   {showSecretKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
 
               {secretKey.trim() && (
@@ -601,13 +600,15 @@ function PaymentTab() {
                   onChange={(e) => setWebhookSecret(e.target.value)}
                   className="pr-10"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => setShowWebhookSecret(!showWebhookSecret)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
                 >
                   {showWebhookSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
+                </Button>
               </div>
             </div>
 

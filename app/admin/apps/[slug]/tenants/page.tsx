@@ -30,6 +30,7 @@ import {
   EmptyStateTitle,
   EmptyStateDescription,
   ConfirmDialog,
+  Checkbox,
 } from "@tesserix/web";
 import { Search, Filter, MoreHorizontal, ExternalLink, ChevronRight, Globe, Trash2 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
@@ -307,11 +308,9 @@ export default function AppTenantsPage({ params }: { params: Promise<{ slug: str
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={allOnPageSelected}
                         onChange={toggleSelectAll}
-                        className="h-4 w-4 rounded border-gray-300 cursor-pointer accent-primary"
                         aria-label="Select all tenants on this page"
                       />
                     </TableHead>
@@ -328,11 +327,9 @@ export default function AppTenantsPage({ params }: { params: Promise<{ slug: str
                   {tenants.map((tenant: Tenant) => (
                     <TableRow key={tenant.id} data-state={selectedIds.has(tenant.id) ? "selected" : undefined}>
                       <TableCell>
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={selectedIds.has(tenant.id)}
                           onChange={() => toggleSelect(tenant.id)}
-                          className="h-4 w-4 rounded border-gray-300 cursor-pointer accent-primary"
                           aria-label={`Select ${tenant.name}`}
                         />
                       </TableCell>

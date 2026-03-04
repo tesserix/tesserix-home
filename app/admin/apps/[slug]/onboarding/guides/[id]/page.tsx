@@ -16,6 +16,7 @@ import {
   Skeleton,
   ErrorState,
   ConfirmDialog,
+  Checkbox,
 } from "@tesserix/web";
 import { AdminHeader } from "@/components/admin/header";
 import {
@@ -197,11 +198,11 @@ export default function GuideDetailPage({
 
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={form?.featured || false} onChange={(e) => updateField("featured", e.target.checked)} className="rounded" />
+                  <Checkbox checked={form?.featured || false} onChange={(e) => updateField("featured", e.target.checked)} />
                   Featured
                 </label>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} className="rounded" />
+                  <Checkbox checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} />
                   Active
                 </label>
               </div>

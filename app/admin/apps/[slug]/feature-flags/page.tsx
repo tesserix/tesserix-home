@@ -120,8 +120,10 @@ export default function AppFeatureFlagsPage({ params }: { params: Promise<{ slug
 
         {/* Tabs */}
         <div className="flex gap-2 border-b">
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`rounded-none border-b-2 px-4 py-2 ${
               activeTab === "flags"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -129,9 +131,11 @@ export default function AppFeatureFlagsPage({ params }: { params: Promise<{ slug
             onClick={() => setActiveTab("flags")}
           >
             Feature Flags
-          </button>
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`rounded-none border-b-2 px-4 py-2 ${
               activeTab === "experiments"
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -139,7 +143,7 @@ export default function AppFeatureFlagsPage({ params }: { params: Promise<{ slug
             onClick={() => setActiveTab("experiments")}
           >
             Experiments
-          </button>
+          </Button>
         </div>
 
         {activeTab === "flags" && (

@@ -99,9 +99,11 @@ export function Navbar() {
 
         {/* Mobile menu button */}
         <div className="flex lg:hidden">
-          <button
+          <Button
             type="button"
-            className="-m-2.5 inline-flex items-center justify-center rounded-md p-2.5 text-foreground"
+            variant="ghost"
+            size="icon"
+            className="-m-2.5"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-menu"
@@ -113,16 +115,18 @@ export function Navbar() {
             ) : (
               <Menu className="h-6 w-6" aria-hidden="true" />
             )}
-          </button>
+          </Button>
         </div>
 
         {/* Desktop navigation */}
         <div className="hidden lg:flex lg:gap-x-8 lg:items-center">
           {/* Products Mega Menu */}
           <div ref={productsRef} className="relative">
-            <button
+            <Button
               type="button"
-              className="flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
               onClick={() => setProductsOpen(!productsOpen)}
               aria-expanded={productsOpen}
               aria-haspopup="true"
@@ -132,7 +136,7 @@ export function Navbar() {
                 className={cn("h-4 w-4 transition-transform", productsOpen && "rotate-180")}
                 aria-hidden="true"
               />
-            </button>
+            </Button>
 
             {/* Mega Menu Dropdown */}
             <div
@@ -218,14 +222,16 @@ export function Navbar() {
       >
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <Image src="/logo.png" alt="Tesserix" width={108} height={32} />
-          <button
+          <Button
             type="button"
-            className="-m-2.5 rounded-md p-2.5 text-foreground"
+            variant="ghost"
+            size="icon"
+            className="-m-2.5"
             onClick={() => setMobileMenuOpen(false)}
             aria-label="Close menu"
           >
             <X className="h-6 w-6" aria-hidden="true" />
-          </button>
+          </Button>
         </div>
 
         <div className="px-6 py-6 space-y-6 overflow-y-auto h-[calc(100%-73px)]">

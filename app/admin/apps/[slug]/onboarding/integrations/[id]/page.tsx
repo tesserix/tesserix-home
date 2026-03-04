@@ -20,6 +20,7 @@ import {
   CardTitle,
   Skeleton,
   ErrorState,
+  Checkbox,
 } from "@tesserix/web";
 import { AdminHeader } from "@/components/admin/header";
 import {
@@ -190,7 +191,7 @@ export default function IntegrationDetailPage({
                 </div>
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} className="rounded" />
+                    <Checkbox checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} />
                     Active
                   </label>
                 </div>

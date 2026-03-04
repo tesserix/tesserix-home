@@ -67,6 +67,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Checkbox,
 } from "@tesserix/web";
 import {
   createOnboardingItem,
@@ -499,8 +500,7 @@ function PlanFormDialog({
               />
             </div>
             <div className="flex items-center gap-3 pt-6">
-              <input
-                type="checkbox"
+              <Checkbox
                 id="plan-free"
                 checked={form.isFree}
                 onChange={(e) => {
@@ -510,17 +510,14 @@ function PlanFormDialog({
                     updateField("yearlyPriceDollars", "0");
                   }
                 }}
-                className="h-4 w-4 rounded border-input"
               />
               <Label htmlFor="plan-free" className="cursor-pointer">Free plan</Label>
             </div>
             <div className="flex items-center gap-3 pt-6">
-              <input
-                type="checkbox"
+              <Checkbox
                 id="plan-active"
                 checked={form.isActive}
                 onChange={(e) => updateField("isActive", e.target.checked)}
-                className="h-4 w-4 rounded border-input"
               />
               <Label htmlFor="plan-active" className="cursor-pointer">Active</Label>
             </div>
@@ -535,11 +532,9 @@ function PlanFormDialog({
                   key={feature}
                   className="flex items-center gap-2 text-sm cursor-pointer rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={!!form.features[feature]}
                     onChange={() => toggleFeature(feature)}
-                    className="h-3.5 w-3.5 rounded border-input"
                   />
                   <span>{feature.replace(/_/g, " ")}</span>
                 </label>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import { Input, Button } from "@tesserix/web";
 
 const footerNavigation = {
   products: [
@@ -40,18 +41,18 @@ export function Footer() {
             <div className="pt-4">
               <p className="text-sm font-medium text-foreground mb-2">Stay updated</p>
               <form className="flex gap-2 max-w-xs">
-                <input
+                <Input
                   type="email"
                   placeholder="Enter your email"
-                  className="flex-1 rounded-lg border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="flex-1"
                   aria-label="Email for newsletter"
                 />
-                <button
+                <Button
                   type="submit"
-                  className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:bg-foreground/90 transition-colors"
+                  size="sm"
                 >
                   Subscribe
-                </button>
+                </Button>
               </form>
             </div>
           </div>

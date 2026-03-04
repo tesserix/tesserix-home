@@ -432,12 +432,13 @@ function IntegrationsTable({ items, onDelete, onToggleActive, slug }: TableProps
         {items.map((integration) => (
           <TableRow key={integration.id}>
             <TableCell>
-              <button
+              <Button
+                variant="link"
                 onClick={() => router.push(`/admin/apps/${slug}/onboarding/integrations/${integration.id}`)}
-                className="text-left font-medium hover:underline"
+                className="h-auto p-0 text-left font-medium"
               >
                 {integration.name}
-              </button>
+              </Button>
               {integration.description && <p className="text-sm text-muted-foreground line-clamp-1">{integration.description}</p>}
             </TableCell>
             <TableCell><Badge variant="secondary">{integration.category}</Badge></TableCell>
@@ -481,12 +482,13 @@ function GuidesTable({ items, onDelete, onToggleActive, slug }: TableProps<Guide
         {items.map((guide) => (
           <TableRow key={guide.id}>
             <TableCell>
-              <button
+              <Button
+                variant="link"
                 onClick={() => router.push(`/admin/apps/${slug}/onboarding/guides/${guide.id}`)}
-                className="text-left font-medium hover:underline"
+                className="h-auto p-0 text-left font-medium"
               >
                 {guide.title}
-              </button>
+              </Button>
               {guide.description && <p className="text-sm text-muted-foreground line-clamp-1">{guide.description}</p>}
             </TableCell>
             <TableCell className="text-muted-foreground">{guide.slug}</TableCell>
@@ -531,12 +533,13 @@ function SlidesTable({ items, onDelete, onToggleActive, slug }: TableProps<Prese
           <TableRow key={slide.id}>
             <TableCell className="font-medium">{slide.slideNumber}</TableCell>
             <TableCell>
-              <button
+              <Button
+                variant="link"
                 onClick={() => router.push(`/admin/apps/${slug}/onboarding/slides/${slide.id}`)}
-                className="text-left font-medium hover:underline"
+                className="h-auto p-0 text-left font-medium"
               >
                 {slide.title || "(untitled)"}
-              </button>
+              </Button>
               {slide.subtitle && <p className="text-sm text-muted-foreground line-clamp-1">{slide.subtitle}</p>}
             </TableCell>
             <TableCell><Badge variant="secondary">{slide.type}</Badge></TableCell>
