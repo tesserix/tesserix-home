@@ -17,9 +17,17 @@ import {
 import {
   type TemplateScope,
   getCategoriesForScope,
-  type CategoryConfig,
 } from "@/lib/api/email-template-categories";
-import { Button, Skeleton, ErrorState, ConfirmDialog } from "@tesserix/web";
+import {
+  Button,
+  Skeleton,
+  ErrorState,
+  ConfirmDialog,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@tesserix/web";
 
 interface TemplateListPageProps {
   scope: TemplateScope;
@@ -36,7 +44,6 @@ export function TemplateListPage({
   description,
   breadcrumb,
 }: TemplateListPageProps) {
-  const [activeTab, setActiveTab] = useState<"templates" | "notifications">("templates");
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | "all">("all");
   const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
@@ -136,100 +143,84 @@ export function TemplateListPage({
         )}
 
         {/* Tabs */}
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2 border-b">
-            <button
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "templates"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setActiveTab("templates")}
-            >
-              Templates
-            </button>
-            <button
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "notifications"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-              onClick={() => setActiveTab("notifications")}
-            >
-              Notification Log
-            </button>
-          </div>
-          {activeTab === "templates" && (
+        <Tabs defaultValue="templates" className="w-full">
+          <div className="flex items-center justify-between">
+            <TabsList className="h-auto rounded-none border-b bg-transparent p-0">
+              <TabsTrigger value="templates" className="rounded-none border-b-2 border-transparent px-4 py-2 data-[state=active]:border-primary">
+                Templates
+              </TabsTrigger>
+              <TabsTrigger value="notifications" className="rounded-none border-b-2 border-transparent px-4 py-2 data-[state=active]:border-primary">
+                Notification Log
+              </TabsTrigger>
+            </TabsList>
+
             <Link href={`${basePath}/new`}>
               <Button>
                 <Plus className="mr-2 h-4 w-4" />
                 New Template
               </Button>
             </Link>
-          )}
-        </div>
+          </div>
 
-        {/* Templates tab */}
-        {activeTab === "templates" && (
-          <>
-            {isLoading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-16 w-full" />
-                ))}
-              </div>
-            ) : error ? (
-              <ErrorState message={error} onRetry={mutate} />
-            ) : (
-              <>
-                <TemplateFilters
-                  templates={templates || []}
-                  statusFilter={statusFilter}
-                  onStatusFilterChange={setStatusFilter}
-                  categoryFilter={categoryFilter}
-                  onCategoryFilterChange={setCategoryFilter}
-                  categories={categories}
-                  search={search}
-                  onSearchChange={setSearch}
-                />
-
+            <TabsContent value="templates" className="mt-6">
+              {isLoading ? (
                 <div className="space-y-3">
-                  {visibleCategories.map((cat) => (
-                    <CategoryAccordion
-                      key={cat.value}
-                      category={cat}
-                      templates={templatesByCategory.get(cat.value) || []}
-                      basePath={basePath}
-                      defaultOpen={categoryFilter !== "all"}
-                      onDuplicate={handleDuplicate}
-                      onDelete={handleDelete}
-                    />
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
                   ))}
-
-                  {/* Uncategorized templates — only show if "all" filter and there are some */}
-                  {categoryFilter === "all" && uncategorizedTemplates.length > 0 && (
-                    <CategoryAccordion
-                      category={{
-                        value: "uncategorized",
-                        label: "Uncategorized",
-                        description: "Templates without a category",
-                        scope,
-                        variables: [],
-                      }}
-                      templates={uncategorizedTemplates}
-                      basePath={basePath}
-                      onDuplicate={handleDuplicate}
-                      onDelete={handleDelete}
-                    />
-                  )}
                 </div>
-              </>
-            )}
-          </>
-        )}
+              ) : error ? (
+                <ErrorState message={error} onRetry={mutate} />
+              ) : (
+                <>
+                  <TemplateFilters
+                    templates={templates || []}
+                    statusFilter={statusFilter}
+                    onStatusFilterChange={setStatusFilter}
+                    categoryFilter={categoryFilter}
+                    onCategoryFilterChange={setCategoryFilter}
+                    categories={categories}
+                    search={search}
+                    onSearchChange={setSearch}
+                  />
 
-        {/* Notification log tab */}
-        {activeTab === "notifications" && <NotificationLog />}
+                  <div className="space-y-3">
+                    {visibleCategories.map((cat) => (
+                      <CategoryAccordion
+                        key={cat.value}
+                        category={cat}
+                        templates={templatesByCategory.get(cat.value) || []}
+                        basePath={basePath}
+                        defaultOpen={categoryFilter !== "all"}
+                        onDuplicate={handleDuplicate}
+                        onDelete={handleDelete}
+                      />
+                    ))}
+
+                    {categoryFilter === "all" && uncategorizedTemplates.length > 0 && (
+                      <CategoryAccordion
+                        category={{
+                          value: "uncategorized",
+                          label: "Uncategorized",
+                          description: "Templates without a category",
+                          scope,
+                          variables: [],
+                        }}
+                        templates={uncategorizedTemplates}
+                        basePath={basePath}
+                        onDuplicate={handleDuplicate}
+                        onDelete={handleDelete}
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+            </TabsContent>
+
+          <TabsContent value="notifications" className="mt-6">
+            <NotificationLog />
+          </TabsContent>
+        </Tabs>
       </main>
 
       <ConfirmDialog

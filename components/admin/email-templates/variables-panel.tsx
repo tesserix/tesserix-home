@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { type CategoryConfig } from "@/lib/api/email-template-categories";
-import { Card, CardContent, CardHeader, CardTitle } from "@tesserix/web";
+import { Card, CardContent, CardHeader, CardTitle, Button } from "@tesserix/web";
 
 interface VariablesPanelProps {
   category: CategoryConfig | undefined;
@@ -27,10 +27,12 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
     return (
       <div className="flex flex-wrap gap-1.5">
         {category.variables.map((v) => (
-          <button
+          <Button
             key={v.name}
+            variant="outline"
+            size="sm"
             onClick={() => handleCopy(v.name)}
-            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-mono hover:bg-muted transition-colors"
+            className="h-7 gap-1 px-2 text-xs font-mono"
             title={`${v.description} — Click to copy`}
           >
             {copiedVar === v.name ? (
@@ -39,7 +41,7 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
               <Copy className="h-3 w-3 text-muted-foreground" />
             )}
             {`{{${v.name}}}`}
-          </button>
+          </Button>
         ))}
       </div>
     );
@@ -56,10 +58,11 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
       <CardContent>
         <div className="space-y-2">
           {category.variables.map((v) => (
-            <button
+            <Button
               key={v.name}
+              variant="ghost"
               onClick={() => handleCopy(v.name)}
-              className="flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-muted transition-colors"
+              className="h-auto w-full items-start justify-start gap-2 rounded-md p-2 text-left"
             >
               <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
                 {copiedVar === v.name ? (
@@ -72,7 +75,7 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
                 <p className="text-xs text-muted-foreground">{v.description}</p>
                 <p className="text-[10px] text-muted-foreground/70">e.g. {v.example}</p>
               </div>
-            </button>
+            </Button>
           ))}
         </div>
       </CardContent>

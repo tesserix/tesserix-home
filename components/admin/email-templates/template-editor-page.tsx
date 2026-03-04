@@ -20,7 +20,6 @@ import {
   type TemplateScope,
   getCategoriesForScope,
   getCategoryConfig,
-  type CategoryConfig,
 } from "@/lib/api/email-template-categories";
 import {
   Button,
@@ -30,6 +29,11 @@ import {
   CardHeader,
   CardTitle,
   Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Skeleton,
   ErrorState,
   ConfirmDialog,
@@ -240,19 +244,23 @@ export function TemplateEditorPage({ scope, basePath, templateId }: TemplateEdit
 
             <div>
               <label className="text-sm font-medium">Category</label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+              <Select
+                value={category || "__none__"}
+                onValueChange={(v) => setCategory(v === "__none__" ? "" : v)}
                 disabled={isSystem}
               >
-                <option value="">No category</option>
-                {categories.map((cat) => (
-                  <option key={cat.value} value={cat.value}>
-                    {cat.label}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="mt-1 w-full">
+                  <SelectValue placeholder="No category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No category</SelectItem>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.value} value={cat.value}>
+                      {cat.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div>
@@ -269,8 +277,9 @@ export function TemplateEditorPage({ scope, basePath, templateId }: TemplateEdit
             {/* Collapsible variable picker */}
             {categoryConfig && categoryConfig.variables.length > 0 && (
               <div className="rounded-md border">
-                <button
-                  className="flex w-full items-center justify-between p-3 text-left hover:bg-muted/30 transition-colors"
+                <Button
+                  variant="ghost"
+                  className="h-auto w-full justify-between rounded-none p-3 text-left hover:bg-muted/30"
                   onClick={() => setVariablesExpanded(!variablesExpanded)}
                 >
                   <span className="text-sm font-medium">
@@ -281,7 +290,7 @@ export function TemplateEditorPage({ scope, basePath, templateId }: TemplateEdit
                       variablesExpanded ? "" : "-rotate-90"
                     }`}
                   />
-                </button>
+                </Button>
                 {variablesExpanded && (
                   <div className="border-t p-3">
                     <VariablesPanel category={categoryConfig} compact />
@@ -322,16 +331,20 @@ export function TemplateEditorPage({ scope, basePath, templateId }: TemplateEdit
                 <CardTitle className="text-base">Status</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <select
+                <Select
                   value={status}
-                  onChange={(e) => setStatus(e.target.value as TemplateStatus)}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  onValueChange={(v) => setStatus(v as TemplateStatus)}
                   disabled={isSystem}
                 >
-                  <option value="draft">Draft</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Badge variant={statusVariant(status)}>{status}</Badge>
               </CardContent>
             </Card>
@@ -341,17 +354,21 @@ export function TemplateEditorPage({ scope, basePath, templateId }: TemplateEdit
                 <CardTitle className="text-base">Type</CardTitle>
               </CardHeader>
               <CardContent>
-                <select
+                <Select
                   value={type}
-                  onChange={(e) => setType(e.target.value)}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  onValueChange={setType}
                   disabled={isSystem}
                 >
-                  <option value="transactional">Transactional</option>
-                  <option value="marketing">Marketing</option>
-                  <option value="notification">Notification</option>
-                  <option value="system">System</option>
-                </select>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="transactional">Transactional</SelectItem>
+                    <SelectItem value="marketing">Marketing</SelectItem>
+                    <SelectItem value="notification">Notification</SelectItem>
+                    <SelectItem value="system">System</SelectItem>
+                  </SelectContent>
+                </Select>
               </CardContent>
             </Card>
 

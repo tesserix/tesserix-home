@@ -29,8 +29,9 @@ export function CategoryAccordion({
 
   return (
     <div className="rounded-lg border">
-      <button
-        className="flex w-full items-center justify-between p-4 text-left hover:bg-muted/30 transition-colors"
+      <Button
+        variant="ghost"
+        className="h-auto w-full justify-between rounded-none p-4 text-left hover:bg-muted/30"
         onClick={() => setOpen(!open)}
       >
         <div className="flex items-center gap-3">
@@ -49,7 +50,7 @@ export function CategoryAccordion({
             <p className="text-xs text-muted-foreground mt-0.5">{category.description}</p>
           </div>
         </div>
-      </button>
+      </Button>
 
       {open && (
         <div className="border-t px-4 pb-4 pt-3">

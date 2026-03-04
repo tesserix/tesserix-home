@@ -453,12 +453,13 @@ export default function AppContentEditorPage({
         <main className="p-6">
           <p className="text-muted-foreground">
             A tenant ID is required. Go back to{" "}
-            <button
+            <Button
+              variant="link"
               onClick={() => router.push(`/admin/apps/${slug}/content`)}
-              className="text-primary underline"
+              className="h-auto p-0"
             >
               Content Pages
-            </button>
+            </Button>
             .
           </p>
         </main>
@@ -487,12 +488,13 @@ export default function AppContentEditorPage({
         <main className="p-6">
           <p className="text-muted-foreground">
             This content page does not exist.{" "}
-            <button
+            <Button
+              variant="link"
               onClick={() => router.push(`/admin/apps/${slug}/content`)}
-              className="text-primary underline"
+              className="h-auto p-0"
             >
               Back to Content Pages
-            </button>
+            </Button>
           </p>
         </main>
       </>

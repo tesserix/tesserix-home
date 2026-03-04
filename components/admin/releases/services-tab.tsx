@@ -424,9 +424,11 @@ function RepoGroupSection({
   return (
     <Card>
       <div className="flex items-center justify-between p-4">
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-3 text-left hover:opacity-80 transition-opacity"
+          className="h-auto items-center gap-3 p-0 text-left hover:opacity-80"
         >
           {expanded ? (
             <ChevronDown className="h-4 w-4 text-muted-foreground" />
@@ -437,7 +439,7 @@ function RepoGroupSection({
           <span className="text-xs text-muted-foreground">
             {group.services.length} services
           </span>
-        </button>
+        </Button>
         <div className="flex items-center gap-2">
           {failed > 0 && (
             <Badge variant="destructive">{failed} failed</Badge>
