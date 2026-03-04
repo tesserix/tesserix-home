@@ -352,7 +352,7 @@ jobs:
           NOTIFICATION_SERVICE_URL=https://global-notification-service-un6tyb5opq-el.a.run.app/api/v1,\
           ONBOARDING_SERVICE_URL=https://marketplace-tenant-onboarding-un6tyb5opq-el.a.run.app,\
           PLATFORM_DOMAIN=tesserix.app" \
-            --set-secrets "INTERNAL_SERVICE_KEY=prod-internal-service-key:latest" \
+            --set-secrets "INTERNAL_SERVICE_KEY=prod-auth-bff-internal-service-key:latest" \
             --quiet
 
       - name: Deploy Summary
