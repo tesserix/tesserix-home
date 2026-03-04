@@ -95,13 +95,14 @@ interface TokenResponse {
  */
 async function getAccessToken(sessionCookieValue: string): Promise<TokenResponse | null> {
   try {
-    const response = await fetch(`${AUTH_BFF_URL}/internal/get-token`, {
+    const response = await fetch(`${AUTH_BFF_URL}/auth/token-exchange`, {
+      method: 'POST',
       headers: {
-        'Cookie': `bff_home_session=${sessionCookieValue}`,
-        'X-Session-ID': sessionCookieValue,
+        'Content-Type': 'application/json',
         'x-forwarded-host': 'tesserix.app',
         ...(INTERNAL_SERVICE_KEY ? { 'X-Internal-Service-Key': INTERNAL_SERVICE_KEY } : {}),
       },
+      body: JSON.stringify({ sessionId: sessionCookieValue }),
     });
 
     if (!response.ok) {
@@ -125,7 +126,7 @@ interface AdminFetchOptions extends Omit<RequestInit, 'headers'> {
  *
  * Auth flow:
  * 1. Read bff_home_session cookie from browser request
- * 2. Exchange session for JWT via auth-bff /internal/get-token
+ * 2. Exchange session for JWT via auth-bff /auth/token-exchange
  * 3. Forward JWT as Authorization: Bearer header to backend services
  * 4. Istio validates JWT and injects x-jwt-claim-* headers for the Go service
  *
@@ -171,7 +172,7 @@ export async function adminFetch(
   const istioHeaders = jwtClaims ? getIstioClaimHeaders(jwtClaims) : {};
 
   // If JWT decode failed (e.g. Logto opaque access tokens), build Istio-style
-  // headers from the session data returned by auth-bff /internal/get-token.
+  // headers from the session data returned by auth-bff /auth/token-exchange.
   // This ensures Go services always receive the x-jwt-claim-* headers they expect.
   if (!jwtClaims) {
     if (tokenData.user_id) istioHeaders['x-jwt-claim-sub'] = tokenData.user_id;
