@@ -341,7 +341,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED=1,\
           NEXT_PUBLIC_SITE_URL=https://tesserix.app,\
           NEXT_PUBLIC_ONBOARDING_SITE_URL=https://mark8ly.com,\
-          AUTH_BFF_URL=https://global-auth-bff-un6tyb5opq-el.a.run.app,\
+          AUTH_BFF_URL=https://tesserix.app,\
           TENANT_SERVICE_URL=https://global-tenant-service-un6tyb5opq-el.a.run.app,\
           TICKETS_SERVICE_URL=https://marketplace-tickets-service-un6tyb5opq-el.a.run.app/api/v1,\
           MARKETPLACE_SETTINGS_SERVICE_URL=https://global-settings-service-un6tyb5opq-el.a.run.app/api/v1,\
@@ -352,6 +352,7 @@ jobs:
           NOTIFICATION_SERVICE_URL=https://global-notification-service-un6tyb5opq-el.a.run.app/api/v1,\
           ONBOARDING_SERVICE_URL=https://marketplace-tenant-onboarding-un6tyb5opq-el.a.run.app,\
           PLATFORM_DOMAIN=tesserix.app" \
+            --set-secrets "INTERNAL_SERVICE_KEY=prod-internal-service-key:latest" \
             --quiet
 
       - name: Deploy Summary
