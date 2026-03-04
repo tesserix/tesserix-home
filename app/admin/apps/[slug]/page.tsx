@@ -18,7 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatsCard } from "@/components/admin/stats-card";
+import { Stat, StatLabel, StatValue, StatMeta } from "@/components/admin/stats-card";
 import { ErrorState } from "@/components/admin/error-state";
 import { useTenants, type Tenant } from "@/lib/api/tenants";
 import { useTickets, type Ticket as TicketType } from "@/lib/api/tickets";
@@ -145,24 +145,30 @@ export default function AppOverviewPage({ params }: { params: Promise<{ slug: st
           <StatsLoadingSkeleton />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatsCard
-              title="Total Tenants"
-              value={totalTenants}
-              description="Active stores"
-              icon={<Building2 className="h-4 w-4" />}
-            />
-            <StatsCard
-              title="Open Tickets"
-              value={openTickets}
-              description="Requires attention"
-              icon={<Ticket className="h-4 w-4" />}
-            />
-            <StatsCard
-              title="Recent Activity"
-              value={recentTenants.length + recentTickets.length}
-              description="Latest events"
-              icon={<Users className="h-4 w-4" />}
-            />
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Total Tenants</StatLabel>
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{totalTenants}</StatValue>
+              <StatMeta>Active stores</StatMeta>
+            </Stat>
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Open Tickets</StatLabel>
+                <Ticket className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{openTickets}</StatValue>
+              <StatMeta>Requires attention</StatMeta>
+            </Stat>
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Recent Activity</StatLabel>
+                <Users className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{recentTenants.length + recentTickets.length}</StatValue>
+              <StatMeta>Latest events</StatMeta>
+            </Stat>
           </div>
         )}
 

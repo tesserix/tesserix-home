@@ -50,7 +50,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
 import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState } from "@/components/admin/empty-state";
+import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useOnboardingContent,
@@ -1055,14 +1055,14 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
               ) : error ? (
                 <ErrorState message={error} onRetry={mutate} />
               ) : filteredItems.length === 0 ? (
-                <EmptyState
-                  message={`No ${ct.label.toLowerCase()} found`}
-                  description={
-                    debouncedSearch
+                <EmptyState>
+                  <EmptyStateTitle>{`No ${ct.label.toLowerCase()} found`}</EmptyStateTitle>
+                  <EmptyStateDescription>
+                    {debouncedSearch
                       ? "Try adjusting your search"
-                      : `Create the first ${ct.label.toLowerCase()} item`
-                  }
-                />
+                      : `Create the first ${ct.label.toLowerCase()} item`}
+                  </EmptyStateDescription>
+                </EmptyState>
               ) : (
                 <div className="rounded-lg border bg-card">
                   {renderTable()}

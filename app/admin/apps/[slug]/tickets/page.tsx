@@ -44,7 +44,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
 import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState } from "@/components/admin/empty-state";
+import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
 import { useTickets, updateTicketStatus, type Ticket } from "@/lib/api/tickets";
 
 const APP_NAMES: Record<string, string> = {
@@ -264,10 +264,12 @@ export default function AppTicketsPage({ params }: { params: Promise<{ slug: str
         ) : error ? (
           <ErrorState message={error} onRetry={mutate} />
         ) : tickets.length === 0 ? (
-          <EmptyState
-            message="No tickets found"
-            description={search ? "Try adjusting your search or filters" : "No support tickets have been created yet."}
-          />
+          <EmptyState>
+            <EmptyStateTitle>No tickets found</EmptyStateTitle>
+            <EmptyStateDescription>
+              {search ? "Try adjusting your search or filters" : "No support tickets have been created yet."}
+            </EmptyStateDescription>
+          </EmptyState>
         ) : (
           <>
             <div className="rounded-lg border bg-card">

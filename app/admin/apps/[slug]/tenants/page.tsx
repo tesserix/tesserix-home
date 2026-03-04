@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
 import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState } from "@/components/admin/empty-state";
+import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useTenants,
@@ -295,10 +295,12 @@ export default function AppTenantsPage({ params }: { params: Promise<{ slug: str
         ) : error ? (
           <ErrorState message={error} onRetry={mutate} />
         ) : tenants.length === 0 ? (
-          <EmptyState
-            message="No tenants found"
-            description={search ? "Try adjusting your search or filters" : undefined}
-          />
+          <EmptyState>
+            <EmptyStateTitle>No tenants found</EmptyStateTitle>
+            {search && (
+              <EmptyStateDescription>Try adjusting your search or filters</EmptyStateDescription>
+            )}
+          </EmptyState>
         ) : (
           <>
             {/* Table */}

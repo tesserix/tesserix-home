@@ -31,7 +31,14 @@ import {
   Users2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Breadcrumb } from "@/components/common/breadcrumb";
+import {
+  Breadcrumb,
+  BreadcrumbList,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbSeparator,
+  BreadcrumbPage,
+} from "@/components/common/breadcrumb";
 import { AnimateOnScroll } from "@/components/ui/animate-on-scroll";
 
 // Product data
@@ -347,12 +354,17 @@ export default async function ProductPage({ params }: PageProps) {
       <section className="py-12 sm:py-16">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           {/* Breadcrumb */}
-          <Breadcrumb
-            items={[
-              { label: "Products", href: "/products" },
-              { label: product.title },
-            ]}
-          />
+          <Breadcrumb className="mb-6">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink href="/products">Products</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>{product.title}</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
 
           <AnimateOnScroll variant="fade-up" className="mx-auto max-w-3xl text-center">
             <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">

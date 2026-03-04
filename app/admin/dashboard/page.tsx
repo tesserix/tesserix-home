@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { AdminHeader } from "@/components/admin/header";
-import { StatsCard } from "@/components/admin/stats-card";
+import { Stat, StatLabel, StatValue, StatMeta } from "@/components/admin/stats-card";
 import {
   Card,
   CardContent,
@@ -185,34 +185,42 @@ export default function DashboardPage() {
           <StatsLoadingSkeleton />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatsCard
-              title="Active Stores"
-              value={totalTenants}
-              description="Across all apps"
-              icon={<Building2 className="h-4 w-4" />}
-            />
-            <StatsCard
-              title="Monthly Revenue"
-              value={`$${(mrr / 100).toLocaleString()}`}
-              description="MRR"
-              icon={<DollarSign className="h-4 w-4" />}
-            />
-            <StatsCard
-              title="Open Tickets"
-              value={openTickets}
-              description="Requires attention"
-              icon={<Ticket className="h-4 w-4" />}
-            />
-            <StatsCard
-              title="System Health"
-              value={getSystemHealthLabel()}
-              description={
-                overallStatus === "operational"
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Active Stores</StatLabel>
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{totalTenants}</StatValue>
+              <StatMeta>Across all apps</StatMeta>
+            </Stat>
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Monthly Revenue</StatLabel>
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{`$${(mrr / 100).toLocaleString()}`}</StatValue>
+              <StatMeta>MRR</StatMeta>
+            </Stat>
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>Open Tickets</StatLabel>
+                <Ticket className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{openTickets}</StatValue>
+              <StatMeta>Requires attention</StatMeta>
+            </Stat>
+            <Stat>
+              <div className="flex items-center justify-between">
+                <StatLabel>System Health</StatLabel>
+                <Activity className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <StatValue>{getSystemHealthLabel()}</StatValue>
+              <StatMeta>
+                {overallStatus === "operational"
                   ? `${healthStats?.totalServices ?? 0} services monitored`
-                  : "Check system health page"
-              }
-              icon={<Activity className="h-4 w-4" />}
-            />
+                  : "Check system health page"}
+              </StatMeta>
+            </Stat>
           </div>
         )}
 

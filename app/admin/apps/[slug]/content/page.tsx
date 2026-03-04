@@ -43,7 +43,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { TableSkeleton } from "@/components/admin/table-skeleton";
 import { ErrorState } from "@/components/admin/error-state";
-import { EmptyState } from "@/components/admin/empty-state";
+import { EmptyState, EmptyStateTitle, EmptyStateDescription } from "@/components/admin/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   useContentPages,
@@ -223,10 +223,10 @@ export default function AppContentPage({ params }: { params: Promise<{ slug: str
         </div>
 
         {!selectedTenantId ? (
-          <EmptyState
-            message="Select a tenant"
-            description="Choose a tenant above to manage their content pages"
-          />
+          <EmptyState>
+            <EmptyStateTitle>Select a tenant</EmptyStateTitle>
+            <EmptyStateDescription>Choose a tenant above to manage their content pages</EmptyStateDescription>
+          </EmptyState>
         ) : (
           <>
             {/* Filters */}
@@ -280,14 +280,14 @@ export default function AppContentPage({ params }: { params: Promise<{ slug: str
             ) : error ? (
               <ErrorState message={error} onRetry={mutate} />
             ) : filteredPages.length === 0 ? (
-              <EmptyState
-                message="No content pages found"
-                description={
-                  search || typeFilter !== "all" || statusFilter !== "all"
+              <EmptyState>
+                <EmptyStateTitle>No content pages found</EmptyStateTitle>
+                <EmptyStateDescription>
+                  {search || typeFilter !== "all" || statusFilter !== "all"
                     ? "Try adjusting your search or filters"
-                    : `Create the first content page for ${selectedTenantName}`
-                }
-              />
+                    : `Create the first content page for ${selectedTenantName}`}
+                </EmptyStateDescription>
+              </EmptyState>
             ) : (
               <>
                 <div className="rounded-lg border bg-card">
