@@ -17,8 +17,8 @@ const footerNavigation = {
     { name: "Careers", href: "/careers" },
   ],
   resources: [
-    { name: "Documentation", href: "/docs" },
-    { name: "API Reference", href: "/docs/api" },
+    { name: "Documentation", href: "https://docs.tesserix.app" },
+    { name: "API Reference", href: "https://docs.tesserix.app/api" },
     { name: "Status", href: "/status" },
   ],
   legal: [
