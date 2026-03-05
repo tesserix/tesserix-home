@@ -30,6 +30,7 @@ const DEV_MOCK_SESSION: SessionResponse = {
   user: {
     id: 'dev-admin-001',
     email: 'admin@tesserix.local',
+    roles: ['admin'],
     authContext: 'staff',
   },
   csrfToken: 'dev-csrf-token',
