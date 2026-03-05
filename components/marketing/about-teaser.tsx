@@ -1,8 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Rocket, BadgeDollarSign, MessageCircle } from "lucide-react";
 import { Button, AnimateOnScroll } from "@tesserix/web";
+
+const values = [
+  {
+    icon: Rocket,
+    title: "Ship fast, fix faster",
+    description:
+      "We'd rather get something useful in your hands today than something perfect next year.",
+    gradient: "from-orange-500/10 to-amber-500/10",
+  },
+  {
+    icon: BadgeDollarSign,
+    title: "Pricing that makes sense",
+    description:
+      "No surprise fees, no per-seat nonsense. You know what you're paying before you sign up.",
+    gradient: "from-amber-500/10 to-yellow-500/10",
+  },
+  {
+    icon: MessageCircle,
+    title: "Humans on the other end",
+    description:
+      "When you reach out, a person responds. We don't hide behind chatbots or ticket queues.",
+    gradient: "from-orange-600/10 to-rose-500/10",
+  },
+];
+
 export function AboutTeaser() {
   return (
     <section className="py-14 sm:py-20">
@@ -36,25 +61,34 @@ export function AboutTeaser() {
 
           {/* What we care about */}
           <AnimateOnScroll variant="fade-up" delay={0.1}>
-            <div className="space-y-6">
-              <div className="rounded-lg border p-6">
-                <p className="font-semibold text-foreground">Ship fast, fix faster</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  We&apos;d rather get something useful in your hands today than something perfect next year.
-                </p>
-              </div>
-              <div className="rounded-lg border p-6">
-                <p className="font-semibold text-foreground">Pricing that makes sense</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  No surprise fees, no per-seat nonsense. You know what you&apos;re paying before you sign up.
-                </p>
-              </div>
-              <div className="rounded-lg border p-6">
-                <p className="font-semibold text-foreground">Humans on the other end</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  When you reach out, a person responds. We don&apos;t hide behind chatbots or ticket queues.
-                </p>
-              </div>
+            <div className="space-y-4">
+              {values.map((v) => (
+                <div
+                  key={v.title}
+                  className="group rounded-xl border p-5 spotlight-card transition-all duration-300 hover:border-foreground/10 hover:shadow-md"
+                  onMouseMove={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    e.currentTarget.style.setProperty("--spotlight-x", `${e.clientX - rect.left}px`);
+                    e.currentTarget.style.setProperty("--spotlight-y", `${e.clientY - rect.top}px`);
+                    e.currentTarget.style.setProperty("--spotlight-opacity", "1");
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.setProperty("--spotlight-opacity", "0");
+                  }}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${v.gradient}`}>
+                      <v.icon className="h-5 w-5 text-foreground" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-foreground">{v.title}</p>
+                      <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                        {v.description}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </AnimateOnScroll>
         </div>

@@ -3,7 +3,7 @@
 import { useRef, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, ChefHat, Hospital, Trophy } from "lucide-react";
+import { ArrowRight, ChefHat, Hospital, Trophy, Sparkles } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { HeroTitle, HeroDescription, HeroActions, Button } from "@tesserix/web";
 const upcomingProducts = [
@@ -13,6 +13,7 @@ const upcomingProducts = [
     description: "Connect home chefs with food lovers in your community.",
     icon: ChefHat,
     href: "/products/homechef",
+    iconGradient: "from-orange-500/15 to-amber-500/10",
   },
   {
     title: "MediCare",
@@ -20,6 +21,7 @@ const upcomingProducts = [
     description: "End-to-end hospital management for clinics of all sizes.",
     icon: Hospital,
     href: "/products/medicare",
+    iconGradient: "from-emerald-500/15 to-teal-500/10",
   },
   {
     title: "FanZone",
@@ -27,6 +29,7 @@ const upcomingProducts = [
     description: "Live scores, predictions, and a vibrant fan community.",
     icon: Trophy,
     href: "/products/fanzone",
+    iconGradient: "from-blue-500/15 to-indigo-500/10",
   },
 ];
 
@@ -51,6 +54,16 @@ const itemVariants = {
 
 const ONBOARDING_URL = process.env.NEXT_PUBLIC_ONBOARDING_SITE_URL || "https://dev-onboarding.tesserix.app";
 
+const cardVariants = {
+  hidden: { opacity: 0, y: 24, scale: 0.96 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: { duration: 0.5, delay: 0.3 + i * 0.1, ease: [0.22, 1, 0.36, 1] as const },
+  }),
+};
+
 export function Hero() {
   const prefersReducedMotion = useReducedMotion();
   const heroRef = useRef<HTMLElement>(null);
@@ -71,18 +84,19 @@ export function Hero() {
   return (
     <section
       ref={heroRef}
-      className="relative overflow-hidden gradient-mesh cursor-glow"
+      className="relative overflow-hidden gradient-mesh-vivid cursor-glow"
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      {/* Decorative floating elements */}
+      {/* Dot grid overlay */}
+      <div className="pointer-events-none absolute inset-0 dot-grid opacity-60" />
+
+      {/* Animated gradient orbs */}
       <div
-        className="pointer-events-none absolute -top-24 -right-24 h-96 w-96 rounded-full bg-foreground/[0.02] blur-3xl"
-        style={{ animation: prefersReducedMotion ? "none" : "float 6s ease-in-out infinite" }}
+        className={`pointer-events-none absolute -top-24 -right-24 h-[500px] w-[500px] rounded-full bg-gradient-to-br from-orange-500/[0.06] to-amber-500/[0.04] blur-3xl ${prefersReducedMotion ? "" : "orb-1"}`}
       />
       <div
-        className="pointer-events-none absolute -bottom-32 -left-32 h-80 w-80 rounded-full bg-foreground/[0.02] blur-3xl"
-        style={{ animation: prefersReducedMotion ? "none" : "float 8s ease-in-out infinite 2s" }}
+        className={`pointer-events-none absolute -bottom-32 -left-32 h-[400px] w-[400px] rounded-full bg-gradient-to-tr from-amber-500/[0.05] to-yellow-500/[0.03] blur-3xl ${prefersReducedMotion ? "" : "orb-2"}`}
       />
 
       <div className="relative mx-auto max-w-7xl px-6 py-12 sm:py-16 lg:px-8 lg:py-20">
@@ -91,12 +105,27 @@ export function Hero() {
           animate="visible"
           variants={containerVariants}
         >
+          {/* Announcement pill */}
+          <motion.div
+            className="flex justify-center mb-6"
+            variants={prefersReducedMotion ? undefined : itemVariants}
+          >
+            <Link
+              href="/products/mark8ly"
+              className="announcement-pill inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium text-foreground border border-orange-500/20 transition-all hover:border-orange-500/40 hover:shadow-sm"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-orange-500" />
+              <span>Mark8ly is live — 12 months free</span>
+              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </Link>
+          </motion.div>
+
           {/* Heading */}
           <motion.div
             className="text-center mb-12"
             variants={prefersReducedMotion ? undefined : itemVariants}
           >
-            <HeroTitle className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl gradient-text">
+            <HeroTitle className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl lg:text-6xl">
               Build what&apos;s next
             </HeroTitle>
             <HeroDescription className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">
@@ -111,7 +140,7 @@ export function Hero() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
               {/* Mark8ly — Featured (spans 2 cols) */}
               <div
-                className="group relative lg:col-span-2 rounded-2xl border bg-card p-6 sm:p-8 overflow-hidden"
+                className="group relative lg:col-span-2 rounded-2xl bg-card p-6 sm:p-8 overflow-hidden glow-border"
               >
                 {/* Watermark logo */}
                 <div className="pointer-events-none absolute bottom-2 right-4 h-64 w-64 sm:h-72 sm:w-72 opacity-[0.08] transition-opacity duration-300 group-hover:opacity-[0.14]">
@@ -147,9 +176,21 @@ export function Hero() {
                   </p>
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {["No coding", "0% platform fees", "Custom domains", "Unlimited products"].map((h) => (
-                      <span key={h} className="inline-flex items-center rounded-md border bg-muted/50 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                        {h}
+                    {[
+                      { label: "No coding", highlight: false },
+                      { label: "0% platform fees", highlight: true },
+                      { label: "Custom domains", highlight: false },
+                      { label: "Unlimited products", highlight: false },
+                    ].map((h) => (
+                      <span
+                        key={h.label}
+                        className={`inline-flex items-center rounded-md px-2.5 py-0.5 text-xs font-medium ${
+                          h.highlight
+                            ? "bg-gradient-to-r from-orange-500/10 to-amber-500/10 text-foreground border border-orange-500/20"
+                            : "border bg-muted/50 text-muted-foreground"
+                        }`}
+                      >
+                        {h.label}
                       </span>
                     ))}
                   </div>
@@ -177,7 +218,7 @@ export function Hero() {
                       No credit card required
                     </span>
                     <div>
-                      <Button size="lg" asChild>
+                      <Button size="lg" asChild className="btn-gradient btn-shimmer text-white border-0">
                         <a href={ONBOARDING_URL}>
                           Start your free year
                           <ArrowRight className="ml-2 h-4 w-4" />
@@ -194,15 +235,31 @@ export function Hero() {
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                   Coming soon
                 </p>
-                {upcomingProducts.map((product) => (
-                  <Link
+                {upcomingProducts.map((product, i) => (
+                  <motion.div
                     key={product.title}
+                    custom={i}
+                    initial={prefersReducedMotion ? false : "hidden"}
+                    animate="visible"
+                    variants={prefersReducedMotion ? undefined : cardVariants}
+                    className="flex-1"
+                  >
+                  <Link
                     href={product.href}
-                    className="group rounded-2xl border bg-card p-5 card-hover-lift flex-1 flex flex-col"
+                    className="group rounded-2xl border bg-card p-5 card-hover-lift h-full flex flex-col spotlight-card"
+                    onMouseMove={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      e.currentTarget.style.setProperty("--spotlight-x", `${e.clientX - rect.left}px`);
+                      e.currentTarget.style.setProperty("--spotlight-y", `${e.clientY - rect.top}px`);
+                      e.currentTarget.style.setProperty("--spotlight-opacity", "1");
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.setProperty("--spotlight-opacity", "0");
+                    }}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                        <product.icon className="h-4 w-4 text-muted-foreground" />
+                      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${product.iconGradient}`}>
+                        <product.icon className="h-4 w-4 text-foreground" />
                       </div>
                       <div>
                         <h3 className="text-sm font-semibold text-foreground">{product.title}</h3>
@@ -217,6 +274,7 @@ export function Hero() {
                       <ArrowRight className="ml-1 h-3 w-3 transition-transform group-hover:translate-x-1" />
                     </div>
                   </Link>
+                  </motion.div>
                 ))}
               </div>
             </div>
