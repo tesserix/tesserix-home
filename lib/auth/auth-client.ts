@@ -11,6 +11,10 @@ import { logger } from '../logger';
 export interface SessionUser {
   id: string;
   email: string;
+  displayName?: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
   tenantId?: string;
   tenantSlug?: string;
   authContext?: string;
@@ -24,6 +28,7 @@ export interface SessionResponse {
   authenticated: boolean;
   userId?: string;
   email?: string;
+  displayName?: string;
   tenantId?: string;
   tenantSlug?: string;
   authContext?: string;
@@ -83,6 +88,7 @@ export async function getSession(): Promise<SessionResponse> {
       data.user = {
         id: data.userId,
         email: data.email || '',
+        displayName: data.displayName,
         tenantId: data.tenantId,
         tenantSlug: data.tenantSlug,
         authContext: data.authContext,
