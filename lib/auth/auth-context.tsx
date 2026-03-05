@@ -24,13 +24,13 @@ const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 // Mock session for dev mode
 const DEV_MOCK_SESSION: SessionResponse = {
   authenticated: true,
+  userId: 'dev-admin-001',
+  email: 'admin@tesserix.local',
+  authContext: 'staff',
   user: {
     id: 'dev-admin-001',
     email: 'admin@tesserix.local',
-    firstName: 'Dev',
-    lastName: 'Admin',
-    displayName: 'Dev Admin',
-    roles: ['admin', 'platform-admin'],
+    authContext: 'staff',
   },
   csrfToken: 'dev-csrf-token',
   expiresAt: Math.floor(Date.now() / 1000) + 86400,
@@ -346,6 +346,11 @@ export function useCsrfToken(): string | null {
   return csrfToken;
 }
 
+/**
+ * Check if the user has a specific auth context.
+ * In the new architecture, fine-grained roles come from OpenFGA (not the session).
+ * For tesserix-home, all authenticated users are "staff" context.
+ */
 export function useHasRole(role: string | string[]): boolean {
   const { user } = useAuth();
 
@@ -353,8 +358,12 @@ export function useHasRole(role: string | string[]): boolean {
     return false;
   }
 
-  const roles = Array.isArray(role) ? role : [role];
-  return roles.some(r => user.roles.includes(r));
+  // All authenticated staff users in tesserix-home are platform admins
+  if (user.authContext === 'staff') {
+    return true;
+  }
+
+  return false;
 }
 
 export default AuthProvider;

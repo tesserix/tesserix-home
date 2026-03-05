@@ -1,6 +1,6 @@
 /**
  * Authentication Configuration for Tesserix Home
- * BFF-based authentication using Keycloak OIDC
+ * BFF-based authentication using Google Identity Platform (GIP)
  */
 
 const ENVIRONMENT = process.env.NODE_ENV || 'development';
@@ -27,31 +27,31 @@ const configs: Record<string, AuthConfig> = {
     callbackUrl: '/auth/callback',
     sessionUrl: '/auth/session',
     refreshUrl: '/auth/refresh',
-    csrfUrl: '/auth/csrf',
+    csrfUrl: '/auth/csrf-token',
     sessionCheckInterval: 300000, // 5 minutes
     sessionRefreshThreshold: 300, // 5 minutes before expiry
   },
   staging: {
     bffBaseUrl: '',
-    bffInternalUrl: 'http://auth-bff.tesserix.svc.cluster.local:8080',
+    bffInternalUrl: process.env.AUTH_BFF_URL || 'http://localhost:8080',
     loginUrl: '/auth/login',
     logoutUrl: '/auth/logout',
     callbackUrl: '/auth/callback',
     sessionUrl: '/auth/session',
     refreshUrl: '/auth/refresh',
-    csrfUrl: '/auth/csrf',
+    csrfUrl: '/auth/csrf-token',
     sessionCheckInterval: 300000,
     sessionRefreshThreshold: 300,
   },
   production: {
     bffBaseUrl: '',
-    bffInternalUrl: 'http://auth-bff.tesserix.svc.cluster.local:8080',
+    bffInternalUrl: process.env.AUTH_BFF_URL || 'http://localhost:8080',
     loginUrl: '/auth/login',
     logoutUrl: '/auth/logout',
     callbackUrl: '/auth/callback',
     sessionUrl: '/auth/session',
     refreshUrl: '/auth/refresh',
-    csrfUrl: '/auth/csrf',
+    csrfUrl: '/auth/csrf-token',
     sessionCheckInterval: 300000,
     sessionRefreshThreshold: 300,
   },

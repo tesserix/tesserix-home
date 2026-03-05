@@ -87,7 +87,7 @@ async function proxyToBff(request: NextRequest, path: string) {
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
       if (location) {
-        // Resolve relative URLs against the external origin (not request.nextUrl.origin which is the internal pod address in K8s)
+        // Resolve relative URLs against the external origin (not request.nextUrl.origin which may differ internally)
         const proto = request.headers.get('x-forwarded-proto') || 'https';
         const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || request.nextUrl.host;
         const externalOrigin = `${proto}://${host}`;

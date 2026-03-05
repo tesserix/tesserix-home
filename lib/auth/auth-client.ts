@@ -6,28 +6,32 @@ import { authConfig } from './config';
 import { logger } from '../logger';
 
 /**
- * Session user information
+ * User information derived from the session response.
  */
 export interface SessionUser {
   id: string;
   email: string;
-  name?: string;
-  firstName?: string;
-  lastName?: string;
-  displayName?: string;
-  avatar?: string;
-  roles: string[];
+  tenantId?: string;
+  tenantSlug?: string;
+  authContext?: string;
 }
 
 /**
- * Session response from BFF
+ * Session response from BFF (/auth/session)
+ * Fields match the lean auth-bff JSON response directly.
  */
 export interface SessionResponse {
   authenticated: boolean;
-  user?: SessionUser;
+  userId?: string;
+  email?: string;
+  tenantId?: string;
+  tenantSlug?: string;
+  authContext?: string;
   expiresAt?: number;
   csrfToken?: string;
   error?: string;
+  /** Derived user object for convenience. Populated by getSession(). */
+  user?: SessionUser;
 }
 
 /**
@@ -72,8 +76,20 @@ export async function getSession(): Promise<SessionResponse> {
       );
     }
 
-    const data = await response.json();
-    return data as SessionResponse;
+    const data = await response.json() as SessionResponse;
+
+    // Build user object from flat response fields
+    if (data.authenticated && data.userId) {
+      data.user = {
+        id: data.userId,
+        email: data.email || '',
+        tenantId: data.tenantId,
+        tenantSlug: data.tenantSlug,
+        authContext: data.authContext,
+      };
+    }
+
+    return data;
   } catch (error) {
     if (error instanceof AuthError) {
       throw error;

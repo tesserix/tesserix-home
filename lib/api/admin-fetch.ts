@@ -13,50 +13,6 @@ const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
 export type ServiceName = 'tenant' | 'tickets' | 'auth' | 'settings' | 'subscription' | 'audit' | 'feature-flags' | 'notification';
 
-/**
- * Decode a JWT payload without verifying the signature.
- * Safe for server-side use where the token was already validated by auth-bff.
- */
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = Buffer.from(parts[1], 'base64url').toString('utf-8');
-    return JSON.parse(payload);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Extract Istio-style x-jwt-claim-* headers from a decoded JWT.
- * This mimics what the Istio ingress gateway does after JWT validation,
- * enabling server-to-server calls to pass auth context to Go services
- * that read these headers via the IstioAuth middleware.
- */
-function getIstioClaimHeaders(claims: Record<string, unknown>): Record<string, string> {
-  const headers: Record<string, string> = {};
-
-  if (claims.sub) headers['x-jwt-claim-sub'] = String(claims.sub);
-  if (claims.email) headers['x-jwt-claim-email'] = String(claims.email);
-  if (claims.preferred_username) headers['x-jwt-claim-preferred-username'] = String(claims.preferred_username);
-  if (claims.name) headers['x-jwt-claim-name'] = String(claims.name);
-  if (claims.tenant_id) headers['x-jwt-claim-tenant-id'] = String(claims.tenant_id);
-  if (claims.tenant_slug) headers['x-jwt-claim-tenant-slug'] = String(claims.tenant_slug);
-  if (claims.staff_id) headers['x-jwt-claim-staff-id'] = String(claims.staff_id);
-  if (claims.vendor_id) headers['x-jwt-claim-vendor-id'] = String(claims.vendor_id);
-  if (claims.customer_id) headers['x-jwt-claim-customer-id'] = String(claims.customer_id);
-  if (claims.platform_owner) headers['x-jwt-claim-platform-owner'] = String(claims.platform_owner);
-
-  // Keycloak realm_access.roles → comma-separated string
-  const realmAccess = claims.realm_access as { roles?: string[] } | undefined;
-  if (realmAccess?.roles?.length) {
-    headers['x-jwt-claim-roles'] = realmAccess.roles.join(',');
-  }
-
-  return headers;
-}
-
 function getServiceBaseUrl(service: ServiceName): string {
   switch (service) {
     case 'tenant':
@@ -78,31 +34,30 @@ function getServiceBaseUrl(service: ServiceName): string {
   }
 }
 
-interface TokenResponse {
+interface SessionExchangeResponse {
   access_token: string;
+  id_token: string;
   user_id: string;
+  email: string;
   tenant_id?: string;
   tenant_slug?: string;
+  auth_context: string;
   expires_at: number;
 }
 
 /**
- * Exchange bff_home_session cookie for a JWT access token via auth-bff internal endpoint.
- * This is the proper auth chain: session cookie → auth-bff → JWT → backend services.
- *
- * The Go backend services expect JWT tokens (validated by Istio which injects
- * x-jwt-claim-* headers) — they do NOT understand session cookies.
+ * Exchange session cookie for tokens via auth-bff internal endpoint.
+ * The encrypted cookie is sent to auth-bff which decrypts it and returns the tokens.
  */
-async function getAccessToken(sessionCookieValue: string): Promise<TokenResponse | null> {
+async function exchangeSession(cookieName: string, cookieValue: string): Promise<SessionExchangeResponse | null> {
   try {
-    const response = await fetch(`${AUTH_BFF_URL}/auth/token-exchange`, {
+    const response = await fetch(`${AUTH_BFF_URL}/internal/session-exchange`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-forwarded-host': 'tesserix.app',
-        ...(INTERNAL_SERVICE_KEY ? { 'X-Internal-Service-Key': INTERNAL_SERVICE_KEY } : {}),
+        ...(INTERNAL_SERVICE_KEY ? { 'Authorization': `Bearer ${INTERNAL_SERVICE_KEY}` } : {}),
       },
-      body: JSON.stringify({ sessionId: sessionCookieValue }),
+      body: JSON.stringify({ cookie_name: cookieName, cookie_value: cookieValue }),
     });
 
     if (!response.ok) {
@@ -117,22 +72,17 @@ async function getAccessToken(sessionCookieValue: string): Promise<TokenResponse
 
 interface AdminFetchOptions extends Omit<RequestInit, 'headers'> {
   headers?: Record<string, string>;
-  /** Override tenant ID for tenant-scoped services (e.g. tickets-service) */
   tenantId?: string;
 }
 
 /**
  * Server-side fetch helper for authenticated requests to backend services.
  *
- * Auth flow:
+ * Auth flow (serverless / Cloud Run):
  * 1. Read bff_home_session cookie from browser request
- * 2. Exchange session for JWT via auth-bff /auth/token-exchange
- * 3. Forward JWT as Authorization: Bearer header to backend services
- * 4. Istio validates JWT and injects x-jwt-claim-* headers for the Go service
- *
- * This ensures proper data isolation:
- * - Platform admins (tesserix-internal realm) get x-jwt-claim-platform-owner=true
- * - Tenant admins (tesserix-customer realm) are scoped to their tenant
+ * 2. Send cookie to auth-bff /internal/session-exchange to decrypt and get tokens
+ * 3. Forward access token as Authorization: Bearer header to backend services
+ * 4. Backend services verify the token directly (no Istio)
  */
 export async function adminFetch(
   service: ServiceName,
@@ -149,10 +99,9 @@ export async function adminFetch(
     });
   }
 
-  // Exchange session cookie for JWT access token
-  const tokenData = await getAccessToken(sessionCookie.value);
+  const sessionData = await exchangeSession('bff_home_session', sessionCookie.value);
 
-  if (!tokenData) {
+  if (!sessionData) {
     return new Response(JSON.stringify({ error: 'Session expired' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -164,42 +113,17 @@ export async function adminFetch(
 
   const { tenantId, headers: extraHeaders, ...fetchOptions } = options;
 
-  // Decode JWT to extract claims for Istio-style headers.
-  // Go backend services use x-jwt-claim-* headers (normally set by Istio ingress
-  // after JWT validation). Since we're calling services directly (server-to-server),
-  // we must set these headers ourselves.
-  const jwtClaims = decodeJwtPayload(tokenData.access_token);
-  const istioHeaders = jwtClaims ? getIstioClaimHeaders(jwtClaims) : {};
-
-  // If JWT decode failed (e.g. Logto opaque access tokens), build Istio-style
-  // headers from the session data returned by auth-bff /auth/token-exchange.
-  // This ensures Go services always receive the x-jwt-claim-* headers they expect.
-  if (!jwtClaims) {
-    if (tokenData.user_id) istioHeaders['x-jwt-claim-sub'] = tokenData.user_id;
-    if (tokenData.tenant_id) istioHeaders['x-jwt-claim-tenant-id'] = tokenData.tenant_id;
-  }
-
-  // tesserix-home is the platform admin app — all authenticated users are platform owners.
-  // Set platform_owner so Go services (IstioAuth + RBAC) grant cross-tenant access.
-  if (!istioHeaders['x-jwt-claim-platform-owner']) {
-    istioHeaders['x-jwt-claim-platform-owner'] = 'true';
-  }
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${tokenData.access_token}`,
-    ...istioHeaders,
+    'Authorization': `Bearer ${sessionData.access_token}`,
     ...extraHeaders,
   };
 
-  // For tenant-scoped services, include tenant context via Istio-style header.
-  // x-jwt-claim-tenant-id is trusted by IstioAuth; X-Tenant-ID is a legacy fallback.
+  // Pass tenant context for tenant-scoped services
   if (tenantId) {
-    headers['x-jwt-claim-tenant-id'] = tenantId;
     headers['X-Tenant-ID'] = tenantId;
-  } else if (tokenData.tenant_id) {
-    headers['x-jwt-claim-tenant-id'] = tokenData.tenant_id;
-    headers['X-Tenant-ID'] = tokenData.tenant_id;
+  } else if (sessionData.tenant_id) {
+    headers['X-Tenant-ID'] = sessionData.tenant_id;
   }
 
   const response = await fetch(url, {
@@ -212,15 +136,13 @@ export async function adminFetch(
 
 /**
  * Get the authenticated user's context from the session.
- * Returns user info including ID, roles, and tenant context.
  */
 export async function getSessionContext(): Promise<{
   userId: string;
   email?: string;
-  name?: string;
   tenantId?: string;
   tenantSlug?: string;
-  roles: string[];
+  authContext: string;
   accessToken: string;
 } | null> {
   const cookieStore = await cookies();
@@ -230,38 +152,19 @@ export async function getSessionContext(): Promise<{
     return null;
   }
 
-  const tokenData = await getAccessToken(sessionCookie.value);
-  if (!tokenData) {
+  const sessionData = await exchangeSession('bff_home_session', sessionCookie.value);
+  if (!sessionData) {
     return null;
   }
 
-  // Also get user info from session endpoint for roles
-  try {
-    const sessionResponse = await fetch(`${AUTH_BFF_URL}/auth/session`, {
-      headers: {
-        'Cookie': `bff_home_session=${sessionCookie.value}`,
-        'X-Session-ID': sessionCookie.value,
-        'x-forwarded-host': 'tesserix.app',
-      },
-    });
-
-    if (!sessionResponse.ok) {
-      return null;
-    }
-
-    const session = await sessionResponse.json();
-    return {
-      userId: tokenData.user_id,
-      email: session.user?.email,
-      name: session.user?.name,
-      tenantId: tokenData.tenant_id,
-      tenantSlug: tokenData.tenant_slug,
-      roles: session.user?.roles || [],
-      accessToken: tokenData.access_token,
-    };
-  } catch {
-    return null;
-  }
+  return {
+    userId: sessionData.user_id,
+    email: sessionData.email,
+    tenantId: sessionData.tenant_id,
+    tenantSlug: sessionData.tenant_slug,
+    authContext: sessionData.auth_context,
+    accessToken: sessionData.access_token,
+  };
 }
 
 /**

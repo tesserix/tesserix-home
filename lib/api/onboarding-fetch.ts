@@ -29,7 +29,7 @@ export async function isAuthenticated(): Promise<boolean> {
  *   (tenant-onboarding also needs the key configured for validation)
  *
  * This is separate from adminFetch because:
- * - adminFetch does session → JWT exchange → Istio headers (for Go services)
+ * - adminFetch does session → token exchange → Bearer auth (for Go services)
  * - onboardingFetch does session validation → API key auth (for the Next.js onboarding service)
  */
 export async function onboardingFetch(

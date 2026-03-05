@@ -21,9 +21,9 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  GCP_PROJECT_ID: tesseracthub-480811
+  GCP_PROJECT_ID: tesserix
   GAR_REGISTRY: asia-south1-docker.pkg.dev
-  GAR_REPOSITORY: cloud-run-source-deploy
+  GAR_REPOSITORY: services
   CLOUD_RUN_SERVICE: tesserix-home
 
 jobs:
@@ -313,7 +313,7 @@ jobs:
           echo "✅ Release completed successfully!" >> $GITHUB_STEP_SUMMARY
 
   # =============================================================================
-  # Deploy to Cloud Run (production)
+  # Deploy to Cloud Run (update image only — env vars managed by Terraform)
   # =============================================================================
   deploy-cloudrun:
     name: Deploy to Cloud Run
@@ -332,27 +332,10 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
+          gcloud run services update ${{ env.CLOUD_RUN_SERVICE }} \
             --image "${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ needs.release.outputs.version }}" \
             --region asia-south1 \
             --project ${{ env.GCP_PROJECT_ID }} \
-            --set-env-vars "\
-          NODE_ENV=production,\
-          NEXT_TELEMETRY_DISABLED=1,\
-          NEXT_PUBLIC_SITE_URL=https://tesserix.app,\
-          NEXT_PUBLIC_ONBOARDING_SITE_URL=https://mark8ly.com,\
-          AUTH_BFF_URL=https://tesserix.app,\
-          TENANT_SERVICE_URL=https://global-tenant-service-un6tyb5opq-el.a.run.app,\
-          TICKETS_SERVICE_URL=https://marketplace-tickets-service-un6tyb5opq-el.a.run.app/api/v1,\
-          MARKETPLACE_SETTINGS_SERVICE_URL=https://global-settings-service-un6tyb5opq-el.a.run.app/api/v1,\
-          SUBSCRIPTION_SERVICE_URL=https://global-subscription-service-un6tyb5opq-el.a.run.app,\
-          AUDIT_SERVICE_URL=https://global-audit-service-un6tyb5opq-el.a.run.app/api/v1,\
-          STATUS_DASHBOARD_SERVICE_URL=https://marketplace-status-dashboard-un6tyb5opq-el.a.run.app/api/v1,\
-          FEATURE_FLAGS_SERVICE_URL=https://marketplace-feature-flags-un6tyb5opq-el.a.run.app/api/v1,\
-          NOTIFICATION_SERVICE_URL=https://global-notification-service-un6tyb5opq-el.a.run.app/api/v1,\
-          ONBOARDING_SERVICE_URL=https://marketplace-tenant-onboarding-un6tyb5opq-el.a.run.app,\
-          PLATFORM_DOMAIN=tesserix.app" \
-            --set-secrets "INTERNAL_SERVICE_KEY=prod-auth-bff-internal-service-key:latest" \
             --quiet
 
       - name: Deploy Summary
@@ -362,6 +345,5 @@ jobs:
           echo "**Service:** ${{ env.CLOUD_RUN_SERVICE }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** asia-south1" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}:${{ needs.release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "✅ Deployed to Cloud Run!" >> $GITHUB_STEP_SUMMARY
