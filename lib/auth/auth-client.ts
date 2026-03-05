@@ -15,6 +15,7 @@ export interface SessionUser {
   name?: string;
   firstName?: string;
   lastName?: string;
+  roles: string[];
   tenantId?: string;
   tenantSlug?: string;
   authContext?: string;
@@ -89,6 +90,7 @@ export async function getSession(): Promise<SessionResponse> {
         id: data.userId,
         email: data.email || '',
         displayName: data.displayName,
+        roles: data.authContext === 'staff' ? ['admin'] : [],
         tenantId: data.tenantId,
         tenantSlug: data.tenantSlug,
         authContext: data.authContext,
