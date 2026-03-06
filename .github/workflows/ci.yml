@@ -1,14 +1,8 @@
-name: Tesserix Home - CI Build
+name: CI
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - 'feat/**'
-      - 'feature/**'
-      - 'bugfix/**'
-      - 'hotfix/**'
+    branches: [main, 'feat/**', 'feature/**', 'bugfix/**', 'hotfix/**']
     paths:
       - 'app/**'
       - 'components/**'
@@ -20,8 +14,8 @@ on:
       - 'middleware.ts'
       - '.github/workflows/ci.yml'
   pull_request:
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,219 +23,24 @@ permissions:
   security-events: write
   id-token: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-  GCP_PROJECT_ID: tesserix
-  GCP_REGION: asia-south1
-  GAR_REGISTRY: asia-south1-docker.pkg.dev
-  GAR_REPOSITORY: services
-  CLOUD_RUN_SERVICE: tesserix-home
-
 jobs:
-  # =============================================================================
-  # Quality Checks Job - Runs linting and type checking
-  # =============================================================================
-  quality:
-    name: Quality Checks
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies
-        run: npm install
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
-
-      - name: Run ESLint
-        run: npm run lint
-        continue-on-error: true
-
-      - name: Quality Summary
-        if: always()
-        run: |
-          echo "## Quality Check Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| ESLint | Completed |" >> $GITHUB_STEP_SUMMARY
-
-  # =============================================================================
-  # Build and Push Docker Image
-  # =============================================================================
   build:
-    name: Build and Push Tesserix Home
-    runs-on: ubuntu-latest
-    needs: [quality]
-    outputs:
-      gar_image: ${{ steps.gar-tag.outputs.gar_image }}
+    uses: tesserix/tesserix-infra/.github/workflows/_build-nextjs.yml@main
+    with:
+      service_name: tesserix-home
+    secrets:
+      PKG_READ_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Authenticate to Google Cloud
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        id: gcp-auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          token_format: access_token
-
-      - name: Log in to Google Artifact Registry
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.GAR_REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.gcp-auth.outputs.access_token }}
-
-      - name: Compute GAR image tag
-        id: gar-tag
-        run: |
-          GAR_IMAGE="${{ env.GAR_REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.CLOUD_RUN_SERVICE }}"
-          echo "gar_image=$GAR_IMAGE" >> $GITHUB_OUTPUT
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-            ${{ github.ref == 'refs/heads/main' && format('{0}/{1}/{2}/{3}', env.GAR_REGISTRY, env.GCP_PROJECT_ID, env.GAR_REPOSITORY, env.CLOUD_RUN_SERVICE) || '' }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.title=Tesserix Home
-            org.opencontainers.image.description=Tesserix Homepage & Admin Portal
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            NODE_ENV=production
-          secrets: |
-            NODE_AUTH_TOKEN=${{ secrets.PKG_READ_TOKEN }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Run Trivy vulnerability scanner
-        if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-        continue-on-error: true
-
-      - name: Upload Trivy results to GitHub Security tab
-        if: github.event_name != 'pull_request'
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-        continue-on-error: true
-
-      - name: Build Summary
-        if: always()
-        run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Application:** Tesserix Home" >> $GITHUB_STEP_SUMMARY
-          echo "**Architecture:** AMD64" >> $GITHUB_STEP_SUMMARY
-          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
-            echo "✅ **Docker Image:** Pushed to ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "🔨 **Docker Image:** Built successfully (not pushed)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  # =============================================================================
-  # Deploy to Cloud Run (dev — auto-deploy on push to main)
-  # =============================================================================
-  deploy-dev:
-    name: Deploy to Cloud Run (dev)
-    runs-on: ubuntu-latest
+  deploy:
     needs: [build]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-
-    steps:
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Deploy to Cloud Run (dev)
-        run: |
-          gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
-            --image "${{ needs.build.outputs.gar_image }}:latest" \
-            --region ${{ env.GCP_REGION }} \
-            --project ${{ env.GCP_PROJECT_ID }} \
-            --set-env-vars "\
-          NODE_ENV=production,\
-          NEXT_TELEMETRY_DISABLED=1,\
-          NEXT_PUBLIC_SITE_URL=https://tesserix.app,\
-          NEXT_PUBLIC_ONBOARDING_SITE_URL=https://mark8ly.com,\
-          AUTH_BFF_URL=https://global-auth-bff-un6tyb5opq-el.a.run.app,\
-          TENANT_SERVICE_URL=https://global-tenant-service-un6tyb5opq-el.a.run.app,\
-          TICKETS_SERVICE_URL=https://marketplace-tickets-service-un6tyb5opq-el.a.run.app/api/v1,\
-          MARKETPLACE_SETTINGS_SERVICE_URL=https://global-settings-service-un6tyb5opq-el.a.run.app/api/v1,\
-          SUBSCRIPTION_SERVICE_URL=https://global-subscription-service-un6tyb5opq-el.a.run.app,\
-          AUDIT_SERVICE_URL=https://global-audit-service-un6tyb5opq-el.a.run.app/api/v1,\
-          STATUS_DASHBOARD_SERVICE_URL=https://marketplace-status-dashboard-un6tyb5opq-el.a.run.app/api/v1,\
-          FEATURE_FLAGS_SERVICE_URL=https://marketplace-feature-flags-un6tyb5opq-el.a.run.app/api/v1,\
-          NOTIFICATION_SERVICE_URL=https://global-notification-service-un6tyb5opq-el.a.run.app/api/v1,\
-          ONBOARDING_SERVICE_URL=https://marketplace-tenant-onboarding-un6tyb5opq-el.a.run.app,\
-          PLATFORM_DOMAIN=tesserix.app" \
-            --quiet
-
-      - name: Deploy Summary
-        run: |
-          echo "## Cloud Run Deployment (dev)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Service:** ${{ env.CLOUD_RUN_SERVICE }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.GCP_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** ${{ needs.build.outputs.gar_image }}:latest" >> $GITHUB_STEP_SUMMARY
+    uses: tesserix/tesserix-infra/.github/workflows/_deploy-cloudrun.yml@main
+    with:
+      service_name: tesserix-home
+      image: ${{ needs.build.outputs.image }}
+      health_path: /api/health
+    secrets:
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
