@@ -115,7 +115,7 @@ export async function adminFetch(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'Authorization': `Bearer ${sessionData.access_token}`,
+    'Authorization': `Bearer ${sessionData.id_token || sessionData.access_token}`,
     ...extraHeaders,
   };
 
