@@ -9,6 +9,8 @@ import {
   AlertCircle,
   Clock,
   Activity,
+  Zap,
+  Shield,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import {
@@ -22,31 +24,27 @@ import {
 } from "@/lib/api/system-health";
 import { Button, Badge, Card, CardContent, Skeleton, ErrorState } from "@tesserix/web";
 
-type StatusFilter = "all" | ServiceHealth;
-
-function statusBannerStyle(status: OverallStatus) {
+function statusIndicator(status: OverallStatus) {
   switch (status) {
     case "operational":
-      return {
-        className:
-          "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400",
-        icon: <CheckCircle2 className="h-6 w-6" />,
-        label: "All Systems Operational",
-      };
+      return { color: "bg-green-500", label: "All Systems Operational" };
     case "degraded":
-      return {
-        className:
-          "bg-yellow-500/10 border-yellow-500/30 text-yellow-700 dark:text-yellow-400",
-        icon: <AlertCircle className="h-6 w-6" />,
-        label: "Degraded Performance",
-      };
+      return { color: "bg-yellow-500", label: "Degraded Performance" };
     case "outage":
-      return {
-        className:
-          "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400",
-        icon: <XCircle className="h-6 w-6" />,
-        label: "System Outage",
-      };
+      return { color: "bg-red-500", label: "System Outage" };
+  }
+}
+
+function healthDot(health: ServiceHealth) {
+  switch (health) {
+    case "healthy":
+      return "bg-green-500";
+    case "unhealthy":
+      return "bg-red-500";
+    case "degraded":
+      return "bg-yellow-500";
+    default:
+      return "bg-gray-400";
   }
 }
 
@@ -60,67 +58,31 @@ function healthBadgeVariant(
       return "destructive";
     case "degraded":
       return "warning";
-    case "unknown":
     default:
       return "secondary";
   }
 }
 
-function healthIcon(health: ServiceHealth) {
-  switch (health) {
-    case "healthy":
-      return <CheckCircle2 className="h-4 w-4 text-green-500" />;
-    case "unhealthy":
-      return <XCircle className="h-4 w-4 text-red-500" />;
-    case "degraded":
-      return <AlertCircle className="h-4 w-4 text-yellow-500" />;
-    default:
-      return <Clock className="h-4 w-4 text-muted-foreground" />;
-  }
-}
+const GROUP_ICONS: Record<AppGroup, React.ReactNode> = {
+  Core: <Shield className="h-4 w-4" />,
+  Application: <Activity className="h-4 w-4" />,
+  Communication: <Zap className="h-4 w-4" />,
+  Supporting: <Clock className="h-4 w-4" />,
+};
 
-function appGroupSummary(services: ServiceSummary[]) {
-  const healthy = services.filter((s) => s.status === "healthy").length;
-  const total = services.length;
-  if (healthy === total)
-    return { label: "All healthy", variant: "success" as const };
-  const unhealthy = services.filter((s) => s.status === "unhealthy").length;
-  if (unhealthy > 0)
-    return { label: `${unhealthy} down`, variant: "destructive" as const };
-  const degraded = services.filter((s) => s.status === "degraded").length;
-  if (degraded > 0)
-    return { label: `${degraded} degraded`, variant: "warning" as const };
-  return {
-    label: `${healthy}/${total} healthy`,
-    variant: "secondary" as const,
-  };
-}
-
-function ServiceRow({ service }: { service: ServiceSummary }) {
+function ServiceCard({ service }: { service: ServiceSummary }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border p-4">
-      <div className="flex items-center gap-3 min-w-0">
-        {healthIcon(service.status)}
-        <div className="min-w-0">
-          <p className="font-medium text-sm truncate">
-            {service.displayName}
-          </p>
-          <p className="text-xs text-muted-foreground">{service.category}</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-4 shrink-0">
-        <div className="text-right hidden sm:block">
-          <p className="text-xs font-mono text-muted-foreground">
-            {service.responseTimeMs}ms
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {service.uptime30d.toFixed(2)}% uptime
-          </p>
-        </div>
-        <Badge variant={healthBadgeVariant(service.status)}>
-          {service.status}
-        </Badge>
-      </div>
+    <div className="flex items-center gap-3 rounded-lg border px-3 py-2.5 hover:bg-muted/50 transition-colors">
+      <span className={`h-2 w-2 rounded-full shrink-0 ${healthDot(service.status)}`} />
+      <span className="text-sm font-medium truncate flex-1">
+        {service.displayName}
+      </span>
+      <span className="text-xs font-mono text-muted-foreground shrink-0">
+        {service.responseTimeMs}ms
+      </span>
+      <span className="text-xs text-muted-foreground shrink-0 w-16 text-right">
+        {service.uptime30d.toFixed(1)}%
+      </span>
     </div>
   );
 }
@@ -134,23 +96,25 @@ function AppGroupSection({
 }) {
   if (services.length === 0) return null;
 
-  const summary = appGroupSummary(services);
+  const healthy = services.filter((s) => s.status === "healthy").length;
+  const allHealthy = healthy === services.length;
 
   return (
     <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <h4 className="text-base font-semibold">{app}</h4>
-            <Badge variant={summary.variant}>{summary.label}</Badge>
-          </div>
-          <span className="text-sm text-muted-foreground">
-            {services.length} service{services.length !== 1 ? "s" : ""}
-          </span>
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-muted-foreground">{GROUP_ICONS[app]}</span>
+          <h4 className="text-sm font-semibold flex-1">{app}</h4>
+          <Badge
+            variant={allHealthy ? "success" : "warning"}
+            className="text-[10px] h-5"
+          >
+            {healthy}/{services.length}
+          </Badge>
         </div>
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           {services.map((svc) => (
-            <ServiceRow key={svc.id} service={svc} />
+            <ServiceCard key={svc.id} service={svc} />
           ))}
         </div>
       </CardContent>
@@ -158,28 +122,41 @@ function AppGroupSection({
   );
 }
 
-function IncidentCard({ incident }: { incident: Incident }) {
+function IncidentBanner({ incidents }: { incidents: Incident[] }) {
+  if (incidents.length === 0) return null;
   return (
-    <Card className="border-yellow-500/30">
+    <Card className="border-yellow-500/30 bg-yellow-500/5">
       <CardContent className="p-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="h-4 w-4 text-yellow-500 shrink-0" />
-              <p className="font-medium text-sm truncate">{incident.title}</p>
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle className="h-4 w-4 text-yellow-500" />
+          <span className="text-sm font-semibold">
+            {incidents.length} Active Incident{incidents.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="space-y-2">
+          {incidents.map((incident) => (
+            <div
+              key={incident.id}
+              className="flex items-center justify-between text-sm"
+            >
+              <div className="min-w-0">
+                <span className="font-medium">{incident.title}</span>
+                <span className="text-muted-foreground">
+                  {" "}&middot; {incident.serviceName}
+                </span>
+              </div>
+              <Badge
+                variant={
+                  incident.status === "investigating"
+                    ? "destructive"
+                    : "warning"
+                }
+                className="text-[10px] h-5 shrink-0"
+              >
+                {incident.status}
+              </Badge>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {incident.serviceName} &middot; Started{" "}
-              {new Date(incident.startedAt).toLocaleString()}
-            </p>
-          </div>
-          <Badge
-            variant={
-              incident.status === "investigating" ? "destructive" : "warning"
-            }
-          >
-            {incident.status}
-          </Badge>
+          ))}
         </div>
       </CardContent>
     </Card>
@@ -188,63 +165,14 @@ function IncidentCard({ incident }: { incident: Incident }) {
 
 function PageSkeleton() {
   return (
-    <div className="space-y-6">
-      <Skeleton className="h-20 w-full" />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="space-y-4">
+      <Skeleton className="h-16 w-full" />
+      <div className="grid gap-4 sm:grid-cols-2">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24" />
+          <Skeleton key={i} className="h-40" />
         ))}
       </div>
-      {Array.from({ length: 3 }).map((_, i) => (
-        <Skeleton key={i} className="h-48" />
-      ))}
     </div>
-  );
-}
-
-const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
-  { value: "all", label: "All" },
-  { value: "healthy", label: "Healthy" },
-  { value: "degraded", label: "Degraded" },
-  { value: "unhealthy", label: "Unhealthy" },
-  { value: "unknown", label: "Unknown" },
-];
-
-const APP_GROUP_FILTERS: { value: AppGroup | "all"; label: string }[] = [
-  { value: "all", label: "All Groups" },
-  { value: "Platform", label: "Platform" },
-  { value: "Mark8ly", label: "Mark8ly" },
-  { value: "Infrastructure", label: "Infrastructure" },
-];
-
-function FilterChip({
-  label,
-  active,
-  count,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  count?: number;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      onClick={onClick}
-      variant={active ? "default" : "outline"}
-      size="sm"
-      className="h-8 gap-1.5 rounded-full"
-    >
-      {label}
-      {count !== undefined && (
-        <Badge
-          variant={active ? "secondary" : "outline"}
-          className="h-5 min-w-5 rounded-full px-1 text-[10px]"
-        >
-          {count}
-        </Badge>
-      )}
-    </Button>
   );
 }
 
@@ -252,8 +180,7 @@ export default function SystemHealthPage() {
   const { data, isLoading, error, mutate } = useSystemHealth();
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [appGroupFilter, setAppGroupFilter] = useState<AppGroup | "all">(
+  const [statusFilter, setStatusFilter] = useState<ServiceHealth | "all">(
     "all"
   );
 
@@ -264,276 +191,121 @@ export default function SystemHealthPage() {
     };
   }, [mutate]);
 
-  // Apply filters to services
   const allServices = data?.services ?? [];
-  const filteredServices = allServices.filter((svc) => {
-    if (statusFilter !== "all" && svc.status !== statusFilter) return false;
-    return true;
-  });
+  const filteredServices =
+    statusFilter === "all"
+      ? allServices
+      : allServices.filter((svc) => svc.status === statusFilter);
   const groups = groupServicesByApp(filteredServices);
-
-  // Count services by status for filter chips
-  const statusCounts: Record<StatusFilter, number> = {
-    all: allServices.length,
-    healthy: allServices.filter((s) => s.status === "healthy").length,
-    degraded: allServices.filter((s) => s.status === "degraded").length,
-    unhealthy: allServices.filter((s) => s.status === "unhealthy").length,
-    unknown: allServices.filter((s) => s.status === "unknown").length,
-  };
-
-  // Count services by app group
-  const allGroups = groupServicesByApp(allServices);
-  const groupCounts: Record<AppGroup | "all", number> = {
-    all: filteredServices.length,
-    Platform: appGroupFilter === "all" || appGroupFilter === "Platform"
-      ? groups.Platform.length
-      : allGroups.Platform.length,
-    Mark8ly: appGroupFilter === "all" || appGroupFilter === "Mark8ly"
-      ? groups.Mark8ly.length
-      : allGroups.Mark8ly.length,
-    Infrastructure: appGroupFilter === "all" || appGroupFilter === "Infrastructure"
-      ? groups.Infrastructure.length
-      : allGroups.Infrastructure.length,
-  };
 
   const activeIncidents =
     data?.incidents?.filter((i) => i.status !== "resolved") ?? [];
 
-  // Determine which app groups to show
-  const visibleGroups: AppGroup[] =
-    appGroupFilter === "all"
-      ? (["Platform", "Mark8ly", "Infrastructure"] as AppGroup[])
-      : [appGroupFilter];
+  const statusCounts = {
+    healthy: allServices.filter((s) => s.status === "healthy").length,
+    degraded: allServices.filter((s) => s.status === "degraded").length,
+    unhealthy: allServices.filter((s) => s.status === "unhealthy").length,
+  };
 
   return (
     <>
       <AdminHeader
         title="System Health"
-        description="Monitor service status and active incidents"
+        description="Monitor service status and incidents"
         icon={<Activity className="h-6 w-6 text-muted-foreground" />}
       />
 
-      <main className="p-6 space-y-6">
-        {/* Refresh bar */}
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            {data?.lastUpdated
-              ? `Last updated: ${new Date(data.lastUpdated).toLocaleTimeString()}`
-              : "Loading..."}
-          </p>
-          <Button variant="outline" size="sm" onClick={() => mutate()}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-        </div>
-
+      <main className="p-6 space-y-4">
         {isLoading ? (
           <PageSkeleton />
         ) : error ? (
           <ErrorState message={error} onRetry={mutate} />
         ) : data ? (
           <>
-            {/* Overall status banner */}
+            {/* Status bar */}
             {(() => {
-              const banner = statusBannerStyle(data.status);
+              const indicator = statusIndicator(data.status);
               return (
-                <Card className={`border ${banner.className}`}>
-                  <CardContent className="p-6">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {banner.icon}
-                        <div>
-                          <h2 className="text-lg font-bold">{banner.label}</h2>
-                          <p className="text-sm opacity-80">
-                            {data.stats.healthyServices}/
-                            {data.stats.totalServices} services healthy
-                            &middot; Avg response{" "}
-                            {data.stats.avgResponseMs.toFixed(0)}ms
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right text-sm hidden sm:block">
-                        <p className="font-mono text-lg font-bold">
-                          {data.stats.overallUptime.toFixed(2)}%
-                        </p>
-                        <p className="text-xs opacity-70">Overall Uptime</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })()}
-
-            {/* Stats cards */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Card>
-                <CardContent className="p-4">
+                <div className="flex items-center justify-between rounded-lg border p-4">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {data.stats.healthyServices}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Healthy</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-yellow-500/10">
-                      <AlertCircle className="h-5 w-5 text-yellow-500" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {data.stats.degradedServices}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Degraded</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
-                      <XCircle className="h-5 w-5 text-red-500" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {data.stats.unhealthyServices}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Unhealthy
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
-                      <Activity className="h-5 w-5 text-blue-500" />
-                    </div>
-                    <div>
-                      <p className="text-2xl font-bold">
-                        {data.stats.avgResponseMs.toFixed(0)}ms
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Avg Latency
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Active incidents */}
-            {activeIncidents.length > 0 && (
-              <div>
-                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                  Active Incidents ({activeIncidents.length})
-                </h3>
-                <div className="space-y-3">
-                  {activeIncidents.map((incident) => (
-                    <IncidentCard key={incident.id} incident={incident} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Filter chips + Services */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Services</h3>
-                <p className="text-sm text-muted-foreground">
-                  {filteredServices.length} of {allServices.length} services
-                </p>
-              </div>
-
-              {/* Status filter chips */}
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  <span className="text-sm font-medium text-muted-foreground self-center mr-1">
-                    Status:
-                  </span>
-                  {STATUS_FILTERS.map((f) =>
-                    // Hide "unknown" chip if no unknown services
-                    f.value === "unknown" && statusCounts.unknown === 0 ? null : (
-                      <FilterChip
-                        key={f.value}
-                        label={f.label}
-                        active={statusFilter === f.value}
-                        count={statusCounts[f.value]}
-                        onClick={() => setStatusFilter(f.value)}
-                      />
-                    )
-                  )}
-                </div>
-
-                {/* App group filter chips */}
-                <div className="flex flex-wrap gap-2">
-                  <span className="text-sm font-medium text-muted-foreground self-center mr-1">
-                    Group:
-                  </span>
-                  {APP_GROUP_FILTERS.map((f) => (
-                    <FilterChip
-                      key={f.value}
-                      label={f.label}
-                      active={appGroupFilter === f.value}
-                      count={groupCounts[f.value]}
-                      onClick={() => setAppGroupFilter(f.value)}
+                    <span
+                      className={`h-3 w-3 rounded-full ${indicator.color} animate-pulse`}
                     />
-                  ))}
-                </div>
-              </div>
-
-              {filteredServices.length === 0 ? (
-                <Card>
-                  <CardContent className="py-8 text-center">
-                    <p className="text-muted-foreground">
-                      No services match the selected filters.
-                    </p>
+                    <div>
+                      <p className="text-sm font-semibold">{indicator.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {data.stats.healthyServices}/{data.stats.totalServices} healthy
+                        &middot; {data.stats.avgResponseMs.toFixed(0)}ms avg
+                        &middot; {data.stats.overallUptime.toFixed(2)}% uptime
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {statusCounts.unhealthy > 0 && (
+                      <Badge variant="destructive" className="text-[10px] h-5">
+                        {statusCounts.unhealthy} down
+                      </Badge>
+                    )}
+                    {statusCounts.degraded > 0 && (
+                      <Badge variant="warning" className="text-[10px] h-5">
+                        {statusCounts.degraded} degraded
+                      </Badge>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="mt-2"
-                      onClick={() => {
-                        setStatusFilter("all");
-                        setAppGroupFilter("all");
-                      }}
+                      className="h-8 w-8 p-0"
+                      onClick={() => mutate()}
                     >
-                      Clear filters
+                      <RefreshCw className="h-4 w-4" />
                     </Button>
-                  </CardContent>
-                </Card>
-              ) : (
-                visibleGroups.map((app) => (
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Active incidents */}
+            <IncidentBanner incidents={activeIncidents} />
+
+            {/* Quick filter */}
+            {(statusCounts.degraded > 0 || statusCounts.unhealthy > 0) && (
+              <div className="flex gap-2">
+                {(["all", "healthy", "degraded", "unhealthy"] as const).map(
+                  (f) => (
+                    <Button
+                      key={f}
+                      variant={statusFilter === f ? "default" : "outline"}
+                      size="sm"
+                      className="h-7 text-xs rounded-full"
+                      onClick={() => setStatusFilter(f)}
+                    >
+                      {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                    </Button>
+                  )
+                )}
+              </div>
+            )}
+
+            {/* Service groups */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              {(["Core", "Application", "Communication", "Supporting"] as AppGroup[]).map(
+                (app) => (
                   <AppGroupSection
                     key={app}
                     app={app}
                     services={groups[app]}
                   />
-                ))
+                )
               )}
             </div>
 
-            {/* No incidents message */}
-            {activeIncidents.length === 0 && (
-              <Card>
-                <CardContent className="py-8 text-center">
-                  <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                  <p className="text-muted-foreground">
-                    No active incidents. All systems running normally.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+            {/* Last updated */}
+            <p className="text-xs text-muted-foreground text-center">
+              Last updated{" "}
+              {data.lastUpdated
+                ? new Date(data.lastUpdated).toLocaleTimeString()
+                : "—"}
+            </p>
           </>
         ) : null}
       </main>
