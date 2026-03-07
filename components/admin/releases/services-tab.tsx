@@ -11,11 +11,24 @@ import {
   ChevronRight,
   ExternalLink,
   X,
+  Lock,
+  Unlock,
+  Undo2,
 } from "lucide-react";
 import { StatusBadge } from "./status-badge";
 import { VersionChips } from "./version-chips";
-import { promoteService, promoteGroup, type ServiceInfo, type BuildStatus } from "@/lib/api/releases";
-import type { ServiceType, AppGroup } from "@/lib/releases/services";
+import { RollbackDialog } from "./rollback-dialog";
+import {
+  promoteService,
+  promoteGroup,
+  useDeployLocks,
+  lockService,
+  unlockService,
+  type ServiceInfo,
+  type BuildStatus,
+  type DeployLock,
+} from "@/lib/api/releases";
+import { getServiceByName, type ServiceType, type AppGroup } from "@/lib/releases/services";
 import { Badge, Button, Card, CardContent, Input, Skeleton } from "@tesserix/web";
 
 type TypeFilter = "all" | ServiceType;
@@ -216,23 +229,50 @@ function ServiceRow({
   promoteOpen,
   onTogglePromote,
   onPromoteSuccess,
+  lock,
+  onLockToggle,
 }: {
   service: ServiceInfo;
   promoteOpen: boolean;
   onTogglePromote: () => void;
   onPromoteSuccess: () => void;
+  lock: DeployLock | null;
+  onLockToggle: () => void;
 }) {
-  const canPromote = !!service.repo;
+  const canPromote = !!service.repo && !lock;
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+  const svcConfig = getServiceByName(service.name);
+
   return (
     <div>
-      <div className="flex items-center justify-between rounded-lg border p-3 hover:bg-muted/30 transition-colors">
+      <div
+        className={`flex items-center justify-between rounded-lg border p-3 hover:bg-muted/30 transition-colors ${
+          lock ? "border-l-2 border-l-amber-500" : ""
+        }`}
+      >
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <p className="font-medium text-sm truncate">{service.displayName}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-medium text-sm truncate">
+                {service.displayName}
+              </p>
+              {lock && (
+                <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs gap-1">
+                  <Lock className="h-3 w-3" />
+                  Locked
+                </Badge>
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-0.5">
               <Badge variant="secondary" className="text-xs">
                 {service.type}
               </Badge>
+              {lock && (
+                <span className="text-xs text-muted-foreground">
+                  by {lock.lockedBy}
+                  {lock.reason ? ` — ${lock.reason}` : ""}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -268,17 +308,49 @@ function ServiceRow({
             )}
           </div>
 
-          {/* Promote toggle */}
-          <Button
-            variant={promoteOpen ? "default" : "outline"}
-            size="sm"
-            disabled={!canPromote}
-            onClick={onTogglePromote}
-            className="shrink-0"
-          >
-            <Rocket className="h-3.5 w-3.5 mr-1" />
-            Promote
-          </Button>
+          {/* Actions */}
+          <div className="flex items-center gap-1.5">
+            {/* Lock/Unlock */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onLockToggle}
+              className="h-8 w-8 p-0"
+              title={lock ? "Unlock deployments" : "Lock deployments"}
+            >
+              {lock ? (
+                <Unlock className="h-3.5 w-3.5 text-amber-400" />
+              ) : (
+                <Lock className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+            </Button>
+
+            {/* Rollback */}
+            {service.latestRelease && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRollbackOpen(true)}
+                disabled={!!lock}
+                className="h-8 w-8 p-0"
+                title="Rollback"
+              >
+                <Undo2 className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            )}
+
+            {/* Promote */}
+            <Button
+              variant={promoteOpen ? "default" : "outline"}
+              size="sm"
+              disabled={!canPromote}
+              onClick={onTogglePromote}
+              className="shrink-0"
+            >
+              <Rocket className="h-3.5 w-3.5 mr-1" />
+              Promote
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -290,6 +362,17 @@ function ServiceRow({
           onSuccess={onPromoteSuccess}
         />
       )}
+
+      {/* Rollback dialog */}
+      <RollbackDialog
+        open={rollbackOpen}
+        onOpenChange={setRollbackOpen}
+        serviceName={service.name}
+        serviceDisplayName={service.displayName}
+        currentVersion={service.latestRelease?.version ?? null}
+        hasDb={svcConfig?.hasDb ?? false}
+        onSuccess={onPromoteSuccess}
+      />
     </div>
   );
 }
@@ -401,12 +484,16 @@ function RepoGroupSection({
   onTogglePromote,
   onPromoteSuccess,
   defaultExpanded,
+  locks,
+  onLockToggle,
 }: {
   group: RepoGroup;
   activePromote: string | null;
   onTogglePromote: (serviceName: string) => void;
   onPromoteSuccess: () => void;
   defaultExpanded: boolean;
+  locks: Map<string, DeployLock>;
+  onLockToggle: (serviceName: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [groupPromoteOpen, setGroupPromoteOpen] = useState(false);
@@ -483,6 +570,8 @@ function RepoGroupSection({
                 promoteOpen={activePromote === svc.name}
                 onTogglePromote={() => onTogglePromote(svc.name)}
                 onPromoteSuccess={onPromoteSuccess}
+                lock={locks.get(svc.name) ?? null}
+                onLockToggle={() => onLockToggle(svc.name)}
               />
             ))}
           </div>
@@ -522,6 +611,25 @@ export function ServicesTab({
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [search, setSearch] = useState("");
   const [activePromote, setActivePromote] = useState<string | null>(null);
+  const { data: locksData, mutate: refreshLocks } = useDeployLocks();
+
+  const locksMap = useMemo(() => {
+    const map = new Map<string, DeployLock>();
+    for (const lock of locksData?.data ?? []) {
+      map.set(lock.serviceName, lock);
+    }
+    return map;
+  }, [locksData]);
+
+  const handleLockToggle = async (serviceName: string) => {
+    const existing = locksMap.get(serviceName);
+    if (existing) {
+      await unlockService(serviceName);
+    } else {
+      await lockService(serviceName, "");
+    }
+    refreshLocks();
+  };
 
   const filtered = useMemo(() => {
     let result = services;
@@ -564,7 +672,7 @@ export function ServicesTab({
   return (
     <div className="space-y-4">
       {/* Stats cards */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
@@ -600,6 +708,19 @@ export function ServicesTab({
               <div>
                 <p className="text-2xl font-bold">{inProgress}</p>
                 <p className="text-xs text-muted-foreground">In Progress</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
+                <Lock className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{locksMap.size}</p>
+                <p className="text-xs text-muted-foreground">Locked</p>
               </div>
             </div>
           </CardContent>
@@ -659,6 +780,8 @@ export function ServicesTab({
             onTogglePromote={handleTogglePromote}
             onPromoteSuccess={onPromoteSuccess}
             defaultExpanded={groups.length <= 4}
+            locks={locksMap}
+            onLockToggle={handleLockToggle}
           />
         ))
       )}

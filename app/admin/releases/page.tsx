@@ -11,6 +11,23 @@ import {
   PipelinesTab,
   PipelinesTabSkeleton,
 } from "@/components/admin/releases/pipelines-tab";
+import {
+  RegistryTab,
+  RegistryTabSkeleton,
+} from "@/components/admin/releases/registry-tab";
+import {
+  GoSharedTab,
+  GoSharedTabSkeleton,
+} from "@/components/admin/releases/go-shared-tab";
+import {
+  HistoryTab,
+  HistoryTabSkeleton,
+} from "@/components/admin/releases/history-tab";
+import {
+  HealthTab,
+  HealthTabSkeleton,
+} from "@/components/admin/releases/health-tab";
+import { DependencyGraph } from "@/components/admin/releases/dependency-graph";
 import { useServices, usePipelines } from "@/lib/api/releases";
 import { Button, Badge, Tabs, TabsContent, TabsList, TabsTrigger, ErrorState } from "@tesserix/web";
 
@@ -64,7 +81,7 @@ export default function ReleasesPage() {
     <>
       <AdminHeader
         title="Releases"
-        description="Monitor builds and promote services to production"
+        description="Monitor builds, manage services, and promote to production"
         icon={<Rocket className="h-6 w-6 text-muted-foreground" />}
       />
 
@@ -93,7 +110,12 @@ export default function ReleasesPage() {
         <Tabs defaultValue="services">
           <TabsList>
             <TabsTrigger value="services">Services</TabsTrigger>
+            <TabsTrigger value="registry">Registry</TabsTrigger>
+            <TabsTrigger value="go-shared">go-shared</TabsTrigger>
             <TabsTrigger value="pipelines">Pipelines</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
+            <TabsTrigger value="dependencies">Dependencies</TabsTrigger>
+            <TabsTrigger value="health">Health</TabsTrigger>
           </TabsList>
 
           <TabsContent value="services">
@@ -107,6 +129,14 @@ export default function ReleasesPage() {
                 onPromoteSuccess={handlePromoteSuccess}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="registry">
+            <RegistryTab />
+          </TabsContent>
+
+          <TabsContent value="go-shared">
+            <GoSharedTab />
           </TabsContent>
 
           <TabsContent value="pipelines">
@@ -123,6 +153,18 @@ export default function ReleasesPage() {
                 onRefresh={handleRefresh}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="history">
+            <HistoryTab />
+          </TabsContent>
+
+          <TabsContent value="dependencies">
+            <DependencyGraph />
+          </TabsContent>
+
+          <TabsContent value="health">
+            <HealthTab />
           </TabsContent>
         </Tabs>
       </main>

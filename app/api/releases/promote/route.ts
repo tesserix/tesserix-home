@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getServiceByName } from "@/lib/releases/services";
 import { dispatchWorkflow } from "@/lib/releases/github";
+import { isLocked, getLock } from "@/lib/releases/deploy-lock";
+import { recordEvent } from "@/lib/releases/release-events";
 
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
@@ -40,6 +42,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (isLocked(serviceName)) {
+      const lock = getLock(serviceName)!;
+      return NextResponse.json(
+        { error: `Service is locked by ${lock.lockedBy}: ${lock.reason}` },
+        { status: 423 }
+      );
+    }
+
     if (!service.repo || !service.releaseWorkflow) {
       return NextResponse.json(
         { error: `Service ${serviceName} does not support promotion` },
@@ -48,6 +58,11 @@ export async function POST(request: NextRequest) {
     }
 
     await dispatchWorkflow(service.repo, service.releaseWorkflow, `v${version}`);
+
+    recordEvent("promote", service.name, service.displayName, {
+      toVersion: version,
+      pipelineUrl: `https://github.com/${service.repo}/actions`,
+    });
 
     return NextResponse.json({
       success: true,

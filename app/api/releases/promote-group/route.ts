@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { getServicesByAppGroup, type AppGroup } from "@/lib/releases/services";
 import { dispatchWorkflow } from "@/lib/releases/github";
+import { isLocked, getLock } from "@/lib/releases/deploy-lock";
+import { recordEvent } from "@/lib/releases/release-events";
 
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
@@ -39,6 +41,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check for locked services
+    const lockedServices = services.filter((s) => isLocked(s.name));
+    if (lockedServices.length > 0) {
+      const lockedNames = lockedServices.map((s) => {
+        const lock = getLock(s.name)!;
+        return `${s.name} (by ${lock.lockedBy})`;
+      });
+      return NextResponse.json(
+        { error: `Locked services: ${lockedNames.join(", ")}` },
+        { status: 423 }
+      );
+    }
+
     const tag = `v${version}`;
     const results = await Promise.allSettled(
       services.map(async (svc) => {
@@ -53,6 +68,14 @@ export async function POST(request: NextRequest) {
     const failed = results
       .filter((r) => r.status === "rejected")
       .map((_, i) => services[i].name);
+
+    for (const name of succeeded) {
+      const svc = services.find((s) => s.name === name);
+      recordEvent("promote", name, svc?.displayName ?? name, {
+        toVersion: version,
+        pipelineUrl: svc ? `https://github.com/${svc.repo}/actions` : undefined,
+      });
+    }
 
     return NextResponse.json({
       success: failed.length === 0,
