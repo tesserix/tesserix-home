@@ -17,6 +17,7 @@ import {
   X,
   Users,
   Rocket,
+  KeyRound,
   ClipboardList,
 } from "lucide-react";
 import { useState } from "react";
@@ -42,6 +43,7 @@ const platformNav: NavItem[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "System Health", href: "/admin/system-health", icon: Activity },
   { name: "Releases", href: "/admin/releases", icon: Rocket },
+  { name: "Secrets", href: "/admin/secrets", icon: KeyRound },
   { name: "Email Templates", href: "/admin/email-templates", icon: Mail },
   { name: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
   { name: "Settings", href: "/admin/settings", icon: Settings },
