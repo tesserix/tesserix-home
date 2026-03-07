@@ -27,6 +27,8 @@ import {
   MessageSquare,
   Database,
   Globe,
+  Cloud,
+  ChevronDown,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -47,26 +49,42 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
 };
 
-const platformNav: NavItem[] = [
+type NavGroup = {
+  name: string;
+  icon: React.ComponentType<{ className?: string }>;
+  items: NavItem[];
+};
+
+type NavEntry = NavItem | NavGroup;
+
+function isNavGroup(entry: NavEntry): entry is NavGroup {
+  return "items" in entry;
+}
+
+const gcpInfraItems: NavItem[] = [
+  { name: "Cloud Run", href: "/admin/cloud-run", icon: Server },
+  { name: "Cloud SQL", href: "/admin/cloud-sql", icon: Database },
+  { name: "IAM", href: "/admin/iam", icon: Shield },
+  { name: "Pub/Sub", href: "/admin/pubsub", icon: MessageSquare },
+  { name: "Logs", href: "/admin/logs", icon: ScrollText },
+  { name: "GCS Storage", href: "/admin/storage", icon: HardDrive },
+  { name: "Costs", href: "/admin/costs", icon: DollarSign },
+];
+
+const platformNav: NavEntry[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "System Health", href: "/admin/system-health", icon: Activity },
   { name: "Releases", href: "/admin/releases", icon: Rocket },
-  { name: "Cloud Run", href: "/admin/cloud-run", icon: Server },
   { name: "Secrets", href: "/admin/secrets", icon: KeyRound },
-  { name: "IAM", href: "/admin/iam", icon: Shield },
-  { name: "Cloud SQL", href: "/admin/cloud-sql", icon: Database },
-  { name: "Pub/Sub", href: "/admin/pubsub", icon: MessageSquare },
+  { name: "GCP", icon: Cloud, items: gcpInfraItems },
   { name: "Cloudflare KV", href: "/admin/cloudflare-kv", icon: Globe },
-  { name: "Logs", href: "/admin/logs", icon: ScrollText },
-  { name: "GCS Storage", href: "/admin/storage", icon: HardDrive },
-  { name: "GCP Costs", href: "/admin/costs", icon: DollarSign },
   { name: "OpenFGA", href: "/admin/openfga", icon: ShieldCheck },
   { name: "Email Templates", href: "/admin/email-templates", icon: Mail },
   { name: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
-const mark8lyNav: NavItem[] = [
+const mark8lyNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/mark8ly", icon: LayoutDashboard },
   { name: "Tenants", href: "/admin/apps/mark8ly/tenants", icon: Users },
   { name: "Tickets", href: "/admin/apps/mark8ly/tickets", icon: Ticket },
@@ -84,23 +102,91 @@ function getActiveContext(pathname: string): RailContext {
   return "platform";
 }
 
-function getSecondaryNav(context: RailContext): { label: string; items: NavItem[] } {
+function getSecondaryNav(context: RailContext): { label: string; entries: NavEntry[] } {
   switch (context) {
     case "mark8ly":
-      return { label: "Mark8ly", items: mark8lyNav };
+      return { label: "Mark8ly", entries: mark8lyNav };
     case "platform":
     default:
-      return { label: "Platform", items: platformNav };
+      return { label: "Platform", entries: platformNav };
   }
 }
 
 function isNavItemActive(pathname: string, href: string): boolean {
-  // Exact match for overview pages to avoid "/admin/apps/mark8ly" matching "/admin/apps/mark8ly/tenants"
   if (href === "/admin/apps/mark8ly") {
     return pathname === "/admin/apps/mark8ly" || pathname === "/admin/apps/mark8ly/";
   }
   return pathname.startsWith(href);
 }
+
+function isGroupActive(pathname: string, group: NavGroup): boolean {
+  return group.items.some((item) => isNavItemActive(pathname, item.href));
+}
+
+// ─── Collapsible Nav Group ───
+
+function CollapsibleGroup({
+  group,
+  pathname,
+  onItemClick,
+  iconSize = "h-4 w-4",
+}: {
+  group: NavGroup;
+  pathname: string;
+  onItemClick?: () => void;
+  iconSize?: string;
+}) {
+  const groupActive = isGroupActive(pathname, group);
+  const [open, setOpen] = useState(groupActive);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          groupActive
+            ? "text-sidebar-foreground"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+        )}
+      >
+        <group.icon className={iconSize} />
+        <span className="flex-1 text-left">{group.name}</span>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 transition-transform",
+            open ? "" : "-rotate-90"
+          )}
+        />
+      </button>
+      {open && (
+        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-3">
+          {group.items.map((item) => {
+            const isActive = isNavItemActive(pathname, item.href);
+            return (
+              <Link
+                key={item.name}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                )}
+                onClick={onItemClick}
+              >
+                <item.icon className={iconSize} />
+                {item.name}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Rail Icon ───
 
 function RailIcon({
   icon: Icon,
@@ -145,6 +231,8 @@ function RailIcon({
     </Tooltip>
   );
 }
+
+// ─── Left Rail ───
 
 function LeftRail({
   activeContext,
@@ -243,14 +331,16 @@ function LeftRail({
   );
 }
 
+// ─── Secondary Sidebar ───
+
 function SecondarySidebar({
   label,
-  items,
+  entries,
   pathname,
   onItemClick,
 }: {
   label: string;
-  items: NavItem[];
+  entries: NavEntry[];
   pathname: string;
   onItemClick?: () => void;
 }) {
@@ -266,12 +356,22 @@ function SecondarySidebar({
       {/* Navigation items */}
       <ScrollArea className="flex-1 px-3 py-4">
         <nav className="space-y-1">
-          {items.map((item) => {
-            const isActive = isNavItemActive(pathname, item.href);
+          {entries.map((entry) => {
+            if (isNavGroup(entry)) {
+              return (
+                <CollapsibleGroup
+                  key={entry.name}
+                  group={entry}
+                  pathname={pathname}
+                  onItemClick={onItemClick}
+                />
+              );
+            }
+            const isActive = isNavItemActive(pathname, entry.href);
             return (
               <Link
-                key={item.name}
-                href={item.href}
+                key={entry.name}
+                href={entry.href}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   isActive
@@ -280,8 +380,8 @@ function SecondarySidebar({
                 )}
                 onClick={onItemClick}
               >
-                <item.icon className="h-4 w-4" />
-                {item.name}
+                <entry.icon className="h-4 w-4" />
+                {entry.name}
               </Link>
             );
           })}
@@ -291,13 +391,15 @@ function SecondarySidebar({
   );
 }
 
+// ─── Main Sidebar ───
+
 export function AdminSidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const activeContext = getActiveContext(pathname);
-  const { label, items } = getSecondaryNav(activeContext);
+  const { label, entries } = getSecondaryNav(activeContext);
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -370,12 +472,23 @@ export function AdminSidebar() {
             {/* Nav items */}
             <ScrollArea className="flex-1 px-3 py-4">
               <nav className="space-y-1">
-                {items.map((item) => {
-                  const isActive = isNavItemActive(pathname, item.href);
+                {entries.map((entry) => {
+                  if (isNavGroup(entry)) {
+                    return (
+                      <CollapsibleGroup
+                        key={entry.name}
+                        group={entry}
+                        pathname={pathname}
+                        onItemClick={() => setMobileMenuOpen(false)}
+                        iconSize="h-5 w-5"
+                      />
+                    );
+                  }
+                  const isActive = isNavItemActive(pathname, entry.href);
                   return (
                     <Link
-                      key={item.name}
-                      href={item.href}
+                      key={entry.name}
+                      href={entry.href}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                         isActive
@@ -384,8 +497,8 @@ export function AdminSidebar() {
                       )}
                       onClick={() => setMobileMenuOpen(false)}
                     >
-                      <item.icon className="h-5 w-5" />
-                      {item.name}
+                      <entry.icon className="h-5 w-5" />
+                      {entry.name}
                     </Link>
                   );
                 })}
@@ -431,7 +544,7 @@ export function AdminSidebar() {
         />
         <SecondarySidebar
           label={label}
-          items={items}
+          entries={entries}
           pathname={pathname}
         />
       </div>

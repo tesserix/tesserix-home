@@ -11,10 +11,14 @@ interface AdminHeaderProps {
 }
 
 export function AdminHeader({ title, description, icon: IconProp }: AdminHeaderProps) {
-  const iconElement =
-    IconProp && typeof IconProp === "function"
-      ? <IconProp className="h-6 w-6 text-muted-foreground" />
-      : IconProp;
+  // Lucide icons may be forwardRef objects (not plain functions) in React 19
+  const isComponent =
+    IconProp &&
+    (typeof IconProp === "function" ||
+      (typeof IconProp === "object" && "render" in IconProp));
+  const iconElement = isComponent
+    ? (() => { const IC = IconProp as LucideIcon; return <IC className="h-6 w-6 text-muted-foreground" />; })()
+    : IconProp;
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
