@@ -1,20 +1,26 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
 import { Bell, Search } from "lucide-react";
 import { Button, Input } from "@tesserix/web";
 
 interface AdminHeaderProps {
   title: string;
   description?: string;
-  icon?: React.ReactNode;
+  icon?: React.ReactNode | LucideIcon;
 }
 
-export function AdminHeader({ title, description, icon }: AdminHeaderProps) {
+export function AdminHeader({ title, description, icon: IconProp }: AdminHeaderProps) {
+  const iconElement =
+    IconProp && typeof IconProp === "function"
+      ? <IconProp className="h-6 w-6 text-muted-foreground" />
+      : IconProp;
+
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-16 items-center justify-between px-6">
         <div className="flex items-center gap-3">
-          {icon}
+          {iconElement}
           <div>
             <h1 className="text-xl font-semibold text-foreground">{title}</h1>
           {description && (

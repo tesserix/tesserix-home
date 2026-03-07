@@ -29,12 +29,14 @@ async function ghFetch<T>(path: string, init?: RequestInit): Promise<T> {
  */
 async function encryptSecret(publicKey: string, secretValue: string): Promise<string> {
   // Dynamic import for server-side only
-  const nacl = await import("tweetnacl");
-  const { encode, decode } = await import("tweetnacl-util");
+  const nacl = (await import("tweetnacl")) as any;
+  const tweetnaclUtil = (await import("tweetnacl-util")) as any;
 
-  const keyBytes = decode(publicKey);
+  const keyBytes = tweetnaclUtil.decodeBase64(publicKey);
   const messageBytes = new TextEncoder().encode(secretValue);
-  const encrypted = nacl.box.seal(messageBytes, keyBytes);
+  const encrypted = nacl.sealedbox
+    ? nacl.sealedbox.seal(messageBytes, keyBytes)
+    : nacl.default.box.seal(messageBytes, keyBytes);
 
   // Buffer.from for base64 encoding
   return Buffer.from(encrypted).toString("base64");

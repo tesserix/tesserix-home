@@ -633,12 +633,12 @@ function DependencyMapTab() {
 
   // Build secret → repos map
   const secretToRepos = useMemo(() => {
-    const map = new Map<string, string[]>();
+    const map: Record<string, string[]> = {};
     for (const repo of filteredRepos) {
       for (const s of repo.secrets) {
-        const list = map.get(s.name) || [];
+        const list = map[s.name] || [];
         list.push(repo.repoShort);
-        map.set(s.name, list);
+        map[s.name] = list;
       }
     }
     return map;
@@ -646,7 +646,7 @@ function DependencyMapTab() {
 
   // All unique secrets sorted
   const allSecrets = useMemo(() => {
-    const names = [...secretToRepos.keys()].sort();
+    const names = Object.keys(secretToRepos).sort();
     if (!search) return names;
     const q = search.toLowerCase();
     return names.filter((n) => n.toLowerCase().includes(q));
@@ -660,22 +660,22 @@ function DependencyMapTab() {
 
   // Repo secret sets for fast lookup
   const repoSecretSets = useMemo(() => {
-    const map = new Map<string, Set<string>>();
+    const map: Record<string, Set<string>> = {};
     for (const repo of filteredRepos) {
-      map.set(repo.repoShort, new Set(repo.secrets.map((s) => s.name)));
+      map[repo.repoShort] = new Set(repo.secrets.map((s: { name: string }) => s.name));
     }
     return map;
   }, [filteredRepos]);
 
   // Shared secrets (in 2+ repos)
   const sharedSecrets = useMemo(
-    () => allSecrets.filter((s) => (secretToRepos.get(s)?.length ?? 0) > 1),
+    () => allSecrets.filter((s) => (secretToRepos[s]?.length ?? 0) > 1),
     [allSecrets, secretToRepos]
   );
 
   // Unique secrets (only in 1 repo)
   const uniqueSecrets = useMemo(
-    () => allSecrets.filter((s) => (secretToRepos.get(s)?.length ?? 0) === 1),
+    () => allSecrets.filter((s) => (secretToRepos[s]?.length ?? 0) === 1),
     [allSecrets, secretToRepos]
   );
 
@@ -764,7 +764,7 @@ function DependencyMapTab() {
               <Card>
                 <CardContent className="p-0 divide-y">
                   {sharedSecrets.map((name) => {
-                    const repos = secretToRepos.get(name) || [];
+                    const repos = secretToRepos[name] || [];
                     return (
                       <div key={name} className="px-4 py-3">
                         <div className="flex items-center justify-between">
@@ -798,7 +798,7 @@ function DependencyMapTab() {
               <Card>
                 <CardContent className="p-0 divide-y">
                   {uniqueSecrets.map((name) => {
-                    const repos = secretToRepos.get(name) || [];
+                    const repos = secretToRepos[name] || [];
                     return (
                       <div key={name} className="flex items-center justify-between px-4 py-2.5">
                         <p className="font-mono text-sm">{name}</p>
@@ -843,7 +843,7 @@ function DependencyMapTab() {
                         {secret}
                       </td>
                       {repoNames.map((repo) => {
-                        const has = repoSecretSets.get(repo)?.has(secret);
+                        const has = repoSecretSets[repo]?.has(secret);
                         return (
                           <td key={repo} className="px-2 py-1.5 text-center">
                             {has ? (
