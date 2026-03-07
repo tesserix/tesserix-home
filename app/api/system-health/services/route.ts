@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
 const STATUS_SERVICE_URL =
-  process.env.STATUS_SERVICE_URL || 'http://localhost:8097/api/v1';
+  process.env.STATUS_DASHBOARD_SERVICE_URL || 'http://localhost:8097/api/v1';
 
 /** @deprecated Use GET /api/system-health instead */
 export async function GET() {
