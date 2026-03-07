@@ -188,6 +188,7 @@ export default function LogsPage() {
         icon={ScrollText}
       />
 
+      <main className="p-6 space-y-6">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {/* Service selector */}
@@ -360,6 +361,7 @@ export default function LogsPage() {
           </Button>
         </div>
       )}
+      </main>
     </>
   );
 }

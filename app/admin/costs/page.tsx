@@ -231,6 +231,7 @@ export default function CostsPage() {
         icon={DollarSign}
       />
 
+      <main className="p-6 space-y-6">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           {data?.billingEnabled && (
@@ -375,6 +376,7 @@ export default function CostsPage() {
           </div>
         </div>
       )}
+      </main>
     </>
   );
 }

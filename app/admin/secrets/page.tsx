@@ -876,7 +876,8 @@ export default function SecretsPage() {
         description="Manage GitHub Actions secrets and GCP Secret Manager"
         icon={KeyRound}
       />
-      <Tabs defaultValue="github" className="space-y-4">
+
+      <main className="p-6 space-y-6">      <Tabs defaultValue="github" className="space-y-4">
         <TabsList>
           <TabsTrigger value="github" className="gap-2">
             <Github className="h-4 w-4" />
@@ -901,6 +902,7 @@ export default function SecretsPage() {
           <DependencyMapTab />
         </TabsContent>
       </Tabs>
+      </main>
     </>
   );
 }

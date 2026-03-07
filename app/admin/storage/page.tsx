@@ -255,6 +255,7 @@ export default function StoragePage() {
         icon={HardDrive}
       />
 
+      <main className="p-6 space-y-6">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {data?.bucket && (
@@ -422,6 +423,7 @@ export default function StoragePage() {
           </Button>
         </div>
       )}
+      </main>
     </>
   );
 }

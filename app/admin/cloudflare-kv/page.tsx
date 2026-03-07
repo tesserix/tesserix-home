@@ -381,6 +381,7 @@ export default function CloudflareKvPage() {
         icon={Globe}
       />
 
+      <main className="p-6 space-y-6">
       <div className="space-y-4">
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">
@@ -496,6 +497,7 @@ export default function CloudflareKvPage() {
           </>
         )}
       </div>
+      </main>
     </>
   );
 }
