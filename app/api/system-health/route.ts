@@ -1,14 +1,14 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const STATUS_DASHBOARD_URL =
-  process.env.STATUS_DASHBOARD_SERVICE_URL || 'http://localhost:8097/api/v1';
+const STATUS_SERVICE_URL =
+  process.env.STATUS_SERVICE_URL || 'http://localhost:8097/api/v1';
 
 /**
  * GET /api/system-health
  *
- * Single endpoint that fetches the full status from the status-dashboard-service.
- * The status-dashboard-service has no auth middleware — it's an internal monitoring
+ * Single endpoint that fetches the full status from the status-service.
+ * The status-service has no auth middleware — it's an internal monitoring
  * service. We just verify the caller has a valid session cookie (authenticated admin).
  */
 export async function GET() {
@@ -20,8 +20,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Call status-dashboard-service directly (no JWT exchange needed)
-    const response = await fetch(`${STATUS_DASHBOARD_URL}/status`, {
+    // Call status-service directly (no JWT exchange needed)
+    const response = await fetch(`${STATUS_SERVICE_URL}/status`, {
       headers: { 'Accept': 'application/json' },
       next: { revalidate: 0 },
     });

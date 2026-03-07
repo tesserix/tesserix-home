@@ -60,33 +60,28 @@ function FilterChip({
 interface RepoGroup {
   repo: string;
   repoShort: string;
-  appGroup: AppGroup | null;
+  appGroup: AppGroup;
   services: ServiceInfo[];
 }
 
-function resolveAppGroup(repoShort: string): AppGroup | null {
-  if (repoShort === "marketplace-services" || repoShort === "marketplace-clients")
-    return "mark8ly";
-  if (repoShort === "global-services") return "global";
-  return null;
-}
+const APP_GROUP_LABELS: Record<AppGroup, string> = {
+  platform: "Platform Services",
+  mark8ly: "Marketplace (mark8ly)",
+};
 
-function groupByRepo(services: ServiceInfo[]): RepoGroup[] {
-  const map = new Map<string, ServiceInfo[]>();
+function groupByAppGroup(services: ServiceInfo[]): RepoGroup[] {
+  const map = new Map<AppGroup, ServiceInfo[]>();
   for (const svc of services) {
-    const key = svc.repo || "unknown";
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(svc);
+    const group = (svc as any).appGroup || "platform";
+    if (!map.has(group)) map.set(group, []);
+    map.get(group)!.push(svc);
   }
-  return Array.from(map.entries()).map(([repo, svcs]) => {
-    const repoShort = repo.split("/").pop() ?? repo;
-    return {
-      repo,
-      repoShort,
-      appGroup: resolveAppGroup(repoShort),
-      services: svcs,
-    };
-  });
+  return Array.from(map.entries()).map(([appGroup, svcs]) => ({
+    repo: appGroup,
+    repoShort: APP_GROUP_LABELS[appGroup] || appGroup,
+    appGroup,
+    services: svcs,
+  }));
 }
 
 function repoGroupStatus(services: ServiceInfo[]): BuildStatus {
@@ -544,7 +539,7 @@ export function ServicesTab({
     return result;
   }, [services, typeFilter, search]);
 
-  const groups = useMemo(() => groupByRepo(filtered), [filtered]);
+  const groups = useMemo(() => groupByAppGroup(filtered), [filtered]);
 
   const failedBuilds = services.filter(
     (s) => s.latestBuild?.status === "failure"

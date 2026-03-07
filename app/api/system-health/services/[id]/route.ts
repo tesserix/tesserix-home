@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
-const STATUS_DASHBOARD_URL =
-  process.env.STATUS_DASHBOARD_SERVICE_URL || 'http://localhost:8097/api/v1';
+const STATUS_SERVICE_URL =
+  process.env.STATUS_SERVICE_URL || 'http://localhost:8097/api/v1';
 
 /** @deprecated Use GET /api/system-health instead */
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -13,7 +13,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     }
 
     const { id } = await params;
-    const response = await fetch(`${STATUS_DASHBOARD_URL}/services/${id}`, {
+    const response = await fetch(`${STATUS_SERVICE_URL}/services/${id}`, {
       headers: { 'Accept': 'application/json' },
     });
     if (!response.ok) {

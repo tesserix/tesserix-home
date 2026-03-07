@@ -4,7 +4,7 @@ import { onboardingFetch, isAuthenticated } from '@/lib/api/onboarding-fetch';
 /**
  * Catch-all proxy route for onboarding content management.
  *
- * Maps tesserix-home API routes to tenant-onboarding internal endpoints:
+ * Maps tesserix-home API routes to marketplace-onboarding internal endpoints:
  *   GET  /api/onboarding-content/faqs       → GET  /api/internal/content/faqs
  *   POST /api/onboarding-content/faqs       → POST /api/internal/content/faqs
  *   PUT  /api/onboarding-content/faqs/{id}  → PUT  /api/internal/content/faqs/{id}

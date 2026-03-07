@@ -1,8 +1,8 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const STATUS_DASHBOARD_URL =
-  process.env.STATUS_DASHBOARD_SERVICE_URL || 'http://localhost:8097/api/v1';
+const STATUS_SERVICE_URL =
+  process.env.STATUS_SERVICE_URL || 'http://localhost:8097/api/v1';
 
 /** @deprecated Use GET /api/system-health instead */
 export async function GET() {
@@ -12,7 +12,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const response = await fetch(`${STATUS_DASHBOARD_URL}/incidents`, {
+    const response = await fetch(`${STATUS_SERVICE_URL}/incidents`, {
       headers: { 'Accept': 'application/json' },
     });
     if (!response.ok) {

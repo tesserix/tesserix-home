@@ -14,7 +14,6 @@ import {
 } from "@/lib/releases/github";
 
 function workflowFileName(path: string): string {
-  // ".github/workflows/settings-service-build.yml" → "settings-service-build.yml"
   return path.split("/").pop() ?? path;
 }
 
@@ -30,20 +29,8 @@ function mapStatus(
   return "queued";
 }
 
-/** Find the latest semver tag matching a service name prefix. */
-function findLatestTag(
-  tags: GitTag[],
-  serviceName: string
-): { version: string; sha: string } | null {
-  // Tags like "settings-service-v1.2.3" or "v1.2.3" for single-service repos
-  const semverRe = /v(\d+\.\d+\.\d+)$/;
-  for (const tag of tags) {
-    if (tag.name.startsWith(`${serviceName}-v`) || tag.name.startsWith(`${serviceName}/v`)) {
-      const m = tag.name.match(semverRe);
-      if (m) return { version: m[1], sha: tag.commit.sha };
-    }
-  }
-  // Fallback: plain "v1.2.3" tags (for repos with a single service)
+/** Find the latest semver tag (per-repo: plain "v1.2.3" tags). */
+function findLatestTag(tags: GitTag[]): { version: string; sha: string } | null {
   for (const tag of tags) {
     if (tag.name.match(/^v\d+\.\d+\.\d+$/)) {
       return { version: tag.name.slice(1), sha: tag.commit.sha };
@@ -67,7 +54,7 @@ export async function GET(request: NextRequest) {
     const repoData = await Promise.allSettled(
       REPOS_WITH_WORKFLOWS.map(async (fullRepo) => {
         const [runs, tags] = await Promise.all([
-          getWorkflowRuns(fullRepo),
+          getWorkflowRuns(fullRepo, { per_page: 20 }),
           getRepoTags(fullRepo),
         ]);
         return { fullRepo, runs, tags };
@@ -89,7 +76,7 @@ export async function GET(request: NextRequest) {
       const runs = runsMap.get(svc.repo) ?? [];
       const tags = tagsMap.get(svc.repo) ?? [];
 
-      // Find latest build run
+      // Find latest CI build run
       const buildRun = runs.find(
         (r) => workflowFileName(r.path) === svc.buildWorkflow
       );
@@ -107,7 +94,7 @@ export async function GET(request: NextRequest) {
       const releaseRun = runs.find(
         (r) => workflowFileName(r.path) === svc.releaseWorkflow
       );
-      const tagInfo = findLatestTag(tags, svc.name);
+      const tagInfo = findLatestTag(tags);
       const latestRelease =
         releaseRun || tagInfo
           ? {
@@ -124,6 +111,7 @@ export async function GET(request: NextRequest) {
         displayName: svc.displayName,
         type: svc.type,
         repo: svc.repo,
+        appGroup: svc.appGroup,
         latestBuild,
         latestRelease,
       };

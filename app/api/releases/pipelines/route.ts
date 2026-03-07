@@ -11,18 +11,17 @@ function workflowFileName(path: string): string {
   return path.split("/").pop() ?? path;
 }
 
-function resolveServiceName(run: WorkflowRun): string {
-  const filename = workflowFileName(run.path);
-  const svc = SERVICE_REGISTRY.find(
-    (s) => s.buildWorkflow === filename || s.releaseWorkflow === filename
-  );
-  return svc?.displayName ?? filename.replace(/-build\.yml$|-release\.yml$/, "");
+function resolveServiceName(run: WorkflowRun, fullRepo: string): string {
+  // In per-repo setup, the repo name IS the service name
+  const { repo } = parseRepo(fullRepo);
+  const svc = SERVICE_REGISTRY.find((s) => s.name === repo);
+  return svc?.displayName ?? repo;
 }
 
 function resolveWorkflowType(run: WorkflowRun): "build" | "release" | "other" {
   const filename = workflowFileName(run.path);
-  if (filename.endsWith("-build.yml")) return "build";
-  if (filename.endsWith("-release.yml")) return "release";
+  if (filename === "ci.yml") return "build";
+  if (filename === "release.yml") return "release";
   return "other";
 }
 
@@ -67,7 +66,7 @@ export async function GET(request: NextRequest) {
     const results = await Promise.allSettled(
       repos.map((fullRepo) =>
         getWorkflowRuns(fullRepo, {
-          per_page: 50,
+          per_page: 30,
           ...(statusFilter === "in_progress" ? { status: "in_progress" } : {}),
         })
       )
@@ -103,12 +102,11 @@ export async function GET(request: NextRequest) {
     const start = (page - 1) * limit;
     const pageRuns = allRuns.slice(start, start + limit);
 
-    const { owner: ghOwner } = parseRepo(repos[0] ?? "Tesseract-Nexus/global-services");
     const data = pageRuns.map(({ run, fullRepo }) => {
       const { repo } = parseRepo(fullRepo);
       return {
         id: run.id,
-        serviceName: resolveServiceName(run),
+        serviceName: resolveServiceName(run, fullRepo),
         workflowType: resolveWorkflowType(run),
         workflowName: run.name,
         branch: run.head_branch,

@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-const ONBOARDING_SERVICE_URL = process.env.ONBOARDING_SERVICE_URL || 'http://localhost:4201';
+const ONBOARDING_SERVICE_URL = process.env.ONBOARDING_SERVICE_URL || 'http://localhost:3000';
 const ONBOARDING_ADMIN_API_KEY = process.env.ONBOARDING_ADMIN_API_KEY || '';
 const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 
@@ -17,16 +17,16 @@ export async function isAuthenticated(): Promise<boolean> {
 }
 
 /**
- * Server-side fetch helper for tenant-onboarding service.
+ * Server-side fetch helper for marketplace-onboarding service.
  *
  * Auth flow:
  * 1. Verify user has bff_home_session cookie (is authenticated in tesserix-home)
- * 2. Forward request to tenant-onboarding with X-Admin-Key header
+ * 2. Forward request to marketplace-onboarding with X-Admin-Key header
  *
  * In dev mode with DEV_AUTH_BYPASS:
  * - Session check is skipped
  * - If ONBOARDING_ADMIN_API_KEY is not set, requests are sent without it
- *   (tenant-onboarding also needs the key configured for validation)
+ *   (marketplace-onboarding also needs the key configured for validation)
  *
  * This is separate from adminFetch because:
  * - adminFetch does session → token exchange → Bearer auth (for Go services)

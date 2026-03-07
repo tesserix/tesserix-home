@@ -34,6 +34,7 @@ export interface ServiceInfo {
   displayName: string;
   type: ServiceType;
   repo: string;
+  appGroup: AppGroup;
   latestBuild: ServiceBuild | null;
   latestRelease: ServiceRelease | null;
 }
