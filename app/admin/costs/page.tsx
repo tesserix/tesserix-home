@@ -282,7 +282,7 @@ export default function CostsPage() {
         />
       )}
 
-      {/* Main content — shown with mock data regardless of billing API status */}
+      {/* Main content — only shown when billing API returns valid data */}
       {loading ? (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -293,7 +293,7 @@ export default function CostsPage() {
           <Skeleton className="h-64" />
           <Skeleton className="h-48" />
         </div>
-      ) : (
+      ) : data && !data.error ? (
         <div className="space-y-4">
           {/* Summary cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -367,7 +367,7 @@ export default function CostsPage() {
             </a>
           </div>
         </div>
-      )}
+      ) : null}
       </main>
     </>
   );
