@@ -20,7 +20,11 @@ import {
   Button,
   Card,
   CardContent,
+  ErrorState,
   Skeleton,
+  Stat,
+  StatLabel,
+  StatValue,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
 
@@ -62,7 +66,7 @@ function stateBadge(state: string) {
   const s = state.toUpperCase();
   if (s === "RUNNABLE") {
     return (
-      <Badge className="gap-1 bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20 hover:bg-green-500/10">
+      <Badge variant="success" className="gap-1">
         <CheckCircle2 className="h-3 w-3" />
         Running
       </Badge>
@@ -70,7 +74,7 @@ function stateBadge(state: string) {
   }
   if (s === "STOPPED" || s === "SUSPENDED") {
     return (
-      <Badge className="gap-1 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/20 hover:bg-yellow-500/10">
+      <Badge variant="warning" className="gap-1">
         <XCircle className="h-3 w-3" />
         {state}
       </Badge>
@@ -78,7 +82,7 @@ function stateBadge(state: string) {
   }
   if (s === "FAILED") {
     return (
-      <Badge className="gap-1 bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20 hover:bg-red-500/10">
+      <Badge variant="destructive" className="gap-1">
         <ServerCrash className="h-3 w-3" />
         Failed
       </Badge>
@@ -303,18 +307,16 @@ function SummaryBar({ instances }: { instances: SqlInstance[] }) {
   return (
     <div className="grid grid-cols-3 gap-3">
       {stats.map((s) => (
-        <Card key={s.label}>
-          <CardContent className="p-3 text-center">
-            <p
-              className={`text-2xl font-bold ${
-                "good" in s && s.good === false ? "text-yellow-600 dark:text-yellow-400" : ""
-              }`}
-            >
-              {s.value}
-            </p>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-          </CardContent>
-        </Card>
+        <Stat key={s.label} size="sm" className="text-center">
+          <StatValue
+            className={
+              "good" in s && s.good === false ? "text-yellow-600 dark:text-yellow-400" : ""
+            }
+          >
+            {s.value}
+          </StatValue>
+          <StatLabel>{s.label}</StatLabel>
+        </Stat>
       ))}
     </div>
   );
@@ -379,16 +381,7 @@ export default function CloudSqlPage() {
 
         {/* Error state */}
         {!loading && error && (
-          <Card className="border-destructive/40">
-            <CardContent className="p-6 text-center space-y-2">
-              <ServerCrash className="h-8 w-8 text-destructive mx-auto" />
-              <p className="text-sm font-medium text-destructive">Failed to load instances</p>
-              <p className="text-xs text-muted-foreground font-mono">{error}</p>
-              <Button variant="outline" size="sm" onClick={fetchInstances}>
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
+          <ErrorState message={error} onRetry={fetchInstances} />
         )}
 
         {/* Content */}

@@ -19,10 +19,18 @@ import {
   Button,
   Card,
   CardContent,
+  Combobox,
+  ErrorState,
   Skeleton,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
 import { SERVICE_REGISTRY } from "@/lib/releases/services";
+
+const SERVICE_OPTIONS = SERVICE_REGISTRY.map((s) => ({
+  value: s.name,
+  label: s.displayName,
+  searchTerms: [s.name],
+}));
 
 // ─── Types ───
 
@@ -192,20 +200,15 @@ export default function LogsPage() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         {/* Service selector */}
-        <div className="relative">
-          <select
-            value={service}
-            onChange={(e) => setService(e.target.value)}
-            className="h-9 appearance-none rounded-md border bg-background px-3 pr-8 text-sm font-medium shadow-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {SERVICE_REGISTRY.map((s) => (
-              <option key={s.name} value={s.name}>
-                {s.displayName}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        </div>
+        <Combobox
+          options={SERVICE_OPTIONS}
+          value={service}
+          onValueChange={setService}
+          placeholder="Select service..."
+          searchPlaceholder="Search services..."
+          emptyText="No services found."
+          className="w-52"
+        />
 
         {/* Severity filter */}
         <div className="flex items-center gap-1 rounded-lg border p-0.5">
@@ -273,15 +276,7 @@ export default function LogsPage() {
 
       {/* Error state */}
       {error && (
-        <Card className="mb-4 border-destructive/30">
-          <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <div>
-              <p className="text-sm font-medium text-destructive">Failed to load logs</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{error}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <ErrorState message={error} onRetry={() => fetchLogs(false)} />
       )}
 
       {/* Loading skeleton */}

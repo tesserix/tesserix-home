@@ -19,6 +19,10 @@ import {
   CardContent,
   Input,
   Skeleton,
+  ErrorState,
+  Stat,
+  StatLabel,
+  StatValue,
   Tabs,
   TabsContent,
   TabsList,
@@ -57,38 +61,28 @@ function SummaryCards({ topics, subscriptions }: SummaryCardsProps) {
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{topics.length}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Topics</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{subscriptions.length}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Subscriptions</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-baseline gap-2">
-            <p className="text-2xl font-bold text-blue-600">{pushCount}</p>
-            <p className="text-xs text-muted-foreground">push</p>
-            <p className="text-2xl font-bold text-muted-foreground">/</p>
-            <p className="text-2xl font-bold">{pullCount}</p>
-            <p className="text-xs text-muted-foreground">pull</p>
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">Push vs Pull</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <p className={`text-2xl font-bold ${dlqCount > 0 ? "text-amber-600" : "text-muted-foreground"}`}>
-            {dlqCount}
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">With Dead Letter</p>
-        </CardContent>
-      </Card>
+      <Stat size="sm">
+        <StatValue>{topics.length}</StatValue>
+        <StatLabel>Topics</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue>{subscriptions.length}</StatValue>
+        <StatLabel>Subscriptions</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue>
+          <span className="text-blue-600">{pushCount}</span>
+          <span className="text-muted-foreground mx-1">/</span>
+          {pullCount}
+        </StatValue>
+        <StatLabel>Push vs Pull</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue className={dlqCount > 0 ? "text-amber-600" : "text-muted-foreground"}>
+          {dlqCount}
+        </StatValue>
+        <StatLabel>With Dead Letter</StatLabel>
+      </Stat>
     </div>
   );
 }
@@ -265,21 +259,21 @@ function SubscriptionsTab({ subscriptions, loading }: SubscriptionsTabProps) {
                 {/* Badges */}
                 <div className="flex items-center gap-2 flex-wrap shrink-0">
                   {sub.type === "push" ? (
-                    <span className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-400 dark:border-blue-900">
+                    <Badge variant="info" className="gap-1">
                       <Webhook className="h-3 w-3" />
                       push
-                    </span>
+                    </Badge>
                   ) : (
-                    <span className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium bg-secondary text-secondary-foreground border-border">
+                    <Badge variant="secondary" className="gap-1">
                       <Radio className="h-3 w-3" />
                       pull
-                    </span>
+                    </Badge>
                   )}
                   {sub.hasDeadLetter && (
-                    <span className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-900">
+                    <Badge variant="warning" className="gap-1">
                       <AlertTriangle className="h-3 w-3" />
                       DLQ
-                    </span>
+                    </Badge>
                   )}
                 </div>
               </div>
@@ -397,11 +391,7 @@ export default function PubSubPage() {
 
         {/* Error */}
         {error && (
-          <Card className="border-destructive/50">
-            <CardContent className="p-4">
-              <p className="text-sm text-destructive">{error}</p>
-            </CardContent>
-          </Card>
+          <ErrorState message={error} onRetry={fetchData} />
         )}
 
         {/* Tabs */}

@@ -17,7 +17,11 @@ import {
   Card,
   CardContent,
   Input,
+  ErrorState,
   Skeleton,
+  Stat,
+  StatLabel,
+  StatValue,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
 import type { IamOverviewResponse, ServiceAccountEntry } from "@/app/api/iam/route";
@@ -57,11 +61,8 @@ function isOverprivileged(role: string): boolean {
   return OVERPRIVILEGED_ROLES.has(role);
 }
 
-function roleBadgeClass(role: string): string {
-  if (isOverprivileged(role)) {
-    return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-900";
-  }
-  return "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400 dark:border-green-900";
+function roleBadgeVariant(role: string): "destructive" | "success" {
+  return isOverprivileged(role) ? "destructive" : "success";
 }
 
 function shortRole(role: string): string {
@@ -84,30 +85,22 @@ function SummaryCards({ serviceAccounts, totalRoles }: SummaryCardsProps) {
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{serviceAccounts.length}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Service Accounts</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold">{totalRoles}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Unique Roles</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold text-red-600">{overprivilegedCount}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Overprivileged</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <p className="text-2xl font-bold text-muted-foreground">{disabled}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Disabled</p>
-        </CardContent>
-      </Card>
+      <Stat size="sm">
+        <StatValue>{serviceAccounts.length}</StatValue>
+        <StatLabel>Service Accounts</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue>{totalRoles}</StatValue>
+        <StatLabel>Unique Roles</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue className="text-red-600">{overprivilegedCount}</StatValue>
+        <StatLabel>Overprivileged</StatLabel>
+      </Stat>
+      <Stat size="sm">
+        <StatValue className="text-muted-foreground">{disabled}</StatValue>
+        <StatLabel>Disabled</StatLabel>
+      </Stat>
     </div>
   );
 }
@@ -172,12 +165,13 @@ function ServiceAccountCard({ sa }: { sa: ServiceAccountEntry }) {
           {sa.roles.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {sa.roles.map((role) => (
-                <span
+                <Badge
                   key={role}
-                  className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium font-mono ${roleBadgeClass(role)}`}
+                  variant={roleBadgeVariant(role)}
+                  className="font-mono"
                 >
                   {shortRole(role)}
-                </span>
+                </Badge>
               ))}
             </div>
           ) : (
@@ -284,11 +278,7 @@ export default function IAMPage() {
 
         {/* Error */}
         {error && (
-          <Card className="border-destructive/50">
-            <CardContent className="p-4">
-              <p className="text-sm text-destructive">{error}</p>
-            </CardContent>
-          </Card>
+          <ErrorState message={error} onRetry={fetchData} />
         )}
 
         {/* List */}

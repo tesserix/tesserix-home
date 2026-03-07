@@ -18,6 +18,8 @@ import {
   Button,
   Card,
   CardContent,
+  Combobox,
+  ErrorState,
   Input,
   Skeleton,
 } from "@tesserix/web";
@@ -226,20 +228,18 @@ function CheckQueryForm({ stores }: { stores: FGAStore[] }) {
         {/* Store selector */}
         <div>
           <label className="text-xs font-medium text-muted-foreground">Store</label>
-          <div className="relative mt-1">
-            <select
-              value={storeId}
-              onChange={(e) => setStoreId(e.target.value)}
-              className="w-full h-9 appearance-none rounded-md border bg-background px-3 pr-8 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.id.slice(0, 12)}…)
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          </div>
+          <Combobox
+            options={stores.map((s) => ({
+              value: s.id,
+              label: `${s.name} (${s.id.slice(0, 12)}…)`,
+              searchTerms: [s.name, s.id],
+            }))}
+            value={storeId}
+            onValueChange={setStoreId}
+            placeholder="Select store..."
+            searchPlaceholder="Search stores..."
+            className="mt-1"
+          />
         </div>
 
         {/* Tuple fields */}
@@ -295,12 +295,9 @@ function CheckQueryForm({ stores }: { stores: FGAStore[] }) {
           )}
 
           {result.allowed !== null && !result.error && (
-            <div
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold ${
-                result.allowed
-                  ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                  : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
-              }`}
+            <Badge
+              variant={result.allowed ? "success" : "destructive"}
+              className="gap-1.5 px-3 py-1.5 text-sm"
             >
               {result.allowed ? (
                 <>
@@ -313,7 +310,7 @@ function CheckQueryForm({ stores }: { stores: FGAStore[] }) {
                   Denied
                 </>
               )}
-            </div>
+            </Badge>
           )}
         </div>
       </CardContent>
@@ -385,12 +382,7 @@ export default function OpenFGAPage() {
 
       {/* Error */}
       {error && (
-        <Card className="mb-4 border-destructive/30">
-          <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
+        <ErrorState message={error} onRetry={fetchData} />
       )}
 
       {/* Unreachable */}

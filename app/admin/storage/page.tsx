@@ -19,6 +19,7 @@ import {
   Button,
   Card,
   CardContent,
+  ErrorState,
   Input,
   Skeleton,
 } from "@tesserix/web";
@@ -308,12 +309,7 @@ export default function StoragePage() {
 
       {/* Error */}
       {error && (
-        <Card className="mb-4 border-destructive/30">
-          <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
+        <ErrorState message={error} onRetry={() => fetchObjects(prefix, false)} />
       )}
 
       {/* Setup required */}

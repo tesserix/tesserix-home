@@ -19,6 +19,11 @@ import {
   Card,
   CardContent,
   Skeleton,
+  ErrorState,
+  Stat,
+  StatLabel,
+  StatValue,
+  StatMeta,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
 
@@ -240,7 +245,7 @@ export default function CostsPage() {
             </Badge>
           )}
           {data?.billingEnabled && (
-            <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 text-xs">
+            <Badge variant="success" className="text-xs">
               Billing enabled
             </Badge>
           )}
@@ -257,12 +262,7 @@ export default function CostsPage() {
 
       {/* Error */}
       {error && (
-        <Card className="mb-4 border-destructive/30">
-          <CardContent className="flex items-start gap-3 p-4">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
+        <ErrorState message={error} onRetry={fetchBilling} />
       )}
 
       {/* Setup required */}
@@ -297,35 +297,27 @@ export default function CostsPage() {
         <div className="space-y-4">
           {/* Summary cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground mb-1">Current Month</p>
-                <p className="text-2xl font-bold">{formatCurrency(totalMockCost)}</p>
-                <p className="text-xs text-muted-foreground mt-1">Estimated</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground mb-1">Last Month</p>
-                <p className="text-2xl font-bold">{formatCurrency(prevMockCost)}</p>
-                <p className="text-xs text-muted-foreground mt-1">February 2026</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-xs text-muted-foreground mb-1">Budgets</p>
-                <p className="text-2xl font-bold">
-                  {data?.budgets?.length ?? 0}
-                </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {data?.budgets?.length
-                    ? data.budgets[0].amount
-                      ? `Budget: ${formatCurrency(data.budgets[0].amount.value, data.budgets[0].amount.currency)}`
-                      : "Configured"
-                    : "None configured"}
-                </p>
-              </CardContent>
-            </Card>
+            <Stat size="sm">
+              <StatLabel>Current Month</StatLabel>
+              <StatValue>{formatCurrency(totalMockCost)}</StatValue>
+              <StatMeta>Estimated</StatMeta>
+            </Stat>
+            <Stat size="sm">
+              <StatLabel>Last Month</StatLabel>
+              <StatValue>{formatCurrency(prevMockCost)}</StatValue>
+              <StatMeta>February 2026</StatMeta>
+            </Stat>
+            <Stat size="sm">
+              <StatLabel>Budgets</StatLabel>
+              <StatValue>{data?.budgets?.length ?? 0}</StatValue>
+              <StatMeta>
+                {data?.budgets?.length
+                  ? data.budgets[0].amount
+                    ? `Budget: ${formatCurrency(data.budgets[0].amount.value, data.budgets[0].amount.currency)}`
+                    : "Configured"
+                  : "None configured"}
+              </StatMeta>
+            </Stat>
           </div>
 
           {/* Monthly trend */}

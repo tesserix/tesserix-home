@@ -28,6 +28,11 @@ import {
   CardTitle,
   Input,
   Skeleton,
+  ErrorState,
+  Stat,
+  StatLabel,
+  StatValue,
+  StatMeta,
   Table,
   TableBody,
   TableCell,
@@ -162,10 +167,10 @@ function AppGroupFilter({
   );
 }
 
-function StatusBadge({ status }: { status: CloudRunService["servingStatus"] }) {
+function ServingStatusBadge({ status }: { status: CloudRunService["servingStatus"] }) {
   if (status === "Serving") {
     return (
-      <Badge className="bg-green-500/15 text-green-600 border-green-500/20 hover:bg-green-500/20 gap-1 font-medium">
+      <Badge variant="success" className="gap-1">
         <CheckCircle2 className="h-3 w-3" />
         Serving
       </Badge>
@@ -173,7 +178,7 @@ function StatusBadge({ status }: { status: CloudRunService["servingStatus"] }) {
   }
   if (status === "Deploying") {
     return (
-      <Badge className="bg-yellow-500/15 text-yellow-600 border-yellow-500/20 hover:bg-yellow-500/20 gap-1 font-medium">
+      <Badge variant="warning" className="gap-1">
         <Loader2 className="h-3 w-3 animate-spin" />
         Deploying
       </Badge>
@@ -181,14 +186,14 @@ function StatusBadge({ status }: { status: CloudRunService["servingStatus"] }) {
   }
   if (status === "Failed") {
     return (
-      <Badge className="bg-red-500/15 text-red-600 border-red-500/20 hover:bg-red-500/20 gap-1 font-medium">
+      <Badge variant="destructive" className="gap-1">
         <AlertCircle className="h-3 w-3" />
         Failed
       </Badge>
     );
   }
   return (
-    <Badge variant="secondary" className="gap-1 font-medium">
+    <Badge variant="secondary" className="gap-1">
       <Activity className="h-3 w-3" />
       Unknown
     </Badge>
@@ -414,62 +419,36 @@ function SummaryCards({
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Server className="h-4 w-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Total Services</p>
-          </div>
-          <p className="text-2xl font-bold">{total}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">on Cloud Run</p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
-            <p className="text-xs text-muted-foreground font-medium">Serving</p>
-          </div>
-          <p className="text-2xl font-bold text-green-600">{serving}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {total > 0 ? `${Math.round((serving / total) * 100)}% healthy` : "—"}
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <AlertCircle
-              className={`h-4 w-4 ${failed > 0 ? "text-red-500" : "text-muted-foreground"}`}
-            />
-            <p className="text-xs text-muted-foreground font-medium">Issues</p>
-          </div>
-          <p className={`text-2xl font-bold ${failed > 0 ? "text-red-600" : ""}`}>
-            {failed + deploying}
-          </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {failed} failed, {deploying} deploying
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <Clock className="h-4 w-4 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground font-medium">Last Deployed</p>
-          </div>
-          {lastDeployed ? (
-            <>
-              <p className="text-sm font-semibold truncate">{lastDeployed.name}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {relativeTime(lastDeployed.updateTime)}
-              </p>
-            </>
-          ) : (
-            <p className="text-2xl font-bold">—</p>
-          )}
-        </CardContent>
-      </Card>
+      <Stat size="sm">
+        <StatLabel>Total Services</StatLabel>
+        <StatValue>{total}</StatValue>
+        <StatMeta>on Cloud Run</StatMeta>
+      </Stat>
+      <Stat size="sm">
+        <StatLabel>Serving</StatLabel>
+        <StatValue className="text-green-600">{serving}</StatValue>
+        <StatMeta>
+          {total > 0 ? `${Math.round((serving / total) * 100)}% healthy` : "—"}
+        </StatMeta>
+      </Stat>
+      <Stat size="sm">
+        <StatLabel>Issues</StatLabel>
+        <StatValue className={failed > 0 ? "text-red-600" : ""}>
+          {failed + deploying}
+        </StatValue>
+        <StatMeta>{failed} failed, {deploying} deploying</StatMeta>
+      </Stat>
+      <Stat size="sm">
+        <StatLabel>Last Deployed</StatLabel>
+        {lastDeployed ? (
+          <>
+            <StatValue className="text-base">{lastDeployed.name}</StatValue>
+            <StatMeta>{relativeTime(lastDeployed.updateTime)}</StatMeta>
+          </>
+        ) : (
+          <StatValue>—</StatValue>
+        )}
+      </Stat>
     </div>
   );
 }
@@ -591,25 +570,7 @@ export default function CloudRunPage() {
 
           {/* Error state */}
           {error && (
-            <Card className="border-destructive/30">
-              <CardContent className="p-4 flex items-center gap-3">
-                <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-destructive">
-                    Failed to load services
-                  </p>
-                  <p className="text-xs text-muted-foreground">{error}</p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => fetchServices()}
-                >
-                  Retry
-                </Button>
-              </CardContent>
-            </Card>
+            <ErrorState message={error} onRetry={() => fetchServices()} />
           )}
 
           {/* Services table */}
@@ -684,7 +645,7 @@ export default function CloudRunPage() {
 
                             {/* Status */}
                             <TableCell className="py-3">
-                              <StatusBadge status={svc.servingStatus} />
+                              <ServingStatusBadge status={svc.servingStatus} />
                             </TableCell>
 
                             {/* Image tag */}

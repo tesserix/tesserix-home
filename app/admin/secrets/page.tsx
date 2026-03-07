@@ -26,6 +26,9 @@ import {
   CardContent,
   Input,
   Skeleton,
+  Stat,
+  StatLabel,
+  StatValue,
   Tabs,
   TabsContent,
   TabsList,
@@ -732,24 +735,18 @@ function DependencyMapTab() {
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-3">
-        <Card>
-          <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold">{allSecrets.length}</p>
-            <p className="text-xs text-muted-foreground">Unique Secrets</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold">{sharedSecrets.length}</p>
-            <p className="text-xs text-muted-foreground">Shared Across Repos</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold">{filteredRepos.length}</p>
-            <p className="text-xs text-muted-foreground">Repos</p>
-          </CardContent>
-        </Card>
+        <Stat size="sm" className="text-center">
+          <StatValue>{allSecrets.length}</StatValue>
+          <StatLabel>Unique Secrets</StatLabel>
+        </Stat>
+        <Stat size="sm" className="text-center">
+          <StatValue>{sharedSecrets.length}</StatValue>
+          <StatLabel>Shared Across Repos</StatLabel>
+        </Stat>
+        <Stat size="sm" className="text-center">
+          <StatValue>{filteredRepos.length}</StatValue>
+          <StatLabel>Repos</StatLabel>
+        </Stat>
       </div>
 
       {view === "by-secret" ? (

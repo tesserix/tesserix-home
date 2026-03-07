@@ -34,7 +34,16 @@ import {
   Input,
   ErrorState,
   Checkbox,
+  Combobox,
 } from "@tesserix/web";
+
+const SEVERITY_OPTIONS = [
+  { value: "", label: "All Severities" },
+  { value: "INFO", label: "Info" },
+  { value: "WARNING", label: "Warning" },
+  { value: "ERROR", label: "Error" },
+  { value: "CRITICAL", label: "Critical" },
+];
 
 function severityColor(severity: AuditSeverity) {
   switch (severity) {
@@ -290,19 +299,16 @@ export default function AuditLogsPage() {
                   Search
                 </Button>
               </div>
-              <select
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                onChange={(e) =>
-                  handleSeverityFilter(e.target.value as AuditSeverity | "")
-                }
+              <Combobox
+                options={SEVERITY_OPTIONS}
                 value={filters.severity || ""}
-              >
-                <option value="">All Severities</option>
-                <option value="INFO">Info</option>
-                <option value="WARNING">Warning</option>
-                <option value="ERROR">Error</option>
-                <option value="CRITICAL">Critical</option>
-              </select>
+                onValueChange={(v) =>
+                  handleSeverityFilter(v as AuditSeverity | "")
+                }
+                placeholder="All Severities"
+                searchPlaceholder="Filter severity..."
+                className="w-44"
+              />
             </div>
 
             {/* Table */}

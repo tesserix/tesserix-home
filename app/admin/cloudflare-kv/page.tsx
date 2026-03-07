@@ -22,8 +22,12 @@ import {
   Button,
   Card,
   CardContent,
+  ErrorState,
   Input,
   Skeleton,
+  Stat,
+  StatLabel,
+  StatValue,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
 
@@ -48,14 +52,14 @@ function KeyBadge({ k }: { k: string }) {
   const prefix = keyPrefix(k);
   if (prefix === "tenant") {
     return (
-      <Badge className="text-xs font-mono bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20 hover:bg-blue-500/10">
+      <Badge variant="info" className="text-xs font-mono">
         {k}
       </Badge>
     );
   }
   if (prefix === "domain") {
     return (
-      <Badge className="text-xs font-mono bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20 hover:bg-green-500/10">
+      <Badge variant="success" className="text-xs font-mono">
         {k}
       </Badge>
     );
@@ -286,12 +290,10 @@ function SummaryBar({ keys }: { keys: KvKey[] }) {
   return (
     <div className="grid grid-cols-3 gap-3">
       {stats.map((s) => (
-        <Card key={s.label}>
-          <CardContent className="p-3 text-center">
-            <p className="text-2xl font-bold">{s.value}</p>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-          </CardContent>
-        </Card>
+        <Stat key={s.label} size="sm" className="text-center">
+          <StatValue>{s.value}</StatValue>
+          <StatLabel>{s.label}</StatLabel>
+        </Stat>
       ))}
     </div>
   );
@@ -428,16 +430,7 @@ export default function CloudflareKvPage() {
 
         {/* Error state */}
         {!loading && error && (
-          <Card className="border-destructive/40">
-            <CardContent className="p-6 text-center space-y-2">
-              <ServerCrash className="h-8 w-8 text-destructive mx-auto" />
-              <p className="text-sm font-medium text-destructive">Failed to load KV data</p>
-              <p className="text-xs text-muted-foreground font-mono">{error}</p>
-              <Button variant="outline" size="sm" onClick={fetchKeys}>
-                Retry
-              </Button>
-            </CardContent>
-          </Card>
+          <ErrorState message={error} onRetry={fetchKeys} />
         )}
 
         {!loading && !error && (
