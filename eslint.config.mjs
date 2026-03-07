@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
       "react/no-unescaped-entities": "warn",
       "@typescript-eslint/no-unused-vars": "warn",
       "prefer-const": "warn",
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/immutability": "warn",
     },
   },
 ]);
