@@ -34,10 +34,6 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
-function isAdminPath(pathname: string): boolean {
-  return pathname.startsWith('/admin');
-}
-
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -101,17 +97,18 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Admin paths require authentication
-  if (isAdminPath(pathname)) {
-    // Check for session cookie (auth-bff sets 'bff_home_session' for tesserix-home)
-    const sessionCookie = request.cookies.get('bff_home_session');
+  // Default-deny: all non-public paths require authentication.
+  // Check for session cookie (auth-bff sets 'bff_home_session' for tesserix-home)
+  const sessionCookie = request.cookies.get('bff_home_session');
 
-    if (!sessionCookie) {
-      // Redirect to login page
-      const loginUrl = new URL('/login', request.url);
-      loginUrl.searchParams.set('returnTo', pathname);
-      return NextResponse.redirect(loginUrl);
+  if (!sessionCookie) {
+    // API routes get 401, page routes get redirected to login
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('returnTo', pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
   return NextResponse.next();

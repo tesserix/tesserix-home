@@ -1,87 +1,40 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowLeft, Loader2, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-  Input,
-  Label,
   Button,
 } from "@tesserix/web";
 export default function LoginPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const returnTo = searchParams.get("returnTo") || "/admin/dashboard";
   const error = searchParams.get("error");
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setLoginError(null);
-    setIsLoading(true);
-
-    try {
-      const response = await fetch("/auth/direct/platform/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        if (data.error === "RATE_LIMITED") {
-          setLoginError("Too many login attempts. Please try again later.");
-        } else if (data.error === "INVALID_CREDENTIALS" || data.error === "AUTH_FAILED") {
-          setLoginError("Invalid email or password.");
-        } else if (data.error === "SERVICE_CONFIG_ERROR") {
-          setLoginError("Authentication service error. Please contact support.");
-        } else {
-          setLoginError(data.message || "Authentication failed. Please try again.");
-        }
-        setIsLoading(false);
-        return;
-      }
-
-      // Login successful — redirect to dashboard
-      router.push(returnTo);
-    } catch {
-      setLoginError("Unable to connect to authentication service. Please try again.");
-      setIsLoading(false);
-    }
-  }
 
   function handleGoogleLogin() {
     setIsGoogleLoading(true);
-    setLoginError(null);
-    // Pass prompt param if present (e.g., select_account from error page to force account picker)
     const prompt = searchParams.get("prompt");
     const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : "";
-    const loginUrl = `/auth/login?returnTo=${encodeURIComponent(returnTo)}&kc_idp_hint=google${promptParam}`;
+    const loginUrl = `/auth/login?returnTo=${encodeURIComponent(returnTo)}${promptParam}`;
     window.location.href = loginUrl;
   }
 
-  const displayError = loginError || (error === "session_expired"
+  const displayError = error === "session_expired"
     ? "Your session has expired. Please sign in again."
     : error === "auth_failed"
       ? "Authentication failed. Please try again."
       : error
         ? "An error occurred. Please try again."
-        : null);
+        : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-muted/30">
@@ -116,13 +69,13 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Google Sign In */}
+            {/* Google Sign In — platform admins use Google OIDC only */}
             <Button
               type="button"
               variant="outline"
               size="lg"
               onClick={handleGoogleLogin}
-              disabled={isGoogleLoading || isLoading}
+              disabled={isGoogleLoading}
               className="w-full gap-3"
             >
               {isGoogleLoading ? (
@@ -137,70 +90,6 @@ export default function LoginPage() {
               )}
               Continue with Google
             </Button>
-
-            {/* Divider */}
-            <div className="relative my-6">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t" />
-              </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">or</span>
-              </div>
-            </div>
-
-            {/* Email/Password Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@tesserix.app"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoComplete="email"
-                  autoFocus
-                  disabled={isLoading}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    autoComplete="current-password"
-                    disabled={isLoading}
-                    className="pr-10"
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1/2 h-8 w-8 -translate-y-1/2"
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <Button type="submit" className="w-full" disabled={isLoading || isGoogleLoading}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Signing in...
-                  </>
-                ) : (
-                  "Sign in"
-                )}
-              </Button>
-            </form>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
               <p>
