@@ -144,6 +144,8 @@ export async function getSessionContext(): Promise<{
   tenantSlug?: string;
   authContext: string;
   accessToken: string;
+  /** GIP id_token — preferred for Authorization: Bearer headers to backend services. */
+  idToken: string;
 } | null> {
   const cookieStore = await cookies();
   const sessionCookie = cookieStore.get('bff_home_session');
@@ -164,6 +166,7 @@ export async function getSessionContext(): Promise<{
     tenantSlug: sessionData.tenant_slug,
     authContext: sessionData.auth_context,
     accessToken: sessionData.access_token,
+    idToken: sessionData.id_token,
   };
 }
 

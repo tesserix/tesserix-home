@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 const OPENFGA_API_URL =
@@ -38,6 +39,12 @@ async function fgaFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function GET() {
+  // Verify user is authenticated
+  const cookieStore = await cookies();
+  if (!cookieStore.get("bff_home_session")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const storesData = await fgaFetch<{ stores: FGAStore[] }>("/stores");
     const stores = storesData.stores ?? [];

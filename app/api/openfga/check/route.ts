@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 const OPENFGA_API_URL =
@@ -13,6 +14,12 @@ interface CheckRequestBody {
 }
 
 export async function POST(req: NextRequest) {
+  // Verify user is authenticated
+  const cookieStore = await cookies();
+  if (!cookieStore.get("bff_home_session")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let body: CheckRequestBody;
   try {
     body = await req.json();
