@@ -14,42 +14,81 @@ concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  GAR_REGISTRY: asia-south1-docker.pkg.dev
+  GAR_REPOSITORY: tesserix/services
+  IMAGE_NAME: tesserix-home
+
 permissions:
   contents: write
-  packages: write
   security-events: write
-  attestations: write
   id-token: write
 
 jobs:
-  release:
-    uses: tesserix/tesserix-infra/.github/workflows/_release-nextjs.yml@main
-    with:
-      service_name: tesserix-home
-      service_title: Tesserix Home
-    secrets:
-      PKG_READ_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
 
-  deploy:
-    needs: [release]
-    uses: tesserix/tesserix-infra/.github/workflows/_deploy-cloudrun.yml@main
-    with:
-      service_name: tesserix-home
-      image: ${{ needs.release.outputs.image }}
-      health_path: /api/health
-    secrets:
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-      DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
-  cleanup:
-    needs: [deploy]
-    if: always() && needs.deploy.result == 'success'
-    uses: tesserix/tesserix-infra/.github/workflows/_cleanup-gar.yml@main
-    with:
-      service_name: tesserix-home
-    secrets:
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
+
+      - name: Lint
+        run: npx eslint . --max-warnings 0
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.CI_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for GAR
+        run: gcloud auth configure-docker ${{ env.GAR_REGISTRY }} --quiet
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=main-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push
+        run: |
+          docker build \
+            --secret id=npm_token,env=NODE_AUTH_TOKEN \
+            --platform linux/amd64 \
+            -t ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest \
+            .
+          docker push --all-tags ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
+
+      - name: Security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Upload scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
