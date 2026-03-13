@@ -1,6 +1,6 @@
 /**
  * Shared GCP API helpers for server-side route handlers.
- * Uses the metadata server to get access tokens on Cloud Run.
+ * Uses the metadata server to get access tokens (works on both Cloud Run and GKE with Workload Identity).
  */
 
 const GCP_PROJECT = process.env.GCP_PROJECT_ID || "tesserix";

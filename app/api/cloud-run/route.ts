@@ -1,58 +1,15 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { isGKE } from "@/lib/api/platform";
 import { getAccessToken, gcpApi, GCP_PROJECT, GCP_REGION } from "@/lib/api/gcp";
+import {
+  k8sFetch,
+  knativeServicesPath,
+  K8S_NAMESPACE,
+  type K8sKnativeService,
+} from "@/lib/api/k8s";
 
-// ─── GCP Cloud Run API types ───
-
-interface GCPCondition {
-  type: string;
-  state: string;
-  message?: string;
-  lastTransitionTime?: string;
-}
-
-interface GCPContainer {
-  image: string;
-  env?: Array<{ name: string; value?: string; valueSource?: unknown }>;
-}
-
-interface GCPRevisionTemplate {
-  scaling?: {
-    minInstanceCount?: number;
-    maxInstanceCount?: number;
-  };
-  containers?: GCPContainer[];
-}
-
-interface GCPTrafficStatus {
-  type?: string;
-  revision?: string;
-  percent?: number;
-  uri?: string;
-}
-
-interface GCPService {
-  name: string;
-  uid?: string;
-  generation?: number;
-  createTime?: string;
-  updateTime?: string;
-  creator?: string;
-  uri?: string;
-  latestReadyRevision?: string;
-  latestCreatedRevision?: string;
-  conditions?: GCPCondition[];
-  template?: GCPRevisionTemplate;
-  traffic?: Array<{ type?: string; percent?: number }>;
-  trafficStatuses?: GCPTrafficStatus[];
-}
-
-interface GCPServicesResponse {
-  services?: GCPService[];
-  nextPageToken?: string;
-}
-
-// ─── Response shape ───
+// ─── Shared response shape (frontend depends on this) ───
 
 export interface CloudRunServiceSummary {
   name: string;
@@ -73,7 +30,160 @@ export interface CloudRunServiceSummary {
   envVarCount: number;
 }
 
-function deriveServingStatus(conditions: GCPCondition[]): CloudRunServiceSummary["servingStatus"] {
+function extractImageTag(image: string): string {
+  const colonIdx = image.lastIndexOf(":");
+  if (colonIdx === -1) return image.split("/").pop() ?? image;
+  const tag = image.slice(colonIdx + 1);
+  if (tag.startsWith("sha256-")) return tag.slice(0, 19);
+  return tag;
+}
+
+function shortName(fullName: string): string {
+  return fullName.split("/").pop() ?? fullName;
+}
+
+// ─── GKE (Knative) ───
+
+const KNATIVE_NAMESPACES = (
+  process.env.K8S_NAMESPACES || "platform,shared,marketplace"
+).split(",");
+
+async function listServicesGKE(): Promise<CloudRunServiceSummary[]> {
+  const results: CloudRunServiceSummary[] = [];
+
+  for (const ns of KNATIVE_NAMESPACES) {
+    const resp = await k8sFetch<{ items?: K8sKnativeService[] }>(
+      knativeServicesPath(ns)
+    );
+
+    for (const svc of resp.items ?? []) {
+      const container = svc.spec.template.spec.containers[0];
+      const image = container?.image ?? "";
+      const conditions = svc.status.conditions ?? [];
+      const readyCond = conditions.find((c) => c.type === "Ready");
+      const routeCond = conditions.find((c) => c.type === "RoutesReady");
+
+      const annotations = svc.spec.template.metadata?.annotations ?? {};
+      const minScale = parseInt(annotations["autoscaling.knative.dev/minScale"] ?? "0", 10);
+      const maxScale = parseInt(annotations["autoscaling.knative.dev/maxScale"] ?? "100", 10);
+
+      results.push({
+        name: svc.metadata.name,
+        displayName: svc.metadata.name,
+        generation: svc.metadata.generation ?? 0,
+        creator: svc.metadata.annotations?.["serving.knative.dev/creator"] ?? "",
+        createTime: svc.metadata.creationTimestamp ?? "",
+        updateTime:
+          conditions.find((c) => c.type === "Ready")?.lastTransitionTime ?? "",
+        uri: svc.status.url ?? "",
+        latestReadyRevision: svc.status.latestReadyRevisionName ?? "",
+        servingStatus: deriveKnativeServingStatus(readyCond),
+        routingStatus: deriveKnativeRouteStatus(routeCond),
+        conditions: conditions.map((c) => ({
+          type: c.type,
+          state: c.status === "True" ? "CONDITION_SUCCEEDED" : c.status === "False" ? "CONDITION_FAILED" : "CONDITION_PENDING",
+          message: c.message,
+        })),
+        minScale,
+        maxScale,
+        image,
+        imageTag: extractImageTag(image),
+        envVarCount: container?.env?.length ?? 0,
+      });
+    }
+  }
+
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  return results;
+}
+
+function deriveKnativeServingStatus(
+  cond?: { status: string }
+): CloudRunServiceSummary["servingStatus"] {
+  if (!cond) return "Unknown";
+  if (cond.status === "True") return "Serving";
+  if (cond.status === "False") return "Failed";
+  return "Deploying";
+}
+
+function deriveKnativeRouteStatus(
+  cond?: { status: string }
+): CloudRunServiceSummary["routingStatus"] {
+  if (!cond) return "Unknown";
+  if (cond.status === "True") return "Active";
+  if (cond.status === "False") return "Inactive";
+  return "Unknown";
+}
+
+// ─── Cloud Run (existing) ───
+
+interface GCPCondition {
+  type: string;
+  state: string;
+  message?: string;
+}
+
+interface GCPService {
+  name: string;
+  generation?: number;
+  createTime?: string;
+  updateTime?: string;
+  creator?: string;
+  uri?: string;
+  latestReadyRevision?: string;
+  conditions?: GCPCondition[];
+  template?: {
+    scaling?: { minInstanceCount?: number; maxInstanceCount?: number };
+    containers?: Array<{
+      image: string;
+      env?: Array<{ name: string }>;
+    }>;
+  };
+}
+
+async function listServicesCloudRun(): Promise<CloudRunServiceSummary[]> {
+  const token = await getAccessToken();
+  const response = await gcpApi<{ services?: GCPService[] }>(
+    `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services`,
+    token
+  );
+
+  const services: CloudRunServiceSummary[] = (response.services ?? []).map((svc) => {
+    const conditions = svc.conditions ?? [];
+    const container = svc.template?.containers?.[0];
+    const image = container?.image ?? "";
+
+    return {
+      name: shortName(svc.name),
+      displayName: shortName(svc.name),
+      generation: svc.generation ?? 0,
+      creator: svc.creator ?? "",
+      createTime: svc.createTime ?? "",
+      updateTime: svc.updateTime ?? "",
+      uri: svc.uri ?? "",
+      latestReadyRevision: svc.latestReadyRevision
+        ? shortName(svc.latestReadyRevision)
+        : "",
+      servingStatus: deriveCRServingStatus(conditions),
+      routingStatus: deriveCRRoutingStatus(conditions),
+      conditions: conditions.map((c) => ({
+        type: c.type,
+        state: c.state,
+        message: c.message,
+      })),
+      minScale: svc.template?.scaling?.minInstanceCount ?? 0,
+      maxScale: svc.template?.scaling?.maxInstanceCount ?? 100,
+      image,
+      imageTag: extractImageTag(image),
+      envVarCount: container?.env?.length ?? 0,
+    };
+  });
+
+  services.sort((a, b) => a.name.localeCompare(b.name));
+  return services;
+}
+
+function deriveCRServingStatus(conditions: GCPCondition[]): CloudRunServiceSummary["servingStatus"] {
   const ready = conditions.find((c) => c.type === "Ready");
   if (!ready) return "Unknown";
   if (ready.state === "CONDITION_SUCCEEDED") return "Serving";
@@ -82,7 +192,7 @@ function deriveServingStatus(conditions: GCPCondition[]): CloudRunServiceSummary
   return "Unknown";
 }
 
-function deriveRoutingStatus(conditions: GCPCondition[]): CloudRunServiceSummary["routingStatus"] {
+function deriveCRRoutingStatus(conditions: GCPCondition[]): CloudRunServiceSummary["routingStatus"] {
   const routing = conditions.find((c) => c.type === "RoutesReady");
   if (!routing) return "Unknown";
   if (routing.state === "CONDITION_SUCCEEDED") return "Active";
@@ -90,20 +200,7 @@ function deriveRoutingStatus(conditions: GCPCondition[]): CloudRunServiceSummary
   return "Unknown";
 }
 
-function extractImageTag(image: string): string {
-  // e.g. us-central1-docker.pkg.dev/project/repo/service:sha256-abc or :v1.2.3
-  const colonIdx = image.lastIndexOf(":");
-  if (colonIdx === -1) return image.split("/").pop() ?? image;
-  const tag = image.slice(colonIdx + 1);
-  // If it's a sha256 digest, shorten it
-  if (tag.startsWith("sha256-")) return tag.slice(0, 19); // sha256-abcdef12
-  return tag;
-}
-
-function shortServiceName(fullName: string): string {
-  // projects/{proj}/locations/{region}/services/{name}
-  return fullName.split("/").pop() ?? fullName;
-}
+// ─── Handler ───
 
 export async function GET() {
   try {
@@ -112,51 +209,13 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const token = await getAccessToken();
-
-    const response = await gcpApi<GCPServicesResponse>(
-      `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services`,
-      token
-    );
-
-    const services: CloudRunServiceSummary[] = (response.services ?? []).map((svc) => {
-      const conditions = svc.conditions ?? [];
-      const container = svc.template?.containers?.[0];
-      const image = container?.image ?? "";
-      const envVarCount = container?.env?.length ?? 0;
-
-      return {
-        name: shortServiceName(svc.name),
-        displayName: shortServiceName(svc.name),
-        generation: svc.generation ?? 0,
-        creator: svc.creator ?? "",
-        createTime: svc.createTime ?? "",
-        updateTime: svc.updateTime ?? "",
-        uri: svc.uri ?? "",
-        latestReadyRevision: svc.latestReadyRevision
-          ? shortServiceName(svc.latestReadyRevision)
-          : "",
-        servingStatus: deriveServingStatus(conditions),
-        routingStatus: deriveRoutingStatus(conditions),
-        conditions: conditions.map((c) => ({
-          type: c.type,
-          state: c.state,
-          message: c.message,
-        })),
-        minScale: svc.template?.scaling?.minInstanceCount ?? 0,
-        maxScale: svc.template?.scaling?.maxInstanceCount ?? 100,
-        image,
-        imageTag: extractImageTag(image),
-        envVarCount,
-      };
-    });
-
-    // Sort alphabetically by name
-    services.sort((a, b) => a.name.localeCompare(b.name));
+    const services = isGKE()
+      ? await listServicesGKE()
+      : await listServicesCloudRun();
 
     return NextResponse.json({ data: services });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to fetch Cloud Run services";
+    const message = err instanceof Error ? err.message : "Failed to fetch services";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

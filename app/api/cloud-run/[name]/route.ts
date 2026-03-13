@@ -1,53 +1,17 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { isGKE } from "@/lib/api/platform";
 import { getAccessToken, gcpApi, GCP_PROJECT, GCP_REGION } from "@/lib/api/gcp";
+import {
+  k8sFetch,
+  knativeServicePath,
+  knativeRevisionsPath,
+  K8S_NAMESPACE,
+  type K8sKnativeService,
+  type K8sKnativeRevision,
+} from "@/lib/api/k8s";
 
-// ─── GCP types ───
-
-interface GCPCondition {
-  type: string;
-  state: string;
-  message?: string;
-}
-
-interface GCPRevision {
-  name: string;
-  createTime?: string;
-  updateTime?: string;
-  conditions?: GCPCondition[];
-  containers?: Array<{
-    image: string;
-    env?: Array<{ name: string }>;
-  }>;
-  scaling?: {
-    minInstanceCount?: number;
-    maxInstanceCount?: number;
-  };
-  // Observed generation
-  observedGeneration?: number;
-}
-
-interface GCPRevisionsResponse {
-  revisions?: GCPRevision[];
-  nextPageToken?: string;
-}
-
-interface GCPTrafficStatus {
-  type?: string;
-  revision?: string;
-  percent?: number;
-  uri?: string;
-}
-
-interface GCPService {
-  name: string;
-  uri?: string;
-  latestReadyRevision?: string;
-  trafficStatuses?: GCPTrafficStatus[];
-  traffic?: Array<{ type?: string; revision?: string; percent?: number }>;
-}
-
-// ─── Response shape ───
+// ─── Shared response shape ───
 
 export interface RevisionSummary {
   name: string;
@@ -74,14 +38,149 @@ function extractImageTag(image: string): string {
   return tag;
 }
 
-function revisionReadyState(conditions: GCPCondition[]): string {
-  const ready = conditions.find((c) => c.type === "Ready");
-  if (!ready) return "Unknown";
-  if (ready.state === "CONDITION_SUCCEEDED") return "Ready";
-  if (ready.state === "CONDITION_FAILED") return "Failed";
-  if (ready.state === "CONDITION_PENDING") return "Pending";
-  return "Unknown";
+// ─── GKE (Knative) ───
+
+const KNATIVE_NAMESPACES = (
+  process.env.K8S_NAMESPACES || "platform,shared,marketplace"
+).split(",");
+
+async function findKnativeServiceNamespace(name: string): Promise<string | null> {
+  for (const ns of KNATIVE_NAMESPACES) {
+    try {
+      await k8sFetch<K8sKnativeService>(knativeServicePath(ns, name));
+      return ns;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
+
+async function getServiceDetailGKE(name: string) {
+  const ns = await findKnativeServiceNamespace(name);
+  if (!ns) throw new Error(`Service ${name} not found in any namespace`);
+
+  const [svc, revisionsResp] = await Promise.all([
+    k8sFetch<K8sKnativeService>(knativeServicePath(ns, name)),
+    k8sFetch<{ items?: K8sKnativeRevision[] }>(
+      `${knativeRevisionsPath(ns)}?labelSelector=serving.knative.dev/service=${name}`
+    ),
+  ]);
+
+  const latestReady = svc.status.latestReadyRevisionName ?? "";
+  const trafficMap = new Map<string, number>();
+  for (const t of svc.status.traffic ?? []) {
+    if (t.revisionName) {
+      trafficMap.set(t.revisionName, (trafficMap.get(t.revisionName) ?? 0) + (t.percent ?? 0));
+    }
+  }
+
+  const revisions: RevisionSummary[] = (revisionsResp.items ?? [])
+    .sort((a, b) => (b.metadata.creationTimestamp ?? "").localeCompare(a.metadata.creationTimestamp ?? ""))
+    .slice(0, 20)
+    .map((rev) => {
+      const container = rev.spec.containers?.[0];
+      const image = container?.image ?? "";
+      const conditions = rev.status.conditions ?? [];
+      const readyCond = conditions.find((c) => c.type === "Ready");
+
+      const annotations = rev.metadata.annotations ?? {};
+      const minScale = parseInt(annotations["autoscaling.knative.dev/minScale"] ?? "0", 10);
+      const maxScale = parseInt(annotations["autoscaling.knative.dev/maxScale"] ?? "100", 10);
+
+      return {
+        name: rev.metadata.name,
+        createTime: rev.metadata.creationTimestamp ?? "",
+        image,
+        imageTag: extractImageTag(image),
+        minScale,
+        maxScale,
+        readyState: readyCond?.status === "True" ? "Ready" : readyCond?.status === "False" ? "Failed" : "Pending",
+        trafficPercent: trafficMap.get(rev.metadata.name) ?? 0,
+        isLatestReady: rev.metadata.name === latestReady,
+        conditions: conditions.map((c) => ({
+          type: c.type,
+          state: c.status === "True" ? "CONDITION_SUCCEEDED" : c.status === "False" ? "CONDITION_FAILED" : "CONDITION_PENDING",
+          message: c.message,
+        })),
+      };
+    });
+
+  return {
+    name,
+    uri: svc.status.url ?? "",
+    latestReadyRevision: latestReady,
+    revisions,
+  };
+}
+
+// ─── Cloud Run ───
+
+interface GCPCondition { type: string; state: string; message?: string }
+
+interface GCPService {
+  name: string;
+  uri?: string;
+  latestReadyRevision?: string;
+  trafficStatuses?: Array<{ revision?: string; percent?: number }>;
+  traffic?: Array<{ revision?: string; percent?: number }>;
+}
+
+interface GCPRevision {
+  name: string;
+  createTime?: string;
+  conditions?: GCPCondition[];
+  containers?: Array<{ image: string }>;
+  scaling?: { minInstanceCount?: number; maxInstanceCount?: number };
+}
+
+async function getServiceDetailCloudRun(name: string) {
+  const token = await getAccessToken();
+
+  const [svc, revisionsResponse] = await Promise.all([
+    gcpApi<GCPService>(
+      `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services/${name}`,
+      token
+    ),
+    gcpApi<{ revisions?: GCPRevision[] }>(
+      `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services/${name}/revisions?pageSize=20`,
+      token
+    ),
+  ]);
+
+  const latestReadyRevision = svc.latestReadyRevision ? shortName(svc.latestReadyRevision) : "";
+
+  const trafficMap = new Map<string, number>();
+  for (const t of svc.trafficStatuses ?? svc.traffic ?? []) {
+    const revName = t.revision ? shortName(t.revision) : "";
+    if (revName) trafficMap.set(revName, (trafficMap.get(revName) ?? 0) + (t.percent ?? 0));
+  }
+
+  const revisions: RevisionSummary[] = (revisionsResponse.revisions ?? []).map((rev) => {
+    const revShortName = shortName(rev.name);
+    const container = rev.containers?.[0];
+    const image = container?.image ?? "";
+    const conditions = rev.conditions ?? [];
+    const ready = conditions.find((c) => c.type === "Ready");
+
+    return {
+      name: revShortName,
+      createTime: rev.createTime ?? "",
+      image,
+      imageTag: extractImageTag(image),
+      minScale: rev.scaling?.minInstanceCount ?? 0,
+      maxScale: rev.scaling?.maxInstanceCount ?? 100,
+      readyState: !ready ? "Unknown" : ready.state === "CONDITION_SUCCEEDED" ? "Ready" : ready.state === "CONDITION_FAILED" ? "Failed" : "Pending",
+      trafficPercent: trafficMap.get(revShortName) ?? 0,
+      isLatestReady: revShortName === latestReadyRevision,
+      conditions: conditions.map((c) => ({ type: c.type, state: c.state, message: c.message })),
+    };
+  });
+
+  return { name, uri: svc.uri ?? "", latestReadyRevision, revisions };
+}
+
+// ─── Handler ───
 
 export async function GET(
   _req: NextRequest,
@@ -94,65 +193,11 @@ export async function GET(
     }
 
     const { name } = await params;
-    const token = await getAccessToken();
+    const data = isGKE()
+      ? await getServiceDetailGKE(name)
+      : await getServiceDetailCloudRun(name);
 
-    // Fetch service and revisions in parallel
-    const [svc, revisionsResponse] = await Promise.all([
-      gcpApi<GCPService>(
-        `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services/${name}`,
-        token
-      ),
-      gcpApi<GCPRevisionsResponse>(
-        `run.googleapis.com/v2/projects/${GCP_PROJECT}/locations/${GCP_REGION}/services/${name}/revisions?pageSize=20`,
-        token
-      ),
-    ]);
-
-    const latestReadyRevision = svc.latestReadyRevision
-      ? shortName(svc.latestReadyRevision)
-      : "";
-
-    // Build traffic percent map from trafficStatuses (actual) or traffic (configured)
-    const trafficMap = new Map<string, number>();
-    for (const t of svc.trafficStatuses ?? svc.traffic ?? []) {
-      const revName = t.revision ? shortName(t.revision) : "";
-      if (revName) {
-        trafficMap.set(revName, (trafficMap.get(revName) ?? 0) + (t.percent ?? 0));
-      }
-    }
-
-    const revisions: RevisionSummary[] = (revisionsResponse.revisions ?? []).map((rev) => {
-      const revShortName = shortName(rev.name);
-      const container = rev.containers?.[0];
-      const image = container?.image ?? "";
-      const conditions = rev.conditions ?? [];
-
-      return {
-        name: revShortName,
-        createTime: rev.createTime ?? "",
-        image,
-        imageTag: extractImageTag(image),
-        minScale: rev.scaling?.minInstanceCount ?? 0,
-        maxScale: rev.scaling?.maxInstanceCount ?? 100,
-        readyState: revisionReadyState(conditions),
-        trafficPercent: trafficMap.get(revShortName) ?? 0,
-        isLatestReady: revShortName === latestReadyRevision,
-        conditions: conditions.map((c) => ({
-          type: c.type,
-          state: c.state,
-          message: c.message,
-        })),
-      };
-    });
-
-    return NextResponse.json({
-      data: {
-        name,
-        uri: svc.uri ?? "",
-        latestReadyRevision,
-        revisions,
-      },
-    });
+    return NextResponse.json({ data });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to fetch service revisions";
     return NextResponse.json({ error: message }, { status: 502 });
