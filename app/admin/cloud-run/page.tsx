@@ -24,8 +24,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
   Input,
   Skeleton,
   ErrorState,
@@ -123,7 +121,7 @@ function relativeTime(iso: string): string {
   return `${months}mo ago`;
 }
 
-function shortImage(image: string): string {
+function _shortImage(image: string): string {
   // Show only the last path segment + tag
   const withoutProto = image.replace(/^https?:\/\//, "");
   const parts = withoutProto.split("/");

@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Mail, Calendar, Building2, Globe, CreditCard, FileText, RefreshCw, ChevronRight } from "lucide-react";
+import { ExternalLink, Mail, Calendar, Building2, Globe, CreditCard, FileText, RefreshCw, ChevronRight } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import { useTenant } from "@/lib/api/tenants";
 import {
@@ -11,7 +11,6 @@ import {
   cancelSubscription,
   reactivateSubscription,
   createPortalSession,
-  type TenantSubscription,
   type SubscriptionInvoice,
 } from "@/lib/api/subscriptions";
 import {

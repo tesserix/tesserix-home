@@ -9,7 +9,6 @@ import {
 import {
   useRollbackVersions,
   rollbackService,
-  type RollbackVersion,
 } from "@/lib/api/releases";
 import {
   Badge,

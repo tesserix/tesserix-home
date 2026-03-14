@@ -5,7 +5,6 @@ import {
   DollarSign,
   RefreshCw,
   Loader2,
-  AlertCircle,
   TrendingUp,
   TrendingDown,
   Minus,

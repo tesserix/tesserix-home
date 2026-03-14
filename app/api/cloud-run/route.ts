@@ -5,7 +5,6 @@ import { getAccessToken, gcpApi, GCP_PROJECT, GCP_REGION } from "@/lib/api/gcp";
 import {
   k8sFetch,
   knativeServicesPath,
-  K8S_NAMESPACE,
   type K8sKnativeService,
 } from "@/lib/api/k8s";
 

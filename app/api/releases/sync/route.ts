@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
  * Cloud Run services deploy automatically via CI/CD (GitHub Actions → _deploy-cloudrun.yml).
  * This endpoint is kept for API compatibility with the releases UI.
  */
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   return NextResponse.json({
     success: true,
     message: "Cloud Run services deploy automatically via CI/CD. No manual sync needed.",

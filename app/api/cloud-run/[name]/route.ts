@@ -6,7 +6,6 @@ import {
   k8sFetch,
   knativeServicePath,
   knativeRevisionsPath,
-  K8S_NAMESPACE,
   type K8sKnativeService,
   type K8sKnativeRevision,
 } from "@/lib/api/k8s";

@@ -15,7 +15,6 @@ import {
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -169,7 +168,7 @@ export default function LogsPage() {
     setEntries([]);
     setNextPageToken(undefined);
     fetchLogs(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [service, severity]);
 
   // Auto-refresh

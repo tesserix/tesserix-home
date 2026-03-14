@@ -27,7 +27,6 @@ import {
   useOnboardingItem,
   updateOnboardingItem,
   type Integration,
-  type IntegrationFeature,
 } from "@/lib/api/onboarding-content";
 import { apiFetch } from "@/lib/api/use-api";
 

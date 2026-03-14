@@ -13,19 +13,15 @@ import {
 } from "@/components/admin/releases/pipelines-tab";
 import {
   RegistryTab,
-  RegistryTabSkeleton,
 } from "@/components/admin/releases/registry-tab";
 import {
   GoSharedTab,
-  GoSharedTabSkeleton,
 } from "@/components/admin/releases/go-shared-tab";
 import {
   HistoryTab,
-  HistoryTabSkeleton,
 } from "@/components/admin/releases/history-tab";
 import {
   HealthTab,
-  HealthTabSkeleton,
 } from "@/components/admin/releases/health-tab";
 import { DependencyGraph } from "@/components/admin/releases/dependency-graph";
 import { useServices, usePipelines } from "@/lib/api/releases";

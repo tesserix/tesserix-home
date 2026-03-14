@@ -622,7 +622,7 @@ function ActionMenu<T extends { id: string; active?: boolean }>({
 
 // ─── Form fields per content type ────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function FAQFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -644,7 +644,7 @@ function FAQFormFields({ form, setForm }: { form: any; setForm: (f: any) => void
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function FeatureFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -674,7 +674,7 @@ function FeatureFormFields({ form, setForm }: { form: any; setForm: (f: any) => 
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function TestimonialFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -704,7 +704,7 @@ function TestimonialFormFields({ form, setForm }: { form: any; setForm: (f: any)
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function TrustBadgeFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -726,7 +726,7 @@ function TrustBadgeFormFields({ form, setForm }: { form: any; setForm: (f: any) 
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function ContactFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -753,7 +753,7 @@ function ContactFormFields({ form, setForm }: { form: any; setForm: (f: any) => 
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function CountryDefaultFormFields({ form, setForm }: { form: any; setForm: (f: any) => void }) {
   return (
     <>
@@ -791,7 +791,7 @@ function CountryDefaultFormFields({ form, setForm }: { form: any; setForm: (f: a
 // Simple types that use inline modal editing
 const SIMPLE_TYPES: ContentType[] = ["faqs", "features", "testimonials", "trust-badges", "contacts", "country-defaults"];
 // Complex types that link to detail pages
-const COMPLEX_TYPES: ContentType[] = ["integrations", "guides", "presentation-slides"];
+const _COMPLEX_TYPES: ContentType[] = ["integrations", "guides", "presentation-slides"];
 
 // ─── Main Page ──────────────────────────────────────────────────────────────
 
@@ -806,14 +806,14 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
 
   // Fetch data for active tab
   const { data, isLoading, error, mutate } = useOnboardingContent(activeTab);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const items = useMemo(() => (data as any)?.data ?? [], [data]);
 
   // Filter items by search
   const filteredItems = useMemo(() => {
     if (!debouncedSearch) return items;
     const q = debouncedSearch.toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     return items.filter((item: any) => {
       const searchable = [
         item.question, item.answer, item.title, item.description,
@@ -824,15 +824,15 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
     });
   }, [items, debouncedSearch]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Dialog state for inline editing
   const [dialogOpen, setDialogOpen] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const [editingItem, setEditingItem] = useState<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const [form, setForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
 
@@ -842,7 +842,7 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
     setDialogOpen(true);
   }, []);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const openEdit = useCallback((item: any) => {
     setEditingItem(item);
     setForm({ ...item });
@@ -868,7 +868,7 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
     }
   }, [editingItem, activeTab, form, mutate]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const handleDelete = useCallback((item: any) => {
     setDeleteTarget(item);
   }, []);
@@ -884,7 +884,7 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
     mutate();
   }, [activeTab, deleteTarget, mutate]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const handleToggleActive = useCallback(async (item: any) => {
     const { error: err } = await updateOnboardingItem(activeTab, item.id, { active: !item.active });
     if (err) { toast({ title: err, variant: "destructive" }); return; }
@@ -948,7 +948,7 @@ export default function OnboardingPage({ params }: { params: Promise<{ slug: str
       }
       const { data: result, error: err } = await createOnboardingItem(activeTab, defaults);
       if (err) { toast({ title: err, variant: "destructive" }); return; }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       const newItem = (result as any)?.data;
       if (!newItem?.id) { mutate(); return; }
       const typeSlug = activeTab === "presentation-slides" ? "slides"

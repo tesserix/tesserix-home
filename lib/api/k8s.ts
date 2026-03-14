@@ -31,7 +31,7 @@ export async function getK8sToken(): Promise<string> {
 }
 
 /** Read the CA cert for verifying the API server TLS cert. */
-async function getCACert(): Promise<string> {
+async function _getCACert(): Promise<string> {
   return readFile(
     "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
     "utf-8"

@@ -352,7 +352,7 @@ export function useCsrfToken(): string | null {
  * In the new architecture, fine-grained roles come from OpenFGA (not the session).
  * For tesserix-home, all authenticated users are "staff" context.
  */
-export function useHasRole(role: string | string[]): boolean {
+export function useHasRole(_role: string | string[]): boolean {
   const { user } = useAuth();
 
   if (!user) {

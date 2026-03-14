@@ -5,7 +5,6 @@ import {
   HardDrive,
   RefreshCw,
   Loader2,
-  AlertCircle,
   Folder,
   File,
   ChevronRight,
@@ -222,7 +221,7 @@ export default function StoragePage() {
 
   useEffect(() => {
     fetchObjects(prefix, false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [prefix]);
 
   const navigate = (newPrefix: string) => {

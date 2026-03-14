@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   SERVICE_REGISTRY,
   REPOS_WITH_WORKFLOWS,
-  parseRepo,
   type ServiceType,
 } from "@/lib/releases/services";
 import {

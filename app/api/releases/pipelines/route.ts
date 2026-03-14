@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
     const pageRuns = allRuns.slice(start, start + limit);
 
     const data = pageRuns.map(({ run, fullRepo }) => {
-      const { repo } = parseRepo(fullRepo);
+      const { repo: _repo } = parseRepo(fullRepo);
       return {
         id: run.id,
         serviceName: resolveServiceName(run, fullRepo),

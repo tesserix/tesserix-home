@@ -6,7 +6,6 @@ import { useApi, apiFetch } from './use-api';
  * Go backend may return object-with-numeric-keys instead of array
  * (e.g. { "0": {...}, "1": {...} }). Normalize to array.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toArray<T>(val: T[] | Record<string, T> | null | undefined): T[] {
   if (!val) return [];
   if (Array.isArray(val)) return val;

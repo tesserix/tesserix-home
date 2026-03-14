@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { adminFetch, apiError } from '@/lib/api/admin-fetch';
 
 // Maps a notification-service template (camelCase) to the frontend EmailTemplate (snake_case)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function mapTemplate(t: any) {
   return {
     id: t.id,
@@ -22,7 +22,7 @@ function mapTemplate(t: any) {
 }
 
 // Reverse-maps frontend EmailTemplate fields to notification-service request fields
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 function toBackendPayload(data: any) {
   return {
     name: data.name,

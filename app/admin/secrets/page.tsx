@@ -16,7 +16,6 @@ import {
   Check,
   Loader2,
   Map,
-  Filter,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import {

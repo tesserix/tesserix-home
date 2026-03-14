@@ -4,9 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import {
   RefreshCw,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
   Clock,
   Activity,
   Zap,
@@ -48,7 +45,7 @@ function healthDot(health: ServiceHealth) {
   }
 }
 
-function healthBadgeVariant(
+function _healthBadgeVariant(
   health: ServiceHealth
 ): "success" | "destructive" | "warning" | "secondary" {
   switch (health) {

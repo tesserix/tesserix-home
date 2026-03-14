@@ -13,7 +13,6 @@ import {
   Check,
   Loader2,
   Copy,
-  ServerCrash,
   X,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";

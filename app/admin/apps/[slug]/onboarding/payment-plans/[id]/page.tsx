@@ -38,7 +38,6 @@ import {
 import { apiFetch } from "@/lib/api/use-api";
 import {
   usePlans,
-  type SubscriptionPlan,
 } from "@/lib/api/subscriptions";
 import {
   subscriptionFeatureTexts,
@@ -55,7 +54,7 @@ export default function PaymentPlanDetailPage({
   params: Promise<{ slug: string; id: string }>;
 }) {
   const { slug, id } = use(params);
-  const router = useRouter();
+  const _router = useRouter();
   const { toast } = useToast();
   const { data, isLoading, error, mutate } = useOnboardingItem("payment-plans", id);
   const plan = data?.data as PaymentPlan | undefined;

@@ -343,7 +343,7 @@ export default function OpenFGAPage() {
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   const selectedStore = data?.stores.find((s) => s.id === selectedStoreId);
