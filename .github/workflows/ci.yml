@@ -74,7 +74,7 @@ jobs:
       - name: Build and push
         run: |
           docker build \
-            --secret id=npm_token,env=NODE_AUTH_TOKEN \
+            --secret id=NODE_AUTH_TOKEN,env=NODE_AUTH_TOKEN \
             --platform linux/amd64 \
             -t ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
             -t ${{ env.GAR_REGISTRY }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:latest \
