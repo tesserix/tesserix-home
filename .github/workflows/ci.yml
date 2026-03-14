@@ -22,7 +22,7 @@ concurrency:
 
 env:
   GAR_REGISTRY: asia-south1-docker.pkg.dev
-  GAR_REPOSITORY: tesserix/services
+  GAR_REPOSITORY: tesserix-app/services
   IMAGE_NAME: tesserix-home
 
 permissions:
@@ -97,4 +97,3 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
-
