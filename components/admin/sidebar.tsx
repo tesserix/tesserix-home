@@ -438,33 +438,37 @@ export function AdminSidebar() {
             <Separator className="bg-sidebar-border" />
 
             {/* Context switcher */}
-            <div className="flex gap-1 px-3 py-3">
-              <button
-                onClick={() => {}}
+            <div className="flex gap-1 px-3 py-3" role="tablist" aria-label="App context">
+              <Link
+                href="/admin/dashboard"
+                onClick={() => setMobileMenuOpen(false)}
+                role="tab"
+                aria-selected={activeContext === "platform"}
+                aria-current={activeContext === "platform" ? "page" : undefined}
                 className={cn(
-                  "flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium transition-colors",
                   activeContext === "platform"
                     ? "bg-sidebar-accent text-sidebar-foreground"
                     : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50"
                 )}
               >
-                <Link href="/admin/dashboard" onClick={() => setMobileMenuOpen(false)}>
-                  Platform
-                </Link>
-              </button>
-              <button
-                onClick={() => {}}
+                Platform
+              </Link>
+              <Link
+                href="/admin/apps/mark8ly"
+                onClick={() => setMobileMenuOpen(false)}
+                role="tab"
+                aria-selected={activeContext === "mark8ly"}
+                aria-current={activeContext === "mark8ly" ? "page" : undefined}
                 className={cn(
-                  "flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  "flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium transition-colors",
                   activeContext === "mark8ly"
                     ? "bg-sidebar-accent text-sidebar-foreground"
                     : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50"
                 )}
               >
-                <Link href="/admin/apps/mark8ly" onClick={() => setMobileMenuOpen(false)}>
-                  Mark8ly
-                </Link>
-              </button>
+                Mark8ly
+              </Link>
             </div>
 
             <Separator className="bg-sidebar-border" />

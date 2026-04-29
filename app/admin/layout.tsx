@@ -42,7 +42,7 @@ export default function AdminLayout({
         <AuthGuard>
           <div className="min-h-screen bg-background">
             <AdminSidebar />
-            <div className="lg:pl-72">
+            <div id="main-content" className="lg:pl-72">
               {children}
             </div>
           </div>
