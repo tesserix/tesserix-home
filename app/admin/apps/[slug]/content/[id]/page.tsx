@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
 import {
   ArrowLeft,
   Save,
@@ -12,7 +13,18 @@ import {
   Clock,
 } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
-import { RichTextEditor } from "@/components/ui/rich-text-editor";
+
+// TipTap is ~150KB; load it on demand once we know we're rendering an editor.
+const RichTextEditor = dynamic(
+  () =>
+    import("@/components/ui/rich-text-editor").then((mod) => mod.RichTextEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[420px] w-full animate-pulse rounded-md border bg-muted/40" />
+    ),
+  },
+);
 import {
   useContentPages,
   saveContentPages,

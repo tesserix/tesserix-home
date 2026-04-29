@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useCallback, useState } from "react";
 import {
   RefreshCw,
   AlertTriangle,
@@ -20,6 +20,7 @@ import {
   type AppGroup,
 } from "@/lib/api/system-health";
 import { Button, Badge, Card, CardContent, Skeleton, ErrorState } from "@tesserix/web";
+import { useVisibilityInterval } from "@/hooks/use-visibility-interval";
 
 function statusIndicator(status: OverallStatus) {
   switch (status) {
@@ -177,37 +178,15 @@ function PageSkeleton() {
 
 export default function SystemHealthPage() {
   const { data, isLoading, error, mutate } = useSystemHealth();
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<ServiceHealth | "all">(
     "all"
   );
 
-  useEffect(() => {
-    function start() {
-      if (intervalRef.current) return;
-      intervalRef.current = setInterval(() => mutate(), 30000);
-    }
-    function stop() {
-      if (!intervalRef.current) return;
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        mutate();
-        start();
-      } else {
-        stop();
-      }
-    }
-    if (document.visibilityState === "visible") start();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
+  const refresh = useCallback(() => {
+    mutate();
   }, [mutate]);
+  useVisibilityInterval(refresh, 30_000);
 
   const allServices = data?.services ?? [];
   const filteredServices =

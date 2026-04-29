@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ScrollText,
   RefreshCw,
@@ -23,6 +23,7 @@ import {
   Skeleton,
 } from "@tesserix/web";
 import { apiFetch } from "@/lib/api/use-api";
+import { useVisibilityInterval } from "@/hooks/use-visibility-interval";
 import { SERVICE_REGISTRY } from "@/lib/releases/services";
 
 const SERVICE_OPTIONS = SERVICE_REGISTRY.map((s) => ({
@@ -133,7 +134,6 @@ export default function LogsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchLogs = useCallback(
     async (append = false) => {
@@ -171,23 +171,13 @@ export default function LogsPage() {
      
   }, [service, severity]);
 
-  // Auto-refresh
-  useEffect(() => {
-    if (!autoRefresh) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      return;
-    }
-    function tick() {
-      if (document.visibilityState !== "visible") return;
-      setEntries([]);
-      setNextPageToken(undefined);
-      fetchLogs(false);
-    }
-    intervalRef.current = setInterval(tick, 10_000);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [autoRefresh, fetchLogs]);
+  // Auto-refresh — paused when the tab is hidden
+  const refresh = useCallback(() => {
+    setEntries([]);
+    setNextPageToken(undefined);
+    fetchLogs(false);
+  }, [fetchLogs]);
+  useVisibilityInterval(autoRefresh ? refresh : null, autoRefresh ? 10_000 : null);
 
   return (
     <>

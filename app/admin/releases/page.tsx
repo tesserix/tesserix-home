@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback } from "react";
 import { Rocket, RefreshCw } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
+import { useVisibilityInterval } from "@/hooks/use-visibility-interval";
 import {
   ServicesTab,
   ServicesTabSkeleton,
@@ -41,38 +42,13 @@ export default function ReleasesPage() {
     mutate: refreshPipelines,
   } = usePipelines();
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
   // Auto-refresh every 30s while the tab is visible
-  useEffect(() => {
-    function refresh() {
-      refreshServices();
-      refreshPipelines();
-    }
-    function start() {
-      if (intervalRef.current) return;
-      intervalRef.current = setInterval(refresh, 30_000);
-    }
-    function stop() {
-      if (!intervalRef.current) return;
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    function onVisibilityChange() {
-      if (document.visibilityState === "visible") {
-        refresh();
-        start();
-      } else {
-        stop();
-      }
-    }
-    if (document.visibilityState === "visible") start();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
+  const refreshAll = useCallback(() => {
+    refreshServices();
+    refreshPipelines();
   }, [refreshServices, refreshPipelines]);
+
+  useVisibilityInterval(refreshAll, 30_000);
 
   const handleRefresh = () => {
     refreshServices();
