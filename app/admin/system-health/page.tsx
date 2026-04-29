@@ -184,9 +184,28 @@ export default function SystemHealthPage() {
   );
 
   useEffect(() => {
-    intervalRef.current = setInterval(() => mutate(), 30000);
+    function start() {
+      if (intervalRef.current) return;
+      intervalRef.current = setInterval(() => mutate(), 30000);
+    }
+    function stop() {
+      if (!intervalRef.current) return;
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        mutate();
+        start();
+      } else {
+        stop();
+      }
+    }
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [mutate]);
 

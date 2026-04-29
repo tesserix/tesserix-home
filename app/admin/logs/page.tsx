@@ -173,15 +173,17 @@ export default function LogsPage() {
 
   // Auto-refresh
   useEffect(() => {
-    if (autoRefresh) {
-      intervalRef.current = setInterval(() => {
-        setEntries([]);
-        setNextPageToken(undefined);
-        fetchLogs(false);
-      }, 10_000);
-    } else {
+    if (!autoRefresh) {
       if (intervalRef.current) clearInterval(intervalRef.current);
+      return;
     }
+    function tick() {
+      if (document.visibilityState !== "visible") return;
+      setEntries([]);
+      setNextPageToken(undefined);
+      fetchLogs(false);
+    }
+    intervalRef.current = setInterval(tick, 10_000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
