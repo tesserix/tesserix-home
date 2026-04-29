@@ -26,25 +26,25 @@ const ACTION_CONFIG: Record<
 > = {
   promote: {
     icon: Rocket,
-    color: "text-green-500",
+    color: "text-success",
     borderColor: "border-l-green-500",
     label: "Promoted",
   },
   rollback: {
     icon: Undo2,
-    color: "text-blue-400",
+    color: "text-info",
     borderColor: "border-l-blue-400",
     label: "Rolled back",
   },
   lock: {
     icon: Lock,
-    color: "text-amber-400",
+    color: "text-warning",
     borderColor: "border-l-amber-400",
     label: "Locked",
   },
   unlock: {
     icon: Unlock,
-    color: "text-amber-400",
+    color: "text-warning",
     borderColor: "border-l-amber-400",
     label: "Unlocked",
   },

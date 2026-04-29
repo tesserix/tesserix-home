@@ -78,7 +78,7 @@ function SummaryCards({ topics, subscriptions }: SummaryCardsProps) {
         <StatLabel>Push vs Pull</StatLabel>
       </Stat>
       <Stat size="sm">
-        <StatValue className={dlqCount > 0 ? "text-amber-600" : "text-muted-foreground"}>
+        <StatValue className={dlqCount > 0 ? "text-warning" : "text-muted-foreground"}>
           {dlqCount}
         </StatValue>
         <StatLabel>With Dead Letter</StatLabel>

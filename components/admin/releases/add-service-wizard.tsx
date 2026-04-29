@@ -613,7 +613,7 @@ function Step2({
           <div className="flex items-center justify-between rounded-lg border px-4 py-3">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-violet-400" />
+                <Package className="h-4 w-4 text-foreground/70" />
                 <Label className="text-sm cursor-pointer">Uses go-shared</Label>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -633,7 +633,7 @@ function Step2({
       <div className="flex items-center justify-between rounded-lg border px-4 py-3">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
-            <Radio className="h-4 w-4 text-teal-400" />
+            <Radio className="h-4 w-4 text-foreground/70" />
             <Label className="text-sm cursor-pointer">Publishes events</Label>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -649,7 +649,7 @@ function Step2({
       </div>
 
       {form.publishesEvents && (
-        <div className="pl-4 border-l-2 border-teal-500/30 space-y-1.5">
+        <div className="pl-4 border-l-2 border-foreground/20 space-y-1.5">
           <Label htmlFor="pubsubTopic">Pub/Sub topic name</Label>
           <Input
             id="pubsubTopic"
@@ -762,8 +762,8 @@ function Step4({
                   variant="secondary"
                   className={
                     form.lang === "go"
-                      ? "bg-zinc-600/20 text-zinc-300 text-xs"
-                      : "bg-blue-500/15 text-blue-400 text-xs"
+                      ? "bg-zinc-600/20 text-muted-foreground text-xs"
+                      : "bg-info/15 text-info text-xs"
                   }
                 >
                   {form.lang === "go" ? "Go" : "Next.js"}
@@ -773,7 +773,7 @@ function Step4({
             <SummaryRow label="Database">
               {form.hasDb ? (
                 <div className="flex items-center gap-1.5">
-                  <Database className="h-3.5 w-3.5 text-blue-400" />
+                  <Database className="h-3.5 w-3.5 text-info" />
                   <span className="text-xs">
                     Yes &mdash;{" "}
                     <span className="font-mono">{form.migration}</span>
@@ -797,7 +797,7 @@ function Step4({
               <SummaryRow label="go-shared">
                 {form.usesGoShared ? (
                   <div className="flex items-center gap-1.5">
-                    <Package className="h-3.5 w-3.5 text-violet-400" />
+                    <Package className="h-3.5 w-3.5 text-foreground/70" />
                     <span className="text-xs">Consumer</span>
                   </div>
                 ) : (
@@ -808,7 +808,7 @@ function Step4({
             <SummaryRow label="Pub/Sub">
               {form.publishesEvents ? (
                 <div className="flex items-center gap-1.5">
-                  <Radio className="h-3.5 w-3.5 text-teal-400" />
+                  <Radio className="h-3.5 w-3.5 text-foreground/70" />
                   <span className="font-mono text-xs">{form.pubsubTopic || "—"}</span>
                 </div>
               ) : (

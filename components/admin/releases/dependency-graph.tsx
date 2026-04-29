@@ -54,15 +54,15 @@ interface GraphEdge {
 const GROUP_COLORS: Record<AppGroup, { border: string; bg: string; text: string; nodeFill: string; nodeStroke: string }> = {
   platform: {
     border: "border-zinc-600",
-    bg: "bg-zinc-800/40",
-    text: "text-zinc-300",
+    bg: "bg-muted",
+    text: "text-muted-foreground",
     nodeFill: "#27272a",
     nodeStroke: "#71717a",
   },
   mark8ly: {
-    border: "border-blue-800",
-    bg: "bg-blue-950/30",
-    text: "text-blue-300",
+    border: "border-info/40",
+    bg: "bg-muted",
+    text: "text-info",
     nodeFill: "#1e3a5f",
     nodeStroke: "#3b82f6",
   },
@@ -460,7 +460,7 @@ function ListRow({ service, allServices, highlighted, onHighlight, onChipClick, 
       className={[
         "grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3 rounded-lg border transition-colors duration-200",
         isHighlighted
-          ? "border-blue-500/60 bg-blue-950/20"
+          ? "border-info/60 bg-muted"
           : `${colors.border} ${colors.bg}`,
       ].join(" ")}
       onMouseEnter={() => onHighlight(service.name)}
@@ -475,9 +475,9 @@ function ListRow({ service, allServices, highlighted, onHighlight, onChipClick, 
             <button
               key={dep.name}
               onClick={() => onChipClick(dep.name)}
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:border-blue-500 hover:text-blue-300 transition-colors"
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-border bg-muted text-muted-foreground hover:border-info hover:text-info transition-colors"
             >
-              <ArrowRight className="h-3 w-3 text-zinc-500" />
+              <ArrowRight className="h-3 w-3 text-muted-foreground" />
               {dep.displayName}
             </button>
           ))
@@ -499,10 +499,10 @@ function ListRow({ service, allServices, highlighted, onHighlight, onChipClick, 
             <button
               key={dep.name}
               onClick={() => onChipClick(dep.name)}
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800/60 text-zinc-300 hover:border-blue-500 hover:text-blue-300 transition-colors"
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-border bg-muted text-muted-foreground hover:border-info hover:text-info transition-colors"
             >
               {dep.displayName}
-              <ArrowRight className="h-3 w-3 text-zinc-500" />
+              <ArrowRight className="h-3 w-3 text-muted-foreground" />
             </button>
           ))
         )}
@@ -609,13 +609,13 @@ function StatsBar({ services }: { services: ServiceConfig[] }) {
       </span>
       <span className="text-border">|</span>
       <span>
-        <span className="font-semibold text-zinc-300">{platformCount}</span>{" "}
-        <span className="text-zinc-500">platform</span>
+        <span className="font-semibold text-muted-foreground">{platformCount}</span>{" "}
+        <span className="text-muted-foreground">platform</span>
       </span>
       <span className="text-border">|</span>
       <span>
-        <span className="font-semibold text-blue-300">{mark8lyCount}</span>{" "}
-        <span className="text-blue-500">mark8ly</span>
+        <span className="font-semibold text-info">{mark8lyCount}</span>{" "}
+        <span className="text-info">mark8ly</span>
       </span>
     </div>
   );
@@ -719,11 +719,11 @@ export function DependencyGraph() {
       {/* Legend */}
       <div className="flex items-center gap-4 px-1">
         <div className="flex items-center gap-1.5">
-          <div className="h-3 w-3 rounded-sm border border-zinc-600 bg-zinc-800/40" />
+          <div className="h-3 w-3 rounded-sm border border-zinc-600 bg-muted" />
           <span className="text-xs text-muted-foreground">Platform</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className="h-3 w-3 rounded-sm border border-blue-800 bg-blue-950/30" />
+          <div className="h-3 w-3 rounded-sm border border-info/40 bg-muted" />
           <span className="text-xs text-muted-foreground">mark8ly</span>
         </div>
         {viewMode === "list" && (

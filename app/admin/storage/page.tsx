@@ -157,7 +157,7 @@ function SetupCard({ message, steps }: { message: string; steps: string[] }) {
               {steps.map((step, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400"
+                  className="flex items-start gap-2 text-xs text-warning"
                 >
                   <span className="shrink-0 font-semibold">{i + 1}.</span>
                   {step}
@@ -335,7 +335,7 @@ export default function StoragePage() {
                       onClick={() => navigate(item.name)}
                       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
                     >
-                      <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                      <Folder className="h-4 w-4 text-warning shrink-0" />
                       <span className="flex-1 font-mono text-sm font-medium">
                         {item.displayName}/
                       </span>

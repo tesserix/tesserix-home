@@ -274,7 +274,7 @@ function TestimonialsTable({ items, onEdit, onDelete, onToggleActive, onApprove,
                       onClick={() => onApprove(testimonial)}
                       title="Approve"
                     >
-                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <CheckCircle className="h-4 w-4 text-success" />
                     </Button>
                     <Button
                       size="sm"
@@ -282,7 +282,7 @@ function TestimonialsTable({ items, onEdit, onDelete, onToggleActive, onApprove,
                       onClick={() => onReject(testimonial)}
                       title="Reject"
                     >
-                      <XCircle className="h-4 w-4 text-red-600" />
+                      <XCircle className="h-4 w-4 text-error" />
                     </Button>
                     <Button
                       size="sm"
@@ -290,7 +290,7 @@ function TestimonialsTable({ items, onEdit, onDelete, onToggleActive, onApprove,
                       onClick={() => onRequestRevision(testimonial)}
                       title="Request Revision"
                     >
-                      <MessageSquare className="h-4 w-4 text-orange-600" />
+                      <MessageSquare className="h-4 w-4 text-warning" />
                     </Button>
                   </>
                 )}

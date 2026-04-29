@@ -80,7 +80,7 @@ function SetupCard({ message, steps }: { message: string; steps: string[] }) {
               {steps.map((step, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400"
+                  className="flex items-start gap-2 text-xs text-warning"
                 >
                   <span className="shrink-0 font-semibold">{i + 1}.</span>
                   {step}

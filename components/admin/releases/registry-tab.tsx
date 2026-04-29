@@ -86,8 +86,8 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
         variant="secondary"
         className={
           service.lang === "go"
-            ? "bg-zinc-600/20 text-zinc-300 text-xs"
-            : "bg-blue-500/15 text-blue-400 text-xs"
+            ? "bg-zinc-600/20 text-muted-foreground text-xs"
+            : "bg-info/15 text-info text-xs"
         }
       >
         {service.lang === "go" ? "Go" : "Next.js"}
@@ -96,19 +96,19 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
         {service.type}
       </Badge>
       {service.hasDb && (
-        <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-xs gap-1">
+        <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
           <Database className="h-3 w-3" />
           DB
         </Badge>
       )}
       {service.usesGoShared && (
-        <Badge className="bg-violet-500/10 text-violet-400 border-violet-500/20 text-xs gap-1">
+        <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
           <Package className="h-3 w-3" />
           GS
         </Badge>
       )}
       {service.publishesEvents && (
-        <Badge className="bg-teal-500/10 text-teal-400 border-teal-500/20 text-xs gap-1">
+        <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
           <Radio className="h-3 w-3" />
           Events
         </Badge>
@@ -120,7 +120,7 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
         </Badge>
       )}
       {!service.managed && (
-        <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs gap-1">
+        <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
           <Shield className="h-3 w-3" />
           External
         </Badge>

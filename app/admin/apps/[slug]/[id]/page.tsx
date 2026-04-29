@@ -224,7 +224,7 @@ function TenantBillingTab({ tenantId }: { tenantId: string }) {
           </div>
 
           {subscription.cancelAtPeriodEnd && (
-            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-200">
+            <div className="rounded-lg bg-warning/5 border border-warning/30 p-3 text-sm text-warning">
               This subscription is set to cancel at the end of the current billing period.
             </div>
           )}

@@ -118,8 +118,8 @@ export function ServiceDetailSheet({
               variant="secondary"
               className={
                 service.lang === "go"
-                  ? "bg-zinc-600/20 text-zinc-300"
-                  : "bg-blue-500/15 text-blue-400"
+                  ? "bg-zinc-600/20 text-muted-foreground"
+                  : "bg-info/15 text-info"
               }
             >
               {service.lang === "go" ? "Go" : "Next.js"}
@@ -127,7 +127,7 @@ export function ServiceDetailSheet({
             <Badge variant="outline">{service.type}</Badge>
             <Badge variant="secondary">{service.appGroup}</Badge>
             {!service.managed && (
-              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 gap-1">
+              <Badge className="bg-warning/10 text-warning border-warning/20 gap-1">
                 <Shield className="h-3 w-3" />
                 External Image
               </Badge>
@@ -186,7 +186,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="Database">
                   {service.hasDb ? (
                     <div className="flex items-center gap-1.5">
-                      <Database className="h-3.5 w-3.5 text-blue-400" />
+                      <Database className="h-3.5 w-3.5 text-info" />
                       <span>Yes</span>
                     </div>
                   ) : (
@@ -213,7 +213,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="go-shared">
                   {service.usesGoShared ? (
                     <div className="flex items-center gap-1.5">
-                      <Package className="h-3.5 w-3.5 text-violet-400" />
+                      <Package className="h-3.5 w-3.5 text-foreground/70" />
                       <span>Consumer</span>
                     </div>
                   ) : (
@@ -223,7 +223,7 @@ export function ServiceDetailSheet({
                 {service.publishesEvents && (
                   <InfoRow label="Pub/Sub Topic">
                     <div className="flex items-center gap-1.5">
-                      <Radio className="h-3.5 w-3.5 text-teal-400" />
+                      <Radio className="h-3.5 w-3.5 text-foreground/70" />
                       <span className="font-mono text-xs">
                         {service.pubsubTopic}
                       </span>

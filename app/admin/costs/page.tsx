@@ -166,7 +166,7 @@ function MonthlyTrendChart() {
           <p className="text-3xl font-bold">{formatCurrency(curr.cost)}</p>
         </div>
         <div className={`flex items-center gap-1 text-sm font-medium pb-1 ${
-          isFlat ? "text-muted-foreground" : isUp ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"
+          isFlat ? "text-muted-foreground" : isUp ? "text-error" : "text-success"
         }`}>
           {isFlat ? (
             <Minus className="h-4 w-4" />

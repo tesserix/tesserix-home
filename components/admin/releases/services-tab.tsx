@@ -153,8 +153,8 @@ function InlinePromote({
 
   if (successInfo) {
     return (
-      <div className="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/5 p-3 mt-2">
-        <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+      <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success/5 p-3 mt-2">
+        <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
         <p className="text-sm">
           Release <span className="font-mono font-medium">v{successInfo.version}</span> triggered
         </p>
@@ -257,7 +257,7 @@ function ServiceRow({
                 {service.displayName}
               </p>
               {lock && (
-                <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs gap-1">
+                <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
                   <Lock className="h-3 w-3" />
                   Locked
                 </Badge>
@@ -319,7 +319,7 @@ function ServiceRow({
               title={lock ? "Unlock deployments" : "Lock deployments"}
             >
               {lock ? (
-                <Unlock className="h-3.5 w-3.5 text-amber-400" />
+                <Unlock className="h-3.5 w-3.5 text-warning" />
               ) : (
                 <Lock className="h-3.5 w-3.5 text-muted-foreground" />
               )}
@@ -418,10 +418,10 @@ function InlineGroupPromote({
 
   if (result) {
     return (
-      <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-3 mx-4 mb-4 space-y-1">
+      <div className="rounded-lg border border-success/30 bg-success/5 p-3 mx-4 mb-4 space-y-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            <CheckCircle2 className="h-4 w-4 text-success" />
             <p className="text-sm font-medium">
               Tagged {result.succeeded.length}/{result.succeeded.length + result.failed.length} services with v{version}
             </p>
@@ -676,8 +676,8 @@ export function ServicesTab({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-                <CheckCircle2 className="h-5 w-5 text-green-500" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
+                <CheckCircle2 className="h-5 w-5 text-success" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{successBuilds}</p>
@@ -689,8 +689,8 @@ export function ServicesTab({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
-                <XCircle className="h-5 w-5 text-red-500" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10">
+                <XCircle className="h-5 w-5 text-error" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{failedBuilds}</p>
@@ -702,8 +702,8 @@ export function ServicesTab({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-yellow-500/10">
-                <Loader2 className="h-5 w-5 text-yellow-500" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
+                <Loader2 className="h-5 w-5 text-warning" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{inProgress}</p>
@@ -715,8 +715,8 @@ export function ServicesTab({
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10">
-                <Lock className="h-5 w-5 text-amber-500" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
+                <Lock className="h-5 w-5 text-warning" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{locksMap.size}</p>

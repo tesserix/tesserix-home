@@ -36,7 +36,7 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
             title={`${v.description} — Click to copy`}
           >
             {copiedVar === v.name ? (
-              <Check className="h-3 w-3 text-green-500" />
+              <Check className="h-3 w-3 text-success" />
             ) : (
               <Copy className="h-3 w-3 text-muted-foreground" />
             )}
@@ -66,7 +66,7 @@ export function VariablesPanel({ category, compact = false }: VariablesPanelProp
             >
               <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
                 {copiedVar === v.name ? (
-                  <span className="text-green-500">Copied!</span>
+                  <span className="text-success">Copied!</span>
                 ) : (
                   `{{${v.name}}}`
                 )}

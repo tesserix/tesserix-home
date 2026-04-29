@@ -56,11 +56,11 @@ const STATUS_ICON: Record<
 > = {
   updated: {
     icon: CheckCircle2,
-    color: "text-green-500",
+    color: "text-success",
     label: "Updated",
   },
-  pending: { icon: Clock, color: "text-amber-400", label: "Pending" },
-  failed: { icon: XCircle, color: "text-red-400", label: "Failed" },
+  pending: { icon: Clock, color: "text-warning", label: "Pending" },
+  failed: { icon: XCircle, color: "text-error", label: "Failed" },
 };
 
 function TriggerReleaseDialog({
@@ -176,9 +176,9 @@ function TriggerReleaseDialog({
           </div>
 
           {pendingCount > 0 && (
-            <div className="flex items-center gap-2 p-2 rounded-lg border border-amber-500/30 bg-amber-500/5">
-              <Clock className="h-4 w-4 text-amber-400 shrink-0" />
-              <p className="text-xs text-amber-400">
+            <div className="flex items-center gap-2 p-2 rounded-lg border border-warning/30 bg-warning/5">
+              <Clock className="h-4 w-4 text-warning shrink-0" />
+              <p className="text-xs text-warning">
                 {pendingCount} repos have pending updates from v{currentVersion}.
               </p>
             </div>
@@ -249,8 +249,8 @@ export function GoSharedTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-500/10">
-            <Package className="h-5 w-5 text-violet-400" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+            <Package className="h-5 w-5 text-foreground/70" />
           </div>
           <div>
             <h3 className="text-sm font-semibold">go-shared</h3>
@@ -311,14 +311,14 @@ export function GoSharedTab() {
           <Card>
             <CardContent className="p-4 space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-1.5 text-green-500">
+                <span className="flex items-center gap-1.5 text-success">
                   <CheckCircle2 className="h-3.5 w-3.5" />
                   Updated
                 </span>
                 <span className="font-medium">{updatedCount}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-1.5 text-amber-400">
+                <span className="flex items-center gap-1.5 text-warning">
                   <Clock className="h-3.5 w-3.5" />
                   Pending
                 </span>
@@ -326,7 +326,7 @@ export function GoSharedTab() {
               </div>
               {failedCount > 0 && (
                 <div className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-1.5 text-red-400">
+                  <span className="flex items-center gap-1.5 text-error">
                     <XCircle className="h-3.5 w-3.5" />
                     Failed
                   </span>

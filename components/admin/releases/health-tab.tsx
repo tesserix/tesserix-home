@@ -33,19 +33,19 @@ const STATUS_CONFIG: Record<
 > = {
   healthy: {
     icon: CheckCircle2,
-    color: "text-green-500",
-    bg: "bg-green-500/10",
+    color: "text-success",
+    bg: "bg-success/10",
     label: "Healthy",
   },
   degraded: {
     icon: AlertTriangle,
-    color: "text-red-400",
-    bg: "bg-red-500/10",
+    color: "text-error",
+    bg: "bg-error/10",
     label: "Degraded",
   },
   unknown: {
     icon: HelpCircle,
-    color: "text-zinc-400",
+    color: "text-muted-foreground",
     bg: "bg-zinc-500/10",
     label: "Unknown",
   },
@@ -174,9 +174,9 @@ export function HealthTab() {
       {/* Not available notice */}
       {data && !data.available && (
         <Card>
-          <CardContent className="p-4 flex items-center gap-3 border-amber-500/30 bg-amber-500/5">
-            <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-            <p className="text-sm text-amber-400">
+          <CardContent className="p-4 flex items-center gap-3 border-warning/30 bg-warning/5">
+            <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
+            <p className="text-sm text-warning">
               Health data unavailable — not running on Cloud Run. Status shown
               as &quot;Unknown&quot; for all services.
             </p>
@@ -190,8 +190,8 @@ export function HealthTab() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-500/10">
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
+                  <CheckCircle2 className="h-5 w-5 text-success" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{healthy}</p>
@@ -203,8 +203,8 @@ export function HealthTab() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-500/10">
-                  <AlertTriangle className="h-5 w-5 text-red-500" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10">
+                  <AlertTriangle className="h-5 w-5 text-error" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{degraded}</p>
@@ -217,7 +217,7 @@ export function HealthTab() {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-500/10">
-                  <HelpCircle className="h-5 w-5 text-zinc-400" />
+                  <HelpCircle className="h-5 w-5 text-muted-foreground" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{unknown}</p>

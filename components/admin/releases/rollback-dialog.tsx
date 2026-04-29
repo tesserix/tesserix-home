@@ -157,9 +157,9 @@ export function RollbackDialog({
 
           {/* Schema warning */}
           {hasDb && selected && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
-              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-amber-400">
+            <div className="flex items-start gap-2 p-3 rounded-lg border border-warning/30 bg-warning/5">
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+              <p className="text-xs text-warning">
                 Schema migrations are NOT reversed automatically. Ensure v
                 {selected} is compatible with the current database schema.
               </p>

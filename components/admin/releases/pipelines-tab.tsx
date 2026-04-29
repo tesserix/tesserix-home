@@ -140,7 +140,7 @@ function ActionButton({
       {state === "loading" ? (
         <Loader2 className="h-3 w-3 animate-spin" />
       ) : state === "success" ? (
-        <CheckCircle2 className="h-3 w-3 text-green-500" />
+        <CheckCircle2 className="h-3 w-3 text-success" />
       ) : (
         <Icon className="h-3 w-3" />
       )}

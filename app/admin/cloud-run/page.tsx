@@ -201,7 +201,7 @@ function ServingStatusBadge({ status }: { status: CloudRunService["servingStatus
 function RevisionReadyBadge({ state }: { state: string }) {
   if (state === "Ready") {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-green-600">
+      <span className="inline-flex items-center gap-1 text-xs text-success">
         <CheckCircle2 className="h-3 w-3" />
         Ready
       </span>
@@ -209,14 +209,14 @@ function RevisionReadyBadge({ state }: { state: string }) {
   }
   if (state === "Failed") {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-red-600">
+      <span className="inline-flex items-center gap-1 text-xs text-error">
         <AlertCircle className="h-3 w-3" />
         Failed
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-yellow-600">
+    <span className="inline-flex items-center gap-1 text-xs text-warning">
       <Loader2 className="h-3 w-3 animate-spin" />
       {state}
     </span>
@@ -297,12 +297,12 @@ function ServiceDetailPanel({ serviceName }: { serviceName: string }) {
               {detail.revisions.map((rev) => (
                 <TableRow
                   key={rev.name}
-                  className={rev.isLatestReady ? "bg-green-500/5" : ""}
+                  className={rev.isLatestReady ? "bg-success/5" : ""}
                 >
                   <TableCell className="font-mono text-xs py-2">
                     <div className="flex items-center gap-1.5">
                       {rev.isLatestReady && (
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-success/50 shrink-0" />
                       )}
                       <span className="truncate max-w-[180px]">{rev.name}</span>
                     </div>
@@ -424,14 +424,14 @@ function SummaryCards({
       </Stat>
       <Stat size="sm">
         <StatLabel>Serving</StatLabel>
-        <StatValue className="text-green-600">{serving}</StatValue>
+        <StatValue className="text-success">{serving}</StatValue>
         <StatMeta>
           {total > 0 ? `${Math.round((serving / total) * 100)}% healthy` : "—"}
         </StatMeta>
       </Stat>
       <Stat size="sm">
         <StatLabel>Issues</StatLabel>
-        <StatValue className={failed > 0 ? "text-red-600" : ""}>
+        <StatValue className={failed > 0 ? "text-error" : ""}>
           {failed + deploying}
         </StatValue>
         <StatMeta>{failed} failed, {deploying} deploying</StatMeta>

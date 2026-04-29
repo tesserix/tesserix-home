@@ -184,7 +184,7 @@ function KpiCards({ stats }: { stats: EnhancedStats | null }) {
     {
       title: "Expiring (7d)",
       value: stats.expiringTrials7d,
-      icon: <AlertTriangle className="h-4 w-4 text-amber-500" />,
+      icon: <AlertTriangle className="h-4 w-4 text-warning" />,
     },
     {
       title: "Suspended",
@@ -704,7 +704,7 @@ function DeletePlanDialog({
 
         <div className="space-y-3 py-2">
           {plan?.stripeProductId && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+            <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-sm text-warning">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <p>
@@ -838,7 +838,7 @@ function PlanCard({
           <div className="space-y-1 border-t pt-3">
             {featureList.map(([feature]) => (
               <div key={feature} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Check className="h-3 w-3 text-green-500 shrink-0" />
+                <Check className="h-3 w-3 text-success shrink-0" />
                 <span>{feature.replace(/_/g, " ")}</span>
               </div>
             ))}
@@ -1081,7 +1081,7 @@ function ExpiringTrialsSection() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            <CalendarClock className="h-4 w-4 text-amber-500" />
+            <CalendarClock className="h-4 w-4 text-warning" />
             <CardTitle className="text-base">Expiring Trials</CardTitle>
             {sorted.length > 0 && (
               <Badge variant="warning" className="text-xs ml-1">{sorted.length}</Badge>

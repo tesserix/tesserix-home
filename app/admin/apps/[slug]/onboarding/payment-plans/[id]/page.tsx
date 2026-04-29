@@ -275,9 +275,9 @@ export default function PaymentPlanDetailPage({
 
         {/* Linked billing plan banner */}
         {linkedPlan && (
-          <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm dark:border-blue-800 dark:bg-blue-950">
+          <div className="rounded-md border border-info/30 bg-info/5 p-3 text-sm">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
+              <div className="flex items-center gap-2 text-info">
                 <Info className="h-4 w-4 shrink-0" />
                 <span>
                   Linked to billing plan: <strong>{linkedPlan.displayName}</strong>{" "}
@@ -286,7 +286,7 @@ export default function PaymentPlanDetailPage({
               </div>
               <Link
                 href={`/admin/apps/${slug}/billing`}
-                className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline dark:text-blue-300"
+                className="inline-flex items-center gap-1 text-xs text-info hover:underline"
               >
                 View Billing
                 <ArrowRight className="h-3 w-3" />
@@ -428,7 +428,7 @@ export default function PaymentPlanDetailPage({
                         onClick={() => toggleHighlight(feature)}
                         title={feature.highlighted ? "Remove highlight" : "Highlight"}
                       >
-                        <Star className={`h-3.5 w-3.5 ${feature.highlighted ? "fill-yellow-500 text-yellow-500" : ""}`} />
+                        <Star className={`h-3.5 w-3.5 ${feature.highlighted ? "fill-yellow-500 text-warning" : ""}`} />
                       </Button>
                       <Button
                         variant="ghost"

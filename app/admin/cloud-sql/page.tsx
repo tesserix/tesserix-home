@@ -191,8 +191,8 @@ function InstanceCard({ inst }: { inst: SqlInstance }) {
       {/* Header */}
       <div className="flex items-start justify-between p-4 pb-3">
         <div className="flex items-center gap-2.5">
-          <div className="rounded-md bg-blue-500/10 p-1.5">
-            <Database className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <div className="rounded-md bg-info/10 p-1.5">
+            <Database className="h-4 w-4 text-info" />
           </div>
           <div>
             <h3 className="font-semibold text-sm font-mono">{inst.name}</h3>
@@ -232,11 +232,11 @@ function InstanceCard({ inst }: { inst: SqlInstance }) {
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-center gap-1.5">
             {inst.backupEnabled ? (
-              <Shield className="h-3.5 w-3.5 text-green-500" />
+              <Shield className="h-3.5 w-3.5 text-success" />
             ) : (
               <Shield className="h-3.5 w-3.5 text-muted-foreground" />
             )}
-            <span className={inst.backupEnabled ? "text-green-700 dark:text-green-400" : "text-muted-foreground"}>
+            <span className={inst.backupEnabled ? "text-success" : "text-muted-foreground"}>
               {inst.backupEnabled ? "Backups enabled" : "Backups disabled"}
             </span>
           </div>
@@ -310,7 +310,7 @@ function SummaryBar({ instances }: { instances: SqlInstance[] }) {
         <Stat key={s.label} size="sm" className="text-center">
           <StatValue
             className={
-              "good" in s && s.good === false ? "text-yellow-600 dark:text-yellow-400" : ""
+              "good" in s && s.good === false ? "text-warning" : ""
             }
           >
             {s.value}
