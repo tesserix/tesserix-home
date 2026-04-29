@@ -51,64 +51,64 @@ export const products: Record<
 > = {
   mark8ly: {
     title: "Mark8ly",
-    tagline: "The simplest way to create and launch your online store",
+    tagline: "Quiet commerce for people who make things",
     description:
-      "Your online store, ready this afternoon. No developer needed.",
+      "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins.",
     website: "https://mark8ly.com",
     longDescription:
-      "Set up your store in under an hour — no developer needed. Skip the expensive customization costs and do it yourself. Beautiful themes you can customize to match your brand, integrated payments, built-in SEO tools, and real human support. Built for creators, makers, and small businesses who want to focus on selling, not software.",
+      "Mark8ly is a quiet, considered commerce platform for people who actually make things. Set up your store in an afternoon, keep every sale, and sell on a storefront that doesn't look like everyone else's. Real merchants worked on the design. Real engineers built the infrastructure. The result is a tool that does fewer things, but does them properly.",
     icon: ShoppingBag,
     status: "available",
     features: [
       {
         icon: Palette,
-        title: "Make It Yours",
+        title: "A storefront worth opening",
         description:
-          "Beautiful themes you can customize to match your brand. No design skills needed. Your store looks great on every device.",
+          "A theme that feels considered, out of the box. Quiet typography, generous whitespace, real attention to product detail pages.",
       },
       {
         icon: CreditCard,
-        title: "Sell Everywhere",
+        title: "Checkout that works everywhere",
         description:
-          "Accept cards, UPI, and wallets. No platform transaction fees — your money is your money.",
-      },
-      {
-        icon: BarChart,
-        title: "Know Your Numbers",
-        description:
-          "Simple analytics that help you understand what's working and what's not. Track revenue, orders, and visitors.",
+          "Cards, UPI, wallets, and local methods, all behind a single checkout. No upcharges from us — standard processor fees only.",
       },
       {
         icon: Package,
-        title: "Unlimited Products",
+        title: "Up to 100 products on Starter",
         description:
-          "Add as many products as you want with unlimited photos. Organize your catalog with categories and collections.",
+          "Studio and Pro are unlimited. Add as many products, photos, and variants as you like as you grow.",
+      },
+      {
+        icon: BarChart,
+        title: "Admin you don't have to learn",
+        description:
+          "Products, orders, customers, inventory. Each screen does one thing, clearly. No dashboards full of metrics that don't matter.",
       },
       {
         icon: Shield,
-        title: "SSL Secured & 99.9% Uptime",
+        title: "Yours, fully",
         description:
-          "Enterprise-grade security with SSL encryption on every store. Your customers' data is always protected.",
+          "Use your own domain, export your data anytime, leave whenever you want. The store is yours — we just keep it running.",
       },
       {
         icon: Users,
-        title: "Real Human Support",
+        title: "Real humans answer",
         description:
-          "No chatbots, just friendly support ready to help when you need it. Average response time under 4 hours.",
+          "If you get stuck, real humans answer real messages. No chatbots, no first-tier triage queue.",
       },
     ],
     benefits: [
-      "12 months free, then just ₹499/month",
-      "No transaction fees from platform",
-      "No developer needed — set up yourself",
-      "Custom domain support",
-      "Shopify migration support",
-      "Cancel anytime, export all your data",
+      "Free for ninety days, no card required",
+      "0% transaction fees from Mark8ly, ever",
+      "Use your own domain from day one",
+      "Export your data and leave anytime",
+      "Optional white-label mobile app on Pro",
+      "Three plans, one price page — no bait and switch",
     ],
     pricing: {
-      starter: "Free for 12 months",
-      professional: "₹499/month",
-      enterprise: "Custom",
+      starter: "$19/mo",
+      professional: "$49/mo (Studio)",
+      enterprise: "$119/mo (Pro)",
     },
   },
   homechef: {
@@ -236,64 +236,65 @@ export const products: Record<
     },
   },
   fanzone: {
-    title: "FanZone",
-    tagline: "Cricket Live Scores & Banter",
+    title: "FanZone Battle Ground",
+    tagline: "Your cricket opinions finally matter",
     description:
-      "The ultimate cricket fan experience with live scores, predictions, and community.",
+      "Live predictions, trash-talk battle rooms, and ranked fan leaderboards.",
+    website: "https://fanzonebattleground.com",
     longDescription:
-      "FanZone brings cricket fans together with real-time match updates, ball-by-ball commentary, match predictions, and a vibrant community for discussions and banter. Whether you're following IPL, international matches, or local leagues, FanZone keeps you connected to the game you love.",
+      "FanZone Battle Ground is a competitive fan engagement platform for cricket. Predict match outcomes, hop into live battle rooms during play, and climb ranked leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions. Free to join with a 50-point bonus on signup.",
     icon: Trophy,
-    status: "coming-soon",
+    status: "available",
     github: "https://github.com/Tesseract-Nexus/FanZone-Battle-Ground",
     features: [
       {
         icon: Zap,
         title: "Live Match Scores",
         description:
-          "Real-time score updates with ball-by-ball tracking, run rates, and key match statistics.",
+          "Real-time cricket action and statistics with ball-by-ball tracking and key match moments.",
       },
       {
         icon: MessageCircle,
-        title: "Ball-by-Ball Commentary",
+        title: "Battle Rooms",
         description:
-          "Expert commentary on every delivery with insights, analysis, and memorable moments.",
+          "Live competitive commentary and trash-talk during matches. Defend your team, call your shots, react to every wicket.",
       },
       {
         icon: TrendingUp,
-        title: "Match Predictions",
+        title: "Predictions Game",
         description:
-          "Predict match outcomes, player performances, and compete with friends on leaderboards.",
+          "Test your instincts on match outcomes. Stake points on calls; build a track record over the season.",
+      },
+      {
+        icon: Trophy,
+        title: "Leaderboards",
+        description:
+          "Ranked standings for top fans. Climb week-on-week through accurate predictions and active battle play.",
       },
       {
         icon: Users2,
-        title: "Fan Discussions & Polls",
+        title: "Hot Takes & Fan Connect",
         description:
-          "Join the conversation with live match threads, polls, and community discussions.",
-      },
-      {
-        icon: BarChart,
-        title: "Player Statistics",
-        description:
-          "Comprehensive player stats, career records, head-to-head comparisons, and performance trends.",
+          "Share your opinions in structured posts, react to other fans' takes, and find your people.",
       },
       {
         icon: Bell,
-        title: "Push Notifications",
+        title: "Match Alerts",
         description:
           "Never miss a wicket or milestone with customizable alerts for your favorite teams and players.",
       },
     ],
     benefits: [
-      "Follow all major cricket tournaments",
-      "Compete with friends in prediction leagues",
-      "Build your cricket fan profile",
-      "Access historical match data",
-      "Ad-free premium experience",
-      "Available on web and mobile",
+      "Free to join — 50 points on signup",
+      "Live battle rooms during every match",
+      "Match-by-match prediction markets",
+      "Ranked leaderboards",
+      "Available on the web today",
+      "IPL, internationals, and local leagues",
     ],
     pricing: {
       starter: "Free",
-      professional: "$9.99/month",
+      professional: "Premium tier available",
       enterprise: "Custom",
     },
   },
