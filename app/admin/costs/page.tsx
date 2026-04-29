@@ -54,16 +54,16 @@ interface BillingData {
 // These represent a realistic Tesserix cost profile (~$15/mo total)
 
 const MOCK_SERVICE_COSTS = [
-  { name: "Cloud Run", cost: 4.2, color: "bg-blue-500" },
-  { name: "Cloud SQL", cost: 5.8, color: "bg-violet-500" },
-  { name: "Secret Manager", cost: 0.6, color: "bg-amber-500" },
-  { name: "Pub/Sub", cost: 0.2, color: "bg-emerald-500" },
-  { name: "Cloud Storage", cost: 0.4, color: "bg-cyan-500" },
-  { name: "Cloud Tasks", cost: 0.05, color: "bg-pink-500" },
-  { name: "Cloud Logging", cost: 1.1, color: "bg-orange-500" },
-  { name: "Container Registry", cost: 0.3, color: "bg-teal-500" },
-  { name: "Networking", cost: 0.8, color: "bg-indigo-500" },
-  { name: "Other", cost: 0.6, color: "bg-muted" },
+  { name: "Cloud Run", cost: 4.2 },
+  { name: "Cloud SQL", cost: 5.8 },
+  { name: "Secret Manager", cost: 0.6 },
+  { name: "Pub/Sub", cost: 0.2 },
+  { name: "Cloud Storage", cost: 0.4 },
+  { name: "Cloud Tasks", cost: 0.05 },
+  { name: "Cloud Logging", cost: 1.1 },
+  { name: "Container Registry", cost: 0.3 },
+  { name: "Networking", cost: 0.8 },
+  { name: "Other", cost: 0.6 },
 ];
 
 const MOCK_MONTHLY = [
@@ -96,16 +96,16 @@ function SetupCard({
   steps: string[];
 }) {
   return (
-    <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
+    <Card className="border-warning/30 bg-warning/5">
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
           <div className="space-y-2">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">{title}</p>
-            <p className="text-xs text-amber-700 dark:text-amber-400">{message}</p>
+            <p className="text-sm font-medium text-foreground">{title}</p>
+            <p className="text-xs text-muted-foreground">{message}</p>
             <ol className="space-y-1">
               {steps.map((step, i) => (
-                <li key={i} className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
                   <span className="shrink-0 font-semibold">{i + 1}.</span>
                   <span>{step}</span>
                 </li>
@@ -131,7 +131,7 @@ function CostBarChart() {
           <div className="w-32 shrink-0 text-sm text-muted-foreground truncate">{item.name}</div>
           <div className="flex-1 h-6 bg-muted/50 rounded-md overflow-hidden">
             <div
-              className={`h-full rounded-md transition-all ${item.color}`}
+              className="h-full rounded-md bg-foreground/80 transition-all"
               style={{ width: `${(item.cost / maxCost) * 100}%` }}
             />
           </div>

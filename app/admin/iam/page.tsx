@@ -94,7 +94,7 @@ function SummaryCards({ serviceAccounts, totalRoles }: SummaryCardsProps) {
         <StatLabel>Unique Roles</StatLabel>
       </Stat>
       <Stat size="sm">
-        <StatValue className="text-red-600">{overprivilegedCount}</StatValue>
+        <StatValue className="text-error">{overprivilegedCount}</StatValue>
         <StatLabel>Overprivileged</StatLabel>
       </Stat>
       <Stat size="sm">
@@ -112,7 +112,7 @@ function ServiceAccountCard({ sa }: { sa: ServiceAccountEntry }) {
   const hasOverprivilegedRole = sa.roles.some(isOverprivileged);
 
   return (
-    <Card className={hasOverprivilegedRole ? "border-red-200 dark:border-red-900" : ""}>
+    <Card className={hasOverprivilegedRole ? "border-error/40" : ""}>
       <CardContent className="p-4 space-y-3">
         {/* Header row */}
         <div className="flex items-start justify-between gap-3">
@@ -146,14 +146,14 @@ function ServiceAccountCard({ sa }: { sa: ServiceAccountEntry }) {
                 Disabled
               </Badge>
             ) : (
-              <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-                <CheckCircle2 className="h-3.5 w-3.5" />
+              <span className="flex items-center gap-1 text-xs text-success">
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                 Active
               </span>
             )}
             {hasOverprivilegedRole && (
-              <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
-                <AlertTriangle className="h-3.5 w-3.5" />
+              <span className="flex items-center gap-1 text-xs text-error">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
                 Overprivileged
               </span>
             )}

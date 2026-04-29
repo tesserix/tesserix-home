@@ -568,8 +568,8 @@ function PaymentTab() {
                     <div className="flex items-center gap-1 text-sm">
                       {verifyResult.valid ? (
                         <>
-                          <CheckCircle2 className="h-4 w-4 text-green-600" />
-                          <span className="text-green-600">
+                          <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
+                          <span className="text-success">
                             Valid ({verifyResult.accountId}
                             {verifyResult.accountName ? `, ${verifyResult.accountName}` : ""}
                             {verifyResult.livemode ? ", Live" : ", Test"})

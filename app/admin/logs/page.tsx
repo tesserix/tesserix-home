@@ -76,22 +76,22 @@ const SEVERITY_CONFIG: Record<
   },
   INFO: {
     color: "text-foreground",
-    badge: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    badge: "bg-info/10 text-info border border-info/20",
     icon: Info,
   },
   WARNING: {
-    color: "text-yellow-700 dark:text-yellow-400",
-    badge: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
+    color: "text-warning",
+    badge: "bg-warning/10 text-warning border border-warning/20",
     icon: AlertTriangle,
   },
   ERROR: {
-    color: "text-red-600 dark:text-red-400",
-    badge: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    color: "text-error",
+    badge: "bg-error/10 text-error border border-error/20",
     icon: AlertCircle,
   },
   CRITICAL: {
-    color: "text-red-700 dark:text-red-300 font-bold",
-    badge: "bg-red-200 text-red-800 dark:bg-red-900/50 dark:text-red-300",
+    color: "text-error font-bold",
+    badge: "bg-error/15 text-error border border-error/30 font-bold",
     icon: AlertCircle,
   },
 };
@@ -232,7 +232,7 @@ export default function LogsPage() {
             onClick={() => setAutoRefresh((v) => !v)}
             className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
               autoRefresh
-                ? "border-green-500/50 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
+                ? "border-success/40 bg-success/10 text-success"
                 : "bg-background text-muted-foreground hover:text-foreground"
             }`}
           >

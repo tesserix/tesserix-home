@@ -71,7 +71,7 @@ function SummaryCards({ topics, subscriptions }: SummaryCardsProps) {
       </Stat>
       <Stat size="sm">
         <StatValue>
-          <span className="text-blue-600">{pushCount}</span>
+          <span className="text-info">{pushCount}</span>
           <span className="text-muted-foreground mx-1">/</span>
           {pullCount}
         </StatValue>
@@ -232,9 +232,15 @@ function SubscriptionsTab({ subscriptions, loading }: SubscriptionsTabProps) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     {sub.type === "push" ? (
-                      <Webhook className="h-4 w-4 shrink-0 text-blue-500" />
+                      <Webhook
+                        className="h-4 w-4 shrink-0 text-info"
+                        aria-hidden="true"
+                      />
                     ) : (
-                      <Radio className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <Radio
+                        className="h-4 w-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
                     )}
                     <p className="font-mono text-sm font-medium truncate">
                       {sub.name}

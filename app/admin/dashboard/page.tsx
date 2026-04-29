@@ -102,42 +102,12 @@ function RecentListSkeleton() {
 }
 
 const QUICK_ACTIONS = [
-  {
-    label: "Create New Tenant",
-    href: "/admin/apps/mark8ly/tenants",
-    icon: Plus,
-    color: "text-blue-500",
-  },
-  {
-    label: "View Tickets",
-    href: "/admin/apps/mark8ly/tickets",
-    icon: Eye,
-    color: "text-orange-500",
-  },
-  {
-    label: "System Health",
-    href: "/admin/system-health",
-    icon: HeartPulse,
-    color: "text-green-500",
-  },
-  {
-    label: "Audit Logs",
-    href: "/admin/audit-logs",
-    icon: ScrollText,
-    color: "text-purple-500",
-  },
-  {
-    label: "Manage Billing",
-    href: "/admin/apps/mark8ly/billing",
-    icon: CreditCard,
-    color: "text-emerald-500",
-  },
-  {
-    label: "Settings",
-    href: "/admin/settings",
-    icon: Settings,
-    color: "text-gray-500",
-  },
+  { label: "Create New Tenant", href: "/admin/apps/mark8ly/tenants", icon: Plus },
+  { label: "View Tickets", href: "/admin/apps/mark8ly/tickets", icon: Eye },
+  { label: "System Health", href: "/admin/system-health", icon: HeartPulse },
+  { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
+  { label: "Manage Billing", href: "/admin/apps/mark8ly/billing", icon: CreditCard },
+  { label: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
 export default function DashboardPage() {
@@ -241,9 +211,12 @@ export default function DashboardPage() {
                   <Link
                     key={action.href}
                     href={action.href}
-                    className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50"
+                    className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 hover:border-foreground/20"
                   >
-                    <action.icon className={`h-4 w-4 ${action.color}`} />
+                    <action.icon
+                      className="h-4 w-4 text-muted-foreground"
+                      aria-hidden="true"
+                    />
                     <span className="text-sm font-medium">{action.label}</span>
                   </Link>
                 ))}
@@ -276,31 +249,40 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
                     {overallStatus === "operational" ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                      <CheckCircle2
+                        className="h-5 w-5 text-success"
+                        aria-hidden="true"
+                      />
                     ) : overallStatus === "degraded" ? (
-                      <AlertTriangle className="h-5 w-5 text-yellow-500" />
+                      <AlertTriangle
+                        className="h-5 w-5 text-warning"
+                        aria-hidden="true"
+                      />
                     ) : (
-                      <XCircle className="h-5 w-5 text-red-500" />
+                      <XCircle
+                        className="h-5 w-5 text-error"
+                        aria-hidden="true"
+                      />
                     )}
                     <span className="font-medium capitalize">
                       {overallStatus}
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-4 text-center">
-                    <div className="rounded-lg bg-green-500/10 p-3">
-                      <p className="text-2xl font-bold text-green-600">
+                    <div className="rounded-lg border border-success/20 bg-success/10 p-3">
+                      <p className="text-2xl font-bold text-success">
                         {healthStats?.healthyServices ?? 0}
                       </p>
                       <p className="text-xs text-muted-foreground">Healthy</p>
                     </div>
-                    <div className="rounded-lg bg-yellow-500/10 p-3">
-                      <p className="text-2xl font-bold text-yellow-600">
+                    <div className="rounded-lg border border-warning/20 bg-warning/10 p-3">
+                      <p className="text-2xl font-bold text-warning">
                         {healthStats?.degradedServices ?? 0}
                       </p>
                       <p className="text-xs text-muted-foreground">Degraded</p>
                     </div>
-                    <div className="rounded-lg bg-red-500/10 p-3">
-                      <p className="text-2xl font-bold text-red-600">
+                    <div className="rounded-lg border border-error/20 bg-error/10 p-3">
+                      <p className="text-2xl font-bold text-error">
                         {healthStats?.unhealthyServices ?? 0}
                       </p>
                       <p className="text-xs text-muted-foreground">

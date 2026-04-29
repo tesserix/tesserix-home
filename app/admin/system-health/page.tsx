@@ -24,39 +24,37 @@ import { Button, Badge, Card, CardContent, Skeleton, ErrorState } from "@tesseri
 function statusIndicator(status: OverallStatus) {
   switch (status) {
     case "operational":
-      return { color: "bg-green-500", label: "All Systems Operational" };
+      return { color: "bg-success", label: "All Systems Operational" };
     case "degraded":
-      return { color: "bg-yellow-500", label: "Degraded Performance" };
+      return { color: "bg-warning", label: "Degraded Performance" };
     case "outage":
-      return { color: "bg-red-500", label: "System Outage" };
+      return { color: "bg-error", label: "System Outage" };
   }
 }
 
 function healthDot(health: ServiceHealth) {
   switch (health) {
     case "healthy":
-      return "bg-green-500";
+      return "bg-success";
     case "unhealthy":
-      return "bg-red-500";
+      return "bg-error";
     case "degraded":
-      return "bg-yellow-500";
+      return "bg-warning";
     default:
-      return "bg-gray-400";
+      return "bg-muted-foreground";
   }
 }
 
-function _healthBadgeVariant(
-  health: ServiceHealth
-): "success" | "destructive" | "warning" | "secondary" {
+function healthLabel(health: ServiceHealth): string {
   switch (health) {
     case "healthy":
-      return "success";
+      return "Healthy";
     case "unhealthy":
-      return "destructive";
+      return "Unhealthy";
     case "degraded":
-      return "warning";
+      return "Degraded";
     default:
-      return "secondary";
+      return "Unknown";
   }
 }
 
@@ -70,7 +68,11 @@ const GROUP_ICONS: Record<AppGroup, React.ReactNode> = {
 function ServiceCard({ service }: { service: ServiceSummary }) {
   return (
     <div className="flex items-center gap-3 rounded-lg border px-3 py-2.5 hover:bg-muted/50 transition-colors">
-      <span className={`h-2 w-2 rounded-full shrink-0 ${healthDot(service.status)}`} />
+      <span
+        className={`h-2 w-2 rounded-full shrink-0 ${healthDot(service.status)}`}
+        aria-hidden="true"
+      />
+      <span className="sr-only">{healthLabel(service.status)}.</span>
       <span className="text-sm font-medium truncate flex-1">
         {service.displayName}
       </span>
@@ -122,10 +124,10 @@ function AppGroupSection({
 function IncidentBanner({ incidents }: { incidents: Incident[] }) {
   if (incidents.length === 0) return null;
   return (
-    <Card className="border-yellow-500/30 bg-yellow-500/5">
+    <Card className="border-warning/30 bg-warning/5">
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-2">
-          <AlertTriangle className="h-4 w-4 text-yellow-500" />
+          <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />
           <span className="text-sm font-semibold">
             {incidents.length} Active Incident{incidents.length !== 1 ? "s" : ""}
           </span>
@@ -227,6 +229,7 @@ export default function SystemHealthPage() {
                   <div className="flex items-center gap-3">
                     <span
                       className={`h-3 w-3 rounded-full ${indicator.color} animate-pulse`}
+                      aria-hidden="true"
                     />
                     <div>
                       <p className="text-sm font-semibold">{indicator.label}</p>

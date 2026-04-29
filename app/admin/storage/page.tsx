@@ -91,16 +91,10 @@ function getFileIcon(contentType: string) {
 }
 
 function FileTypeIcon({ contentType }: { contentType: string }) {
-  const type = getFileIcon(contentType);
-  const colorMap: Record<string, string> = {
-    image: "text-purple-500",
-    video: "text-blue-500",
-    json: "text-amber-500",
-    text: "text-green-500",
-    pdf: "text-red-500",
-    generic: "text-muted-foreground",
-  };
-  return <File className={`h-4 w-4 ${colorMap[type] ?? "text-muted-foreground"}`} />;
+  // Type is already conveyed by filename extension; keep the icon neutral
+  // so the table doesn't read like a kindergarten chart.
+  void getFileIcon(contentType);
+  return <File className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
 }
 
 // ─── Breadcrumbs ───
@@ -152,13 +146,13 @@ function Breadcrumbs({
 
 function SetupCard({ message, steps }: { message: string; steps: string[] }) {
   return (
-    <Card className="border-amber-300/50 bg-amber-50/50 dark:bg-amber-900/10">
+    <Card className="border-warning/30 bg-warning/5">
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
           <div className="space-y-2">
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Setup required</p>
-            <p className="text-xs text-amber-700 dark:text-amber-400">{message}</p>
+            <p className="text-sm font-medium text-foreground">Setup required</p>
+            <p className="text-xs text-muted-foreground">{message}</p>
             <ol className="space-y-1">
               {steps.map((step, i) => (
                 <li

@@ -186,9 +186,9 @@ export default function AppTicketsPage({ params }: { params: Promise<{ slug: str
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">Open</p>
-                    <p className="text-2xl font-bold text-blue-600">{openCount}</p>
+                    <p className="text-2xl font-bold text-info">{openCount}</p>
                   </div>
-                  <AlertCircle className="h-5 w-5 text-blue-500" />
+                  <AlertCircle className="h-5 w-5 text-info" aria-hidden="true" />
                 </div>
               </CardContent>
             </Card>
@@ -197,9 +197,9 @@ export default function AppTicketsPage({ params }: { params: Promise<{ slug: str
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">In Progress</p>
-                    <p className="text-2xl font-bold text-amber-600">{inProgressCount}</p>
+                    <p className="text-2xl font-bold text-warning">{inProgressCount}</p>
                   </div>
-                  <Clock className="h-5 w-5 text-amber-500" />
+                  <Clock className="h-5 w-5 text-warning" aria-hidden="true" />
                 </div>
               </CardContent>
             </Card>
@@ -208,9 +208,9 @@ export default function AppTicketsPage({ params }: { params: Promise<{ slug: str
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">High Priority</p>
-                    <p className="text-2xl font-bold text-red-600">{criticalCount}</p>
+                    <p className="text-2xl font-bold text-error">{criticalCount}</p>
                   </div>
-                  <AlertCircle className="h-5 w-5 text-red-500" />
+                  <AlertCircle className="h-5 w-5 text-error" aria-hidden="true" />
                 </div>
               </CardContent>
             </Card>

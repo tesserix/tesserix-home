@@ -584,7 +584,7 @@ function GCPSecretsTab() {
                       onClick={() => handleCopy(revealedSecret.value)}
                     >
                       {copied ? (
-                        <Check className="h-3 w-3 text-green-500" />
+                        <Check className="h-3 w-3 text-success" aria-hidden="true" />
                       ) : (
                         <Copy className="h-3 w-3" />
                       )}
