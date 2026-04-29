@@ -69,10 +69,10 @@ export function ProductContent({ slug }: { slug: string }) {
                 </>
               ) : (
                 <>
-                  <Button size="lg" asChild className="btn-shimmer">
+                  <Button size="lg" asChild>
                     <Link href="/contact">
                       Start free trial
-                      <ArrowRight className="ml-2 h-5 w-5" />
+                      <ArrowRight className="ml-2 h-5 w-5" aria-hidden="true" />
                     </Link>
                   </Button>
                   <p className="mt-3 text-sm text-muted-foreground">

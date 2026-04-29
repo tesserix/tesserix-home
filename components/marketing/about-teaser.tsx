@@ -10,21 +10,18 @@ const values = [
     title: "Ship fast, fix faster",
     description:
       "We'd rather get something useful in your hands today than something perfect next year.",
-    gradient: "from-orange-500/10 to-amber-500/10",
   },
   {
     icon: BadgeDollarSign,
     title: "Pricing that makes sense",
     description:
       "No surprise fees, no per-seat nonsense. You know what you're paying before you sign up.",
-    gradient: "from-amber-500/10 to-yellow-500/10",
   },
   {
     icon: MessageCircle,
     title: "Humans on the other end",
     description:
       "When you reach out, a person responds. We don't hide behind chatbots or ticket queues.",
-    gradient: "from-orange-600/10 to-rose-500/10",
   },
 ];
 
@@ -65,24 +62,15 @@ export function AboutTeaser() {
               {values.map((v) => (
                 <div
                   key={v.title}
-                  className="group rounded-xl border p-5 spotlight-card transition-all duration-300 hover:border-foreground/10 hover:shadow-md"
-                  onMouseMove={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    e.currentTarget.style.setProperty("--spotlight-x", `${e.clientX - rect.left}px`);
-                    e.currentTarget.style.setProperty("--spotlight-y", `${e.clientY - rect.top}px`);
-                    e.currentTarget.style.setProperty("--spotlight-opacity", "1");
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.setProperty("--spotlight-opacity", "0");
-                  }}
+                  className="rounded-xl border p-5 transition-colors hover:border-foreground/30"
                 >
                   <div className="flex items-start gap-4">
-                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${v.gradient}`}>
-                      <v.icon className="h-5 w-5 text-foreground" />
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-muted/50">
+                      <v.icon className="h-5 w-5 text-foreground" aria-hidden="true" />
                     </div>
                     <div>
                       <p className="font-semibold text-foreground">{v.title}</p>
-                      <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
                         {v.description}
                       </p>
                     </div>

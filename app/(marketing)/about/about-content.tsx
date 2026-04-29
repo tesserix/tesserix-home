@@ -132,7 +132,7 @@ export function AboutContent() {
           <StaggerContainer className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-8 sm:grid-cols-3">
             {team.map((group) => (
               <StaggerItem key={group.name}>
-                <div className="text-center rounded-lg border bg-card p-6 card-hover-lift">
+                <div className="rounded-lg border bg-card p-6 text-center transition-colors hover:border-foreground/30">
                   <h3 className="text-lg font-semibold text-foreground">{group.name}</h3>
                   <p className="mt-2 text-sm text-muted-foreground">{group.description}</p>
                 </div>
