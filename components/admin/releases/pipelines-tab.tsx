@@ -138,11 +138,11 @@ function ActionButton({
       title={state === "error" ? errorMsg : label}
     >
       {state === "loading" ? (
-        <Loader2  className="h-3 w-3 animate-spin" aria-hidden="true" />
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
       ) : state === "success" ? (
-        <CheckCircle2  className="h-3 w-3 text-success" aria-hidden="true" />
+        <CheckCircle2 className="h-3 w-3 text-success" aria-hidden="true" />
       ) : (
-        <Icon  className="h-3 w-3" aria-hidden="true" />
+        <Icon className="h-3 w-3" aria-hidden="true" />
       )}
       {label}
     </Button>
@@ -184,7 +184,7 @@ function PipelineRow({
           <p>{relativeTime(run.createdAt)}</p>
           {run.duration !== null && (
             <div className="flex items-center gap-1">
-              <Clock  className="h-3 w-3" aria-hidden="true" />
+              <Clock className="h-3 w-3" aria-hidden="true" />
               <span>{formatDuration(run.duration)}</span>
             </div>
           )}
@@ -198,7 +198,7 @@ function PipelineRow({
           className="inline-flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           {run.commitSha}
-          <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
       </TableCell>
       <TableCell>
@@ -236,7 +236,7 @@ function PipelineRow({
           )}
           <a href={run.runUrl} target="_blank" rel="noopener noreferrer">
             <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
-              <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
               GitHub
             </Button>
           </a>

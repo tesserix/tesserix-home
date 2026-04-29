@@ -81,22 +81,6 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function getFileIcon(contentType: string) {
-  if (contentType.startsWith("image/")) return "image";
-  if (contentType.startsWith("video/")) return "video";
-  if (contentType === "application/json") return "json";
-  if (contentType === "text/plain" || contentType === "text/csv") return "text";
-  if (contentType === "application/pdf") return "pdf";
-  return "generic";
-}
-
-function FileTypeIcon({ contentType }: { contentType: string }) {
-  // Type is already conveyed by filename extension; keep the icon neutral
-  // so the table doesn't read like a kindergarten chart.
-  void getFileIcon(contentType);
-  return <File className="h-4 w-4 text-muted-foreground" aria-hidden="true" />;
-}
-
 // ─── Breadcrumbs ───
 
 function Breadcrumbs({
@@ -350,7 +334,7 @@ export default function StoragePage() {
                     key={item.name}
                     className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors"
                   >
-                    <FileTypeIcon contentType={item.contentType} />
+                    <File className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                     <div className="flex-1 min-w-0">
                       <p className="font-mono text-sm truncate">{item.displayName}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">

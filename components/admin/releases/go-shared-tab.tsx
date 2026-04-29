@@ -177,7 +177,7 @@ function TriggerReleaseDialog({
 
           {pendingCount > 0 && (
             <div className="flex items-center gap-2 p-2 rounded-lg border border-warning/30 bg-warning/5">
-              <Clock  className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
+              <Clock className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
               <p className="text-xs text-warning">
                 {pendingCount} repos have pending updates from v{currentVersion}.
               </p>
@@ -193,9 +193,9 @@ function TriggerReleaseDialog({
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting}>
             {isSubmitting ? (
-              <Loader2  className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
+              <Loader2 className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
             ) : (
-              <Rocket  className="h-4 w-4 mr-2" aria-hidden="true" />
+              <Rocket className="h-4 w-4 mr-2" aria-hidden="true" />
             )}
             Trigger Release
           </Button>
@@ -261,11 +261,11 @@ export function GoSharedTab() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={mutate}>
-            <RefreshCw  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            <RefreshCw className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
             Refresh
           </Button>
           <Button size="sm" onClick={() => setTriggerOpen(true)}>
-            <Rocket  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            <Rocket className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
             Trigger Release
           </Button>
         </div>
@@ -302,7 +302,7 @@ export function GoSharedTab() {
                 className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
               >
                 View Changelog
-                <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+                <ExternalLink className="h-3 w-3" aria-hidden="true" />
               </a>
             </CardContent>
           </Card>
@@ -312,14 +312,14 @@ export function GoSharedTab() {
             <CardContent className="p-4 space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-1.5 text-success">
-                  <CheckCircle2  className="h-3.5 w-3.5" aria-hidden="true" />
+                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                   Updated
                 </span>
                 <span className="font-medium">{updatedCount}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-1.5 text-warning">
-                  <Clock  className="h-3.5 w-3.5" aria-hidden="true" />
+                  <Clock className="h-3.5 w-3.5" aria-hidden="true" />
                   Pending
                 </span>
                 <span className="font-medium">{pendingCount}</span>
@@ -327,7 +327,7 @@ export function GoSharedTab() {
               {failedCount > 0 && (
                 <div className="flex items-center justify-between text-sm">
                   <span className="flex items-center gap-1.5 text-error">
-                    <XCircle  className="h-3.5 w-3.5" aria-hidden="true" />
+                    <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
                     Failed
                   </span>
                   <span className="font-medium">{failedCount}</span>

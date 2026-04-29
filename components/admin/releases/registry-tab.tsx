@@ -86,7 +86,7 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
         variant="secondary"
         className={
           service.lang === "go"
-            ? "bg-zinc-600/20 text-muted-foreground text-xs"
+            ? "bg-muted text-muted-foreground text-xs"
             : "bg-info/15 text-info text-xs"
         }
       >
@@ -97,7 +97,7 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
       </Badge>
       {service.hasDb && (
         <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
-          <Database  className="h-3 w-3" aria-hidden="true" />
+          <Database className="h-3 w-3" aria-hidden="true" />
           DB
         </Badge>
       )}
@@ -121,7 +121,7 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
       )}
       {!service.managed && (
         <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
-          <Shield  className="h-3 w-3" aria-hidden="true" />
+          <Shield className="h-3 w-3" aria-hidden="true" />
           External
         </Badge>
       )}
@@ -156,7 +156,7 @@ function ServiceCard({
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           {service.invokes.length > 0 && (
             <span className="flex items-center gap-1">
-              <GitBranch  className="h-3 w-3" aria-hidden="true" />
+              <GitBranch className="h-3 w-3" aria-hidden="true" />
               Calls {service.invokes.length}
             </span>
           )}
@@ -178,7 +178,7 @@ function ServiceCard({
           }}
         >
           View Details
-          <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </Button>
       </CardContent>
     </Card>
@@ -212,9 +212,9 @@ function ServiceGroup({
         className="h-auto items-center gap-3 p-2 text-left hover:opacity-80 mb-2"
       >
         {expanded ? (
-          <ChevronDown  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         ) : (
-          <ChevronRight  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         )}
         <h4 className="text-sm font-semibold">
           {APP_GROUP_LABELS[appGroup]}
@@ -319,7 +319,7 @@ export function RegistryTab() {
           className="gap-1.5"
           onClick={() => setAddWizardOpen(true)}
         >
-          <Plus  className="h-4 w-4" aria-hidden="true" />
+          <Plus className="h-4 w-4" aria-hidden="true" />
           Add Service
         </Button>
       </div>
@@ -399,7 +399,7 @@ export function RegistryTab() {
         />
 
         <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search  className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Search services..."
             value={search}

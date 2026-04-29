@@ -27,7 +27,7 @@ export function StatusBadge({
   return (
     <Badge variant={config.variant} className="gap-1">
       {status === "in_progress" && (
-        <Loader2  className="h-3 w-3 animate-spin" aria-hidden="true" />
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
       )}
       {label ?? config.label}
     </Badge>

@@ -46,7 +46,7 @@ const STATUS_CONFIG: Record<
   unknown: {
     icon: HelpCircle,
     color: "text-muted-foreground",
-    bg: "bg-zinc-500/10",
+    bg: "bg-muted",
     label: "Unknown",
   },
 };
@@ -74,7 +74,7 @@ function HealthStatusBadge({ status }: { status: HealthStatus }) {
   const Icon = config.icon;
   return (
     <Badge className={`${config.bg} ${config.color} border-0 gap-1`}>
-      <Icon  className="h-3 w-3" aria-hidden="true" />
+      <Icon className="h-3 w-3" aria-hidden="true" />
       {config.label}
     </Badge>
   );
@@ -125,7 +125,7 @@ function HealthRow({ service }: { service: ServiceHealth }) {
             className="text-xs text-primary hover:underline inline-flex items-center gap-1"
           >
             URL
-            <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         )}
       </TableCell>
@@ -175,7 +175,7 @@ export function HealthTab() {
       {data && !data.available && (
         <Card>
           <CardContent className="p-4 flex items-center gap-3 border-warning/30 bg-warning/5">
-            <AlertTriangle  className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
+            <AlertTriangle className="h-4 w-4 text-warning shrink-0" aria-hidden="true" />
             <p className="text-sm text-warning">
               Health data unavailable — not running on Cloud Run. Status shown
               as &quot;Unknown&quot; for all services.
@@ -191,7 +191,7 @@ export function HealthTab() {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
-                  <CheckCircle2  className="h-5 w-5 text-success" aria-hidden="true" />
+                  <CheckCircle2 className="h-5 w-5 text-success" aria-hidden="true" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{healthy}</p>
@@ -204,7 +204,7 @@ export function HealthTab() {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10">
-                  <AlertTriangle  className="h-5 w-5 text-error" aria-hidden="true" />
+                  <AlertTriangle className="h-5 w-5 text-error" aria-hidden="true" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{degraded}</p>
@@ -216,8 +216,8 @@ export function HealthTab() {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-500/10">
-                  <HelpCircle  className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                  <HelpCircle className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{unknown}</p>
@@ -228,7 +228,7 @@ export function HealthTab() {
           </Card>
         </div>
         <Button variant="outline" size="sm" onClick={mutate} className="ml-4">
-          <RefreshCw  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+          <RefreshCw className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
           Refresh
         </Button>
       </div>
@@ -237,7 +237,7 @@ export function HealthTab() {
       {services.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center space-y-2">
-            <Server  className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden="true" />
+            <Server className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden="true" />
             <p className="text-muted-foreground">No services found.</p>
           </CardContent>
         </Card>

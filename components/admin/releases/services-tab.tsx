@@ -154,7 +154,7 @@ function InlinePromote({
   if (successInfo) {
     return (
       <div className="flex items-center gap-3 rounded-lg border border-success/30 bg-success/5 p-3 mt-2">
-        <CheckCircle2  className="h-4 w-4 text-success shrink-0" aria-hidden="true" />
+        <CheckCircle2 className="h-4 w-4 text-success shrink-0" aria-hidden="true" />
         <p className="text-sm">
           Release <span className="font-mono font-medium">v{successInfo.version}</span> triggered
         </p>
@@ -165,10 +165,10 @@ function InlinePromote({
           className="inline-flex items-center gap-1 text-sm text-primary hover:underline ml-auto"
         >
           View in Actions
-          <ExternalLink  className="h-3 w-3" aria-hidden="true" />
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
         </a>
         <Button variant="ghost" size="sm" onClick={onClose} className="shrink-0 h-7 w-7 p-0">
-          <X  className="h-3.5 w-3.5" aria-hidden="true" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       </div>
     );
@@ -188,7 +188,7 @@ function InlinePromote({
           )}
         </div>
         <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
-          <X  className="h-3.5 w-3.5" aria-hidden="true" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       </div>
 
@@ -209,9 +209,9 @@ function InlinePromote({
         />
         <Button size="sm" onClick={handleSubmit} disabled={!version || isSubmitting} className="h-8">
           {isSubmitting ? (
-            <Loader2  className="h-3.5 w-3.5 animate-spin mr-1" aria-hidden="true" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" aria-hidden="true" />
           ) : (
-            <Rocket  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            <Rocket className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
           )}
           Promote
         </Button>
@@ -258,7 +258,7 @@ function ServiceRow({
               </p>
               {lock && (
                 <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
-                  <Lock  className="h-3 w-3" aria-hidden="true" />
+                  <Lock className="h-3 w-3" aria-hidden="true" />
                   Locked
                 </Badge>
               )}
@@ -319,9 +319,9 @@ function ServiceRow({
               title={lock ? "Unlock deployments" : "Lock deployments"}
             >
               {lock ? (
-                <Unlock  className="h-3.5 w-3.5 text-warning" aria-hidden="true" />
+                <Unlock className="h-3.5 w-3.5 text-warning" aria-hidden="true" />
               ) : (
-                <Lock  className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                <Lock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               )}
             </Button>
 
@@ -335,7 +335,7 @@ function ServiceRow({
                 className="h-8 w-8 p-0"
                 title="Rollback"
               >
-                <Undo2  className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                <Undo2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
               </Button>
             )}
 
@@ -347,7 +347,7 @@ function ServiceRow({
               onClick={onTogglePromote}
               className="shrink-0"
             >
-              <Rocket  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              <Rocket className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
               Promote
             </Button>
           </div>
@@ -421,13 +421,13 @@ function InlineGroupPromote({
       <div className="rounded-lg border border-success/30 bg-success/5 p-3 mx-4 mb-4 space-y-1">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CheckCircle2  className="h-4 w-4 text-success" aria-hidden="true" />
+            <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
             <p className="text-sm font-medium">
               Tagged {result.succeeded.length}/{result.succeeded.length + result.failed.length} services with v{version}
             </p>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
-            <X  className="h-3.5 w-3.5" aria-hidden="true" />
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
           </Button>
         </div>
         {result.failed.length > 0 && (
@@ -446,7 +446,7 @@ function InlineGroupPromote({
           Tag all {serviceCount} {groupLabel} services
         </p>
         <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
-          <X  className="h-3.5 w-3.5" aria-hidden="true" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
       </div>
       <div className="flex items-center gap-2">
@@ -466,9 +466,9 @@ function InlineGroupPromote({
         />
         <Button size="sm" onClick={handleSubmit} disabled={!version || isSubmitting} className="h-8">
           {isSubmitting ? (
-            <Loader2  className="h-3.5 w-3.5 animate-spin mr-1" aria-hidden="true" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" aria-hidden="true" />
           ) : (
-            <Rocket  className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+            <Rocket className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
           )}
           Tag All
         </Button>
@@ -513,9 +513,9 @@ function RepoGroupSection({
           className="h-auto items-center gap-3 p-0 text-left hover:opacity-80"
         >
           {expanded ? (
-            <ChevronDown  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           ) : (
-            <ChevronRight  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
           )}
           <h4 className="text-sm font-semibold">{group.repoShort}</h4>
           <span className="text-xs text-muted-foreground">
@@ -542,7 +542,7 @@ function RepoGroupSection({
               }}
               className="h-7 text-xs"
             >
-              <Rocket  className="h-3 w-3 mr-1" aria-hidden="true" />
+              <Rocket className="h-3 w-3 mr-1" aria-hidden="true" />
               Tag All
             </Button>
           )}
@@ -677,7 +677,7 @@ export function ServicesTab({
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
-                <CheckCircle2  className="h-5 w-5 text-success" aria-hidden="true" />
+                <CheckCircle2 className="h-5 w-5 text-success" aria-hidden="true" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{successBuilds}</p>
@@ -690,7 +690,7 @@ export function ServicesTab({
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-error/10">
-                <XCircle  className="h-5 w-5 text-error" aria-hidden="true" />
+                <XCircle className="h-5 w-5 text-error" aria-hidden="true" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{failedBuilds}</p>
@@ -703,7 +703,7 @@ export function ServicesTab({
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
-                <Loader2  className="h-5 w-5 text-warning" aria-hidden="true" />
+                <Loader2 className="h-5 w-5 text-warning" aria-hidden="true" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{inProgress}</p>
@@ -716,7 +716,7 @@ export function ServicesTab({
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-warning/10">
-                <Lock  className="h-5 w-5 text-warning" aria-hidden="true" />
+                <Lock className="h-5 w-5 text-warning" aria-hidden="true" />
               </div>
               <div>
                 <p className="text-2xl font-bold">{locksMap.size}</p>
@@ -741,7 +741,7 @@ export function ServicesTab({
           ))}
         </div>
         <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search  className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Search services..."
             value={search}
