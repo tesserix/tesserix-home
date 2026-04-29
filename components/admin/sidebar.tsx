@@ -98,7 +98,6 @@ type RailContext = "platform" | "mark8ly";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
-  if (pathname.startsWith("/admin/apps")) return "platform";
   return "platform";
 }
 
@@ -143,6 +142,7 @@ function CollapsibleGroup({
     <div>
       <button
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
           groupActive
@@ -150,13 +150,14 @@ function CollapsibleGroup({
             : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
         )}
       >
-        <group.icon className={iconSize} />
+        <group.icon className={iconSize} aria-hidden="true" />
         <span className="flex-1 text-left">{group.name}</span>
         <ChevronDown
           className={cn(
             "h-3.5 w-3.5 transition-transform",
             open ? "" : "-rotate-90"
           )}
+          aria-hidden="true"
         />
       </button>
       {open && (
@@ -167,6 +168,7 @@ function CollapsibleGroup({
               <Link
                 key={item.name}
                 href={item.href}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
                   isActive
@@ -175,7 +177,7 @@ function CollapsibleGroup({
                 )}
                 onClick={onItemClick}
               >
-                <item.icon className={iconSize} />
+                <item.icon className={iconSize} aria-hidden="true" />
                 {item.name}
               </Link>
             );
@@ -210,7 +212,8 @@ function RailIcon({
           : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
       )}
     >
-      <Icon className="h-5 w-5" />
+      <Icon className="h-5 w-5" aria-hidden="true" />
+      <span className="sr-only">{label}</span>
     </div>
   );
 
@@ -218,11 +221,16 @@ function RailIcon({
     <Tooltip>
       <TooltipTrigger asChild>
         {href ? (
-          <Link href={href} onClick={onClick}>
+          <Link
+            href={href}
+            onClick={onClick}
+            aria-label={label}
+            aria-current={isActive ? "page" : undefined}
+          >
             {content}
           </Link>
         ) : (
-          <button onClick={onClick}>{content}</button>
+          <button onClick={onClick} aria-label={label}>{content}</button>
         )}
       </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
@@ -355,7 +363,7 @@ function SecondarySidebar({
 
       {/* Navigation items */}
       <ScrollArea className="flex-1 px-3 py-4">
-        <nav className="space-y-1">
+        <nav className="space-y-1" aria-label={label}>
           {entries.map((entry) => {
             if (isNavGroup(entry)) {
               return (
@@ -372,6 +380,7 @@ function SecondarySidebar({
               <Link
                 key={entry.name}
                 href={entry.href}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                   isActive
@@ -380,7 +389,7 @@ function SecondarySidebar({
                 )}
                 onClick={onItemClick}
               >
-                <entry.icon className="h-4 w-4" />
+                <entry.icon className="h-4 w-4" aria-hidden="true" />
                 {entry.name}
               </Link>
             );
@@ -475,7 +484,7 @@ export function AdminSidebar() {
 
             {/* Nav items */}
             <ScrollArea className="flex-1 px-3 py-4">
-              <nav className="space-y-1">
+              <nav className="space-y-1" aria-label={label}>
                 {entries.map((entry) => {
                   if (isNavGroup(entry)) {
                     return (
@@ -493,6 +502,7 @@ export function AdminSidebar() {
                     <Link
                       key={entry.name}
                       href={entry.href}
+                      aria-current={isActive ? "page" : undefined}
                       className={cn(
                         "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                         isActive
@@ -501,7 +511,7 @@ export function AdminSidebar() {
                       )}
                       onClick={() => setMobileMenuOpen(false)}
                     >
-                      <entry.icon className="h-5 w-5" />
+                      <entry.icon className="h-5 w-5" aria-hidden="true" />
                       {entry.name}
                     </Link>
                   );

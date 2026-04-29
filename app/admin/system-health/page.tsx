@@ -103,7 +103,7 @@ function AppGroupSection({
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-muted-foreground">{GROUP_ICONS[app]}</span>
-          <h4 className="text-sm font-semibold flex-1">{app}</h4>
+          <h3 className="text-sm font-semibold flex-1">{app}</h3>
           <Badge
             variant={allHealthy ? "success" : "warning"}
             className="text-[10px] h-5"

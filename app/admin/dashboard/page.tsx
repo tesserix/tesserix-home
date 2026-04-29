@@ -161,7 +161,7 @@ export default function DashboardPage() {
             <Stat>
               <div className="flex items-center justify-between">
                 <StatLabel>Active Stores</StatLabel>
-                <Building2 className="h-4 w-4 text-muted-foreground" />
+                <Building2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               </div>
               <StatValue>{totalTenants}</StatValue>
               <StatMeta>Across all apps</StatMeta>
@@ -234,7 +234,7 @@ export default function DashboardPage() {
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/admin/system-health">
                   Details
-                  <ArrowRight className="ml-2 h-4 w-4" />
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
                 </Link>
               </Button>
             </CardHeader>
@@ -340,7 +340,7 @@ export default function DashboardPage() {
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/admin/apps/mark8ly">
                   View all
-                  <ArrowRight className="ml-2 h-4 w-4" />
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
                 </Link>
               </Button>
             </CardHeader>
@@ -393,7 +393,7 @@ export default function DashboardPage() {
               <Button variant="ghost" size="sm" asChild>
                 <Link href="/admin/audit-logs">
                   View all
-                  <ArrowRight className="ml-2 h-4 w-4" />
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
                 </Link>
               </Button>
             </CardHeader>
