@@ -35,6 +35,10 @@ import {
   ErrorState,
   Checkbox,
   Combobox,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
 } from "@tesserix/web";
 
 const SEVERITY_OPTIONS = [
@@ -99,64 +103,62 @@ function AuditLogDetailDialog({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative z-50 w-full max-w-2xl rounded-lg bg-background p-6 shadow-lg max-h-[80vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Audit Log Detail</h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Audit Log Detail</DialogTitle>
+        </DialogHeader>
 
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4 text-sm">
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Timestamp</p>
-              <p className="font-medium">
+              <p className="font-medium break-words">
                 {new Date(log.timestamp).toLocaleString()}
               </p>
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Severity</p>
               <Badge variant={severityColor(log.severity)}>{log.severity}</Badge>
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Actor</p>
-              <p className="font-medium">{log.actor}</p>
+              <p className="font-medium break-words">{log.actor}</p>
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Actor Type</p>
-              <p className="font-medium">{log.actor_type}</p>
+              <p className="font-medium break-words">{log.actor_type}</p>
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Action</p>
-              <p className="font-medium">{log.action}</p>
+              <p className="font-medium break-words">{log.action}</p>
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Resource</p>
-              <p className="font-medium">
+              <p className="font-medium break-words">
                 {log.resource_type}/{log.resource_id}
               </p>
             </div>
             {log.ip_address && (
-              <div>
+              <div className="min-w-0">
                 <p className="text-muted-foreground">IP Address</p>
-                <p className="font-medium">{log.ip_address}</p>
+                <p className="font-medium break-words">{log.ip_address}</p>
               </div>
             )}
             {log.tenant_id && (
-              <div>
+              <div className="min-w-0">
                 <p className="text-muted-foreground">Tenant ID</p>
-                <p className="font-medium font-mono text-xs">{log.tenant_id}</p>
+                <p className="font-mono text-xs font-medium break-all">
+                  {log.tenant_id}
+                </p>
               </div>
             )}
           </div>
 
           {log.metadata && Object.keys(log.metadata).length > 0 && (
             <div>
-              <p className="text-sm text-muted-foreground mb-2">Metadata</p>
-              <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
+              <p className="mb-2 text-sm text-muted-foreground">Metadata</p>
+              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
                 {JSON.stringify(log.metadata, null, 2)}
               </pre>
             </div>
@@ -164,15 +166,15 @@ function AuditLogDetailDialog({
 
           {log.changes && Object.keys(log.changes).length > 0 && (
             <div>
-              <p className="text-sm text-muted-foreground mb-2">Changes</p>
-              <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
+              <p className="mb-2 text-sm text-muted-foreground">Changes</p>
+              <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
                 {JSON.stringify(log.changes, null, 2)}
               </pre>
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -428,7 +430,7 @@ export default function AuditLogsPage() {
 
                   {compliance.findings.length > 0 && (
                     <div>
-                      <h4 className="text-sm font-medium mb-2">Findings</h4>
+                      <h3 className="mb-2 text-sm font-medium">Findings</h3>
                       <div className="space-y-2">
                         {compliance.findings.map((finding, i) => (
                           <div

@@ -79,7 +79,7 @@ export function RollbackDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Undo2 className="h-5 w-5" />
+            <Undo2  className="h-5 w-5" aria-hidden="true" />
             Rollback {serviceDisplayName}
           </DialogTitle>
           <DialogDescription>
@@ -158,7 +158,7 @@ export function RollbackDialog({
           {/* Schema warning */}
           {hasDb && selected && (
             <div className="flex items-start gap-2 p-3 rounded-lg border border-warning/30 bg-warning/5">
-              <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+              <AlertTriangle  className="h-4 w-4 text-warning shrink-0 mt-0.5" aria-hidden="true" />
               <p className="text-xs text-warning">
                 Schema migrations are NOT reversed automatically. Ensure v
                 {selected} is compatible with the current database schema.
@@ -179,9 +179,9 @@ export function RollbackDialog({
             disabled={!selected || isSubmitting}
           >
             {isSubmitting ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              <Loader2  className="h-4 w-4 animate-spin mr-2" aria-hidden="true" />
             ) : (
-              <Undo2 className="h-4 w-4 mr-2" />
+              <Undo2  className="h-4 w-4 mr-2" aria-hidden="true" />
             )}
             Confirm Rollback
           </Button>

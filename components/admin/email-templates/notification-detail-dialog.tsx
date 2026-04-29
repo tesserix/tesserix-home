@@ -1,10 +1,19 @@
 "use client";
 
-import { type Notification, type NotificationStatus } from "@/lib/api/email-templates";
-import { Badge, Button } from "@tesserix/web";
+import {
+  type Notification,
+  type NotificationStatus,
+} from "@/lib/api/email-templates";
+import {
+  Badge,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@tesserix/web";
 
 function notificationStatusVariant(
-  status: NotificationStatus
+  status: NotificationStatus,
 ): "success" | "destructive" | "warning" | "secondary" {
   switch (status) {
     case "sent":
@@ -29,24 +38,20 @@ export function NotificationDetailDialog({
   onClose,
 }: NotificationDetailDialogProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative z-50 w-full max-w-lg rounded-lg bg-background p-6 shadow-lg">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">Notification Detail</h3>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
-        </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Notification Detail</DialogTitle>
+        </DialogHeader>
 
         <div className="space-y-3 text-sm">
-          <div>
+          <div className="min-w-0">
             <p className="text-muted-foreground">Recipient</p>
-            <p className="font-medium">{notification.recipient}</p>
+            <p className="font-medium break-words">{notification.recipient}</p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-muted-foreground">Subject</p>
-            <p className="font-medium">{notification.subject}</p>
+            <p className="font-medium break-words">{notification.subject}</p>
           </div>
           <div>
             <p className="text-muted-foreground">Status</p>
@@ -55,13 +60,15 @@ export function NotificationDetailDialog({
             </Badge>
           </div>
           {notification.template_name && (
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Template</p>
-              <p className="font-medium">{notification.template_name}</p>
+              <p className="font-medium break-words">
+                {notification.template_name}
+              </p>
             </div>
           )}
           {notification.sent_at && (
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Sent At</p>
               <p className="font-medium">
                 {new Date(notification.sent_at).toLocaleString()}
@@ -69,7 +76,7 @@ export function NotificationDetailDialog({
             </div>
           )}
           {notification.delivered_at && (
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Delivered At</p>
               <p className="font-medium">
                 {new Date(notification.delivered_at).toLocaleString()}
@@ -77,22 +84,24 @@ export function NotificationDetailDialog({
             </div>
           )}
           {notification.error_message && (
-            <div>
+            <div className="min-w-0">
               <p className="text-muted-foreground">Error</p>
-              <p className="text-destructive">{notification.error_message}</p>
+              <p className="text-destructive break-words">
+                {notification.error_message}
+              </p>
             </div>
           )}
           {notification.metadata &&
             Object.keys(notification.metadata).length > 0 && (
               <div>
-                <p className="text-muted-foreground mb-1">Metadata</p>
-                <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto">
+                <p className="mb-1 text-muted-foreground">Metadata</p>
+                <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
                   {JSON.stringify(notification.metadata, null, 2)}
                 </pre>
               </div>
             )}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

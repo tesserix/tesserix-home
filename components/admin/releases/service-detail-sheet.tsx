@@ -71,9 +71,9 @@ function DependencyChip({
       className="h-7 gap-1.5 text-xs font-mono"
     >
       {direction === "outbound" ? (
-        <ArrowRight className="h-3 w-3 text-muted-foreground" />
+        <ArrowRight  className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
       ) : (
-        <ArrowLeft className="h-3 w-3 text-muted-foreground" />
+        <ArrowLeft  className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
       )}
       {name}
     </Button>
@@ -103,7 +103,7 @@ export function ServiceDetailSheet({
               rel="noopener noreferrer"
               className="text-muted-foreground hover:text-foreground"
             >
-              <ExternalLink className="h-4 w-4" />
+              <ExternalLink  className="h-4 w-4" aria-hidden="true" />
             </a>
           </SheetTitle>
           <SheetDescription className="font-mono text-xs">
@@ -128,7 +128,7 @@ export function ServiceDetailSheet({
             <Badge variant="secondary">{service.appGroup}</Badge>
             {!service.managed && (
               <Badge className="bg-warning/10 text-warning border-warning/20 gap-1">
-                <Shield className="h-3 w-3" />
+                <Shield  className="h-3 w-3" aria-hidden="true" />
                 External Image
               </Badge>
             )}
@@ -186,7 +186,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="Database">
                   {service.hasDb ? (
                     <div className="flex items-center gap-1.5">
-                      <Database className="h-3.5 w-3.5 text-info" />
+                      <Database  className="h-3.5 w-3.5 text-info" aria-hidden="true" />
                       <span>Yes</span>
                     </div>
                   ) : (
@@ -203,7 +203,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="Sidecar">
                   {service.sidecar === "cloud-sql-proxy" ? (
                     <div className="flex items-center gap-1.5">
-                      <HardDrive className="h-3.5 w-3.5 text-slate-400" />
+                      <HardDrive  className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                       <span>Cloud SQL Proxy</span>
                     </div>
                   ) : (
@@ -213,7 +213,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="go-shared">
                   {service.usesGoShared ? (
                     <div className="flex items-center gap-1.5">
-                      <Package className="h-3.5 w-3.5 text-foreground/70" />
+                      <Package  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
                       <span>Consumer</span>
                     </div>
                   ) : (
@@ -223,7 +223,7 @@ export function ServiceDetailSheet({
                 {service.publishesEvents && (
                   <InfoRow label="Pub/Sub Topic">
                     <div className="flex items-center gap-1.5">
-                      <Radio className="h-3.5 w-3.5 text-foreground/70" />
+                      <Radio  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
                       <span className="font-mono text-xs">
                         {service.pubsubTopic}
                       </span>
@@ -249,7 +249,7 @@ export function ServiceDetailSheet({
           {service.secrets.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <Key className="h-4 w-4 text-muted-foreground" />
+                <Key  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 Secrets ({service.secrets.length})
               </h3>
               <Card>
@@ -274,7 +274,7 @@ export function ServiceDetailSheet({
           {(dependencies.length > 0 || dependents.length > 0) && (
             <div>
               <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                <GitBranch className="h-4 w-4 text-muted-foreground" />
+                <GitBranch  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 Dependencies
               </h3>
               <Card>
@@ -331,7 +331,7 @@ export function ServiceDetailSheet({
               rel="noopener noreferrer"
             >
               <Button variant="outline" className="w-full gap-2">
-                <ExternalLink className="h-4 w-4" />
+                <ExternalLink  className="h-4 w-4" aria-hidden="true" />
                 View on GitHub
               </Button>
             </a>

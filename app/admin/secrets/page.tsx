@@ -251,7 +251,7 @@ function GitHubSecretsTab() {
           <div className="flex items-center justify-between p-4 pb-2">
             <div className="flex items-center gap-2">
               <Github className="h-4 w-4 text-muted-foreground" />
-              <h4 className="text-sm font-semibold">{repo.repoShort}</h4>
+              <h3 className="text-sm font-semibold">{repo.repoShort}</h3>
               <Badge variant="secondary" className="text-xs">
                 {repo.secrets.length}
               </Badge>

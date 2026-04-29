@@ -118,7 +118,7 @@ function StepIndicator({ current }: { current: number }) {
                     : "bg-muted text-muted-foreground",
                 ].join(" ")}
               >
-                {done ? <Check className="h-3.5 w-3.5" /> : idx + 1}
+                {done ? <Check  className="h-3.5 w-3.5" aria-hidden="true" /> : idx + 1}
               </div>
               <span
                 className={[
@@ -203,7 +203,7 @@ function TagInput({
               onClick={() => removeTag(tag)}
               className="ml-0.5 hover:text-destructive transition-colors"
             >
-              <X className="h-3 w-3" />
+              <X  className="h-3 w-3" aria-hidden="true" />
             </button>
           </Badge>
         ))}
@@ -271,7 +271,7 @@ function InvokesSelector({
                 onClick={() => toggle(name)}
                 className="ml-0.5 hover:text-destructive transition-colors"
               >
-                <X className="h-3 w-3" />
+                <X  className="h-3 w-3" aria-hidden="true" />
               </button>
             </Badge>
           ))}
@@ -303,7 +303,7 @@ function InvokesSelector({
                 />
                 <span className="font-mono text-xs">{name}</span>
                 {checked && (
-                  <Check className="ml-auto h-3 w-3 text-primary shrink-0" />
+                  <Check  className="ml-auto h-3 w-3 text-primary shrink-0" aria-hidden="true" />
                 )}
               </label>
             );
@@ -567,7 +567,7 @@ function Step2({
             </Select>
           </div>
           <div className="rounded-md bg-muted px-3 py-2 flex items-center gap-2">
-            <Database className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Database  className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
             <span className="text-xs text-muted-foreground">
               Database name preview:{" "}
               <span className="font-mono text-foreground">
@@ -613,7 +613,7 @@ function Step2({
           <div className="flex items-center justify-between rounded-lg border px-4 py-3">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <Package className="h-4 w-4 text-foreground/70" />
+                <Package  className="h-4 w-4 text-foreground/70" aria-hidden="true" />
                 <Label className="text-sm cursor-pointer">Uses go-shared</Label>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -633,7 +633,7 @@ function Step2({
       <div className="flex items-center justify-between rounded-lg border px-4 py-3">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
-            <Radio className="h-4 w-4 text-foreground/70" />
+            <Radio  className="h-4 w-4 text-foreground/70" aria-hidden="true" />
             <Label className="text-sm cursor-pointer">Publishes events</Label>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -773,7 +773,7 @@ function Step4({
             <SummaryRow label="Database">
               {form.hasDb ? (
                 <div className="flex items-center gap-1.5">
-                  <Database className="h-3.5 w-3.5 text-info" />
+                  <Database  className="h-3.5 w-3.5 text-info" aria-hidden="true" />
                   <span className="text-xs">
                     Yes &mdash;{" "}
                     <span className="font-mono">{form.migration}</span>
@@ -786,7 +786,7 @@ function Step4({
             <SummaryRow label="Sidecar">
               {form.sidecar === "cloud-sql-proxy" ? (
                 <div className="flex items-center gap-1.5">
-                  <HardDrive className="h-3.5 w-3.5 text-slate-400" />
+                  <HardDrive  className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                   <span className="text-xs">Cloud SQL Proxy</span>
                 </div>
               ) : (
@@ -797,7 +797,7 @@ function Step4({
               <SummaryRow label="go-shared">
                 {form.usesGoShared ? (
                   <div className="flex items-center gap-1.5">
-                    <Package className="h-3.5 w-3.5 text-foreground/70" />
+                    <Package  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
                     <span className="text-xs">Consumer</span>
                   </div>
                 ) : (
@@ -808,7 +808,7 @@ function Step4({
             <SummaryRow label="Pub/Sub">
               {form.publishesEvents ? (
                 <div className="flex items-center gap-1.5">
-                  <Radio className="h-3.5 w-3.5 text-foreground/70" />
+                  <Radio  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
                   <span className="font-mono text-xs">{form.pubsubTopic || "—"}</span>
                 </div>
               ) : (
@@ -875,12 +875,12 @@ function Step4({
       >
         {isSubmitting ? (
           <>
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2  className="h-4 w-4 animate-spin" aria-hidden="true" />
             Creating PR...
           </>
         ) : (
           <>
-            <GitPullRequest className="h-4 w-4" />
+            <GitPullRequest  className="h-4 w-4" aria-hidden="true" />
             Create PR
           </>
         )}
@@ -1048,7 +1048,7 @@ export function AddServiceWizard({
                 className="gap-1.5"
               >
                 Next
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight  className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>

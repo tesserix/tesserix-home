@@ -126,7 +126,7 @@ function HistoryEntry({ event }: { event: ReleaseEvent }) {
               className="inline-flex items-center gap-1 text-primary hover:underline"
             >
               Pipeline
-              <ExternalLink className="h-3 w-3" />
+              <ExternalLink  className="h-3 w-3" aria-hidden="true" />
             </a>
           )}
         </div>
@@ -169,7 +169,7 @@ export function HistoryTab() {
     return (
       <Card>
         <CardContent className="py-12 text-center space-y-2">
-          <Rocket className="h-8 w-8 text-muted-foreground mx-auto" />
+          <Rocket  className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden="true" />
           <p className="text-muted-foreground">No release events yet.</p>
           <p className="text-xs text-muted-foreground">
             Promotion, rollback, and lock events will appear here.

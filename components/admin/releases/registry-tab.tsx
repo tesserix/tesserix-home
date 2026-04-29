@@ -97,31 +97,31 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
       </Badge>
       {service.hasDb && (
         <Badge className="bg-info/10 text-info border-info/20 text-xs gap-1">
-          <Database className="h-3 w-3" />
+          <Database  className="h-3 w-3" aria-hidden="true" />
           DB
         </Badge>
       )}
       {service.usesGoShared && (
         <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
-          <Package className="h-3 w-3" />
+          <Package  className="h-3 w-3" aria-hidden="true" />
           GS
         </Badge>
       )}
       {service.publishesEvents && (
         <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
-          <Radio className="h-3 w-3" />
+          <Radio  className="h-3 w-3" aria-hidden="true" />
           Events
         </Badge>
       )}
       {service.sidecar === "cloud-sql-proxy" && (
         <Badge className="bg-slate-500/10 text-slate-400 border-slate-500/20 text-xs gap-1">
-          <HardDrive className="h-3 w-3" />
+          <HardDrive  className="h-3 w-3" aria-hidden="true" />
           Proxy
         </Badge>
       )}
       {!service.managed && (
         <Badge className="bg-warning/10 text-warning border-warning/20 text-xs gap-1">
-          <Shield className="h-3 w-3" />
+          <Shield  className="h-3 w-3" aria-hidden="true" />
           External
         </Badge>
       )}
@@ -156,7 +156,7 @@ function ServiceCard({
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           {service.invokes.length > 0 && (
             <span className="flex items-center gap-1">
-              <GitBranch className="h-3 w-3" />
+              <GitBranch  className="h-3 w-3" aria-hidden="true" />
               Calls {service.invokes.length}
             </span>
           )}
@@ -178,7 +178,7 @@ function ServiceCard({
           }}
         >
           View Details
-          <ExternalLink className="h-3 w-3" />
+          <ExternalLink  className="h-3 w-3" aria-hidden="true" />
         </Button>
       </CardContent>
     </Card>
@@ -212,9 +212,9 @@ function ServiceGroup({
         className="h-auto items-center gap-3 p-2 text-left hover:opacity-80 mb-2"
       >
         {expanded ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          <ChevronDown  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+          <ChevronRight  className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
         )}
         <h4 className="text-sm font-semibold">
           {APP_GROUP_LABELS[appGroup]}
@@ -319,7 +319,7 @@ export function RegistryTab() {
           className="gap-1.5"
           onClick={() => setAddWizardOpen(true)}
         >
-          <Plus className="h-4 w-4" />
+          <Plus  className="h-4 w-4" aria-hidden="true" />
           Add Service
         </Button>
       </div>
@@ -399,7 +399,7 @@ export function RegistryTab() {
         />
 
         <div className="relative flex-1 min-w-[200px] max-w-xs">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search  className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Search services..."
             value={search}

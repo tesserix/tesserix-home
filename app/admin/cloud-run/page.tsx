@@ -277,10 +277,10 @@ function ServiceDetailPanel({ serviceName }: { serviceName: string }) {
     <div className="space-y-5 pt-1">
       {/* Revisions */}
       <div>
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-          <Layers className="h-3.5 w-3.5" />
+        <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Layers className="h-3.5 w-3.5" aria-hidden="true" />
           Revisions (latest 20)
-        </h4>
+        </h3>
         <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
@@ -347,15 +347,15 @@ function ServiceDetailPanel({ serviceName }: { serviceName: string }) {
 
       {/* Env Vars */}
       <div>
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-          <Lock className="h-3.5 w-3.5" />
+        <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <Lock className="h-3.5 w-3.5" aria-hidden="true" />
           Environment Variables
           {!loadingEnv && envDetail && (
             <span className="ml-1 text-xs font-normal normal-case">
               ({envDetail.count} configured)
             </span>
           )}
-        </h4>
+        </h3>
         {loadingEnv ? (
           <div className="flex flex-wrap gap-1.5">
             {Array.from({ length: 5 }).map((_, i) => (

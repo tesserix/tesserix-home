@@ -43,14 +43,34 @@ export default function ReleasesPage() {
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Auto-refresh every 30s
+  // Auto-refresh every 30s while the tab is visible
   useEffect(() => {
-    intervalRef.current = setInterval(() => {
+    function refresh() {
       refreshServices();
       refreshPipelines();
-    }, 30000);
+    }
+    function start() {
+      if (intervalRef.current) return;
+      intervalRef.current = setInterval(refresh, 30_000);
+    }
+    function stop() {
+      if (!intervalRef.current) return;
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        refresh();
+        start();
+      } else {
+        stop();
+      }
+    }
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [refreshServices, refreshPipelines]);
 

@@ -358,7 +358,7 @@ function GraphView({ services }: GraphViewProps) {
                   onClick={() => setSelected(null)}
                   className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
                 >
-                  <X className="h-4 w-4" />
+                  <X  className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
 
@@ -382,7 +382,7 @@ function GraphView({ services }: GraphViewProps) {
               {selectedDeps.length > 0 && (
                 <div className="space-y-1.5">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <ArrowRight className="h-3 w-3" />
+                    <ArrowRight  className="h-3 w-3" aria-hidden="true" />
                     Calls ({selectedDeps.length})
                   </p>
                   <div className="flex flex-col gap-1">
@@ -402,7 +402,7 @@ function GraphView({ services }: GraphViewProps) {
               {selectedDependents.length > 0 && (
                 <div className="space-y-1.5">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <ArrowLeft className="h-3 w-3" />
+                    <ArrowLeft  className="h-3 w-3" aria-hidden="true" />
                     Called by ({selectedDependents.length})
                   </p>
                   <div className="flex flex-col gap-1">
@@ -477,7 +477,7 @@ function ListRow({ service, allServices, highlighted, onHighlight, onChipClick, 
               onClick={() => onChipClick(dep.name)}
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-border bg-muted text-muted-foreground hover:border-info hover:text-info transition-colors"
             >
-              <ArrowRight className="h-3 w-3 text-muted-foreground" />
+              <ArrowRight  className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
               {dep.displayName}
             </button>
           ))
@@ -502,7 +502,7 @@ function ListRow({ service, allServices, highlighted, onHighlight, onChipClick, 
               className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-border bg-muted text-muted-foreground hover:border-info hover:text-info transition-colors"
             >
               {dep.displayName}
-              <ArrowRight className="h-3 w-3 text-muted-foreground" />
+              <ArrowRight  className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
             </button>
           ))
         )}
@@ -546,7 +546,7 @@ function ListView({ services }: ListViewProps) {
   if (services.length === 0) {
     return (
       <div className="py-12 text-center space-y-2">
-        <Server className="h-8 w-8 text-muted-foreground mx-auto" />
+        <Server  className="h-8 w-8 text-muted-foreground mx-auto" aria-hidden="true" />
         <p className="text-muted-foreground text-sm">No services match the current filters.</p>
       </div>
     );
@@ -557,7 +557,7 @@ function ListView({ services }: ListViewProps) {
       {/* Column headers */}
       <div className="grid grid-cols-[1fr_auto_1fr] gap-3 px-4 pb-1">
         <p className="text-xs font-medium text-muted-foreground text-right flex items-center justify-end gap-1">
-          <ArrowRight className="h-3 w-3" />
+          <ArrowRight  className="h-3 w-3" aria-hidden="true" />
           Called by
         </p>
         <p className="text-xs font-medium text-muted-foreground text-center min-w-[140px]">
@@ -565,7 +565,7 @@ function ListView({ services }: ListViewProps) {
         </p>
         <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
           Calls
-          <ArrowRight className="h-3 w-3" />
+          <ArrowRight  className="h-3 w-3" aria-hidden="true" />
         </p>
       </div>
 
@@ -652,7 +652,7 @@ export function DependencyGraph() {
             <div className="flex items-center gap-3 flex-wrap">
               {/* Group filter */}
               <div className="flex items-center gap-1.5">
-                <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+                <Filter  className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                 <div className="flex rounded-md border border-border overflow-hidden">
                   {(["all", "platform", "mark8ly"] as const).map((group) => (
                     <button
@@ -695,7 +695,7 @@ export function DependencyGraph() {
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                   ].join(" ")}
                 >
-                  <List className="h-3.5 w-3.5" />
+                  <List  className="h-3.5 w-3.5" aria-hidden="true" />
                   List
                 </button>
                 <button
@@ -707,7 +707,7 @@ export function DependencyGraph() {
                       : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
                   ].join(" ")}
                 >
-                  <Network className="h-3.5 w-3.5" />
+                  <Network  className="h-3.5 w-3.5" aria-hidden="true" />
                   Graph
                 </button>
               </div>
