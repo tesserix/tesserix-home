@@ -613,7 +613,7 @@ function Step2({
           <div className="flex items-center justify-between rounded-lg border px-4 py-3">
             <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <Package  className="h-4 w-4 text-foreground/70" aria-hidden="true" />
+                <Package className="h-4 w-4 text-chart-5" aria-hidden="true" />
                 <Label className="text-sm cursor-pointer">Uses go-shared</Label>
               </div>
               <p className="text-xs text-muted-foreground">
@@ -633,7 +633,7 @@ function Step2({
       <div className="flex items-center justify-between rounded-lg border px-4 py-3">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
-            <Radio  className="h-4 w-4 text-foreground/70" aria-hidden="true" />
+            <Radio className="h-4 w-4 text-chart-2" aria-hidden="true" />
             <Label className="text-sm cursor-pointer">Publishes events</Label>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -786,7 +786,7 @@ function Step4({
             <SummaryRow label="Sidecar">
               {form.sidecar === "cloud-sql-proxy" ? (
                 <div className="flex items-center gap-1.5">
-                  <HardDrive  className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                  <HardDrive className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                   <span className="text-xs">Cloud SQL Proxy</span>
                 </div>
               ) : (
@@ -797,7 +797,7 @@ function Step4({
               <SummaryRow label="go-shared">
                 {form.usesGoShared ? (
                   <div className="flex items-center gap-1.5">
-                    <Package  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
+                    <Package className="h-3.5 w-3.5 text-chart-5" aria-hidden="true" />
                     <span className="text-xs">Consumer</span>
                   </div>
                 ) : (
@@ -808,7 +808,7 @@ function Step4({
             <SummaryRow label="Pub/Sub">
               {form.publishesEvents ? (
                 <div className="flex items-center gap-1.5">
-                  <Radio  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
+                  <Radio className="h-3.5 w-3.5 text-chart-2" aria-hidden="true" />
                   <span className="font-mono text-xs">{form.pubsubTopic || "—"}</span>
                 </div>
               ) : (

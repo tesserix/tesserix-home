@@ -203,7 +203,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="Sidecar">
                   {service.sidecar === "cloud-sql-proxy" ? (
                     <div className="flex items-center gap-1.5">
-                      <HardDrive  className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
+                      <HardDrive className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                       <span>Cloud SQL Proxy</span>
                     </div>
                   ) : (
@@ -213,7 +213,7 @@ export function ServiceDetailSheet({
                 <InfoRow label="go-shared">
                   {service.usesGoShared ? (
                     <div className="flex items-center gap-1.5">
-                      <Package  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
+                      <Package className="h-3.5 w-3.5 text-chart-5" aria-hidden="true" />
                       <span>Consumer</span>
                     </div>
                   ) : (
@@ -223,7 +223,7 @@ export function ServiceDetailSheet({
                 {service.publishesEvents && (
                   <InfoRow label="Pub/Sub Topic">
                     <div className="flex items-center gap-1.5">
-                      <Radio  className="h-3.5 w-3.5 text-foreground/70" aria-hidden="true" />
+                      <Radio className="h-3.5 w-3.5 text-chart-2" aria-hidden="true" />
                       <span className="font-mono text-xs">
                         {service.pubsubTopic}
                       </span>

@@ -249,8 +249,8 @@ export function GoSharedTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-            <Package  className="h-5 w-5 text-foreground/70" aria-hidden="true" />
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-chart-5/10">
+            <Package className="h-5 w-5 text-chart-5" aria-hidden="true" />
           </div>
           <div>
             <h3 className="text-sm font-semibold">go-shared</h3>

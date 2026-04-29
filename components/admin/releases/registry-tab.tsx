@@ -102,20 +102,20 @@ function ServiceBadges({ service }: { service: ServiceConfig }) {
         </Badge>
       )}
       {service.usesGoShared && (
-        <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
-          <Package  className="h-3 w-3" aria-hidden="true" />
+        <Badge className="bg-chart-5/10 text-chart-5 border-chart-5/20 text-xs gap-1">
+          <Package className="h-3 w-3" aria-hidden="true" />
           GS
         </Badge>
       )}
       {service.publishesEvents && (
-        <Badge className="bg-muted text-foreground/70 border-foreground/20 text-xs gap-1">
-          <Radio  className="h-3 w-3" aria-hidden="true" />
+        <Badge className="bg-chart-2/10 text-chart-2 border-chart-2/20 text-xs gap-1">
+          <Radio className="h-3 w-3" aria-hidden="true" />
           Events
         </Badge>
       )}
       {service.sidecar === "cloud-sql-proxy" && (
-        <Badge className="bg-slate-500/10 text-slate-400 border-slate-500/20 text-xs gap-1">
-          <HardDrive  className="h-3 w-3" aria-hidden="true" />
+        <Badge className="bg-muted text-muted-foreground border-border text-xs gap-1">
+          <HardDrive className="h-3 w-3" aria-hidden="true" />
           Proxy
         </Badge>
       )}
