@@ -1,5 +1,18 @@
 import type { Metadata } from "next";
+import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+
+const sans = Inter_Tight({
+  subsets: ["latin"],
+  variable: "--font-app-sans",
+  display: "swap",
+});
+
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-app-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -120,7 +133,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <head>
         <script
           type="application/ld+json"
