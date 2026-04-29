@@ -358,21 +358,24 @@ export default function DashboardPage() {
                   {recentTenants.map((tenant: Tenant) => (
                     <div
                       key={tenant.id}
-                      className="flex items-center justify-between"
+                      className="flex items-center justify-between gap-3"
                     >
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <Link
                           href={`/admin/apps/mark8ly/${tenant.id}`}
-                          className="font-medium hover:underline"
+                          className="block truncate font-medium hover:underline"
                         >
                           {tenant.name}
                         </Link>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="truncate text-sm text-muted-foreground">
                           {tenant.slug}
                         </p>
                       </div>
                       {tenant.status && (
-                        <Badge variant={getStatusColor(tenant.status)}>
+                        <Badge
+                          variant={getStatusColor(tenant.status)}
+                          className="shrink-0"
+                        >
                           {tenant.status}
                         </Badge>
                       )}
@@ -411,18 +414,22 @@ export default function DashboardPage() {
                   {recentAuditLogs.slice(0, 5).map((log: AuditLog) => (
                     <div
                       key={log.id}
-                      className="flex items-center justify-between gap-2"
+                      className="flex items-center justify-between gap-3"
                     >
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">
                           {log.action}
                         </p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {log.actor} &middot;{" "}
+                        <p className="truncate text-xs text-muted-foreground">
+                          <span className="truncate">{log.actor}</span>
+                          {" · "}
                           {new Date(log.timestamp).toLocaleString()}
                         </p>
                       </div>
-                      <Badge variant={severityColor(log.severity)}>
+                      <Badge
+                        variant={severityColor(log.severity)}
+                        className="shrink-0"
+                      >
                         {log.severity}
                       </Badge>
                     </div>
