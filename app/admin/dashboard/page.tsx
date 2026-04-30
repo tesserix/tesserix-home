@@ -1,445 +1,151 @@
-"use client";
+// Super-admin dashboard. Renders cross-product counts from
+// /api/admin/dashboard, which itself reads live from tesserix-postgres
+// (apps + leads) and mark8ly-postgres (tenants + stores via the
+// mark8ly_platform_admin role).
 
-import {
-  Building2,
-  Ticket,
-  DollarSign,
-  ArrowRight,
-  Activity,
-  Plus,
-  Eye,
-  HeartPulse,
-  ScrollText,
-  CreditCard,
-  Settings,
-  CheckCircle2,
-  AlertTriangle,
-  XCircle,
-} from "lucide-react";
 import Link from "next/link";
+import { headers } from "next/headers";
+import { Building2, Store, Users, Boxes, ArrowRight } from "lucide-react";
+
 import { AdminHeader } from "@/components/admin/header";
-import { useTenants, type Tenant } from "@/lib/api/tenants";
-import { useTickets } from "@/lib/api/tickets";
-import { useSubscriptionStats } from "@/lib/api/subscriptions";
-import { useSystemHealth } from "@/lib/api/system-health";
-import { useAuditLogs, type AuditLog, type AuditSeverity } from "@/lib/api/audit-logs";
-import {
-  Stat,
-  StatLabel,
-  StatValue,
-  StatMeta,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  Badge,
-  Button,
-  Skeleton,
-  ErrorState,
-} from "@tesserix/web";
 
-function getStatusColor(status: string) {
-  switch (status?.toLowerCase()) {
-    case "active":
-    case "resolved":
-      return "success";
-    case "pending":
-    case "in_progress":
-    case "in-progress":
-      return "warning";
-    case "open":
-      return "info";
-    default:
-      return "secondary";
-  }
+interface DashboardData {
+  tenants: { total: number; active: number };
+  stores: { total: number };
+  leads: { total: number; by_status: Record<string, number> };
+  apps: { active: number };
+  generated_at: string;
 }
 
-function severityColor(severity: AuditSeverity) {
-  switch (severity) {
-    case "CRITICAL":
-    case "ERROR":
-      return "destructive";
-    case "WARNING":
-      return "warning";
-    case "INFO":
-    default:
-      return "secondary";
-  }
-}
-
-function StatsLoadingSkeleton() {
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <Card key={i}>
-          <CardHeader className="pb-2">
-            <Skeleton className="h-4 w-24" />
-          </CardHeader>
-          <CardContent>
-            <Skeleton className="h-8 w-16" />
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function RecentListSkeleton() {
-  return (
-    <div className="space-y-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="flex items-center justify-between">
-          <div className="space-y-1">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-20" />
-          </div>
-          <Skeleton className="h-5 w-16 rounded-full" />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-const QUICK_ACTIONS = [
-  { label: "Create New Tenant", href: "/admin/apps/mark8ly/tenants", icon: Plus },
-  { label: "View Tickets", href: "/admin/apps/mark8ly/tickets", icon: Eye },
-  { label: "System Health", href: "/admin/system-health", icon: HeartPulse },
-  { label: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
-  { label: "Manage Billing", href: "/admin/apps/mark8ly/billing", icon: CreditCard },
-  { label: "Settings", href: "/admin/settings", icon: Settings },
+const LEAD_STATUS_ORDER: ReadonlyArray<string> = [
+  "new",
+  "contacted",
+  "qualified",
+  "converted",
+  "lost",
 ];
 
-export default function DashboardPage() {
-  const {
-    data: tenantsData,
-    isLoading: tenantsLoading,
-    error: tenantsError,
-    mutate: mutateTenants,
-  } = useTenants({ limit: 4 });
-  const { data: openTicketsData } = useTickets({ status: "open", limit: 1 });
-  const { data: subscriptionStats } = useSubscriptionStats();
-  const { data: healthData, isLoading: healthLoading } = useSystemHealth();
-  const {
-    data: auditLogs,
-    isLoading: auditLoading,
-    error: auditError,
-    mutate: mutateAudit,
-  } = useAuditLogs({ limit: 5 });
+async function loadDashboard(): Promise<DashboardData | null> {
+  const h = await headers();
+  const host = h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? "http";
+  const cookie = h.get("cookie") ?? "";
+  try {
+    const res = await fetch(`${proto}://${host}/api/admin/dashboard`, {
+      headers: { cookie },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as DashboardData;
+  } catch {
+    return null;
+  }
+}
 
-  const totalTenants = tenantsData?.total ?? 0;
-  const openTickets = openTicketsData?.total ?? 0;
-  const mrr = subscriptionStats?.mrr ?? 0;
-  const recentTenants = tenantsData?.data ?? [];
-  const recentAuditLogs = auditLogs ?? [];
+interface StatCardProps {
+  label: string;
+  value: number | string;
+  icon: React.ComponentType<{ className?: string }>;
+  href?: string;
+  hint?: string;
+}
 
-  const healthStats = healthData?.stats;
-  const overallStatus = healthData?.status;
+function StatCard({ label, value, icon: Icon, href, hint }: StatCardProps) {
+  const inner = (
+    <div className="rounded-lg border border-border bg-card p-5 transition-colors hover:border-foreground/30">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm text-muted-foreground">{label}</p>
+          <p className="mt-2 text-3xl font-semibold tabular-nums">{value}</p>
+          {hint ? <p className="mt-1 text-xs text-muted-foreground">{hint}</p> : null}
+        </div>
+        <Icon className="h-5 w-5 text-muted-foreground" />
+      </div>
+      {href ? (
+        <div className="mt-4 flex items-center gap-1 text-sm text-foreground">
+          View <ArrowRight className="h-3 w-3" />
+        </div>
+      ) : null}
+    </div>
+  );
+  return href ? <Link href={href}>{inner}</Link> : inner;
+}
 
-  function getSystemHealthLabel() {
-    if (healthLoading) return "...";
-    if (!overallStatus) return "Unknown";
-    if (overallStatus === "operational") return "All Operational";
-    if (overallStatus === "degraded") {
-      const count = (healthStats?.degradedServices ?? 0) + (healthStats?.unhealthyServices ?? 0);
-      return `${count} service${count !== 1 ? "s" : ""} degraded`;
-    }
-    const count = healthStats?.unhealthyServices ?? 0;
-    return `${count} service${count !== 1 ? "s" : ""} down`;
+interface LeadFunnelProps {
+  byStatus: Record<string, number>;
+  total: number;
+}
+
+function LeadFunnel({ byStatus, total }: LeadFunnelProps) {
+  return (
+    <section className="rounded-lg border border-border bg-card p-5">
+      <header className="mb-4 flex items-center justify-between">
+        <h2 className="text-base font-medium">Leads pipeline</h2>
+        <Link
+          href="/admin/leads"
+          className="flex items-center gap-1 text-sm text-foreground/70 hover:text-foreground"
+        >
+          Manage <ArrowRight className="h-3 w-3" />
+        </Link>
+      </header>
+      {total === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No leads yet. Import a CSV or paste-JSON dump on the leads page to populate the pipeline.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {LEAD_STATUS_ORDER.map((status) => {
+            const count = byStatus[status] ?? 0;
+            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+            return (
+              <li key={status} className="flex items-center gap-3">
+                <span className="w-24 text-sm capitalize text-muted-foreground">{status}</span>
+                <div className="flex-1">
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full bg-foreground/70" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+                <span className="w-12 text-right text-sm tabular-nums">{count}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+export default async function DashboardPage() {
+  const data = await loadDashboard();
+
+  if (!data) {
+    return (
+      <div className="flex h-full flex-col">
+        <AdminHeader title="Dashboard" />
+        <div className="flex-1 p-6">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-5 text-sm">
+            Could not load dashboard data. Check the <code className="font-mono">/api/admin/dashboard</code> route and the cross-DB role status.
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <>
-      <AdminHeader title="Dashboard" description="Overview of your platform" />
-
-      <main className="p-6 space-y-6">
-        {/* Row 1 — Stats Grid */}
-        {tenantsLoading || healthLoading ? (
-          <StatsLoadingSkeleton />
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat>
-              <div className="flex items-center justify-between">
-                <StatLabel>Active Stores</StatLabel>
-                <Building2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-              </div>
-              <StatValue>{totalTenants}</StatValue>
-              <StatMeta>Across all apps</StatMeta>
-            </Stat>
-            <Stat>
-              <div className="flex items-center justify-between">
-                <StatLabel>Monthly Revenue</StatLabel>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <StatValue>{`$${(mrr / 100).toLocaleString()}`}</StatValue>
-              <StatMeta>MRR</StatMeta>
-            </Stat>
-            <Stat>
-              <div className="flex items-center justify-between">
-                <StatLabel>Open Tickets</StatLabel>
-                <Ticket className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <StatValue>{openTickets}</StatValue>
-              <StatMeta>Requires attention</StatMeta>
-            </Stat>
-            <Stat>
-              <div className="flex items-center justify-between">
-                <StatLabel>System Health</StatLabel>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <StatValue>{getSystemHealthLabel()}</StatValue>
-              <StatMeta>
-                {overallStatus === "operational"
-                  ? `${healthStats?.totalServices ?? 0} services monitored`
-                  : "Check system health page"}
-              </StatMeta>
-            </Stat>
-          </div>
-        )}
-
-        {/* Row 2 — Quick Actions + System Health Summary */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Quick Actions */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Common management tasks</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 gap-3">
-                {QUICK_ACTIONS.map((action) => (
-                  <Link
-                    key={action.href}
-                    href={action.href}
-                    className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 hover:border-foreground/20"
-                  >
-                    <action.icon
-                      className="h-4 w-4 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="text-sm font-medium">{action.label}</span>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* System Health Summary */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>System Health</CardTitle>
-                <CardDescription>Service status overview</CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/admin/system-health">
-                  Details
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {healthLoading ? (
-                <RecentListSkeleton />
-              ) : !healthData ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  Unable to fetch health data
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2">
-                    {overallStatus === "operational" ? (
-                      <CheckCircle2
-                        className="h-5 w-5 text-success"
-                        aria-hidden="true"
-                      />
-                    ) : overallStatus === "degraded" ? (
-                      <AlertTriangle
-                        className="h-5 w-5 text-warning"
-                        aria-hidden="true"
-                      />
-                    ) : (
-                      <XCircle
-                        className="h-5 w-5 text-error"
-                        aria-hidden="true"
-                      />
-                    )}
-                    <span className="font-medium capitalize">
-                      {overallStatus}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-4 text-center">
-                    <div className="rounded-lg border border-success/20 bg-success/10 p-3">
-                      <p className="text-2xl font-bold text-success">
-                        {healthStats?.healthyServices ?? 0}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Healthy</p>
-                    </div>
-                    <div className="rounded-lg border border-warning/20 bg-warning/10 p-3">
-                      <p className="text-2xl font-bold text-warning">
-                        {healthStats?.degradedServices ?? 0}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Degraded</p>
-                    </div>
-                    <div className="rounded-lg border border-error/20 bg-error/10 p-3">
-                      <p className="text-2xl font-bold text-error">
-                        {healthStats?.unhealthyServices ?? 0}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Unhealthy
-                      </p>
-                    </div>
-                  </div>
-                  {healthData.incidents.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-muted-foreground">
-                        Active Incidents
-                      </p>
-                      {healthData.incidents
-                        .filter((i) => i.status !== "resolved")
-                        .slice(0, 3)
-                        .map((incident) => (
-                          <div
-                            key={incident.id}
-                            className="flex items-center justify-between rounded-md border p-2 text-sm"
-                          >
-                            <div>
-                              <p className="font-medium">{incident.title}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {incident.serviceName}
-                              </p>
-                            </div>
-                            <Badge
-                              variant={
-                                incident.status === "investigating"
-                                  ? "destructive"
-                                  : "warning"
-                              }
-                            >
-                              {incident.status}
-                            </Badge>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+    <div className="flex h-full flex-col">
+      <AdminHeader title="Dashboard" />
+      <div className="flex-1 space-y-6 p-6">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard label="Active tenants" value={data.tenants.active} hint={`${data.tenants.total} total`} icon={Users} href="/admin/tenants" />
+          <StatCard label="Stores" value={data.stores.total} icon={Store} href="/admin/tenants" />
+          <StatCard label="Active products" value={data.apps.active} icon={Boxes} href="/admin/apps" />
+          <StatCard label="Leads" value={data.leads.total} icon={Building2} href="/admin/leads" />
         </div>
-
-        {/* Row 3 — Recent Activity */}
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Recent Stores */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Recent Stores</CardTitle>
-                <CardDescription>Newly onboarded businesses</CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/admin/apps/mark8ly">
-                  View all
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {tenantsLoading ? (
-                <RecentListSkeleton />
-              ) : tenantsError ? (
-                <ErrorState message={tenantsError} onRetry={mutateTenants} />
-              ) : recentTenants.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No stores yet
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {recentTenants.map((tenant: Tenant) => (
-                    <div
-                      key={tenant.id}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <Link
-                          href={`/admin/apps/mark8ly/${tenant.id}`}
-                          className="block truncate font-medium hover:underline"
-                        >
-                          {tenant.name}
-                        </Link>
-                        <p className="truncate text-sm text-muted-foreground">
-                          {tenant.slug}
-                        </p>
-                      </div>
-                      {tenant.status && (
-                        <Badge
-                          variant={getStatusColor(tenant.status)}
-                          className="shrink-0"
-                        >
-                          {tenant.status}
-                        </Badge>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Recent Audit Events */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle>Recent Audit Events</CardTitle>
-                <CardDescription>Latest system activity</CardDescription>
-              </div>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/admin/audit-logs">
-                  View all
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {auditLoading ? (
-                <RecentListSkeleton />
-              ) : auditError ? (
-                <ErrorState message={auditError} onRetry={mutateAudit} />
-              ) : recentAuditLogs.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No audit events yet
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {recentAuditLogs.slice(0, 5).map((log: AuditLog) => (
-                    <div
-                      key={log.id}
-                      className="flex items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {log.action}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          <span className="truncate">{log.actor}</span>
-                          {" · "}
-                          {new Date(log.timestamp).toLocaleString()}
-                        </p>
-                      </div>
-                      <Badge
-                        variant={severityColor(log.severity)}
-                        className="shrink-0"
-                      >
-                        {log.severity}
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </main>
-    </>
+        <LeadFunnel byStatus={data.leads.by_status} total={data.leads.total} />
+        <p className="text-xs text-muted-foreground">
+          Generated at <time dateTime={data.generated_at}>{new Date(data.generated_at).toLocaleString()}</time>
+        </p>
+      </div>
+    </div>
   );
 }

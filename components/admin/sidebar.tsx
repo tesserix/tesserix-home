@@ -5,28 +5,12 @@ import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  Ticket,
-  CreditCard,
-  ScrollText,
-  Activity,
-  ToggleLeft,
-  Mail,
   Settings,
   LogOut,
   Menu,
   X,
   Users,
-  Rocket,
-  KeyRound,
   ClipboardList,
-  DollarSign,
-  ShieldCheck,
-  HardDrive,
-  Server,
-  Shield,
-  MessageSquare,
-  Database,
-  Globe,
   Cloud,
   ChevronDown,
 } from "lucide-react";
@@ -61,38 +45,22 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
   return "items" in entry;
 }
 
-const gcpInfraItems: NavItem[] = [
-  { name: "Cloud Run", href: "/admin/cloud-run", icon: Server },
-  { name: "Cloud SQL", href: "/admin/cloud-sql", icon: Database },
-  { name: "IAM", href: "/admin/iam", icon: Shield },
-  { name: "Pub/Sub", href: "/admin/pubsub", icon: MessageSquare },
-  { name: "Logs", href: "/admin/logs", icon: ScrollText },
-  { name: "GCS Storage", href: "/admin/storage", icon: HardDrive },
-  { name: "Costs", href: "/admin/costs", icon: DollarSign },
-];
-
+// Phase 2: minimal super-admin nav. Cross-product views (tenants, leads,
+// apps registry) live at flat /admin/<page> paths. Per-product deep-links
+// will return when the dedicated product pages are rebuilt — for now
+// everything routes through the core five.
 const platformNav: NavEntry[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { name: "System Health", href: "/admin/system-health", icon: Activity },
-  { name: "Releases", href: "/admin/releases", icon: Rocket },
-  { name: "Secrets", href: "/admin/secrets", icon: KeyRound },
-  { name: "GCP", icon: Cloud, items: gcpInfraItems },
-  { name: "Cloudflare KV", href: "/admin/cloudflare-kv", icon: Globe },
-  { name: "OpenFGA", href: "/admin/openfga", icon: ShieldCheck },
-  { name: "Email Templates", href: "/admin/email-templates", icon: Mail },
-  { name: "Audit Logs", href: "/admin/audit-logs", icon: ScrollText },
+  { name: "Tenants", href: "/admin/tenants", icon: Users },
+  { name: "Leads", href: "/admin/leads", icon: ClipboardList },
+  { name: "Apps", href: "/admin/apps", icon: Cloud },
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
-const mark8lyNav: NavEntry[] = [
-  { name: "Overview", href: "/admin/apps/mark8ly", icon: LayoutDashboard },
-  { name: "Tenants", href: "/admin/apps/mark8ly/tenants", icon: Users },
-  { name: "Tickets", href: "/admin/apps/mark8ly/tickets", icon: Ticket },
-  { name: "Onboarding", href: "/admin/apps/mark8ly/onboarding", icon: ClipboardList },
-  { name: "Billing", href: "/admin/apps/mark8ly/billing", icon: CreditCard },
-  { name: "Feature Flags", href: "/admin/apps/mark8ly/feature-flags", icon: ToggleLeft },
-  { name: "Email Templates", href: "/admin/apps/mark8ly/email-templates", icon: Mail },
-];
+// Rail context is preserved for future per-product navigation. Both rails
+// currently show the same flat list — we'll repopulate `mark8lyNav` when
+// per-product detail pages return.
+const mark8lyNav: NavEntry[] = platformNav;
 
 type RailContext = "platform" | "mark8ly";
 

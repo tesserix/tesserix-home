@@ -1,66 +1,130 @@
 "use client";
 
-import Link from "next/link";
-import { ShoppingBag, Users, ArrowRight } from "lucide-react";
-import { AdminHeader } from "@/components/admin/header";
-import { useTenants } from "@/lib/api/tenants";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, Badge } from "@tesserix/web";
+// Apps registry — products this super-admin oversees. Sourced from
+// tesserix-postgres.tesserix_admin.apps. Read-only Phase 1 (new product
+// onboarding is a runbook step in tesserix-k8s/docs/cross-db-admin.md).
 
-const APPS = [
-  {
-    slug: "mark8ly",
-    name: "Mark8ly",
-    description: "Multi-tenant marketplace platform for e-commerce businesses",
-    icon: ShoppingBag,
-    status: "active" as const,
-  },
-];
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { ExternalLink, RefreshCw } from "lucide-react";
+
+import { AdminHeader } from "@/components/admin/header";
+
+interface AppEntry {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  status: "active" | "planned" | "archived" | "deprecated";
+  db_namespace: string | null;
+  db_databases: string[] | null;
+  primary_domain: string | null;
+  admin_url: string | null;
+}
 
 export default function AppsPage() {
-  const { data: tenantsData } = useTenants({ limit: 1 });
-  const totalTenants = tenantsData?.total ?? 0;
+  const [apps, setApps] = useState<AppEntry[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/admin/apps", { credentials: "include" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { apps: AppEntry[] };
+        if (!cancelled) setApps(data.apps);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
-    <>
-      <AdminHeader
-        title="Apps"
-        description="Platform applications and their tenants"
-      />
+    <div className="flex h-full flex-col">
+      <AdminHeader title="Apps" />
+      <div className="flex-1 space-y-4 p-6">
+        <p className="text-sm text-muted-foreground">
+          Products this super-admin oversees. To add a new product, follow the cross-DB admin runbook in tesserix-k8s.
+        </p>
 
-      <main className="p-6 space-y-6">
-        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {APPS.map((app) => (
-            <Link key={app.slug} href={`/admin/apps/${app.slug}`}>
-              <Card className="hover:border-primary/50 hover:shadow-md transition-all cursor-pointer h-full">
-                <CardHeader className="flex flex-row items-start gap-4 space-y-0">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
-                    <app.icon className="h-6 w-6 text-primary" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">{app.name}</CardTitle>
-                      <Badge variant="success">{app.status}</Badge>
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <RefreshCw className="h-3 w-3 animate-spin" /> Loading
+          </div>
+        ) : error ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
+            Error: {error}
+          </div>
+        ) : apps.length === 0 ? (
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            No apps registered.
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {apps.map((a) => (
+              <article key={a.id} className="rounded-lg border border-border bg-card p-5">
+                <header className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-medium">{a.name}</h3>
+                      <span
+                        className={
+                          "rounded-full px-2 py-0.5 text-xs capitalize " +
+                          (a.status === "active"
+                            ? "bg-emerald-500/15 text-emerald-700"
+                            : a.status === "planned"
+                            ? "bg-blue-500/15 text-blue-700"
+                            : "bg-muted text-muted-foreground")
+                        }
+                      >
+                        {a.status}
+                      </span>
                     </div>
-                    <CardDescription className="mt-1">{app.description}</CardDescription>
+                    <p className="font-mono text-xs text-muted-foreground">{a.slug}</p>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Users className="h-4 w-4" />
-                      <span>{totalTenants} {totalTenants === 1 ? "tenant" : "tenants"}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-sm text-primary font-medium">
-                      View tenants
-                      <ArrowRight className="h-4 w-4" />
-                    </div>
+                  {a.admin_url ? (
+                    <Link
+                      href={a.admin_url.replace("{slug}", a.slug)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  ) : null}
+                </header>
+                {a.description ? (
+                  <p className="mt-3 text-sm text-muted-foreground">{a.description}</p>
+                ) : null}
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground">Namespace</dt>
+                    <dd className="mt-0.5 font-mono">{a.db_namespace ?? "—"}</dd>
                   </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      </main>
-    </>
+                  <div>
+                    <dt className="text-muted-foreground">Domain</dt>
+                    <dd className="mt-0.5 font-mono">{a.primary_domain ?? "—"}</dd>
+                  </div>
+                  <div className="col-span-2">
+                    <dt className="text-muted-foreground">Databases</dt>
+                    <dd className="mt-0.5 font-mono">
+                      {a.db_databases && a.db_databases.length > 0
+                        ? a.db_databases.join(", ")
+                        : "—"}
+                    </dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
