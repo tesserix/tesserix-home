@@ -502,9 +502,10 @@ function PlanFormDialog({
               <Checkbox
                 id="plan-free"
                 checked={form.isFree}
-                onChange={(e) => {
-                  updateField("isFree", e.target.checked);
-                  if (e.target.checked) {
+                onCheckedChange={(checked) => {
+                  const isChecked = checked === true;
+                  updateField("isFree", isChecked);
+                  if (isChecked) {
                     updateField("monthlyPriceDollars", "0");
                     updateField("yearlyPriceDollars", "0");
                   }
@@ -516,7 +517,7 @@ function PlanFormDialog({
               <Checkbox
                 id="plan-active"
                 checked={form.isActive}
-                onChange={(e) => updateField("isActive", e.target.checked)}
+                onCheckedChange={(checked) => updateField("isActive", checked === true)}
               />
               <Label htmlFor="plan-active" className="cursor-pointer">Active</Label>
             </div>
@@ -533,7 +534,7 @@ function PlanFormDialog({
                 >
                   <Checkbox
                     checked={!!form.features[feature]}
-                    onChange={() => toggleFeature(feature)}
+                    onCheckedChange={() => toggleFeature(feature)}
                   />
                   <span>{feature.replace(/_/g, " ")}</span>
                 </label>

@@ -540,7 +540,7 @@ function RetentionCard({
             <Checkbox
               id="autoCleanup"
               checked={autoCleanup}
-              onChange={(e) => setAutoCleanup(e.target.checked)}
+              onCheckedChange={(checked) => setAutoCleanup(checked === true)}
             />
             <label htmlFor="autoCleanup" className="text-sm">
               Auto cleanup

@@ -333,7 +333,7 @@ function ContentEditorForm({
                   <Switch
                     id="show-in-menu"
                     checked={showInMenu}
-                    onChange={(e) => setShowInMenu(e.target.checked)}
+                    onCheckedChange={setShowInMenu}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -343,7 +343,7 @@ function ContentEditorForm({
                   <Switch
                     id="show-in-footer"
                     checked={showInFooter}
-                    onChange={(e) => setShowInFooter(e.target.checked)}
+                    onCheckedChange={setShowInFooter}
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3">
@@ -353,7 +353,7 @@ function ContentEditorForm({
                   <Switch
                     id="is-featured-page"
                     checked={isFeatured}
-                    onChange={(e) => setIsFeatured(e.target.checked)}
+                    onCheckedChange={setIsFeatured}
                   />
                 </div>
               </CardContent>

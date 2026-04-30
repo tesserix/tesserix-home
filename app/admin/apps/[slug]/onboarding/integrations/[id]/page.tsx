@@ -190,7 +190,7 @@ export default function IntegrationDetailPage({
                 </div>
                 <div className="flex items-end pb-1">
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} />
+                    <Checkbox checked={form?.active !== false} onCheckedChange={(checked) => updateField("active", checked === true)} />
                     Active
                   </label>
                 </div>

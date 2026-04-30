@@ -298,7 +298,7 @@ function InvokesSelector({
               >
                 <Checkbox
                   checked={checked}
-                  onChange={() => toggle(name)}
+                  onCheckedChange={() => toggle(name)}
                   className="shrink-0"
                 />
                 <span className="font-mono text-xs">{name}</span>
@@ -534,8 +534,7 @@ function Step2({
         </div>
         <Switch
           checked={form.hasDb}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-            const checked = e.target.checked;
+          onCheckedChange={(checked) => {
             const patch: Partial<WizardForm> = {
               hasDb: checked,
               sidecar: checked ? "cloud-sql-proxy" : "none",
@@ -622,7 +621,7 @@ function Step2({
             </div>
             <Switch
               checked={form.usesGoShared}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange({ usesGoShared: e.target.checked })}
+              onCheckedChange={(checked) => onChange({ usesGoShared: checked })}
             />
           </div>
           <Separator />
@@ -642,8 +641,8 @@ function Step2({
         </div>
         <Switch
           checked={form.publishesEvents}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-            onChange({ publishesEvents: e.target.checked, pubsubTopic: "" });
+          onCheckedChange={(checked) => {
+            onChange({ publishesEvents: checked, pubsubTopic: "" });
           }}
         />
       </div>

@@ -67,11 +67,14 @@ export function AuthProvider({ children, initialSession }: AuthProviderProps) {
   const [csrfToken, setCsrfToken] = useState<string | null>(effectiveInitialSession?.csrfToken || null);
   const [expiresAt, setExpiresAt] = useState<number | null>(effectiveInitialSession?.expiresAt || null);
 
-  const lastSessionCheckRef = useRef<number>(Date.now());
+  // Use 0 as sentinel; replaced with actual timestamp on first session check
+  // (avoids calling Date.now() during render — react-hooks/purity).
+  const lastSessionCheckRef = useRef<number>(0);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isRefreshingRef = useRef<boolean>(false);
   const consecutiveFailuresRef = useRef<number>(0);
-  const isOnlineRef = useRef<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  // Initialized to true; corrected in an effect once we know the navigator state.
+  const isOnlineRef = useRef<boolean>(true);
 
   const MIN_CHECK_INTERVAL_MS = 60000; // 1 minute
   const MAX_CONSECUTIVE_FAILURES = 5;
@@ -80,6 +83,12 @@ export function AuthProvider({ children, initialSession }: AuthProviderProps) {
   useEffect(() => {
     if (DEV_AUTH_BYPASS) {
       logger.debug('[Auth] DEV AUTH BYPASS ENABLED - Using mock session');
+    }
+    if (lastSessionCheckRef.current === 0) {
+      lastSessionCheckRef.current = Date.now();
+    }
+    if (typeof navigator !== 'undefined') {
+      isOnlineRef.current = navigator.onLine;
     }
   }, []);
 

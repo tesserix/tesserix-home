@@ -310,7 +310,7 @@ export default function AppTenantsPage({ params }: { params: Promise<{ slug: str
                     <TableHead className="w-10">
                       <Checkbox
                         checked={allOnPageSelected}
-                        onChange={toggleSelectAll}
+                        onCheckedChange={toggleSelectAll}
                         aria-label="Select all tenants on this page"
                       />
                     </TableHead>
@@ -329,7 +329,7 @@ export default function AppTenantsPage({ params }: { params: Promise<{ slug: str
                       <TableCell>
                         <Checkbox
                           checked={selectedIds.has(tenant.id)}
-                          onChange={() => toggleSelect(tenant.id)}
+                          onCheckedChange={() => toggleSelect(tenant.id)}
                           aria-label={`Select ${tenant.name}`}
                         />
                       </TableCell>

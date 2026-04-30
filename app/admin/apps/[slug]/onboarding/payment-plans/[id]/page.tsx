@@ -358,11 +358,11 @@ export default function PaymentPlanDetailPage({
 
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={form?.featured || false} onChange={(e) => updateField("featured", e.target.checked)} />
+                  <Checkbox checked={form?.featured || false} onCheckedChange={(checked) => updateField("featured", checked === true)} />
                   Featured
                 </label>
                 <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={form?.active !== false} onChange={(e) => updateField("active", e.target.checked)} />
+                  <Checkbox checked={form?.active !== false} onCheckedChange={(checked) => updateField("active", checked === true)} />
                   Active
                 </label>
               </div>
