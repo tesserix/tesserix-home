@@ -42,8 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
       - name: Lint
         run: npx eslint . --max-warnings 0
@@ -69,14 +67,11 @@ jobs:
       - name: Build and push
         run: |
           docker build \
-            --secret id=npm_token,env=NODE_AUTH_TOKEN \
             --platform linux/amd64 \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest \
             .
           docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
       - name: Security scan
         uses: aquasecurity/trivy-action@master

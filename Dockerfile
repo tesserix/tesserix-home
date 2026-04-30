@@ -3,12 +3,11 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files and registry config
-COPY package.json package-lock.json* .npmrc ./
+# Copy package files
+COPY package.json package-lock.json* ./
 
-# Install dependencies (token injected via build secret)
-RUN --mount=type=secret,id=NODE_AUTH_TOKEN \
-    NODE_AUTH_TOKEN=$(cat /run/secrets/NODE_AUTH_TOKEN) npm ci
+# Install dependencies (all packages now resolve from public npm)
+RUN npm ci
 
 # Copy source files
 COPY . .
