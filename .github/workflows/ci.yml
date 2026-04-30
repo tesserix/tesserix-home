@@ -101,13 +101,25 @@ jobs:
           location: ${{ env.GKE_REGION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      - name: Restart Deployment (rollout)
+      - name: Deploy (set image to SHA tag)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.gke_creds.outcome == 'success'
         continue-on-error: true
         run: |
           # The Deployment is created by the `company` Helm chart in
           # tesserix-k8s (KEDA-scaled, replaces the old Knative setup).
-          kubectl rollout restart deployment/company -n tesserix
+          #
+          # We pin to the just-built SHA tag (rather than rollout-restart
+          # against :latest) because the GAR remote-repository mirror
+          # caches :latest's digest and revalidates only on cache-miss.
+          # Two consecutive CI runs against :latest would deploy the same
+          # stale digest. The SHA tag is unique per build so the mirror
+          # always pulls fresh from upstream ghcr.io.
+          #
+          # ArgoCD's company app excludes the image field via
+          # spec.ignoreDifferences (see argocd/prod/apps/global/company.yaml
+          # in tesserix-k8s) so reconciliation does not revert this pin.
+          kubectl -n tesserix set image deployment/company \
+            company=asia-south1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/ghcr-remote/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
           kubectl rollout status deployment/company -n tesserix --timeout=5m
 
       - name: Security scan
