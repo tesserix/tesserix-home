@@ -84,6 +84,19 @@ export async function exchangeCodeForTokens(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // Surface Google's full error in the server log so the operator can
+    // distinguish redirect_uri_mismatch / invalid_client / invalid_grant
+    // from a generic network failure.
+    // eslint-disable-next-line no-console
+    console.error(
+      "[oauth] token exchange failed",
+      JSON.stringify({
+        status: res.status,
+        body: text.slice(0, 500),
+        client_id: getOAuthClientId().slice(0, 24) + "…",
+        redirect_uri: getOAuthRedirectUri(),
+      }),
+    );
     throw new Error(`token exchange failed (${res.status}): ${text}`);
   }
   return (await res.json()) as GoogleTokenResponse;

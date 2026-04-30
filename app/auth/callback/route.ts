@@ -23,8 +23,22 @@ import { logger } from "@/lib/logger";
 
 const STATE_COOKIE_NAME = "tx_oauth_state";
 
+// Build redirect URLs using the public origin from forwarded headers
+// instead of req.url, which reflects the pod's internal HOSTNAME
+// (0.0.0.0:3000) and would send the browser to a non-existent host.
+function publicOrigin(req: NextRequest): string {
+  const fwdProto = req.headers.get("x-forwarded-proto");
+  const fwdHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (fwdHost) {
+    const proto = fwdProto?.split(",")[0]?.trim() ?? "https";
+    return `${proto}://${fwdHost.split(",")[0].trim()}`;
+  }
+  // Fallback to NEXT_PUBLIC_SITE_URL when behind no proxy.
+  return process.env.NEXT_PUBLIC_SITE_URL ?? "https://tesserix.app";
+}
+
 function loginErrorRedirect(req: NextRequest, code: string): Response {
-  const url = new URL("/login", req.url);
+  const url = new URL("/login", publicOrigin(req));
   url.searchParams.set("error", code);
   return NextResponse.redirect(url);
 }
@@ -105,7 +119,7 @@ export async function GET(req: NextRequest): Promise<Response> {
   });
 
   const cookieOpts = sessionCookieOptions();
-  const dest = new URL(returnTo, req.url);
+  const dest = new URL(returnTo, publicOrigin(req));
   const res = NextResponse.redirect(dest);
   res.cookies.set(sessionCookieName(), session, {
     httpOnly: true,
