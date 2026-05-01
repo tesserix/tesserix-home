@@ -18,7 +18,9 @@ import {
 } from "@/components/admin/metrics/format";
 import { useDashboardCounts, useProductMetrics, type DashboardCounts } from "@/lib/admin/use-metrics";
 import { useProductRevenue } from "@/lib/admin/use-billing";
+import { useCriticalEventCount } from "@/lib/admin/use-audit";
 import { RevenueSection } from "@/components/admin/billing/revenue-section";
+import { ShieldAlert } from "lucide-react";
 import type { ProductConfig, KpiTileSpec } from "@/lib/products/types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@tesserix/web";
 
@@ -46,9 +48,10 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const dashboard = useDashboardCounts();
   const hasBilling = Boolean(config.pricingByPlan);
   const revenue = useProductRevenue(hasBilling ? config.id : "", 30);
+  const critical = useCriticalEventCount(config.id);
 
   async function handleRefresh() {
-    await Promise.all([mutate(), dashboard.mutate(), revenue.mutate()]);
+    await Promise.all([mutate(), dashboard.mutate(), revenue.mutate(), critical.mutate()]);
   }
 
   const generatedAt = data?.generatedAt;
@@ -86,7 +89,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
           title="Overview"
           error={dashboard.error ? "Could not load tenant/store/lead counts." : undefined}
         >
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {config.businessKpiTiles.map((tile) => {
               const { value, hint } = resolveKpiValue(tile, dashboard.data);
               return (
@@ -100,6 +103,14 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
                 />
               );
             })}
+            <KpiTile
+              label="Critical events (24h)"
+              value={critical.data ? formatNumber(critical.data.summary.criticalLast24h) : "—"}
+              hint="audit log severity=critical"
+              href={`/admin/apps/${config.id}/audit-logs?severity=critical`}
+              icon={ShieldAlert}
+              loading={critical.isLoading}
+            />
           </div>
         </MetricsSection>
 

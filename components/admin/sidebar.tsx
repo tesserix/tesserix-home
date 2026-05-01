@@ -14,6 +14,7 @@ import {
   Cloud,
   ChevronDown,
   CreditCard,
+  ScrollText,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ const mark8lyNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/mark8ly", icon: LayoutDashboard },
   { name: "Tenants", href: "/admin/apps/mark8ly/tenants", icon: Users },
   { name: "Subscriptions", href: "/admin/apps/mark8ly/subscriptions", icon: CreditCard },
+  { name: "Audit logs", href: "/admin/apps/mark8ly/audit-logs", icon: ScrollText },
   { name: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
 ];
 
