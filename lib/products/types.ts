@@ -35,4 +35,9 @@ export interface ProductConfig {
   // omit these and the billing UI gracefully hides on their pages.
   readonly pricingByPlan?: Readonly<Record<string, number>>;
   readonly pricingCurrency?: string;
+  // Default trial length in days, used when synthesizing a trial for
+  // tenants without a store_subscriptions row. Source of truth lives in
+  // the product's billing service (mark8ly: TrialDays in
+  // marketplace-api/internal/billing/trial/subscribe.go).
+  readonly trialDays?: number;
 }

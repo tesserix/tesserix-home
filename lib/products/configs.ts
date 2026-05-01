@@ -34,6 +34,9 @@ const mark8ly: ProductConfig = {
     marketplace: 299,
   },
   pricingCurrency: "USD",
+  // §5.3 free-trial length, per mark8ly marketplace-api
+  // internal/billing/trial/subscribe.go: TrialDays = 90.
+  trialDays: 90,
 };
 
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {

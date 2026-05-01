@@ -51,13 +51,16 @@ function dunningStateFromStatus(status: string): "retrying" | "exhausted" | null
   return null;
 }
 
-const TYPICAL_TRIAL_DAYS = 14;
-
 // Build a synthetic trial subscription view for tenants without a real
-// store_subscriptions row. They're effectively trialing from creation +14d.
-function synthesizeTrialItem(tenant: TenantBasicRow, currency: string): SubscriptionListItem {
+// store_subscriptions row. They're effectively trialing from creation
+// + ProductConfig.trialDays (mark8ly: 90 days per §5.3).
+function synthesizeTrialItem(
+  tenant: TenantBasicRow,
+  currency: string,
+  trialDays: number,
+): SubscriptionListItem {
   const created = new Date(tenant.created_at);
-  const trialEnd = new Date(created.getTime() + TYPICAL_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  const trialEnd = new Date(created.getTime() + trialDays * 24 * 60 * 60 * 1000);
   return {
     tenantId: tenant.id,
     tenantName: tenant.name,
@@ -83,8 +86,17 @@ function realItemFromSub(
   tenant: TenantBasicRow | undefined,
   pricingByPlan: Readonly<Record<string, number>>,
   currency: string,
+  trialDays: number,
 ): SubscriptionListItem {
   const isTrial = sub.plan === "trial" || sub.status === "trialing";
+  // If the real subscription has no current_period_end (Stripe didn't
+  // populate it yet, or our row is freshly created), derive from
+  // created_at + product trial length so trial-days display still works.
+  const effectivePeriodEnd =
+    sub.current_period_end ??
+    (isTrial && sub.created_at
+      ? new Date(new Date(sub.created_at).getTime() + trialDays * 24 * 60 * 60 * 1000).toISOString()
+      : null);
   const item: SubscriptionListItem = {
     tenantId: sub.tenant_id,
     tenantName: tenant?.name ?? sub.tenant_id,
@@ -92,13 +104,13 @@ function realItemFromSub(
     status: sub.status,
     mrr: sub.status === "active" ? pricingByPlan[sub.plan] ?? 0 : 0,
     currency,
-    currentPeriodEnd: sub.current_period_end,
+    currentPeriodEnd: effectivePeriodEnd,
     cancelAtPeriodEnd: sub.cancel_at_period_end,
     hasSubscription: true,
     dunningState: dunningStateFromStatus(sub.status),
   };
   if (isTrial) {
-    item.trialDaysRemaining = trialDaysRemaining(sub.current_period_end);
+    item.trialDaysRemaining = trialDaysRemaining(effectivePeriodEnd);
     item.conversionLikelihood = scoreTrialLikelihood({
       daysIntoTrial: daysIntoTrial(sub.created_at),
       orderCount: 0,
@@ -140,6 +152,7 @@ export async function GET(
   }
   const pricingByPlan = config.pricingByPlan;
   const currency = config.pricingCurrency;
+  const trialDays = config.trialDays ?? 14;
 
   const url = new URL(req.url);
   const filter = parseFilter(url.searchParams.get("filter"));
@@ -161,8 +174,8 @@ export async function GET(
     const allItems: SubscriptionListItem[] = tenants.map((t) => {
       const sub = subsByTenantId.get(t.id);
       return sub
-        ? realItemFromSub(sub, t, pricingByPlan, currency)
-        : synthesizeTrialItem(t, currency);
+        ? realItemFromSub(sub, t, pricingByPlan, currency, trialDays)
+        : synthesizeTrialItem(t, currency, trialDays);
     });
 
     // Subscriptions whose tenant got hard-deleted from platform DB but
@@ -170,7 +183,7 @@ export async function GET(
     // invisible.
     for (const s of subs) {
       if (!tenantsById.has(s.tenant_id)) {
-        allItems.push(realItemFromSub(s, undefined, pricingByPlan, currency));
+        allItems.push(realItemFromSub(s, undefined, pricingByPlan, currency, trialDays));
       }
     }
 

@@ -49,6 +49,7 @@ export interface TenantBillingResponse {
     stripe_subscription_id: string | null;
   } | null;
   synthesized?: boolean;
+  currency?: string;
   trial: {
     daysRemaining: number | null;
     conversionLikelihood: "low" | "medium" | "high";

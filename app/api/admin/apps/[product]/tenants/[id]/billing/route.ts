@@ -62,7 +62,8 @@ export async function GET(
       );
       const tenantCreated = tenantRes.rows[0]?.created_at;
       if (tenantCreated) {
-        const trialEnd = new Date(new Date(tenantCreated).getTime() + 14 * 24 * 60 * 60 * 1000);
+        const trialDays = config.trialDays ?? 14;
+        const trialEnd = new Date(new Date(tenantCreated).getTime() + trialDays * 24 * 60 * 60 * 1000);
         subscription = {
           id: "synthetic-" + id,
           tenant_id: id,
@@ -85,9 +86,19 @@ export async function GET(
       ? subscription.plan === "trial" || subscription.status === "trialing"
       : false;
 
+    // If period end isn't stored, derive from created_at + product trial length.
+    const effectivePeriodEnd =
+      subscription?.current_period_end ??
+      (inTrial && subscription
+        ? new Date(
+            new Date(subscription.created_at).getTime() +
+              (config.trialDays ?? 14) * 24 * 60 * 60 * 1000,
+          ).toISOString()
+        : null);
+
     const trialBlock = inTrial && subscription
       ? {
-          daysRemaining: trialDaysRemaining(subscription.current_period_end),
+          daysRemaining: trialDaysRemaining(effectivePeriodEnd),
           conversionLikelihood: scoreTrialLikelihood({
             daysIntoTrial: daysIntoTrial(subscription.created_at),
             orderCount: 0,
@@ -97,8 +108,11 @@ export async function GET(
       : null;
 
     return NextResponse.json({
-      subscription,
+      subscription: subscription
+        ? { ...subscription, current_period_end: effectivePeriodEnd }
+        : null,
       synthesized,
+      currency: config.pricingCurrency,
       trial: trialBlock,
       planHistory: planHistory.status === "fulfilled" ? planHistory.value : [],
       recentInvoices: invoiceEvents.status === "fulfilled" ? invoiceEvents.value : [],

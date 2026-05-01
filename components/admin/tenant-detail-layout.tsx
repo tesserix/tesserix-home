@@ -228,6 +228,11 @@ export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps
                 <div className="flex flex-wrap items-center gap-2">
                   <PlanBadge plan={billing.data.subscription.plan} />
                   <StatusBadge status={billing.data.subscription.status} />
+                  {billing.data.currency ? (
+                    <span className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                      {billing.data.currency}
+                    </span>
+                  ) : null}
                   <DunningPill
                     state={
                       ["past_due", "incomplete"].includes(billing.data.subscription.status)
