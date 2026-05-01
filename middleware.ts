@@ -31,6 +31,11 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/login",
   "/api/health",
   "/api/contact",
+  // Internal product-to-product endpoints. Auth is enforced by each
+  // route handler via the INTERNAL_API_TOKEN bearer check — middleware
+  // session auth would block legitimate server-to-server callers that
+  // don't have a tesserix-home browser session.
+  "/api/internal",
 ];
 
 function isPublicPath(pathname: string): boolean {
@@ -57,6 +62,15 @@ function csrfCheck(request: NextRequest): CsrfDecision {
     request.method,
   );
   if (!isApiRoute || !isMutating) {
+    return { blocked: false };
+  }
+  // /api/internal/* is server-to-server with bearer-token auth (e.g.,
+  // mark8ly admin filing a platform ticket on a merchant's behalf).
+  // CSRF is irrelevant for non-cookie auth — the bearer token in
+  // INTERNAL_API_TOKEN is the access control. Skipping the Origin/
+  // Referer check here lets trusted callers POST without faking a
+  // browser-style request.
+  if (request.nextUrl.pathname.startsWith("/api/internal/")) {
     return { blocked: false };
   }
 
