@@ -34,7 +34,7 @@ interface SubscriptionsTableProps {
 }
 
 interface ColSpec {
-  key: SortKey | "dunning" | "trial";
+  key: SortKey | "dunning" | "trial" | "currency";
   label: string;
   sortable: boolean;
   align?: "right";
@@ -44,6 +44,7 @@ const COLUMNS: ReadonlyArray<ColSpec> = [
   { key: "tenantName", label: "Tenant", sortable: true },
   { key: "plan", label: "Plan", sortable: true },
   { key: "status", label: "Status", sortable: true },
+  { key: "currency", label: "Currency", sortable: false },
   { key: "mrr", label: "MRR", sortable: true, align: "right" },
   { key: "currentPeriodEnd", label: "Renews", sortable: true },
   { key: "trial", label: "Trial", sortable: false },
@@ -107,6 +108,11 @@ export function SubscriptionsTable({ rows, sortKey, sortDir, onSort, productId }
               </td>
               <td className="px-4 py-3">
                 <StatusBadge status={r.status} />
+              </td>
+              <td className="px-4 py-3">
+                <span className="rounded-md border border-border px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                  {r.currency}
+                </span>
               </td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {r.mrr === 0 ? "—" : formatCurrency(r.mrr, r.currency)}

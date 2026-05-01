@@ -177,33 +177,36 @@ export interface TenantBasicRow {
 
 // All tenants from mark8ly's platform_api DB. Used to LEFT-JOIN against
 // store_subscriptions in app code (the two tables live in different DBs).
-// Per-tenant store currency, sourced from the latest subscription_plan_change_audit
-// row. Returns a map keyed by tenant_id; missing tenants fall back to the
-// product's platform-default currency.
+// Per-tenant store currency. Canonical source is the `stores` table —
+// every store carries its own `currency_code` (set during onboarding).
+// For multi-store tenants we surface any one of their store currencies
+// (DISTINCT ON tenant_id). Subscription_plan_change_audit is a secondary
+// signal we no longer rely on as the primary, since stores have currency
+// from creation while audit rows only exist after plan changes.
 export async function getStoreCurrencies(): Promise<Map<string, string>> {
-  const res = await mark8lyQuery<{ tenant_id: string; billing_currency: string }>(
+  const res = await mark8lyQuery<{ tenant_id: string; currency_code: string }>(
     "marketplace_api",
-    `SELECT DISTINCT ON (tenant_id) tenant_id::text, billing_currency
-     FROM subscription_plan_change_audit
-     ORDER BY tenant_id, effective_at DESC`,
+    `SELECT DISTINCT ON (tenant_id) tenant_id::text, currency_code
+     FROM stores
+     ORDER BY tenant_id, synced_at DESC`,
   );
   const map = new Map<string, string>();
   for (const r of res.rows) {
-    if (r.billing_currency) map.set(r.tenant_id, r.billing_currency);
+    if (r.currency_code) map.set(r.tenant_id, r.currency_code);
   }
   return map;
 }
 
 export async function getStoreCurrency(tenantId: string): Promise<string | null> {
-  const res = await mark8lyQuery<{ billing_currency: string }>(
+  const res = await mark8lyQuery<{ currency_code: string }>(
     "marketplace_api",
-    `SELECT billing_currency FROM subscription_plan_change_audit
+    `SELECT currency_code FROM stores
      WHERE tenant_id = $1::uuid
-     ORDER BY effective_at DESC
+     ORDER BY synced_at DESC
      LIMIT 1`,
     [tenantId],
   );
-  return res.rows[0]?.billing_currency ?? null;
+  return res.rows[0]?.currency_code ?? null;
 }
 
 export async function listAllTenants(): Promise<TenantBasicRow[]> {
