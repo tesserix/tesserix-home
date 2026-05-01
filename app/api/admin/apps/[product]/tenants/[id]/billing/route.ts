@@ -8,6 +8,7 @@ import {
   getLifetimeRevenueCents,
   getPlanChangeHistory,
   getRecentInvoiceEvents,
+  getStoreCurrency,
   getSubscription,
 } from "@/lib/db/mark8ly-billing";
 import { mark8lyQuery } from "@/lib/db/mark8ly";
@@ -41,12 +42,13 @@ export async function GET(
   const window: Window = isValidWindow(rawWindow) ? rawWindow : "30d";
 
   try {
-    const [sub, planHistory, invoiceEvents, lifetimeCents, margin] = await Promise.allSettled([
+    const [sub, planHistory, invoiceEvents, lifetimeCents, margin, storeCurrency] = await Promise.allSettled([
       getSubscription(id),
       getPlanChangeHistory(id),
       getRecentInvoiceEvents(id),
       getLifetimeRevenueCents(id),
       computeTenantMargin(config, id, window),
+      getStoreCurrency(id),
     ]);
 
     let subscription = sub.status === "fulfilled" ? sub.value : null;
@@ -113,12 +115,16 @@ export async function GET(
         }
       : null;
 
+    const effectiveCurrency =
+      (storeCurrency.status === "fulfilled" ? storeCurrency.value : null) ??
+      config.pricingCurrency;
+
     return NextResponse.json({
       subscription: subscription
         ? { ...subscription, current_period_end: effectivePeriodEnd }
         : null,
       synthesized,
-      currency: config.pricingCurrency,
+      currency: effectiveCurrency,
       trial: trialBlock,
       planHistory: planHistory.status === "fulfilled" ? planHistory.value : [],
       recentInvoices: invoiceEvents.status === "fulfilled" ? invoiceEvents.value : [],

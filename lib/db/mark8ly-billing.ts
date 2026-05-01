@@ -177,6 +177,35 @@ export interface TenantBasicRow {
 
 // All tenants from mark8ly's platform_api DB. Used to LEFT-JOIN against
 // store_subscriptions in app code (the two tables live in different DBs).
+// Per-tenant store currency, sourced from the latest subscription_plan_change_audit
+// row. Returns a map keyed by tenant_id; missing tenants fall back to the
+// product's platform-default currency.
+export async function getStoreCurrencies(): Promise<Map<string, string>> {
+  const res = await mark8lyQuery<{ tenant_id: string; billing_currency: string }>(
+    "marketplace_api",
+    `SELECT DISTINCT ON (tenant_id) tenant_id::text, billing_currency
+     FROM subscription_plan_change_audit
+     ORDER BY tenant_id, effective_at DESC`,
+  );
+  const map = new Map<string, string>();
+  for (const r of res.rows) {
+    if (r.billing_currency) map.set(r.tenant_id, r.billing_currency);
+  }
+  return map;
+}
+
+export async function getStoreCurrency(tenantId: string): Promise<string | null> {
+  const res = await mark8lyQuery<{ billing_currency: string }>(
+    "marketplace_api",
+    `SELECT billing_currency FROM subscription_plan_change_audit
+     WHERE tenant_id = $1::uuid
+     ORDER BY effective_at DESC
+     LIMIT 1`,
+    [tenantId],
+  );
+  return res.rows[0]?.billing_currency ?? null;
+}
+
 export async function listAllTenants(): Promise<TenantBasicRow[]> {
   const res = await mark8lyQuery<TenantBasicRow>(
     "platform_api",

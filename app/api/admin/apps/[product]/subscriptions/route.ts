@@ -6,6 +6,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
+  getStoreCurrencies,
   getSubscriptionsSummary,
   listAllTenants,
   listSubscriptions,
@@ -158,10 +159,11 @@ export async function GET(
   const filter = parseFilter(url.searchParams.get("filter"));
 
   try {
-    const [summary, subs, tenants] = await Promise.all([
+    const [summary, subs, tenants, currenciesByTenant] = await Promise.all([
       getSubscriptionsSummary(),
       listSubscriptions({ limit: 1000 }),
       listAllTenants(),
+      getStoreCurrencies(),
     ]);
 
     const subsByTenantId = new Map<string, SubscriptionRow>();
@@ -173,9 +175,10 @@ export async function GET(
     // synthetic trial.
     const allItems: SubscriptionListItem[] = tenants.map((t) => {
       const sub = subsByTenantId.get(t.id);
+      const tenantCurrency = currenciesByTenant.get(t.id) ?? currency;
       return sub
-        ? realItemFromSub(sub, t, pricingByPlan, currency, trialDays)
-        : synthesizeTrialItem(t, currency, trialDays);
+        ? realItemFromSub(sub, t, pricingByPlan, tenantCurrency, trialDays)
+        : synthesizeTrialItem(t, tenantCurrency, trialDays);
     });
 
     // Subscriptions whose tenant got hard-deleted from platform DB but
@@ -183,7 +186,8 @@ export async function GET(
     // invisible.
     for (const s of subs) {
       if (!tenantsById.has(s.tenant_id)) {
-        allItems.push(realItemFromSub(s, undefined, pricingByPlan, currency, trialDays));
+        const c = currenciesByTenant.get(s.tenant_id) ?? currency;
+        allItems.push(realItemFromSub(s, undefined, pricingByPlan, c, trialDays));
       }
     }
 
