@@ -37,12 +37,6 @@ export interface TenantCostShare {
   };
 }
 
-interface RawShares {
-  readonly requestsShare: number;
-  readonly storageShare: number;
-  readonly egressShare: number;
-}
-
 function safeRatio(part: number, whole: number): number {
   if (!whole || whole <= 0) return 0;
   return Math.max(0, Math.min(1, part / whole));
