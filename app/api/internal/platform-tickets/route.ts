@@ -23,9 +23,13 @@ const createSchema = z.object({
 });
 
 function authorize(req: NextRequest): boolean {
-  const expected = process.env.INTERNAL_API_TOKEN;
+  // trim() defends against trailing whitespace introduced by GSM/ESO
+  // when a secret was created with `<<<` heredoc or echo (both append a
+  // newline). An attacker can't introduce whitespace into the env, so
+  // this is loss-less defense in depth.
+  const expected = (process.env.INTERNAL_API_TOKEN ?? "").trim();
   if (!expected) return false;
-  const header = req.headers.get("authorization") ?? "";
+  const header = (req.headers.get("authorization") ?? "").trim();
   return header === `Bearer ${expected}`;
 }
 

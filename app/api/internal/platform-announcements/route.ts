@@ -10,9 +10,12 @@ import { getActiveAnnouncementsForTenant } from "@/lib/db/platform-announcements
 import { logger } from "@/lib/logger";
 
 function authorize(req: NextRequest): boolean {
-  const expected = process.env.INTERNAL_API_TOKEN;
+  // trim() defends against trailing whitespace introduced by GSM/ESO
+  // when a secret was created with `<<<` heredoc or echo (both append a
+  // newline). See the platform-tickets route for the full explanation.
+  const expected = (process.env.INTERNAL_API_TOKEN ?? "").trim();
   if (!expected) return false;
-  const header = req.headers.get("authorization") ?? "";
+  const header = (req.headers.get("authorization") ?? "").trim();
   return header === `Bearer ${expected}`;
 }
 
