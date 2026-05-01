@@ -16,17 +16,32 @@ import {
   formatCurrency,
   formatNumber,
 } from "@/components/admin/metrics/format";
-import { useProductMetrics } from "@/lib/admin/use-metrics";
-import type { ProductConfig } from "@/lib/products/types";
+import { useDashboardCounts, useProductMetrics, type DashboardCounts } from "@/lib/admin/use-metrics";
+import type { ProductConfig, KpiTileSpec } from "@/lib/products/types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@tesserix/web";
 
 interface ProductOverviewLayoutProps {
   config: ProductConfig;
 }
 
+function resolveKpiValue(tile: KpiTileSpec, dash: DashboardCounts | undefined): { value: string; hint?: string } {
+  if (!dash) return { value: "—", hint: tile.hint };
+  switch (tile.key) {
+    case "tenants_active":
+      return { value: formatNumber(dash.tenants.active), hint: `${formatNumber(dash.tenants.total)} of total` };
+    case "stores_total":
+      return { value: formatNumber(dash.stores.total), hint: tile.hint };
+    case "leads_total":
+      return { value: formatNumber(dash.leads.total), hint: tile.hint };
+    default:
+      return { value: "—", hint: tile.hint };
+  }
+}
+
 export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const [window, setWindow] = useState<TimeWindow>("24h");
   const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, window);
+  const dashboard = useDashboardCounts();
 
   const generatedAt = data?.generatedAt;
   const cost = data?.cost ?? null;
@@ -45,19 +60,26 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
           <RefreshControl onRefresh={() => void mutate()} loading={isValidating} />
         </div>
 
-        {/* Section A — Business KPIs (placeholder; replace with real values when wired to /api/admin/dashboard) */}
-        <MetricsSection id="section-business" title="Overview">
+        {/* Section A — Business KPIs */}
+        <MetricsSection
+          id="section-business"
+          title="Overview"
+          error={dashboard.error ? "Could not load tenant/store/lead counts." : undefined}
+        >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-            {config.businessKpiTiles.map((tile) => (
-              <KpiTile
-                key={tile.key}
-                label={tile.label}
-                value="—"
-                hint={tile.hint}
-                href={tile.href}
-                loading={isLoading}
-              />
-            ))}
+            {config.businessKpiTiles.map((tile) => {
+              const { value, hint } = resolveKpiValue(tile, dashboard.data);
+              return (
+                <KpiTile
+                  key={tile.key}
+                  label={tile.label}
+                  value={value}
+                  hint={hint}
+                  href={tile.href}
+                  loading={dashboard.isLoading}
+                />
+              );
+            })}
           </div>
         </MetricsSection>
 

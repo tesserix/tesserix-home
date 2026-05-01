@@ -46,3 +46,19 @@ export function useTenantIdentity(tenantId: string) {
     { revalidateOnFocus: false },
   );
 }
+
+export interface DashboardCounts {
+  tenants: { total: number; active: number };
+  stores: { total: number };
+  leads: { total: number; by_status: Record<string, number> };
+  apps: { active: number };
+  generated_at: string;
+}
+
+export function useDashboardCounts() {
+  return useSWR<DashboardCounts>(
+    "/api/admin/dashboard",
+    fetcher as (u: string) => Promise<DashboardCounts>,
+    { revalidateOnFocus: false, dedupingInterval: 30_000 },
+  );
+}
