@@ -78,7 +78,12 @@ export function SubscriptionsPageLayout({ config }: Props) {
     <div className="flex h-full flex-col">
       <AdminHeader title="Subscriptions" />
       <div className="flex-1 space-y-6 p-6">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          {data?.summary.currency ? (
+            <span className="rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground">
+              Currency · {data.summary.currency}
+            </span>
+          ) : null}
           <RefreshControl onRefresh={async () => { await mutate(); }} loading={isValidating} />
         </div>
 
