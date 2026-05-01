@@ -39,9 +39,13 @@ function resolveKpiValue(tile: KpiTileSpec, dash: DashboardCounts | undefined): 
 }
 
 export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
-  const [window, setWindow] = useState<TimeWindow>("24h");
-  const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, window);
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
+  const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, timeWindow);
   const dashboard = useDashboardCounts();
+
+  async function handleRefresh() {
+    await Promise.all([mutate(), dashboard.mutate()]);
+  }
 
   const generatedAt = data?.generatedAt;
   const cost = data?.cost ?? null;
@@ -56,8 +60,8 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
       <AdminHeader title={config.name} />
       <div className="flex-1 space-y-8 p-6">
         <div className="flex items-center justify-end gap-2">
-          <TimeWindowPicker value={window} onChange={setWindow} />
-          <RefreshControl onRefresh={() => void mutate()} loading={isValidating} />
+          <TimeWindowPicker value={timeWindow} onChange={setTimeWindow} />
+          <RefreshControl onRefresh={handleRefresh} loading={isValidating} />
         </div>
 
         {/* Section A — Business KPIs */}
@@ -173,7 +177,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
             <div className="space-y-4">
               <div className="flex items-baseline gap-3">
                 <p className="text-3xl font-semibold tabular-nums">{formatCurrency(cost.total, cost.currency)}</p>
-                <span className="text-xs text-muted-foreground">{window} window · OpenCost</span>
+                <span className="text-xs text-muted-foreground">{timeWindow} window · OpenCost</span>
               </div>
               <CostBreakdownStack
                 total={cost.total}
@@ -189,7 +193,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Cost metrics unavailable. {error ? error.message : "Check OpenCost reachability."}
+              Cost data is not available right now.
             </p>
           )}
         </MetricsSection>
@@ -208,21 +212,20 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
             <KpiTile label="Bounces" value={email ? formatNumber(email.bounces) : "—"} loading={isLoading} />
             <KpiTile label="Unsubscribes" value={email ? formatNumber(email.unsubscribes) : "—"} loading={isLoading} />
           </div>
-          {email?.sent === 0 ? (
-            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          {email && email.sent === 0 ? (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              No email events recorded yet.
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label="Why are these zero?">
+                  <button type="button" aria-label="Why is this zero?">
                     <Info className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
-                  Email events are populated from the SendGrid Event Webhook into notification-service.
-                  Until that pipeline lands and mark8ly sends are tagged with custom_args, these
-                  remain zero.
+                  Email metrics start appearing once mark8ly sends are tagged and the SendGrid
+                  webhook pipeline is enabled. This is expected to be empty during initial rollout.
                 </TooltipContent>
               </Tooltip>
-              No events recorded yet.
             </p>
           ) : null}
         </MetricsSection>

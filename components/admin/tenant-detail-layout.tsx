@@ -21,9 +21,13 @@ interface TenantDetailLayoutProps {
 }
 
 export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps) {
-  const [window, setWindow] = useState<TimeWindow>("24h");
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
   const identity = useTenantIdentity(tenantId);
-  const metrics = useTenantMetrics(config.id, tenantId, window);
+  const metrics = useTenantMetrics(config.id, tenantId, timeWindow);
+
+  async function handleRefresh() {
+    await Promise.all([metrics.mutate(), identity.mutate()]);
+  }
 
   const tenant = identity.data?.tenant;
   const data = metrics.data;
@@ -44,8 +48,8 @@ export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps
             <ArrowLeft className="h-3 w-3" /> All tenants
           </Link>
           <div className="flex items-center gap-2">
-            <TimeWindowPicker value={window} onChange={setWindow} />
-            <RefreshControl onRefresh={() => void metrics.mutate()} loading={metrics.isValidating} />
+            <TimeWindowPicker value={timeWindow} onChange={setTimeWindow} />
+            <RefreshControl onRefresh={handleRefresh} loading={metrics.isValidating} />
           </div>
         </div>
 
