@@ -13,6 +13,7 @@ import {
   ClipboardList,
   Cloud,
   ChevronDown,
+  CreditCard,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ const platformNav: NavEntry[] = [
 const mark8lyNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/mark8ly", icon: LayoutDashboard },
   { name: "Tenants", href: "/admin/apps/mark8ly/tenants", icon: Users },
+  { name: "Subscriptions", href: "/admin/apps/mark8ly/subscriptions", icon: CreditCard },
   { name: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
 ];
 

@@ -31,4 +31,8 @@ export interface ProductConfig {
   readonly rowCountTables: ReadonlyArray<RowCountTable>;
   readonly costAttribution: CostAttributionWeights;
   readonly businessKpiTiles: ReadonlyArray<KpiTileSpec>;
+  // Pricing — optional. Products without subscriptions (HomeChef in v1)
+  // omit these and the billing UI gracefully hides on their pages.
+  readonly pricingByPlan?: Readonly<Record<string, number>>;
+  readonly pricingCurrency?: string;
 }

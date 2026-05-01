@@ -22,6 +22,18 @@ const mark8ly: ProductConfig = {
     { key: "stores_total", label: "Stores", href: "/admin/apps/mark8ly/tenants", source: "product" },
     { key: "leads_total", label: "Leads", href: "/admin/apps/mark8ly/leads", source: "platform" },
   ],
+  // PLACEHOLDER — confirm with mark8ly product owner before relying on
+  // these in revenue/margin reports. Source of truth is Stripe; sync this
+  // map whenever Stripe prices change. Plans per
+  // mark8ly migration 000041_subscription_plan_v2_rename.
+  pricingByPlan: {
+    trial: 0,
+    starter: 29,
+    studio: 79,
+    pro: 149,
+    marketplace: 299,
+  },
+  pricingCurrency: "USD",
 };
 
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
