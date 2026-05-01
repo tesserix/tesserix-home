@@ -11,13 +11,14 @@
 Tasks within a wave are independent; waves are sequential. Mark `// PARALLELIZE` in execution context for dispatching.
 
 ```
-Wave 0  →  Infra prerequisites (tesserix-k8s repo + DB grants)
-Wave 1  →  Backend foundations (lib/metrics, types, ProductConfig)
-Wave 2  →  Backend API routes (product + tenant metrics endpoints)
-Wave 3  →  Frontend primitives (KPI tile, sparkline, breakdown stack, time picker)
-Wave 4  →  Frontend pages (Overview rebuild + tenant detail rebuild)
-Wave 5  →  Mark8ly send-site custom_args instrumentation (separate PR per service)
-Wave 6  →  Visual polish + a11y audit
+Wave 0    →  Infra prerequisites (tesserix-k8s repo + DB grants + SendGrid webhook config)
+Wave 1    →  Backend foundations (lib/metrics, types, ProductConfig)
+Wave 1.5  →  notification-service: email_events table + SendGrid webhook receiver
+Wave 2    →  Backend API routes (product + tenant metrics endpoints)
+Wave 3    →  Frontend primitives (KPI tile, sparkline, breakdown stack, time picker)
+Wave 4    →  Frontend pages (Overview rebuild + tenant detail rebuild)
+Wave 5    →  Mark8ly send-site custom_args instrumentation (separate PR per service)
+Wave 6    →  Visual polish + a11y audit
 ```
 
 ---
@@ -26,32 +27,40 @@ Wave 6  →  Visual polish + a11y audit
 
 These are NOT tesserix-home changes. They're prerequisites in the sibling `tesserix-k8s` repo and runbook execution. Do these first; downstream work blocks on them.
 
-### T0.1 — Provision Prometheus read-only access for tesserix-home
-- File: `tesserix-k8s/charts/apps/company/templates/` (add ServiceAccount + RBAC for read-only Prom)
-- File: `tesserix-k8s/external-secrets/prod/tesserix/externalsecret.yaml` — add `tesserix-home-prometheus-token` entry sourced from GSM
-- Verify: `kubectl exec` into tesserix-home pod and `curl prometheus:9090/api/v1/query?query=up` returns 200
-- Risk: Low. Read-only access. No mark8ly impact.
+### T0.1 — Set Prometheus URL env var in tesserix-home
+- File: `tesserix-k8s/charts/apps/company/values.yaml` — add `PROMETHEUS_URL: "http://prometheus-server.monitoring"`
+- **No ESO secret needed** — Prometheus is open within mesh (verified live 2026-05-01).
+- Verify: redeploy company; `kubectl exec ... -- env | grep PROMETHEUS_URL` shows the value.
+- Risk: None.
 
-### T0.2 — Provision OpenCost access (if needed)
-- Check whether the in-cluster `opencost` service requires auth from `tesserix` namespace (mesh policy).
-- If yes: add ESO entry + service account; if no: skip.
-- Verify: `curl opencost.opencost:9003/allocation/compute?window=24h&aggregate=namespace` from tesserix-home pod returns mark8ly entry.
+### T0.2 — Whitelist tesserix in OpenCost via Istio AuthorizationPolicy
+- File: `tesserix-k8s/charts/apps/opencost-authpolicy/templates/authorization-policy.yaml` (new) OR add to existing `charts/thirdparty/opencost/templates/`
+- Allow source: `cluster.local/ns/tesserix/sa/<tesserix-home-sa>` to call `opencost.opencost:9003`.
+- File: `tesserix-k8s/charts/apps/company/values.yaml` — add `OPENCOST_URL: "http://opencost.opencost:9003"`
+- Verify: from `company` pod, `wget http://opencost.opencost:9003/allocation/compute?window=24h&aggregate=namespace` returns `mark8ly` entry.
+- Risk: Low. Read-only path. No production data exposure.
 
-### T0.3 — Provision SendGrid Activity API key
-- Confirm SendGrid plan tier includes Activity API (CONTEXT.md Q3). If not, parking K4 partial — UI shows "—" for email metrics.
-- Create scoped API key with `Email Activity Read` only — NOT full key.
-- Add to GSM, ESO entry → K8s secret `tesserix-home-sendgrid-readonly-key`.
+### T0.3 — Configure SendGrid Event Webhook (replaces old SendGrid Activity API task)
+- SendGrid console → Mail Settings → Event Webhook:
+  - Endpoint: `https://notification-service.<prod-domain>/webhooks/sendgrid` (final URL TBD; pick a path that fits notification-service's existing routing).
+  - Events: select `processed`, `delivered`, `opened`, `bounce`, `dropped`, `unsubscribe`, `spamreport` at minimum.
+  - Enable Signed Event Webhook → copy public key for HMAC verification.
+- Add public key to GSM as `notification-service-sendgrid-webhook-secret`; ESO entry in `notification-service` namespace.
+- **Do NOT enable** until T1.5.1 (webhook receiver) is deployed — SendGrid will retry failed webhooks but it's noisy.
+- Risk: None until enabled. Once enabled: invalid signature events are rejected with HMAC verify.
 
 ### T0.4 — Cross-DB SELECT grants on mark8ly tables
-- Per `tesserix-k8s/docs/cross-db-admin.md` runbook, grant `tesserix_admin` role:
+- Per `tesserix-k8s/docs/cross-db-admin.md` runbook, grant `tesserix_admin` role on `mark8ly-postgres.marketplace` DB:
   ```sql
-  GRANT SELECT ON mark8ly.tenants, mark8ly.stores, mark8ly.orders,
-                mark8ly.products, mark8ly.customers TO tesserix_admin;
+  GRANT SELECT ON marketplace.stores, marketplace.orders,
+                  marketplace.products, marketplace.customer_profiles
+  TO tesserix_admin;
   ```
-  (Confirm exact table list with mark8ly DB owner — answers CONTEXT.md Q4.)
-- Verify: from tesserix-home pod, `psql -c "SELECT count(*) FROM orders"` succeeds.
+- Q4 confirmed: actual table is `customer_profiles`, not `customers`.
+- Verify: from `company` pod, `psql -c "SELECT count(*) FROM marketplace.orders"` succeeds.
+- Risk: Low. Read-only. Pre-existing role.
 
-**Wave 0 acceptance:** All three external dependencies (Prom, OpenCost, SendGrid) reachable from tesserix-home pod with read-only credentials. Cross-DB row counts queryable.
+**Wave 0 acceptance:** Prometheus + OpenCost reachable (verified by `wget` from `company` pod). Cross-DB row counts queryable. SendGrid webhook configured but disabled until receiver deployed.
 
 ---
 
@@ -92,11 +101,12 @@ These are NOT tesserix-home changes. They're prerequisites in the sibling `tesse
 - Note: OpenCost returns USD by default. Convert via static rate or surface the currency from response. Decision: surface currency in response, render in UI.
 - Acceptance: Returns valid breakdown for `mark8ly` namespace.
 
-### T1.4 — SendGrid Activity API wrapper
-- New file: `lib/metrics/sendgrid.ts`
+### T1.4 — Notification-service email events client
+- New file: `lib/metrics/email-events.ts`
 - Function: `getEmailMetrics(filters: { product: string; tenantId?: string; days: number }): Promise<EmailMetrics>` returning `{ sent, delivered, opens, bounces, unsubscribes }`.
-- Uses `GET /v3/messages?query=...` with custom_args filter.
-- Acceptance: Returns zero counts gracefully when no events match (e.g., before mark8ly is instrumented in Wave 5).
+- Calls `notification-service` internal API (e.g., `GET /internal/email-events/aggregate?product=mark8ly&tenant_id=...&days=30`).
+- Auth: existing service-to-service token pattern in tesserix namespace.
+- Acceptance: Returns zero counts gracefully when no events recorded yet (e.g., before Wave 5 instrumentation lands). Fixture-based unit test.
 
 ### T1.5 — Cross-DB tenant metrics queries
 - Extend `lib/db/mark8ly.ts` with:
@@ -115,6 +125,51 @@ These are NOT tesserix-home changes. They're prerequisites in the sibling `tesse
 - `lib/metrics/` directory complete with typed clients
 - Each client unit-tested against fixture responses (no live network in tests)
 - ProductConfig registry resolves mark8ly correctly
+
+---
+
+## Wave 1.5 — notification-service email events ingestion
+
+**Repo:** `notification-service` (separate repo from tesserix-home). Small, additive, no breaking changes. Phase 1 scope includes this work.
+
+### T1.5.1 — `email_events` table migration
+- New migration: `email_events` table with columns:
+  ```
+  id              uuid primary key
+  sg_event_id     text unique  -- SendGrid's sg_event_id, dedupe key
+  email           text
+  event_type      text         -- processed | delivered | open | bounce | dropped | unsubscribe | spamreport
+  tenant_id       text         -- from custom_args
+  product         text         -- from custom_args (e.g., "mark8ly")
+  template_key    text         -- from custom_args (optional)
+  reason          text         -- bounce/drop reason (nullable)
+  occurred_at     timestamptz  -- SendGrid timestamp
+  received_at     timestamptz  -- our ingestion time
+  raw_payload     jsonb        -- full event for debugging
+  ```
+- Indexes: `(product, tenant_id, occurred_at DESC)`, `(product, occurred_at DESC)`, `(sg_event_id)` unique.
+- Retention: forever for now; revisit at Phase 4+.
+
+### T1.5.2 — `POST /webhooks/sendgrid` receiver
+- HMAC verification using `notification-service-sendgrid-webhook-secret` from ESO. Reject 401 on signature failure.
+- Parse SendGrid batch JSON; insert rows with `INSERT ... ON CONFLICT (sg_event_id) DO NOTHING` for idempotency.
+- Return 200 within 1s — SendGrid times out and retries otherwise.
+- Log rejections + ingestion counts to existing logging infra.
+
+### T1.5.3 — `GET /internal/email-events/aggregate` query endpoint
+- Internal-only route (admin auth or service-to-service token).
+- Query params: `product`, `tenant_id?`, `days` (default 30).
+- Returns: `{ sent, delivered, opens, bounces, unsubscribes, dropped }` aggregated counts.
+- Underlying SQL: 5 grouped count queries on indexed columns.
+
+### T1.5.4 — Enable SendGrid webhook
+- After T1.5.1–T1.5.3 deployed, enable Event Webhook in SendGrid console (T0.3 prepared but disabled).
+- Verify: trigger a test send from mark8ly platform-api; confirm row appears in `email_events` within seconds.
+
+### Wave 1.5 acceptance
+- Webhook accepts valid SendGrid events, rejects forged ones (HMAC verify proven via test fixture).
+- `/internal/email-events/aggregate` returns correct counts for mark8ly product (will be 0 until Wave 5 lands `custom_args` instrumentation).
+- Migration deployed; rollback plan documented (drop table; webhook can stay configured but receiving 404 won't break SendGrid sends).
 
 ---
 
@@ -322,8 +377,10 @@ Run, in this order, against the new pages:
 
 ## Risk-driven sequencing notes
 
-- **Wave 5 is dependent on Wave 0+2 only.** It can start in parallel with Wave 3+4 if a separate engineer is doing the mark8ly side. We'll defer kicking off Wave 5 until Wave 4 demo proves the Activity API is working — that way, we know the instrumentation will actually be visible in the dashboard.
-- **Wave 0 has manual steps** (DB grants, GSM secrets) — kick off first thing Phase 1, parallel with Wave 1 backend foundations.
+- **Wave 5 (mark8ly instrumentation) starts only after Wave 1.5 deployed.** Otherwise `custom_args` tags fly into a void. Sequence: 0 → (1, 1.5 in parallel) → 2 → (3, 4) → 5 → 6.
+- **Wave 0 has manual steps** (Istio AuthZ Policy PR, DB grants, SendGrid webhook setup) — kick off first thing Phase 1, parallel with Wave 1 backend foundations.
+- **Wave 1.5 = notification-service repo** — separate PR, separate review, but Phase-1 owned. Has its own deployment cycle.
+- **SendGrid webhook stays disabled until T1.5.4.** Premature enablement floods notification-service with 404s and SendGrid retries.
 - **Wave 6 design polish gates phase completion.** Don't ship without it.
 
 ---
