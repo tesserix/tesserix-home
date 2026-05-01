@@ -70,7 +70,7 @@ export async function listPlatformTickets(filter: ListFilter = {}): Promise<Plat
     SELECT id, product_id, tenant_id::text, ticket_number, subject, description,
            status, priority, submitted_by_name, submitted_by_email,
            submitted_by_user_id::text, resolved_at, created_at, updated_at
-    FROM tesserix_admin.platform_tickets
+    FROM platform_tickets
     ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
       CASE WHEN status IN ('open','in_progress') THEN 0 ELSE 1 END,
@@ -90,7 +90,7 @@ export async function getPlatformTicket(id: string): Promise<PlatformTicketRow |
     `SELECT id, product_id, tenant_id::text, ticket_number, subject, description,
             status, priority, submitted_by_name, submitted_by_email,
             submitted_by_user_id::text, resolved_at, created_at, updated_at
-     FROM tesserix_admin.platform_tickets WHERE id = $1::uuid`,
+     FROM platform_tickets WHERE id = $1::uuid`,
     [id],
   );
   return res.rows[0] ?? null;
@@ -100,7 +100,7 @@ export async function getPlatformTicketReplies(ticketId: string): Promise<Platfo
   const res = await tesserixQuery<PlatformTicketReplyRow>(
     `SELECT id, ticket_id::text, author_type, author_name, author_email,
             author_user_id::text, content, created_at
-     FROM tesserix_admin.platform_ticket_replies
+     FROM platform_ticket_replies
      WHERE ticket_id = $1::uuid
      ORDER BY created_at ASC`,
     [ticketId],
@@ -122,14 +122,14 @@ export interface CreateTicketInput {
 export async function createPlatformTicket(input: CreateTicketInput): Promise<PlatformTicketRow> {
   return tesserixTx(async (client) => {
     const seqRes = await client.query<{ n: string }>(
-      `SELECT nextval('tesserix_admin.platform_tickets_seq')::text AS n`,
+      `SELECT nextval('platform_tickets_seq')::text AS n`,
     );
     const n = Number(seqRes.rows[0]?.n ?? "1");
     const prefix = PRODUCT_PREFIX[input.productId] ?? input.productId.slice(0, 2).toUpperCase();
     const ticketNumber = `${prefix}-${String(n).padStart(4, "0")}`;
 
     const insRes = await client.query<PlatformTicketRow>(
-      `INSERT INTO tesserix_admin.platform_tickets
+      `INSERT INTO platform_tickets
          (product_id, tenant_id, ticket_number, subject, description,
           priority, submitted_by_name, submitted_by_email, submitted_by_user_id)
        VALUES ($1, $2::uuid, $3, $4, $5, COALESCE($6, 'medium'), $7, $8, $9::uuid)
@@ -165,7 +165,7 @@ export interface CreateReplyInput {
 export async function createPlatformTicketReply(input: CreateReplyInput): Promise<PlatformTicketReplyRow> {
   return tesserixTx(async (client) => {
     const replyRes = await client.query<PlatformTicketReplyRow>(
-      `INSERT INTO tesserix_admin.platform_ticket_replies
+      `INSERT INTO platform_ticket_replies
          (ticket_id, author_type, author_name, author_email, author_user_id, content)
        VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6)
        RETURNING id, ticket_id::text, author_type, author_name, author_email,
@@ -181,7 +181,7 @@ export async function createPlatformTicketReply(input: CreateReplyInput): Promis
     );
     if (input.newStatus) {
       await client.query(
-        `UPDATE tesserix_admin.platform_tickets
+        `UPDATE platform_tickets
            SET status = $1,
                resolved_at = CASE WHEN $1 = 'resolved' THEN now() ELSE resolved_at END
          WHERE id = $2::uuid`,
@@ -211,7 +211,7 @@ export async function getPlatformTicketsSummary(): Promise<PlatformTicketsSummar
        count(*) FILTER (WHERE status = 'in_progress')::bigint AS in_progress,
        count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= now() - interval '7 days')::bigint AS resolved_this_week,
        count(*) FILTER (WHERE status IN ('open','in_progress') AND priority = 'urgent')::bigint AS urgent_open
-     FROM tesserix_admin.platform_tickets`,
+     FROM platform_tickets`,
   );
   const r = res.rows[0];
   return {

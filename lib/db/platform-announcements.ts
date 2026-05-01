@@ -18,7 +18,7 @@ export async function listAnnouncements(): Promise<AnnouncementRow[]> {
   const res = await tesserixQuery<AnnouncementRow>(
     `SELECT id, title, body, severity, audience_filter, starts_at, ends_at,
             is_published, created_by, created_at, updated_at
-     FROM tesserix_admin.platform_announcements
+     FROM platform_announcements
      ORDER BY starts_at DESC LIMIT 500`,
   );
   return res.rows;
@@ -29,7 +29,7 @@ export async function getActiveAnnouncementsForTenant(productId: string, tenantS
   const res = await tesserixQuery<AnnouncementRow>(
     `SELECT id, title, body, severity, audience_filter, starts_at, ends_at,
             is_published, created_by, created_at, updated_at
-     FROM tesserix_admin.platform_announcements
+     FROM platform_announcements
      WHERE is_published = true
        AND starts_at <= now()
        AND (ends_at IS NULL OR ends_at > now())
@@ -56,7 +56,7 @@ export interface CreateAnnouncementInput {
 
 export async function createAnnouncement(input: CreateAnnouncementInput): Promise<AnnouncementRow> {
   const res = await tesserixQuery<AnnouncementRow>(
-    `INSERT INTO tesserix_admin.platform_announcements
+    `INSERT INTO platform_announcements
        (title, body, severity, audience_filter, starts_at, ends_at, is_published, created_by)
      VALUES ($1, $2, COALESCE($3,'info'), COALESCE($4::jsonb,'{}'::jsonb),
              COALESCE($5::timestamptz, now()), $6::timestamptz, COALESCE($7,false), $8)
@@ -78,7 +78,7 @@ export async function createAnnouncement(input: CreateAnnouncementInput): Promis
 
 export async function updateAnnouncementPublished(id: string, isPublished: boolean): Promise<AnnouncementRow | null> {
   const res = await tesserixQuery<AnnouncementRow>(
-    `UPDATE tesserix_admin.platform_announcements
+    `UPDATE platform_announcements
        SET is_published = $2
      WHERE id = $1::uuid
      RETURNING id, title, body, severity, audience_filter, starts_at, ends_at,
