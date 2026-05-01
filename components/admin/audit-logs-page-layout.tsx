@@ -23,15 +23,17 @@ interface Props {
   initialSeverity?: string;
 }
 
+const ALL = "all";
+
 const SEVERITIES = [
-  { value: "", label: "All severities" },
+  { value: ALL, label: "All severities" },
   { value: "info", label: "Info" },
   { value: "warning", label: "Warning" },
   { value: "critical", label: "Critical" },
 ];
 
 const STATUSES = [
-  { value: "", label: "All statuses" },
+  { value: ALL, label: "All statuses" },
   { value: "success", label: "Success" },
   { value: "failure", label: "Failure" },
 ];
@@ -52,6 +54,10 @@ export function AuditLogsPageLayout({ config, initialSeverity = "" }: Props) {
 
   function update<K extends keyof AuditFilters>(key: K, value: AuditFilters[K] | undefined) {
     setFilters((f) => ({ ...f, [key]: value || undefined }));
+  }
+
+  function pickEnum(value: string): string | undefined {
+    return value === ALL || !value ? undefined : value;
   }
 
   const rows = data?.rows ?? [];
@@ -79,8 +85,8 @@ export function AuditLogsPageLayout({ config, initialSeverity = "" }: Props) {
 
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3">
           <Select
-            value={filters.severity ?? ""}
-            onValueChange={(v) => update("severity", v || undefined)}
+            value={filters.severity ?? ALL}
+            onValueChange={(v) => update("severity", pickEnum(v))}
           >
             <SelectTrigger className="h-9 w-44 text-xs">
               <SelectValue placeholder="Severity" />
@@ -92,8 +98,8 @@ export function AuditLogsPageLayout({ config, initialSeverity = "" }: Props) {
             </SelectContent>
           </Select>
           <Select
-            value={filters.status ?? ""}
-            onValueChange={(v) => update("status", v || undefined)}
+            value={filters.status ?? ALL}
+            onValueChange={(v) => update("status", pickEnum(v))}
           >
             <SelectTrigger className="h-9 w-36 text-xs">
               <SelectValue placeholder="Status" />
