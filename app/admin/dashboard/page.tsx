@@ -82,7 +82,7 @@ function LeadFunnel({ byStatus, total }: LeadFunnelProps) {
       <header className="mb-4 flex items-center justify-between">
         <h2 className="text-base font-medium">Leads pipeline</h2>
         <Link
-          href="/admin/leads"
+          href="/admin/apps/mark8ly/leads"
           className="flex items-center gap-1 text-sm text-foreground/70 hover:text-foreground"
         >
           Manage <ArrowRight className="h-3 w-3" />
@@ -136,10 +136,10 @@ export default async function DashboardPage() {
       <AdminHeader title="Dashboard" />
       <div className="flex-1 space-y-6 p-6">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <StatCard label="Active tenants" value={data.tenants.active} hint={`${data.tenants.total} total`} icon={Users} href="/admin/tenants" />
-          <StatCard label="Stores" value={data.stores.total} icon={Store} href="/admin/tenants" />
+          <StatCard label="Active tenants" value={data.tenants.active} hint={`${data.tenants.total} total`} icon={Users} href="/admin/apps/mark8ly/tenants" />
+          <StatCard label="Stores" value={data.stores.total} icon={Store} href="/admin/apps/mark8ly/tenants" />
           <StatCard label="Active products" value={data.apps.active} icon={Boxes} href="/admin/apps" />
-          <StatCard label="Leads" value={data.leads.total} icon={Building2} href="/admin/leads" />
+          <StatCard label="Leads" value={data.leads.total} icon={Building2} href="/admin/apps/mark8ly/leads" />
         </div>
         <LeadFunnel byStatus={data.leads.by_status} total={data.leads.total} />
         <p className="text-xs text-muted-foreground">

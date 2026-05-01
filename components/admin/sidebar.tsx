@@ -45,22 +45,17 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
   return "items" in entry;
 }
 
-// Phase 2: minimal super-admin nav. Cross-product views (tenants, leads,
-// apps registry) live at flat /admin/<page> paths. Per-product deep-links
-// will return when the dedicated product pages are rebuilt — for now
-// everything routes through the core five.
 const platformNav: NavEntry[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { name: "Tenants", href: "/admin/tenants", icon: Users },
-  { name: "Leads", href: "/admin/leads", icon: ClipboardList },
   { name: "Apps", href: "/admin/apps", icon: Cloud },
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
-// Rail context is preserved for future per-product navigation. Both rails
-// currently show the same flat list — we'll repopulate `mark8lyNav` when
-// per-product detail pages return.
-const mark8lyNav: NavEntry[] = platformNav;
+const mark8lyNav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/mark8ly", icon: LayoutDashboard },
+  { name: "Tenants", href: "/admin/apps/mark8ly/tenants", icon: Users },
+  { name: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
+];
 
 type RailContext = "platform" | "mark8ly";
 
