@@ -2,7 +2,7 @@
 
 import { AuthProvider, useAuth } from "@/lib/auth/auth-context";
 import { AdminSidebar } from "@/components/admin/sidebar";
-import { ToastProvider, ToastViewport } from "@tesserix/web";
+import { ToastProvider, ToastViewport, TooltipProvider } from "@tesserix/web";
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 
@@ -39,14 +39,16 @@ export default function AdminLayout({
   return (
     <AuthProvider>
       <ToastProvider>
-        <AuthGuard>
-          <div className="min-h-screen bg-background">
-            <AdminSidebar />
-            <div id="main-content" className="lg:pl-72">
-              {children}
+        <TooltipProvider delayDuration={200}>
+          <AuthGuard>
+            <div className="min-h-screen bg-background">
+              <AdminSidebar />
+              <div id="main-content" className="lg:pl-72">
+                {children}
+              </div>
             </div>
-          </div>
-        </AuthGuard>
+          </AuthGuard>
+        </TooltipProvider>
         <ToastViewport position="bottom-right" />
       </ToastProvider>
     </AuthProvider>
