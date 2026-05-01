@@ -23,14 +23,19 @@ const createSchema = z.object({
 });
 
 function authorize(req: NextRequest): boolean {
+  // We use a custom X-Internal-Token header instead of Authorization
+  // because the istio-ingress layer has a RequestAuthentication policy
+  // that intercepts `Authorization: Bearer ...`, tries to parse it as
+  // a JWT, and rejects opaque tokens with 401 ("Jwt is not in the form
+  // of Header.Payload.Signature..."). A custom header bypasses that.
+  //
   // trim() defends against trailing whitespace introduced by GSM/ESO
   // when a secret was created with `<<<` heredoc or echo (both append a
-  // newline). An attacker can't introduce whitespace into the env, so
-  // this is loss-less defense in depth.
+  // newline). An attacker can't influence env, so this is loss-less.
   const expected = (process.env.INTERNAL_API_TOKEN ?? "").trim();
   if (!expected) return false;
-  const header = (req.headers.get("authorization") ?? "").trim();
-  return header === `Bearer ${expected}`;
+  const supplied = (req.headers.get("x-internal-token") ?? "").trim();
+  return supplied !== "" && supplied === expected;
 }
 
 export async function POST(req: NextRequest) {

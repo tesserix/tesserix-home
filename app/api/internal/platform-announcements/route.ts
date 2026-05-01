@@ -10,13 +10,12 @@ import { getActiveAnnouncementsForTenant } from "@/lib/db/platform-announcements
 import { logger } from "@/lib/logger";
 
 function authorize(req: NextRequest): boolean {
-  // trim() defends against trailing whitespace introduced by GSM/ESO
-  // when a secret was created with `<<<` heredoc or echo (both append a
-  // newline). See the platform-tickets route for the full explanation.
+  // X-Internal-Token (not Authorization Bearer) — see platform-tickets
+  // route for the full explanation of why we avoid the standard header.
   const expected = (process.env.INTERNAL_API_TOKEN ?? "").trim();
   if (!expected) return false;
-  const header = (req.headers.get("authorization") ?? "").trim();
-  return header === `Bearer ${expected}`;
+  const supplied = (req.headers.get("x-internal-token") ?? "").trim();
+  return supplied !== "" && supplied === expected;
 }
 
 export async function GET(req: NextRequest) {
