@@ -13,6 +13,12 @@ import { RefreshControl } from "@/components/admin/metrics/refresh-control";
 import { MetricsSection } from "@/components/admin/metrics/section";
 import { formatBytes, formatCurrency, formatNumber } from "@/components/admin/metrics/format";
 import { useTenantIdentity, useTenantMetrics } from "@/lib/admin/use-metrics";
+import { useTenantBilling } from "@/lib/admin/use-billing";
+import { PlanBadge } from "@/components/admin/billing/plan-badge";
+import { StatusBadge } from "@/components/admin/billing/status-badge";
+import { DunningPill } from "@/components/admin/billing/dunning-pill";
+import { PlanChangeTimeline } from "@/components/admin/billing/plan-change-timeline";
+import { MarginCard } from "@/components/admin/billing/margin-card";
 import type { ProductConfig } from "@/lib/products/types";
 
 interface TenantDetailLayoutProps {
@@ -24,9 +30,11 @@ export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
   const identity = useTenantIdentity(tenantId);
   const metrics = useTenantMetrics(config.id, tenantId, timeWindow);
+  const hasBilling = Boolean(config.pricingByPlan);
+  const billing = useTenantBilling(hasBilling ? config.id : "", hasBilling ? tenantId : "");
 
   async function handleRefresh() {
-    await Promise.all([metrics.mutate(), identity.mutate()]);
+    await Promise.all([metrics.mutate(), identity.mutate(), billing.mutate()]);
   }
 
   const tenant = identity.data?.tenant;
@@ -201,6 +209,107 @@ export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps
             <p className="text-sm text-muted-foreground">Cost share unavailable.</p>
           )}
         </MetricsSection>
+
+        {/* Section E — Subscription */}
+        {hasBilling ? (
+          <MetricsSection
+            id="section-subscription"
+            title="Subscription"
+            lastRefreshedAt={billing.data?.generatedAt}
+            error={billing.error ? "Could not load subscription." : undefined}
+          >
+            {billing.data?.subscription ? (
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <PlanBadge plan={billing.data.subscription.plan} />
+                  <StatusBadge status={billing.data.subscription.status} />
+                  <DunningPill
+                    state={
+                      ["past_due", "incomplete"].includes(billing.data.subscription.status)
+                        ? "retrying"
+                        : billing.data.subscription.status === "unpaid"
+                          ? "exhausted"
+                          : null
+                    }
+                  />
+                  {billing.data.subscription.cancel_at_period_end ? (
+                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700">
+                      Cancels at period end
+                    </span>
+                  ) : null}
+                </div>
+                <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-muted-foreground">Period start</dt>
+                    <dd className="mt-1 tabular-nums">
+                      {billing.data.subscription.current_period_start
+                        ? new Date(billing.data.subscription.current_period_start).toLocaleDateString()
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-muted-foreground">Period end</dt>
+                    <dd className="mt-1 tabular-nums">
+                      {billing.data.subscription.current_period_end
+                        ? new Date(billing.data.subscription.current_period_end).toLocaleDateString()
+                        : "—"}
+                    </dd>
+                  </div>
+                  {billing.data.trial ? (
+                    <>
+                      <div>
+                        <dt className="text-xs uppercase tracking-wide text-muted-foreground">Trial ends in</dt>
+                        <dd className="mt-1 tabular-nums">
+                          {billing.data.trial.daysRemaining != null
+                            ? `${billing.data.trial.daysRemaining}d`
+                            : "—"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-xs uppercase tracking-wide text-muted-foreground">Conversion</dt>
+                        <dd className="mt-1 capitalize">{billing.data.trial.conversionLikelihood}</dd>
+                      </div>
+                    </>
+                  ) : null}
+                  {billing.data.lifetimeRevenue ? (
+                    <div>
+                      <dt className="text-xs uppercase tracking-wide text-muted-foreground">Lifetime revenue</dt>
+                      <dd className="mt-1 tabular-nums">
+                        {formatCurrency(billing.data.lifetimeRevenue.amount, billing.data.lifetimeRevenue.currency)}
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+                {billing.data.planHistory.length > 0 ? (
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Plan history</p>
+                    <PlanChangeTimeline changes={billing.data.planHistory} />
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No subscription on file for this tenant.</p>
+            )}
+          </MetricsSection>
+        ) : null}
+
+        {/* Section F — Margin */}
+        {hasBilling && billing.data?.margin ? (
+          <MetricsSection
+            id="section-margin"
+            title="Estimated margin"
+            lastRefreshedAt={billing.data.generatedAt}
+          >
+            <MarginCard
+              revenue={billing.data.margin.revenue}
+              infraCost={billing.data.margin.infraCost}
+              margin={billing.data.margin.margin}
+              currency={billing.data.margin.currency}
+              inTrial={billing.data.margin.inTrial}
+              productName={config.name}
+            />
+          </MetricsSection>
+        ) : null}
       </div>
     </div>
   );

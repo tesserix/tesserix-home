@@ -17,6 +17,8 @@ import {
   formatNumber,
 } from "@/components/admin/metrics/format";
 import { useDashboardCounts, useProductMetrics, type DashboardCounts } from "@/lib/admin/use-metrics";
+import { useProductRevenue } from "@/lib/admin/use-billing";
+import { RevenueSection } from "@/components/admin/billing/revenue-section";
 import type { ProductConfig, KpiTileSpec } from "@/lib/products/types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@tesserix/web";
 
@@ -42,9 +44,11 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
   const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, timeWindow);
   const dashboard = useDashboardCounts();
+  const hasBilling = Boolean(config.pricingByPlan);
+  const revenue = useProductRevenue(hasBilling ? config.id : "", 30);
 
   async function handleRefresh() {
-    await Promise.all([mutate(), dashboard.mutate()]);
+    await Promise.all([mutate(), dashboard.mutate(), revenue.mutate()]);
   }
 
   const generatedAt = data?.generatedAt;
@@ -63,6 +67,18 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
           <TimeWindowPicker value={timeWindow} onChange={setTimeWindow} />
           <RefreshControl onRefresh={handleRefresh} loading={isValidating} />
         </div>
+
+        {/* Section A0 — Revenue (only when billing configured) */}
+        {hasBilling ? (
+          <MetricsSection
+            id="section-revenue"
+            title="Revenue"
+            lastRefreshedAt={revenue.data?.generatedAt}
+            error={revenue.error ? "Could not load revenue metrics." : undefined}
+          >
+            <RevenueSection data={revenue.data ?? null} loading={revenue.isLoading} />
+          </MetricsSection>
+        ) : null}
 
         {/* Section A — Business KPIs */}
         <MetricsSection
