@@ -1,9 +1,11 @@
-import { redirect } from "next/navigation";
+import { TenantDetailLayout } from "@/components/admin/tenant-detail-layout";
+import { getProductConfig } from "@/lib/products/configs";
 
-export default function TenantDetailPage({
+export default async function Mark8lyTenantDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  redirect(`/admin/apps/mark8ly/${params.id}`);
+  const { id } = await params;
+  return <TenantDetailLayout config={getProductConfig("mark8ly")} tenantId={id} />;
 }

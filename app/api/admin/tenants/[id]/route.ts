@@ -7,20 +7,45 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
-import { mark8lyTx } from "@/lib/db/mark8ly";
+import { mark8lyQuery, mark8lyTx } from "@/lib/db/mark8ly";
 import type { TenantRow } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 
 const uuidSchema = z.string().uuid();
 
+interface RouteCtx {
+  params: Promise<{ id: string }>;
+}
+
+export async function GET(_req: NextRequest, ctx: RouteCtx): Promise<Response> {
+  const { id } = await ctx.params;
+  const idCheck = uuidSchema.safeParse(id);
+  if (!idCheck.success) {
+    return NextResponse.json({ error: "invalid id" }, { status: 400 });
+  }
+
+  try {
+    const result = await mark8lyQuery<TenantRow>(
+      "platform_api",
+      `SELECT id, name, owner_user_id, owner_email, status, created_at, updated_at
+       FROM tenants WHERE id = $1`,
+      [idCheck.data],
+    );
+    const tenant = result.rows[0];
+    if (!tenant) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ tenant });
+  } catch (err) {
+    logger.error("[tenants GET single] failed", err);
+    return NextResponse.json({ error: "query failed" }, { status: 500 });
+  }
+}
+
 const tenantUpdateSchema = z.object({
   status: z.enum(["active", "suspended", "archived"]).optional(),
   name: z.string().trim().min(1).max(200).optional(),
 });
-
-interface RouteCtx {
-  params: Promise<{ id: string }>;
-}
 
 export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   const { id } = await ctx.params;

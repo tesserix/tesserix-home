@@ -6,7 +6,7 @@ import { formatRelativeTime, isStale } from "./format";
 
 interface MetricsSectionProps {
   id: string;
-  title: string;
+  title: ReactNode;
   description?: string;
   lastRefreshedAt?: string;
   fixedWindowLabel?: string;
