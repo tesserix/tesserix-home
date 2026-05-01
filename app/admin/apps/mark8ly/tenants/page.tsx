@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
 
 import { AdminHeader } from "@/components/admin/header";
 
@@ -140,15 +147,19 @@ export default function TenantsPage() {
                       {new Date(t.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <select
+                      <Select
                         value={t.status}
-                        onChange={(e) => void updateStatus(t.id, e.target.value)}
-                        className="rounded-md border border-border bg-background px-2 py-1 text-xs"
+                        onValueChange={(v) => void updateStatus(t.id, v)}
                       >
-                        <option value="active">active</option>
-                        <option value="suspended">suspended</option>
-                        <option value="archived">archived</option>
-                      </select>
+                        <SelectTrigger className="ml-auto h-7 w-32 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active" className="text-xs">active</SelectItem>
+                          <SelectItem value="suspended" className="text-xs">suspended</SelectItem>
+                          <SelectItem value="archived" className="text-xs">archived</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </td>
                   </tr>
                 ))

@@ -5,6 +5,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, RefreshCw, Upload } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
 
 import { AdminHeader } from "@/components/admin/header";
 import { LEAD_STATUSES } from "@/lib/leads/schema";
@@ -177,17 +184,21 @@ export default function LeadsPage() {
                     <td className="px-4 py-3">{l.company ?? "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{l.source ?? "—"}</td>
                     <td className="px-4 py-3">
-                      <select
+                      <Select
                         value={l.status}
-                        onChange={(e) => void updateStatus(l.id, e.target.value)}
-                        className="rounded-md border border-border bg-background px-2 py-1 text-xs capitalize"
+                        onValueChange={(v) => void updateStatus(l.id, v)}
                       >
-                        {LEAD_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger className="h-7 w-32 text-xs capitalize">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LEAD_STATUSES.map((s) => (
+                            <SelectItem key={s} value={s} className="text-xs capitalize">
+                              {s}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {new Date(l.created_at).toLocaleDateString()}
