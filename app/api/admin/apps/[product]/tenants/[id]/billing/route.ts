@@ -54,31 +54,37 @@ export async function GET(
 
     // Tenant exists but no store_subscriptions row → synthesize a trial
     // (mark8ly default — un-onboarded tenants are effectively trialing).
+    // Wrapped so a synthesis failure can't take down the whole route — we
+    // still want to return planHistory / invoices / margin if those succeeded.
     if (!subscription) {
-      const tenantRes = await mark8lyQuery<{ created_at: string }>(
-        "platform_api",
-        `SELECT created_at::text FROM tenants WHERE id = $1::uuid`,
-        [id],
-      );
-      const tenantCreated = tenantRes.rows[0]?.created_at;
-      if (tenantCreated) {
-        const trialDays = config.trialDays ?? 14;
-        const trialEnd = new Date(new Date(tenantCreated).getTime() + trialDays * 24 * 60 * 60 * 1000);
-        subscription = {
-          id: "synthetic-" + id,
-          tenant_id: id,
-          store_id: "",
-          stripe_customer_id: null,
-          stripe_subscription_id: null,
-          plan: "trial",
-          status: "trialing",
-          current_period_start: tenantCreated,
-          current_period_end: trialEnd.toISOString(),
-          cancel_at_period_end: false,
-          created_at: tenantCreated,
-          updated_at: tenantCreated,
-        };
-        synthesized = true;
+      try {
+        const tenantRes = await mark8lyQuery<{ created_at: string }>(
+          "platform_api",
+          `SELECT created_at::text FROM tenants WHERE id = $1::uuid`,
+          [id],
+        );
+        const tenantCreated = tenantRes.rows[0]?.created_at;
+        if (tenantCreated) {
+          const trialDays = config.trialDays ?? 14;
+          const trialEnd = new Date(new Date(tenantCreated).getTime() + trialDays * 24 * 60 * 60 * 1000);
+          subscription = {
+            id: "synthetic-" + id,
+            tenant_id: id,
+            store_id: "",
+            stripe_customer_id: null,
+            stripe_subscription_id: null,
+            plan: "trial",
+            status: "trialing",
+            current_period_start: tenantCreated,
+            current_period_end: trialEnd.toISOString(),
+            cancel_at_period_end: false,
+            created_at: tenantCreated,
+            updated_at: tenantCreated,
+          };
+          synthesized = true;
+        }
+      } catch (synthErr) {
+        logger.warn(`[tenant billing] synthesis failed for ${product}/${id}`, synthErr);
       }
     }
 
