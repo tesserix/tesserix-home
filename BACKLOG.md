@@ -15,17 +15,19 @@ Consolidated feature backlog from architecture conversations. Items tagged with 
 
 ---
 
-## Phase plan (locked through Phase 3, suggested beyond)
+## Phase plan (Phase 1 in flight, 2–4 reordered 2026-05-01 to put billing/subscriptions ahead of comms)
 
 | Phase | Scope | Daily use? | Risk to mark8ly |
 |---|---|---|---|
-| **1** | **Resources + Cost dashboards** (K1, K2, K4, L1, L2) | Daily | None — all read-only |
-| **2** | **Tickets + Audit Logs** (A2, A7) | Daily | Low (FW writes via mark8ly API) |
+| **1** ✅ | **Resources + Cost dashboards** (K1, K2, K4, L1, L2) | Daily | None — all read-only |
+| **2** | **Subscriptions, Dunning + Trial Management** (A1, N1, G1) — pairs with L2 to give margin-per-tenant on tenant detail | Daily | None (FR) |
 | **3** | **Templates Registry + Lead Marketing Send** (B1, B2) | Daily-Weekly | None (mark8ly send paths untouched) |
-| 4 | Subscriptions + Trial Management (A1, N1) | Weekly | None (FR) |
+| 4 | Tickets + Audit Logs (A2, A7) | Daily | Low (FW writes via mark8ly API) |
 | 5 | Onboarding Funnel + Notification Log (E1, E2) | Weekly | None (FR) |
 | 6 | Cross-product User Search + Synthetic Uptime (F1, M1) | Weekly | None |
 | 7+ | Templates rewire (B3), GCP Billing Export (L3), governance | As needed | Med (B3 touches send paths) |
+
+**Why this order:** L2 (Phase 1) shows infra cost per tenant — what they cost us. A1 (Phase 2) shows subscription revenue per tenant — what they pay us. Together they answer "is this tenant economically healthy?" which is daily-use for a multi-tenant platform owner. Comms (templates, tickets) is important but lower-frequency.
 
 ---
 
