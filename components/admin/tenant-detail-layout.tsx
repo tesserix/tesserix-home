@@ -220,6 +220,11 @@ export function TenantDetailLayout({ config, tenantId }: TenantDetailLayoutProps
           >
             {billing.data?.subscription ? (
               <div className="space-y-4">
+                {billing.data.synthesized ? (
+                  <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                    No subscription record found. Showing as trial based on tenant created date.
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2">
                   <PlanBadge plan={billing.data.subscription.plan} />
                   <StatusBadge status={billing.data.subscription.status} />

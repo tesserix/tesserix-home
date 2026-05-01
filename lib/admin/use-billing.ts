@@ -48,6 +48,7 @@ export interface TenantBillingResponse {
     stripe_customer_id: string | null;
     stripe_subscription_id: string | null;
   } | null;
+  synthesized?: boolean;
   trial: {
     daysRemaining: number | null;
     conversionLikelihood: "low" | "medium" | "high";

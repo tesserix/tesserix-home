@@ -1,14 +1,16 @@
 // GET /api/admin/apps/:product/subscriptions?filter=active|trial|past_due|cancelled
-// Subscription list view + summary tiles. Auth via middleware.
+// Subscription list view. The page shows ALL tenants for the product —
+// tenants without a store_subscriptions row are treated as trial (mark8ly's
+// default for un-onboarded merchants per migration 41 + 42). Auth via middleware.
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { mark8lyQuery } from "@/lib/db/mark8ly";
 import {
   getSubscriptionsSummary,
+  listAllTenants,
   listSubscriptions,
-  type SubscriptionListFilter,
   type SubscriptionRow,
+  type TenantBasicRow,
 } from "@/lib/db/mark8ly-billing";
 import {
   daysIntoTrial,
@@ -19,11 +21,6 @@ import {
 import { getProductConfig } from "@/lib/products/configs";
 import { logger } from "@/lib/logger";
 
-interface TenantNameRow {
-  id: string;
-  name: string;
-}
-
 interface SubscriptionListItem {
   tenantId: string;
   tenantName: string;
@@ -33,9 +30,19 @@ interface SubscriptionListItem {
   currency: string;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  hasSubscription: boolean;
   trialDaysRemaining?: number | null;
   conversionLikelihood?: TrialLikelihood;
   dunningState?: "retrying" | "exhausted" | null;
+}
+
+type Filter = "all" | "active" | "trial" | "past_due" | "cancelled";
+
+function parseFilter(raw: string | null): Filter {
+  if (raw === "active" || raw === "trial" || raw === "past_due" || raw === "cancelled") {
+    return raw;
+  }
+  return "all";
 }
 
 function dunningStateFromStatus(status: string): "retrying" | "exhausted" | null {
@@ -44,18 +51,76 @@ function dunningStateFromStatus(status: string): "retrying" | "exhausted" | null
   return null;
 }
 
-function parseFilter(raw: string | null): SubscriptionListFilter {
-  switch (raw) {
+const TYPICAL_TRIAL_DAYS = 14;
+
+// Build a synthetic trial subscription view for tenants without a real
+// store_subscriptions row. They're effectively trialing from creation +14d.
+function synthesizeTrialItem(tenant: TenantBasicRow, currency: string): SubscriptionListItem {
+  const created = new Date(tenant.created_at);
+  const trialEnd = new Date(created.getTime() + TYPICAL_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    tenantId: tenant.id,
+    tenantName: tenant.name,
+    plan: "trial",
+    status: "trialing",
+    mrr: 0,
+    currency,
+    currentPeriodEnd: trialEnd.toISOString(),
+    cancelAtPeriodEnd: false,
+    hasSubscription: false,
+    trialDaysRemaining: trialDaysRemaining(trialEnd.toISOString()),
+    conversionLikelihood: scoreTrialLikelihood({
+      daysIntoTrial: daysIntoTrial(tenant.created_at),
+      orderCount: 0,
+      lastSeenAt: null,
+    }),
+    dunningState: null,
+  };
+}
+
+function realItemFromSub(
+  sub: SubscriptionRow,
+  tenant: TenantBasicRow | undefined,
+  pricingByPlan: Readonly<Record<string, number>>,
+  currency: string,
+): SubscriptionListItem {
+  const isTrial = sub.plan === "trial" || sub.status === "trialing";
+  const item: SubscriptionListItem = {
+    tenantId: sub.tenant_id,
+    tenantName: tenant?.name ?? sub.tenant_id,
+    plan: sub.plan,
+    status: sub.status,
+    mrr: sub.status === "active" ? pricingByPlan[sub.plan] ?? 0 : 0,
+    currency,
+    currentPeriodEnd: sub.current_period_end,
+    cancelAtPeriodEnd: sub.cancel_at_period_end,
+    hasSubscription: true,
+    dunningState: dunningStateFromStatus(sub.status),
+  };
+  if (isTrial) {
+    item.trialDaysRemaining = trialDaysRemaining(sub.current_period_end);
+    item.conversionLikelihood = scoreTrialLikelihood({
+      daysIntoTrial: daysIntoTrial(sub.created_at),
+      orderCount: 0,
+      lastSeenAt: null,
+    });
+  }
+  return item;
+}
+
+function applyFilter(items: ReadonlyArray<SubscriptionListItem>, filter: Filter): SubscriptionListItem[] {
+  switch (filter) {
     case "active":
-      return { status: "active" };
+      return items.filter((i) => i.status === "active");
     case "trial":
-      return { trialOnly: true };
+      return items.filter((i) => i.plan === "trial" || i.status === "trialing");
     case "past_due":
-      return { dunningOnly: true };
+      return items.filter((i) => i.dunningState != null);
     case "cancelled":
-      return { status: "canceled" };
+      return items.filter((i) => i.status === "canceled");
+    case "all":
     default:
-      return {};
+      return [...items];
   }
 }
 
@@ -73,62 +138,59 @@ export async function GET(
   if (!config.pricingByPlan || !config.pricingCurrency) {
     return NextResponse.json({ error: "billing_not_configured" }, { status: 404 });
   }
+  const pricingByPlan = config.pricingByPlan;
+  const currency = config.pricingCurrency;
 
   const url = new URL(req.url);
   const filter = parseFilter(url.searchParams.get("filter"));
 
   try {
-    const [summary, rows] = await Promise.all([
+    const [summary, subs, tenants] = await Promise.all([
       getSubscriptionsSummary(),
-      listSubscriptions(filter),
+      listSubscriptions({ limit: 1000 }),
+      listAllTenants(),
     ]);
 
-    // Resolve tenant names in one cross-DB hop.
-    const tenantIds = Array.from(new Set(rows.map((r) => r.tenant_id)));
-    const namesById = new Map<string, string>();
-    if (tenantIds.length > 0) {
-      const namesRes = await mark8lyQuery<TenantNameRow>(
-        "platform_api",
-        `SELECT id::text, name FROM tenants WHERE id = ANY($1::uuid[])`,
-        [tenantIds],
-      );
-      for (const r of namesRes.rows) namesById.set(r.id, r.name);
+    const subsByTenantId = new Map<string, SubscriptionRow>();
+    for (const s of subs) subsByTenantId.set(s.tenant_id, s);
+    const tenantsById = new Map<string, TenantBasicRow>();
+    for (const t of tenants) tenantsById.set(t.id, t);
+
+    // Merge: every tenant gets a row. Real subscription if present, else
+    // synthetic trial.
+    const allItems: SubscriptionListItem[] = tenants.map((t) => {
+      const sub = subsByTenantId.get(t.id);
+      return sub
+        ? realItemFromSub(sub, t, pricingByPlan, currency)
+        : synthesizeTrialItem(t, currency);
+    });
+
+    // Subscriptions whose tenant got hard-deleted from platform DB but
+    // billing_archive still references them; surface them so they're not
+    // invisible.
+    for (const s of subs) {
+      if (!tenantsById.has(s.tenant_id)) {
+        allItems.push(realItemFromSub(s, undefined, pricingByPlan, currency));
+      }
     }
 
-    const items: SubscriptionListItem[] = rows.map((r: SubscriptionRow) => {
-      const isTrial = r.plan === "trial" || r.status === "trialing";
-      const item: SubscriptionListItem = {
-        tenantId: r.tenant_id,
-        tenantName: namesById.get(r.tenant_id) ?? r.tenant_id,
-        plan: r.plan,
-        status: r.status,
-        mrr: r.status === "active" ? config.pricingByPlan![r.plan] ?? 0 : 0,
-        currency: config.pricingCurrency!,
-        currentPeriodEnd: r.current_period_end,
-        cancelAtPeriodEnd: r.cancel_at_period_end,
-        dunningState: dunningStateFromStatus(r.status),
-      };
-      if (isTrial) {
-        item.trialDaysRemaining = trialDaysRemaining(r.current_period_end);
-        item.conversionLikelihood = scoreTrialLikelihood({
-          daysIntoTrial: daysIntoTrial(r.created_at),
-          orderCount: 0, // TODO: plumb from orders table once Wave-5 lands
-          lastSeenAt: null,
-        });
-      }
-      return item;
-    });
+    const filtered = applyFilter(allItems, filter);
+
+    // Recompute trial count to include synthesized rows.
+    const trialCount = allItems.filter(
+      (i) => i.plan === "trial" || i.status === "trialing",
+    ).length;
 
     return NextResponse.json({
       summary: {
-        totalMrr: items.reduce((acc, i) => acc + i.mrr, 0),
-        currency: config.pricingCurrency,
+        totalMrr: allItems.reduce((acc, i) => acc + i.mrr, 0),
+        currency,
         activeCount: summary.totalActive,
-        trialCount: summary.trialing,
+        trialCount,
         pastDueCount: summary.pastDue,
         cancelledThisMonth: summary.cancelledThisMonth,
       },
-      rows: items,
+      rows: filtered,
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

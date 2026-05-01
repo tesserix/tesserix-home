@@ -168,6 +168,23 @@ export async function getLifetimeRevenueCents(tenantId: string): Promise<number>
   return Math.round(archiveUsd * 100);
 }
 
+export interface TenantBasicRow {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string;
+  readonly created_at: string;
+}
+
+// All tenants from mark8ly's platform_api DB. Used to LEFT-JOIN against
+// store_subscriptions in app code (the two tables live in different DBs).
+export async function listAllTenants(): Promise<TenantBasicRow[]> {
+  const res = await mark8lyQuery<TenantBasicRow>(
+    "platform_api",
+    `SELECT id::text, name, status, created_at::text FROM tenants ORDER BY created_at DESC LIMIT 1000`,
+  );
+  return res.rows;
+}
+
 // Quick aggregate counts for the subscriptions list summary tiles.
 export interface SubscriptionsSummary {
   readonly totalActive: number;

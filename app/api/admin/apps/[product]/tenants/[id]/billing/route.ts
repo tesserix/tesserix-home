@@ -10,6 +10,7 @@ import {
   getRecentInvoiceEvents,
   getSubscription,
 } from "@/lib/db/mark8ly-billing";
+import { mark8lyQuery } from "@/lib/db/mark8ly";
 import { computeTenantMargin } from "@/lib/metrics/margin";
 import { isValidWindow, type Window } from "@/lib/metrics/window";
 import {
@@ -48,7 +49,38 @@ export async function GET(
       computeTenantMargin(config, id, window),
     ]);
 
-    const subscription = sub.status === "fulfilled" ? sub.value : null;
+    let subscription = sub.status === "fulfilled" ? sub.value : null;
+    let synthesized = false;
+
+    // Tenant exists but no store_subscriptions row → synthesize a trial
+    // (mark8ly default — un-onboarded tenants are effectively trialing).
+    if (!subscription) {
+      const tenantRes = await mark8lyQuery<{ created_at: string }>(
+        "platform_api",
+        `SELECT created_at::text FROM tenants WHERE id = $1::uuid`,
+        [id],
+      );
+      const tenantCreated = tenantRes.rows[0]?.created_at;
+      if (tenantCreated) {
+        const trialEnd = new Date(new Date(tenantCreated).getTime() + 14 * 24 * 60 * 60 * 1000);
+        subscription = {
+          id: "synthetic-" + id,
+          tenant_id: id,
+          store_id: "",
+          stripe_customer_id: null,
+          stripe_subscription_id: null,
+          plan: "trial",
+          status: "trialing",
+          current_period_start: tenantCreated,
+          current_period_end: trialEnd.toISOString(),
+          cancel_at_period_end: false,
+          created_at: tenantCreated,
+          updated_at: tenantCreated,
+        };
+        synthesized = true;
+      }
+    }
+
     const inTrial = subscription
       ? subscription.plan === "trial" || subscription.status === "trialing"
       : false;
@@ -66,6 +98,7 @@ export async function GET(
 
     return NextResponse.json({
       subscription,
+      synthesized,
       trial: trialBlock,
       planHistory: planHistory.status === "fulfilled" ? planHistory.value : [],
       recentInvoices: invoiceEvents.status === "fulfilled" ? invoiceEvents.value : [],
