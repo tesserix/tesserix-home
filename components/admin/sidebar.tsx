@@ -15,6 +15,8 @@ import {
   ChevronDown,
   CreditCard,
   ScrollText,
+  LifeBuoy,
+  Megaphone,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -50,6 +52,8 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
 const platformNav: NavEntry[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
   { name: "Apps", href: "/admin/apps", icon: Cloud },
+  { name: "Tickets", href: "/admin/platform-tickets", icon: LifeBuoy },
+  { name: "Announcements", href: "/admin/platform-announcements", icon: Megaphone },
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
