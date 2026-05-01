@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-01 — through commit `0df851b`
+**Last session:** 2026-05-01 — Phase 5.5 mark8ly merchant UI + internal announcements endpoint shipped (uncommitted)
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -25,37 +25,51 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 - `POST /api/internal/platform-tickets` — bearer-token authed; mark8ly admin will call this to file
 - `GET /api/internal/platform-tickets?product=&tenant_id=` — list a tenant's own tickets
 
+**Phase 5.5 internal endpoints (added this session, uncommitted):**
+- `GET /api/internal/platform-announcements?product=&tenant_status=` — bearer-authed; returns active announcements
+
+**Phase 5.5 cross-repo work (uncommitted):**
+- `tesserix-k8s` — `INTERNAL_API_TOKEN` wired into the `company` chart's ExternalSecret + new ExternalSecret in `mark8ly-admin` chart; both pull GSM key `prod-tesserix-internal-api-token`
+- `mark8ly` — new `lib/api/tesserix.ts` client, `app/(admin)/support/platform/page.tsx`, `components/support/PlatformTicketForm.tsx`, sidebar entry "Platform support", new `/api/platform-announcements` proxy route, new `PlatformAnnouncementBanner` mounted in `AdminShell`
+
+**Manual operator step before redeploy:**
+1. Create the GSM secret: `gcloud secrets create prod-tesserix-internal-api-token --replication-policy=automatic --data-file=- <<<"$(openssl rand -hex 32)"`
+2. Grant access to both Workload Identity SAs (tesserix + mark8ly admin)
+3. Sync ArgoCD `company` and `mark8ly-admin` apps after the next image roll
+
 ---
 
 ## Pending work — pick up in priority order
 
-### A. Phase 5.5 — Mark8ly admin merchant UI (cross-repo)
+### A. Phase 5.5 — Mark8ly admin merchant UI ✅ implemented (uncommitted)
 
-**Repo:** `../mark8ly/apps/admin` (Next.js, App Router, route group `(admin)`)
-**What to add:**
+All code is in place across three repos. **Pending manual step:** create the GSM secret + grant WIF access (see "Still needed" above).
 
-1. **`INTERNAL_API_TOKEN` env var on both apps** (shared bearer token for tesserix-home internal endpoints):
-   - tesserix-home: add to `tesserix-k8s/charts/apps/company/values.yaml` env block (or as ESO secret)
-   - mark8ly admin: add to mark8ly admin's chart values
-   - Generate one secret value, populate both via GSM/ESO
+**Files added/changed (uncommitted):**
 
-2. **mark8ly admin client** (`../mark8ly/apps/admin/lib/tesserix.ts` or similar):
-   - `filePlatformTicket(input)` — POST to `https://tesserix.app/api/internal/platform-tickets` (URL via `TESSERIX_INTERNAL_URL` env)
-   - `listMyPlatformTickets(productId, tenantId)` — GET with same auth
-   - Forwards `Authorization: Bearer ${INTERNAL_API_TOKEN}`
+`tesserix-home/`
+- `app/api/internal/platform-announcements/route.ts` — new GET endpoint (bearer auth)
+- `.planning/HANDOFF.md` — this file
 
-3. **mark8ly admin page**: new route `app/(admin)/support/platform/page.tsx`:
-   - Form: subject, description, priority — submits via `filePlatformTicket`
-   - List below: my tickets (status, ticket_number, last_updated)
-   - Sidebar nav: add "Platform support" entry under Support
+`tesserix-k8s/`
+- `charts/apps/company/templates/externalsecret.yaml` — adds `INTERNAL_API_TOKEN` from `prod-tesserix-internal-api-token`
+- `charts/apps/mark8ly-admin/values.yaml` — new `tesserixInternal` block
+- `charts/apps/mark8ly-admin/templates/externalsecret.yaml` — new ExternalSecret in mark8ly namespace
+- `charts/apps/mark8ly-admin/templates/deployment.yaml` — env wiring for `INTERNAL_API_TOKEN` + `TESSERIX_INTERNAL_URL`
 
-4. **Network policy check**: verify mark8ly admin pod can egress to tesserix namespace. If not, add to `tesserix-k8s/charts/apps/mark8ly-admin/templates/network-policy.yaml`. (Mirror the OpenCost egress fix from Phase 1.)
+`mark8ly/`
+- `apps/admin/lib/api/tesserix.ts` — client (`filePlatformTicket`, `listMyPlatformTickets`, `listActivePlatformAnnouncements`)
+- `apps/admin/app/(admin)/support/platform/page.tsx` — new merchant page
+- `apps/admin/app/(admin)/support/platform/actions.ts` — server action
+- `apps/admin/app/api/platform-announcements/route.ts` — server proxy for the banner client
+- `apps/admin/components/support/PlatformTicketForm.tsx` — client form
+- `apps/admin/components/shell/banners/PlatformAnnouncementBanner.tsx` — client banner with localStorage dismissal
+- `apps/admin/components/shell/AdminShell.tsx` — sidebar entry + page-title eyebrow + banner mount
 
-5. **Active announcements banner** (deferred to 5.6 if budget tight):
-   - mark8ly admin reads from `GET /api/internal/platform-announcements` (endpoint to be added in tesserix-home — symmetric to platform-tickets one)
-   - Banner component lives in `app/(admin)/layout.tsx` or near the top of dashboard
-
-**Phase 5.5 acceptance:** A merchant in mark8ly admin can navigate to /support/platform, file a ticket, see it appear in tesserix-home's `/admin/platform-tickets`.
+**Verification once redeployed:**
+1. Sign in to mark8ly admin as a merchant; nav to Support → Platform support
+2. File a test ticket; confirm it appears in tesserix-home `/admin/platform-tickets`
+3. In tesserix-home `/admin/platform-announcements`, publish an announcement; confirm it appears as a banner across mark8ly admin within 5 minutes
 
 ### B. Phase 5.6 — Reply flow (both sides)
 
@@ -119,9 +133,9 @@ See `BACKLOG.md` at repo root. Highlights:
 - ✅ Migration `0002_platform_comms.sql` applied to tesserix-postgres `tesserix_admin` database (tables in `public` schema)
 
 ### Still needed
-- ⏳ `INTERNAL_API_TOKEN` env var on both tesserix-home + mark8ly admin (Phase 5.5)
+- ⏳ Create GSM secret `prod-tesserix-internal-api-token` and grant WIF access to both SAs (Phase 5.5 — chart wiring is in place; secret is the only manual step)
 - ⏳ SendGrid Event Webhook signing key in GSM as `notification-service-sendgrid-webhook-secret` (Phase 1 Wave 1.5)
-- ⏳ NetworkPolicy: mark8ly admin → tesserix egress (verify when 5.5 begins)
+- ⏳ Egress path validated: mark8ly admin currently calls `https://tesserix.app/...` (external HTTPS via Cloudflare). To switch to in-cluster (cheaper), add `mark8ly` to the company AuthorizationPolicy `allow-ingress-to-tesserix` allowed sources and flip `tesserixInternal.url` to `http://company.tesserix.svc.cluster.local`
 
 ### Verification commands
 ```bash
@@ -181,7 +195,11 @@ kubectl exec -n tesserix $POD -- wget -qO- --header="Authorization: Bearer test"
 
 ## Suggested next-session opener
 
-"Read `.planning/HANDOFF.md`. Then pick up Phase 5.5 (mark8ly admin merchant UI for platform tickets). Start with provisioning the shared `INTERNAL_API_TOKEN` and writing the mark8ly client + page, then the active announcements banner."
+"Read `.planning/HANDOFF.md`. Phase 5.5 is implemented but uncommitted across three repos (tesserix-home, tesserix-k8s, mark8ly). Walk the diffs in each repo, then commit per-repo with conventional-commit messages. Once committed, redeploy after the operator creates the GSM secret."
+
+Or to start the next phase:
+
+"Read `.planning/HANDOFF.md`. Pick up Phase 5.6 — reply flow on both sides. Start with `POST /api/internal/platform-tickets/[id]/replies` (bearer-authed, merchant reply) in tesserix-home, then the super-admin reply route + ticket detail page."
 
 Or for a different priority:
 
