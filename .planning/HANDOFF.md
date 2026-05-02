@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-02 — small ops sweep shipped (E5 outbox, O3 Cmd+K, E3 service health) on top of F4 / F1 wave 3 from earlier in the day. Latest commit `d15b192`.
+**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 first half: mark8ly platform-api templates registry + tesserix-home authoring UI. Latest commit `fb27a5c` (tesserix-home), `14c6e33` (mark8ly platform-api).
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -31,6 +31,7 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 | **Outbox events** | `/admin/outbox` | E5 — stuck/dead rows across mark8ly platform_api + marketplace_api |
 | **Break-glass audit** | `/admin/break-glass` | F4 — rotation SLA + recently-used flag |
 | **Cmd+K palette** | global keyboard | O3 — admin destinations + cross-product user search, mounted in admin layout |
+| **Email templates** | `/admin/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates |
 
 **Mark8ly admin merchant surfaces (cross-repo, shipped 5.5/5.6):**
 - `/(admin)/support/platform` — file platform support ticket
@@ -57,6 +58,21 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 ---
 
 ## Recently shipped (2026-05-02)
+
+### ✅ Phase 3 B1 — Email templates registry (mark8ly platform-api side + tesserix-home authoring UI)
+- **mark8ly platform-api** (commit `14c6e33`):
+  - Migration `0013_create_email_templates` — runtime-editable templates table (key PK, subject/html/text/vars/status/version columns)
+  - `internal/notification/db_loader.go` — DB-first loader with embedded fallback + 5min TTL cache + idempotent SeedFromEmbedded (ON CONFLICT DO NOTHING) called at startup
+  - All 4 callers updated to use `loader.Render(ctx, key, ...)` — auth/verification/invitation/onboarding services
+  - `internal/notification/handler.go` — `POST /internal/templates/refresh` (cache evict) + `POST /internal/templates/:key/test` (test-send through real SendGrid pipeline)
+  - Full unit + handler tests + DB-backed integration tests (byte-identity proof: DB-rendered output equals embedded-rendered output for the seed catalog)
+- **tesserix-home** (commit `fb27a5c`):
+  - `lib/db/email-templates.ts` — cross-DB CRUD via existing `mark8ly_platform_admin` grant
+  - `lib/api/mark8ly-internal.ts` — HTTP client for cache-refresh + test-send
+  - `/admin/notifications/templates` list + edit pages with side-by-side editor / iframe preview / sample-vars test-send
+  - Sidebar + Cmd+K entries
+- **Architecture choice (per user):** templates live in each product's own DB (mark8ly here). Tesserix-home is the authoring surface only. Mark8ly services never touch tesserix DB. Lead/marketing templates (B2) will live in tesserix_admin DB since tesserix owns the lead pipeline.
+- **Verification path (no live prod traffic yet):** API trigger end-to-end — call `POST /auth/password-reset` / complete an onboarding session / etc. with operator email → operator receives the new template. Embedded fallback safety net means mis-edits don't break sends.
 
 ### ✅ E5 — Outbox events monitor
 - `/admin/outbox` — federated read across mark8ly's two outbox tables (platform_api uses status enum; marketplace_api uses `published_at IS NULL`)
@@ -136,12 +152,19 @@ Once unblocked (highest immediate value — closes the loop on email metrics):
 - Update tesserix-home `lib/metrics/email-events.ts` to call notification-service instead of returning zeros
 - Wave 5 `custom_args` are already in flight at the send sites — engagement events will carry tenant_id from day 1 of webhook receiver
 
-### B. Phase 3 — Templates Registry + Lead Marketing Send 🎯 NEXT UP
+### B. Phase 3 — Templates Registry + Lead Marketing Send
 
-Per user direction (2026-05-02): pick this up next, after the small-ops sweep (E5 / O3 / E3) is done.
-- **B1** — Templates Registry (read-only canon): extend `notification-service.templates` with `product_id`+`kind`+`key`; seed 10 mark8ly templates. Read-only canon — admin UI in tesserix-home shows the catalog; no rewire of mark8ly send paths yet.
-- **B2** — Lead invite/marketing send: Mark8ly Leads page → marketing template → notification-service.
-- **B3** (later) — Rewire mark8ly transactional sends to fetch from registry. **High risk** — touches live billing/email paths.
+**Architecture pivot (2026-05-02):** dropped notification-service entirely (it's dormant — no helm chart, no consumers, mark8ly explicitly bypassed it). Templates now live per-product in each product's own DB; tesserix-home is the authoring surface and writes via the existing cross-DB grant. Admin UI calls a tiny `/internal/templates/refresh` endpoint to evict cache; falls back to embedded if DB row is missing.
+
+- ✅ **B1 (platform-api half)** — DONE this session. Migration + loader + caller updates + refresh endpoint + admin UI shipped. See "Recently shipped" above.
+- ⏳ **B1f — marketplace-api templates registry** — same shape, 6 templates still need lifting:
+  - `internal/orderdoc/templates/`: invoice_email, receipt_email, refund_email, cancellation_email
+  - `internal/giftcard/templates/`: gift_card_delivery
+  - `internal/campaign/templates/`: campaign_envelope
+  - Mirror `platform-api/internal/notification/db_loader.go` + handler. Reuse the same migration shape (0013-style). Same Render call site updates pattern. Same tests pattern.
+  - Out of scope for B1: otto OTP (string-literal templated), shipping label envelope (fmt.Sprintf), dunning/payment_action_reminder (templates.go is empty placeholder). These need a small refactor to file-based first.
+- ⏳ **B2 — Lead invite/marketing send** — tesserix-home → SendGrid direct path. Templates live in `tesserix_admin.platform_lead_templates`. Operator picks lead, picks template, send. Wave 5 custom_args pattern carries product+kind+lead_id for engagement attribution.
+- ⏳ **B3** — Drop. Original B3 was "rewire mark8ly transactional sends to fetch from registry" but B1c already does this. Nothing left.
 
 ### C. P initiative — Centralized pricing & discounts (parked, multi-phase)
 
@@ -186,7 +209,9 @@ See `BACKLOG.md` for full list. Notable ones still pending:
 - ✅ `company-uptime-probe` CronJob in `tesserix` namespace (every 5 min, drives `/api/internal/uptime/probe`)
 
 ### Still needed
-- ⏳ **SendGrid Event Webhook signing key** in GSM as `notification-service-sendgrid-webhook-secret` (Phase 1 Wave 1.5 — the only remaining external dependency unblocking email engagement metrics)
+- ⏳ **SendGrid Event Webhook signing key** in GSM as `tesserix-sendgrid-webhook-secret` (Phase 1 Wave 1.5 — the only remaining external dependency unblocking email engagement metrics; renamed since the receiver moved out of the dormant notification-service into tesserix-home)
+- ⏳ **MARK8LY_PLATFORM_API_URL env var** for tesserix-home in prod — defaults to `http://platform-api.mark8ly.svc.cluster.local` which works in-cluster. Ensure ExternalSecret / values.yaml override picks this up if a different URL is needed.
+- ⏳ **NetworkPolicy / AuthorizationPolicy** for tesserix → mark8ly platform-api egress on the /internal endpoints (templates/refresh, templates/:key/test). Verify before relying on the cache-refresh ping in prod.
 - ⏳ Optional optimization: switch mark8ly admin → tesserix-home calls from public URL to in-cluster URL. Requires adding `mark8ly` to the company AuthorizationPolicy `allow-ingress-to-tesserix` allowed sources, then flipping `tesserixInternal.url` to `http://company.tesserix.svc.cluster.local`. Saves Cloudflare egress; current public path works.
 
 ### Verification commands
