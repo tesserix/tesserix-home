@@ -63,7 +63,7 @@ const platformNav: NavEntry[] = [
   { name: "Uptime", href: "/admin/uptime", icon: Activity },
   { name: "Service health", href: "/admin/health", icon: HeartPulse },
   { name: "Outbox", href: "/admin/outbox", icon: Inbox },
-  { name: "Email templates", href: "/admin/notifications/templates", icon: Mail },
+  { name: "Notification log", href: "/admin/notifications/log", icon: Mail },
   { name: "Lead templates", href: "/admin/notifications/lead-templates", icon: Mail },
   { name: "GDPR queue", href: "/admin/erasure-requests", icon: Shield },
   { name: "Break-glass", href: "/admin/break-glass", icon: KeyRound },
@@ -77,6 +77,17 @@ const mark8lyNav: NavEntry[] = [
   { name: "Subscriptions", href: "/admin/apps/mark8ly/subscriptions", icon: CreditCard },
   { name: "Audit logs", href: "/admin/apps/mark8ly/audit-logs", icon: ScrollText },
   { name: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
+  {
+    name: "Notifications",
+    icon: Mail,
+    items: [
+      {
+        name: "Templates",
+        href: "/admin/apps/mark8ly/notifications/templates",
+        icon: Mail,
+      },
+    ],
+  },
 ];
 
 type RailContext = "platform" | "mark8ly";

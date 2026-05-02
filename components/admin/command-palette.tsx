@@ -122,10 +122,10 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
   },
   {
     group: "Platform",
-    label: "Email templates",
-    href: "/admin/notifications/templates",
+    label: "Notification log",
+    href: "/admin/notifications/log",
     icon: Mail,
-    keywords: ["template", "notification", "email", "registry"],
+    keywords: ["email", "events", "delivered", "bounce", "open", "engagement", "sendgrid"],
   },
   {
     group: "Platform",
@@ -184,6 +184,13 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
     icon: ScrollText,
   },
   { group: "Mark8ly", label: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
+  {
+    group: "Mark8ly",
+    label: "Email templates",
+    href: "/admin/apps/mark8ly/notifications/templates",
+    icon: Mail,
+    keywords: ["template", "notification", "email", "registry", "transactional"],
+  },
 ];
 
 const SEARCH_MIN_LENGTH = 3;

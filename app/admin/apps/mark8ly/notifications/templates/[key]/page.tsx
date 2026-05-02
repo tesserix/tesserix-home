@@ -32,7 +32,7 @@ const STATUS_TONE: Record<TemplateStatus, string> = {
   draft: "bg-amber-50 text-amber-700",
 };
 
-export default function TemplateEditPage({
+export default function Mark8lyTemplateEditPage({
   params,
 }: {
   params: Promise<{ key: string }>;
@@ -124,16 +124,12 @@ export default function TemplateEditPage({
     setTesting(true);
     setTestResult(null);
     try {
-      // Build synthetic vars from declared variables — fill with the
-      // variable name as the placeholder value. Operator can override
-      // by editing the test recipient or using a more elaborate
-      // sample-vars surface in a future iteration.
       const vars: Record<string, string> = {};
       for (const v of template?.variables ?? []) {
         vars[v.name] = `sample-${v.name}`;
       }
       const res = await fetch(
-        `/api/admin/email-templates/${encodeURIComponent(key)}/test-send`,
+        `/api/admin/email-templates/${encodeURIComponent(key)}/test-send?database=${database}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -167,7 +163,7 @@ export default function TemplateEditPage({
       <div className="flex-1 space-y-4 p-6">
         <div className="flex items-center justify-between">
           <Link
-            href="/admin/notifications/templates"
+            href="/admin/apps/mark8ly/notifications/templates"
             className="text-xs text-muted-foreground hover:text-foreground"
           >
             ← All templates

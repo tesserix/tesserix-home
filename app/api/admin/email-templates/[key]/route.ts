@@ -126,7 +126,7 @@ export async function PUT(
   try {
     const saved = await upsertEmailTemplate(database, upd);
     // Best-effort cache evict — non-fatal if it fails (TTL covers us).
-    await refreshTemplateCache(key);
+    await refreshTemplateCache(database, key);
     return NextResponse.json(saved);
   } catch (err) {
     logger.error("[admin email-templates PUT] failed", err);

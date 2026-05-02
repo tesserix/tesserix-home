@@ -4,11 +4,23 @@
 // + sending happens in mark8ly so what the operator receives is exactly
 // what production would render. We don't render here — that would risk
 // previewing a different output than the actual send.
+//
+// Routes by `?database=` so marketplace_api templates hit marketplace-api,
+// not platform-api (which doesn't know those template keys).
 
 import { NextResponse, type NextRequest } from "next/server";
 import { sendTestEmail } from "@/lib/api/mark8ly-internal";
 import { getCurrentSession } from "@/lib/auth/session-jwt";
 import { logger } from "@/lib/logger";
+import type { Mark8lyDatabase } from "@/lib/db/mark8ly";
+
+const ALLOWED_DBS: ReadonlyArray<Mark8lyDatabase> = ["platform_api", "marketplace_api"];
+
+function pickDB(raw: string | null): Mark8lyDatabase {
+  return raw && ALLOWED_DBS.includes(raw as Mark8lyDatabase)
+    ? (raw as Mark8lyDatabase)
+    : "platform_api";
+}
 
 interface PostBody {
   to?: string;
@@ -20,6 +32,8 @@ export async function POST(
   { params }: { params: Promise<{ key: string }> },
 ) {
   const { key } = await params;
+  const url = new URL(req.url);
+  const database = pickDB(url.searchParams.get("database"));
 
   let body: PostBody;
   try {
@@ -45,6 +59,7 @@ export async function POST(
 
   try {
     const result = await sendTestEmail({
+      database,
       key,
       to,
       vars: body.vars ?? {},

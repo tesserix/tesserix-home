@@ -36,8 +36,9 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 | **Outbox events** | `/admin/outbox` | E5 — stuck/dead rows across mark8ly platform_api + marketplace_api |
 | **Break-glass audit** | `/admin/break-glass` | F4 — rotation SLA + recently-used flag |
 | **Cmd+K palette** | global keyboard | O3 — admin destinations + cross-product user search, mounted in admin layout |
-| **Email templates** | `/admin/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates (10 templates: platform-api 4 + marketplace-api 6) |
-| **Lead templates** | `/admin/notifications/lead-templates` | B2 — operator-authored lead/marketing templates in `tesserix_admin.platform_lead_templates`; ships empty until operator authors first one |
+| **Email templates** | `/admin/apps/mark8ly/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates (10 templates: platform-api 4 + marketplace-api 6). Relocated from `/admin/notifications/templates` since these are mark8ly-owned, not platform-owned |
+| **Lead templates** | `/admin/notifications/lead-templates` | B2 — operator-authored lead/marketing templates in `tesserix_admin.platform_lead_templates`; ships seeded with `lead_welcome`, `lead_demo_invite`, `lead_followup_no_response` once migration `0006` is applied |
+| **Notification log** | `/admin/notifications/log` | E2 — engagement event feed from `email_events`; KPIs (sent/delivered/opens/clicks/bounces/unsubs) + recent rows; filters by product / tenant / window. Empty until SendGrid webhook is configured |
 | **Send email to lead** | `/admin/apps/mark8ly/leads` (modal) | B2 — picks a published lead template, idempotent send via SendGrid, audit log in `platform_outbound_emails` |
 | **SendGrid webhook** | `POST /webhooks/sendgrid` | Wave 1.5 — ECDSA-verified, idempotent on `sg_event_id`, populates `email_events`. Returns 401 in prod until signing key is in GSM |
 | **Email events read** | `GET /api/admin/email-events` | Wave 1.5 — `?view=metrics&product=&tenant_id=&days=` (aggregate) OR `?view=recent` (raw event log) |
@@ -65,6 +66,37 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 3. Sync ArgoCD `company` and `mark8ly-admin` apps after the next image roll
 
 ---
+
+## Recently shipped (2026-05-02 PM — UX restructure + E2 + 0006 seed)
+
+### ✅ UX — Email templates moved under Mark8ly section
+- Moved `/admin/notifications/templates/*` → `/admin/apps/mark8ly/notifications/templates/*`. The pages are mark8ly-owned data (templates live in mark8ly's own DBs); they belong under the Mark8ly product section, not the Platform notifications namespace. Future products mirror the pattern (`/admin/apps/<product>/notifications/templates`).
+- Sidebar: added Notifications group to `mark8lyNav`; removed Email templates from `platformNav`.
+- Cmd+K: same entry, regrouped under Mark8ly with new href.
+- Improved error message on the templates list — now points the operator at the operator activation checklist when the cross-DB query fails (typical cause: mark8ly platform-api not yet rolled, so migration `0013` hasn't applied).
+
+### ✅ E — `MARK8LY_MARKETPLACE_API_URL` shortfall fixed
+- `lib/api/mark8ly-internal.ts` now routes both `refreshTemplateCache` and `sendTestEmail` by database. Marketplace-api templates ping marketplace-api for cache eviction; platform-api templates ping platform-api. Same with test-sends — they go through the right service so the rendered output is byte-identical to what production would send.
+- `app/api/admin/email-templates/[key]/test-send/route.ts` reads `?database=` and threads it through. The edit page already passes the param.
+
+### ✅ D — Lead-marketing template seeds (`0006_seed_lead_templates.sql`)
+- Three starter templates so `/admin/notifications/lead-templates` ships with content rather than the empty state:
+  - `lead_welcome` — first-touch acknowledgement (vars: FirstName, SenderName)
+  - `lead_demo_invite` — walkthrough invite with conditional CompanyName + MeetingURL CTA (vars: FirstName, CompanyName, MeetingURL, SenderName)
+  - `lead_followup_no_response` — quiet check-in, no urgency (vars: FirstName, SenderName)
+- Voice follows mark8ly's editorial brand (calm, premium, refined). HTML uses paper/ink/moss palette inline; Source Serif 4 with Georgia fallback for headlines.
+- `ON CONFLICT (key) DO NOTHING` so re-runs don't clobber operator edits.
+
+### ✅ E2 — Notification log UI
+- `/admin/notifications/log` reading from `lib/db/email-events.ts` (`aggregateEmailMetrics` + `listRecentEmailEvents`).
+- KPIs: Sent / Delivered (with rate %) / Opens (with rate %) / Clicks / Bounces (incl. dropped) / Unsubscribes.
+- Filters: product (any | mark8ly), tenant_id, window (24h / 7d / 30d / 90d). Auto-refresh every 30s.
+- Recent table: time, event-type pill (color-coded), product, tenant, template_key, recipient, reason. Empty state explains the most likely cause (SendGrid webhook not yet configured).
+- Sidebar + Cmd+K entries added (Platform notifications group).
+
+### ✅ Round-trip smoke harness
+- `scripts/smoke-templates.sh` — bash + curl, requires SESSION_COOKIE env. Exercises GET → PUT → GET → test-send → restore against the user-facing API. Asserts version bump and subject persistence at each step.
+- `.planning/SMOKE-TEMPLATES.md` — operator-side activation checklist + manual UI steps for product templates / marketplace-api templates / engagement ingestion / lead-marketing send. Diagnostic table for common failure modes.
 
 ## Recently shipped (2026-05-02)
 
@@ -354,12 +386,13 @@ In rough order:
    - tesserix-home → `main-fa28c49` (or later)
    - mark8ly platform-api → `main-14c6e33` (or later)
    - mark8ly marketplace-api → `main-435319c` (or later)
-2. ☐ ArgoCD sync — migrations apply on next pod startup:
+2. ☐ Apply migrations to the relevant Postgres clusters (manual `kubectl exec ... psql -f`):
    - tesserix-home migration `0005` (email_events + platform_lead_templates + platform_outbound_emails)
+   - tesserix-home migration `0006` (3 starter lead-marketing templates) ← new
    - platform-api migration `0013` (email_templates)
    - marketplace-api migration `000085` (email_templates)
 3. ☐ Add `MARK8LY_PLATFORM_API_URL` env to tesserix-home company chart. Default `http://platform-api.mark8ly.svc.cluster.local` should work in-cluster.
-4. ☐ Add `MARK8LY_MARKETPLACE_API_URL` env to tesserix-home company chart for marketplace-api templates refresh ping (similarly: `http://marketplace-api.mark8ly.svc.cluster.local`). Same code path; just hardcoded to platform-api today.
+4. ☐ Add `MARK8LY_MARKETPLACE_API_URL` env to tesserix-home company chart for marketplace-api templates refresh ping (`http://marketplace-api.mark8ly.svc.cluster.local`). Code is now wired (was hardcoded to platform-api before this session).
 5. ☐ Verify NetworkPolicy / AuthorizationPolicy allows tesserix → mark8ly platform-api + marketplace-api egress on `/internal/templates/*`.
 6. ☐ Configure SendGrid Event Webhook in console pointing at `https://tesserix.app/webhooks/sendgrid`. SendGrid will give you an ECDSA public key.
 7. ☐ Store ECDSA public key in GSM as `tesserix-sendgrid-webhook-secret`.
@@ -373,6 +406,6 @@ After all that:
 - Dashboards (Mark8ly Overview, Tenant Detail) showing real email metrics
 - Operator can send lead emails via the leads page
 
-## Known shortfall — `MARK8LY_MARKETPLACE_API_URL`
+## Known shortfall — `MARK8LY_MARKETPLACE_API_URL` ✅ FIXED
 
-The `lib/api/mark8ly-internal.ts` HTTP client currently hardcodes platform-api as its target. The cache-refresh ping for marketplace-api templates (orderdoc / giftcard / shipment_dispatched) doesn't actually fire — saves still work via cross-DB UPSERT, but propagation waits for the 5-min TTL. ~30 min fix to thread the URL through based on the database the template lives in. Logged here so it's not lost.
+The `lib/api/mark8ly-internal.ts` HTTP client now routes by database: platform_api templates ping platform-api, marketplace_api templates ping marketplace-api. Both `refreshTemplateCache` and `sendTestEmail` accept a `database` argument; the test-send API route reads `?database=` from the query string. New env: `MARK8LY_MARKETPLACE_API_URL` (defaults to `http://marketplace-api.mark8ly.svc.cluster.local`).
