@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 first half: mark8ly platform-api templates registry + tesserix-home authoring UI. Latest commit `fb27a5c` (tesserix-home), `14c6e33` (mark8ly platform-api).
+**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 + B1f. Templates registry covers mark8ly platform-api (4 templates) AND marketplace-api orderdoc (4 templates) + giftcard (1 template). 9 templates total now operator-editable via tesserix-home. Latest commits: `87371ea` tesserix-home, `bc5bc14` mark8ly.
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -58,6 +58,16 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 ---
 
 ## Recently shipped (2026-05-02)
+
+### ✅ Phase 3 B1f — Email templates registry extended to marketplace-api (orderdoc + giftcard)
+- **Shared loader package** (commit `e5d4a4c`): `services/marketplace-api/internal/emailtemplates/` — same shape as platform-api's `notification/db_loader.go` but in its own package because orderdoc + giftcard + future packages share it. Public Register / Render / Invalidate / SeedFromEmbedded surface. Includes `SendGridTestSender` for the test-send endpoint.
+- **orderdoc refactor** (commit `2c62167`): subjects lifted from `fmt.Sprintf` switch into Go-template strings stored in DB (with `{{if .IsFullRefund}}…{{else}}…{{end}}` for state-driven dynamic subjects). Heading / Lede / CTAButtonLabel stay computed in Go (business-logic-driven). 4 templates: `orderdoc_invoice_email`, `orderdoc_receipt_email`, `orderdoc_cancellation_email`, `orderdoc_refund_email`.
+- **giftcard refactor** (commit `bc5bc14`): same pattern. 1 template: `giftcard_delivery`. Subject template `"You received a gift card from {{.Theme.StoreName}}"`.
+- **Internal endpoints in marketplace-api**: `POST /internal/templates/refresh` + `POST /internal/templates/:key/test` (mounted alongside existing /internal routes; same network policy posture as platform-api).
+- **Tests**: 16 emailtemplates + 6 orderdoc + 5 giftcard = 27 new tests. Includes byte-identity proof tests (DB-rendered = embedded-rendered for the same vars) — the safety net that catches drift between seed migration and embedded fallback.
+- **Out of scope**:
+  - **campaign envelope** — subject is per-campaign data set by `send_worker`, not a static template string. Different shape entirely from the registry pattern. Operator can edit campaign body content via the campaign editor flow, not via the templates registry. Documented as out-of-scope.
+  - **Inline-string mailers** (otto OTP, marketplace-api shipping label envelope, dunning placeholders) — would need a small refactor to extract into file-based templates first; queued for a follow-up if/when operator-edit need surfaces.
 
 ### ✅ Phase 3 B1 — Email templates registry (mark8ly platform-api side + tesserix-home authoring UI)
 - **mark8ly platform-api** (commit `14c6e33`):
@@ -156,13 +166,9 @@ Once unblocked (highest immediate value — closes the loop on email metrics):
 
 **Architecture pivot (2026-05-02):** dropped notification-service entirely (it's dormant — no helm chart, no consumers, mark8ly explicitly bypassed it). Templates now live per-product in each product's own DB; tesserix-home is the authoring surface and writes via the existing cross-DB grant. Admin UI calls a tiny `/internal/templates/refresh` endpoint to evict cache; falls back to embedded if DB row is missing.
 
-- ✅ **B1 (platform-api half)** — DONE this session. Migration + loader + caller updates + refresh endpoint + admin UI shipped. See "Recently shipped" above.
-- ⏳ **B1f — marketplace-api templates registry** — same shape, 6 templates still need lifting:
-  - `internal/orderdoc/templates/`: invoice_email, receipt_email, refund_email, cancellation_email
-  - `internal/giftcard/templates/`: gift_card_delivery
-  - `internal/campaign/templates/`: campaign_envelope
-  - Mirror `platform-api/internal/notification/db_loader.go` + handler. Reuse the same migration shape (0013-style). Same Render call site updates pattern. Same tests pattern.
-  - Out of scope for B1: otto OTP (string-literal templated), shipping label envelope (fmt.Sprintf), dunning/payment_action_reminder (templates.go is empty placeholder). These need a small refactor to file-based first.
+- ✅ **B1 (platform-api half)** — DONE. Migration + loader + caller updates + refresh endpoint + admin UI shipped.
+- ✅ **B1f (marketplace-api orderdoc + giftcard)** — DONE. Shared loader package + 5 templates lifted (4 orderdoc kinds + 1 giftcard delivery). Campaign envelope deliberately skipped (per-campaign data, doesn't fit registry shape).
+- ⏳ **B1f follow-up (inline-string mailers)** — out of scope: otto OTP, marketplace-api shipping label envelope, dunning/payment_action_reminder placeholders. Each needs a small refactor to extract inline strings into file-based templates before they can join the registry. Defer until operator-edit need surfaces.
 - ⏳ **B2 — Lead invite/marketing send** — tesserix-home → SendGrid direct path. Templates live in `tesserix_admin.platform_lead_templates`. Operator picks lead, picks template, send. Wave 5 custom_args pattern carries product+kind+lead_id for engagement attribution.
 - ⏳ **B3** — Drop. Original B3 was "rewire mark8ly transactional sends to fetch from registry" but B1c already does this. Nothing left.
 
