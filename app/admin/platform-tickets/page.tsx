@@ -85,10 +85,14 @@ export default function PlatformTicketsPage() {
               ) : (
                 data?.rows.map((r) => (
                   <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                    <td className="px-4 py-3 font-mono text-xs">{r.ticket_number}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      <Link href={`/admin/platform-tickets/${r.id}`} className="hover:underline">
+                        {r.ticket_number}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-xs capitalize">{r.product_id}</td>
                     <td className="px-4 py-3">
-                      <Link href={`/admin/apps/${r.product_id}/tenants/${r.tenant_id}`} className="hover:underline">
+                      <Link href={`/admin/platform-tickets/${r.id}`} className="hover:underline">
                         {r.subject}
                       </Link>
                     </td>

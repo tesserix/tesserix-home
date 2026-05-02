@@ -94,6 +94,22 @@ export async function verifySession(
   }
 }
 
+// Convenience for server actions / route handlers that need the
+// authenticated super-admin's identity (e.g. to attribute a ticket
+// reply to author_email + author_name). Middleware already gates the
+// route so the session is guaranteed valid by the time we get here —
+// this is just for reading the claims.
+export async function getCurrentSession(): Promise<VerifiedSession | null> {
+  // Lazy import keeps this file usable in the Edge runtime if it ever
+  // moves there; cookies() is only available inside RSC/route-handler
+  // contexts which we know we're in when this is called.
+  const { cookies } = await import("next/headers");
+  const jar = await cookies();
+  const token = jar.get(sessionCookieName())?.value;
+  if (!token) return null;
+  return verifySession(token);
+}
+
 export function sessionCookieName(): string {
   return process.env.SESSION_COOKIE_NAME ?? "tx_session";
 }

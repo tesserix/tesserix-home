@@ -197,6 +197,23 @@ export async function createPlatformTicketReply(input: CreateReplyInput): Promis
   });
 }
 
+export async function updatePlatformTicketStatus(
+  id: string,
+  status: string,
+): Promise<PlatformTicketRow | null> {
+  const res = await tesserixQuery<PlatformTicketRow>(
+    `UPDATE platform_tickets
+       SET status = $2,
+           resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE resolved_at END
+     WHERE id = $1::uuid
+     RETURNING id, product_id, tenant_id::text, ticket_number, subject, description,
+               status, priority, submitted_by_name, submitted_by_email,
+               submitted_by_user_id, resolved_at, created_at, updated_at`,
+    [id, status],
+  );
+  return res.rows[0] ?? null;
+}
+
 export interface PlatformTicketsSummary {
   readonly open: number;
   readonly inProgress: number;
