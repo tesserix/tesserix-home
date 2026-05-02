@@ -113,6 +113,52 @@ export async function getLeadTemplate(key: string): Promise<LeadTemplate | null>
   return rowToTemplate(res.rows[0]);
 }
 
+// Sentinel thrown by createLeadTemplate when the key already exists.
+// API layer maps this to a 409 so the UI can prompt the operator to
+// reload rather than silently overwrite a concurrent editor's row.
+export class LeadTemplateKeyConflictError extends Error {
+  readonly code = "key_conflict";
+  constructor(key: string) {
+    super(`lead template '${key}' already exists`);
+    this.name = "LeadTemplateKeyConflictError";
+  }
+}
+
+// createLeadTemplate is the strict-create variant of upsert. Used by
+// the +New flow on the list page so two operators racing on the same
+// fresh key can't both claim it: whichever INSERT lands second sees 0
+// rows affected and we throw LeadTemplateKeyConflictError.
+//
+// Subsequent edits on an existing template still go through
+// upsertLeadTemplate, which UPSERTs and bumps version.
+export async function createLeadTemplate(
+  upd: LeadTemplateUpsert,
+): Promise<LeadTemplate> {
+  const sql = `
+    INSERT INTO platform_lead_templates
+      (key, label, subject, html_body, text_body, variables, status, product, version, updated_at, updated_by)
+    VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, 1, now(), $9)
+    ON CONFLICT (key) DO NOTHING
+    RETURNING key, label, subject, html_body, text_body, variables, status,
+              product, version, updated_at, updated_by
+  `;
+  const res = await tesserixQuery<RawRow>(sql, [
+    upd.key,
+    upd.label,
+    upd.subject,
+    upd.htmlBody,
+    upd.textBody,
+    JSON.stringify(upd.variables ?? []),
+    upd.status ?? "published",
+    upd.product ?? "",
+    upd.updatedBy,
+  ]);
+  if (res.rows.length === 0) {
+    throw new LeadTemplateKeyConflictError(upd.key);
+  }
+  return rowToTemplate(res.rows[0]);
+}
+
 export async function upsertLeadTemplate(
   upd: LeadTemplateUpsert,
 ): Promise<LeadTemplate> {

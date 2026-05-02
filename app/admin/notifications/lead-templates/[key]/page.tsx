@@ -52,6 +52,12 @@ export default function LeadTemplateEditPage({
   const [previewMode, setPreviewMode] = useState<"html" | "text">("html");
   const [testTo, setTestTo] = useState("");
   const [testResult, setTestResult] = useState<string | null>(null);
+  // isNewTemplate stays true until either the initial GET returns a row
+  // (existing template) or our first save successfully creates one. We
+  // use it to switch the save path to `?create_only=1` so racing
+  // operators on the same fresh key get a 409 instead of silently
+  // overwriting each other.
+  const [isNewTemplate, setIsNewTemplate] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -68,6 +74,7 @@ export default function LeadTemplateEditPage({
         if (cancelled) return;
         if (t) {
           setTemplate(t);
+          setIsNewTemplate(false);
           setLabel(t.label);
           setSubject(t.subject);
           setHtmlBody(t.htmlBody);
@@ -75,7 +82,9 @@ export default function LeadTemplateEditPage({
           setStatus(t.status);
           setProduct(t.product);
         } else {
-          // brand-new template — pre-fill defaults
+          // brand-new template — pre-fill defaults and gate the next
+          // save on create_only so racing operators get a 409.
+          setIsNewTemplate(true);
           setLabel(key);
           setSubject("");
           setHtmlBody("");
@@ -96,33 +105,46 @@ export default function LeadTemplateEditPage({
     setSaving(true);
     setError(null);
     setSavedAt(null);
+    // Append create_only=1 on the first save of a brand-new key so a
+    // racing operator can't silently overwrite us. After the row exists,
+    // subsequent edits go through the default upsert path.
+    const url = isNewTemplate
+      ? `/api/admin/lead-templates/${encodeURIComponent(key)}?create_only=1`
+      : `/api/admin/lead-templates/${encodeURIComponent(key)}`;
     try {
-      const res = await fetch(
-        `/api/admin/lead-templates/${encodeURIComponent(key)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({
-            label,
-            subject,
-            htmlBody,
-            textBody,
-            variables: template?.variables ?? [],
-            status,
-            product,
-          }),
-        },
-      );
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          label,
+          subject,
+          htmlBody,
+          textBody,
+          variables: template?.variables ?? [],
+          status,
+          product,
+        }),
+      });
       if (!res.ok) {
         const errBody = (await res.json().catch(() => ({}))) as {
           message?: string;
           error?: string;
         };
+        // 409 means another operator beat us to creating this key while
+        // we were editing. Surface a specific message instead of the
+        // generic db_unavailable so the operator knows to refresh.
+        if (res.status === 409) {
+          throw new Error(
+            errBody.message ??
+              "Another operator created this key while you were editing. Refresh to load their version.",
+          );
+        }
         throw new Error(errBody.message ?? errBody.error ?? `HTTP ${res.status}`);
       }
       const updated: LeadTemplate = await res.json();
       setTemplate(updated);
+      setIsNewTemplate(false); // first save succeeded — back to upsert mode
       setSavedAt(new Date().toLocaleTimeString());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

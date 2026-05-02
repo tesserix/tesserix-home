@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from "react";
 import useSWR from "swr";
+import { Button } from "@tesserix/web";
 import { AdminHeader } from "@/components/admin/header";
 import { KpiTile } from "@/components/admin/metrics/kpi-tile";
 
@@ -64,7 +65,7 @@ const CERT_TONE: Record<CertStatus, string> = {
 };
 
 export default function CustomDomainsPage() {
-  const { data, error, isLoading } = useSWR<{ domains: CustomDomain[] }>(
+  const { data, error, isLoading, mutate } = useSWR<{ domains: CustomDomain[] }>(
     "/api/admin/custom-domains",
     fetcher,
     { refreshInterval: 60_000, revalidateOnFocus: false },
@@ -72,6 +73,54 @@ export default function CustomDomainsPage() {
 
   const [statusFilter, setStatusFilter] = useState<DomainStatus | "">("");
   const [methodFilter, setMethodFilter] = useState<DNSMethod | "">("");
+  // Per-row "in flight" tracker so the right button on the right row
+  // shows a spinner while we wait for the upstream call.
+  const [busyRow, setBusyRow] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<{
+    id: string;
+    text: string;
+    tone: "ok" | "err";
+  } | null>(null);
+
+  async function triggerAction(
+    id: string,
+    action: "verify" | "refresh-status",
+  ): Promise<void> {
+    setBusyRow(`${id}:${action}`);
+    setActionMsg(null);
+    try {
+      const res = await fetch(
+        `/api/admin/custom-domains/${encodeURIComponent(id)}/${action}`,
+        { method: "POST", credentials: "include" },
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        setActionMsg({
+          id,
+          text: body.message ?? body.error ?? `HTTP ${res.status}`,
+          tone: "err",
+        });
+        return;
+      }
+      setActionMsg({
+        id,
+        text: action === "verify" ? "Re-verify queued ✓" : "Cert status refreshed ✓",
+        tone: "ok",
+      });
+      await mutate();
+    } catch (err) {
+      setActionMsg({
+        id,
+        text: err instanceof Error ? err.message : String(err),
+        tone: "err",
+      });
+    } finally {
+      setBusyRow(null);
+    }
+  }
 
   const domains = data?.domains ?? [];
 
@@ -237,6 +286,7 @@ export default function CustomDomainsPage() {
                   <th className="px-4 py-3">Cert</th>
                   <th className="px-4 py-3">Verified</th>
                   <th className="px-4 py-3">Error</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,6 +344,42 @@ export default function CustomDomainsPage() {
                       <span className="block truncate">
                         {d.errorMessage ?? d.certError ?? "—"}
                       </span>
+                      {actionMsg?.id === d.id && (
+                        <span
+                          className={
+                            "mt-1 block text-[10px] " +
+                            (actionMsg.tone === "ok"
+                              ? "text-emerald-700"
+                              : "text-rose-700")
+                          }
+                        >
+                          {actionMsg.text}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busyRow !== null}
+                          onClick={() => triggerAction(d.id, "verify")}
+                          title="Re-run DNS + cert provisioning checks against the carrier / cert-manager"
+                        >
+                          {busyRow === `${d.id}:verify` ? "…" : "Verify"}
+                        </Button>
+                        {d.dnsMethod === "manual" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={busyRow !== null}
+                            onClick={() => triggerAction(d.id, "refresh-status")}
+                            title="Sync cert_status with cert-manager (manual DNS only)"
+                          >
+                            {busyRow === `${d.id}:refresh-status` ? "…" : "Refresh cert"}
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

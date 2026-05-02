@@ -1,8 +1,10 @@
-// B2 — Lead templates GET + PUT (upsert).
+// B2 — Lead templates GET + PUT (upsert) + POST (create-only race-safe).
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  createLeadTemplate,
   getLeadTemplate,
   upsertLeadTemplate,
+  LeadTemplateKeyConflictError,
   type LeadTemplateUpsert,
 } from "@/lib/db/lead-templates";
 import { getCurrentSession } from "@/lib/auth/session-jwt";
@@ -95,10 +97,31 @@ export async function PUT(
     updatedBy,
   };
 
+  // ?create_only=1 — strict INSERT path used by the +New flow. Two
+  // operators racing on the same fresh key can't both claim it: the
+  // second one to reach the DB sees 0 rows affected (ON CONFLICT DO
+  // NOTHING) and we 409. Subsequent edits use the default upsert path.
+  const url = new URL(req.url);
+  const createOnly = url.searchParams.get("create_only") === "1";
+
   try {
+    if (createOnly) {
+      const created = await createLeadTemplate(upd);
+      return NextResponse.json(created);
+    }
     const saved = await upsertLeadTemplate(upd);
     return NextResponse.json(saved);
   } catch (err) {
+    if (err instanceof LeadTemplateKeyConflictError) {
+      return NextResponse.json(
+        {
+          error: "key_conflict",
+          message:
+            "Another operator created a template with this key while you were editing. Refresh the page to load their version.",
+        },
+        { status: 409 },
+      );
+    }
     logger.error("[admin lead-templates PUT] failed", err);
     return NextResponse.json({ error: "db_unavailable" }, { status: 500 });
   }
