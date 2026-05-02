@@ -39,6 +39,8 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 | **Email templates** | `/admin/apps/mark8ly/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates (10 templates: platform-api 4 + marketplace-api 6). Relocated from `/admin/notifications/templates` since these are mark8ly-owned, not platform-owned |
 | **Lead templates** | `/admin/notifications/lead-templates` | B2 — operator-authored lead/marketing templates in `tesserix_admin.platform_lead_templates`; ships seeded with `lead_welcome`, `lead_demo_invite`, `lead_followup_no_response` once migration `0006` is applied |
 | **Notification log** | `/admin/notifications/log` | E2 — engagement event feed from `email_events`; KPIs (sent/delivered/opens/clicks/bounces/unsubs) + recent rows; filters by product / tenant / window. Empty until SendGrid webhook is configured |
+| **Database clusters** | `/admin/databases` | E4 + O2 — CNPG cluster health (instances, replication lag, connections, db size, uptime, last backup) + backup-issues banner at top (failed-after-success, stale > 24h, never-backed-up). Sourced from cnpg-collector via Prometheus, refreshes every 30s |
+| **Custom domains** | `/admin/custom-domains` | M2 — per-tenant custom-domain DNS / SSL / cert verification status, sourced from mark8ly's `custom_domains` table joined with platform-api `tenants`. Top banner pops on any failed/stuck row; filters by status + DNS method |
 | **Send email to lead** | `/admin/apps/mark8ly/leads` (modal) | B2 — picks a published lead template, idempotent send via SendGrid, audit log in `platform_outbound_emails` |
 | **SendGrid webhook** | `POST /webhooks/sendgrid` | Wave 1.5 — ECDSA-verified, idempotent on `sg_event_id`, populates `email_events`. Returns 401 in prod until signing key is in GSM |
 | **Email events read** | `GET /api/admin/email-events` | Wave 1.5 — `?view=metrics&product=&tenant_id=&days=` (aggregate) OR `?view=recent` (raw event log) |
@@ -66,6 +68,30 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 3. Sync ArgoCD `company` and `mark8ly-admin` apps after the next image roll
 
 ---
+
+## Recently shipped (2026-05-02 evening — E4 + O2 + M2 + lead-templates +New + shipment_dispatched dedup)
+
+### ✅ Lead-templates "+ New template" inline action
+- Adds a button + slug-validated input to `/admin/notifications/lead-templates` so operators can create new templates entirely from the UI (no PUT-via-curl). On valid key submission, navigates to the edit page (which already handles brand-new keys via 404 → empty defaults).
+- Slug pattern enforced client-side: `[a-z0-9_]{3,64}`. Duplicate-key check against the loaded list.
+
+### ✅ E4 + O2 — Database clusters dashboard at `/admin/databases`
+- Per-cluster cards showing namespace + name, status (healthy/degraded/down), instances ready/total, connections, replication lag (or "n/a (single)"), database size, postmaster uptime, last successful backup age + failed-after-success warning.
+- Top-of-page backup-issues banner (folds O2 into E4): pops when any cluster has a recent failed backup, no successful backup ever, or last successful > 24h old.
+- Metric source: `lib/metrics/cnpg-health.ts` — all queries wrapped in safeQuery so a missing CNPG metric (version-dependent) doesn't crash the page; surfaces what it can find.
+- Cluster discovery is metric-driven (we ask Prometheus what clusters exist); no config to update when adding fanzone/homechef/etc.
+
+### ✅ M2 — Custom-domain DNS verification dashboard at `/admin/custom-domains`
+- Lists every custom domain with: domain, tenant (name + slug, joined from platform-api), status (active/pending/verifying/failed), DNS method (manual CNAME or cloudflare automated), CNAME target, SSL status, cert status, last verified, error message.
+- KPIs + filter pills (status, dns_method) + top banner highlighting any domain with `status=failed` OR `ssl_status=failed` OR `cert_status=failed`.
+- We deliberately don't make live DNS lookups here — tenant-router-service owns the verification loop and writes its findings to mark8ly's `custom_domains` table. We surface what it has already seen.
+- Cross-DB enrichment: domains from `marketplace_api`, tenant names from `platform_api`, joined in JS. Tenant lookup gracefully falls back to "tenant_id (truncated)" if the cross-DB pool to platform_api fails.
+
+### ✅ shipment_dispatched carrier-webhook hook + dedup column (cross-repo, mark8ly)
+- New marketplace-api migration `000086_shipments_dispatched_email_sent_at` adds nullable `dispatched_email_sent_at TIMESTAMPTZ` column. `ExpectedSchemaVersion` bumped to 86.
+- `dispatchShipmentDispatchedEmail` now atomic-gates on the new column: `UPDATE shipments SET dispatched_email_sent_at = now() WHERE id = ? AND dispatched_email_sent_at IS NULL` — first transition wins. Subsequent calls see `RowsAffected == 0` and skip silently.
+- `AdvanceShipmentFromTracking` (the unified path used by both the 2-min carrier sync poller AND the public webhook handler) now fires `dispatchShipmentDispatchedEmail` on `in_transit` transition. Combined with the gate, this means: whichever path observes the transition first sends the email; the other path is a no-op.
+- Build + vet + ExpectedSchemaVersion test all green.
 
 ## Recently shipped (2026-05-02 PM — UX restructure + E2 + 0006 seed)
 

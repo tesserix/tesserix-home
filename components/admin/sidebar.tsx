@@ -23,6 +23,8 @@ import {
   Inbox,
   HeartPulse,
   Mail,
+  Database,
+  Globe,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -62,6 +64,8 @@ const platformNav: NavEntry[] = [
   { name: "Announcements", href: "/admin/platform-announcements", icon: Megaphone },
   { name: "Uptime", href: "/admin/uptime", icon: Activity },
   { name: "Service health", href: "/admin/health", icon: HeartPulse },
+  { name: "Databases", href: "/admin/databases", icon: Database },
+  { name: "Custom domains", href: "/admin/custom-domains", icon: Globe },
   { name: "Outbox", href: "/admin/outbox", icon: Inbox },
   { name: "Notification log", href: "/admin/notifications/log", icon: Mail },
   { name: "Lead templates", href: "/admin/notifications/lead-templates", icon: Mail },
