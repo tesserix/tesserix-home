@@ -220,6 +220,144 @@ export async function searchMark8lyOnboarding(q: string): Promise<UserSearchResu
   });
 }
 
+// ─── mark8ly_marketplace_api: customer_profiles ────────────────────
+interface CustomerProfileRow {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  status: string;
+  store_name: string | null;
+  store_slug: string | null;
+  updated_at: string;
+}
+
+export async function searchMark8lyCustomers(q: string): Promise<UserSearchResult[]> {
+  // Join stores so the result row can show "customer of {store name}"
+  // without a second round trip. The store_id ↦ tenant_id mapping lets
+  // us deep-link to the existing tenant detail page.
+  const res = await mark8lyQuery<CustomerProfileRow>(
+    "marketplace_api",
+    `SELECT cp.id::text, cp.tenant_id::text, cp.store_id::text, cp.email,
+            cp.first_name, cp.last_name, cp.status, cp.updated_at,
+            s.name AS store_name, s.slug AS store_slug
+     FROM customer_profiles cp
+     LEFT JOIN stores s ON s.id = cp.store_id
+     WHERE cp.email      ILIKE $1 ESCAPE '\\'
+        OR cp.first_name ILIKE $1 ESCAPE '\\'
+        OR cp.last_name  ILIKE $1 ESCAPE '\\'
+     ORDER BY cp.updated_at DESC
+     LIMIT ${PER_SOURCE_LIMIT}`,
+    [asPattern(q)],
+  );
+  return res.rows.map((r) => {
+    const fullName = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
+    const storeLabel = r.store_name ?? r.store_slug ?? "unknown store";
+    return {
+      source: "customers",
+      kind: "Storefront customer",
+      email: r.email,
+      label: fullName || r.email,
+      sublabel: `customer of ${storeLabel} · ${humanizeStatus(r.status)}`,
+      href: `/admin/apps/mark8ly/tenants/${r.tenant_id}`,
+      matchedField: matchedField(q, {
+        email: r.email,
+        first_name: r.first_name,
+        last_name: r.last_name,
+      }),
+      updatedAt: r.updated_at,
+    };
+  });
+}
+
+// ─── mark8ly_marketplace_api: user_profiles ────────────────────────
+interface UserProfileRow {
+  user_id: string;
+  email: string;
+  display_name: string | null;
+  updated_at: string;
+}
+
+export async function searchMark8lyUsers(q: string): Promise<UserSearchResult[]> {
+  // user_profiles is mark8ly's platform-wide identity table — one row per
+  // human, regardless of which tenant(s) they belong to. Useful as a
+  // confirmation signal ("this email is a registered mark8ly user")
+  // even when the same email also appears in tenants/customers.
+  // Result row links back to the full /admin/search page so the operator
+  // can see every other source for the same email at a glance.
+  const res = await mark8lyQuery<UserProfileRow>(
+    "marketplace_api",
+    `SELECT user_id::text, email, display_name, updated_at
+     FROM user_profiles
+     WHERE email        ILIKE $1 ESCAPE '\\'
+        OR display_name ILIKE $1 ESCAPE '\\'
+     ORDER BY updated_at DESC
+     LIMIT ${PER_SOURCE_LIMIT}`,
+    [asPattern(q)],
+  );
+  return res.rows.map((r) => ({
+    source: "mark8ly_users",
+    kind: "Mark8ly user",
+    email: r.email,
+    label: r.display_name?.trim() || r.email,
+    sublabel: `mark8ly account · ${r.email}`,
+    href: `/admin/search?q=${encodeURIComponent(r.email)}`,
+    matchedField: matchedField(q, { email: r.email, display_name: r.display_name }),
+    updatedAt: r.updated_at,
+  }));
+}
+
+// ─── mark8ly_marketplace_api: tickets (customer-side) ──────────────
+interface MerchantTicketRow {
+  id: string;
+  tenant_id: string;
+  store_id: string;
+  ticket_number: string;
+  subject: string;
+  status: string;
+  submitted_by_name: string;
+  submitted_by_email: string;
+  store_name: string | null;
+  updated_at: string;
+}
+
+export async function searchMark8lyMerchantTickets(q: string): Promise<UserSearchResult[]> {
+  // Customer-facing support tickets — distinct from tesserix_admin.platform_tickets
+  // which are merchant-to-platform. These are customer-to-merchant, filed via
+  // the storefront. Joining stores gives us a meaningful sublabel.
+  const res = await mark8lyQuery<MerchantTicketRow>(
+    "marketplace_api",
+    `SELECT t.id::text, t.tenant_id::text, t.store_id::text, t.ticket_number,
+            t.subject, t.status, t.submitted_by_name, t.submitted_by_email,
+            t.updated_at, s.name AS store_name
+     FROM tickets t
+     LEFT JOIN stores s ON s.id = t.store_id
+     WHERE t.submitted_by_email ILIKE $1 ESCAPE '\\'
+        OR t.submitted_by_name  ILIKE $1 ESCAPE '\\'
+     ORDER BY t.updated_at DESC
+     LIMIT ${PER_SOURCE_LIMIT}`,
+    [asPattern(q)],
+  );
+  return res.rows.map((r) => ({
+    source: "merchant_tickets",
+    kind: "Customer ticket",
+    email: r.submitted_by_email,
+    label: r.subject,
+    sublabel: `${r.ticket_number} · ${r.store_name ?? "store"} · ${humanizeStatus(r.status)}`,
+    // No detail page for customer-side tickets in tesserix-home yet —
+    // route to the tenant detail page where the operator can drill into
+    // the merchant admin if needed.
+    href: `/admin/apps/mark8ly/tenants/${r.tenant_id}`,
+    matchedField: matchedField(q, {
+      submitted_by_email: r.submitted_by_email,
+      submitted_by_name: r.submitted_by_name,
+    }),
+    updatedAt: r.updated_at,
+  }));
+}
+
 // ─── helpers ───────────────────────────────────────────────────────
 
 function matchedField(

@@ -36,17 +36,23 @@ const fetcher = (u: string) =>
 
 const SOURCE_TONE: Record<string, string> = {
   tenants: "bg-emerald-500/15 text-emerald-700",
+  customers: "bg-teal-500/15 text-teal-700",
   leads: "bg-sky-500/15 text-sky-700",
+  mark8ly_users: "bg-slate-500/15 text-slate-700",
   invitations: "bg-amber-500/15 text-amber-700",
   platform_tickets: "bg-violet-500/15 text-violet-700",
+  merchant_tickets: "bg-fuchsia-500/15 text-fuchsia-700",
   onboarding: "bg-muted text-muted-foreground",
 };
 
 const SOURCE_LABEL: Record<string, string> = {
-  tenants: "Tenant owners",
+  tenants: "Tenants",
+  customers: "Storefront customers",
   leads: "Leads",
+  mark8ly_users: "Mark8ly accounts",
   invitations: "Pending invites",
   platform_tickets: "Platform tickets",
+  merchant_tickets: "Customer tickets",
   onboarding: "Onboarding sessions",
 };
 

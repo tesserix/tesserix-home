@@ -8,6 +8,9 @@ import {
   searchMark8lyTenants,
   searchMark8lyInvitations,
   searchMark8lyOnboarding,
+  searchMark8lyCustomers,
+  searchMark8lyUsers,
+  searchMark8lyMerchantTickets,
   type UserSearchResult,
 } from "@/lib/db/users-search";
 import { logger } from "@/lib/logger";
@@ -48,10 +51,13 @@ export async function GET(req: NextRequest) {
     run: (q: string) => Promise<UserSearchResult[]>;
   }> = [
     { name: "tenants", run: searchMark8lyTenants },
+    { name: "customers", run: searchMark8lyCustomers },
     { name: "leads", run: searchLeads },
+    { name: "mark8ly_users", run: searchMark8lyUsers },
     { name: "invitations", run: searchMark8lyInvitations },
-    { name: "onboarding", run: searchMark8lyOnboarding },
     { name: "platform_tickets", run: searchPlatformTickets },
+    { name: "merchant_tickets", run: searchMark8lyMerchantTickets },
+    { name: "onboarding", run: searchMark8lyOnboarding },
   ];
 
   // Promise.allSettled — one failed source (missing grant, slow DB) MUST
@@ -78,13 +84,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Stable sort: tenant owners first (most useful), then by recency.
+  // Stable sort by source priority (most actionable first), then recency.
+  // Order: a person you're looking up is most likely either a tenant owner
+  // or one of their customers — both surface immediately. Mark8ly accounts
+  // (the platform-wide identity table) are confirmation signal only.
   const sourceRank: Record<string, number> = {
     tenants: 0,
-    leads: 1,
-    invitations: 2,
-    platform_tickets: 3,
-    onboarding: 4,
+    customers: 1,
+    leads: 2,
+    mark8ly_users: 3,
+    invitations: 4,
+    platform_tickets: 5,
+    merchant_tickets: 6,
+    onboarding: 7,
   };
   results.sort((a, b) => {
     const ra = sourceRank[a.source] ?? 99;
