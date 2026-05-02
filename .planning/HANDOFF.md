@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 + B1f. Templates registry covers mark8ly platform-api (4 templates) AND marketplace-api orderdoc (4 templates) + giftcard (1 template). 9 templates total now operator-editable via tesserix-home. Latest commits: `87371ea` tesserix-home, `bc5bc14` mark8ly.
+**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 + B1f + Wave 1.5 + B2. Templates registry covers 9 product templates (mark8ly platform-api 4 + marketplace-api orderdoc 4 + giftcard 1). B2 lead invite + marketing send is live: tesserix-home owns lead templates, sends directly to SendGrid, write-logs every send to `platform_outbound_emails`. Wave 1.5 webhook receiver is built and waiting for the SendGrid signing key to land in GSM. Latest commits: `331c817` tesserix-home, `bc5bc14` mark8ly.
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -58,6 +58,25 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 ---
 
 ## Recently shipped (2026-05-02)
+
+### ✅ B2 — Lead invite + marketing send
+- New tables in tesserix_admin (migration `0005`): `platform_lead_templates` (operator-editable lead/marketing templates) + `platform_outbound_emails` (audit log of every outbound send)
+- Admin UI: `/admin/notifications/lead-templates` list + edit (subject/html/text + iframe preview + variables panel + test-send) — same UX shape as product templates but pointed at tesserix DB
+- Lead-side flow: "Send email" button on every row of `/admin/apps/mark8ly/leads`; opens a modal with template picker; idempotent send via `POST /api/admin/leads/[id]/send-email`
+- SendGrid integration: direct POST to v3 from tesserix-home (no product hop), Wave 5-style `custom_args` carrying `product`, `kind=lead_email`, `template_key`, `lead_id` so engagement events flow back through the same Wave 1.5 webhook
+- Local Go-template-flavored renderer (`lib/templates/render.ts`) — supports `{{.Field}}` and `{{if .Field}}…{{else}}…{{end}}`, with HTML auto-escape in html mode and passthrough in text mode
+- `last_contacted_at` on the lead row gets bumped on every successful send so the leads list shows engagement freshness
+
+### ✅ Phase 1 Wave 1.5 — SendGrid webhook receiver + email_events
+- Migration `0005` (bundled with B2): `email_events` table with indexes for the dashboard query shapes (`product`, `tenant_id`, `event_at`, `template_key`, `lead_id`)
+- `POST /webhooks/sendgrid` receiver with ECDSA signature verification (gated by `SENDGRID_WEBHOOK_VERIFY=false` for dev)
+- Replay protection: rejects events older than 10 minutes
+- Wave 5's instrumented `custom_args` (`product`, `tenant_id`, `kind`, `template_key`, `campaign_id`, `lead_id`) all flow into typed columns at insert time
+- ON CONFLICT DO NOTHING on `sg_event_id` makes SendGrid retries idempotent
+- Read endpoint: `GET /api/admin/email-events?product=&tenant_id=&days=` (aggregate) or `?view=recent` (raw)
+- `lib/metrics/email-events.ts` swapped from zero-stub to real query against the new table — dashboards stop returning zeros the moment the first event lands
+
+**Still blocked on operator step:** SendGrid Event Webhook signing key in GSM as `tesserix-sendgrid-webhook-secret`. Until that lands and `SENDGRID_WEBHOOK_PUBLIC_KEY` is set, the receiver in prod will reject every request as `signature_invalid`. Receiver is fully built and exercised; this is just the missing key.
 
 ### ✅ Phase 3 B1f — Email templates registry extended to marketplace-api (orderdoc + giftcard)
 - **Shared loader package** (commit `e5d4a4c`): `services/marketplace-api/internal/emailtemplates/` — same shape as platform-api's `notification/db_loader.go` but in its own package because orderdoc + giftcard + future packages share it. Public Register / Render / Invalidate / SeedFromEmbedded surface. Includes `SendGridTestSender` for the test-send endpoint.
@@ -151,16 +170,15 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 
 ## Pending work — pick up in priority order
 
-### A. Phase 1 Wave 1.5 — `notification-service` email_events ingestion 🔒 BLOCKED
+### A. Phase 1 Wave 1.5 — SendGrid webhook receiver ✅ BUILT, awaiting signing key
 
-**Blocked on:** SendGrid Event Webhook signing key configured in SendGrid console + stored in GSM as `notification-service-sendgrid-webhook-secret`.
+Receiver moved to tesserix-home (notification-service is dormant). All code is shipped — see "Recently shipped". Operator just needs to:
+1. Configure the SendGrid Event Webhook in the SendGrid console pointing at `https://tesserix.app/webhooks/sendgrid`
+2. Copy the SendGrid-provided ECDSA public key into GSM as `tesserix-sendgrid-webhook-secret`
+3. Add `SENDGRID_WEBHOOK_PUBLIC_KEY` to the company chart's ExternalSecret (sourced from the GSM key)
+4. ArgoCD sync; receiver starts accepting signed events
 
-Once unblocked (highest immediate value — closes the loop on email metrics):
-- Add migration in `../notification-service/migrations` for `email_events` table (schema in `.planning/phases/01-resources-cost-dashboards/PLAN.md` Wave 1.5)
-- Add `POST /webhooks/sendgrid` receiver with HMAC verify
-- Add `GET /internal/email-events/aggregate` for tesserix-home to query
-- Update tesserix-home `lib/metrics/email-events.ts` to call notification-service instead of returning zeros
-- Wave 5 `custom_args` are already in flight at the send sites — engagement events will carry tenant_id from day 1 of webhook receiver
+Until then, the receiver returns 401 in prod. Dev can override with `SENDGRID_WEBHOOK_VERIFY=false`.
 
 ### B. Phase 3 — Templates Registry + Lead Marketing Send
 
@@ -168,7 +186,7 @@ Once unblocked (highest immediate value — closes the loop on email metrics):
 
 - ✅ **B1 (platform-api half)** — DONE. Migration + loader + caller updates + refresh endpoint + admin UI shipped.
 - ✅ **B1f (marketplace-api orderdoc + giftcard)** — DONE. Shared loader package + 5 templates lifted (4 orderdoc kinds + 1 giftcard delivery). Campaign envelope deliberately skipped (per-campaign data, doesn't fit registry shape).
-- ⏳ **B1f follow-up (inline-string mailers)** — out of scope: otto OTP, marketplace-api shipping label envelope, dunning/payment_action_reminder placeholders. Each needs a small refactor to extract inline strings into file-based templates before they can join the registry. Defer until operator-edit need surfaces.
+- ⏳ **B1f follow-up (inline-string mailers)** — see `.planning/B1F_FOLLOWUP.md` for the per-service scope. Three services pending (otto OTP, marketplace-api shipping label envelope, dunning placeholders). Recommendation: shipping_label first (~2h, no cross-repo concerns), otto second (decide vendor-vs-go-shared upfront), dunning last (blocked on content).
 - ⏳ **B2 — Lead invite/marketing send** — tesserix-home → SendGrid direct path. Templates live in `tesserix_admin.platform_lead_templates`. Operator picks lead, picks template, send. Wave 5 custom_args pattern carries product+kind+lead_id for engagement attribution.
 - ⏳ **B3** — Drop. Original B3 was "rewire mark8ly transactional sends to fetch from registry" but B1c already does this. Nothing left.
 
