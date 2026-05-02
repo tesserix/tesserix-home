@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-01 — Phase 5.5 mark8ly merchant UI + internal announcements endpoint shipped (uncommitted)
+**Last session:** 2026-05-02 — F4 + F1 wave 3 shipped through commit `cc4d61d` (tesserix-home), `4103fe74` (tesserix-k8s)
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -9,24 +9,38 @@ This file is the entry point for the next session. Read it first.
 
 ## What's live in production
 
-Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD as `company` deployment in the `tesserix` namespace. CI auto-builds on push to main; ArgoCD auto-syncs.
+Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD as `company` deployment in the `tesserix` namespace. CI builds image per commit (`main-<sha>`), CronJob runs synthetic uptime probes every 5 min.
 
-| Phase | Surface | Live? | Notes |
-|---|---|---|---|
-| 1 | `/admin/apps/mark8ly` overview (CPU/memory/pods/cost/email) | ✅ | Email zero until Phase 1 Wave 1.5 |
-| 1 | `/admin/apps/mark8ly/tenants/[id]` (activity + cost share) | ✅ | DB grants applied; row counts populate |
-| 2 | `/admin/apps/mark8ly/subscriptions` | ✅ | Synthesizes trial for tenants with no subscription row |
-| 2 | Tenant detail Subscription + Margin sections | ✅ | Currency from `stores.currency_code` |
-| 4 | `/admin/apps/mark8ly/audit-logs` | ✅ | 13 mark8ly events visible |
-| 5 | `/admin/platform-tickets` (super-admin list) | ✅ | Empty until 5.5 ships merchant filing UI |
-| 5 | `/admin/platform-announcements` (super-admin composer + list) | ✅ | Functional — try creating one |
+**Image pin pattern:** the company chart's `image.tag` helm parameter (in `tesserix-k8s/argocd/prod/apps/global/company.yaml`) is bumped on each release. ArgoCD `RespectIgnoreDifferences=true` keeps live state stable. Current pin: `main-cc4d61d`.
 
-**Phase 5 internal endpoints (added in `0df851b`):**
-- `POST /api/internal/platform-tickets` — bearer-token authed; mark8ly admin will call this to file
-- `GET /api/internal/platform-tickets?product=&tenant_id=` — list a tenant's own tickets
+| Surface | Path | Notes |
+|---|---|---|
+| Mark8ly overview | `/admin/apps/mark8ly` | CPU/memory/pods/cost/email — email zero until D ships |
+| Tenant detail | `/admin/apps/mark8ly/tenants/[id]` | Activity + cost share + margin |
+| Subscriptions | `/admin/apps/mark8ly/subscriptions` | Synthesizes trial when no subscription row |
+| **Onboarding funnel** | `/admin/apps/mark8ly/onboarding` | E1 — in-flight / abandoned / completed, time-to-complete |
+| Audit logs | `/admin/apps/mark8ly/audit-logs` | Mark8ly events |
+| Platform tickets list | `/admin/platform-tickets` | Phase 5 |
+| Platform ticket detail | `/admin/platform-tickets/[id]` | Phase 5.6 — thread + composer + status stepper |
+| Platform announcements | `/admin/platform-announcements` | Composer + list |
+| **Cross-product search** | `/admin/search` + header dropdown | F1 W1+W2 — 8 sources, debounced |
+| **User profile** | `/admin/users/[email]` | F1 W3 — consolidated identity across 8 sources |
+| **GDPR queue** | `/admin/erasure-requests` | F3 — `customer_erasure_requests`, 14d warn / 30d breach |
+| **Synthetic uptime** | `/admin/uptime` | M1 — 1h/6h/24h/7d windows, p50/p95, CronJob driven |
+| **Break-glass audit** | `/admin/break-glass` | F4 — rotation SLA + recently-used flag |
 
-**Phase 5.5 internal endpoints (added this session, uncommitted):**
-- `GET /api/internal/platform-announcements?product=&tenant_status=` — bearer-authed; returns active announcements
+**Mark8ly admin merchant surfaces (cross-repo, shipped 5.5/5.6):**
+- `/(admin)/support/platform` — file platform support ticket
+- `/(admin)/support/platform/[id]` — thread + reply composer
+- Active platform-announcement banner mounted in `AdminShell`
+
+**Phase 5/5.5/5.6 internal endpoints (bearer-authed via `X-Internal-Token` — NOT `Authorization` because istio-ingress JWT-validates the latter):**
+- `POST /api/internal/platform-tickets` — file
+- `GET /api/internal/platform-tickets?product=&tenant_id=` — list
+- `GET /api/internal/platform-tickets/[id]?product=&tenant_id=` — single + thread
+- `POST /api/internal/platform-tickets/[id]/replies` — merchant reply (auto-reopens resolved tickets)
+- `GET /api/internal/platform-announcements?product=&tenant_status=` — active announcements
+- `POST /api/internal/uptime/probe` — triggers a probe sweep (called by CronJob)
 
 **Phase 5.5 cross-repo work (uncommitted):**
 - `tesserix-k8s` — `INTERNAL_API_TOKEN` wired into the `company` chart's ExternalSecret + new ExternalSecret in `mark8ly-admin` chart; both pull GSM key `prod-tesserix-internal-api-token`
@@ -39,85 +53,97 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 
 ---
 
+## Recently shipped (2026-05-02)
+
+### ✅ Phase 5.5 + 5.6 — Mark8ly merchant UI + reply flow
+- Cross-repo (tesserix-home + tesserix-k8s + mark8ly admin) — fully deployed
+- Bearer auth uses `X-Internal-Token` (NOT `Authorization`) because istio-ingress JWT-validates `Authorization: Bearer` headers
+- DB schema: `submitted_by_user_id` / `author_user_id` are TEXT (migration 0003) — supports Firebase UIDs
+- Inline form validation, toast on success, in-place list refresh
+
+### ✅ Phase 1 Wave 5 — SendGrid `custom_args` instrumentation
+- Three mark8ly services (platform-api, otto, marketplace-api) — all 6 send sites carry `product=mark8ly` + `tenant_id` + `kind` (and `campaign_id` for campaign sends)
+- Metadata-only / additive — no behavior change
+- Won't surface in tesserix-home dashboards until D (webhook ingestion) ships
+
+### ✅ Phase 2 — Pricing constants reconciled
+- `lib/products/configs.ts` mark8ly prices now match `mark8ly/services/marketplace-api/internal/billing/pricing/catalog.go` (AUD developed-tier monthly): trial=0, starter=29, studio=75, pro=179, marketplace=0 (no Stripe Price)
+
+### ✅ F1 — Cross-product user search (waves 1, 2, 3)
+- `lib/db/users-search.ts` — 8 sources via `Promise.allSettled` for graceful degradation
+- Header dropdown + `/admin/search` full page + `/admin/users/[email]` consolidated profile
+- Sources: tenants (name OR owner_email), customers, leads (email/name/company), mark8ly_users, invitations, platform_tickets, merchant_tickets, onboarding
+- Wave 3 strict-matches by exact email; HomeChef extensibility piece is parked
+
+### ✅ E1 — Onboarding funnel
+- `/admin/apps/mark8ly/onboarding` — KPIs (in flight / verified % / completion % / abandoned / median-time-to-complete) + filterable session list with stage pips
+
+### ✅ F3 — GDPR erasure queue
+- `/admin/erasure-requests` — queue across all mark8ly tenants
+- SLA gradient: 14d amber warn / 30d red breach
+- Read-only — actual erasure execution happens via mark8ly admin per tenant
+
+### ✅ M1 — Synthetic uptime
+- `/admin/uptime` — per-tenant uptime/p50/p95 with 1h/6h/24h/7d windows, "Down now" KPI
+- K8s CronJob `company-uptime-probe` runs every 5 min
+- Migration `0004_tenant_uptime_probes.sql` applied to tesserix-postgres
+
+### ✅ F4 — Break-glass account audit
+- `/admin/break-glass` — rotation SLA (90d stale flag), recently-used flag (last 7d), MFA enrollment %
+
+### ✅ Operational fixes
+- tesserix-postgres pool now retries-once on transient connection drops (CNPG failover safety)
+- ArgoCD app for `company` has `RespectIgnoreDifferences=true` so selfHeal doesn't revert CI's image pin
+- Image tag pinning convention: `image.tag` helm parameter in `tesserix-k8s/argocd/prod/apps/global/company.yaml` is bumped per release
+
+---
+
 ## Pending work — pick up in priority order
 
-### A. Phase 5.5 — Mark8ly admin merchant UI ✅ implemented (uncommitted)
-
-All code is in place across three repos. **Pending manual step:** create the GSM secret + grant WIF access (see "Still needed" above).
-
-**Files added/changed (uncommitted):**
-
-`tesserix-home/`
-- `app/api/internal/platform-announcements/route.ts` — new GET endpoint (bearer auth)
-- `.planning/HANDOFF.md` — this file
-
-`tesserix-k8s/`
-- `charts/apps/company/templates/externalsecret.yaml` — adds `INTERNAL_API_TOKEN` from `prod-tesserix-internal-api-token`
-- `charts/apps/mark8ly-admin/values.yaml` — new `tesserixInternal` block
-- `charts/apps/mark8ly-admin/templates/externalsecret.yaml` — new ExternalSecret in mark8ly namespace
-- `charts/apps/mark8ly-admin/templates/deployment.yaml` — env wiring for `INTERNAL_API_TOKEN` + `TESSERIX_INTERNAL_URL`
-
-`mark8ly/`
-- `apps/admin/lib/api/tesserix.ts` — client (`filePlatformTicket`, `listMyPlatformTickets`, `listActivePlatformAnnouncements`)
-- `apps/admin/app/(admin)/support/platform/page.tsx` — new merchant page
-- `apps/admin/app/(admin)/support/platform/actions.ts` — server action
-- `apps/admin/app/api/platform-announcements/route.ts` — server proxy for the banner client
-- `apps/admin/components/support/PlatformTicketForm.tsx` — client form
-- `apps/admin/components/shell/banners/PlatformAnnouncementBanner.tsx` — client banner with localStorage dismissal
-- `apps/admin/components/shell/AdminShell.tsx` — sidebar entry + page-title eyebrow + banner mount
-
-**Verification once redeployed:**
-1. Sign in to mark8ly admin as a merchant; nav to Support → Platform support
-2. File a test ticket; confirm it appears in tesserix-home `/admin/platform-tickets`
-3. In tesserix-home `/admin/platform-announcements`, publish an announcement; confirm it appears as a banner across mark8ly admin within 5 minutes
-
-### B. Phase 5.6 — Reply flow (both sides)
-
-After 5.5:
-- Add `POST /api/internal/platform-tickets/[id]/replies` in tesserix-home (merchant reply, bearer auth)
-- Add `POST /api/admin/platform-tickets/[id]/replies` in tesserix-home (super-admin reply, session auth)
-- Detail page in tesserix-home: `/admin/platform-tickets/[id]` with thread + composer (per `.planning/phases/05-platform-comms/UX-SPEC.md`)
-- mark8ly admin: ticket detail page with thread + composer
-- Email notifications when other side replies (depends on Phase 1 Wave 1.5)
-
-### C. Phase 1 Wave 5 — mark8ly send-site `custom_args` instrumentation
-
-Six files across three mark8ly services. Metadata-only, additive. Required to light up email metrics per-tenant in tesserix-home dashboards.
-
-| Service | File(s) |
-|---|---|
-| `../mark8ly/services/platform-api` | `internal/notification/sendgrid.go` (single chokepoint) |
-| `../mark8ly/services/marketplace-api` | `internal/orderdoc/mailer.go`, `internal/campaign/sendgrid_dispatcher.go`, `internal/giftcard/mailer.go`, `internal/shipping/labelmailer.go` |
-| `../mark8ly/services/otto` | `internal/mailer/sendgrid.go` |
-
-For each: add `CustomArgs map[string]string{"tenant_id": ..., "product": "mark8ly"}` to the SendGrid request struct. One PR per service. Verify in SendGrid Activity post-deploy.
-
-### D. Phase 1 Wave 1.5 — `notification-service` email_events ingestion
+### A. Phase 1 Wave 1.5 — `notification-service` email_events ingestion 🔒 BLOCKED
 
 **Blocked on:** SendGrid Event Webhook signing key configured in SendGrid console + stored in GSM as `notification-service-sendgrid-webhook-secret`.
 
-After signing key is set:
+Once unblocked (highest immediate value — closes the loop on email metrics):
 - Add migration in `../notification-service/migrations` for `email_events` table (schema in `.planning/phases/01-resources-cost-dashboards/PLAN.md` Wave 1.5)
 - Add `POST /webhooks/sendgrid` receiver with HMAC verify
 - Add `GET /internal/email-events/aggregate` for tesserix-home to query
 - Update tesserix-home `lib/metrics/email-events.ts` to call notification-service instead of returning zeros
+- Wave 5 `custom_args` are already in flight at the send sites — engagement events will carry tenant_id from day 1 of webhook receiver
 
-### E. Phase 2 — Confirm pricing constants
-
-`lib/products/configs.ts` has placeholder mark8ly prices in AUD: `{trial: 0, starter: 29, studio: 79, pro: 149, marketplace: 299}`. **These were USD numbers I labeled AUD.** Real values must be confirmed against Stripe before MRR/ARR is meaningful in any reporting downstream.
-
-### F. Phase 3 — Templates Registry + Lead Marketing Send
+### B. Phase 3 — Templates Registry + Lead Marketing Send
 
 Plan written but not started. Lower priority while leads pipeline is empty.
+- B1 — Templates Registry (read-only canon): extend `notification-service.templates` with `product_id`+`kind`+`key`; seed 10 mark8ly templates
+- B2 — Lead invite/marketing send: Mark8ly Leads page → marketing template → notification-service
+- B3 (later) — Rewire mark8ly transactional sends to fetch from registry. **High risk** — touches live billing/email paths.
 
-### G. Other backlog items
+### C. P initiative — Centralized pricing & discounts (parked, multi-phase)
 
-See `BACKLOG.md` at repo root. Highlights:
-- F1 — Cross-product user search (high support unlock, ~3 waves)
-- E1 — Onboarding funnel visibility (reads mark8ly `onboarding_sessions`, etc.)
-- M1 — Synthetic uptime per tenant subdomain
-- O1 — New product onboarding wizard
-- **P** (NEW, parked) — Centralized pricing & discounts initiative (P1–P5). Tesserix-home becomes the authoring surface for plan catalogs + promo codes; Stripe stays the billing engine. Affects mark8ly's `marketplace-api/internal/billing/pricing/catalog.go`, `mark8ly/packages/ui/src/subscription/pricing-data.ts`, and `tesserix-home/lib/products/configs.ts`. P2/P3a are HIGH risk (touches live billing) — staged rollout. See BACKLOG.md → §P for the full phase breakdown.
+See BACKLOG.md → §P for the full P1–P5 breakdown. Tesserix-home becomes the authoring surface for plan catalogs + promo codes; Stripe stays the billing engine. Three sources of truth that need to converge: `marketplace-api/internal/billing/pricing/catalog.go`, `mark8ly/packages/ui/src/subscription/pricing-data.ts`, `tesserix-home/lib/products/configs.ts`. P2/P3a are HIGH risk — staged rollout required.
+
+### D. F1 Wave 3 extensibility (parked per user instruction)
+
+`ProductConfig.userSearchSources` array so adding HomeChef tomorrow is config-only. Parked at user request. The detail-page surface (`/admin/users/[email]`) ships without it.
+
+### E. Backlog items skipped this batch (source data missing)
+
+- **F5 — API key inventory**: `api_keys` table doesn't exist in either mark8ly DB. Not shippable until the table is created.
+- **N3 — Usage caps & overage**: neither `plan_caps` nor `subscription_usage` tables exist. Would require defining cap rules from scratch first (M-L effort).
+
+### F. Backlog items deferred (large effort)
+
+- **O1 — New product onboarding wizard**: K8s namespace + CNPG cluster + OpenFGA store + secret/grant scaffold UI. 2-3 day wave.
+- **F2 — Tenant "view as" (read-only impersonation)**: needs new auth path + careful audit trail. High risk, large effort.
+
+### G. Other small backlog items
+
+See `BACKLOG.md` for full list. Notable ones:
+- E2 — Notification log (depends on D unblocking SendGrid ingestion)
+- E3 — Service health snapshot via Prometheus proxy
+- M2 — Custom-domain DNS verification dashboard
+- O3 — Global Cmd+K command palette
+- O7 — Failed login / auth-anomaly tracker (FR — needs a source table inventoried first)
 
 ---
 
@@ -126,17 +152,17 @@ See `BACKLOG.md` at repo root. Highlights:
 ### Already provisioned
 - ✅ `mark8ly-platform-admin` secret in `tesserix` namespace (cross-DB password)
 - ✅ `tesserix-postgres-tesserix-admin` secret (tesserix-postgres `tesserix_admin` role password)
-- ✅ Cross-DB grants on mark8ly billing tables (`store_subscriptions`, `stripe_webhook_events`, `subscription_plan_change_audit`, `billing_archive`)
-- ✅ Cross-DB grants on mark8ly tickets/audit (`tickets`, `ticket_replies`, `audit_logs`)
-- ✅ Cross-DB grants on mark8ly tenant tables (`stores`, `orders`, `products`, `customer_profiles`)
-- ✅ NetworkPolicy: company → opencost egress (Phase 1)
-- ✅ tesserix-home env vars: `PROMETHEUS_URL`, `OPENCOST_URL`, `MARK8LY_DB_*`
-- ✅ Migration `0002_platform_comms.sql` applied to tesserix-postgres `tesserix_admin` database (tables in `public` schema)
+- ✅ `prod-tesserix-internal-api-token` GSM secret + WIF binding to `app-secrets-ext-secrets-prod` SA (used by Phase 5.5 internal endpoints + uptime probe cron)
+- ✅ Cross-DB grants on mark8ly billing/tickets/audit/tenant tables (per-table list in earlier HANDOFF revisions)
+- ✅ Cross-DB grants extended to: `customer_profiles`, `user_profiles`, `tickets`, `customer_erasure_requests`, `break_glass_accounts`, `onboarding_sessions`, `invitations`
+- ✅ NetworkPolicy: company → opencost egress
+- ✅ tesserix-home env vars: `PROMETHEUS_URL`, `OPENCOST_URL`, `MARK8LY_DB_*`, `TESSERIX_DB_*`, `INTERNAL_API_TOKEN`
+- ✅ Migrations applied to tesserix-postgres: `0002_platform_comms.sql`, `0003_platform_user_id_text.sql`, `0004_tenant_uptime_probes.sql`
+- ✅ `company-uptime-probe` CronJob in `tesserix` namespace (every 5 min, drives `/api/internal/uptime/probe`)
 
 ### Still needed
-- ⏳ Create GSM secret `prod-tesserix-internal-api-token` and grant WIF access to both SAs (Phase 5.5 — chart wiring is in place; secret is the only manual step)
-- ⏳ SendGrid Event Webhook signing key in GSM as `notification-service-sendgrid-webhook-secret` (Phase 1 Wave 1.5)
-- ⏳ Egress path validated: mark8ly admin currently calls `https://tesserix.app/...` (external HTTPS via Cloudflare). To switch to in-cluster (cheaper), add `mark8ly` to the company AuthorizationPolicy `allow-ingress-to-tesserix` allowed sources and flip `tesserixInternal.url` to `http://company.tesserix.svc.cluster.local`
+- ⏳ **SendGrid Event Webhook signing key** in GSM as `notification-service-sendgrid-webhook-secret` (Phase 1 Wave 1.5 — the only remaining external dependency unblocking email engagement metrics)
+- ⏳ Optional optimization: switch mark8ly admin → tesserix-home calls from public URL to in-cluster URL. Requires adding `mark8ly` to the company AuthorizationPolicy `allow-ingress-to-tesserix` allowed sources, then flipping `tesserixInternal.url` to `http://company.tesserix.svc.cluster.local`. Saves Cloudflare egress; current public path works.
 
 ### Verification commands
 ```bash
@@ -180,7 +206,8 @@ kubectl exec -n tesserix $POD -- wget -qO- --header="Authorization: Bearer test"
 |---|---|
 | Phase plans + summaries | `.planning/phases/0[1-5]-*/` |
 | Backlog / phase ordering | `BACKLOG.md` |
-| Cross-DB query helpers | `lib/db/{mark8ly,tesserix,mark8ly-billing,mark8ly-audit,mark8ly-tenant-metrics,platform-tickets,platform-announcements}.ts` |
+| Cross-DB query helpers | `lib/db/{mark8ly,tesserix,mark8ly-billing,mark8ly-audit,mark8ly-tenant-metrics,mark8ly-onboarding,platform-tickets,platform-announcements,users-search,erasure-requests,break-glass,uptime-probes}.ts` |
+| Uptime probe runner | `lib/uptime/runner.ts` |
 | Metric aggregators | `lib/metrics/{prometheus,opencost,product-metrics,tenant-metrics,cost-proxy,revenue,margin,trial-likelihood,email-events,window}.ts` |
 | ProductConfig | `lib/products/{types,configs}.ts` |
 | Admin SWR hooks | `lib/admin/{use-metrics,use-billing,use-audit}.ts` |
@@ -189,19 +216,21 @@ kubectl exec -n tesserix $POD -- wget -qO- --header="Authorization: Bearer test"
 | UI primitives | `components/admin/{metrics,billing,audit,tickets/...}/*.tsx` |
 | Layouts | `components/admin/{product-overview,tenant-detail,subscriptions-page,audit-logs-page}-layout.tsx` |
 | Sidebar | `components/admin/sidebar.tsx` |
-| DB migrations | `db/migrations/000[1-2]_*.sql` |
+| DB migrations | `db/migrations/000[1-4]_*.sql` |
 | Sibling repo pointers | `../mark8ly/`, `../tesserix-k8s/`, `../notification-service/` |
 
 ---
 
 ## Suggested next-session opener
 
-"Read `.planning/HANDOFF.md`. Phase 5.5 is implemented but uncommitted across three repos (tesserix-home, tesserix-k8s, mark8ly). Walk the diffs in each repo, then commit per-repo with conventional-commit messages. Once committed, redeploy after the operator creates the GSM secret."
+**If the SendGrid signing key is now available:**
 
-Or to start the next phase:
+"Read `.planning/HANDOFF.md`. The SendGrid Event Webhook signing key is now in GSM as `notification-service-sendgrid-webhook-secret`. Pick up Phase 1 Wave 1.5 — add the `email_events` migration in `../notification-service/migrations`, the `POST /webhooks/sendgrid` receiver with HMAC verify, and the `GET /internal/email-events/aggregate` endpoint. Then update `tesserix-home/lib/metrics/email-events.ts` to call notification-service instead of returning zeros. Wave 5 `custom_args` are already in flight at the send sites."
 
-"Read `.planning/HANDOFF.md`. Pick up Phase 5.6 — reply flow on both sides. Start with `POST /api/internal/platform-tickets/[id]/replies` (bearer-authed, merchant reply) in tesserix-home, then the super-admin reply route + ticket detail page."
+**If the signing key is still pending:**
 
-Or for a different priority:
+"Read `.planning/HANDOFF.md`. Phase 1 Wave 1.5 is still blocked on the SendGrid signing key. Pick up Phase 3 — Templates Registry (B1) — extend `notification-service.templates` with `product_id`+`kind`+`key` and seed 10 mark8ly templates. Read-only canon for now; rewire of mark8ly transactional sends (B3) deferred until B1+B2 are validated."
 
-"Read `.planning/HANDOFF.md`. Confirm Phase 2 pricing constants against Stripe (`lib/products/configs.ts`). Then take on Phase 1 Wave 5 — mark8ly `custom_args` instrumentation in `mark8ly/services/platform-api/internal/notification/sendgrid.go` first (single chokepoint, lowest risk)."
+**If you want a smaller win:**
+
+"Read `.planning/HANDOFF.md`. Take a sweep through the small backlog items I've left flagged: E3 (Service health snapshot via Prometheus proxy), M2 (Custom-domain DNS verification dashboard), or O3 (global Cmd+K palette). Pick whichever needs fewer external dependencies."
