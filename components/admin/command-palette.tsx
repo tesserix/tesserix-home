@@ -21,7 +21,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { useRouter } from "next/navigation";
@@ -214,8 +213,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   // Map of "value" → action, populated as items render. We can't pass
   // onSelect to CommandItem (the custom Command primitive doesn't accept
   // it), so we keep the dispatch table here and look it up in
-  // onValueChange.
-  const handlersRef = useRef<Map<string, () => void>>(new Map());
+  // onValueChange. Plain Map (not a ref) so the lint rule against
+  // accessing refs during render stays happy — onValueChange captures
+  // this map by closure for the current render cycle, which is what
+  // we want anyway since the items rebuild each render.
+  const handlers = new Map<string, () => void>();
 
   // Reset query when palette closes — opening fresh shouldn't show
   // residue from the last search.
@@ -255,15 +257,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   );
 
   // Register a handler for a value and return the value back. Used in
-  // render so the JSX stays declarative.
+  // render so the JSX stays declarative. The map is rebuilt fresh
+  // each render (it's a plain Map declared above, not a ref).
   function bindAction(value: string, action: () => void): string {
-    handlersRef.current.set(value, action);
+    handlers.set(value, action);
     return value;
   }
-
-  // Clear the handler map on each render — items that no longer render
-  // (filtered out by query) shouldn't keep a handler around.
-  handlersRef.current = new Map();
 
   const grouped = useMemo(
     () =>
@@ -278,7 +277,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <Command
         onValueChange={(value: string) => {
-          const handler = handlersRef.current.get(value);
+          const handler = handlers.get(value);
           if (handler) handler();
         }}
       >
