@@ -30,6 +30,7 @@ import {
   Activity,
   Cloud,
   CreditCard,
+  HeartPulse,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -104,6 +105,13 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
     href: "/admin/uptime",
     icon: Activity,
     keywords: ["synthetic", "probe", "health"],
+  },
+  {
+    group: "Platform",
+    label: "Service health",
+    href: "/admin/health",
+    icon: HeartPulse,
+    keywords: ["pods", "replicas", "restarts", "k8s", "kubernetes"],
   },
   {
     group: "Platform",
