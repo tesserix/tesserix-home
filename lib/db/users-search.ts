@@ -41,31 +41,47 @@ function asPattern(q: string): string {
 interface LeadRow {
   id: string;
   email: string;
-  full_name: string | null;
+  name: string | null;
+  company: string | null;
   status: string;
   created_at: string;
   updated_at: string;
 }
 
 export async function searchLeads(q: string): Promise<UserSearchResult[]> {
+  // Match across email, name, AND company so a search for "bondi" or
+  // "Acme" finds leads even when the email doesn't carry the brand
+  // (e.g., a Gmail address attached to a company).
   const res = await tesserixQuery<LeadRow>(
-    `SELECT id::text, email, full_name, status, created_at, updated_at
+    `SELECT id::text, email, name, company, status, created_at, updated_at
      FROM leads
-     WHERE email ILIKE $1 ESCAPE '\\'
+     WHERE email   ILIKE $1 ESCAPE '\\'
+        OR name    ILIKE $1 ESCAPE '\\'
+        OR company ILIKE $1 ESCAPE '\\'
      ORDER BY updated_at DESC
      LIMIT ${PER_SOURCE_LIMIT}`,
     [asPattern(q)],
   );
-  return res.rows.map((r) => ({
-    source: "leads",
-    kind: "Lead",
-    email: r.email,
-    label: r.full_name?.trim() || r.email,
-    sublabel: `${humanizeStatus(r.status)} · captured ${relativeTime(r.created_at)}`,
-    href: `/admin/apps/mark8ly/leads`,
-    matchedField: "email",
-    updatedAt: r.updated_at,
-  }));
+  return res.rows.map((r) => {
+    const display = r.name?.trim() || r.email;
+    const sub = [
+      r.company?.trim(),
+      humanizeStatus(r.status),
+      `captured ${relativeTime(r.created_at)}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return {
+      source: "leads",
+      kind: "Lead",
+      email: r.email,
+      label: display,
+      sublabel: sub,
+      href: `/admin/apps/mark8ly/leads`,
+      matchedField: matchedField(q, { email: r.email, name: r.name, company: r.company }),
+      updatedAt: r.updated_at,
+    };
+  });
 }
 
 // ─── tesserix_admin: platform_tickets ──────────────────────────────
@@ -112,23 +128,27 @@ interface TenantRow {
 }
 
 export async function searchMark8lyTenants(q: string): Promise<UserSearchResult[]> {
+  // Match across the tenant's display name AND the owner's email so a
+  // search for "bondi" finds "the-bondi-store" even though the owner's
+  // email may be on Gmail.
   const res = await mark8lyQuery<TenantRow>(
     "platform_api",
     `SELECT id::text, name, owner_email, status, updated_at
      FROM tenants
      WHERE owner_email ILIKE $1 ESCAPE '\\'
+        OR name        ILIKE $1 ESCAPE '\\'
      ORDER BY updated_at DESC
      LIMIT ${PER_SOURCE_LIMIT}`,
     [asPattern(q)],
   );
   return res.rows.map((r) => ({
     source: "tenants",
-    kind: "Tenant owner",
+    kind: "Tenant",
     email: r.owner_email,
     label: r.name,
-    sublabel: `mark8ly · ${humanizeStatus(r.status)}`,
+    sublabel: `mark8ly · ${humanizeStatus(r.status)} · ${r.owner_email}`,
     href: `/admin/apps/mark8ly/tenants/${r.id}`,
-    matchedField: "owner_email",
+    matchedField: matchedField(q, { name: r.name, owner_email: r.owner_email }),
     updatedAt: r.updated_at,
   }));
 }
@@ -201,6 +221,17 @@ export async function searchMark8lyOnboarding(q: string): Promise<UserSearchResu
 }
 
 // ─── helpers ───────────────────────────────────────────────────────
+
+function matchedField(
+  q: string,
+  fields: Readonly<Record<string, string | null | undefined>>,
+): string {
+  const needle = q.toLowerCase();
+  for (const [name, value] of Object.entries(fields)) {
+    if (value && value.toLowerCase().includes(needle)) return name;
+  }
+  return Object.keys(fields)[0] ?? "";
+}
 
 function humanizeStatus(status: string): string {
   return status.replace(/_/g, " ");

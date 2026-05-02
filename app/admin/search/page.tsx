@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Input } from "@tesserix/web";
 import { Search, Loader2, AlertCircle } from "lucide-react";
@@ -50,8 +51,10 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export default function CrossProductSearchPage() {
-  const [query, setQuery] = useState("");
-  const [debounced, setDebounced] = useState("");
+  const searchParams = useSearchParams();
+  const initialQuery = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(initialQuery);
+  const [debounced, setDebounced] = useState(initialQuery.trim().toLowerCase());
 
   // 250ms debounce so we don't fire a query per keystroke.
   useEffect(() => {
@@ -77,8 +80,9 @@ export default function CrossProductSearchPage() {
       <div className="flex-1 space-y-6 p-6">
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
-            Find a user across leads, tenants, invitations, platform tickets,
-            and onboarding sessions. Email substring match — minimum{" "}
+            Find a person or company across leads, tenants, invitations,
+            platform tickets, and onboarding sessions. Substring match on
+            email, tenant name, and lead name/company — minimum{" "}
             {MIN_QUERY_LENGTH} characters.
           </p>
           <div className="relative">
