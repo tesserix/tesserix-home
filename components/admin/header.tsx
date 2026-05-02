@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import type { LucideIcon } from "lucide-react";
-import { Bell, Search, Loader2, AlertCircle } from "lucide-react";
+import { Bell, Search, Loader2, AlertCircle, Command } from "lucide-react";
 import { Button, Input } from "@tesserix/web";
+import { useCommandPalette } from "@/components/admin/command-palette";
 
 interface AdminHeaderProps {
   title: string;
@@ -40,6 +41,8 @@ export function AdminHeader({ title, description, icon: IconProp }: AdminHeaderP
         <div className="flex items-center gap-4">
           <HeaderSearch />
 
+          <CommandPaletteTrigger />
+
           {/* Notifications */}
           <Button variant="ghost" size="icon" className="relative" aria-label="Notifications">
             <Bell className="h-5 w-5" aria-hidden="true" />
@@ -51,6 +54,32 @@ export function AdminHeader({ title, description, icon: IconProp }: AdminHeaderP
         </div>
       </div>
     </header>
+  );
+}
+
+// ─── Command palette trigger ──────────────────────────────────────
+//
+// Discoverable button that opens the palette and shows the keyboard
+// shortcut so users learn Cmd+K exists. Hidden on mobile (the palette
+// itself works fine but keyboard hints are pointless on touch).
+
+function CommandPaletteTrigger() {
+  const { open } = useCommandPalette();
+  const isMac =
+    typeof window !== "undefined" && /Mac|iPad|iPhone/.test(navigator.platform);
+  return (
+    <button
+      type="button"
+      onClick={open}
+      className="hidden items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted md:inline-flex"
+      aria-label="Open command palette"
+    >
+      <Command className="h-3.5 w-3.5" aria-hidden="true" />
+      <span>Commands</span>
+      <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">
+        {isMac ? "⌘K" : "Ctrl+K"}
+      </kbd>
+    </button>
   );
 }
 
