@@ -1,6 +1,6 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-02 — F4 + F1 wave 3 shipped through commit `cc4d61d` (tesserix-home), `4103fe74` (tesserix-k8s)
+**Last session:** 2026-05-02 — small ops sweep shipped (E5 outbox, O3 Cmd+K, E3 service health) on top of F4 / F1 wave 3 from earlier in the day. Latest commit `d15b192`.
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
 
 This file is the entry point for the next session. Read it first.
@@ -11,7 +11,7 @@ This file is the entry point for the next session. Read it first.
 
 Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD as `company` deployment in the `tesserix` namespace. CI builds image per commit (`main-<sha>`), CronJob runs synthetic uptime probes every 5 min.
 
-**Image pin pattern:** the company chart's `image.tag` helm parameter (in `tesserix-k8s/argocd/prod/apps/global/company.yaml`) is bumped on each release. ArgoCD `RespectIgnoreDifferences=true` keeps live state stable. Current pin: `main-cc4d61d`.
+**Image pin pattern:** the company chart's `image.tag` helm parameter (in `tesserix-k8s/argocd/prod/apps/global/company.yaml`) is bumped on each release. ArgoCD `RespectIgnoreDifferences=true` keeps live state stable. Current pin: `main-cc4d61d` (next bump should pick up `main-d15b192` which contains E5 / O3 / E3).
 
 | Surface | Path | Notes |
 |---|---|---|
@@ -27,7 +27,10 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 | **User profile** | `/admin/users/[email]` | F1 W3 — consolidated identity across 8 sources |
 | **GDPR queue** | `/admin/erasure-requests` | F3 — `customer_erasure_requests`, 14d warn / 30d breach |
 | **Synthetic uptime** | `/admin/uptime` | M1 — 1h/6h/24h/7d windows, p50/p95, CronJob driven |
+| **Service health** | `/admin/health` | E3 — workload pod readiness + restart counts (kube-state-metrics) |
+| **Outbox events** | `/admin/outbox` | E5 — stuck/dead rows across mark8ly platform_api + marketplace_api |
 | **Break-glass audit** | `/admin/break-glass` | F4 — rotation SLA + recently-used flag |
+| **Cmd+K palette** | global keyboard | O3 — admin destinations + cross-product user search, mounted in admin layout |
 
 **Mark8ly admin merchant surfaces (cross-repo, shipped 5.5/5.6):**
 - `/(admin)/support/platform` — file platform support ticket
@@ -54,6 +57,28 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 ---
 
 ## Recently shipped (2026-05-02)
+
+### ✅ E5 — Outbox events monitor
+- `/admin/outbox` — federated read across mark8ly's two outbox tables (platform_api uses status enum; marketplace_api uses `published_at IS NULL`)
+- Per-DB cards (pending / in-flight / stuck / dead) + combined recent-stuck table sorted by age
+- Stuck threshold: pending > 5 min; auto-refresh every 30s
+- Files: `lib/db/outbox-events.ts`, `app/api/admin/outbox/route.ts`, `app/admin/outbox/page.tsx`, sidebar entry
+
+### ✅ O3 — Cmd+K command palette
+- Global keyboard launcher (Cmd/Ctrl+K) mounted in `app/admin/layout.tsx` via `CommandPaletteProvider`
+- Two intents in one box: admin destinations (filtered by typed query) + cross-product user search (debounced ≥3 chars)
+- Email queries surface a "consolidated profile" link to `/admin/users/[email]`
+- Discoverable header trigger button shows the keyboard shortcut so users learn the hotkey
+- Files: `components/admin/command-palette.tsx`, header trigger added to `components/admin/header.tsx`
+- Implementation note: @tesserix/web's `Command` is a custom (non-cmdk) primitive — selection is dispatched via `onValueChange` on the wrapper, not `onSelect` on items. We use a value→handler ref map. CommandInput's internal `query` state drives item filtering, so we mirror via `onInput` (additive) instead of overriding `value`/`onChange`.
+
+### ✅ E3 — Service health snapshot
+- `/admin/health` — workload-level pod readiness + restart counts via Prometheus + kube-state-metrics
+- KPIs: workloads / healthy / degraded / down / restarts-24h
+- Status: healthy / degraded / down / idle (idle = scale-to-zero, not alarming)
+- Filters: namespace pills + "hide idle" toggle; auto-refresh every 30s
+- Workload name resolution: `serving.knative.dev/service` → `app.kubernetes.io/name` → `app` → pod prefix
+- Files: `lib/metrics/service-health.ts`, `app/api/admin/service-health/route.ts`, `app/admin/health/page.tsx`, sidebar + Cmd+K entries
 
 ### ✅ Phase 5.5 + 5.6 — Mark8ly merchant UI + reply flow
 - Cross-repo (tesserix-home + tesserix-k8s + mark8ly admin) — fully deployed
@@ -111,12 +136,12 @@ Once unblocked (highest immediate value — closes the loop on email metrics):
 - Update tesserix-home `lib/metrics/email-events.ts` to call notification-service instead of returning zeros
 - Wave 5 `custom_args` are already in flight at the send sites — engagement events will carry tenant_id from day 1 of webhook receiver
 
-### B. Phase 3 — Templates Registry + Lead Marketing Send
+### B. Phase 3 — Templates Registry + Lead Marketing Send 🎯 NEXT UP
 
-Plan written but not started. Lower priority while leads pipeline is empty.
-- B1 — Templates Registry (read-only canon): extend `notification-service.templates` with `product_id`+`kind`+`key`; seed 10 mark8ly templates
-- B2 — Lead invite/marketing send: Mark8ly Leads page → marketing template → notification-service
-- B3 (later) — Rewire mark8ly transactional sends to fetch from registry. **High risk** — touches live billing/email paths.
+Per user direction (2026-05-02): pick this up next, after the small-ops sweep (E5 / O3 / E3) is done.
+- **B1** — Templates Registry (read-only canon): extend `notification-service.templates` with `product_id`+`kind`+`key`; seed 10 mark8ly templates. Read-only canon — admin UI in tesserix-home shows the catalog; no rewire of mark8ly send paths yet.
+- **B2** — Lead invite/marketing send: Mark8ly Leads page → marketing template → notification-service.
+- **B3** (later) — Rewire mark8ly transactional sends to fetch from registry. **High risk** — touches live billing/email paths.
 
 ### C. P initiative — Centralized pricing & discounts (parked, multi-phase)
 
@@ -138,12 +163,12 @@ See BACKLOG.md → §P for the full P1–P5 breakdown. Tesserix-home becomes the
 
 ### G. Other small backlog items
 
-See `BACKLOG.md` for full list. Notable ones:
+See `BACKLOG.md` for full list. Notable ones still pending:
 - E2 — Notification log (depends on D unblocking SendGrid ingestion)
-- E3 — Service health snapshot via Prometheus proxy
 - M2 — Custom-domain DNS verification dashboard
-- O3 — Global Cmd+K command palette
 - O7 — Failed login / auth-anomaly tracker (FR — needs a source table inventoried first)
+- E4 — CNPG cluster health per product (replication lag, WAL, connections) — small, leverages Prom client we've already wired
+- O2 — Database backup health dashboard (CNPG ScheduledBackup status) — small, also Prom-based
 
 ---
 
@@ -223,14 +248,10 @@ kubectl exec -n tesserix $POD -- wget -qO- --header="Authorization: Bearer test"
 
 ## Suggested next-session opener
 
-**If the SendGrid signing key is now available:**
+**Default — Phase 3 templates (per user direction 2026-05-02):**
 
-"Read `.planning/HANDOFF.md`. The SendGrid Event Webhook signing key is now in GSM as `notification-service-sendgrid-webhook-secret`. Pick up Phase 1 Wave 1.5 — add the `email_events` migration in `../notification-service/migrations`, the `POST /webhooks/sendgrid` receiver with HMAC verify, and the `GET /internal/email-events/aggregate` endpoint. Then update `tesserix-home/lib/metrics/email-events.ts` to call notification-service instead of returning zeros. Wave 5 `custom_args` are already in flight at the send sites."
+"Read `.planning/HANDOFF.md`. Small-ops sweep is done (E5/O3/E3 shipped). Pick up Phase 3 — Templates Registry (B1): extend `../notification-service.templates` with `product_id`+`kind`+`key` columns and seed 10 mark8ly templates. Build a read-only admin UI under `/admin/notifications/templates` that lists the catalog. After B1 lands, B2 (lead invite/marketing send) wires the Mark8ly leads page through to notification-service. B3 (rewire transactional sends) stays deferred — high risk."
 
-**If the signing key is still pending:**
+**If the SendGrid signing key has shown up:**
 
-"Read `.planning/HANDOFF.md`. Phase 1 Wave 1.5 is still blocked on the SendGrid signing key. Pick up Phase 3 — Templates Registry (B1) — extend `notification-service.templates` with `product_id`+`kind`+`key` and seed 10 mark8ly templates. Read-only canon for now; rewire of mark8ly transactional sends (B3) deferred until B1+B2 are validated."
-
-**If you want a smaller win:**
-
-"Read `.planning/HANDOFF.md`. Take a sweep through the small backlog items I've left flagged: E3 (Service health snapshot via Prometheus proxy), M2 (Custom-domain DNS verification dashboard), or O3 (global Cmd+K palette). Pick whichever needs fewer external dependencies."
+"Read `.planning/HANDOFF.md`. The SendGrid Event Webhook signing key is in GSM as `notification-service-sendgrid-webhook-secret`. Pivot to Phase 1 Wave 1.5 (highest-value when unblocked): add the `email_events` migration in `../notification-service/migrations`, the `POST /webhooks/sendgrid` receiver with HMAC verify, and the `GET /internal/email-events/aggregate` endpoint. Then update `tesserix-home/lib/metrics/email-events.ts` to call notification-service instead of returning zeros."
