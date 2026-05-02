@@ -69,7 +69,7 @@ export async function listPlatformTickets(filter: ListFilter = {}): Promise<Plat
   const sql = `
     SELECT id, product_id, tenant_id::text, ticket_number, subject, description,
            status, priority, submitted_by_name, submitted_by_email,
-           submitted_by_user_id::text, resolved_at, created_at, updated_at
+           submitted_by_user_id, resolved_at, created_at, updated_at
     FROM platform_tickets
     ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
     ORDER BY
@@ -89,7 +89,7 @@ export async function getPlatformTicket(id: string): Promise<PlatformTicketRow |
   const res = await tesserixQuery<PlatformTicketRow>(
     `SELECT id, product_id, tenant_id::text, ticket_number, subject, description,
             status, priority, submitted_by_name, submitted_by_email,
-            submitted_by_user_id::text, resolved_at, created_at, updated_at
+            submitted_by_user_id, resolved_at, created_at, updated_at
      FROM platform_tickets WHERE id = $1::uuid`,
     [id],
   );
@@ -99,7 +99,7 @@ export async function getPlatformTicket(id: string): Promise<PlatformTicketRow |
 export async function getPlatformTicketReplies(ticketId: string): Promise<PlatformTicketReplyRow[]> {
   const res = await tesserixQuery<PlatformTicketReplyRow>(
     `SELECT id, ticket_id::text, author_type, author_name, author_email,
-            author_user_id::text, content, created_at
+            author_user_id, content, created_at
      FROM platform_ticket_replies
      WHERE ticket_id = $1::uuid
      ORDER BY created_at ASC`,
@@ -129,13 +129,15 @@ export async function createPlatformTicket(input: CreateTicketInput): Promise<Pl
     const ticketNumber = `${prefix}-${String(n).padStart(4, "0")}`;
 
     const insRes = await client.query<PlatformTicketRow>(
+      // submitted_by_user_id is TEXT (per migration 0003) so foreign
+      // identifiers like Firebase UIDs can be stored without a uuid cast.
       `INSERT INTO platform_tickets
          (product_id, tenant_id, ticket_number, subject, description,
           priority, submitted_by_name, submitted_by_email, submitted_by_user_id)
-       VALUES ($1, $2::uuid, $3, $4, $5, COALESCE($6, 'medium'), $7, $8, $9::uuid)
+       VALUES ($1, $2::uuid, $3, $4, $5, COALESCE($6, 'medium'), $7, $8, $9)
        RETURNING id, product_id, tenant_id::text, ticket_number, subject, description,
                  status, priority, submitted_by_name, submitted_by_email,
-                 submitted_by_user_id::text, resolved_at, created_at, updated_at`,
+                 submitted_by_user_id, resolved_at, created_at, updated_at`,
       [
         input.productId,
         input.tenantId,
@@ -165,11 +167,14 @@ export interface CreateReplyInput {
 export async function createPlatformTicketReply(input: CreateReplyInput): Promise<PlatformTicketReplyRow> {
   return tesserixTx(async (client) => {
     const replyRes = await client.query<PlatformTicketReplyRow>(
+      // author_user_id is TEXT (per migration 0003) — supports both
+      // tesserix UUIDs (super-admin replies) and Firebase UIDs (merchant
+      // replies forwarded from product admin apps).
       `INSERT INTO platform_ticket_replies
          (ticket_id, author_type, author_name, author_email, author_user_id, content)
-       VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6)
+       VALUES ($1::uuid, $2, $3, $4, $5, $6)
        RETURNING id, ticket_id::text, author_type, author_name, author_email,
-                 author_user_id::text, content, created_at`,
+                 author_user_id, content, created_at`,
       [
         input.ticketId,
         input.authorType,

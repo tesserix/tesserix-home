@@ -27,7 +27,11 @@ const createSchema = z.object({
   priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
   submittedByName: z.string().min(1).max(200),
   submittedByEmail: z.string().email().max(300),
-  submittedByUserId: uuidLike.optional(),
+  // Foreign user identifier — mark8ly uses Firebase UIDs (28-char base62),
+  // homechef/fanzone may use other shapes. Stored as TEXT in the DB
+  // (see migration 0003_platform_user_id_text.sql), so accept any
+  // reasonably-sized non-empty string here.
+  submittedByUserId: z.string().min(1).max(200).optional(),
 });
 
 function authorize(req: NextRequest): boolean {
