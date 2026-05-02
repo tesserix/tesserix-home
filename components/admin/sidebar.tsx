@@ -19,6 +19,7 @@ import {
   Megaphone,
   Shield,
   Activity,
+  KeyRound,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ const platformNav: NavEntry[] = [
   { name: "Announcements", href: "/admin/platform-announcements", icon: Megaphone },
   { name: "Uptime", href: "/admin/uptime", icon: Activity },
   { name: "GDPR queue", href: "/admin/erasure-requests", icon: Shield },
+  { name: "Break-glass", href: "/admin/break-glass", icon: KeyRound },
   { name: "Settings", href: "/admin/settings", icon: Settings },
 ];
 

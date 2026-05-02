@@ -275,6 +275,16 @@ function HeaderSearch() {
               </div>
             )}
 
+            {looksLikeEmail(debounced) && (
+              <Link
+                href={`/admin/users/${encodeURIComponent(debounced)}`}
+                onClick={() => setOpen(false)}
+                className="block w-full border-t border-border bg-muted/20 px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-muted/40"
+              >
+                View consolidated profile for {debounced} →
+              </Link>
+            )}
+
             {(hasMore || inlineResults.length > 0) && (
               <button
                 type="button"
@@ -306,6 +316,10 @@ function HeaderSearch() {
       </Link>
     </>
   );
+}
+
+function looksLikeEmail(q: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q);
 }
 
 function highlight(text: string, q: string): React.ReactNode {
