@@ -164,6 +164,46 @@ Consolidated feature backlog from architecture conversations. Items tagged with 
 | O7 | Failed login / auth-anomaly tracker | FR | Low | M |
 | O8 | Image dependency vulnerability dashboard | FR (Trivy) | Low | M |
 
+### P. Centralized pricing & discounts (parked — multi-phase initiative)
+
+**Intent:** Make tesserix-home the *authoring* surface for every product's plan catalog and promo codes. Stripe stays the billing engine and remains highly available; tesserix-home is the editorial layer above it. No new runtime dependency on tesserix-home for the checkout / subscription hot path — mark8ly continues reading Stripe by `lookup_key`.
+
+**Architecture (to be confirmed at P1 plan time):**
+
+| Concern | Where | Why |
+|---|---|---|
+| Plan catalog (which plans exist, base rates per currency, period, tier) | tesserix-home admin UI, persisted in `tesserix_admin.platform_plans` | Cross-product consistency; one place to roll a price change |
+| Stripe-write authority | tesserix-home owns the bootstrap (move out of mark8ly's `cmd/billing-bootstrap`) | Single Stripe-write SA; mark8ly drops a privilege it doesn't need |
+| Promo codes / global discounts | tesserix-home admin UI → Stripe Coupons + Promotion Codes | Stripe primitive already exists; we just give super-admins a UI |
+| Subscription create / update / cancel (hot path) | mark8ly reads Stripe Prices by `lookup_key`, applies coupons by ID | No tesserix-home availability dependency on checkout |
+| Per-tenant overrides ("Acme gets 20% off forever") | tesserix-home, mirrored to Stripe as a customer-scoped Coupon | Audit trail in our DB + Stripe enforces |
+| Public marketing prices on onboarding marketing site | mark8ly onboarding builds against an SSG snapshot fetched from tesserix-home at build time | Static / cacheable; no runtime fetch from public site |
+
+**Affected sources of truth that must be reconciled:**
+
+- `mark8ly/services/marketplace-api/internal/billing/pricing/catalog.go` — current canonical catalog (Go map → Stripe)
+- `mark8ly/packages/ui/src/subscription/pricing-data.ts` — what the onboarding marketing site renders
+- `tesserix-home/lib/products/configs.ts` `pricingByPlan` — tesserix-home's fallback for trial-tenant MRR estimation (already mirrors above)
+
+After P1 ships, all three should be derivable from a single registry.
+
+| # | Phase | Pattern | Risk | Effort |
+|---|---|---|---|---|
+| P1 | Plan catalog DB schema + read-only admin UI in tesserix-home (mirrors current mark8ly catalog so we can compare diffs before flipping authority) | NA + SR | Low | M |
+| P2 | Move Stripe bootstrap CLI from mark8ly to tesserix-home; revoke mark8ly's Stripe-write key | SR | **High** (touches real billing) | M |
+| P3a | Mark8ly marketplace-api reads catalog from tesserix-home (cached, fail-open to last-known on outage). Replaces `pricing/catalog.go` map. | SR | High | M |
+| P3b | Mark8ly onboarding marketing site fetches catalog at build time from tesserix-home; falls back to baked snapshot if fetch fails. Replaces `packages/ui/src/subscription/pricing-data.ts`. | SR | Med | S |
+| P4 | Promo / discount admin UI — create + activate Stripe Coupons & Promotion Codes from tesserix-home, scoped to product or tenant. | NA → Stripe | Low | M |
+| P5 | Per-tenant override UI — apply customer-scoped Coupon to a specific tenant; audit who/when/why. | NA → Stripe | Low | S |
+
+**Why parked:** P2/P3a touch the real billing flow — needs careful staging (catalog parity check, dual-source verification window, then cutover). Land after current operational priorities (B/C/E shipped this session; D blocked on SendGrid; F1 next; Phase 3 templates after that).
+
+**Pre-requisites before kicking off P1:**
+- Confirm Stripe API key currently lives in mark8ly's GSM secret only; need to plan how tesserix-home gets a separate key with the same write scope (or co-owns it).
+- Inventory all places mark8ly references `pricing/catalog.go` symbols outside the bootstrap CLI — those are downstream consumers that will need to migrate to the API client too.
+
+---
+
 ### O.deferred (not now)
 
 | # | Feature | Reason |
@@ -177,6 +217,7 @@ Consolidated feature backlog from architecture conversations. Items tagged with 
 ## Open architectural decisions
 
 - [ ] Tesserix billing model — does Tesserix charge merchants directly (need platform Stripe), or is Stripe purely product-level?
+- [ ] **P initiative confirm-before-kickoff:** tesserix-home owns plan-catalog authoring and Stripe-write for all products (mark8ly, future homechef/fanzone), or per-product authoring with a shared schema? Default leaning: centralized authoring per the table above. Decide at P1 plan time.
 - [ ] Override secret storage — per-tenant GSM secrets vs KMS-encrypted in Postgres
 - [ ] Cost share basis for L2 — request count only, composite (50/30/20), or per-product configurable
 - [ ] GCP Billing Export setup — Phase 1 or Phase 4

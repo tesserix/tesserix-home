@@ -117,6 +117,7 @@ See `BACKLOG.md` at repo root. Highlights:
 - E1 — Onboarding funnel visibility (reads mark8ly `onboarding_sessions`, etc.)
 - M1 — Synthetic uptime per tenant subdomain
 - O1 — New product onboarding wizard
+- **P** (NEW, parked) — Centralized pricing & discounts initiative (P1–P5). Tesserix-home becomes the authoring surface for plan catalogs + promo codes; Stripe stays the billing engine. Affects mark8ly's `marketplace-api/internal/billing/pricing/catalog.go`, `mark8ly/packages/ui/src/subscription/pricing-data.ts`, and `tesserix-home/lib/products/configs.ts`. P2/P3a are HIGH risk (touches live billing) — staged rollout. See BACKLOG.md → §P for the full phase breakdown.
 
 ---
 
