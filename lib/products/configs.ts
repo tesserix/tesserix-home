@@ -22,20 +22,29 @@ const mark8ly: ProductConfig = {
     { key: "stores_total", label: "Stores", href: "/admin/apps/mark8ly/tenants", source: "product" },
     { key: "leads_total", label: "Leads", href: "/admin/apps/mark8ly/leads", source: "platform" },
   ],
-  // PLACEHOLDER — confirm with mark8ly product owner before relying on
-  // these in revenue/margin reports. Source of truth is Stripe; sync this
-  // map whenever Stripe prices change. Plans per
-  // mark8ly migration 000041_subscription_plan_v2_rename.
-  // Platform-default subscription currency is AUD (matches the GCP billing
-  // currency). Each store's actual billing_currency is read per-row from
+  // Source of truth: mark8ly/services/marketplace-api/internal/billing/
+  // pricing/catalog.go — the same Go map that feeds the Stripe bootstrap
+  // CLI, so these AUD figures are exactly what Stripe charges. Spec
+  // ref: docs/superpowers/specs/2026-04-17-subscription-model-design.md §4.1
+  // (developed-market tier, monthly period, AUD baseline).
+  //
+  // Each store's actual billing_currency is read per-row from
   // subscription_plan_change_audit; this default is only a fallback for
-  // brand-new trial tenants who have no plan-change history yet.
+  // brand-new trial tenants who have no plan-change history yet (so AUD
+  // is correct for the platform default).
+  //
+  // PlanMarketplace has no Stripe Price object — it was scoped out of the
+  // catalog (catalog.go: "PlanTrial and PlanMarketplace have no Price
+  // objects — excluded"). We retain the key with a 0 fallback so any
+  // legacy `plan = "marketplace"` rows in subscription tables don't
+  // crash MRR/ARR computation; treat the resulting 0 contribution as
+  // accurate for that bucket.
   pricingByPlan: {
     trial: 0,
     starter: 29,
-    studio: 79,
-    pro: 149,
-    marketplace: 299,
+    studio: 75,
+    pro: 179,
+    marketplace: 0,
   },
   pricingCurrency: "AUD",
   // §5.3 free-trial length, per mark8ly marketplace-api
