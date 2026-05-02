@@ -11,15 +11,23 @@ import {
 } from "@/lib/db/platform-tickets";
 import { logger } from "@/lib/logger";
 
+// Accept any 8-4-4-4-12 hex string for UUID fields. We avoid z.string().uuid()
+// because newer Zod versions enforce variant/version bits — mark8ly's tenant
+// and user IDs are real UUIDs but not strict v4. Postgres still rejects
+// malformed UUIDs at the ::uuid cast in the INSERT, so this stays safe.
+const uuidLike = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid UUID");
+
 const createSchema = z.object({
   productId: z.string().min(1),
-  tenantId: z.string().uuid(),
+  tenantId: uuidLike,
   subject: z.string().min(1).max(300),
   description: z.string().min(1),
   priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
   submittedByName: z.string().min(1).max(200),
   submittedByEmail: z.string().email().max(300),
-  submittedByUserId: z.string().uuid().optional(),
+  submittedByUserId: uuidLike.optional(),
 });
 
 function authorize(req: NextRequest): boolean {
