@@ -64,6 +64,7 @@ const platformNav: NavEntry[] = [
   { name: "Service health", href: "/admin/health", icon: HeartPulse },
   { name: "Outbox", href: "/admin/outbox", icon: Inbox },
   { name: "Email templates", href: "/admin/notifications/templates", icon: Mail },
+  { name: "Lead templates", href: "/admin/notifications/lead-templates", icon: Mail },
   { name: "GDPR queue", href: "/admin/erasure-requests", icon: Shield },
   { name: "Break-glass", href: "/admin/break-glass", icon: KeyRound },
   { name: "Settings", href: "/admin/settings", icon: Settings },

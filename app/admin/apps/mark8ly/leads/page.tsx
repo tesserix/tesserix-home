@@ -4,7 +4,7 @@
 // supports status filter, status edit, and a paste-JSON import drawer.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, RefreshCw, Upload } from "lucide-react";
+import { Plus, RefreshCw, Upload, Mail } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -50,6 +50,7 @@ export default function LeadsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState<boolean>(false);
+  const [sendDialogLead, setSendDialogLead] = useState<Lead | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -167,12 +168,13 @@ export default function LeadsPage() {
                 <th className="px-4 py-3">Source</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Created</th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               {leads.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
                     No leads. Click <span className="font-medium">Import</span> to add some.
                   </td>
                 </tr>
@@ -203,12 +205,166 @@ export default function LeadsPage() {
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {new Date(l.created_at).toLocaleDateString()}
                     </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => setSendDialogLead(l)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                        aria-label={`Send email to ${l.email}`}
+                      >
+                        <Mail className="h-3 w-3" aria-hidden="true" />
+                        Email
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
+      </div>
+
+      {sendDialogLead && (
+        <SendEmailDialog
+          lead={sendDialogLead}
+          onClose={() => setSendDialogLead(null)}
+          onSent={() => {
+            setSendDialogLead(null);
+            void refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+interface SendEmailDialogProps {
+  lead: Lead;
+  onClose: () => void;
+  onSent: () => void;
+}
+
+interface LeadTemplateOption {
+  key: string;
+  label: string;
+  status: "published" | "draft";
+  product: string;
+}
+
+function SendEmailDialog({ lead, onClose, onSent }: SendEmailDialogProps) {
+  const [templates, setTemplates] = useState<LeadTemplateOption[]>([]);
+  const [picked, setPicked] = useState<string>("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/lead-templates", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d: { templates: LeadTemplateOption[] }) => {
+        if (cancelled) return;
+        const published = d.templates.filter((t) => t.status === "published");
+        setTemplates(published);
+        if (published.length > 0) setPicked(published[0].key);
+      })
+      .catch((e: Error) => !cancelled && setError(e.message));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function send() {
+    if (!picked) return;
+    setSending(true);
+    setError(null);
+    try {
+      const idempotencyKey = `lead-${lead.id}-${picked}-${Date.now()}`;
+      const res = await fetch(`/api/admin/leads/${lead.id}/send-email`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateKey: picked, idempotencyKey }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        sent?: boolean;
+        recipient?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        setError(body.message ?? `HTTP ${res.status}`);
+        return;
+      }
+      setResult(`Sent to ${body.recipient ?? lead.email}`);
+      setTimeout(onSent, 800);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl">
+        <header className="mb-3">
+          <h3 className="text-base font-medium">Send email to lead</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {lead.email}
+            {lead.name ? ` · ${lead.name}` : ""}
+            {lead.company ? ` · ${lead.company}` : ""}
+          </p>
+        </header>
+
+        {templates.length === 0 ? (
+          <p className="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
+            No published lead templates yet. Create one at{" "}
+            <code>/admin/notifications/lead-templates/&lt;key&gt;</code> first.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <label className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Template
+            </label>
+            <select
+              value={picked}
+              onChange={(e) => setPicked(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            >
+              {templates.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label} ({t.key})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {error && (
+          <p className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        {result && (
+          <p className="mt-3 rounded-md border border-emerald-300/40 bg-emerald-50 p-2 text-xs text-emerald-700">
+            {result}
+          </p>
+        )}
+
+        <footer className="mt-4 flex items-center justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={send}
+            disabled={sending || !picked || templates.length === 0}
+            className="rounded-md bg-foreground px-3 py-1.5 text-sm text-background disabled:opacity-40"
+          >
+            {sending ? "Sending…" : "Send"}
+          </button>
+        </footer>
       </div>
     </div>
   );

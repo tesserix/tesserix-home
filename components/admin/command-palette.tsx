@@ -130,6 +130,13 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
   },
   {
     group: "Platform",
+    label: "Lead templates",
+    href: "/admin/notifications/lead-templates",
+    icon: Mail,
+    keywords: ["lead", "marketing", "invite", "outreach"],
+  },
+  {
+    group: "Platform",
     label: "GDPR / erasure queue",
     href: "/admin/erasure-requests",
     icon: Shield,
