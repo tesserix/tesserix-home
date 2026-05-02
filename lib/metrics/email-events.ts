@@ -1,8 +1,11 @@
-// Email events client. Phase 1 stub: returns zeros until Wave 1.5 lands
-// the SendGrid Event Webhook receiver in notification-service. Once that
-// ships, swap the stub for an HTTP call to
-//   GET notification-service/internal/email-events/aggregate
-// keyed by product (+ optional tenant_id) and a days window.
+// Email metrics aggregator. Wave 1.5: backed by tesserix_admin.email_events
+// populated via /webhooks/sendgrid. Until the SendGrid signing key lands
+// in GSM (and SENDGRID_WEBHOOK_PUBLIC_KEY is set), the table will be
+// empty and these functions return zeros — same shape as the prior stub
+// so dashboards don't change behaviour pre-key-rotation.
+
+import { aggregateEmailMetrics } from "@/lib/db/email-events";
+import { logger } from "@/lib/logger";
 
 export interface EmailMetrics {
   readonly sent: number;
@@ -28,8 +31,31 @@ const ZERO: EmailMetrics = {
   dropped: 0,
 };
 
-export async function getEmailMetrics(_filters: EmailMetricsFilters): Promise<EmailMetrics> {
-  // Stub. Returns zeros so the dashboard shape is stable; real source
-  // wires in once notification-service.email_events is populated.
-  return ZERO;
+export async function getEmailMetrics(
+  filters: EmailMetricsFilters,
+): Promise<EmailMetrics> {
+  try {
+    const rows = await aggregateEmailMetrics({
+      product: filters.product,
+      tenantId: filters.tenantId,
+      days: filters.days,
+    });
+    if (rows.length === 0) return ZERO;
+    return rows.reduce<EmailMetrics>(
+      (acc, r) => ({
+        sent: acc.sent + r.sent,
+        delivered: acc.delivered + r.delivered,
+        opens: acc.opens + r.opens,
+        bounces: acc.bounces + r.bounces,
+        unsubscribes: acc.unsubscribes + r.unsubscribes,
+        dropped: acc.dropped + r.drops,
+      }),
+      ZERO,
+    );
+  } catch (err) {
+    logger.warn("[email-events] aggregate failed; returning zeros", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return ZERO;
+  }
 }
