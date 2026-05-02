@@ -22,6 +22,7 @@ import {
   KeyRound,
   Inbox,
   HeartPulse,
+  Mail,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,7 @@ const platformNav: NavEntry[] = [
   { name: "Uptime", href: "/admin/uptime", icon: Activity },
   { name: "Service health", href: "/admin/health", icon: HeartPulse },
   { name: "Outbox", href: "/admin/outbox", icon: Inbox },
+  { name: "Email templates", href: "/admin/notifications/templates", icon: Mail },
   { name: "GDPR queue", href: "/admin/erasure-requests", icon: Shield },
   { name: "Break-glass", href: "/admin/break-glass", icon: KeyRound },
   { name: "Settings", href: "/admin/settings", icon: Settings },

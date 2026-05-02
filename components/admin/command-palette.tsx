@@ -33,6 +33,7 @@ import {
   HeartPulse,
   Inbox,
   KeyRound,
+  Mail,
   LayoutDashboard,
   LifeBuoy,
   Megaphone,
@@ -119,6 +120,13 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
     href: "/admin/outbox",
     icon: Inbox,
     keywords: ["stuck", "queue", "events"],
+  },
+  {
+    group: "Platform",
+    label: "Email templates",
+    href: "/admin/notifications/templates",
+    icon: Mail,
+    keywords: ["template", "notification", "email", "registry"],
   },
   {
     group: "Platform",
