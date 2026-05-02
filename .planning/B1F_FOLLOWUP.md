@@ -51,27 +51,26 @@ homechef or fanzone start needing the registry, the `go-shared` move
 becomes a forced function — better to do it once when there are three
 consumers than to vendor twice.
 
-### marketplace-api — shipping label envelope
+### marketplace-api — shipping label envelope ❌ SKIP BY DESIGN
 
 **Where:** `mark8ly/services/marketplace-api/internal/shipping/labelmailer.go`
 
-Current shape: short HTML + text body built inline via `fmt.Sprintf` in
-`SendLabel()`. Subject also computed inline.
+Investigation during the session confirmed this email is NOT customer-facing.
+The recipient comes from a free-form `req.Recipient` field the merchant
+types into the admin UI (see `handlers/admin/shipments.go:1230`) — they
+email the label to themselves, warehouse staff, a 3PL partner, or whoever
+fulfills the package. The customer never sees this.
 
-What's needed:
-1. Create `internal/shipping/templates/label_email.html` and
-   `label_email.txt`. Pull current Sprintf strings into them with
-   `{{.Field}}` interpolation.
-2. Add `embed.FS` for the templates directory.
-3. Define a `RegisterFallbacks(loader)` function and call it from
-   `cmd/marketplace-api/main.go` next to the existing orderdoc + giftcard
-   registrations.
-4. Refactor `SendLabel` to call `loader.Render(ctx, "shipping_label", data)`.
-5. Add `WithLoader` to `SendGridLabelMailer`.
-6. Tests mirroring orderdoc/giftcard pattern.
+Operator-editable copy is low value here — internal/operational email,
+recipient barely reads it (they want the PDF), subject + body are
+functional, not branded.
 
-**Effort:** ~2 hours. Already in the same repo + DB as orderdoc, so no
-loader-sharing question.
+**Decision:** leave inline `fmt.Sprintf` as-is. Don't lift to registry.
+
+**The actual customer-facing gap** that we discovered — the missing "your
+order has shipped" email between invoice and receipt — was filled in the
+same session as `shipment_dispatched` (see HANDOFF.md "Recently shipped").
+That covers the customer touchpoint properly with carrier + tracking.
 
 ### marketplace-api — dunning + payment_action_reminder
 
@@ -93,13 +92,32 @@ What's needed:
 **Effort:** unknown (blocked on content). Defer until billing flow is
 exercised in production and the actual copy is settled.
 
+## Carrier-webhook hook for shipment_dispatched (related follow-up)
+
+Separate from B1f but in the same neighborhood: `shipment_dispatched`
+currently only fires from the admin status-update path. The carrier
+webhook (`delhivery_webhook.go:300`) also stamps `shipped_at` when the
+carrier reports pickup. To wire the email here too:
+
+1. Call `dispatchShipmentDispatchedEmail` from the webhook handler
+   when the status transition is the in_transit one.
+2. **Add dedup** so the customer doesn't get two emails — one from
+   admin marking shipped + one from the webhook arriving moments later.
+   Cleanest: add `shipments.dispatched_email_sent_at` (new nullable
+   column) and check it inside the same UPDATE that stamps shipped_at.
+   `UPDATE...WHERE dispatched_email_sent_at IS NULL` pattern returns
+   1 row only on the first transition.
+
+**Effort:** ~1.5 hours including the migration + dedup test.
+
 ## Recommendation
 
 Order of pickup:
-1. **shipping_label** first (smallest, all in marketplace-api, no
-   loader-sharing question). ~2 hours.
-2. **otto OTP** second. Decide vendor-vs-go-shared up front; vendor is
+1. **otto OTP** first. Decide vendor-vs-go-shared up front; vendor is
    the pragmatic choice if homechef/fanzone adoption is >3 months out.
+2. **shipment_dispatched webhook hook + dedup** — high value (covers
+   the case where merchant doesn't manually transition status; carrier
+   reports pickup first).
 3. **dunning** last, only when there's content to author.
 
 When `go-shared` move happens, also migrate platform-api +

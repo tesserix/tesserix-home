@@ -1,7 +1,9 @@
 # Handoff — Tesserix super-admin tool
 
-**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 + B1f + Wave 1.5 + B2. Templates registry covers 9 product templates (mark8ly platform-api 4 + marketplace-api orderdoc 4 + giftcard 1). B2 lead invite + marketing send is live: tesserix-home owns lead templates, sends directly to SendGrid, write-logs every send to `platform_outbound_emails`. Wave 1.5 webhook receiver is built and waiting for the SendGrid signing key to land in GSM. Latest commits: `331c817` tesserix-home, `bc5bc14` mark8ly.
+**Last session:** 2026-05-02 — small ops sweep (E5/O3/E3) + Phase 3 B1 + B1f + Wave 1.5 + B2 + shipment_dispatched. Templates registry covers **10** customer-facing product templates (platform-api 4 + marketplace-api orderdoc 5 + giftcard 1). B2 lead invite + marketing send is live: tesserix-home owns lead templates, sends directly to SendGrid, write-logs every send to `platform_outbound_emails`. Wave 1.5 webhook receiver is built and waiting for the SendGrid signing key to land in GSM. CI is **green** on main for both repos. Latest commits: `fa28c49` tesserix-home, `435319c` mark8ly.
 **Branch:** main (no PRs in flight; commits go directly to main per workflow_preferences memory)
+
+**One-line status of email templates work:** registry infrastructure is complete; 10 file-based customer templates lifted; 3 inline-string templates (otto OTP, dunning placeholders, shipping_label) deferred per `B1F_FOLLOWUP.md`; operator config steps still required for full prod activation (see "Still needed" below).
 
 This file is the entry point for the next session. Read it first.
 
@@ -11,7 +13,10 @@ This file is the entry point for the next session. Read it first.
 
 Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD as `company` deployment in the `tesserix` namespace. CI builds image per commit (`main-<sha>`), CronJob runs synthetic uptime probes every 5 min.
 
-**Image pin pattern:** the company chart's `image.tag` helm parameter (in `tesserix-k8s/argocd/prod/apps/global/company.yaml`) is bumped on each release. ArgoCD `RespectIgnoreDifferences=true` keeps live state stable. Current pin: `main-cc4d61d` (next bump should pick up `main-d15b192` which contains E5 / O3 / E3).
+**Image pin pattern:** the company chart's `image.tag` helm parameter (in `tesserix-k8s/argocd/prod/apps/global/company.yaml`) is bumped on each release. ArgoCD `RespectIgnoreDifferences=true` keeps live state stable. Current pin: `main-cc4d61d`. **Next bump targets:**
+- `tesserix-home` → `main-fa28c49` (E5 + O3 + E3 + B1 admin UI + Wave 1.5 receiver + B2 lead-send + lint fix)
+- `mark8ly platform-api` → `main-14c6e33` (B1 templates registry)
+- `mark8ly marketplace-api` → `main-435319c` (B1f orderdoc + giftcard + shipment_dispatched + ExpectedSchemaVersion=85)
 
 | Surface | Path | Notes |
 |---|---|---|
@@ -31,7 +36,11 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 | **Outbox events** | `/admin/outbox` | E5 — stuck/dead rows across mark8ly platform_api + marketplace_api |
 | **Break-glass audit** | `/admin/break-glass` | F4 — rotation SLA + recently-used flag |
 | **Cmd+K palette** | global keyboard | O3 — admin destinations + cross-product user search, mounted in admin layout |
-| **Email templates** | `/admin/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates |
+| **Email templates** | `/admin/notifications/templates` | B1 — list + edit + preview + test-send; cross-DB writes to mark8ly's email_templates (10 templates: platform-api 4 + marketplace-api 6) |
+| **Lead templates** | `/admin/notifications/lead-templates` | B2 — operator-authored lead/marketing templates in `tesserix_admin.platform_lead_templates`; ships empty until operator authors first one |
+| **Send email to lead** | `/admin/apps/mark8ly/leads` (modal) | B2 — picks a published lead template, idempotent send via SendGrid, audit log in `platform_outbound_emails` |
+| **SendGrid webhook** | `POST /webhooks/sendgrid` | Wave 1.5 — ECDSA-verified, idempotent on `sg_event_id`, populates `email_events`. Returns 401 in prod until signing key is in GSM |
+| **Email events read** | `GET /api/admin/email-events` | Wave 1.5 — `?view=metrics&product=&tenant_id=&days=` (aggregate) OR `?view=recent` (raw event log) |
 
 **Mark8ly admin merchant surfaces (cross-repo, shipped 5.5/5.6):**
 - `/(admin)/support/platform` — file platform support ticket
@@ -78,15 +87,19 @@ Tesserix super-admin app at `https://tesserix.app/admin/*`. Deployed via ArgoCD 
 
 **Still blocked on operator step:** SendGrid Event Webhook signing key in GSM as `tesserix-sendgrid-webhook-secret`. Until that lands and `SENDGRID_WEBHOOK_PUBLIC_KEY` is set, the receiver in prod will reject every request as `signature_invalid`. Receiver is fully built and exercised; this is just the missing key.
 
-### ✅ Phase 3 B1f — Email templates registry extended to marketplace-api (orderdoc + giftcard)
+### ✅ Phase 3 B1f — Email templates registry extended to marketplace-api (orderdoc + giftcard + shipment_dispatched)
 - **Shared loader package** (commit `e5d4a4c`): `services/marketplace-api/internal/emailtemplates/` — same shape as platform-api's `notification/db_loader.go` but in its own package because orderdoc + giftcard + future packages share it. Public Register / Render / Invalidate / SeedFromEmbedded surface. Includes `SendGridTestSender` for the test-send endpoint.
 - **orderdoc refactor** (commit `2c62167`): subjects lifted from `fmt.Sprintf` switch into Go-template strings stored in DB (with `{{if .IsFullRefund}}…{{else}}…{{end}}` for state-driven dynamic subjects). Heading / Lede / CTAButtonLabel stay computed in Go (business-logic-driven). 4 templates: `orderdoc_invoice_email`, `orderdoc_receipt_email`, `orderdoc_cancellation_email`, `orderdoc_refund_email`.
 - **giftcard refactor** (commit `bc5bc14`): same pattern. 1 template: `giftcard_delivery`. Subject template `"You received a gift card from {{.Theme.StoreName}}"`.
+- **shipment_dispatched (NEW customer email, commit `435319c`)**: filled the missing gap between invoice (placed) and receipt (delivered). Fires when admin marks a shipment `in_transit` via `PATCH .../shipments/:id/status`. Includes carrier + tracking + ETA. `KindShipmentDispatched` enum value, `Mailer.SendShipmentDispatched` on both LogMailer + SendGridMailer, `orderdoc.Service.SendShipmentDispatched(ctx, orderID, ShipmentInfo)`, `dispatchShipmentDispatchedEmail` helper in shipments.go (detached background context, mirrors dispatchReceiptEmail pattern). Same commit also bumped `ExpectedSchemaVersion` to 85 to fix CI.
+- **shipment_dispatched follow-up still open**: the carrier webhook path at `delhivery_webhook.go:300` also stamps `shipped_at` when the carrier reports pickup. Currently does NOT fire the email. Wiring it requires dedup logic against the admin path so a customer doesn't get two "shipped" emails.
 - **Internal endpoints in marketplace-api**: `POST /internal/templates/refresh` + `POST /internal/templates/:key/test` (mounted alongside existing /internal routes; same network policy posture as platform-api).
 - **Tests**: 16 emailtemplates + 6 orderdoc + 5 giftcard = 27 new tests. Includes byte-identity proof tests (DB-rendered = embedded-rendered for the same vars) — the safety net that catches drift between seed migration and embedded fallback.
-- **Out of scope**:
-  - **campaign envelope** — subject is per-campaign data set by `send_worker`, not a static template string. Different shape entirely from the registry pattern. Operator can edit campaign body content via the campaign editor flow, not via the templates registry. Documented as out-of-scope.
-  - **Inline-string mailers** (otto OTP, marketplace-api shipping label envelope, dunning placeholders) — would need a small refactor to extract into file-based templates first; queued for a follow-up if/when operator-edit need surfaces.
+- **Out of scope** (see `B1F_FOLLOWUP.md` for full per-service work):
+  - **campaign envelope** — subject is per-campaign data set by `send_worker`, not a static template. Different shape; doesn't fit registry. Operator edits campaign content via the campaign editor flow.
+  - **shipping_label envelope** — confirmed during session that this is internal/operational (merchant emails labels to themselves/warehouse/3PL — never to the customer). Low value for operator-edit. Marked **skip-by-design**.
+  - **otto OTP** — otto is a separate Go service with its own DB. Needs vendor-vs-`go-shared` decision before lifting.
+  - **dunning_day_5/7 + payment_action_reminder** — `email/templates.go` is empty (just constants). Blocked on copy/content (likely needs billing/legal review).
 
 ### ✅ Phase 3 B1 — Email templates registry (mark8ly platform-api side + tesserix-home authoring UI)
 - **mark8ly platform-api** (commit `14c6e33`):
@@ -297,10 +310,69 @@ kubectl exec -n tesserix $POD -- wget -qO- --header="Authorization: Bearer test"
 
 ## Suggested next-session opener
 
-**Default — Phase 3 templates (per user direction 2026-05-02):**
+**TL;DR for next session:** Email templates work is essentially done — registry infrastructure is shipped, 10 customer-facing templates lifted, lead-marketing send live, Wave 1.5 webhook receiver built. CI is green on main for both repos. What's left is operator config (image rolls, SendGrid signing key, env vars) plus three deferred templates documented in `.planning/B1F_FOLLOWUP.md` (otto OTP, dunning, shipping_label-skip-by-design).
 
-"Read `.planning/HANDOFF.md`. Small-ops sweep is done (E5/O3/E3 shipped). Pick up Phase 3 — Templates Registry (B1): extend `../notification-service.templates` with `product_id`+`kind`+`key` columns and seed 10 mark8ly templates. Build a read-only admin UI under `/admin/notifications/templates` that lists the catalog. After B1 lands, B2 (lead invite/marketing send) wires the Mark8ly leads page through to notification-service. B3 (rewire transactional sends) stays deferred — high risk."
+**Pick one of these prompts depending on what's unblocked:**
 
-**If the SendGrid signing key has shown up:**
+**A. If operator config has been done (image rolled + SendGrid key in GSM):**
 
-"Read `.planning/HANDOFF.md`. The SendGrid Event Webhook signing key is in GSM as `notification-service-sendgrid-webhook-secret`. Pivot to Phase 1 Wave 1.5 (highest-value when unblocked): add the `email_events` migration in `../notification-service/migrations`, the `POST /webhooks/sendgrid` receiver with HMAC verify, and the `GET /internal/email-events/aggregate` endpoint. Then update `tesserix-home/lib/metrics/email-events.ts` to call notification-service instead of returning zeros."
+"Read `.planning/HANDOFF.md`. Email templates infrastructure is live in prod. Validate the round-trip end-to-end: edit a mark8ly welcome template at `/admin/notifications/templates/welcome`, save, then API-trigger by completing an onboarding session with my email. Then start E2 — notification log UI at `/admin/notifications/log` reading from `lib/db/email-events.ts:listRecentEmailEvents` (~1h, data layer already exists)."
+
+**B. If operator config is still pending and you want forward engineering progress:**
+
+"Read `.planning/HANDOFF.md` and `.planning/B1F_FOLLOWUP.md`. Pick up the otto OTP migration to the templates registry. Make the vendor-vs-go-shared decision first (the doc has the tradeoffs). Otto's OTP email is the last customer-facing transactional template not yet operator-editable."
+
+**C. If you want to do small operational items rather than templates work:**
+
+"Read `.planning/HANDOFF.md`. Templates work is done. Pick up E2 (notification log UI — ~1h, data layer ready) OR E4 (CNPG cluster health via Prometheus — small, leverages existing prom client) OR M2 (custom-domain DNS verification dashboard — M effort)."
+
+**D. If you want to seed lead-marketing templates so B2 isn't shipping empty:**
+
+"Read `.planning/HANDOFF.md`. B2 lead-templates surface ships empty. Author the first lead-marketing templates: lead_welcome (intro to mark8ly), lead_demo_invite, lead_followup_no_response. Use the `/admin/notifications/lead-templates/<key>` editor (it'll auto-create a new row when saved). Then validate the leads-page send-email modal end-to-end."
+
+---
+
+## How email templates work end-to-end (for the next session)
+
+Quick mental model so you don't re-discover this:
+
+1. **Product transactional templates** (welcome, invitation, invoice, refund, etc) live in **each product service's own DB** (`mark8ly_platform_api.email_templates` for platform-api, `mark8ly_marketplace_api.email_templates` for marketplace-api). The product service reads them on every send via a per-process loader with 5-min TTL cache. **Embedded fallback** ships in the binary so DB-down ≠ emails-broken.
+
+2. **Tesserix-home is the AUTHORING surface.** It writes to mark8ly's DBs via the existing `mark8ly_platform_admin` cross-DB grant (no FW HTTP hop for the write). After save it pings mark8ly's `POST /internal/templates/refresh` to evict the cache so changes go live in seconds rather than minutes.
+
+3. **Lead/marketing templates** live in `tesserix_admin.platform_lead_templates`. Tesserix-home authors AND sends them directly via SendGrid (no product hop). Audit log in `platform_outbound_emails`.
+
+4. **Engagement attribution** — every send carries Wave 5 `custom_args` (`product`, `tenant_id`, `kind`, `template_key`, optionally `lead_id`/`campaign_id`). SendGrid echoes them back on every event (delivered/open/click/bounce). Wave 1.5 receiver at `/webhooks/sendgrid` ingests them into `tesserix_admin.email_events`. `getEmailMetrics` reads from there.
+
+5. **Test-send button** in the admin UI for a product template POSTs to mark8ly's `/internal/templates/:key/test` — mark8ly renders + sends via its OWN SendGrid client, so the test is byte-identical to a production send. For lead templates it's a direct SendGrid POST from tesserix-home.
+
+## Operator activation checklist (run-once, then templates are fully live)
+
+In rough order:
+
+1. ☐ Bump image pins in `tesserix-k8s/argocd/prod/apps/global/company.yaml`:
+   - tesserix-home → `main-fa28c49` (or later)
+   - mark8ly platform-api → `main-14c6e33` (or later)
+   - mark8ly marketplace-api → `main-435319c` (or later)
+2. ☐ ArgoCD sync — migrations apply on next pod startup:
+   - tesserix-home migration `0005` (email_events + platform_lead_templates + platform_outbound_emails)
+   - platform-api migration `0013` (email_templates)
+   - marketplace-api migration `000085` (email_templates)
+3. ☐ Add `MARK8LY_PLATFORM_API_URL` env to tesserix-home company chart. Default `http://platform-api.mark8ly.svc.cluster.local` should work in-cluster.
+4. ☐ Add `MARK8LY_MARKETPLACE_API_URL` env to tesserix-home company chart for marketplace-api templates refresh ping (similarly: `http://marketplace-api.mark8ly.svc.cluster.local`). Same code path; just hardcoded to platform-api today.
+5. ☐ Verify NetworkPolicy / AuthorizationPolicy allows tesserix → mark8ly platform-api + marketplace-api egress on `/internal/templates/*`.
+6. ☐ Configure SendGrid Event Webhook in console pointing at `https://tesserix.app/webhooks/sendgrid`. SendGrid will give you an ECDSA public key.
+7. ☐ Store ECDSA public key in GSM as `tesserix-sendgrid-webhook-secret`.
+8. ☐ Add `SENDGRID_WEBHOOK_PUBLIC_KEY` env to company chart's ExternalSecret (sourced from the GSM key above).
+9. ☐ ArgoCD sync. Hit the receiver with `gh api repos/.../send-test-event` or trigger a real send to validate.
+10. ☐ (Optional) Author first lead-marketing templates so the `/admin/notifications/lead-templates` surface isn't empty.
+
+After all that:
+- All 10 product templates editable end-to-end (edit → save → test-send → API-trigger validation in <1 min)
+- Engagement events flowing into `email_events`
+- Dashboards (Mark8ly Overview, Tenant Detail) showing real email metrics
+- Operator can send lead emails via the leads page
+
+## Known shortfall — `MARK8LY_MARKETPLACE_API_URL`
+
+The `lib/api/mark8ly-internal.ts` HTTP client currently hardcodes platform-api as its target. The cache-refresh ping for marketplace-api templates (orderdoc / giftcard / shipment_dispatched) doesn't actually fire — saves still work via cross-DB UPSERT, but propagation waits for the 5-min TTL. ~30 min fix to thread the URL through based on the database the template lives in. Logged here so it's not lost.
