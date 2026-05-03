@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "db:migrate": "node scripts/db-migrate.mjs"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.10",

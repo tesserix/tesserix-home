@@ -27,25 +27,44 @@ columns, `ON CONFLICT DO NOTHING` on seeds), so re-running is safe.
 
 ### 1.1 — tesserix-postgres (super-admin DB)
 
+As of 2026-05-04 tesserix-postgres tracks applied migrations in a
+`schema_migrations` table and there's a Node-based runner that applies
+any unapplied files in `db/migrations/` automatically. Prefer it over
+manual `psql -f`:
+
+```bash
+# From the tesserix-home repo root, run via port-forward:
+kubectl port-forward -n tesserix tesserix-postgres-1 25432:5432 &
+PF_PID=$!
+
+TESSERIX_DB_HOST=localhost \
+TESSERIX_DB_PORT=25432 \
+TESSERIX_DB_USER=tesserix_admin \
+TESSERIX_DB_PASSWORD=$(kubectl get secret -n tesserix tesserix-postgres-tesserix-admin \
+  -o jsonpath='{.data.password}' | base64 -d) \
+  npm run db:migrate
+
+kill $PF_PID
+```
+
+The runner is idempotent — re-running prints `no pending migrations`
+when there's nothing to do. Migration files use the existing
+`NNNN_name.sql` naming convention; no `.up.sql` / `.down.sql` split.
+
+If you need to bypass the runner (one-off, fixing a broken state, etc.)
+the manual `psql -f` path still works:
+
 ```bash
 TESSERIX_PASS=$(kubectl get secret -n tesserix tesserix-postgres-tesserix-admin \
   -o jsonpath='{.data.password}' | base64 -d)
-
-# 0005 — email_events + platform_lead_templates + platform_outbound_emails
 kubectl exec -i -n tesserix pod/tesserix-postgres-1 -c postgres -- \
   env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin -d tesserix_admin \
-  < ../tesserix-home/db/migrations/0005_email_events_and_lead_templates.sql
-
-# 0006 — seed 3 starter lead-marketing templates
+  < db/migrations/0007_some_new_thing.sql
+# Then mark it applied so the runner skips it next time:
 kubectl exec -i -n tesserix pod/tesserix-postgres-1 -c postgres -- \
   env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin -d tesserix_admin \
-  < ../tesserix-home/db/migrations/0006_seed_lead_templates.sql
-
-# Verify
-kubectl exec -n tesserix pod/tesserix-postgres-1 -c postgres -- \
-  env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin -d tesserix_admin \
-  -c "SELECT key, label, status FROM platform_lead_templates ORDER BY key;"
-# Expect 3 rows: lead_demo_invite, lead_followup_no_response, lead_welcome
+  -c "INSERT INTO schema_migrations (version, name) VALUES (7, 'some_new_thing') \
+      ON CONFLICT DO NOTHING;"
 ```
 
 ### 1.2 — mark8ly platform-api (`0013` — email_templates)
