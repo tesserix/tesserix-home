@@ -10,13 +10,22 @@
 //   website_status, biography, instagram_url, source_hashtags,
 //   external_url_if_any (optional)
 //
-// Mapping into public.leads (post-migration 0007):
+// Mapping into public.leads (post-migration 0007 + 0008 cleanup):
 //   email             = real email if present, else NULL
 //   instagram_handle  = csv.username (lowered)
 //   phone             = csv.phone
-//   name              = csv.name (fallback: username)
-//   company           = csv.username
-//   location          = csv.location
+//   name              = csv.name if non-empty, else NULL
+//                       (no fallback to username — UI shows @handle)
+//   company           = NULL for IG sources
+//                       (the slug already lives in instagram_handle;
+//                        keeping company empty avoids storing the same
+//                        value in two columns. Set this manually for
+//                        non-IG leads where the brand differs from
+//                        the contact channel.)
+//   location          = csv.location with sanitization:
+//                       - "India (unspecified)" → NULL
+//                       - trailing ", India" stripped (everyone's India-based)
+//                       - "Indore City" → "Indore"
 //   category          = csv.what_they_sell split on `, `
 //   has_website       = true  if website_status matches /Has website/i
 //                       false otherwise (any "no/social/aggregator" variant)
@@ -124,6 +133,19 @@ function parseHasWebsite(raw) {
     return false;
   }
   return null;
+}
+
+// Sanitize location strings to match what migration 0008 cleans up.
+// Keeps the import script + DB state in lock-step so re-imports don't
+// re-introduce the placeholders 0008 just removed.
+function sanitizeLocation(raw) {
+  if (!raw) return null;
+  const v = raw.trim();
+  if (v.length === 0) return null;
+  if (/^india\s*\(unspecified\)$/i.test(v)) return null;
+  let cleaned = v.replace(/,?\s*india\s*$/i, "").trim();
+  if (cleaned === "Indore City") cleaned = "Indore";
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function requireEnv(name) {
@@ -235,13 +257,14 @@ async function main() {
     const realEmail = get("email").toLowerCase() || null;
     const handle = username.toLowerCase();
     if (realEmail) realEmails++;
+    const csvName = get("name");
     const args = [
       realEmail,
       handle,
       get("phone") || null,
-      get("name") || username,
-      username,
-      get("location") || null,
+      csvName || null, // no fallback to username — UI shows @handle
+      null, // company stays NULL for IG-sourced leads (the slug is in instagram_handle)
+      sanitizeLocation(get("location")),
       splitCommaList(get("what_they_sell")),
       parseHasWebsite(get("website_status")),
       get("external_url_if_any") || null,
@@ -253,7 +276,7 @@ async function main() {
 
     if (dryRun) {
       console.log(
-        `[import]   ${(realEmail ?? `@${handle}`).padEnd(50)} | ${args[3].padEnd(30)} | ${(args[5] ?? "").padEnd(20)} | site=${args[7]}`,
+        `[import]   ${(realEmail ?? `@${handle}`).padEnd(50)} | ${(args[3] ?? "—").padEnd(30)} | ${(args[5] ?? "").padEnd(20)} | site=${args[7]}`,
       );
       inserted++;
       continue;
