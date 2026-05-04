@@ -48,6 +48,7 @@ interface Lead {
   website_url: string | null;
   biography: string | null;
   tags: string[];
+  followers_count: number | null;
   source: string | null;
   status: string;
   notes: string | null;
@@ -102,11 +103,30 @@ const HAS_WEBSITE_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "unknown", label: "Unknown" },
 ];
 
+const COUNTRY_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "india", label: "India" },
+  { value: "australia", label: "Australia" },
+];
+
+// Min-follower bands. Empty value = no minimum (Any). Values map 1:1
+// to the API's `min_followers` integer; the API excludes NULL rows
+// when the param is set, so "Any" deliberately omits the param to
+// keep handle-only / non-IG leads visible by default.
+const MIN_FOLLOWERS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Any" },
+  { value: "100", label: "100+" },
+  { value: "1000", label: "1k+" },
+  { value: "10000", label: "10k+" },
+];
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [hasWebsiteFilter, setHasWebsiteFilter] = useState<string>("all");
+  const [countryFilter, setCountryFilter] = useState<string>("all");
+  const [minFollowersFilter, setMinFollowersFilter] = useState<string>("");
   const [search, setSearch] = useState<string>("");
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -129,6 +149,8 @@ export default function LeadsPage() {
       if (filter !== "all") params.set("status", filter);
       if (sourceFilter !== "all") params.set("source", sourceFilter);
       if (hasWebsiteFilter !== "all") params.set("has_website", hasWebsiteFilter);
+      if (countryFilter !== "all") params.set("country", countryFilter);
+      if (minFollowersFilter) params.set("min_followers", minFollowersFilter);
       if (debouncedSearch) params.set("q", debouncedSearch);
       const url = `/api/admin/leads${params.size > 0 ? `?${params.toString()}` : ""}`;
       const res = await fetch(url, { credentials: "include" });
@@ -142,7 +164,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, sourceFilter, hasWebsiteFilter, debouncedSearch]);
+  }, [filter, sourceFilter, hasWebsiteFilter, countryFilter, minFollowersFilter, debouncedSearch]);
 
   useEffect(() => {
     void refresh();
@@ -269,6 +291,28 @@ export default function LeadsPage() {
               </FilterPill>
             ))}
           </FilterRow>
+          <FilterRow label="Country">
+            {COUNTRY_FILTERS.map((f) => (
+              <FilterPill
+                key={f.value}
+                active={countryFilter === f.value}
+                onClick={() => setCountryFilter(f.value)}
+              >
+                {f.label}
+              </FilterPill>
+            ))}
+          </FilterRow>
+          <FilterRow label="Followers">
+            {MIN_FOLLOWERS_FILTERS.map((f) => (
+              <FilterPill
+                key={f.value || "any"}
+                active={minFollowersFilter === f.value}
+                onClick={() => setMinFollowersFilter(f.value)}
+              >
+                {f.label}
+              </FilterPill>
+            ))}
+          </FilterRow>
           {sourceOptions.length > 0 && (
             <FilterRow label="Source">
               <FilterPill
@@ -325,6 +369,7 @@ export default function LeadsPage() {
                 <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Site</th>
+                <th className="px-4 py-3 text-right">Followers</th>
                 <th className="px-4 py-3">Source</th>
                 <th className="px-4 py-3">Owner</th>
                 <th className="px-4 py-3">Status</th>
@@ -336,8 +381,8 @@ export default function LeadsPage() {
             <tbody>
               {leads.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
-                    {debouncedSearch || filter !== "all" || hasWebsiteFilter !== "all" || sourceFilter !== "all"
+                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
+                    {debouncedSearch || filter !== "all" || hasWebsiteFilter !== "all" || sourceFilter !== "all" || countryFilter !== "all" || minFollowersFilter
                       ? "No leads match the current filters."
                       : "No leads. Click Import to add some."}
                   </td>
@@ -498,6 +543,15 @@ function LeadRow({
       </td>
       <td className="px-4 py-3">
         <SiteBadge has={lead.has_website} url={lead.website_url} />
+      </td>
+      <td className="px-4 py-3 text-right text-xs tabular-nums">
+        {lead.followers_count !== null && lead.followers_count !== undefined ? (
+          <span title={`${lead.followers_count.toLocaleString()} followers`}>
+            {formatFollowers(lead.followers_count)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
       </td>
       <td className="px-4 py-3 text-xs text-muted-foreground">
         {lead.source ?? "—"}
@@ -799,6 +853,14 @@ function ActivityDrawer({
       </div>
     </div>
   );
+}
+
+// Compact follower count for the table cell. Full value lives in the
+// `title` attribute so hover surfaces the exact number.
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
 }
 
 function CategoryBadges({ items }: { items: string[] }) {

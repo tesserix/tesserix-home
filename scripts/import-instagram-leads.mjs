@@ -8,7 +8,7 @@
 // Expected CSV columns (header row required, in any order):
 //   username, name, phone, email, location, what_they_sell,
 //   website_status, biography, instagram_url, source_hashtags,
-//   external_url_if_any (optional)
+//   external_url_if_any (optional), followers (optional)
 //
 // Mapping into public.leads (post-migration 0007 + 0008 cleanup):
 //   email             = real email if present, else NULL
@@ -33,6 +33,9 @@
 //   website_url       = csv.external_url_if_any
 //   biography         = csv.biography
 //   tags              = csv.source_hashtags split on `, `
+//   followers_count   = parseInt(csv.followers) if a non-negative
+//                       integer, else NULL (so re-imports without the
+//                       column don't blow away an existing value)
 //   source            = "instagram_outreach"
 //   status            = "new"
 //
@@ -180,6 +183,7 @@ async function main() {
     instagram_url: colIndex("instagram_url"),
     source_hashtags: colIndex("source_hashtags"),
     external_url_if_any: colIndex("external_url_if_any"),
+    followers: colIndex("followers"),
   };
   if (idx.username < 0) {
     console.error("ERROR: 'username' column not found in CSV header");
@@ -222,9 +226,10 @@ async function main() {
     INSERT INTO leads (
       email, instagram_handle, phone, name, company,
       location, category, has_website, website_url, biography, tags,
+      followers_count,
       source, status
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     ON CONFLICT (lower(email)) WHERE email IS NOT NULL
     DO UPDATE SET
       instagram_handle = COALESCE(EXCLUDED.instagram_handle, leads.instagram_handle),
@@ -239,6 +244,7 @@ async function main() {
       biography        = COALESCE(EXCLUDED.biography,        leads.biography),
       tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                               THEN EXCLUDED.tags ELSE leads.tags END,
+      followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
       updated_at       = now()
     RETURNING (xmax = 0) AS inserted
   `;
@@ -258,6 +264,13 @@ async function main() {
     const handle = username.toLowerCase();
     if (realEmail) realEmails++;
     const csvName = get("name");
+    // followers — accept the value when it parses as a non-negative
+    // integer; bad/empty cells become NULL so the COALESCE in the
+    // upsert leaves any existing value alone.
+    const followersRaw = get("followers");
+    const followersNum = followersRaw ? Number.parseInt(followersRaw, 10) : NaN;
+    const followers =
+      Number.isFinite(followersNum) && followersNum >= 0 ? followersNum : null;
     const args = [
       realEmail,
       handle,
@@ -270,6 +283,7 @@ async function main() {
       get("external_url_if_any") || null,
       get("biography") || null,
       splitCommaList(get("source_hashtags")),
+      followers,
       SOURCE,
       STATUS,
     ];

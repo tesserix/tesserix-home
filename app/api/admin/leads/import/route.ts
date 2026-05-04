@@ -35,9 +35,10 @@ const UPSERT_BY_EMAIL = `
   INSERT INTO leads (
     email, instagram_handle, phone, name, company,
     location, category, has_website, website_url, biography, tags,
+    followers_count,
     source, status, notes, owner
   )
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
   ON CONFLICT (lower(email)) WHERE email IS NOT NULL
   DO UPDATE SET
     name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -52,6 +53,7 @@ const UPSERT_BY_EMAIL = `
     biography        = COALESCE(EXCLUDED.biography,        leads.biography),
     tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                             THEN EXCLUDED.tags ELSE leads.tags END,
+    followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
     source           = COALESCE(EXCLUDED.source,           leads.source),
     notes            = COALESCE(EXCLUDED.notes,            leads.notes),
     owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -63,9 +65,10 @@ const UPSERT_BY_HANDLE = `
   INSERT INTO leads (
     email, instagram_handle, phone, name, company,
     location, category, has_website, website_url, biography, tags,
+    followers_count,
     source, status, notes, owner
   )
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
   ON CONFLICT (lower(instagram_handle)) WHERE instagram_handle IS NOT NULL
   DO UPDATE SET
     name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -80,6 +83,7 @@ const UPSERT_BY_HANDLE = `
     biography        = COALESCE(EXCLUDED.biography,        leads.biography),
     tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                             THEN EXCLUDED.tags ELSE leads.tags END,
+    followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
     source           = COALESCE(EXCLUDED.source,           leads.source),
     notes            = COALESCE(EXCLUDED.notes,            leads.notes),
     owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -126,6 +130,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             r.website_url ?? null,
             r.biography ?? null,
             r.tags ?? [],
+            r.followers_count ?? null,
             r.source ?? source,
             r.status ?? "new",
             r.notes ?? null,

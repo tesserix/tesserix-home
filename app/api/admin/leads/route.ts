@@ -1,4 +1,4 @@
-// GET  /api/admin/leads      — list with filters (?status=, ?source=, ?has_website=, ?q=)
+// GET  /api/admin/leads      — list with filters (?status=, ?source=, ?has_website=, ?country=, ?min_followers=, ?q=)
 // POST /api/admin/leads      — create one lead
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -11,6 +11,7 @@ import { logger } from "@/lib/logger";
 const LEAD_COLUMNS = `
   id, email, instagram_handle, phone, name, company,
   location, category, has_website, website_url, biography, tags,
+  followers_count,
   source, status, notes, owner,
   created_at, updated_at, last_contacted_at
 `;
@@ -20,6 +21,8 @@ export async function GET(req: NextRequest): Promise<Response> {
   const statusParam = url.searchParams.get("status");
   const sourceParam = url.searchParams.get("source");
   const hasWebsiteParam = url.searchParams.get("has_website");
+  const countryParam = url.searchParams.get("country");
+  const minFollowersParam = url.searchParams.get("min_followers");
   const q = url.searchParams.get("q");
 
   const where: string[] = [];
@@ -46,6 +49,34 @@ export async function GET(req: NextRequest): Promise<Response> {
     where.push(`has_website = false`);
   } else if (hasWebsiteParam === "unknown") {
     where.push(`has_website IS NULL`);
+  }
+
+  // Country derivation from `location`. There is no `country` column on
+  // leads — Australia rows store the literal string "Australia", India
+  // rows store either NULL (importer strips ", India") or an Indian
+  // city/state. Treat the AU bucket as the only positive match and
+  // everything else as India. When more countries arrive, lift this
+  // into a real column.
+  if (countryParam === "australia") {
+    where.push(`location ILIKE 'australia'`);
+  } else if (countryParam === "india") {
+    where.push(`(location IS NULL OR location NOT ILIKE 'australia')`);
+  }
+
+  // min_followers — filter to leads with a known follower count at or
+  // above the threshold. Rows where followers_count IS NULL are excluded
+  // (they're typically non-IG leads). Reject non-integer / negative
+  // input rather than silently coerce so the URL stays auditable.
+  if (minFollowersParam !== null && minFollowersParam !== "") {
+    const n = Number.parseInt(minFollowersParam, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      return NextResponse.json(
+        { error: "min_followers must be a non-negative integer" },
+        { status: 400 },
+      );
+    }
+    where.push(`followers_count >= $${i++}`);
+    args.push(n);
   }
 
   if (q && q.trim().length > 0) {
@@ -119,9 +150,10 @@ export async function POST(req: NextRequest): Promise<Response> {
       `INSERT INTO leads (
          email, instagram_handle, phone, name, company,
          location, category, has_website, website_url, biography, tags,
+         followers_count,
          source, status, notes, owner
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
        ON CONFLICT ${conflictTarget} ${conflictWhere}
        DO UPDATE SET
          name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -137,6 +169,7 @@ export async function POST(req: NextRequest): Promise<Response> {
          biography        = COALESCE(EXCLUDED.biography,        leads.biography),
          tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                                  THEN EXCLUDED.tags ELSE leads.tags END,
+         followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
          source           = COALESCE(EXCLUDED.source,           leads.source),
          notes            = COALESCE(EXCLUDED.notes,            leads.notes),
          owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -154,6 +187,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         lead.website_url ?? null,
         lead.biography ?? null,
         lead.tags ?? [],
+        lead.followers_count ?? null,
         lead.source ?? null,
         lead.status ?? "new",
         lead.notes ?? null,
