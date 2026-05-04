@@ -21,6 +21,7 @@ import {
   GlobeLock,
   Search,
   MessageSquare,
+  Star,
   X,
   UserPlus,
 } from "lucide-react";
@@ -49,6 +50,8 @@ interface Lead {
   biography: string | null;
   tags: string[];
   followers_count: number | null;
+  posts_count: number | null;
+  is_starred: boolean;
   source: string | null;
   status: string;
   notes: string | null;
@@ -120,6 +123,15 @@ const MIN_FOLLOWERS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "10000", label: "10k+" },
 ];
 
+// Min-posts bands. Same NULL-exclusion semantics as min_followers; an
+// active shop with 100+ posts reads very differently from one with 5.
+const MIN_POSTS_FILTERS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "", label: "Any" },
+  { value: "10", label: "10+" },
+  { value: "100", label: "100+" },
+  { value: "500", label: "500+" },
+];
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [filter, setFilter] = useState<string>("all");
@@ -127,6 +139,8 @@ export default function LeadsPage() {
   const [hasWebsiteFilter, setHasWebsiteFilter] = useState<string>("all");
   const [countryFilter, setCountryFilter] = useState<string>("all");
   const [minFollowersFilter, setMinFollowersFilter] = useState<string>("");
+  const [minPostsFilter, setMinPostsFilter] = useState<string>("");
+  const [starredOnly, setStarredOnly] = useState<boolean>(false);
   const [search, setSearch] = useState<string>("");
   const [debouncedSearch, setDebouncedSearch] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
@@ -151,6 +165,8 @@ export default function LeadsPage() {
       if (hasWebsiteFilter !== "all") params.set("has_website", hasWebsiteFilter);
       if (countryFilter !== "all") params.set("country", countryFilter);
       if (minFollowersFilter) params.set("min_followers", minFollowersFilter);
+      if (minPostsFilter) params.set("min_posts", minPostsFilter);
+      if (starredOnly) params.set("starred", "true");
       if (debouncedSearch) params.set("q", debouncedSearch);
       const url = `/api/admin/leads${params.size > 0 ? `?${params.toString()}` : ""}`;
       const res = await fetch(url, { credentials: "include" });
@@ -164,7 +180,7 @@ export default function LeadsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, sourceFilter, hasWebsiteFilter, countryFilter, minFollowersFilter, debouncedSearch]);
+  }, [filter, sourceFilter, hasWebsiteFilter, countryFilter, minFollowersFilter, minPostsFilter, starredOnly, debouncedSearch]);
 
   useEffect(() => {
     void refresh();
@@ -183,6 +199,35 @@ export default function LeadsPage() {
       }
     },
     [refresh],
+  );
+
+  // Optimistic star toggle — flips the local row first so the UI is
+  // instant, PATCHes the server, and rolls back on failure. Doesn't
+  // call refresh() on success: keeping the in-place mutation avoids
+  // a full table reflow on every star click.
+  const toggleStar = useCallback(
+    async (id: string, current: boolean) => {
+      const next = !current;
+      setLeads((rows) =>
+        rows.map((r) => (r.id === id ? { ...r, is_starred: next } : r)),
+      );
+      try {
+        const res = await fetch(`/api/admin/leads/${id}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_starred: next }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch (err) {
+        // Roll back on failure
+        setLeads((rows) =>
+          rows.map((r) => (r.id === id ? { ...r, is_starred: current } : r)),
+        );
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [],
   );
 
   const totalsByStatus = useMemo(() => {
@@ -313,6 +358,30 @@ export default function LeadsPage() {
               </FilterPill>
             ))}
           </FilterRow>
+          <FilterRow label="Posts">
+            {MIN_POSTS_FILTERS.map((f) => (
+              <FilterPill
+                key={f.value || "any"}
+                active={minPostsFilter === f.value}
+                onClick={() => setMinPostsFilter(f.value)}
+              >
+                {f.label}
+              </FilterPill>
+            ))}
+          </FilterRow>
+          <FilterRow label="Starred">
+            <FilterPill active={!starredOnly} onClick={() => setStarredOnly(false)}>
+              All
+            </FilterPill>
+            <FilterPill active={starredOnly} onClick={() => setStarredOnly(true)}>
+              <Star
+                className="mr-1 inline h-3 w-3"
+                fill={starredOnly ? "currentColor" : "none"}
+                aria-hidden="true"
+              />
+              Starred only
+            </FilterPill>
+          </FilterRow>
           {sourceOptions.length > 0 && (
             <FilterRow label="Source">
               <FilterPill
@@ -364,12 +433,14 @@ export default function LeadsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
+                <th className="w-8 px-2 py-3"></th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3">Name / Company</th>
                 <th className="px-4 py-3">Location</th>
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Site</th>
                 <th className="px-4 py-3 text-right">Followers</th>
+                <th className="px-4 py-3 text-right">Posts</th>
                 <th className="px-4 py-3">Source</th>
                 <th className="px-4 py-3">Owner</th>
                 <th className="px-4 py-3">Status</th>
@@ -381,8 +452,8 @@ export default function LeadsPage() {
             <tbody>
               {leads.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-8 text-center text-muted-foreground">
-                    {debouncedSearch || filter !== "all" || hasWebsiteFilter !== "all" || sourceFilter !== "all" || countryFilter !== "all" || minFollowersFilter
+                  <td colSpan={13} className="px-4 py-8 text-center text-muted-foreground">
+                    {debouncedSearch || filter !== "all" || hasWebsiteFilter !== "all" || sourceFilter !== "all" || countryFilter !== "all" || minFollowersFilter || minPostsFilter || starredOnly
                       ? "No leads match the current filters."
                       : "No leads. Click Import to add some."}
                   </td>
@@ -395,6 +466,7 @@ export default function LeadsPage() {
                     onStatus={(v) => void updateStatus(l.id, v)}
                     onEmail={() => setSendDialogLead(l)}
                     onOpenActivity={() => setActivityLead(l)}
+                    onToggleStar={() => void toggleStar(l.id, l.is_starred)}
                   />
                 ))
               )}
@@ -496,15 +568,38 @@ function LeadRow({
   onStatus,
   onEmail,
   onOpenActivity,
+  onToggleStar,
 }: {
   lead: Lead;
   onStatus: (v: string) => void;
   onEmail: () => void;
   onOpenActivity: () => void;
+  onToggleStar: () => void;
 }) {
   const canEmail = Boolean(lead.email);
   return (
     <tr className="border-b border-border last:border-0">
+      <td className="w-8 px-2 py-3">
+        <button
+          type="button"
+          onClick={onToggleStar}
+          className={
+            "inline-flex h-6 w-6 items-center justify-center rounded transition-colors " +
+            (lead.is_starred
+              ? "text-amber-500 hover:text-amber-600"
+              : "text-muted-foreground/40 hover:text-amber-500")
+          }
+          aria-label={lead.is_starred ? "Unstar lead" : "Star lead"}
+          aria-pressed={lead.is_starred}
+          title={lead.is_starred ? "Unstar (priority bookmark)" : "Star (priority bookmark)"}
+        >
+          <Star
+            className="h-4 w-4"
+            fill={lead.is_starred ? "currentColor" : "none"}
+            aria-hidden="true"
+          />
+        </button>
+      </td>
       <td className="px-4 py-3">
         {lead.email ? (
           <span className="block truncate font-mono text-xs">{lead.email}</span>
@@ -548,6 +643,15 @@ function LeadRow({
         {lead.followers_count !== null && lead.followers_count !== undefined ? (
           <span title={`${lead.followers_count.toLocaleString()} followers`}>
             {formatFollowers(lead.followers_count)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-right text-xs tabular-nums">
+        {lead.posts_count !== null && lead.posts_count !== undefined ? (
+          <span title={`${lead.posts_count.toLocaleString()} posts`}>
+            {formatFollowers(lead.posts_count)}
           </span>
         ) : (
           <span className="text-muted-foreground">—</span>
