@@ -49,6 +49,8 @@ export interface LeadRow {
   biography: string | null;
   tags: string[];
   followers_count: number | null;
+  posts_count: number | null;
+  is_starred: boolean;
   source: string | null;
   status: LeadStatus;
   notes: string | null;
