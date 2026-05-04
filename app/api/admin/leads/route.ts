@@ -1,4 +1,4 @@
-// GET  /api/admin/leads      — list with filters (?status=, ?source=, ?has_website=, ?country=, ?min_followers=, ?q=)
+// GET  /api/admin/leads      — list with filters (?status=, ?source=, ?has_website=, ?country=, ?min_followers=, ?min_posts=, ?starred=, ?q=)
 // POST /api/admin/leads      — create one lead
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -11,7 +11,7 @@ import { logger } from "@/lib/logger";
 const LEAD_COLUMNS = `
   id, email, instagram_handle, phone, name, company,
   location, category, has_website, website_url, biography, tags,
-  followers_count,
+  followers_count, posts_count, is_starred,
   source, status, notes, owner,
   created_at, updated_at, last_contacted_at
 `;
@@ -23,6 +23,8 @@ export async function GET(req: NextRequest): Promise<Response> {
   const hasWebsiteParam = url.searchParams.get("has_website");
   const countryParam = url.searchParams.get("country");
   const minFollowersParam = url.searchParams.get("min_followers");
+  const minPostsParam = url.searchParams.get("min_posts");
+  const starredParam = url.searchParams.get("starred");
   const q = url.searchParams.get("q");
 
   const where: string[] = [];
@@ -77,6 +79,27 @@ export async function GET(req: NextRequest): Promise<Response> {
     }
     where.push(`followers_count >= $${i++}`);
     args.push(n);
+  }
+
+  // min_posts — same shape as min_followers. Excludes NULL post counts
+  // (manual / non-IG leads). The combined "active account" filter
+  // (followers + posts) reads as "this is a real shop, not a stub".
+  if (minPostsParam !== null && minPostsParam !== "") {
+    const n = Number.parseInt(minPostsParam, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      return NextResponse.json(
+        { error: "min_posts must be a non-negative integer" },
+        { status: 400 },
+      );
+    }
+    where.push(`posts_count >= $${i++}`);
+    args.push(n);
+  }
+
+  // starred=true returns only bookmarked leads. Any other value is a
+  // no-op (we don't expose "starred=false" — it's just "no filter").
+  if (starredParam === "true") {
+    where.push(`is_starred = true`);
   }
 
   if (q && q.trim().length > 0) {
@@ -150,10 +173,10 @@ export async function POST(req: NextRequest): Promise<Response> {
       `INSERT INTO leads (
          email, instagram_handle, phone, name, company,
          location, category, has_website, website_url, biography, tags,
-         followers_count,
+         followers_count, posts_count, is_starred,
          source, status, notes, owner
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
        ON CONFLICT ${conflictTarget} ${conflictWhere}
        DO UPDATE SET
          name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -170,6 +193,10 @@ export async function POST(req: NextRequest): Promise<Response> {
          tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                                  THEN EXCLUDED.tags ELSE leads.tags END,
          followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
+         posts_count      = COALESCE(EXCLUDED.posts_count,      leads.posts_count),
+         -- is_starred is intentionally NOT updated on conflict: re-imports
+         -- shouldn't reset an operator's bookmark. Star flips happen via
+         -- PATCH only.
          source           = COALESCE(EXCLUDED.source,           leads.source),
          notes            = COALESCE(EXCLUDED.notes,            leads.notes),
          owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -188,6 +215,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         lead.biography ?? null,
         lead.tags ?? [],
         lead.followers_count ?? null,
+        lead.posts_count ?? null,
+        lead.is_starred ?? false,
         lead.source ?? null,
         lead.status ?? "new",
         lead.notes ?? null,

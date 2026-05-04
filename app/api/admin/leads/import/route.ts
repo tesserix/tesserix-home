@@ -35,10 +35,10 @@ const UPSERT_BY_EMAIL = `
   INSERT INTO leads (
     email, instagram_handle, phone, name, company,
     location, category, has_website, website_url, biography, tags,
-    followers_count,
+    followers_count, posts_count, is_starred,
     source, status, notes, owner
   )
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
   ON CONFLICT (lower(email)) WHERE email IS NOT NULL
   DO UPDATE SET
     name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -54,6 +54,9 @@ const UPSERT_BY_EMAIL = `
     tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                             THEN EXCLUDED.tags ELSE leads.tags END,
     followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
+    posts_count      = COALESCE(EXCLUDED.posts_count,      leads.posts_count),
+    -- is_starred intentionally not updated on conflict — re-imports
+    -- must not reset an operator's bookmarks. Use PATCH for stars.
     source           = COALESCE(EXCLUDED.source,           leads.source),
     notes            = COALESCE(EXCLUDED.notes,            leads.notes),
     owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -65,10 +68,10 @@ const UPSERT_BY_HANDLE = `
   INSERT INTO leads (
     email, instagram_handle, phone, name, company,
     location, category, has_website, website_url, biography, tags,
-    followers_count,
+    followers_count, posts_count, is_starred,
     source, status, notes, owner
   )
-  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
   ON CONFLICT (lower(instagram_handle)) WHERE instagram_handle IS NOT NULL
   DO UPDATE SET
     name             = COALESCE(EXCLUDED.name,             leads.name),
@@ -84,6 +87,9 @@ const UPSERT_BY_HANDLE = `
     tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
                             THEN EXCLUDED.tags ELSE leads.tags END,
     followers_count  = COALESCE(EXCLUDED.followers_count,  leads.followers_count),
+    posts_count      = COALESCE(EXCLUDED.posts_count,      leads.posts_count),
+    -- is_starred intentionally not updated on conflict — re-imports
+    -- must not reset an operator's bookmarks. Use PATCH for stars.
     source           = COALESCE(EXCLUDED.source,           leads.source),
     notes            = COALESCE(EXCLUDED.notes,            leads.notes),
     owner            = COALESCE(EXCLUDED.owner,            leads.owner),
@@ -131,6 +137,8 @@ export async function POST(req: NextRequest): Promise<Response> {
             r.biography ?? null,
             r.tags ?? [],
             r.followers_count ?? null,
+            r.posts_count ?? null,
+            r.is_starred ?? false,
             r.source ?? source,
             r.status ?? "new",
             r.notes ?? null,

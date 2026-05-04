@@ -15,6 +15,7 @@ const uuidSchema = z.string().uuid();
 const LEAD_RETURNING = `
   id, email, instagram_handle, phone, name, company,
   location, category, has_website, website_url, biography, tags,
+  followers_count, posts_count, is_starred,
   source, status, notes, owner,
   created_at, updated_at, last_contacted_at
 `;
@@ -68,6 +69,9 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
   setIfPresent("website_url", "website_url");
   setIfPresent("biography", "biography");
   setIfPresent("tags", "tags");
+  setIfPresent("followers_count", "followers_count");
+  setIfPresent("posts_count", "posts_count");
+  setIfPresent("is_starred", "is_starred");
   setIfPresent("source", "source");
   setIfPresent("status", "status");
   setIfPresent("notes", "notes");
