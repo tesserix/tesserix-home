@@ -155,15 +155,31 @@ export async function POST(
     sgMessageId: result.messageId ?? undefined,
     sentAt: new Date(),
   });
-  // Best-effort: bump the lead's last_contacted_at so the operator
-  // sees it on the leads list.
+  // Best-effort: bump the lead's last_contacted_at + log the send as
+  // an activity so the timeline reflects what just happened.
   try {
     await tesserixQuery(
       `UPDATE leads SET last_contacted_at = now(), updated_at = now() WHERE id = $1`,
       [id],
     );
+    await tesserixQuery(
+      `INSERT INTO lead_activities (lead_id, kind, actor_email, body, metadata)
+       VALUES ($1, 'email_sent', $2, $3, $4::jsonb)`,
+      [
+        id,
+        sentBy,
+        `Sent "${tpl.label}" — subject: ${subject.output}`,
+        JSON.stringify({
+          template_key: tpl.key,
+          template_version: tpl.version,
+          recipient: lead.email,
+          sg_message_id: result.messageId ?? null,
+          idempotency_key: body.idempotencyKey,
+        }),
+      ],
+    );
   } catch {
-    /* non-fatal */
+    /* non-fatal — observation, not source-of-truth */
   }
   return NextResponse.json({
     sent: true,

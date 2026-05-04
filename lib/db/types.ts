@@ -57,6 +57,26 @@ export interface LeadRow {
   last_contacted_at: Date | null;
 }
 
+export type LeadActivityKind =
+  | "note"
+  | "dm_sent"
+  | "dm_received"
+  | "email_sent"
+  | "email_received"
+  | "call"
+  | "status_change"
+  | "assigned";
+
+export interface LeadActivityRow {
+  id: string;
+  lead_id: string;
+  kind: LeadActivityKind;
+  actor_email: string;
+  body: string | null;
+  metadata: Record<string, unknown>;
+  created_at: Date;
+}
+
 export interface LeadImportRow {
   id: string;
   source: string;

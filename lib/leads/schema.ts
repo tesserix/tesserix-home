@@ -95,6 +95,29 @@ export const leadImportSchema = z.object({
   rows: z.array(leadInputSchema).min(1).max(10_000),
 });
 
+export const LEAD_ACTIVITY_KINDS = [
+  "note",
+  "dm_sent",
+  "dm_received",
+  "email_sent",
+  "email_received",
+  "call",
+  "status_change",
+  "assigned",
+] as const;
+
+export const leadActivityKindSchema = z.enum(LEAD_ACTIVITY_KINDS);
+
+// Activity composer payload. Operators primarily use this to log
+// notes / DMs / calls; status_change and email_sent are auto-logged
+// server-side and don't go through this schema.
+export const leadActivityInputSchema = z.object({
+  kind: leadActivityKindSchema,
+  body: z.string().trim().max(10_000).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
+});
+
 export type LeadInput = z.infer<typeof leadInputSchema>;
 export type LeadUpdate = z.infer<typeof leadUpdateSchema>;
 export type LeadImport = z.infer<typeof leadImportSchema>;
+export type LeadActivityInput = z.infer<typeof leadActivityInputSchema>;

@@ -67,8 +67,12 @@ export async function GET(req: NextRequest): Promise<Response> {
   const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
 
   try {
-    const result = await tesserixQuery<LeadRow>(
-      `SELECT ${LEAD_COLUMNS}
+    // activity_count: a correlated subquery is cheaper than a LATERAL
+    // join here since we LIMIT 500 leads. Indexed on (lead_id, …) so
+    // each subquery is an index-only count.
+    const result = await tesserixQuery<LeadRow & { activity_count: number }>(
+      `SELECT ${LEAD_COLUMNS},
+              (SELECT count(*)::int FROM lead_activities a WHERE a.lead_id = leads.id) AS activity_count
        FROM leads
        ${whereClause}
        ORDER BY created_at DESC

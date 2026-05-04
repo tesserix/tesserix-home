@@ -7,6 +7,7 @@ import { z } from "zod";
 import { tesserixQuery } from "@/lib/db/tesserix";
 import type { LeadRow } from "@/lib/db/types";
 import { leadUpdateSchema } from "@/lib/leads/schema";
+import { getCurrentSession } from "@/lib/auth/session-jwt";
 import { logger } from "@/lib/logger";
 
 const uuidSchema = z.string().uuid();
@@ -79,6 +80,17 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
   values.push(idCheck.data);
 
   try {
+    // Snapshot the previous state for the things we auto-log on change
+    // (status, owner). One round-trip is fine for a single-row patch.
+    const prev = await tesserixQuery<{ status: string; owner: string | null }>(
+      `SELECT status, owner FROM leads WHERE id = $1`,
+      [idCheck.data],
+    );
+    if (prev.rows.length === 0) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    const before = prev.rows[0];
+
     const result = await tesserixQuery<LeadRow>(
       `UPDATE leads SET ${sets.join(", ")}
        WHERE id = $${i}
@@ -88,7 +100,45 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
     if (result.rows.length === 0) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
-    return NextResponse.json({ lead: result.rows[0] });
+    const after = result.rows[0];
+
+    // Auto-log status / owner changes as activities. Best-effort: a
+    // failure here doesn't roll back the underlying mutation, since
+    // the timeline is observation, not source-of-truth.
+    const session = await getCurrentSession().catch(() => null);
+    const actor = session?.email ?? "unknown@tesserix";
+    try {
+      if (u.status !== undefined && u.status !== before.status) {
+        await tesserixQuery(
+          `INSERT INTO lead_activities (lead_id, kind, actor_email, body, metadata)
+           VALUES ($1, 'status_change', $2, $3, $4::jsonb)`,
+          [
+            idCheck.data,
+            actor,
+            `${before.status} → ${after.status}`,
+            JSON.stringify({ from: before.status, to: after.status }),
+          ],
+        );
+      }
+      if (u.owner !== undefined && (u.owner ?? null) !== before.owner) {
+        await tesserixQuery(
+          `INSERT INTO lead_activities (lead_id, kind, actor_email, body, metadata)
+           VALUES ($1, 'assigned', $2, $3, $4::jsonb)`,
+          [
+            idCheck.data,
+            actor,
+            after.owner
+              ? `Assigned to ${after.owner}`
+              : `Unassigned (was ${before.owner ?? "—"})`,
+            JSON.stringify({ from: before.owner, to: after.owner }),
+          ],
+        );
+      }
+    } catch (logErr) {
+      logger.warn("[leads PATCH] activity log failed (non-fatal)", logErr);
+    }
+
+    return NextResponse.json({ lead: after });
   } catch (err) {
     logger.error("[leads PATCH] failed", err);
     return NextResponse.json({ error: "update failed" }, { status: 500 });

@@ -20,6 +20,9 @@ import {
   Globe,
   GlobeLock,
   Search,
+  MessageSquare,
+  X,
+  UserPlus,
 } from "lucide-react";
 import {
   Select,
@@ -52,6 +55,25 @@ interface Lead {
   created_at: string;
   updated_at: string;
   last_contacted_at: string | null;
+  activity_count?: number;
+}
+
+interface Activity {
+  id: string;
+  lead_id: string;
+  kind:
+    | "note"
+    | "dm_sent"
+    | "dm_received"
+    | "email_sent"
+    | "email_received"
+    | "call"
+    | "status_change"
+    | "assigned";
+  actor_email: string;
+  body: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
 }
 
 interface ImportSummary {
@@ -91,6 +113,7 @@ export default function LeadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState<boolean>(false);
   const [sendDialogLead, setSendDialogLead] = useState<Lead | null>(null);
+  const [activityLead, setActivityLead] = useState<Lead | null>(null);
 
   // Debounce free-text search so we don't refetch on every keystroke.
   useEffect(() => {
@@ -147,6 +170,29 @@ export default function LeadsPage() {
     return m;
   }, [leads]);
 
+  // KPI roll-up across the (filtered) result set. We compute against
+  // `leads` rather than a separate count endpoint so the strip reflects
+  // whatever the operator is currently filtering — e.g. selecting
+  // "No website" shows how many of those are owned / contacted.
+  // Date.now() can't be called inside render (react-hooks/purity), so
+  // we keep the wall-clock cutoff in a useEffect-driven state slot.
+  const [sevenDaysAgo, setSevenDaysAgo] = useState<number>(0);
+  useEffect(() => {
+    setSevenDaysAgo(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  }, [leads]);
+  const kpis = useMemo(() => {
+    return {
+      total: leads.length,
+      owned: leads.filter((l) => l.owner).length,
+      contactedRecently: leads.filter(
+        (l) =>
+          l.last_contacted_at &&
+          new Date(l.last_contacted_at).getTime() >= sevenDaysAgo,
+      ).length,
+      noWebsite: leads.filter((l) => l.has_website === false).length,
+    };
+  }, [leads, sevenDaysAgo]);
+
   // Build the source filter pills from the current row set so we don't
   // hard-code a list. As soon as a new source name lands in the data,
   // the pill appears.
@@ -160,6 +206,20 @@ export default function LeadsPage() {
     <div className="flex h-full flex-col">
       <AdminHeader title="Leads" />
       <div className="flex-1 space-y-4 p-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <KpiTile label="Total" value={kpis.total} hint="in current filter" />
+          <KpiTile label="Owned" value={kpis.owned} hint="have an assignee" />
+          <KpiTile
+            label="Contacted (7d)"
+            value={kpis.contactedRecently}
+            hint="recent outreach"
+          />
+          <KpiTile
+            label="No website"
+            value={kpis.noWebsite}
+            hint="ICP fit for mark8ly"
+          />
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <FilterRow label="Status">
@@ -266,7 +326,9 @@ export default function LeadsPage() {
                 <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Site</th>
                 <th className="px-4 py-3">Source</th>
+                <th className="px-4 py-3">Owner</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Activity</th>
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3"></th>
               </tr>
@@ -274,7 +336,7 @@ export default function LeadsPage() {
             <tbody>
               {leads.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={11} className="px-4 py-8 text-center text-muted-foreground">
                     {debouncedSearch || filter !== "all" || hasWebsiteFilter !== "all" || sourceFilter !== "all"
                       ? "No leads match the current filters."
                       : "No leads. Click Import to add some."}
@@ -287,6 +349,7 @@ export default function LeadsPage() {
                     lead={l}
                     onStatus={(v) => void updateStatus(l.id, v)}
                     onEmail={() => setSendDialogLead(l)}
+                    onOpenActivity={() => setActivityLead(l)}
                   />
                 ))
               )}
@@ -305,6 +368,38 @@ export default function LeadsPage() {
           }}
         />
       )}
+
+      {activityLead && (
+        <ActivityDrawer
+          lead={activityLead}
+          onClose={() => {
+            setActivityLead(null);
+            void refresh(); // pick up activity_count + assignee changes
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: number;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 text-xl font-medium tabular-nums">{value}</p>
+      {hint ? (
+        <p className="text-[10px] text-muted-foreground">{hint}</p>
+      ) : null}
     </div>
   );
 }
@@ -355,10 +450,12 @@ function LeadRow({
   lead,
   onStatus,
   onEmail,
+  onOpenActivity,
 }: {
   lead: Lead;
   onStatus: (v: string) => void;
   onEmail: () => void;
+  onOpenActivity: () => void;
 }) {
   const canEmail = Boolean(lead.email);
   return (
@@ -405,6 +502,18 @@ function LeadRow({
       <td className="px-4 py-3 text-xs text-muted-foreground">
         {lead.source ?? "—"}
       </td>
+      <td className="px-4 py-3 text-xs">
+        {lead.owner ? (
+          <span
+            className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px]"
+            title={lead.owner}
+          >
+            {lead.owner.split("@")[0]}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
       <td className="px-4 py-3">
         <Select value={lead.status} onValueChange={onStatus}>
           <SelectTrigger className="h-7 w-32 text-xs capitalize">
@@ -418,6 +527,17 @@ function LeadRow({
             ))}
           </SelectContent>
         </Select>
+      </td>
+      <td className="px-4 py-3">
+        <button
+          onClick={onOpenActivity}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          aria-label={`Open activity timeline for ${lead.name ?? lead.instagram_handle ?? "lead"}`}
+          title="Notes, conversations, status history"
+        >
+          <MessageSquare className="h-3 w-3" aria-hidden="true" />
+          {lead.activity_count ?? 0}
+        </button>
       </td>
       <td className="px-4 py-3 text-xs text-muted-foreground">
         {new Date(lead.created_at).toLocaleDateString()}
@@ -435,6 +555,249 @@ function LeadRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+const ACTIVITY_KIND_LABEL: Record<Activity["kind"], string> = {
+  note: "Note",
+  dm_sent: "DM sent",
+  dm_received: "DM received",
+  email_sent: "Email sent",
+  email_received: "Email received",
+  call: "Call",
+  status_change: "Status",
+  assigned: "Assignment",
+};
+
+const ACTIVITY_KIND_TONE: Record<Activity["kind"], string> = {
+  note: "bg-muted text-muted-foreground",
+  dm_sent: "bg-violet-50 text-violet-700",
+  dm_received: "bg-violet-50 text-violet-700",
+  email_sent: "bg-sky-50 text-sky-700",
+  email_received: "bg-sky-50 text-sky-700",
+  call: "bg-emerald-50 text-emerald-700",
+  status_change: "bg-amber-50 text-amber-700",
+  assigned: "bg-amber-50 text-amber-700",
+};
+
+const COMPOSER_KINDS: ReadonlyArray<{ value: Activity["kind"]; label: string }> = [
+  { value: "note", label: "Note" },
+  { value: "dm_sent", label: "DM sent" },
+  { value: "dm_received", label: "DM received" },
+  { value: "email_received", label: "Email received" },
+  { value: "call", label: "Call" },
+];
+
+function ActivityDrawer({
+  lead,
+  onClose,
+}: {
+  lead: Lead;
+  onClose: () => void;
+}) {
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [composerKind, setComposerKind] = useState<Activity["kind"]>("note");
+  const [composerBody, setComposerBody] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [ownerInput, setOwnerInput] = useState(lead.owner ?? "");
+  const [savingOwner, setSavingOwner] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/leads/${lead.id}/activities`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { activities: Activity[] };
+      setActivities(data.activities);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [lead.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function submit() {
+    if (!composerBody.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/admin/leads/${lead.id}/activities`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: composerKind, body: composerBody.trim() }),
+      });
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(e.error ?? `HTTP ${res.status}`);
+      }
+      setComposerBody("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function saveOwner() {
+    setSavingOwner(true);
+    try {
+      const next = ownerInput.trim() || null;
+      const res = await fetch(`/api/admin/leads/${lead.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: next }),
+      });
+      if (!res.ok) {
+        const e = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(e.error ?? `HTTP ${res.status}`);
+      }
+      // PATCH auto-logs an `assigned` activity, so reload.
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingOwner(false);
+    }
+  }
+
+  const headline =
+    lead.name ?? (lead.instagram_handle ? `@${lead.instagram_handle}` : lead.email);
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      <div className="flex-1 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div className="flex w-full max-w-lg flex-col bg-card shadow-xl">
+        <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-medium">{headline}</h3>
+            <p className="truncate text-xs text-muted-foreground">
+              {lead.email ?? `@${lead.instagram_handle ?? "—"}`}
+              {lead.location ? ` · ${lead.location}` : ""}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="space-y-4 border-b border-border px-5 py-4">
+          <div>
+            <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Owner
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                value={ownerInput}
+                onChange={(e) => setOwnerInput(e.target.value)}
+                placeholder="email@example.com (blank to unassign)"
+                className="flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs"
+              />
+              <button
+                onClick={() => void saveOwner()}
+                disabled={savingOwner || ownerInput.trim() === (lead.owner ?? "")}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-xs hover:bg-muted/40 disabled:opacity-40"
+              >
+                <UserPlus className="h-3 w-3" aria-hidden="true" />
+                {savingOwner ? "…" : "Assign"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3 border-b border-border px-5 py-4">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Log activity
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {COMPOSER_KINDS.map((k) => (
+              <button
+                key={k.value}
+                onClick={() => setComposerKind(k.value)}
+                aria-pressed={composerKind === k.value}
+                className={
+                  "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors " +
+                  (composerKind === k.value
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border hover:border-foreground/40")
+                }
+              >
+                {k.label}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={composerBody}
+            onChange={(e) => setComposerBody(e.target.value)}
+            rows={3}
+            placeholder="What happened?"
+            className="w-full rounded-md border border-border bg-background p-2 text-sm"
+          />
+          <div className="flex justify-end">
+            <button
+              onClick={() => void submit()}
+              disabled={submitting || composerBody.trim().length === 0}
+              className="rounded-md bg-foreground px-3 py-1 text-xs text-background disabled:opacity-40"
+            >
+              {submitting ? "Logging…" : "Log"}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-auto px-5 py-4">
+          {error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          {loading ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : activities.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No activity yet. Status changes, sent emails, and notes you log here will show up.
+            </p>
+          ) : (
+            <ol className="space-y-3">
+              {activities.map((a) => (
+                <li key={a.id} className="rounded-md border border-border bg-background p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${ACTIVITY_KIND_TONE[a.kind]}`}
+                    >
+                      {ACTIVITY_KIND_LABEL[a.kind]}
+                    </span>
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      {new Date(a.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  {a.body ? (
+                    <p className="mt-1.5 whitespace-pre-wrap text-xs">{a.body}</p>
+                  ) : null}
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    by {a.actor_email}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
