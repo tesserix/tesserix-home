@@ -10,18 +10,26 @@
 //   website_status, biography, instagram_url, source_hashtags,
 //   external_url_if_any (optional)
 //
-// Mapping into public.leads:
-//   email   = <real email> or "<username>@instagram.placeholder"
-//   name    = csv.name or csv.username
-//   company = csv.username (the @handle is the brand on Instagram)
-//   source  = "instagram_outreach"
-//   status  = "new"
-//   notes   = location · what_they_sell · website_status · bio · IG link
-//             · external website · source hashtags (whichever are present)
+// Mapping into public.leads (post-migration 0007):
+//   email             = real email if present, else NULL
+//   instagram_handle  = csv.username (lowered)
+//   phone             = csv.phone
+//   name              = csv.name (fallback: username)
+//   company           = csv.username
+//   location          = csv.location
+//   category          = csv.what_they_sell split on `, `
+//   has_website       = true  if website_status matches /Has website/i
+//                       false otherwise (any "no/social/aggregator" variant)
+//                       NULL  if website_status missing
+//   website_url       = csv.external_url_if_any
+//   biography         = csv.biography
+//   tags              = csv.source_hashtags split on `, `
+//   source            = "instagram_outreach"
+//   status            = "new"
 //
-// Idempotent — `ON CONFLICT (lower(email)) DO NOTHING`. Re-running with
-// the same CSV is a no-op. Real-email rows beat placeholder rows: if
-// you discover a real email later, UPDATE the row directly.
+// Idempotent dedup:
+//   - If email present     → ON CONFLICT (lower(email))            DO NOTHING
+//   - Else handle present  → ON CONFLICT (lower(instagram_handle)) DO NOTHING
 //
 // Records every run in lead_imports for audit (filename + counts).
 
@@ -30,7 +38,6 @@ import path from "node:path";
 import process from "node:process";
 import pg from "pg";
 
-const PLACEHOLDER_DOMAIN = "instagram.placeholder";
 const SOURCE = "instagram_outreach";
 const STATUS = "new";
 
@@ -46,8 +53,7 @@ function parseArgs() {
 }
 
 // RFC 4180-ish CSV parser. Handles quoted fields, embedded commas,
-// embedded quotes (escaped as ""), and \n / \r\n line endings. Good
-// enough for tooling-generated exports — not for arbitrary user input.
+// embedded quotes (escaped as ""), and \n / \r\n line endings.
 function parseCSV(text) {
   const rows = [];
   let row = [];
@@ -101,25 +107,23 @@ function parseCSV(text) {
   return rows;
 }
 
-function buildNotes(get) {
-  const parts = [];
-  const location = get("location");
-  if (location) parts.push(`Location: ${location}`);
-  const sells = get("what_they_sell");
-  if (sells) parts.push(`Sells: ${sells}`);
-  const website = get("website_status");
-  if (website) parts.push(`Website status: ${website}`);
-  const bio = get("biography");
-  if (bio) parts.push(`Bio: ${bio}`);
-  const ig = get("instagram_url");
-  if (ig) parts.push(`IG: ${ig}`);
-  const ext = get("external_url_if_any");
-  if (ext) parts.push(`Website: ${ext}`);
-  const phone = get("phone");
-  if (phone) parts.push(`Phone: ${phone}`);
-  const tags = get("source_hashtags");
-  if (tags) parts.push(`Hashtags: ${tags}`);
-  return parts.join(" · ");
+function splitCommaList(raw) {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function parseHasWebsite(raw) {
+  if (!raw) return null;
+  if (/Has website/i.test(raw)) return true;
+  if (
+    /No links|no website|WhatsApp\/social|aggregator|Linktree/i.test(raw)
+  ) {
+    return false;
+  }
+  return null;
 }
 
 function requireEnv(name) {
@@ -184,49 +188,82 @@ async function main() {
   }
 
   let inserted = 0;
-  let skipped = 0;
+  let updated = 0;
   let failed = 0;
   let realEmails = 0;
   const errors = [];
+
+  // Two SQL paths — one for each conflict target. We have to pick at
+  // statement-construction time because PostgreSQL only supports a
+  // single ON CONFLICT clause per query.
+  const insertByEmail = `
+    INSERT INTO leads (
+      email, instagram_handle, phone, name, company,
+      location, category, has_website, website_url, biography, tags,
+      source, status
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    ON CONFLICT (lower(email)) WHERE email IS NOT NULL
+    DO UPDATE SET
+      instagram_handle = COALESCE(EXCLUDED.instagram_handle, leads.instagram_handle),
+      phone            = COALESCE(EXCLUDED.phone,            leads.phone),
+      name             = COALESCE(EXCLUDED.name,             leads.name),
+      company          = COALESCE(EXCLUDED.company,          leads.company),
+      location         = COALESCE(EXCLUDED.location,         leads.location),
+      category         = CASE WHEN array_length(EXCLUDED.category, 1) > 0
+                              THEN EXCLUDED.category ELSE leads.category END,
+      has_website      = COALESCE(EXCLUDED.has_website,      leads.has_website),
+      website_url      = COALESCE(EXCLUDED.website_url,      leads.website_url),
+      biography        = COALESCE(EXCLUDED.biography,        leads.biography),
+      tags             = CASE WHEN array_length(EXCLUDED.tags, 1) > 0
+                              THEN EXCLUDED.tags ELSE leads.tags END,
+      updated_at       = now()
+    RETURNING (xmax = 0) AS inserted
+  `;
+  const insertByHandle = insertByEmail.replace(
+    "ON CONFLICT (lower(email)) WHERE email IS NOT NULL",
+    "ON CONFLICT (lower(instagram_handle)) WHERE instagram_handle IS NOT NULL",
+  );
 
   for (const row of dataRows) {
     const get = (key) =>
       idx[key] >= 0 && row[idx[key]] ? row[idx[key]].trim() : "";
     const username = get("username");
     if (!username) {
-      skipped++;
       continue;
     }
-    const realEmail = get("email").toLowerCase();
-    const email = realEmail || `${username.toLowerCase()}@${PLACEHOLDER_DOMAIN}`;
+    const realEmail = get("email").toLowerCase() || null;
+    const handle = username.toLowerCase();
     if (realEmail) realEmails++;
-    const name = get("name") || username;
-    const company = username;
-    const notes = buildNotes(get);
+    const args = [
+      realEmail,
+      handle,
+      get("phone") || null,
+      get("name") || username,
+      username,
+      get("location") || null,
+      splitCommaList(get("what_they_sell")),
+      parseHasWebsite(get("website_status")),
+      get("external_url_if_any") || null,
+      get("biography") || null,
+      splitCommaList(get("source_hashtags")),
+      SOURCE,
+      STATUS,
+    ];
 
     if (dryRun) {
       console.log(
-        `[import]   ${email.padEnd(50)} | ${name.padEnd(30)} | ${notes.slice(0, 80)}`,
+        `[import]   ${(realEmail ?? `@${handle}`).padEnd(50)} | ${args[3].padEnd(30)} | ${(args[5] ?? "").padEnd(20)} | site=${args[7]}`,
       );
       inserted++;
       continue;
     }
 
     try {
-      const res = await client.query(
-        `
-          INSERT INTO leads (email, name, company, source, status, notes)
-          VALUES ($1, $2, $3, $4, $5::lead_status, $6)
-          ON CONFLICT (lower(email)) DO NOTHING
-          RETURNING id
-        `,
-        [email, name, company, SOURCE, STATUS, notes],
-      );
-      if (res.rowCount > 0) {
-        inserted++;
-      } else {
-        skipped++;
-      }
+      const sql = realEmail ? insertByEmail : insertByHandle;
+      const res = await client.query(sql, args);
+      if (res.rows[0]?.inserted) inserted++;
+      else updated++;
     } catch (err) {
       failed++;
       const msg = err instanceof Error ? err.message : String(err);
@@ -240,7 +277,7 @@ async function main() {
       `
         INSERT INTO lead_imports
           (source, filename, imported_by, total_rows, inserted_rows, updated_rows, failed_rows, errors)
-        VALUES ($1, $2, $3, $4, $5, 0, $6, $7::jsonb)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
       `,
       [
         SOURCE,
@@ -248,6 +285,7 @@ async function main() {
         process.env.IMPORTED_BY ?? "import-script",
         dataRows.length,
         inserted,
+        updated,
         failed,
         JSON.stringify(errors),
       ],
@@ -257,14 +295,12 @@ async function main() {
 
   console.log("");
   console.log("[import] summary:");
-  console.log(`           total rows:   ${dataRows.length}`);
-  console.log(`           inserted:     ${inserted}`);
-  console.log(`           skipped (dup):${skipped}`);
-  console.log(`           failed:       ${failed}`);
-  console.log(`           real emails:  ${realEmails}`);
-  console.log(
-    `           placeholders: ${dataRows.length - realEmails - failed - skipped}`,
-  );
+  console.log(`           total rows:    ${dataRows.length}`);
+  console.log(`           inserted:      ${inserted}`);
+  console.log(`           updated:       ${updated}`);
+  console.log(`           failed:        ${failed}`);
+  console.log(`           with email:    ${realEmails}`);
+  console.log(`           handle-only:   ${dataRows.length - realEmails - failed}`);
 }
 
 main().catch((err) => {

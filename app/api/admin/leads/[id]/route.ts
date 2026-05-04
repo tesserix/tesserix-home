@@ -1,4 +1,4 @@
-// PATCH  /api/admin/leads/:id   — update fields (status, notes, owner, last_contacted_at, …)
+// PATCH  /api/admin/leads/:id   — update fields (status, notes, owner, structured fields, …)
 // DELETE /api/admin/leads/:id   — hard delete
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -10,6 +10,13 @@ import { leadUpdateSchema } from "@/lib/leads/schema";
 import { logger } from "@/lib/logger";
 
 const uuidSchema = z.string().uuid();
+
+const LEAD_RETURNING = `
+  id, email, instagram_handle, phone, name, company,
+  location, category, has_website, website_url, biography, tags,
+  source, status, notes, owner,
+  created_at, updated_at, last_contacted_at
+`;
 
 interface RouteCtx {
   params: Promise<{ id: string }>;
@@ -39,20 +46,32 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
   const u = parsed.data;
 
   // Build SET clause dynamically — only update fields the caller specified.
+  // text[] columns (category, tags) take JS arrays directly via node-postgres.
   const sets: string[] = [];
   const values: unknown[] = [];
   let i = 1;
-  if (u.email !== undefined) { sets.push(`email = $${i++}`); values.push(u.email); }
-  if (u.name !== undefined) { sets.push(`name = $${i++}`); values.push(u.name); }
-  if (u.company !== undefined) { sets.push(`company = $${i++}`); values.push(u.company); }
-  if (u.source !== undefined) { sets.push(`source = $${i++}`); values.push(u.source); }
-  if (u.status !== undefined) { sets.push(`status = $${i++}`); values.push(u.status); }
-  if (u.notes !== undefined) { sets.push(`notes = $${i++}`); values.push(u.notes); }
-  if (u.owner !== undefined) { sets.push(`owner = $${i++}`); values.push(u.owner); }
-  if (u.last_contacted_at !== undefined) {
-    sets.push(`last_contacted_at = $${i++}`);
-    values.push(u.last_contacted_at);
-  }
+  const setIfPresent = <K extends keyof typeof u>(col: string, key: K) => {
+    if (u[key] !== undefined) {
+      sets.push(`${col} = $${i++}`);
+      values.push(u[key]);
+    }
+  };
+  setIfPresent("email", "email");
+  setIfPresent("instagram_handle", "instagram_handle");
+  setIfPresent("phone", "phone");
+  setIfPresent("name", "name");
+  setIfPresent("company", "company");
+  setIfPresent("location", "location");
+  setIfPresent("category", "category");
+  setIfPresent("has_website", "has_website");
+  setIfPresent("website_url", "website_url");
+  setIfPresent("biography", "biography");
+  setIfPresent("tags", "tags");
+  setIfPresent("source", "source");
+  setIfPresent("status", "status");
+  setIfPresent("notes", "notes");
+  setIfPresent("owner", "owner");
+  setIfPresent("last_contacted_at", "last_contacted_at");
 
   if (sets.length === 0) {
     return NextResponse.json({ error: "no fields to update" }, { status: 400 });
@@ -63,8 +82,7 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
     const result = await tesserixQuery<LeadRow>(
       `UPDATE leads SET ${sets.join(", ")}
        WHERE id = $${i}
-       RETURNING id, email, name, company, source, status, notes, owner,
-                 created_at, updated_at, last_contacted_at`,
+       RETURNING ${LEAD_RETURNING}`,
       values,
     );
     if (result.rows.length === 0) {

@@ -37,9 +37,17 @@ export type LeadStatus =
 
 export interface LeadRow {
   id: string;
-  email: string;
+  email: string | null;
+  instagram_handle: string | null;
+  phone: string | null;
   name: string | null;
   company: string | null;
+  location: string | null;
+  category: string[];
+  has_website: boolean | null;
+  website_url: string | null;
+  biography: string | null;
+  tags: string[];
   source: string | null;
   status: LeadStatus;
   notes: string | null;
