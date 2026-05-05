@@ -429,8 +429,8 @@ export default function LeadsPage() {
           </div>
         ) : null}
 
-        <div className="rounded-lg border border-border bg-card">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          <table className="w-full min-w-[1280px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
                 <th className="w-8 px-2 py-3"></th>
