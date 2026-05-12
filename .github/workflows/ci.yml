@@ -24,6 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   REGISTRY: ghcr.io
   IMAGE_NAME: tesserix-home
   GCP_PROJECT_ID: tesseracthub-480811
