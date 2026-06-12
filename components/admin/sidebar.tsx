@@ -338,7 +338,7 @@ function LeftRail({
                 alt="Home Chef"
                 width={24}
                 height={24}
-                className="rounded-sm brightness-0 invert"
+                className="rounded-md"
               />
             </Link>
           </TooltipTrigger>
