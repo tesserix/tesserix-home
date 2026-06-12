@@ -25,6 +25,7 @@ import {
   Mail,
   Database,
   Globe,
+  Truck,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -100,6 +101,7 @@ const mark8lyNav: NavEntry[] = [
 const homechefNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
   { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
+  { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
 ];
 
