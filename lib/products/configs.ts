@@ -52,8 +52,37 @@ const mark8ly: ProductConfig = {
   trialDays: 90,
 };
 
+// Home Chef — India home-cooking marketplace (Customer + Vendor mobile apps +
+// Go API). Single database (homechef_db). No subscriptions in v1, so pricing is
+// omitted and the billing UI hides on its pages. Business KPIs are served by the
+// product-scoped route /api/admin/apps/homechef/kpis (direct homechef_db reads
+// via lib/db/homechef.ts) — see resolveKpiValue in product-overview-layout.tsx.
+const homechef: ProductConfig = {
+  id: "homechef",
+  name: "Home Chef",
+  namespace: "homechef",
+  cnpgClusterName: "homechef-postgres",
+  sendGridProductTag: "homechef",
+  // Left empty in v1: the per-table storage estimate routes through mark8ly's
+  // pool today. Resources/DB-size on the overview come from CNPG Prometheus
+  // metrics (cnpgClusterName), so this isn't needed for a working overview.
+  rowCountTables: [],
+  costAttribution: {
+    requests: 0.5,
+    storage: 0.3,
+    egress: 0.2,
+  },
+  businessKpiTiles: [
+    { key: "chefs_active", label: "Active chefs", hint: "verified + active", source: "product" },
+    { key: "orders_today", label: "Orders today", hint: "since 00:00 IST", source: "product" },
+    { key: "gmv_today", label: "GMV today", hint: "₹, excl. cancelled/refunded", source: "product" },
+    { key: "approvals_pending", label: "Pending approvals", hint: "awaiting review", source: "product" },
+  ],
+};
+
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
   mark8ly,
+  homechef,
 };
 
 export function getProductConfig(id: string): ProductConfig {

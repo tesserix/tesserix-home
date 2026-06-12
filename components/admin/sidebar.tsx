@@ -94,10 +94,18 @@ const mark8lyNav: NavEntry[] = [
   },
 ];
 
-type RailContext = "platform" | "mark8ly";
+// Home Chef secondary nav. Phase A ships the Overview only; the deeper admin
+// surfaces (chefs/approvals, orders, payouts, delivery, customers) land with the
+// 5B admin sub-features.
+const homechefNav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
+];
+
+type RailContext = "platform" | "mark8ly" | "homechef";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
+  if (pathname.startsWith("/admin/apps/homechef")) return "homechef";
   return "platform";
 }
 
@@ -105,6 +113,8 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
   switch (context) {
     case "mark8ly":
       return { label: "Mark8ly", entries: mark8lyNav };
+    case "homechef":
+      return { label: "Home Chef", entries: homechefNav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
@@ -305,6 +315,31 @@ function LeftRail({
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
             Mark8ly
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/admin/apps/homechef"
+              onClick={() => onContextChange("homechef")}
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg transition-colors",
+                activeContext === "homechef"
+                  ? "bg-sidebar-accent"
+                  : "hover:bg-sidebar-accent/50"
+              )}
+            >
+              <Image
+                src="/homechef-icon.png"
+                alt="Home Chef"
+                width={24}
+                height={24}
+                className="rounded-sm brightness-0 invert"
+              />
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            Home Chef
           </TooltipContent>
         </Tooltip>
       </div>

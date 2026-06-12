@@ -22,6 +22,18 @@ export function useProductMetrics(productId: string, window: Window) {
   );
 }
 
+// Product-scoped business KPI values keyed by tile key (see businessKpiTiles in
+// lib/products/configs.ts). Empty {} for products without a wired KPI source.
+export type ProductKpis = Record<string, number>;
+
+export function useProductKpis(productId: string) {
+  return useSWR<ProductKpis>(
+    productId ? `/api/admin/apps/${productId}/kpis` : null,
+    fetcher as (u: string) => Promise<ProductKpis>,
+    { revalidateOnFocus: false, dedupingInterval: 30_000 },
+  );
+}
+
 export function useTenantMetrics(productId: string, tenantId: string, window: Window) {
   return useSWR<TenantMetrics>(
     `/api/admin/apps/${productId}/tenants/${tenantId}/metrics?window=${window}`,

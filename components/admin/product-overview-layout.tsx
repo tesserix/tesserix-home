@@ -16,7 +16,7 @@ import {
   formatCurrency,
   formatNumber,
 } from "@/components/admin/metrics/format";
-import { useDashboardCounts, useProductMetrics, type DashboardCounts } from "@/lib/admin/use-metrics";
+import { useDashboardCounts, useProductMetrics, useProductKpis, type DashboardCounts, type ProductKpis } from "@/lib/admin/use-metrics";
 import { useProductRevenue } from "@/lib/admin/use-billing";
 import { useCriticalEventCount } from "@/lib/admin/use-audit";
 import { RevenueSection } from "@/components/admin/billing/revenue-section";
@@ -28,7 +28,20 @@ interface ProductOverviewLayoutProps {
   config: ProductConfig;
 }
 
-function resolveKpiValue(tile: KpiTileSpec, dash: DashboardCounts | undefined): { value: string; hint?: string } {
+function resolveKpiValue(
+  tile: KpiTileSpec,
+  dash: DashboardCounts | undefined,
+  productKpis: ProductKpis | undefined,
+): { value: string; hint?: string } {
+  // Product-scoped KPIs (homechef, …) take precedence: they're computed from
+  // the product's own DB and keyed by tile.key. Currency tiles (gmv/revenue)
+  // format as ₹; the rest as plain counts.
+  if (productKpis && tile.key in productKpis) {
+    const n = productKpis[tile.key];
+    const isCurrency = tile.key.includes("gmv") || tile.key.includes("revenue");
+    return { value: isCurrency ? formatCurrency(n, "INR") : formatNumber(n), hint: tile.hint };
+  }
+  // Fallback: the platform dashboard (mark8ly's tenants/stores/leads).
   if (!dash) return { value: "—", hint: tile.hint };
   switch (tile.key) {
     case "tenants_active":
@@ -46,12 +59,13 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
   const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, timeWindow);
   const dashboard = useDashboardCounts();
+  const productKpis = useProductKpis(config.id);
   const hasBilling = Boolean(config.pricingByPlan);
   const revenue = useProductRevenue(hasBilling ? config.id : "", 30);
   const critical = useCriticalEventCount(config.id);
 
   async function handleRefresh() {
-    await Promise.all([mutate(), dashboard.mutate(), revenue.mutate(), critical.mutate()]);
+    await Promise.all([mutate(), dashboard.mutate(), productKpis.mutate(), revenue.mutate(), critical.mutate()]);
   }
 
   const generatedAt = data?.generatedAt;
@@ -87,11 +101,18 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
         <MetricsSection
           id="section-business"
           title="Overview"
-          error={dashboard.error ? "Could not load tenant/store/lead counts." : undefined}
+          error={
+            productKpis.error
+              ? "Could not load product KPIs."
+              : dashboard.error
+                ? "Could not load tenant/store/lead counts."
+                : undefined
+          }
         >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {config.businessKpiTiles.map((tile) => {
-              const { value, hint } = resolveKpiValue(tile, dashboard.data);
+              const { value, hint } = resolveKpiValue(tile, dashboard.data, productKpis.data);
+              const usesProductKpis = Boolean(productKpis.data && tile.key in productKpis.data);
               return (
                 <KpiTile
                   key={tile.key}
@@ -99,7 +120,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
                   value={value}
                   hint={hint}
                   href={tile.href}
-                  loading={dashboard.isLoading}
+                  loading={usesProductKpis ? productKpis.isLoading : dashboard.isLoading}
                 />
               );
             })}
