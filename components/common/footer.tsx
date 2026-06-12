@@ -36,7 +36,7 @@ export function Footer() {
           <div className="space-y-4">
             <Image src="/logo.png" alt="Tesserix" width={94} height={28} />
             <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
-              Commerce infrastructure for growing businesses. Build, launch, and scale your online marketplace.
+              A product studio building specialized software — one industry at a time. Commerce, sports, healthcare, food.
             </p>
             {/* Newsletter signup */}
             <div className="pt-4">

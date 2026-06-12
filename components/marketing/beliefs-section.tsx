@@ -22,30 +22,39 @@ const beliefs = [
 
 export function BeliefsSection() {
   return (
-    <section className="border-t py-16 sm:py-20">
+    <section className="relative border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            What we believe
+          <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            02 — Principles
           </p>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
             Three things we won&apos;t compromise on.
           </h2>
         </AnimateOnScroll>
 
-        <div className="mt-12 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border bg-border lg:grid-cols-3">
-          {beliefs.map((b) => (
-            <div key={b.number} className="bg-card p-8">
-              <span className="font-mono text-sm font-medium text-muted-foreground">
-                {b.number}
-              </span>
-              <h3 className="mt-4 text-lg font-semibold text-foreground">
-                {b.title}
-              </h3>
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                {b.body}
-              </p>
-            </div>
+        <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-14 lg:grid-cols-3">
+          {beliefs.map((belief, index) => (
+            <AnimateOnScroll
+              key={belief.number}
+              variant="fade-up"
+              delay={index * 0.1}
+            >
+              <div className="group relative border-t pt-8">
+                <span
+                  aria-hidden="true"
+                  className="font-mono text-6xl font-semibold tracking-tight text-muted-foreground/25 transition-colors duration-500 group-hover:text-muted-foreground/50 sm:text-7xl"
+                >
+                  {belief.number}
+                </span>
+                <h3 className="mt-6 text-xl font-semibold tracking-tight text-foreground">
+                  {belief.title}
+                </h3>
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                  {belief.body}
+                </p>
+              </div>
+            </AnimateOnScroll>
           ))}
         </div>
       </div>
