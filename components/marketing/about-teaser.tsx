@@ -60,7 +60,7 @@ function ScrollRevealStatement() {
   return (
     <p
       ref={ref}
-      className="max-w-4xl text-2xl font-medium leading-snug tracking-tight sm:text-3xl lg:text-4xl"
+      className="relative max-w-4xl text-2xl font-medium leading-snug tracking-tight sm:text-3xl lg:text-4xl"
     >
       {words.map((word, index) => (
         <Word

@@ -4,7 +4,7 @@ import { AboutContent } from "./about-content";
 export const metadata: Metadata = {
   title: "About",
   description:
-    "Learn about Tesserix - our mission, values, and the team building the future of commerce.",
+    "Tesserix is a small product studio building specialized SaaS — one industry at a time. Commerce, sports, healthcare, food.",
 };
 
 export default function AboutPage() {

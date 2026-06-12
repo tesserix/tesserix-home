@@ -1,15 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { ShoppingBag, ChefHat, Hospital, Trophy, ArrowRight } from "lucide-react";
-import { Button, AnimateOnScroll } from "@tesserix/web";
-const products = [
+import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { AnimateOnScroll, Button } from "@tesserix/web";
+
+type Status = "live" | "soon";
+
+interface ProductEntry {
+  title: string;
+  tagline: string;
+  description: string;
+  status: Status;
+  href: string;
+  website?: string;
+  pricing?: string;
+  features: string[];
+}
+
+const products: ProductEntry[] = [
   {
     title: "Mark8ly",
     tagline: "Quiet commerce for people who make things",
     description:
       "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
-    icon: ShoppingBag,
+    status: "live",
     href: "/products/mark8ly",
     website: "mark8ly.com",
     pricing: "90 days free, then from $19/mo",
@@ -27,7 +41,7 @@ const products = [
     tagline: "Your cricket opinions finally matter",
     description:
       "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-    icon: Trophy,
+    status: "live",
     href: "/products/fanzone",
     website: "fanzonebattleground.com",
     pricing: "Free to join — 50 pts on signup",
@@ -45,9 +59,8 @@ const products = [
     tagline: "Hospital management without the bloat",
     description:
       "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-    icon: Hospital,
+    status: "soon",
     href: "/products/medicare",
-    comingSoon: true,
     features: [
       "Electronic health records",
       "Appointment scheduling",
@@ -62,9 +75,8 @@ const products = [
     tagline: "Home cooks, real customers",
     description:
       "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
-    icon: ChefHat,
+    status: "soon",
     href: "/products/homechef",
-    comingSoon: true,
     features: [
       "Chef onboarding & verification",
       "Menu management",
@@ -76,95 +88,136 @@ const products = [
   },
 ];
 
+function StatusPill({ status }: { status: Status }) {
+  if (status === "live") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 font-mono text-xs font-medium text-success">
+        <span
+          className="h-1.5 w-1.5 rounded-full bg-success"
+          aria-hidden="true"
+        />
+        Live
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full border bg-muted/50 px-2.5 py-0.5 font-mono text-xs font-medium text-muted-foreground">
+      Coming soon
+    </span>
+  );
+}
+
+function ProductRow({
+  product,
+  index,
+}: {
+  product: ProductEntry;
+  index: number;
+}) {
+  return (
+    <article className="group relative -mx-4 rounded-xl px-4 transition-colors hover:bg-muted/40 sm:-mx-6 sm:px-6">
+      <div className="grid grid-cols-1 gap-x-8 gap-y-5 border-t py-10 sm:py-14 lg:grid-cols-12">
+        <div className="flex items-center gap-4 lg:col-span-2 lg:flex-col lg:items-start">
+          <span className="font-mono text-sm text-muted-foreground">
+            {String(index + 1).padStart(2, "0")}
+          </span>
+          <StatusPill status={product.status} />
+        </div>
+
+        <div className="lg:col-span-4">
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+            <Link href={product.href} className="after:absolute after:inset-0">
+              {product.title}
+            </Link>
+          </h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {product.tagline}
+          </p>
+          {product.pricing ? (
+            <p className="mt-4 font-mono text-xs text-foreground">
+              {product.pricing}
+            </p>
+          ) : null}
+          {product.website ? (
+            <a
+              href={`https://${product.website}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="relative z-10 mt-2 inline-flex items-center gap-1 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+            >
+              {product.website}
+              <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+            </a>
+          ) : null}
+        </div>
+
+        <div className="lg:col-span-5">
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {product.description}
+          </p>
+          <ul className="mt-5 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+            {product.features.map((feature) => (
+              <li
+                key={feature}
+                className="flex items-start gap-2 text-sm text-muted-foreground"
+              >
+                <span
+                  className="mt-2 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60"
+                  aria-hidden="true"
+                />
+                {feature}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="hidden lg:col-span-1 lg:flex lg:items-start lg:justify-end">
+          <ArrowUpRight
+            className="h-5 w-5 text-muted-foreground transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-foreground"
+            aria-hidden="true"
+          />
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export default function ProductsPage() {
   return (
     <div>
-      {/* Hero */}
-      <section className="py-12 sm:py-16">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-2xl text-center">
-            <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
+      {/* Header */}
+      <section className="relative overflow-hidden border-b">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
+        />
+        <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
               Products
+            </p>
+            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
+              The portfolio.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Software solutions designed to help businesses succeed in their domains.
+              Four products, four industries. Each one focused on doing a
+              specific job well — and nothing else.
             </p>
           </AnimateOnScroll>
         </div>
       </section>
 
-      {/* Products List */}
-      <section className="pb-12 sm:pb-16">
+      {/* Index */}
+      <section className="py-12 sm:py-16">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="space-y-16 sm:space-y-20">
+          <div className="border-b">
             {products.map((product, index) => (
               <AnimateOnScroll
                 key={product.title}
                 variant="fade-up"
+                delay={index * 0.05}
               >
-                <div
-                  className={`flex flex-col gap-8 lg:flex-row lg:items-start ${
-                    index % 2 === 1 ? "lg:flex-row-reverse" : ""
-                  }`}
-                >
-                  {/* Icon/Visual */}
-                  <div className="lg:w-1/3">
-                    <div className="flex h-48 w-full items-center justify-center rounded-lg border bg-muted/30 shadow-sm">
-                      <product.icon className="h-16 w-16 text-muted-foreground/50" />
-                    </div>
-                  </div>
-
-                  {/* Content */}
-                  <div className="lg:w-2/3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <h2 className="text-2xl font-semibold text-foreground">
-                        {product.title}
-                      </h2>
-                      {product.comingSoon && (
-                        <span className="rounded-full border border-foreground/20 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
-                          Coming Soon
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-muted-foreground">{product.tagline}</p>
-                      {product.website && (
-                        <span className="text-sm font-medium text-muted-foreground">
-                          {product.website}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Pricing teaser */}
-                    {product.pricing && (
-                      <p className="mt-2 text-sm font-medium text-foreground">
-                        {product.pricing}
-                      </p>
-                    )}
-
-                    <p className="mt-4 text-muted-foreground leading-relaxed">{product.description}</p>
-
-                    {/* Features Grid */}
-                    <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {product.features.map((feature) => (
-                        <div key={feature} className="flex items-center gap-2">
-                          <div className="h-1 w-1 rounded-full bg-foreground shrink-0" />
-                          <span className="text-sm text-muted-foreground">{feature}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* CTA */}
-                    <div className="mt-8">
-                      <Button asChild>
-                        <Link href={product.href}>
-                          Explore {product.title}
-                          <ArrowRight className="ml-2 h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
+                <ProductRow product={product} index={index} />
               </AnimateOnScroll>
             ))}
           </div>
@@ -172,24 +225,28 @@ export default function ProductsPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-12 sm:py-16 border-t">
+      <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Have a question?
-            </h2>
-            <p className="mt-4 text-lg text-muted-foreground">
-              We&apos;d love to hear from you.
-            </p>
-            <div className="mt-10">
+          <AnimateOnScroll variant="fade-up">
+            <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
+              <div>
+                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Not sure which fits?
+                </p>
+                <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                  Tell us what you&apos;re building.
+                </h2>
+              </div>
               <Button size="lg" asChild>
-                <Link href="/contact">Get in touch</Link>
+                <Link href="/contact">
+                  Get in touch
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                </Link>
               </Button>
             </div>
-          </div>
+          </AnimateOnScroll>
         </div>
       </section>
-
     </div>
   );
 }

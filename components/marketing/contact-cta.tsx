@@ -24,7 +24,7 @@ export function ContactCTA() {
   const opacity = useTransform(scrollYProgress, [0, 0.6], [0.4, 1]);
 
   return (
-    <section ref={sectionRef} className="py-20 sm:py-28">
+    <section ref={sectionRef} className="relative py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <motion.div
           style={prefersReducedMotion ? undefined : { scale, opacity }}
@@ -61,11 +61,11 @@ export function ContactCTA() {
                   </Link>
                 </Button>
                 <a
-                  href="mailto:hello@tesserix.com"
+                  href="mailto:sales@tesserix.app"
                   className="inline-flex items-center gap-2 font-mono text-sm text-primary-foreground/70 transition-colors hover:text-primary-foreground"
                 >
                   <Mail className="h-4 w-4" aria-hidden="true" />
-                  hello@tesserix.com
+                  sales@tesserix.app
                 </a>
               </div>
             </div>

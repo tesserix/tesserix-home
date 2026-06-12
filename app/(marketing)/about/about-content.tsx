@@ -1,144 +1,196 @@
 "use client";
 
-import { AnimateOnScroll, StaggerContainer, StaggerItem } from "@tesserix/web";
-import { Users, Globe, Shield, Zap } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight } from "lucide-react";
+import { AnimateOnScroll, Button } from "@tesserix/web";
 
-const values = [
+const principles = [
   {
-    icon: Users,
-    title: "Customer First",
-    description:
-      "Every decision we make starts with our customers. We build solutions that solve real problems and deliver measurable value.",
+    number: "01",
+    title: "Small on purpose",
+    body: "We're a small team by choice. Fewer layers means faster decisions — and the person fixing your bug is usually the person who wrote the feature.",
   },
   {
-    icon: Shield,
-    title: "Security & Trust",
-    description:
-      "Enterprise-grade security is built into everything we do. Your data and your customers' data are protected by industry-leading standards.",
+    number: "02",
+    title: "Opinionated by default",
+    body: "Good tools make choices. We'd rather ship strong defaults you can override than a settings page with forty toggles nobody understands.",
   },
   {
-    icon: Zap,
-    title: "Innovation",
-    description:
-      "We continuously push the boundaries of what's possible, leveraging the latest technologies to give our customers a competitive edge.",
+    number: "03",
+    title: "Ship fast, fix faster",
+    body: "We'd rather get something useful in your hands today than something perfect next year — and then improve it every single week.",
   },
   {
-    icon: Globe,
-    title: "Global Scale",
-    description:
-      "Our infrastructure is designed for global scale, ensuring your business can grow without limits.",
+    number: "04",
+    title: "Built to last",
+    body: "Fair prices for working software, so we're still here in ten years. No growth hacks, no dark patterns, no surprise pivots.",
   },
 ];
 
-const team = [
-  {
-    name: "Leadership Team",
-    description:
-      "Our leadership brings decades of combined experience from leading technology companies, with deep expertise in e-commerce, cloud infrastructure, and enterprise software.",
-  },
-  {
-    name: "Engineering",
-    description:
-      "World-class engineers passionate about building reliable, scalable systems that power businesses around the world.",
-  },
-  {
-    name: "Customer Success",
-    description:
-      "Dedicated team ensuring every customer achieves their business goals with our platform.",
-  },
+const focus = [
+  { area: "Commerce", product: "Mark8ly", status: "Live" },
+  { area: "Sports", product: "FanZone Battle Ground", status: "Live" },
+  { area: "Healthcare", product: "MediCare", status: "In development" },
+  { area: "Food", product: "HomeChef", status: "In development" },
 ];
 
 export function AboutContent() {
   return (
     <div>
-      {/* Hero */}
-      <section className="py-14 sm:py-20">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-2xl text-center">
-            <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-              About Tesserix
+      {/* Header */}
+      <section className="relative overflow-hidden border-b">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
+        />
+        <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-3xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              About
+            </p>
+            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
+              A small studio
+              <br />
+              <span className="text-muted-foreground">
+                with strong opinions.
+              </span>
             </h1>
-            <p className="mt-6 text-lg leading-8 text-muted-foreground">
-              We are on a mission to democratize access to enterprise-grade commerce tools,
-              enabling businesses of all sizes to compete and succeed in the digital economy.
+            <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
+              Tesserix builds specialized SaaS products — one industry at a
+              time. No platform play, no feature checklists. Just focused
+              software for people who are tired of tools that almost fit.
             </p>
           </AnimateOnScroll>
         </div>
       </section>
 
-      {/* Mission */}
-      <section className="py-14 sm:py-20 bg-muted/30">
+      {/* Why we exist */}
+      <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-3xl">
-            <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Our Mission
-            </h2>
-            <p className="mt-6 text-lg leading-8 text-muted-foreground border-l-2 border-foreground/10 pl-6">
-              Tesserix was founded with a simple belief: that every business deserves access to
-              powerful, reliable, and affordable software tools. Too often, small and medium businesses
-              are forced to choose between expensive enterprise solutions and inadequate consumer products.
+          <AnimateOnScroll variant="fade-up">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              01 — Why we exist
             </p>
-            <p className="mt-4 text-lg leading-8 text-muted-foreground border-l-2 border-foreground/10 pl-6">
-              We&apos;re changing that. By building multi-tenant SaaS platforms from the ground up, we can
-              offer enterprise-grade features at a fraction of the cost, allowing businesses to focus
-              on what they do best: serving their customers.
-            </p>
-          </AnimateOnScroll>
-        </div>
-      </section>
-
-      {/* Values */}
-      <section className="py-14 sm:py-20">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Our Values
-            </h2>
-            <p className="mt-4 text-lg text-muted-foreground">
-              The principles that guide everything we do.
+            <p className="mt-8 max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
+              Too many businesses choose between expensive enterprise suites
+              and flimsy consumer tools.{" "}
+              <span className="text-muted-foreground">
+                We build the missing middle — software that's specialized,
+                affordable, and genuinely good at the one job it was hired to
+                do.
+              </span>
             </p>
           </AnimateOnScroll>
 
-          <StaggerContainer className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-6 sm:grid-cols-2">
-            {values.map((value) => (
-              <StaggerItem key={value.title}>
-                <div className="rounded-lg border p-6">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg border">
-                    <value.icon className="h-5 w-5" />
+          <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-12">
+            <div className="lg:col-span-5">
+              <p className="leading-relaxed text-muted-foreground">
+                We started with Mark8ly because launching an online store
+                shouldn&apos;t require a developer or a fortune. Each product
+                since follows the same recipe: pick one industry, learn it
+                deeply, and build the tool we&apos;d want if it were our
+                business.
+              </p>
+            </div>
+            <div className="lg:col-span-6 lg:col-start-7">
+              <dl>
+                {focus.map((item) => (
+                  <div
+                    key={item.area}
+                    className="flex items-baseline justify-between gap-4 border-t py-4"
+                  >
+                    <dt className="flex items-baseline gap-3">
+                      <span className="font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground">
+                        {item.area}
+                      </span>
+                      <span className="font-semibold text-foreground">
+                        {item.product}
+                      </span>
+                    </dt>
+                    <dd className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          item.status === "Live"
+                            ? "bg-success"
+                            : "bg-muted-foreground/50"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      {item.status}
+                    </dd>
                   </div>
-                  <h3 className="mt-4 text-lg font-medium text-foreground">
-                    {value.title}
-                  </h3>
-                  <p className="mt-2 text-sm text-muted-foreground">{value.description}</p>
-                </div>
-              </StaggerItem>
-            ))}
-          </StaggerContainer>
+                ))}
+              </dl>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Team */}
-      <section className="py-14 sm:py-20 bg-muted/30">
+      {/* How we work */}
+      <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-2xl text-center">
-            <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Our Team
-            </h2>
-            <p className="mt-4 text-lg text-muted-foreground">
-              A diverse team united by a shared passion for building great products.
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              02 — How we work
             </p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
+              The rules we run on.
+            </h2>
           </AnimateOnScroll>
 
-          <StaggerContainer className="mx-auto mt-16 grid max-w-5xl grid-cols-1 gap-8 sm:grid-cols-3">
-            {team.map((group) => (
-              <StaggerItem key={group.name}>
-                <div className="rounded-lg border bg-card p-6 text-center transition-colors hover:border-foreground/30">
-                  <h3 className="text-lg font-semibold text-foreground">{group.name}</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">{group.description}</p>
+          <div className="mt-14 grid grid-cols-1 gap-x-8 gap-y-12 sm:grid-cols-2">
+            {principles.map((principle, index) => (
+              <AnimateOnScroll
+                key={principle.number}
+                variant="fade-up"
+                delay={index * 0.08}
+              >
+                <div className="group border-t pt-8">
+                  <span
+                    aria-hidden="true"
+                    className="font-mono text-5xl font-semibold tracking-tight text-muted-foreground/25 transition-colors duration-500 group-hover:text-muted-foreground/50 sm:text-6xl"
+                  >
+                    {principle.number}
+                  </span>
+                  <h3 className="mt-5 text-xl font-semibold tracking-tight text-foreground">
+                    {principle.title}
+                  </h3>
+                  <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
+                    {principle.body}
+                  </p>
                 </div>
-              </StaggerItem>
+              </AnimateOnScroll>
             ))}
-          </StaggerContainer>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="border-t py-16 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <AnimateOnScroll variant="fade-up">
+            <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
+              <div>
+                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  03 — Next
+                </p>
+                <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                  See what we&apos;re building.
+                </h2>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                <Button size="lg" asChild>
+                  <Link href="/products">
+                    Explore the products
+                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                  </Link>
+                </Button>
+                <Button size="lg" variant="ghost" asChild>
+                  <Link href="/contact">Get in touch</Link>
+                </Button>
+              </div>
+            </div>
+          </AnimateOnScroll>
         </div>
       </section>
     </div>

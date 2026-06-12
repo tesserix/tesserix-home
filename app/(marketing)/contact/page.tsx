@@ -1,14 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, MapPin, Phone, Loader2 } from "lucide-react";
+import { Mail, Loader2, CheckCircle2 } from "lucide-react";
 import {
   Button,
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   Input,
   Label,
   Textarea,
@@ -19,30 +14,17 @@ import {
   SelectValue,
   AnimateOnScroll,
 } from "@tesserix/web";
-const contactInfo = [
-  {
-    icon: Mail,
-    title: "Email",
-    description: "sales@tesserix.app",
-    href: "mailto:sales@tesserix.app",
-  },
-  {
-    icon: Phone,
-    title: "Phone",
-    description: "+1 (555) 123-4567",
-    href: "tel:+15551234567",
-  },
-  {
-    icon: MapPin,
-    title: "Office",
-    description: "San Francisco, CA",
-    href: null,
-  },
+
+const expectations = [
+  "A reply from a person, usually within one business day",
+  "No chatbot queue, no ticket black hole",
+  "You'll talk to the people who build the products",
 ];
 
 export default function ContactPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const validateForm = (formData: FormData) => {
@@ -77,198 +59,242 @@ export default function ContactPage() {
     }
 
     setErrors({});
+    setSubmitError(null);
     setIsSubmitting(true);
 
-    // Simulate form submission
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: formData.get("firstName"),
+          lastName: formData.get("lastName"),
+          email: formData.get("email"),
+          company: formData.get("company"),
+          interest: formData.get("interest"),
+          message: formData.get("message"),
+        }),
+      });
 
-    setIsSubmitting(false);
-    setSubmitted(true);
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(data?.error ?? "Something went wrong");
+      }
+
+      setSubmitted(true);
+    } catch (error) {
+      setSubmitError(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong — please try again or email us directly.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
     <div>
-      {/* Hero */}
-      <section className="py-12 sm:py-16">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <AnimateOnScroll variant="fade-up" className="mx-auto max-w-2xl text-center">
-            <h1 className="text-4xl font-semibold tracking-tight text-foreground sm:text-5xl">
-              Get in Touch
+      {/* Header */}
+      <section className="relative overflow-hidden border-b">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
+        />
+        <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              Contact
+            </p>
+            <h1 className="mt-4 text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
+              Talk to a human.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Have questions about our products? Want to schedule a demo?
-              Our team is here to help.
+              Questions about a product, pricing, or whether something is the
+              right fit — we read everything and reply ourselves.
             </p>
           </AnimateOnScroll>
         </div>
       </section>
 
-      {/* Contact Form & Info */}
-      <section className="pb-12 sm:pb-16">
+      {/* Form & Info */}
+      <section className="py-16 sm:py-20">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="mx-auto grid max-w-5xl grid-cols-1 gap-12 lg:gap-16 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-8 gap-y-16 lg:grid-cols-12">
             {/* Form */}
-            <AnimateOnScroll variant="slide-left">
-            <Card className="shadow-sm">
-              <CardHeader>
-                <CardTitle>Send us a message</CardTitle>
-                <CardDescription>
-                  Fill out the form below and we'll get back to you within 24 hours.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {submitted ? (
-                  <div className="py-8 text-center">
-                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
-                      <Mail className="h-6 w-6 text-success" />
-                    </div>
-                    <h3 className="mt-4 text-lg font-semibold">Thank you!</h3>
-                    <p className="mt-2 text-muted-foreground">
-                      We've received your message and will be in touch soon.
-                    </p>
+            <AnimateOnScroll variant="fade-up" className="lg:col-span-7">
+              {submitted ? (
+                <div className="rounded-2xl border bg-card px-8 py-16 text-center">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-success/10">
+                    <CheckCircle2
+                      className="h-6 w-6 text-success"
+                      aria-hidden="true"
+                    />
                   </div>
-                ) : (
-                  <form onSubmit={handleSubmit} className="space-y-6" noValidate>
-                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="firstName">
-                          First name <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="firstName"
-                          name="firstName"
-                          aria-required="true"
-                          aria-invalid={!!errors.firstName}
-                          aria-describedby={errors.firstName ? "firstName-error" : undefined}
-                          className={errors.firstName ? "border-destructive" : ""}
-                        />
-                        {errors.firstName && (
-                          <p id="firstName-error" className="text-sm text-destructive">
-                            {errors.firstName}
-                          </p>
-                        )}
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="lastName">Last name</Label>
-                        <Input id="lastName" name="lastName" />
-                      </div>
-                    </div>
-
+                  <h2 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
+                    Thank you!
+                  </h2>
+                  <p className="mt-3 text-muted-foreground">
+                    We&apos;ve received your message and will be in touch soon.
+                  </p>
+                </div>
+              ) : (
+                <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="email">
-                        Email <span className="text-destructive">*</span>
+                      <Label htmlFor="firstName">
+                        First name <span className="text-destructive">*</span>
                       </Label>
                       <Input
-                        id="email"
-                        name="email"
-                        type="email"
+                        id="firstName"
+                        name="firstName"
                         aria-required="true"
-                        aria-invalid={!!errors.email}
-                        aria-describedby={errors.email ? "email-error" : undefined}
-                        className={errors.email ? "border-destructive" : ""}
+                        aria-invalid={!!errors.firstName}
+                        aria-describedby={
+                          errors.firstName ? "firstName-error" : undefined
+                        }
+                        className={errors.firstName ? "border-destructive" : ""}
                       />
-                      {errors.email && (
-                        <p id="email-error" className="text-sm text-destructive">
-                          {errors.email}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="company">Company</Label>
-                      <Input id="company" name="company" />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="interest">I'm interested in</Label>
-                      <Select name="interest">
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a product" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mark8ly">Mark8ly</SelectItem>
-                          <SelectItem value="homechef">HomeChef</SelectItem>
-                          <SelectItem value="medicare">MediCare</SelectItem>
-                          <SelectItem value="fanzone">FanZone</SelectItem>
-                          <SelectItem value="other">Other / General inquiry</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="message">
-                        Message <span className="text-destructive">*</span>
-                      </Label>
-                      <Textarea
-                        id="message"
-                        name="message"
-                        rows={4}
-                        placeholder="Tell us about your needs..."
-                        aria-required="true"
-                        aria-invalid={!!errors.message}
-                        aria-describedby={errors.message ? "message-error" : undefined}
-                        className={errors.message ? "border-destructive" : ""}
-                      />
-                      {errors.message && (
-                        <p id="message-error" className="text-sm text-destructive">
-                          {errors.message}
-                        </p>
-                      )}
-                    </div>
-
-                    <Button type="submit" className="w-full" disabled={isSubmitting}>
-                      {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      {isSubmitting ? "Sending..." : "Send Message"}
-                    </Button>
-                  </form>
-                )}
-              </CardContent>
-            </Card>
-            </AnimateOnScroll>
-
-            {/* Contact Info */}
-            <AnimateOnScroll variant="slide-right">
-            <div className="space-y-8">
-              <div>
-                <h2 className="text-2xl font-semibold text-foreground">Contact Information</h2>
-                <p className="mt-4 text-muted-foreground leading-relaxed">
-                  Reach out to us through any of these channels. We typically respond within one business day.
-                </p>
-              </div>
-
-              <div className="space-y-6">
-                {contactInfo.map((item) => (
-                  <div key={item.title} className="flex items-start gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-                      <item.icon className="h-5 w-5 text-foreground" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-foreground">{item.title}</h3>
-                      {item.href ? (
-                        <a
-                          href={item.href}
-                          className="text-muted-foreground hover:text-foreground transition-colors"
+                      {errors.firstName && (
+                        <p
+                          id="firstName-error"
+                          className="text-sm text-destructive"
                         >
-                          {item.description}
-                        </a>
-                      ) : (
-                        <p className="text-muted-foreground">{item.description}</p>
+                          {errors.firstName}
+                        </p>
                       )}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Last name</Label>
+                      <Input id="lastName" name="lastName" />
                     </div>
                   </div>
-                ))}
+
+                  <div className="space-y-2">
+                    <Label htmlFor="email">
+                      Email <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      aria-required="true"
+                      aria-invalid={!!errors.email}
+                      aria-describedby={errors.email ? "email-error" : undefined}
+                      className={errors.email ? "border-destructive" : ""}
+                    />
+                    {errors.email && (
+                      <p id="email-error" className="text-sm text-destructive">
+                        {errors.email}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="company">Company</Label>
+                    <Input id="company" name="company" />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="interest">I&apos;m interested in</Label>
+                    <Select name="interest">
+                      <SelectTrigger id="interest">
+                        <SelectValue placeholder="Select a product" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mark8ly">Mark8ly</SelectItem>
+                        <SelectItem value="fanzone">FanZone</SelectItem>
+                        <SelectItem value="medicare">MediCare</SelectItem>
+                        <SelectItem value="homechef">HomeChef</SelectItem>
+                        <SelectItem value="other">
+                          Other / General inquiry
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="message">
+                      Message <span className="text-destructive">*</span>
+                    </Label>
+                    <Textarea
+                      id="message"
+                      name="message"
+                      rows={5}
+                      placeholder="Tell us about your needs..."
+                      aria-required="true"
+                      aria-invalid={!!errors.message}
+                      aria-describedby={
+                        errors.message ? "message-error" : undefined
+                      }
+                      className={errors.message ? "border-destructive" : ""}
+                    />
+                    {errors.message && (
+                      <p id="message-error" className="text-sm text-destructive">
+                        {errors.message}
+                      </p>
+                    )}
+                  </div>
+
+                  {submitError && (
+                    <p role="alert" className="text-sm text-destructive">
+                      {submitError}
+                    </p>
+                  )}
+
+                  <Button type="submit" size="lg" disabled={isSubmitting}>
+                    {isSubmitting && (
+                      <Loader2
+                        className="mr-2 h-4 w-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                    )}
+                    {isSubmitting ? "Sending..." : "Send message"}
+                  </Button>
+                </form>
+              )}
+            </AnimateOnScroll>
+
+            {/* Sidebar */}
+            <AnimateOnScroll
+              variant="fade-up"
+              delay={0.1}
+              className="lg:col-span-4 lg:col-start-9"
+            >
+              <div className="border-t pt-8">
+                <h2 className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  Prefer email?
+                </h2>
+                <a
+                  href="mailto:sales@tesserix.app"
+                  className="mt-4 inline-flex items-center gap-2 font-mono text-base text-foreground underline-offset-4 transition-colors hover:underline"
+                >
+                  <Mail className="h-4 w-4" aria-hidden="true" />
+                  sales@tesserix.app
+                </a>
               </div>
 
-              <div className="rounded-lg bg-muted/50 p-6 border">
-                <h3 className="font-semibold text-foreground">Schedule a Demo</h3>
-                <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
-                  Want to see our products in action? Book a personalized demo with our team.
-                </p>
-                <Button variant="outline" className="mt-4">
-                  Book a Demo
-                </Button>
+              <div className="mt-12 border-t pt-8">
+                <h2 className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  What to expect
+                </h2>
+                <ul className="mt-5 space-y-4">
+                  {expectations.map((item) => (
+                    <li
+                      key={item}
+                      className="flex items-start gap-2.5 text-sm leading-relaxed text-muted-foreground"
+                    >
+                      <span
+                        className="mt-2 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60"
+                        aria-hidden="true"
+                      />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
               </div>
-            </div>
             </AnimateOnScroll>
           </div>
         </div>
