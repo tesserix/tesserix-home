@@ -99,6 +99,7 @@ const mark8lyNav: NavEntry[] = [
 // 5B admin sub-features.
 const homechefNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
+  { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
 ];
 
 type RailContext = "platform" | "mark8ly" | "homechef";
