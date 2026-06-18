@@ -27,21 +27,16 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   REGISTRY: ghcr.io
   IMAGE_NAME: tesserix-home
-  GCP_PROJECT_ID: tesseracthub-480811
-  GKE_CLUSTER: tesseract-prod-in-gke
-  GKE_REGION: asia-south1
 
 permissions:
   contents: read
   packages: write
   security-events: write
-  id-token: write
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
       packages: write
       security-events: write
@@ -58,15 +53,6 @@ jobs:
 
       - name: Lint
         run: npx eslint . --max-warnings 0
-
-      - name: Authenticate to GCP (GKE deploy)
-        id: auth_gcp
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/849928263410/locations/global/workloadIdentityPools/github-pool/providers/github-provider
-          service_account: github-actions@tesseracthub-480811.iam.gserviceaccount.com
-          project_id: ${{ env.GCP_PROJECT_ID }}
 
       - name: Log in to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -94,37 +80,13 @@ jobs:
             .
           docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
 
-      # --- Deploy to GKE (Knative) ---
-      - name: Get GKE credentials
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.auth_gcp.outcome == 'success'
-        continue-on-error: true
-        id: gke_creds
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_REGION }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
-      - name: Deploy (set image to SHA tag)
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.gke_creds.outcome == 'success'
-        continue-on-error: true
-        run: |
-          # The Deployment is created by the `company` Helm chart in
-          # tesserix-k8s (KEDA-scaled, replaces the old Knative setup).
-          #
-          # We pin to the just-built SHA tag (rather than rollout-restart
-          # against :latest) because the GAR remote-repository mirror
-          # caches :latest's digest and revalidates only on cache-miss.
-          # Two consecutive CI runs against :latest would deploy the same
-          # stale digest. The SHA tag is unique per build so the mirror
-          # always pulls fresh from upstream ghcr.io.
-          #
-          # ArgoCD's company app excludes the image field via
-          # spec.ignoreDifferences (see argocd/prod/apps/global/company.yaml
-          # in tesserix-k8s) so reconciliation does not revert this pin.
-          kubectl -n tesserix set image deployment/company \
-            company=asia-south1-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/ghcr-remote/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
-          kubectl rollout status deployment/company -n tesserix --timeout=5m
+      # No GKE deploy step here. Cluster rollout is owned by Kargo:
+      # the kargo-tesserix-home Project's prod Stage discovers the new
+      # main-<sha> image (via the GAR ghcr-remote mirror), auto-promotes
+      # it, and rewrites the `company` Argo CD Application's `image.tag`
+      # Helm parameter — Argo CD then syncs the Deployment. See
+      # tesserix-k8s: kargo-manifests/projects/tesserix-home and
+      # argocd/prod/apps/global/company.yaml.
 
       - name: Security scan
         uses: aquasecurity/trivy-action@master
