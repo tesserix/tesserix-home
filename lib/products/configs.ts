@@ -52,14 +52,14 @@ const mark8ly: ProductConfig = {
   trialDays: 90,
 };
 
-// Home Chef — India home-cooking marketplace (Customer + Vendor mobile apps +
+// Fe3dr — India home-cooking marketplace (Customer + Vendor mobile apps +
 // Go API). Single database (homechef_db). No subscriptions in v1, so pricing is
 // omitted and the billing UI hides on its pages. Business KPIs are served by the
 // product-scoped route /api/admin/apps/homechef/kpis (direct homechef_db reads
 // via lib/db/homechef.ts) — see resolveKpiValue in product-overview-layout.tsx.
 const homechef: ProductConfig = {
   id: "homechef",
-  name: "Home Chef",
+  name: "Fe3dr",
   namespace: "homechef",
   cnpgClusterName: "homechef-postgres",
   sendGridProductTag: "homechef",

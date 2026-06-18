@@ -1,6 +1,6 @@
 "use client";
 
-// Home Chef chef-payout admin. Lists all chefs' weekly settlement statements
+// Fe3dr chef-payout admin. Lists all chefs' weekly settlement statements
 // (homechef_db, direct) with filters, a CSV export, and a mark-paid action that
 // records a manual disbursement reference. Statement calculation is automated in
 // homechef-api; disbursement is manual (RazorpayX automation gated on an Indian
@@ -112,7 +112,7 @@ export default function HomechefPayoutsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <AdminHeader title="Home Chef · Payouts" />
+      <AdminHeader title="Fe3dr · Payouts" />
       <div className="flex-1 space-y-4 p-6">
         <p className="text-sm text-muted-foreground">
           Weekly chef settlement statements. Calculation is automated; disbursement is manual —
