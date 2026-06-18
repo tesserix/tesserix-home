@@ -2,12 +2,18 @@
 -- Idempotent: ON CONFLICT (slug) DO UPDATE keeps the row in sync with
 -- whatever's checked in here, so re-running the seed is safe.
 --
+-- AUTO-APPLY: `db:migrate` does NOT run this seed — it runs db/migrations/* only.
+-- The canonical, auto-applied copy of this registry is the idempotent migration
+-- db/migrations/0012_seed_apps_registry.sql. Keep the two in sync: when you add
+-- or change a product here, mirror it in 0012 (or add a follow-up migration) so
+-- the row actually persists on deploy. This file remains for manual/ad-hoc seeds.
+--
 -- When adding a new product (fanzone, homechef, …):
 --   1. Provision its mark8ly_platform_admin-equivalent role per
 --      tesserix-k8s/docs/cross-db-admin.md.
 --   2. Add an ExternalSecret in tesserix namespace named <product>-platform-admin.
---   3. Append an INSERT below.
---   4. Re-run this seed.
+--   3. Append an INSERT below AND mirror it in db/migrations/0012_seed_apps_registry.sql.
+--   4. Deploy (db:migrate auto-applies the migration); re-run this seed only for ad-hoc fixes.
 
 INSERT INTO apps (
   slug, name, description, status,
