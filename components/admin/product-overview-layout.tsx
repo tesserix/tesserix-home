@@ -16,7 +16,7 @@ import {
   formatCurrency,
   formatNumber,
 } from "@/components/admin/metrics/format";
-import { useDashboardCounts, useProductMetrics, type DashboardCounts } from "@/lib/admin/use-metrics";
+import { useDashboardCounts, useProductMetrics, useProductKpis, type DashboardCounts, type ProductKpis } from "@/lib/admin/use-metrics";
 import { useProductRevenue } from "@/lib/admin/use-billing";
 import { useCriticalEventCount } from "@/lib/admin/use-audit";
 import { RevenueSection } from "@/components/admin/billing/revenue-section";
@@ -28,30 +28,40 @@ interface ProductOverviewLayoutProps {
   config: ProductConfig;
 }
 
-function resolveKpiValue(tile: KpiTileSpec, dash: DashboardCounts | undefined): { value: string; hint?: string } {
-  if (!dash) return { value: "—", hint: tile.hint };
-  switch (tile.key) {
-    case "tenants_active":
-      return { value: formatNumber(dash.tenants.active), hint: `${formatNumber(dash.tenants.total)} of total` };
-    case "stores_total":
-      return { value: formatNumber(dash.stores.total), hint: tile.hint };
-    case "leads_total":
-      return { value: formatNumber(dash.leads.total), hint: tile.hint };
-    default:
-      return { value: "—", hint: tile.hint };
+function resolveKpiValue(
+  tile: KpiTileSpec,
+  dash: DashboardCounts | undefined,
+  productKpis: ProductKpis | undefined,
+): { value: string; hint?: string } {
+  // Shared-dashboard KPIs (mark8ly). Resolved first so existing products are
+  // unaffected by the per-product KPI source added for HomeChef.
+  if (dash) {
+    switch (tile.key) {
+      case "tenants_active":
+        return { value: formatNumber(dash.tenants.active), hint: `${formatNumber(dash.tenants.total)} of total` };
+      case "stores_total":
+        return { value: formatNumber(dash.stores.total), hint: tile.hint };
+      case "leads_total":
+        return { value: formatNumber(dash.leads.total), hint: tile.hint };
+    }
   }
+  // Per-product KPIs (e.g. HomeChef), keyed by tile.key.
+  const fromProduct = productKpis?.kpis[tile.key];
+  if (fromProduct) return { value: fromProduct.value, hint: fromProduct.hint ?? tile.hint };
+  return { value: "—", hint: tile.hint };
 }
 
 export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("24h");
   const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, timeWindow);
   const dashboard = useDashboardCounts();
+  const productKpis = useProductKpis(config.id);
   const hasBilling = Boolean(config.pricingByPlan);
   const revenue = useProductRevenue(hasBilling ? config.id : "", 30);
   const critical = useCriticalEventCount(config.id);
 
   async function handleRefresh() {
-    await Promise.all([mutate(), dashboard.mutate(), revenue.mutate(), critical.mutate()]);
+    await Promise.all([mutate(), dashboard.mutate(), productKpis.mutate(), revenue.mutate(), critical.mutate()]);
   }
 
   const generatedAt = data?.generatedAt;
@@ -91,7 +101,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
         >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {config.businessKpiTiles.map((tile) => {
-              const { value, hint } = resolveKpiValue(tile, dashboard.data);
+              const { value, hint } = resolveKpiValue(tile, dashboard.data, productKpis.data);
               return (
                 <KpiTile
                   key={tile.key}
@@ -99,7 +109,7 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
                   value={value}
                   hint={hint}
                   href={tile.href}
-                  loading={dashboard.isLoading}
+                  loading={dashboard.isLoading || productKpis.isLoading}
                 />
               );
             })}

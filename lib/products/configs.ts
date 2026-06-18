@@ -52,8 +52,36 @@ const mark8ly: ProductConfig = {
   trialDays: 90,
 };
 
+// HomeChef — home-cooked food delivery (fe3dr.com). Single Postgres
+// database (`homechef_db`), no per-tenant model, no subscriptions in v1 (so
+// pricing/billing are omitted and the billing UI hides). Business KPIs are
+// read from homechef_db via /api/admin/apps/homechef/kpis + lib/db/homechef.ts.
+const homechef: ProductConfig = {
+  id: "homechef",
+  name: "HomeChef",
+  namespace: "homechef",
+  // HomeChef's Postgres lives in the postgresql-homechef namespace. Used only
+  // for the (gracefully-degrading) CNPG resource metrics.
+  cnpgClusterName: "postgresql-homechef",
+  sendGridProductTag: "homechef",
+  // No per-tenant row-count concept (not a multi-tenant DB like mark8ly).
+  rowCountTables: [],
+  costAttribution: {
+    requests: 0.5,
+    storage: 0.3,
+    egress: 0.2,
+  },
+  businessKpiTiles: [
+    { key: "active_chefs", label: "Active chefs", hint: "verified + active", source: "product" },
+    { key: "orders_today", label: "Orders today", source: "product" },
+    { key: "gmv_today", label: "GMV today", source: "product" },
+    { key: "pending_approvals", label: "Pending approvals", hint: "awaiting verification", source: "product" },
+  ],
+};
+
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
   mark8ly,
+  homechef,
 };
 
 export function getProductConfig(id: string): ProductConfig {

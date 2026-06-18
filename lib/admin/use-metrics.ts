@@ -62,3 +62,18 @@ export function useDashboardCounts() {
     { revalidateOnFocus: false, dedupingInterval: 30_000 },
   );
 }
+
+// Per-product business KPIs (e.g. HomeChef: active_chefs / orders_today / …),
+// keyed by the product config's businessKpiTiles keys. Empty for products
+// (like mark8ly) that resolve their KPIs from the shared dashboard instead.
+export interface ProductKpis {
+  kpis: Record<string, { value: string; hint?: string }>;
+}
+
+export function useProductKpis(productId: string) {
+  return useSWR<ProductKpis>(
+    productId ? `/api/admin/apps/${productId}/kpis` : null,
+    fetcher as (u: string) => Promise<ProductKpis>,
+    { revalidateOnFocus: false, dedupingInterval: 30_000 },
+  );
+}

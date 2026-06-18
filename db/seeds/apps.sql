@@ -38,3 +38,38 @@ ON CONFLICT (slug) DO UPDATE SET
   db_databases          = EXCLUDED.db_databases,
   primary_domain        = EXCLUDED.primary_domain,
   admin_url             = EXCLUDED.admin_url;
+
+-- HomeChef — home-cooked food delivery (fe3dr.com). Single Postgres database
+-- (homechef_db) in the postgresql-homechef namespace. Admin oversight reads KPIs
+-- as homechef_platform_admin (HOMECHEF_DB_* from the homechef-platform-admin
+-- ExternalSecret). This row is what makes the HomeChef tile appear in the
+-- Admin → Apps grid; the tile was missing because the row was never seeded (#59).
+INSERT INTO apps (
+  slug, name, description, status,
+  db_namespace, db_host, db_port, db_admin_secret_name, db_databases,
+  primary_domain, admin_url
+) VALUES
+(
+  'homechef',
+  'HomeChef',
+  'Home-cooked food delivery — chefs cook, drivers deliver, customers order.',
+  'active',
+  'postgresql-homechef',
+  'postgresql.postgresql-homechef.svc.cluster.local',
+  5432,
+  'homechef-platform-admin',
+  '["homechef_db"]'::jsonb,
+  'fe3dr.com',
+  'https://admin.fe3dr.com'
+)
+ON CONFLICT (slug) DO UPDATE SET
+  name                  = EXCLUDED.name,
+  description           = EXCLUDED.description,
+  status                = EXCLUDED.status,
+  db_namespace          = EXCLUDED.db_namespace,
+  db_host               = EXCLUDED.db_host,
+  db_port               = EXCLUDED.db_port,
+  db_admin_secret_name  = EXCLUDED.db_admin_secret_name,
+  db_databases          = EXCLUDED.db_databases,
+  primary_domain        = EXCLUDED.primary_domain,
+  admin_url             = EXCLUDED.admin_url;

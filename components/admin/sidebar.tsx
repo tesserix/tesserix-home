@@ -25,6 +25,7 @@ import {
   Mail,
   Database,
   Globe,
+  ChefHat,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -94,10 +95,18 @@ const mark8lyNav: NavEntry[] = [
   },
 ];
 
-type RailContext = "platform" | "mark8ly";
+// HomeChef oversight — only the overview ships today (KPI dashboard). Other
+// sections (tenants/audit) don't exist for HomeChef yet, so the rail keeps to
+// what's wired to avoid 404 links.
+const homechefNav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
+];
+
+type RailContext = "platform" | "mark8ly" | "homechef";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
+  if (pathname.startsWith("/admin/apps/homechef")) return "homechef";
   return "platform";
 }
 
@@ -105,6 +114,8 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
   switch (context) {
     case "mark8ly":
       return { label: "Mark8ly", entries: mark8lyNav };
+    case "homechef":
+      return { label: "HomeChef", entries: homechefNav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
@@ -114,6 +125,9 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
 function isNavItemActive(pathname: string, href: string): boolean {
   if (href === "/admin/apps/mark8ly") {
     return pathname === "/admin/apps/mark8ly" || pathname === "/admin/apps/mark8ly/";
+  }
+  if (href === "/admin/apps/homechef") {
+    return pathname === "/admin/apps/homechef" || pathname === "/admin/apps/homechef/";
   }
   return pathname.startsWith(href);
 }
@@ -305,6 +319,25 @@ function LeftRail({
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
             Mark8ly
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/admin/apps/homechef"
+              onClick={() => onContextChange("homechef")}
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg transition-colors",
+                activeContext === "homechef"
+                  ? "bg-sidebar-accent"
+                  : "hover:bg-sidebar-accent/50"
+              )}
+            >
+              <ChefHat className="h-5 w-5 text-sidebar-foreground" />
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            HomeChef
           </TooltipContent>
         </Tooltip>
       </div>

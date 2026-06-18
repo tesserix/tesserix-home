@@ -44,6 +44,7 @@ import {
   Shield,
   Users,
   ClipboardList,
+  ChefHat,
 } from "lucide-react";
 import {
   Command,
@@ -76,7 +77,7 @@ interface SearchResponse {
 }
 
 interface Destination {
-  group: "Platform" | "Mark8ly";
+  group: "Platform" | "Mark8ly" | "HomeChef";
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -206,6 +207,13 @@ const ADMIN_DESTINATIONS: ReadonlyArray<Destination> = [
     href: "/admin/apps/mark8ly/notifications/templates",
     icon: Mail,
     keywords: ["template", "notification", "email", "registry", "transactional"],
+  },
+  {
+    group: "HomeChef",
+    label: "Overview",
+    href: "/admin/apps/homechef",
+    icon: ChefHat,
+    keywords: ["homechef", "food", "chefs", "kpis", "gmv"],
   },
 ];
 
