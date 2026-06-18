@@ -1,6 +1,6 @@
 "use client";
 
-// Home Chef 3PL delivery admin (Wave 7E): provider list + enable/disable +
+// Fe3dr 3PL delivery admin (Wave 7E): provider list + enable/disable +
 // cost reconciliation (provider cost vs collected delivery fee). Provider key
 // config + "test connection" live in homechef-api's provider CRUD, not here.
 
@@ -78,7 +78,7 @@ export default function HomechefDeliveryPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <AdminHeader title="Home Chef · Delivery (3PL)" />
+      <AdminHeader title="Fe3dr · Delivery (3PL)" />
       <div className="flex-1 space-y-4 p-6">
         {/* Reconciliation */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -98,7 +98,7 @@ export default function HomechefDeliveryPage() {
             <RefreshCw className={"h-3 w-3 " + (loading ? "animate-spin" : "")} /> Refresh
           </button>
           <p className="text-xs text-muted-foreground">
-            Provider keys + connection test are managed in the Home Chef API admin (not here).
+            Provider keys + connection test are managed in the Fe3dr API admin (not here).
           </p>
         </div>
 

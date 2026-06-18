@@ -1,6 +1,6 @@
 "use client";
 
-// Home Chef customer-ops: recent orders + GMV summary (read-only). Direct
+// Fe3dr customer-ops: recent orders + GMV summary (read-only). Direct
 // homechef_db reads via the platform-admin role. 5B customer-ops oversight.
 
 import { useCallback, useEffect, useState } from "react";
@@ -80,7 +80,7 @@ export default function HomechefOrdersPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <AdminHeader title="Home Chef · Orders" />
+      <AdminHeader title="Fe3dr · Orders" />
       <div className="flex-1 space-y-4 p-6">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <KpiTile label="Orders (filter)" value={formatNumber(summary.total_orders)} hint="matching the current filter" loading={loading} />

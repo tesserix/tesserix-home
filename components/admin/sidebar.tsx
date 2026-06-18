@@ -95,7 +95,7 @@ const mark8lyNav: NavEntry[] = [
   },
 ];
 
-// Home Chef secondary nav. Phase A ships the Overview only; the deeper admin
+// Fe3dr secondary nav. Phase A ships the Overview only; the deeper admin
 // surfaces (chefs/approvals, orders, payouts, delivery, customers) land with the
 // 5B admin sub-features.
 const homechefNav: NavEntry[] = [
@@ -118,7 +118,7 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
     case "mark8ly":
       return { label: "Mark8ly", entries: mark8lyNav };
     case "homechef":
-      return { label: "Home Chef", entries: homechefNav };
+      return { label: "Fe3dr", entries: homechefNav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
@@ -335,7 +335,7 @@ function LeftRail({
             >
               <Image
                 src="/homechef-icon.png"
-                alt="Home Chef"
+                alt="Fe3dr"
                 width={24}
                 height={24}
                 className="rounded-md"
@@ -343,7 +343,7 @@ function LeftRail({
             </Link>
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
-            Home Chef
+            Fe3dr
           </TooltipContent>
         </Tooltip>
       </div>
