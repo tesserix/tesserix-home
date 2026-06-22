@@ -31,6 +31,10 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/login",
   "/api/health",
   "/api/contact",
+  // Support chat proxy — anonymous marketing visitors must be able to open
+  // a chat (otto enforces its own OTP/session auth + the internal-auth
+  // secret); a tesserix-home session is not required.
+  "/api/otto",
   // Internal product-to-product endpoints. Auth is enforced by each
   // route handler via the INTERNAL_API_TOKEN bearer check — middleware
   // session auth would block legitimate server-to-server callers that

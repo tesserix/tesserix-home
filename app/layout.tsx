@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
+import { OttoSupportChat } from "@/components/OttoSupportChat";
+import { getCurrentSession } from "@/lib/auth/session-jwt";
+
 const sans = Inter_Tight({
   subsets: ["latin"],
   variable: "--font-app-sans",
@@ -127,11 +130,14 @@ const softwareSchema = {
     "Multi-tenant marketplace platform enabling businesses to launch and scale their own branded online stores.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Prefill the support widget with the logged-in admin's identity (skips
+  // OTP); anonymous visitors get the email-verification flow.
+  const session = await getCurrentSession().catch(() => null);
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <head>
@@ -157,6 +163,10 @@ export default function RootLayout({
           Skip to main content
         </a>
         {children}
+        <OttoSupportChat
+          userEmail={session?.email ?? undefined}
+          userName={session?.name ?? undefined}
+        />
       </body>
     </html>
   );
