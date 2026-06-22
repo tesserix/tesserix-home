@@ -26,6 +26,8 @@ import {
   Database,
   Globe,
   Truck,
+  ChefHat,
+  BadgeCheck,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -100,6 +102,8 @@ const mark8lyNav: NavEntry[] = [
 // 5B admin sub-features.
 const homechefNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
+  { name: "Chefs", href: "/admin/apps/homechef/chefs", icon: ChefHat },
+  { name: "Approvals", href: "/admin/apps/homechef/approvals", icon: BadgeCheck },
   { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
   { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
