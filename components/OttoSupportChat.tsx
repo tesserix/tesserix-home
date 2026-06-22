@@ -3,6 +3,9 @@
 import { OttoWidget } from "@tesserix/otto-widget";
 
 import "@tesserix/otto-widget/styles/otto.css";
+// Local override (loaded after the widget CSS): makes the post-close
+// feedback survey scrollable so the Submit button is always reachable.
+import "./otto-widget-overrides.css";
 
 // Thin wrapper around the shared otto widget. Routes through the same-origin
 // /api/otto proxy (which injects the internal-auth secret + the "platform"
