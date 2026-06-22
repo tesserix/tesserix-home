@@ -235,6 +235,40 @@ export interface DeliveryPartnerSummary {
   createdAt: string;
 }
 
+// ---- Support: tickets + order issues ---------------------------------------
+export interface SupportTicket {
+  id: string;
+  ticketNumber: string;
+  reporterId: string;
+  reporterRole: string;
+  assignedToId?: string | null;
+  orderId?: string | null;
+  category: string;
+  priority: string;
+  status: string;
+  subject: string;
+  description: string;
+  resolution?: string;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderIssue {
+  id: string;
+  orderId: string;
+  chefId: string;
+  customerId: string;
+  reason: string;
+  description?: string;
+  requestedAmount: number;
+  refundAmount: number;
+  status: string;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // ---- Staff ------------------------------------------------------------------
 export interface StaffMember {
   id: string;
