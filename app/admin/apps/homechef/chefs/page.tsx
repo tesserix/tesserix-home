@@ -5,8 +5,9 @@ import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatINR } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ChefWithStats, Paginated } from "@/lib/products/homechef/contracts";
 
 const STATUS_FILTERS = [
@@ -27,6 +28,7 @@ export default function HomechefChefsPage() {
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, prompt } = useConfirm();
 
   const { data, isLoading, mutate } = useSWR<Paginated<ChefWithStats>>(
     ["/chefs", { search, status, page: 1, limit: 50 }],
@@ -37,10 +39,29 @@ export default function HomechefChefsPage() {
     setError(null);
     let reason = "";
     if (action === "reject") {
-      reason = window.prompt("Reason for rejection (sent to the chef):")?.trim() ?? "";
-      if (!reason) return;
-    } else if (!window.confirm(`${titleCase(action)} this kitchen?`)) {
-      return;
+      const r = await prompt({
+        title: "Reject application",
+        message: "Tell the chef why their application was rejected.",
+        label: "Reason",
+        placeholder: "e.g. FSSAI licence missing / not a home kitchen",
+        multiline: true,
+        required: true,
+        confirmLabel: "Reject application",
+        tone: "destructive",
+      });
+      if (r === null) return;
+      reason = r;
+    } else {
+      const ok = await confirm({
+        title: action === "verify" ? "Verify kitchen" : "Suspend kitchen",
+        message:
+          action === "verify"
+            ? "Approve this home kitchen? It will go live and can receive orders."
+            : "Suspend this kitchen? It will stop receiving orders immediately.",
+        confirmLabel: action === "verify" ? "Verify" : "Suspend",
+        tone: action === "suspend" ? "destructive" : "default",
+      });
+      if (!ok) return;
     }
     setBusyId(id);
     try {

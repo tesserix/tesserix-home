@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { Paginated, ReviewRow } from "@/lib/products/homechef/contracts";
 
 function ratingTone(r: number): Tone {
@@ -18,6 +19,7 @@ export default function HomechefReviewsPage() {
   const [view, setView] = useState<"visible" | "hidden">("visible");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { prompt } = useConfirm();
 
   const { data, isLoading, mutate } = useSWR<Paginated<ReviewRow>>(
     ["/reviews", { hidden: view === "hidden" ? "true" : "", page: 1, limit: 50 }],
@@ -25,8 +27,17 @@ export default function HomechefReviewsPage() {
   );
 
   async function hide(r: ReviewRow) {
-    const reason = window.prompt("Reason for moderation (kept for audit):")?.trim() ?? "";
-    if (!reason) return;
+    const reason = await prompt({
+      title: "Hide review",
+      message: "This hides the review from the chef's page. The reason is kept for audit.",
+      label: "Reason",
+      placeholder: "e.g. abusive language / spam",
+      multiline: true,
+      required: true,
+      confirmLabel: "Hide review",
+      tone: "destructive",
+    });
+    if (reason === null) return;
     setError(null);
     setBusyId(r.id);
     try {

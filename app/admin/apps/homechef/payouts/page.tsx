@@ -18,6 +18,7 @@ import {
 
 import { AdminHeader } from "@/components/admin/header";
 import { formatCurrency, formatNumber } from "@/components/admin/metrics/format";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 
 interface StatementRow {
   id: string;
@@ -57,6 +58,7 @@ export default function HomechefPayoutsPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const { prompt } = useConfirm();
 
   const queryString = useCallback(() => {
     const p = new URLSearchParams();
@@ -87,10 +89,15 @@ export default function HomechefPayoutsPage() {
   useEffect(() => { void load(); }, [load]);
 
   async function markPaid(row: StatementRow) {
-    const ref = window.prompt(
-      `Mark ${row.chef_name ?? row.chef_id}'s ${row.week_start.slice(0, 10)} statement as PAID.\nEnter the payout reference (UTR / RazorpayX id / bank ref):`,
-    );
-    if (!ref || !ref.trim()) return;
+    const ref = await prompt({
+      title: "Mark statement paid",
+      message: `Record a disbursement for ${row.chef_name ?? row.chef_id}'s ${row.week_start.slice(0, 10)} statement.`,
+      label: "Payout reference",
+      placeholder: "UTR / RazorpayX id / bank ref",
+      required: true,
+      confirmLabel: "Mark paid",
+    });
+    if (ref === null) return;
     setBusyId(row.id);
     try {
       const res = await fetch(`/api/admin/apps/homechef/payouts/${row.id}/mark-paid`, {

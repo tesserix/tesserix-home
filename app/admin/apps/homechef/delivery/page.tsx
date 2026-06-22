@@ -10,6 +10,7 @@ import { RefreshCw } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import { KpiTile } from "@/components/admin/metrics/kpi-tile";
 import { formatCurrency, formatNumber } from "@/components/admin/metrics/format";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 
 interface ProviderRow {
   id: string;
@@ -38,6 +39,7 @@ export default function HomechefDeliveryPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const { confirm } = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,7 +63,13 @@ export default function HomechefDeliveryPage() {
   useEffect(() => { void load(); }, [load]);
 
   async function toggle(p: ProviderRow) {
-    if (!window.confirm(`${p.is_enabled ? "Disable" : "Enable"} ${p.name}?`)) return;
+    const ok = await confirm({
+      title: p.is_enabled ? "Disable provider" : "Enable provider",
+      message: `${p.is_enabled ? "Disable" : "Enable"} ${p.name} for new deliveries?`,
+      confirmLabel: p.is_enabled ? "Disable" : "Enable",
+      tone: p.is_enabled ? "destructive" : "default",
+    });
+    if (!ok) return;
     setBusyId(p.id);
     try {
       const res = await fetch(`/api/admin/apps/homechef/delivery/providers/${p.id}/toggle`, {

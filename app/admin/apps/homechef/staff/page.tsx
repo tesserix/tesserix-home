@@ -7,6 +7,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDate, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { Paginated, StaffMember } from "@/lib/products/homechef/contracts";
 
 const ROLES = ["support", "fleet_manager", "delivery_ops", "admin", "super_admin"];
@@ -21,6 +22,7 @@ export default function HomechefStaffPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
+  const { confirm } = useConfirm();
 
   async function invite() {
     setError(null);
@@ -39,7 +41,13 @@ export default function HomechefStaffPage() {
 
   async function toggle(m: StaffMember) {
     const action = m.isActive ? "deactivate" : "reactivate";
-    if (!window.confirm(`${titleCase(action)} ${m.user?.email ?? "this member"}?`)) return;
+    const ok = await confirm({
+      title: action === "deactivate" ? "Deactivate staff" : "Reactivate staff",
+      message: `${titleCase(action)} ${m.user?.email ?? "this member"}?`,
+      confirmLabel: titleCase(action),
+      tone: action === "deactivate" ? "destructive" : "default",
+    });
+    if (!ok) return;
     setError(null);
     setBusyId(m.id);
     try {
