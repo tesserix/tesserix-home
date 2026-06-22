@@ -75,6 +75,7 @@ jobs:
           fi
 
       - name: Build and push
+        if: github.event_name != 'pull_request'
         run: |
           docker build \
             --platform linux/amd64 \
@@ -92,6 +93,7 @@ jobs:
       # argocd/prod/apps/global/company.yaml.
 
       - name: Security scan
+        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
@@ -101,7 +103,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload scan results
-        if: always()
+        if: github.event_name != 'pull_request'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
