@@ -3,6 +3,7 @@
 import { AuthProvider, useAuth } from "@/lib/auth/auth-context";
 import { AdminSidebar } from "@/components/admin/sidebar";
 import { CommandPaletteProvider } from "@/components/admin/command-palette";
+import { ConfirmProvider } from "@/components/admin/confirm-dialog";
 import { ToastProvider, ToastViewport, TooltipProvider } from "@tesserix/web";
 import { useEffect } from "react";
 import { usePathname } from "next/navigation";
@@ -43,12 +44,14 @@ export default function AdminLayout({
         <TooltipProvider delayDuration={200}>
           <AuthGuard>
             <CommandPaletteProvider>
-              <div className="min-h-screen bg-background">
-                <AdminSidebar />
-                <div id="main-content" className="lg:pl-72">
-                  {children}
+              <ConfirmProvider>
+                <div className="min-h-screen bg-background">
+                  <AdminSidebar />
+                  <div id="main-content" className="lg:pl-72">
+                    {children}
+                  </div>
                 </div>
-              </div>
+              </ConfirmProvider>
             </CommandPaletteProvider>
           </AuthGuard>
         </TooltipProvider>

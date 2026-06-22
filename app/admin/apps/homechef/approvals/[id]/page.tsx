@@ -9,6 +9,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ApprovalRequest } from "@/lib/products/homechef/contracts";
 
 function statusTone(s: string): Tone {
@@ -35,18 +36,34 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, prompt } = useConfirm();
 
   async function decide(action: "approve" | "reject" | "request-info") {
     setError(null);
     let notes = "";
     if (action === "reject" || action === "request-info") {
-      notes =
-        window
-          .prompt(action === "reject" ? "Reason for rejection:" : "What information is needed?")
-          ?.trim() ?? "";
-      if (!notes) return;
-    } else if (!window.confirm("Approve this request?")) {
-      return;
+      const r = await prompt({
+        title: action === "reject" ? "Reject request" : "Request more info",
+        message:
+          action === "reject"
+            ? "Add a note explaining the rejection (shared with the applicant)."
+            : "Tell the applicant what's missing.",
+        label: "Note",
+        placeholder: action === "reject" ? "Reason for rejection…" : "What do you need?",
+        multiline: true,
+        required: true,
+        confirmLabel: action === "reject" ? "Reject" : "Send request",
+        tone: action === "reject" ? "destructive" : "default",
+      });
+      if (r === null) return;
+      notes = r;
+    } else {
+      const ok = await confirm({
+        title: "Approve request",
+        message: "Approve this request? This triggers the related workflow.",
+        confirmLabel: "Approve",
+      });
+      if (!ok) return;
     }
     setBusy(true);
     try {

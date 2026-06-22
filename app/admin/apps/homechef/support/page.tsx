@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { OrderIssue, Paginated, SupportTicket } from "@/lib/products/homechef/contracts";
 
 const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"];
@@ -128,6 +129,7 @@ function IssuesTab() {
   const [status, setStatus] = useState("pending");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, prompt } = useConfirm();
   const { data, isLoading, mutate } = useSWR<{ data: OrderIssue[]; count: number }>(
     ["/order-issues", { status }],
     swrFetcher,
@@ -135,11 +137,17 @@ function IssuesTab() {
   );
 
   async function resolve(it: OrderIssue) {
-    const amtStr = window.prompt(
-      `Refund amount (₹). Requested: ${formatINR(it.requestedAmount)}`,
-      String(it.requestedAmount || ""),
-    )?.trim();
-    if (!amtStr) return;
+    const amtStr = await prompt({
+      title: "Resolve & refund",
+      message: `Approve a refund for this order issue. Requested: ${formatINR(it.requestedAmount)}.`,
+      label: "Refund amount (₹)",
+      placeholder: String(it.requestedAmount || ""),
+      defaultValue: String(it.requestedAmount || ""),
+      numeric: true,
+      required: true,
+      confirmLabel: "Resolve & refund",
+    });
+    if (amtStr === null) return;
     const amount = Number(amtStr);
     if (!Number.isFinite(amount) || amount <= 0) {
       setError("Enter a valid amount greater than zero.");
@@ -158,7 +166,13 @@ function IssuesTab() {
   }
 
   async function reject(it: OrderIssue) {
-    if (!window.confirm("Reject this refund request?")) return;
+    const ok = await confirm({
+      title: "Reject refund request",
+      message: "Reject this refund request? The customer will not be refunded.",
+      confirmLabel: "Reject",
+      tone: "destructive",
+    });
+    if (!ok) return;
     setError(null);
     setBusyId(it.id);
     try {

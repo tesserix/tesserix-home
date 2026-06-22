@@ -8,6 +8,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatINR, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { Paginated, UserWithStats } from "@/lib/products/homechef/contracts";
 
 const ROLES = [
@@ -23,6 +24,7 @@ export default function HomechefUsersPage() {
   const [role, setRole] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm } = useConfirm();
 
   const { data, isLoading, mutate } = useSWR<Paginated<UserWithStats>>(
     ["/users", { search, role, page: 1, limit: 50 }],
@@ -31,7 +33,13 @@ export default function HomechefUsersPage() {
 
   async function toggle(u: UserWithStats) {
     const action = u.isActive ? "suspend" : "activate";
-    if (!window.confirm(`${titleCase(action)} ${u.email}?`)) return;
+    const ok = await confirm({
+      title: action === "suspend" ? "Suspend user" : "Activate user",
+      message: `${action === "suspend" ? "Suspend" : "Reactivate"} ${u.email}?`,
+      confirmLabel: action === "suspend" ? "Suspend" : "Activate",
+      tone: action === "suspend" ? "destructive" : "default",
+    });
+    if (!ok) return;
     setError(null);
     setBusyId(u.id);
     try {

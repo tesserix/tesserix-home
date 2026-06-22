@@ -7,6 +7,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDate } from "@/lib/products/homechef/format";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { FSSAILockedChef, FSSAILockResponse } from "@/lib/products/homechef/contracts";
 
 export default function HomechefFssaiPage() {
@@ -16,18 +17,35 @@ export default function HomechefFssaiPage() {
   );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { confirm, prompt } = useConfirm();
 
   async function grant(ch: FSSAILockedChef) {
     setError(null);
-    const reason = window.prompt("Override reason (min 10 chars):")?.trim() ?? "";
-    if (reason.length < 10) {
-      if (reason) setError("Reason must be at least 10 characters.");
-      return;
-    }
-    const daysStr = window.prompt("Override duration in days (1–30):", "7")?.trim() ?? "";
+    const reason = await prompt({
+      title: `Grant FSSAI override — ${ch.businessName}`,
+      message: "Temporarily lift the FSSAI lock so this kitchen can keep operating.",
+      label: "Reason (min 10 characters)",
+      placeholder: "Why is this override justified?",
+      multiline: true,
+      required: true,
+      minLength: 10,
+      confirmLabel: "Next",
+    });
+    if (reason === null) return;
+    const daysStr = await prompt({
+      title: "Override duration",
+      message: "How long should the override last?",
+      label: "Days (1–30)",
+      placeholder: "7",
+      defaultValue: "7",
+      numeric: true,
+      required: true,
+      confirmLabel: "Grant override",
+    });
+    if (daysStr === null) return;
     const days = Number(daysStr);
     if (!Number.isInteger(days) || days < 1 || days > 30) {
-      setError("Days must be an integer between 1 and 30.");
+      setError("Days must be a whole number between 1 and 30.");
       return;
     }
     setBusyId(ch.chefId);
@@ -42,7 +60,13 @@ export default function HomechefFssaiPage() {
   }
 
   async function clear(ch: FSSAILockedChef) {
-    if (!window.confirm(`Re-lock ${ch.businessName}?`)) return;
+    const ok = await confirm({
+      title: "Clear override",
+      message: `Re-lock ${ch.businessName}? It will be blocked until its FSSAI licence is renewed.`,
+      confirmLabel: "Clear override",
+      tone: "destructive",
+    });
+    if (!ok) return;
     setError(null);
     setBusyId(ch.chefId);
     try {
