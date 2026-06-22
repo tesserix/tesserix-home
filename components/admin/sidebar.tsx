@@ -28,6 +28,9 @@ import {
   Truck,
   ChefHat,
   BadgeCheck,
+  CalendarRange,
+  UserCog,
+  BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -104,9 +107,16 @@ const homechefNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
   { name: "Chefs", href: "/admin/apps/homechef/chefs", icon: ChefHat },
   { name: "Approvals", href: "/admin/apps/homechef/approvals", icon: BadgeCheck },
+  { name: "Users", href: "/admin/apps/homechef/users", icon: Users },
+  { name: "Wallets", href: "/admin/apps/homechef/wallets", icon: CreditCard },
+  { name: "FSSAI", href: "/admin/apps/homechef/fssai", icon: Shield },
+  { name: "Reviews", href: "/admin/apps/homechef/reviews", icon: ScrollText },
   { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
+  { name: "Meal Plans", href: "/admin/apps/homechef/meal-plans", icon: CalendarRange },
   { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
+  { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
+  { name: "Analytics", href: "/admin/apps/homechef/analytics", icon: BarChart3 },
 ];
 
 type RailContext = "platform" | "mark8ly" | "homechef";
