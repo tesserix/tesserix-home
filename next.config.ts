@@ -7,6 +7,11 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: 'standalone',
 
+  // @tesserix/otto-widget ships raw TypeScript source (no dist/) — Next.js
+  // must transpile it from node_modules or the build fails with
+  // "Unknown module type" on its src/index.ts.
+  transpilePackages: ['@tesserix/otto-widget'],
+
   async headers() {
     const cspDirectives = [
       "default-src 'self'",
