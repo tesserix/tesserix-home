@@ -1,0 +1,14 @@
+/* Otto support widget — post-close feedback survey scroll fix.
+ *
+ * @tesserix/otto-widget@0.5.1 renders the feedback survey in the panel's
+ * fixed-height (560px) slot, but unlike .otto-widget__messages the
+ * .otto-widget__feedback view has no flex/scroll. On short viewports its
+ * lower fields and the Submit button get clipped and become unreachable.
+ * Give it the same scroll behaviour as the messages view. Loaded after
+ * the widget stylesheet; !important guards against bundle-order changes.
+ * Remove once the upstream widget package ships the fix. */
+.otto-widget__feedback {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+}
