@@ -75,7 +75,9 @@ jobs:
           docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
 
       - name: Security scan
-        uses: aquasecurity/trivy-action@master
+        # Pinned off @master — @master regressed (cache-path failure). v0.36.0
+        # pins setup-trivy/actions-cache to known-good versions.
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
           format: sarif
