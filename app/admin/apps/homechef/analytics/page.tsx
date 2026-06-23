@@ -1,60 +1,60 @@
 "use client";
 
+import * as React from "react";
 import useSWR from "swr";
+import { Card, CardContent, CardHeader, CardTitle } from "@tesserix/web";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatCount, formatINR, formatRelative, titleCase } from "@/lib/products/homechef/format";
+import {
+  formatCount,
+  formatINR,
+  formatRelative,
+  titleCase,
+} from "@/lib/products/homechef/format";
 import type {
   Activity,
   AdminAnalytics,
   AdminStats,
 } from "@/lib/products/homechef/contracts";
+import {
+  AnalyticsShell,
+  BarChartCard,
+  KpiCard,
+  type ChartSeries,
+  type KpiTone,
+} from "@/components/admin/charts";
 
 const REFRESH = 30_000; // real-time-ish: re-pull every 30s
-
-function Tile({
-  label,
-  value,
-  sub,
-  delta,
-  deltaUp,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  delta?: string;
-  deltaUp?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-border p-4">
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-foreground tabular-nums">{value}</div>
-      <div className="mt-1 flex items-center gap-2 text-xs">
-        {sub ? <span className="text-muted-foreground">{sub}</span> : null}
-        {delta ? (
-          <span
-            className={
-              deltaUp
-                ? "text-green-600 dark:text-green-400"
-                : "text-red-600 dark:text-red-400"
-            }
-          >
-            {delta}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 function pct(n: number | undefined): string {
   const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
   return `${v >= 0 ? "▲" : "▼"} ${Math.abs(v).toFixed(1)}% vs prev.`;
 }
 
+// Orders-by-status row: status label + count. BarChartCard plots `count` and
+// uses `label` as the (vertical) category axis.
+interface StatusRow extends Record<string, unknown> {
+  label: string;
+  count: number;
+}
+
+const ORDERS_SERIES: readonly ChartSeries[] = [
+  { dataKey: "count", name: "Orders", formatValue: formatCount },
+];
+
+function toStatusRows(rec: Record<string, number> | undefined): StatusRow[] {
+  return Object.entries(rec ?? {})
+    .map(([status, count]): StatusRow => ({ label: titleCase(status), count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export default function HomechefAnalyticsPage() {
-  const stats = useSWR<AdminStats>(["/stats"], swrFetcher, { refreshInterval: REFRESH });
-  const analytics = useSWR<AdminAnalytics>(["/analytics"], swrFetcher, { refreshInterval: REFRESH });
+  const stats = useSWR<AdminStats>(["/stats"], swrFetcher, {
+    refreshInterval: REFRESH,
+  });
+  const analytics = useSWR<AdminAnalytics>(["/analytics"], swrFetcher, {
+    refreshInterval: REFRESH,
+  });
   const activity = useSWR<{ data: Activity[] }>(
     ["/activities", { limit: 12 }],
     swrFetcher,
@@ -62,115 +62,125 @@ export default function HomechefAnalyticsPage() {
   );
 
   const s = stats.data;
-  const byStatus = Object.entries(analytics.data?.ordersByStatus ?? {});
-  const maxStatus = byStatus.reduce((m, [, v]) => Math.max(m, v), 0) || 1;
   const loading = stats.isLoading && !s;
 
+  const statusRows = toStatusRows(analytics.data?.ordersByStatus);
+  const activities = activity.data?.data ?? [];
+
+  const revenueUp = (s?.revenueChange ?? 0) >= 0;
+  const ordersUp = (s?.ordersChange ?? 0) >= 0;
+  const pendingTone: KpiTone = s?.pendingVerifications ? "warning" : "positive";
+
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Analytics</h1>
-          <p className="text-sm text-muted-foreground">Platform performance · live (30s refresh)</p>
+    <AnalyticsShell
+      title="HomeChef analytics"
+      description="Platform performance · live (30s refresh)"
+      live={stats.isValidating ? "Updating…" : "Live"}
+      liveTone="live"
+      columns={2}
+    >
+      {/* Money & volume */}
+      <AnalyticsShell.Section span="full" title="Money & volume">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <KpiCard
+            label="Total revenue"
+            value={formatINR(s?.revenue)}
+            delta={s?.revenueChange != null ? pct(s.revenueChange) : undefined}
+            deltaUp={revenueUp}
+            tone={s?.revenueChange != null ? (revenueUp ? "positive" : "critical") : "neutral"}
+          />
+          <KpiCard
+            label="Revenue today"
+            value={formatINR(s?.revenueToday)}
+            sub="since 00:00 IST"
+          />
+          <KpiCard
+            label="Total orders"
+            value={formatCount(s?.totalOrders)}
+            delta={s?.ordersChange != null ? pct(s.ordersChange) : undefined}
+            deltaUp={ordersUp}
+            tone={s?.ordersChange != null ? (ordersUp ? "positive" : "critical") : "neutral"}
+          />
+          <KpiCard label="Orders today" value={formatCount(s?.ordersToday)} />
         </div>
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
-          {stats.isValidating ? "updating…" : "live"}
-        </span>
-      </div>
+      </AnalyticsShell.Section>
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : (
-        <>
-          {/* Revenue + orders with deltas */}
-          <div>
-            <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">Money & volume</h2>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <Tile
-                label="Total revenue"
-                value={formatINR(s?.revenue)}
-                delta={s?.revenueChange != null ? pct(s.revenueChange) : undefined}
-                deltaUp={(s?.revenueChange ?? 0) >= 0}
-              />
-              <Tile label="Revenue today" value={formatINR(s?.revenueToday)} sub="since 00:00 IST" />
-              <Tile
-                label="Total orders"
-                value={formatCount(s?.totalOrders)}
-                delta={s?.ordersChange != null ? pct(s.ordersChange) : undefined}
-                deltaUp={(s?.ordersChange ?? 0) >= 0}
-              />
-              <Tile label="Orders today" value={formatCount(s?.ordersToday)} />
-            </div>
-          </div>
+      {/* People & efficiency */}
+      <AnalyticsShell.Section span="full" title="People & efficiency">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <KpiCard
+            label="Avg order value"
+            value={formatINR(analytics.data?.overview.avgOrderValue)}
+          />
+          <KpiCard
+            label="Total users"
+            value={formatCount(s?.totalUsers)}
+            delta={s?.newUsersToday ? `+${formatCount(s.newUsersToday)} today` : undefined}
+            deltaUp
+            tone={s?.newUsersToday ? "positive" : "neutral"}
+          />
+          <KpiCard
+            label="Active users"
+            value={formatCount(analytics.data?.overview.activeUsers)}
+            tone="info"
+          />
+          <KpiCard
+            label="Chefs"
+            value={formatCount(s?.totalChefs)}
+            sub={s?.pendingVerifications ? `${s.pendingVerifications} pending` : "all verified"}
+            tone={pendingTone}
+            badge={s?.pendingVerifications ? "Review" : undefined}
+          />
+        </div>
+      </AnalyticsShell.Section>
 
-          {/* AOV + users + chefs */}
-          <div>
-            <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">People & efficiency</h2>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <Tile label="Avg order value" value={formatINR(analytics.data?.overview.avgOrderValue)} />
-              <Tile
-                label="Total users"
-                value={formatCount(s?.totalUsers)}
-                delta={s?.newUsersToday ? `+${formatCount(s.newUsersToday)} today` : undefined}
-                deltaUp
-              />
-              <Tile label="Active users" value={formatCount(analytics.data?.overview.activeUsers)} />
-              <Tile
-                label="Chefs"
-                value={formatCount(s?.totalChefs)}
-                sub={s?.pendingVerifications ? `${s.pendingVerifications} pending` : "all verified"}
-              />
-            </div>
-          </div>
+      {/* Orders by status */}
+      <BarChartCard<StatusRow>
+        title="Orders by status"
+        description="Order lifecycle distribution"
+        data={statusRows}
+        categoryKey="label"
+        series={ORDERS_SERIES}
+        layout="vertical"
+        loading={loading}
+        emptyMessage="No order data yet."
+        height={320}
+      />
 
-          {/* Orders by status + recent activity, side by side */}
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div>
-              <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">Orders by status</h2>
-              {byStatus.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No data.</p>
-              ) : (
-                <div className="space-y-3 rounded-lg border border-border p-4">
-                  {byStatus.map(([status, count]) => (
-                    <div key={status}>
-                      <div className="mb-1 flex justify-between text-sm">
-                        <span className="text-foreground">{titleCase(status)}</span>
-                        <span className="font-medium text-foreground tabular-nums">{formatCount(count)}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-2 rounded-full bg-foreground"
-                          style={{ width: `${Math.max(4, (count / maxStatus) * 100)}%` }}
-                        />
-                      </div>
+      {/* Recent activity */}
+      <Card className="flex flex-col">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Recent activity</CardTitle>
+        </CardHeader>
+        <CardContent className="flex-1">
+          <div className="divide-y divide-border">
+            {loading ? (
+              <p className="py-2 text-sm text-muted-foreground">Loading…</p>
+            ) : activities.length === 0 ? (
+              <p className="py-2 text-sm text-muted-foreground">No recent activity.</p>
+            ) : (
+              activities.map((a) => (
+                <div
+                  key={a.id}
+                  className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {a.title}
                     </div>
-                  ))}
+                    <div className="truncate text-xs text-muted-foreground">
+                      {a.description}
+                    </div>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatRelative(a.timestamp)}
+                  </span>
                 </div>
-              )}
-            </div>
-
-            <div>
-              <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">Recent activity</h2>
-              <div className="rounded-lg border border-border divide-y divide-border">
-                {(activity.data?.data ?? []).length === 0 ? (
-                  <p className="p-4 text-sm text-muted-foreground">No recent activity.</p>
-                ) : (
-                  activity.data!.data.map((a) => (
-                    <div key={a.id} className="flex items-start justify-between gap-3 p-3">
-                      <div>
-                        <div className="text-sm font-medium text-foreground">{a.title}</div>
-                        <div className="text-xs text-muted-foreground">{a.description}</div>
-                      </div>
-                      <span className="shrink-0 text-xs text-muted-foreground">{formatRelative(a.timestamp)}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+              ))
+            )}
           </div>
-        </>
-      )}
-    </div>
+        </CardContent>
+      </Card>
+    </AnalyticsShell>
   );
 }
