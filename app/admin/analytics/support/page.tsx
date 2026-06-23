@@ -18,6 +18,9 @@ interface PlatformSupportStats {
   csat: number;
   resolved_rate: number;
   feedback_count: number;
+  // id -> friendly name (mark8ly store names + humanized product labels);
+  // added by the proxy. Missing ids fall back to the raw id.
+  tenant_names?: Record<string, string>;
 }
 
 const fetcher = (url: string) =>
@@ -210,7 +213,10 @@ export default function PlatformSupportAnalyticsPage() {
             />
             <Bars
               title="By tenant"
-              data={sortedEntries(d?.by_tenant)}
+              data={sortedEntries(d?.by_tenant).map(([id, n]) => [
+                d?.tenant_names?.[id] ?? id,
+                n,
+              ])}
               empty="No tenants yet."
             />
           </div>
