@@ -7,7 +7,12 @@
  * Give it the same scroll behaviour as the messages view. Loaded after
  * the widget stylesheet; !important guards against bundle-order changes.
  * Remove once the upstream widget package ships the fix. */
-.otto-widget__feedback {
+/* The post-close feedback survey AND the multi-field intake / OTP-verify
+ * forms overflow the fixed-height panel. Make them scroll. Scope the form
+ * rule to forms that contain field labels (intake/verify) via :has() so the
+ * short chat composer (no field labels) is NOT forced to grow. */
+.otto-widget__feedback,
+.otto-widget__form:has(.otto-widget__field-label) {
   flex: 1 1 auto !important;
   min-height: 0 !important;
   overflow-y: auto !important;
