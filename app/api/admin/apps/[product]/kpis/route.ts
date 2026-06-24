@@ -35,7 +35,7 @@ export async function GET(
       try {
         const base =
           "FROM otel.otel_traces WHERE ParentSpanId = '' " +
-          "AND Timestamp >= now() - INTERVAL 24 HOUR AND ServiceName LIKE 'devai-%'";
+          "AND Timestamp >= now() - INTERVAL 24 HOUR AND ServiceName LIKE 'devai%'";
         const rows = await chQuery<{ requests: number; errors: number; p95Ms: number }>(
           `SELECT count() AS requests, countIf(StatusCode = 'Error') AS errors,
                   round(quantile(0.95)(Duration)/1e6, 0) AS p95Ms ${base}`,

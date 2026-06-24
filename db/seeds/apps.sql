@@ -82,3 +82,37 @@ ON CONFLICT (slug) DO UPDATE SET
   db_databases          = EXCLUDED.db_databases,
   primary_domain        = EXCLUDED.primary_domain,
   admin_url             = EXCLUDED.admin_url;
+
+-- DevAI — AI-powered ALM + SRE platform (namespace devai, CNPG devai-postgres,
+-- dashboard devai.tesserix.app). Analytics/logs via OTel→ClickHouse, incidents
+-- via platform_tickets(product_id='devai'). Mirrors
+-- db/migrations/0013_seed_devai_app.sql.
+INSERT INTO apps (
+  slug, name, description, status,
+  db_namespace, db_host, db_port, db_admin_secret_name, db_databases,
+  primary_domain, admin_url
+) VALUES
+(
+  'devai',
+  'DevAI',
+  'AI-powered ALM + SRE platform — agents for application lifecycle and incident response.',
+  'active',
+  'devai',
+  'devai-postgres-rw.devai.svc.cluster.local',
+  5432,
+  'devai-platform-admin',
+  '["devai_db"]'::jsonb,
+  'devai.tesserix.app',
+  'https://devai.tesserix.app'
+)
+ON CONFLICT (slug) DO UPDATE SET
+  name                  = EXCLUDED.name,
+  description           = EXCLUDED.description,
+  status                = EXCLUDED.status,
+  db_namespace          = EXCLUDED.db_namespace,
+  db_host               = EXCLUDED.db_host,
+  db_port               = EXCLUDED.db_port,
+  db_admin_secret_name  = EXCLUDED.db_admin_secret_name,
+  db_databases          = EXCLUDED.db_databases,
+  primary_domain        = EXCLUDED.primary_domain,
+  admin_url             = EXCLUDED.admin_url;

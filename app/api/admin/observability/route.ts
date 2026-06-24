@@ -21,7 +21,9 @@ const APP_FILTER: Record<string, string> = {
   mark8ly: "ServiceName LIKE 'mark8ly-%'",
   fe3dr: "ServiceName LIKE 'homechef-%'",
   platform: "ServiceName LIKE 'support-platform-%'",
-  devai: "ServiceName LIKE 'devai-%'",
+  // 'devai%' (not 'devai-%') so it also catches a service that exports the
+  // bare default service.name="devai" (config default) alongside devai-api etc.
+  devai: "ServiceName LIKE 'devai%'",
 };
 
 // Derived app label from the service prefix.
@@ -29,7 +31,7 @@ const APP_CASE = `multiIf(
   ServiceName LIKE 'mark8ly-%','mark8ly',
   ServiceName LIKE 'homechef-%','fe3dr',
   ServiceName LIKE 'support-platform-%','platform',
-  ServiceName LIKE 'devai-%','devai','other')`;
+  ServiceName LIKE 'devai%','devai','other')`;
 
 // OTel status: 'Error' = failure; 'Unset'/'Ok' = success.
 const ERR = "StatusCode = 'Error'";
