@@ -80,9 +80,38 @@ const homechef: ProductConfig = {
   ],
 };
 
+// DevAI — AI-powered ALM + SRE platform (Python FastAPI + LangGraph agents:
+// devai-api, devai-auth-bff, devai-dashboard, devai-mcp-*). Single namespace
+// `devai`, CNPG cluster `devai-postgres`, no subscriptions in v1. There's no
+// tenant/store model, so its overview KPIs are its OTel telemetry (ClickHouse:
+// traces, errors, p95) + open platform incidents — served by the product-scoped
+// route /api/admin/apps/devai/kpis. Traces/logs live on the global Observability
+// page (already devai-filtered), incidents on Platform Tickets (product_id=devai),
+// and service health on the Health page (namespace=devai).
+const devai: ProductConfig = {
+  id: "devai",
+  name: "DevAI",
+  namespace: "devai",
+  cnpgClusterName: "devai-postgres",
+  sendGridProductTag: "devai",
+  rowCountTables: [],
+  costAttribution: {
+    requests: 0.5,
+    storage: 0.3,
+    egress: 0.2,
+  },
+  businessKpiTiles: [
+    { key: "requests_24h", label: "Traces (24h)", hint: "root spans", href: "/admin/observability", source: "product" },
+    { key: "errors_24h", label: "Errors (24h)", hint: "error spans", href: "/admin/observability", source: "product" },
+    { key: "p95_ms", label: "p95 latency", hint: "ms (24h)", href: "/admin/observability", source: "product" },
+    { key: "incidents_open", label: "Open incidents", hint: "open / in progress", href: "/admin/platform-tickets", source: "product" },
+  ],
+};
+
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
   mark8ly,
   homechef,
+  devai,
 };
 
 export function getProductConfig(id: string): ProductConfig {
