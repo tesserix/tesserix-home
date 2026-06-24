@@ -123,11 +123,23 @@ const homechefNav: NavEntry[] = [
   { name: "Analytics", href: "/admin/apps/homechef/analytics", icon: BarChart3 },
 ];
 
-type RailContext = "platform" | "mark8ly" | "homechef";
+// DevAI secondary nav. It has no product-scoped data pages of its own — its
+// analytics + logs come from Observability (devai-filtered), incidents from
+// Platform Tickets, and service health from the Health page. The Overview ties
+// them together (KPI tiles deep-link out).
+const devaiNav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/devai", icon: LayoutDashboard },
+  { name: "Observability", href: "/admin/observability", icon: Gauge },
+  { name: "Service health", href: "/admin/health", icon: HeartPulse },
+  { name: "Incidents", href: "/admin/platform-tickets", icon: LifeBuoy },
+];
+
+type RailContext = "platform" | "mark8ly" | "homechef" | "devai";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
   if (pathname.startsWith("/admin/apps/homechef")) return "homechef";
+  if (pathname.startsWith("/admin/apps/devai")) return "devai";
   return "platform";
 }
 
@@ -137,6 +149,8 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
       return { label: "Mark8ly", entries: mark8lyNav };
     case "homechef":
       return { label: "Fe3dr", entries: homechefNav };
+    case "devai":
+      return { label: "DevAI", entries: devaiNav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
