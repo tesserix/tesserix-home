@@ -141,6 +141,11 @@ export interface ApprovalRequest {
   partnerId?: string | null;
   submittedById: string;
   reviewedById?: string | null;
+  // Computed by the API so every approval shows who submitted it + which
+  // kitchen, regardless of type.
+  requestedByName?: string;
+  requestedByEmail?: string;
+  kitchenName?: string;
   entityType: string;
   entityId: string;
   title: string;

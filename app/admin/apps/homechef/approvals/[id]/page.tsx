@@ -200,6 +200,25 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
       ) : null}
 
       <dl className="grid grid-cols-2 gap-4 rounded-lg border border-border p-4 text-sm">
+        {a.kitchenName ? (
+          <div>
+            <dt className="text-muted-foreground">Kitchen</dt>
+            <dd className="font-medium text-foreground">{a.kitchenName}</dd>
+          </div>
+        ) : null}
+        {a.requestedByName || a.requestedByEmail ? (
+          <div>
+            <dt className="text-muted-foreground">Requested by</dt>
+            <dd className="font-medium text-foreground">
+              {a.requestedByName || "—"}
+              {a.requestedByEmail ? (
+                <span className="block text-xs font-normal text-muted-foreground">
+                  {a.requestedByEmail}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+        ) : null}
         <div>
           <dt className="text-muted-foreground">Priority</dt>
           <dd className="font-medium text-foreground">{titleCase(a.priority)}</dd>
