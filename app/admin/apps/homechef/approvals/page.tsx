@@ -37,7 +37,9 @@ export default function HomechefApprovalsPage() {
   const items = data?.data ?? [];
 
   return (
-    <div className="space-y-6 p-6">
+    // pb-28 keeps the last row's "Review" link clear of the fixed
+    // "Chat with support" widget that floats over the bottom-right corner.
+    <div className="space-y-6 p-6 pb-28">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Approvals</h1>
         <p className="text-sm text-muted-foreground">
@@ -88,8 +90,15 @@ export default function HomechefApprovalsPage() {
             ) : (
               items.map((a) => (
                 <tr key={a.id} className="hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium text-foreground">
-                    {a.title || titleCase(a.type)}
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-foreground">
+                      {a.title || titleCase(a.type)}
+                    </div>
+                    {a.kitchenName || a.requestedByName ? (
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {[a.kitchenName, a.requestedByName].filter(Boolean).join(" · ")}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{titleCase(a.type)}</td>
                   <td className="px-4 py-3">
