@@ -75,13 +75,12 @@ export async function GET(): Promise<Response> {
       },
       cache: "no-store",
     });
-    // On a non-2xx from otto, pass it through untouched.
+    // On a non-2xx from otto, return a generic error — don't echo the upstream
+    // body, which can leak internal host/IP/stack details to the client.
     if (!res.ok) {
-      const text = await res.text();
-      const out = new NextResponse(text, { status: res.status });
-      out.headers.set(
-        "Content-Type",
-        res.headers.get("Content-Type") || "application/json",
+      const out = NextResponse.json(
+        { error: "upstream_error" },
+        { status: res.status },
       );
       out.headers.set("Cache-Control", "no-store");
       return out;
@@ -96,12 +95,7 @@ export async function GET(): Promise<Response> {
     out.headers.set("Cache-Control", "no-store");
     return out;
   } catch (err) {
-    return NextResponse.json(
-      {
-        error: "upstream_unreachable",
-        message: err instanceof Error ? err.message : "otto unreachable",
-      },
-      { status: 502 },
-    );
+    console.error("[otto-analytics] upstream request failed:", err);
+    return NextResponse.json({ error: "upstream_unavailable" }, { status: 502 });
   }
 }
