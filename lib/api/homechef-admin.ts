@@ -7,8 +7,11 @@
 // admin read/write flows through the Go API (preserving Temporal/NATS/Redis/
 // escrow side-effects) with ZERO Go API changes.
 //
-// Wire format (must match bff_auth.go:compute exactly — drift = 401):
-//   X-Internal-Auth = HMAC_SHA256( "${method}\n${path}\n${sha256hex(body)}\n${ts}", key )
+// Wire format (must match bff_auth.go:compute exactly — drift = 401). The
+// identity headers are BOUND INTO the MAC (#461) so the Go side can't be handed
+// a swapped X-User-Role / X-Auth-Pool with a still-valid signature:
+//   X-Internal-Auth = HMAC_SHA256(
+//     "${method}\n${path}\n${sha256hex(body)}\n${ts}\n${userId}\n${email}\n${role}\n${pool}", key )
 //   + X-User-Id, X-User-Email, X-User-Role, X-Auth-Pool, X-Auth-Ts
 // where `path` is the Go server's r.URL.Path (query string excluded) and `key`
 // is the base64-decoded shared HMAC secret (same as the Go side's
@@ -35,9 +38,19 @@ export class HomechefAdminError extends Error {
   }
 }
 
+/** Identity fields bound into the signature (must match the Go `BFFIdentity`). */
+export interface SignedIdentity {
+  userId: string;
+  email: string;
+  role: string;
+  pool: string;
+}
+
 /**
- * Mirrors `compute()` in apps/api/middleware/bff_auth.go:203 exactly.
- * Pure + exported so the unit test can pin it to a fixed vector (drift guard).
+ * Mirrors `compute()` in apps/api/middleware/bff_auth.go exactly, INCLUDING the
+ * identity binding (#461): method/path/bodyhash/ts + userId/email/role/pool, all
+ * "\n"-separated. Pure + exported so the unit test can pin it to a fixed vector
+ * (drift guard). Any divergence from the Go canonical string = 401 at the API.
  */
 export function computeSignature(
   method: string,
@@ -45,10 +58,13 @@ export function computeSignature(
   body: Buffer,
   ts: string,
   key: Buffer,
+  id: SignedIdentity,
 ): string {
   const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
   const mac = crypto.createHmac("sha256", key);
-  mac.update(`${method}\n${path}\n${bodyHash}\n${ts}`);
+  mac.update(
+    `${method}\n${path}\n${bodyHash}\n${ts}\n${id.userId}\n${id.email}\n${id.role}\n${id.pool}`,
+  );
   return mac.digest("hex");
 }
 
@@ -73,14 +89,20 @@ export function buildSignedHeaders(
 ): Record<string, string> {
   const key = Buffer.from(keyBase64, "base64");
   const ts = Math.floor(now / 1000).toString();
+  const id: SignedIdentity = {
+    userId: actor.userId,
+    email: actor.email,
+    role: "admin",
+    pool: "internal",
+  };
   return {
     "Content-Type": "application/json",
-    "X-User-Id": actor.userId,
-    "X-User-Email": actor.email,
-    "X-User-Role": "admin",
-    "X-Auth-Pool": "internal",
+    "X-User-Id": id.userId,
+    "X-User-Email": id.email,
+    "X-User-Role": id.role,
+    "X-Auth-Pool": id.pool,
     "X-Auth-Ts": ts,
-    "X-Internal-Auth": computeSignature(method, path, body, ts, key),
+    "X-Internal-Auth": computeSignature(method, path, body, ts, key, id),
   };
 }
 
