@@ -274,6 +274,34 @@ export interface OrderIssue {
   updatedAt: string;
 }
 
+// ---- Payouts (admin release queue, #388) ------------------------------------
+// Mirrors apps/api/services/payout_release.go PendingPayout + the GetPendingPayouts
+// envelope. The hold lifecycle matches models/payout_hold.go PayoutHoldStatus.
+export type PayoutHoldStatus =
+  | "awaiting_customer_confirmation"
+  | "release_eligible"
+  | "released"
+  | "withheld"
+  | "reversed"
+  | "disputed";
+
+export interface PendingPayout {
+  aggType: "order" | "meal-plan-day";
+  id: string;
+  chefId: string;
+  amount: number;
+  holdStatus: PayoutHoldStatus;
+  deliveredAt?: string | null;
+  ageHours: number;
+  customerConfirmedAt?: string | null;
+  context: string;
+}
+
+export interface PendingPayoutsResponse {
+  payouts: PendingPayout[];
+  count: number;
+}
+
 // ---- Staff ------------------------------------------------------------------
 export interface StaffMember {
   id: string;
