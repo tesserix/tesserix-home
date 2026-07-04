@@ -1,0 +1,38 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "http://localhost:3002",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "849928263410-n0rvsuvfb01uti8evdv0epl369a0sbpm.apps.googleusercontent.com",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "true"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "849928263410-n0rvsuvfb01uti8evdv0epl369a0sbpm.apps.googleusercontent.com"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "849928263410-n0rvsuvfb01uti8evdv0epl369a0sbpm.apps.googleusercontent.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "2CRHRRYBPL"
+      }
+    }
+  }
+}

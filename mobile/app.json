@@ -9,7 +9,16 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.tesserix.admin"
+      "bundleIdentifier": "app.tesserix.admin",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.849928263410-n0rvsuvfb01uti8evdv0epl369a0sbpm"
+            ]
+          }
+        ]
+      }
     },
     "android": {
       "package": "app.tesserix.admin",
