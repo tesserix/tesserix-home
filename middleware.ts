@@ -51,7 +51,10 @@ function isPublicPath(pathname: string): boolean {
       pathname.startsWith(p + "/") ||
       pathname.startsWith("/_next") ||
       // Self-hosted OAuth flow (login redirect, callback, logout).
-      pathname.startsWith("/auth/"),
+      pathname.startsWith("/auth/") ||
+      // Mobile admin sign-in (verifies a Google id_token + mints a bearer
+      // session; the /session route validates its own bearer). Pre-auth.
+      pathname.startsWith("/api/auth/mobile/"),
   );
 }
 
@@ -155,14 +158,21 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  // Locally verify the encrypted session cookie. This is fast (no
-  // network), handled by tesserix-home itself, and removes the
-  // cross-namespace dependency on auth-bff for protected page renders.
-  const sessionCookie = request.cookies.get(sessionCookieName());
-  if (!sessionCookie) {
+  // Accept either the encrypted session COOKIE (web) or an
+  // `Authorization: Bearer <token>` header carrying the same encrypted session
+  // (the mobile admin app — it can't use the .tesserix.app httpOnly cookie).
+  // Both are the identical JWE minted by signSession, so verification is shared.
+  const authHeader = request.headers.get("authorization");
+  const bearer =
+    authHeader && authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : null;
+  const sessionToken =
+    request.cookies.get(sessionCookieName())?.value ?? bearer;
+  if (!sessionToken) {
     return unauthorized(request);
   }
-  const session = await verifySession(sessionCookie.value);
+  const session = await verifySession(sessionToken);
   if (!session) {
     return unauthorized(request);
   }

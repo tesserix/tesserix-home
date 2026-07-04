@@ -10,6 +10,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The Expo/React Native admin app has its own toolchain — the Next web
+    // lint config doesn't apply to it.
+    "mobile/**",
   ]),
   {
     rules: {

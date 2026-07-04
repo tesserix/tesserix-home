@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Tesserix Admin",
+    "slug": "tesserix-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "tesserix-admin",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "app.tesserix.admin"
+    },
+    "android": {
+      "package": "app.tesserix.admin",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0F172A",
+          "resizeMode": "contain",
+          "imageWidth": 160
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {}
+    },
+    "owner": "tesserix-org"
+  }
+}
