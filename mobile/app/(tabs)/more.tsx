@@ -1,5 +1,5 @@
 import { Alert, ScrollView, Text, View } from 'react-native';
-import { LogOut, Search, Settings } from 'lucide-react-native';
+import { Search, Settings } from 'lucide-react-native';
 import { useAuth } from '../../lib/auth';
 import { Card, ListRow, Screen, ScreenHeader, SectionLabel, Button } from '../../components/kit';
 import { usePalette, space, text, radius } from '../../lib/theme';

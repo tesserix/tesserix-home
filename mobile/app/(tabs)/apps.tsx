@@ -1,4 +1,4 @@
-import { ScrollView, View } from 'react-native';
+import { ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ChefHat, Store, Bot } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader } from '../../components/kit';
