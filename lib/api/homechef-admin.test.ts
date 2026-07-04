@@ -7,6 +7,9 @@ import { buildSignedHeaders, computeSignature } from "./homechef-admin";
 // identical formula; any drift in computeSignature() fails here BEFORE it ships.
 const KEY = Buffer.from("test-key-32-bytes-padding-padding!");
 const KEY_B64 = KEY.toString("base64");
+// The identity bound into the MAC (#461). Matches buildSignedHeaders' pinned
+// admin/internal role/pool so the GET vector below is shared with that test.
+const ID = { userId: "u-1", email: "ops@tesserix.com", role: "admin", pool: "internal" };
 
 describe("computeSignature (parity with Go bff_auth.go:compute)", () => {
   it("matches the fixed vector for a PUT with a JSON body", () => {
@@ -16,9 +19,10 @@ describe("computeSignature (parity with Go bff_auth.go:compute)", () => {
       Buffer.from(JSON.stringify({ reason: "ok" })),
       "1700000000",
       KEY,
+      ID,
     );
     expect(sig).toBe(
-      "98c2cbe720f510bd1017b9de5bcdeee2f362baf086505ce208a85ac510da38d4",
+      "55261490f58766b0bd2c3dbf331feae55071709fda0d4cedd2879044f53af5f2",
     );
   });
 
@@ -29,16 +33,26 @@ describe("computeSignature (parity with Go bff_auth.go:compute)", () => {
       Buffer.alloc(0),
       "1700000000",
       KEY,
+      ID,
     );
     expect(sig).toBe(
-      "683f8207ad98ca5df28a0cd2a58804395a614bd6db6fa0f413aba0b54073afa4",
+      "45b71ada5327f105446247af9827dc5fcbc911ba53abd41d365e63e9e6e693b2",
     );
   });
 
   it("changes when the body changes (body is bound into the signature)", () => {
-    const a = computeSignature("POST", "/api/v1/admin/x", Buffer.from("a"), "1", KEY);
-    const b = computeSignature("POST", "/api/v1/admin/x", Buffer.from("b"), "1", KEY);
+    const a = computeSignature("POST", "/api/v1/admin/x", Buffer.from("a"), "1", KEY, ID);
+    const b = computeSignature("POST", "/api/v1/admin/x", Buffer.from("b"), "1", KEY, ID);
     expect(a).not.toBe(b);
+  });
+
+  it("changes when the role is escalated (identity is bound — #461)", () => {
+    const asCustomer = computeSignature("GET", "/api/v1/admin/x", Buffer.alloc(0), "1", KEY, {
+      ...ID,
+      role: "customer",
+    });
+    const asAdmin = computeSignature("GET", "/api/v1/admin/x", Buffer.alloc(0), "1", KEY, ID);
+    expect(asCustomer).not.toBe(asAdmin);
   });
 });
 
@@ -58,7 +72,7 @@ describe("buildSignedHeaders", () => {
     expect(headers["X-User-Email"]).toBe("ops@tesserix.com");
     expect(headers["X-Auth-Ts"]).toBe("1700000000");
     expect(headers["X-Internal-Auth"]).toBe(
-      "683f8207ad98ca5df28a0cd2a58804395a614bd6db6fa0f413aba0b54073afa4",
+      "45b71ada5327f105446247af9827dc5fcbc911ba53abd41d365e63e9e6e693b2",
     );
   });
 });
