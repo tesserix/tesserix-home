@@ -315,3 +315,55 @@ export interface StaffMember {
   lastActiveAt?: string;
   createdAt: string;
 }
+
+// ---- Delivery-failure resolution queue (#613) --------------------------------
+// The read-only admin queue over apps/api GET /admin/delivery-failures. An admin
+// confirms a fault per row and the matching resolve-delivery-failure endpoint runs
+// the money policy (customer → chef paid, no refund; platform/chef → full refund +
+// chef payout blocked). Categories are disjoint (gateway/chef-self-delivery → an
+// OrderIssue; meal-plan days / group orders → status=failed shells, no issue).
+export type DeliveryFaultClass = "customer" | "platform" | "chef";
+
+export interface OrderDeliveryFailure {
+  issueId: string;
+  orderId: string;
+  orderNumber: string;
+  customerId: string;
+  chefId: string;
+  total: number;
+  holdStatus: PayoutHoldStatus;
+  description: string;
+  reason: string;
+  suggestedFault: string;
+  reportedBy: string;
+  createdAt: string;
+}
+
+export interface DayDeliveryFailure {
+  dayId: string;
+  mealPlanId: string;
+  mealPlanNumber: string;
+  customerId: string;
+  chefId: string;
+  date: string;
+  price: number;
+  holdStatus: PayoutHoldStatus;
+  updatedAt: string;
+}
+
+export interface GroupDeliveryFailure {
+  groupId: string;
+  hostId: string;
+  chefId: string;
+  subtotal: number;
+  tax: number;
+  holdStatus: PayoutHoldStatus;
+  updatedAt: string;
+}
+
+export interface DeliveryFailuresResponse {
+  orderIssues: OrderDeliveryFailure[];
+  mealPlanDays: DayDeliveryFailure[];
+  groupOrders: GroupDeliveryFailure[];
+  count: number;
+}
