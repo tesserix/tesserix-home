@@ -11,6 +11,9 @@ import type { OrderIssue, Paginated, SupportTicket } from "@/lib/products/homech
 
 const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"];
 
+// #618 fault policy for resolving an order-issue refund (see AdminResolveIssue).
+type FaultPolicy = "chef_clawback" | "platform_goodwill";
+
 function ticketTone(s: string): Tone {
   if (s === "resolved" || s === "closed") return "success";
   if (s === "open") return "warning";
@@ -136,16 +139,25 @@ function IssuesTab() {
     { refreshInterval: 30_000 },
   );
 
-  async function resolve(it: OrderIssue) {
+  // #618: resolving a refund carries a FAULT POLICY. `chef_clawback` (the default)
+  // reverses the chef's payout; `platform_goodwill` refunds the customer but lets the
+  // chef KEEP their payout (platform absorbs the cost) — PARTIAL refunds only, so the
+  // backend 422s a goodwill request that would fully refund (surfaced via e.message).
+  async function resolve(it: OrderIssue, policy: FaultPolicy) {
+    const goodwill = policy === "platform_goodwill";
     const amtStr = await prompt({
-      title: "Resolve & refund",
-      message: `Approve a refund for this order issue. Requested: ${formatINR(it.requestedAmount)}.`,
+      title: goodwill ? "Goodwill refund" : "Resolve & refund",
+      message: goodwill
+        ? `Refund the customer as platform goodwill — the chef KEEPS their payout and the platform absorbs the cost. Partial refunds only. Requested: ${formatINR(it.requestedAmount)}.`
+        : `Approve a refund and claw it back from the chef's payout. Requested: ${formatINR(it.requestedAmount)}.`,
       label: "Refund amount (₹)",
-      placeholder: String(it.requestedAmount || ""),
-      defaultValue: String(it.requestedAmount || ""),
+      // Goodwill is PARTIAL-only (a full refund 422s), so don't pre-fill the full
+      // requested amount — start blank so the happy path isn't a guaranteed reject.
+      placeholder: goodwill ? "Partial amount (less than full)" : String(it.requestedAmount || ""),
+      defaultValue: goodwill ? "" : String(it.requestedAmount || ""),
       numeric: true,
       required: true,
-      confirmLabel: "Resolve & refund",
+      confirmLabel: goodwill ? "Refund as goodwill" : "Resolve & refund",
     });
     if (amtStr === null) return;
     const amount = Number(amtStr);
@@ -156,7 +168,7 @@ function IssuesTab() {
     setError(null);
     setBusyId(it.id);
     try {
-      await hcAdmin.post(`/order-issues/${it.id}/resolve`, { amount });
+      await hcAdmin.post(`/order-issues/${it.id}/resolve`, { amount, faultPolicy: policy });
       await mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Resolve failed");
@@ -244,10 +256,19 @@ function IssuesTab() {
                       <div className="flex justify-end gap-2">
                         <button
                           disabled={busyId === it.id}
-                          onClick={() => resolve(it)}
+                          onClick={() => resolve(it, "chef_clawback")}
                           className="rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+                          title="Refund the customer and claw it back from the chef's payout"
                         >
                           Resolve
+                        </button>
+                        <button
+                          disabled={busyId === it.id}
+                          onClick={() => resolve(it, "platform_goodwill")}
+                          className="rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                          title="Refund the customer as goodwill — the chef keeps their payout (partial refunds only)"
+                        >
+                          Goodwill
                         </button>
                         <button
                           disabled={busyId === it.id}
