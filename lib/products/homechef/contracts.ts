@@ -274,6 +274,45 @@ export interface OrderIssue {
   updatedAt: string;
 }
 
+// Admin-tunable refund policy for order issues (#262/#618): refunds up to the cap
+// auto-approve; above it they queue for review. Mirrors GET/PUT /admin/order-issue/config.
+export interface OrderIssueConfig {
+  enabled: boolean;
+  autoApproveCap: number;
+  defaultFaultPolicy?: string;
+}
+
+// ---- Cancellation arbitration (#475 / #480) ---------------------------------
+// Disputed cancellations + vendor timeouts an admin rules on. The admin picks the
+// tier matching what actually happened; the Go API issues the refund (timeout) or
+// tops it up to the difference (dispute). Amounts are snapshotted in paise; the
+// platform fee is never refundable and the admin can only RAISE a refund, never
+// claw one back. Mirrors apps/api/handlers/admin_cancellation.go.
+export interface AdminCancellationRequest {
+  id: string;
+  orderId: string;
+  status: string;
+  customerReason?: string;
+  vendorReason?: string;
+  disputeReason?: string;
+  refundTotalPaise: number;
+  vendorKeptPaise: number;
+  refundExecuted: boolean;
+  createdAt: string;
+}
+
+// The refund tiers, shared verbatim with the vendor + customer + web + mobile
+// surfaces. The percentage each tier refunds is admin-configurable server-side
+// (cancel.refund.*_pct in PlatformSettings); the hints reflect the defaults.
+export const CANCEL_REASONS = [
+  { value: "not_started", label: "Not started yet", hint: "Customer gets most of it back (~90%)" },
+  { value: "materials_purchased", label: "Ingredients bought", hint: "Materials covered — ~40% back" },
+  { value: "in_preparation", label: "Already cooking", hint: "Preparation started — no refund" },
+  { value: "ready", label: "Already made", hint: "Food is ready — no refund" },
+] as const;
+
+export type CancelReasonValue = (typeof CANCEL_REASONS)[number]["value"];
+
 // ---- Payouts (admin release queue, #388) ------------------------------------
 // Mirrors apps/api/services/payout_release.go PendingPayout + the GetPendingPayouts
 // envelope. The hold lifecycle matches models/payout_hold.go PayoutHoldStatus.
