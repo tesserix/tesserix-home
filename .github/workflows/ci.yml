@@ -32,6 +32,7 @@ permissions:
   contents: read
   packages: write
   security-events: write
+  actions: read
 
 jobs:
   build-and-push:
@@ -40,6 +41,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      actions: read # upload-sarif@v3 reads the run's metadata (else it 403s on push)
     steps:
       - uses: actions/checkout@v4
 
