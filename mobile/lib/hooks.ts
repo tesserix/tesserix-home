@@ -17,6 +17,8 @@ import type {
   SupportTicket,
   StaffMember,
   WalletResponse,
+  AdminCancellationRequest,
+  OrderIssue,
 } from './contracts';
 
 export const qk = {
@@ -58,6 +60,59 @@ export const useStaff = (p: { page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.staff(p), queryFn: () => hc.get<Paginated<StaffMember>>('/staff', p) });
 export const useWallet = (userId: string) =>
   useQuery({ queryKey: qk.wallet(userId), queryFn: () => hc.get<WalletResponse>(`/wallet/${userId}`), enabled: !!userId });
+
+// Cancellation arbitration (#475/#480): disputes + vendor timeouts. The admin
+// picks the tier and the Go API issues/tops-up the refund. Amounts are in paise.
+export const useCancellations = (status = '') =>
+  useQuery({
+    queryKey: ['hc', 'cancel-requests', status] as const,
+    queryFn: () =>
+      hc.get<{ data: AdminCancellationRequest[] }>('/cancel-requests', status ? { status } : undefined),
+    refetchInterval: 30_000,
+  });
+
+export function useResolveCancellation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; reason: string; note?: string }) =>
+      hc.post(`/cancel-requests/${a.id}/resolve`, { reason: a.reason, note: a.note ?? '' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'cancel-requests'] }),
+  });
+}
+
+// Order-issue refunds (#262/#618): resolve (chef_clawback | platform_goodwill) or reject.
+export const useOrderIssues = (status = 'pending') =>
+  useQuery({
+    queryKey: ['hc', 'order-issues', status] as const,
+    queryFn: () => hc.get<{ data: OrderIssue[]; count: number }>('/order-issues', { status }),
+    refetchInterval: 30_000,
+  });
+
+export function useResolveOrderIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; amount: number; faultPolicy: 'chef_clawback' | 'platform_goodwill' }) =>
+      hc.post(`/order-issues/${a.id}/resolve`, { amount: a.amount, faultPolicy: a.faultPolicy }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'order-issues'] }),
+  });
+}
+
+export function useRejectOrderIssue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => hc.post(`/order-issues/${id}/reject`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'order-issues'] }),
+  });
+}
+
+export function useSetTicketStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; status: string }) =>
+      hc.put(`/support/tickets/${a.id}/status`, { status: a.status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'tickets'] }),
+  });
+}
 
 /** Generic mutation helper: PUT a verb path (verify/suspend/hide…) then invalidate. */
 export function useAdminAction(invalidate: readonly unknown[]) {

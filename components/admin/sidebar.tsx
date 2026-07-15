@@ -34,6 +34,7 @@ import {
   BarChart3,
   HandCoins,
   PackageX,
+  Scale,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -122,6 +123,7 @@ const homechefNav: NavEntry[] = [
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
   { name: "Release Queue", href: "/admin/apps/homechef/payout-queue", icon: HandCoins },
   { name: "Delivery Failures", href: "/admin/apps/homechef/delivery-failures", icon: PackageX },
+  { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
   { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
   { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
   { name: "Analytics", href: "/admin/apps/homechef/analytics", icon: BarChart3 },
