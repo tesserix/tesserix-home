@@ -7,7 +7,7 @@ import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import type { OrderIssue, Paginated, SupportTicket } from "@/lib/products/homechef/contracts";
+import type { OrderIssue, OrderIssueConfig, Paginated, SupportTicket } from "@/lib/products/homechef/contracts";
 
 const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"];
 
@@ -128,6 +128,77 @@ function TicketsTab() {
   );
 }
 
+// Admin-tunable refund policy (#262): order-issue refunds at or below the cap are
+// paid to the customer's wallet automatically; above it they queue here for review.
+function IssuePolicyCard() {
+  const { data, mutate } = useSWR<OrderIssueConfig>(["/order-issue/config", {}], swrFetcher);
+  const { prompt } = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!data) return null;
+
+  async function update(payload: { enabled?: boolean; autoApproveCap?: number }) {
+    setError(null);
+    setBusy(true);
+    try {
+      await hcAdmin.put("/order-issue/config", payload);
+      await mutate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update the policy");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function editCap() {
+    const v = await prompt({
+      title: "Auto-approve cap",
+      message:
+        "Order-issue refunds at or below this amount (₹) are paid to the customer's wallet automatically; anything above waits here for review.",
+      label: "Cap (₹)",
+      defaultValue: String(data?.autoApproveCap ?? ""),
+      numeric: true,
+      required: true,
+      confirmLabel: "Save cap",
+    });
+    if (v === null) return;
+    await update({ autoApproveCap: Number(v) });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 p-4">
+      <div>
+        <p className="text-sm font-medium text-foreground">Auto-approve policy</p>
+        <p className="text-xs text-muted-foreground">
+          {data.enabled ? "Enabled" : "Disabled"} · refunds up to{" "}
+          <span className="font-medium tabular-nums text-foreground">{formatINR(data.autoApproveCap)}</span> are
+          paid automatically.
+        </p>
+        {error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => update({ enabled: !data.enabled })}
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+        >
+          {data.enabled ? "Disable" : "Enable"}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={editCap}
+          className="rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+        >
+          Edit cap
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function IssuesTab() {
   const [status, setStatus] = useState("pending");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -201,6 +272,7 @@ function IssuesTab() {
 
   return (
     <div className="space-y-4">
+      <IssuePolicyCard />
       <div className="flex gap-1">
         {["pending", "resolved", "rejected"].map((s) => (
           <button

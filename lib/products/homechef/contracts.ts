@@ -274,6 +274,14 @@ export interface OrderIssue {
   updatedAt: string;
 }
 
+// Admin-tunable refund policy for order issues (#262/#618): refunds up to the cap
+// auto-approve; above it they queue for review. Mirrors GET/PUT /admin/order-issue/config.
+export interface OrderIssueConfig {
+  enabled: boolean;
+  autoApproveCap: number;
+  defaultFaultPolicy?: string;
+}
+
 // ---- Cancellation arbitration (#475 / #480) ---------------------------------
 // Disputed cancellations + vendor timeouts an admin rules on. The admin picks the
 // tier matching what actually happened; the Go API issues the refund (timeout) or

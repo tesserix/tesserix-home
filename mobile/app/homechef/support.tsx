@@ -8,6 +8,8 @@ import {
   useRejectOrderIssue,
   useTickets,
   useSetTicketStatus,
+  useOrderIssueConfig,
+  useUpdateOrderIssueConfig,
 } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
 import { formatINR, formatDateTime, titleCase } from '../../lib/format';
@@ -72,6 +74,80 @@ function issueTone(s: string): Tone {
   return 'warning';
 }
 
+// Admin-tunable refund policy (#262): order-issue refunds at or below the cap are
+// paid to the customer's wallet automatically; above it they queue for review.
+function PolicyCard() {
+  const p = usePalette();
+  const q = useOrderIssueConfig();
+  const update = useUpdateOrderIssueConfig();
+  const [editing, setEditing] = useState(false);
+  const [cap, setCap] = useState('');
+  const cfg = q.data;
+  if (!cfg) return null;
+
+  function save() {
+    const n = Number(cap);
+    if (!Number.isFinite(n) || n < 0) {
+      Alert.alert('Enter a cap', 'Enter a valid amount (₹).');
+      return;
+    }
+    update.mutate(
+      { autoApproveCap: n },
+      { onSuccess: () => setEditing(false), onError: (e) => Alert.alert('Could not update', apiError(e)) },
+    );
+  }
+
+  return (
+    <View style={[styles.card, { marginHorizontal: space[4], marginBottom: space[3], backgroundColor: p.surface, borderColor: p.border }]}>
+      <Text style={[text.title, { color: p.foreground }]}>Auto-approve policy</Text>
+      <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>
+        {cfg.enabled ? 'Enabled' : 'Disabled'} · refunds up to {formatINR(cfg.autoApproveCap)} are paid automatically.
+      </Text>
+      {editing ? (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, alignItems: 'center' }}>
+          <TextInput
+            value={cap}
+            onChangeText={setCap}
+            keyboardType="numeric"
+            placeholder="Cap (₹)"
+            placeholderTextColor={p.mutedForeground}
+            style={[styles.input, { flex: 1, borderColor: p.border, color: p.foreground, backgroundColor: p.muted }]}
+          />
+          <View style={{ width: 96 }}>
+            <Button label="Save" onPress={save} loading={update.isPending} />
+          </View>
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Button
+              label={cfg.enabled ? 'Disable' : 'Enable'}
+              variant="secondary"
+              onPress={() =>
+                update.mutate(
+                  { enabled: !cfg.enabled },
+                  { onError: (e) => Alert.alert('Could not update', apiError(e)) },
+                )
+              }
+              disabled={update.isPending}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Button
+              label="Edit cap"
+              variant="ghost"
+              onPress={() => {
+                setCap(String(cfg.autoApproveCap ?? ''));
+                setEditing(true);
+              }}
+            />
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function RefundsTab() {
   const [status, setStatus] = useState('pending');
   const q = useOrderIssues(status);
@@ -79,6 +155,7 @@ function RefundsTab() {
 
   return (
     <>
+      <PolicyCard />
       <View style={{ paddingBottom: space[3] }}>
         <FilterChips options={ISSUE_STATUSES} value={status} onChange={setStatus} />
       </View>

@@ -19,6 +19,9 @@ import type {
   WalletResponse,
   AdminCancellationRequest,
   OrderIssue,
+  OrderIssueConfig,
+  DeliveryFailuresResponse,
+  DeliveryFaultClass,
 } from './contracts';
 
 export const qk = {
@@ -111,6 +114,34 @@ export function useSetTicketStatus() {
     mutationFn: (a: { id: string; status: string }) =>
       hc.put(`/support/tickets/${a.id}/status`, { status: a.status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'tickets'] }),
+  });
+}
+
+// Order-issue refund policy (#262): the admin-tunable auto-approve cap.
+export const useOrderIssueConfig = () =>
+  useQuery({ queryKey: ['hc', 'order-issue-config'] as const, queryFn: () => hc.get<OrderIssueConfig>('/order-issue/config') });
+
+export function useUpdateOrderIssueConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { enabled?: boolean; autoApproveCap?: number }) => hc.put('/order-issue/config', payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'order-issue-config'] }),
+  });
+}
+
+// Delivery-failure fault resolution (#613): confirm a fault → Go runs the money policy.
+export const useDeliveryFailures = () =>
+  useQuery({
+    queryKey: ['hc', 'delivery-failures'] as const,
+    queryFn: () => hc.get<DeliveryFailuresResponse>('/delivery-failures'),
+    refetchInterval: 30_000,
+  });
+
+export function useResolveDeliveryFailure() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { path: string; fault: DeliveryFaultClass }) => hc.post(a.path, { fault: a.fault }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'delivery-failures'] }),
   });
 }
 

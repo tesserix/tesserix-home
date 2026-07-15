@@ -2,7 +2,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   ChevronLeft, ShoppingBag, ChefHat, ClipboardCheck, Truck, ShieldCheck, CalendarRange,
-  Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale,
+  Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale, PackageX,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
@@ -18,6 +18,7 @@ const SECTIONS = [
   ]},
   { group: 'Money', items: [
     { title: 'Cancellations', sub: 'Refund arbitration', icon: Scale, route: '/homechef/cancellations', live: true },
+    { title: 'Delivery failures', sub: 'Confirm fault + refund', icon: PackageX, route: '/homechef/delivery-failures', live: true },
     { title: 'Payouts', sub: 'Weekly chef statements', icon: BadgeIndianRupee, route: '/homechef/payouts', live: false },
     { title: 'Wallets', sub: 'Customer credit', icon: Wallet, route: '/homechef/wallets', live: false },
   ]},

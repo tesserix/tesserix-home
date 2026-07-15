@@ -274,6 +274,14 @@ export interface OrderIssue {
   updatedAt: string;
 }
 
+// Admin-tunable refund policy for order issues (#262/#618): refunds up to the cap
+// auto-approve; above it they queue for review. Mirrors GET/PUT /admin/order-issue/config.
+export interface OrderIssueConfig {
+  enabled: boolean;
+  autoApproveCap: number;
+  defaultFaultPolicy?: string;
+}
+
 // ---- Cancellation arbitration (#475 / #480) ---------------------------------
 // Disputed cancellations + vendor timeouts an admin rules on. The admin picks the
 // tier matching what actually happened; the Go API issues the refund (timeout) or
@@ -317,4 +325,84 @@ export interface StaffMember {
   permissions?: string[];
   lastActiveAt?: string;
   createdAt: string;
+}
+
+// ---- Payouts (admin release queue, #388) ------------------------------------
+// Mirrors apps/api/services/payout_release.go PendingPayout + the GetPendingPayouts
+// envelope. The hold lifecycle matches models/payout_hold.go PayoutHoldStatus.
+export type PayoutHoldStatus =
+  | "awaiting_customer_confirmation"
+  | "release_eligible"
+  | "released"
+  | "withheld"
+  | "reversed"
+  | "disputed";
+
+export interface PendingPayout {
+  aggType: "order" | "meal-plan-day";
+  id: string;
+  chefId: string;
+  amount: number;
+  holdStatus: PayoutHoldStatus;
+  deliveredAt?: string | null;
+  ageHours: number;
+  customerConfirmedAt?: string | null;
+  context: string;
+}
+
+export interface PendingPayoutsResponse {
+  payouts: PendingPayout[];
+  count: number;
+}
+
+// ---- Delivery-failure resolution queue (#613) --------------------------------
+// The read-only admin queue over apps/api GET /admin/delivery-failures. An admin
+// confirms a fault per row and the matching resolve-delivery-failure endpoint runs
+// the money policy (customer → chef paid, no refund; platform/chef → full refund +
+// chef payout blocked). Categories are disjoint (gateway/chef-self-delivery → an
+// OrderIssue; meal-plan days / group orders → status=failed shells, no issue).
+export type DeliveryFaultClass = "customer" | "platform" | "chef";
+
+export interface OrderDeliveryFailure {
+  issueId: string;
+  orderId: string;
+  orderNumber: string;
+  customerId: string;
+  chefId: string;
+  total: number;
+  holdStatus: PayoutHoldStatus;
+  description: string;
+  reason: string;
+  suggestedFault: string;
+  reportedBy: string;
+  createdAt: string;
+}
+
+export interface DayDeliveryFailure {
+  dayId: string;
+  mealPlanId: string;
+  mealPlanNumber: string;
+  customerId: string;
+  chefId: string;
+  date: string;
+  price: number;
+  holdStatus: PayoutHoldStatus;
+  updatedAt: string;
+}
+
+export interface GroupDeliveryFailure {
+  groupId: string;
+  hostId: string;
+  chefId: string;
+  subtotal: number;
+  tax: number;
+  holdStatus: PayoutHoldStatus;
+  updatedAt: string;
+}
+
+export interface DeliveryFailuresResponse {
+  orderIssues: OrderDeliveryFailure[];
+  mealPlanDays: DayDeliveryFailure[];
+  groupOrders: GroupDeliveryFailure[];
+  count: number;
 }
