@@ -442,3 +442,28 @@ export const WINBACK_TRIGGER_LABEL: Record<string, string> = {
   subscription_cancelled: "Subscription cancelled",
   subscription_suspended: "Subscription suspended",
 };
+
+// ── Loyalty (#40) ────────────────────────────────────────────────────────────
+// Points earned per rupee, redeemable as wallet store credit, plus streaks and
+// tiers. Config is the loyalty.* PlatformSettings block — runtime-tunable.
+
+export interface LoyaltyConfig {
+  enabled: boolean;
+  pointsPerRupee: number;
+  redeemRate: number;
+  minRedeem: number;
+  streakThreshold: number;
+  streakBonus: number;
+  streakGraceDays: number;
+  tierSilverAt: number;
+  tierGoldAt: number;
+}
+
+export interface LoyaltyAnalytics {
+  members: number;
+  outstandingPts: number;
+  pointsEarned: number;
+  pointsRedeemed: number;
+  activeStreaks: number;
+  longestStreak: number;
+}
