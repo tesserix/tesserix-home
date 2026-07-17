@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR } from "@/lib/products/homechef/format";
+import Link from "next/link";
+
+import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ChefWithStats, Paginated } from "@/lib/products/homechef/contracts";
@@ -23,10 +25,86 @@ function chefStatus(c: ChefWithStats): { label: string; tone: Tone } {
   return { label: "Verified", tone: "success" };
 }
 
+// Chef metadata, expanded in place.
+//
+// There is deliberately no fetch here: the Go API has no GET /admin/chefs/:id
+// (only the list, plus /chefs/fssai-locked), and every field below already
+// arrives on the list row. Inventing a detail request would mean either a new
+// backend endpoint or an N+1 that returns exactly what we already hold. The
+// mobile admin resolves detail from the list for the same reason.
+//
+// What ISN'T on the row — documents, payouts, FSSAI history — is linked out to
+// the section that owns it rather than half-rendered here.
+function ChefDetail({ chef }: { chef: ChefWithStats }) {
+  const facts: ReadonlyArray<{ label: string; value: string }> = [
+    { label: "Kitchen type", value: chef.kitchenType ? titleCase(chef.kitchenType) : "—" },
+    { label: "Cuisines", value: chef.cuisines?.length ? chef.cuisines.join(", ") : "—" },
+    { label: "Owner", value: chef.ownerName || "—" },
+    { label: "Email", value: chef.ownerEmail || "—" },
+    { label: "Phone", value: chef.ownerPhone || "—" },
+    { label: "Joined", value: formatDateTime(chef.createdAt) },
+    { label: "Menu items", value: String(chef.menuItemCount) },
+    { label: "Documents", value: String(chef.documentCount) },
+    { label: "Total orders", value: String(chef.totalOrders) },
+    { label: "Total revenue", value: formatINR(chef.totalRevenue) },
+    { label: "Rating", value: `${chef.rating?.toFixed(1) ?? "0.0"}★` },
+    {
+      label: "Accepting orders",
+      value: chef.acceptingOrders ? "Yes" : "No",
+    },
+    { label: "Online status", value: chef.onlineStatus ? titleCase(chef.onlineStatus) : "—" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+        {facts.map((f) => (
+          <div key={f.label}>
+            <dt className="text-xs text-muted-foreground">{f.label}</dt>
+            <dd className="text-sm text-foreground">{f.value}</dd>
+          </div>
+        ))}
+        <div className="col-span-2 sm:col-span-3 lg:col-span-4">
+          <dt className="text-xs text-muted-foreground">Chef ID</dt>
+          <dd className="font-mono text-xs text-foreground">{chef.id}</dd>
+        </div>
+      </dl>
+
+      <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+        <Link
+          href={`/admin/apps/homechef/orders?chefId=${chef.id}`}
+          className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+        >
+          Orders
+        </Link>
+        <Link
+          href={`/admin/apps/homechef/payouts?chefId=${chef.id}`}
+          className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+        >
+          Payouts
+        </Link>
+        <Link
+          href={`/admin/apps/homechef/reviews?chefId=${chef.id}`}
+          className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+        >
+          Reviews
+        </Link>
+        <Link
+          href={`/admin/apps/homechef/approvals?search=${encodeURIComponent(chef.businessName ?? "")}`}
+          className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70"
+        >
+          Approval + documents
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 export default function HomechefChefsPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm, prompt } = useConfirm();
 
@@ -146,14 +224,24 @@ export default function HomechefChefsPage() {
                 const s = chefStatus(c);
                 const busy = busyId === c.id;
                 return (
-                  <tr key={c.id} className="hover:bg-muted/30">
+                  <Fragment key={c.id}>
+                  <tr className="hover:bg-muted/30">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-foreground">
-                        {c.businessName || "Unnamed kitchen"}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {c.rating?.toFixed(1) ?? "0.0"}★ · {c.menuItemCount} items
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setOpenId(openId === c.id ? null : c.id)}
+                        className="text-left"
+                        aria-expanded={openId === c.id}
+                        aria-controls={`chef-detail-${c.id}`}
+                      >
+                        <div className="font-medium text-foreground underline-offset-2 hover:underline">
+                          {c.businessName || "Unnamed kitchen"}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {c.rating?.toFixed(1) ?? "0.0"}★ · {c.menuItemCount} items ·{" "}
+                          {openId === c.id ? "hide details" : "details"}
+                        </div>
+                      </button>
                     </td>
                     <td className="px-4 py-3">
                       <div className="text-foreground">{c.ownerName || "—"}</div>
@@ -201,6 +289,14 @@ export default function HomechefChefsPage() {
                       </div>
                     </td>
                   </tr>
+                  {openId === c.id ? (
+                    <tr id={`chef-detail-${c.id}`} className="bg-muted/20">
+                      <td colSpan={6} className="px-4 py-4">
+                        <ChefDetail chef={c} />
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 );
               })
             )}
