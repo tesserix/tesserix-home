@@ -176,7 +176,10 @@ function AnalyticsCard() {
         ))}
       </div>
 
-      {data.byTrigger.length > 0 ? (
+      {/* A nil Go slice serialises to null — byTrigger is `var byTrigger
+          []triggerRow` and stays nil when no offers exist yet, so guard before
+          reading it or the page dies on a fresh platform. */}
+      {(data.byTrigger ?? []).length > 0 ? (
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b text-left text-xs uppercase text-muted-foreground">
@@ -187,7 +190,7 @@ function AnalyticsCard() {
             </tr>
           </thead>
           <tbody>
-            {data.byTrigger.map((row) => (
+            {(data.byTrigger ?? []).map((row) => (
               <tr key={row.trigger} className="border-b last:border-0">
                 <td className="py-2">{WINBACK_TRIGGER_LABEL[row.trigger] ?? row.trigger}</td>
                 <td className="py-2 text-right tabular-nums">{row.total}</td>

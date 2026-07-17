@@ -433,7 +433,8 @@ export interface WinbackAnalytics {
   reactivated: number;
   expired: number;
   reactivationRate: number;
-  byTrigger: WinbackTriggerStat[];
+  /** Nullable: the Go handler scans into a nil slice, so no offers => null. */
+  byTrigger: WinbackTriggerStat[] | null;
 }
 
 // What fired the offer. Kept in sync with the Go side's trigger values.
@@ -622,8 +623,15 @@ export interface PlatformPolicy {
   timezone: string;
   openingTime: string;
   closingTime: string;
-  /** ISO weekday numbers the platform accepts orders on. */
-  operatingDays: number[];
+  /**
+   * Weekday numbers the platform accepts orders on: 0=Sunday..6=Saturday,
+   * matching Go's time.Weekday(). EMPTY (or null) means OPEN EVERY DAY, not
+   * closed — see services/platform_policy.go IsPlatformOpen.
+   *
+   * Nullable because the Go field defaults to a nil slice, which serialises to
+   * null: a fresh platform sends `"operatingDays": null`.
+   */
+  operatingDays: number[] | null;
   closedMessage: string;
 }
 

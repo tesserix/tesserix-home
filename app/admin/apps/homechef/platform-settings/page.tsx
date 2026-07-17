@@ -25,7 +25,10 @@ import type {
   SubscriptionPricing,
 } from "@/lib/products/homechef/contracts";
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+// Index IS the value the API stores: 0=Sunday..6=Saturday (services/
+// platform_policy.go IsPlatformOpen compares against time.Weekday()). Listing
+// Monday first would silently shift every day by one.
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 function Field({
   label,
@@ -66,7 +69,11 @@ function PolicySection() {
   const { confirm } = useConfirm();
 
   useEffect(() => {
-    if (data) setForm(data);
+    // A nil Go slice serialises to null, and PlatformPolicy defaults
+    // OperatingDays to nil — so `data.operatingDays` is null on a fresh
+    // platform and `.includes()` on it takes the whole page down. Normalise at
+    // the boundary rather than guarding every read.
+    if (data) setForm({ ...data, operatingDays: data.operatingDays ?? [] });
   }, [data]);
 
   async function save() {
@@ -95,9 +102,10 @@ function PolicySection() {
 
   function toggleDay(idx: number) {
     if (!form) return;
-    const days = form.operatingDays.includes(idx)
-      ? form.operatingDays.filter((d) => d !== idx)
-      : [...form.operatingDays, idx].sort((a, b) => a - b);
+    const current = form.operatingDays ?? [];
+    const days = current.includes(idx)
+      ? current.filter((d) => d !== idx)
+      : [...current, idx].sort((a, b) => a - b);
     setForm({ ...form, operatingDays: days });
   }
 
@@ -178,14 +186,14 @@ function PolicySection() {
           />
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           {WEEKDAYS.map((d, i) => (
             <button
               key={d}
               type="button"
               onClick={() => toggleDay(i)}
               className={`rounded-md px-3 py-1 text-xs ${
-                form.operatingDays.includes(i)
+                (form.operatingDays ?? []).includes(i)
                   ? "bg-primary text-primary-foreground"
                   : "border text-muted-foreground"
               }`}
@@ -193,6 +201,13 @@ function PolicySection() {
               {d}
             </button>
           ))}
+          {/* The API treats an EMPTY list as "open every day", not "closed" —
+              nothing selected must not read as a shut platform. */}
+          {(form.operatingDays ?? []).length === 0 ? (
+            <span className="text-xs text-muted-foreground">
+              None selected — open every day.
+            </span>
+          ) : null}
         </div>
 
         <label className="mt-3 block space-y-1 text-sm">
