@@ -682,3 +682,89 @@ export interface AuditLogResponse {
   page: number;
   limit: number;
 }
+
+// ── Marketing campaigns (#56) ────────────────────────────────────────────────
+// The one admin surface that reaches customers OUTSIDE an order: a send goes to
+// everyone the segment matches, at once, and cannot be recalled. `preview`
+// exists precisely so the audience is a known number before that happens.
+//
+// segment is stored as a JSON string on the wire but authored as SegmentCriteria
+// — parse defensively, a bad blob must not take the page down.
+
+export interface SegmentCriteria {
+  roles?: string[];
+  recency?: "" | "active" | "lapsed";
+  recencyDays?: number;
+  cities?: string[];
+  subscription?: "" | "active" | "paused" | "none";
+  newWithinDays?: number;
+}
+
+export type CampaignStatus =
+  | "draft"
+  | "scheduled"
+  | "queued"
+  | "sending"
+  | "sent"
+  | "cancelled";
+
+export interface Campaign {
+  id: string;
+  name: string;
+  status: CampaignStatus;
+  sendPush: boolean;
+  sendEmail: boolean;
+  pushTitle: string;
+  pushBody: string;
+  emailSubject: string;
+  emailHtml: string;
+  /** JSON-encoded SegmentCriteria. */
+  segment: string;
+  scheduledAt?: string;
+  sentAt?: string;
+  recipients: number;
+  createdAt: string;
+}
+
+export interface CampaignInput {
+  name: string;
+  sendPush: boolean;
+  sendEmail: boolean;
+  pushTitle: string;
+  pushBody: string;
+  emailSubject: string;
+  emailHtml: string;
+  segment: SegmentCriteria;
+}
+
+// matched is who the segment selects; reachable* is who can actually be
+// contacted. The gap matters — a customer with no FCM token is matched but
+// unreachable by push (see the device-token 404 that left every vendor without
+// one).
+export interface SegmentPreview {
+  matched: number;
+  reachablePush: number;
+  reachableEmail: number;
+}
+
+export interface CampaignChannelMetrics {
+  sent: number;
+  failed: number;
+  opened: number;
+}
+
+export interface CampaignMetrics {
+  recipients: number;
+  push: CampaignChannelMetrics;
+  email: CampaignChannelMetrics;
+}
+
+/** Tolerates a malformed blob — a bad segment must not break the list. */
+export function parseSegment(raw: string): SegmentCriteria {
+  try {
+    const v: unknown = JSON.parse(raw);
+    return v && typeof v === "object" ? (v as SegmentCriteria) : {};
+  } catch {
+    return {};
+  }
+}
