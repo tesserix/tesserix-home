@@ -139,6 +139,7 @@ const homechefNav: NavEntry[] = [
   { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
   { name: "Payment Gateway", href: "/admin/apps/homechef/payment-gateway", icon: Wallet },
   { name: "Platform Settings", href: "/admin/apps/homechef/platform-settings", icon: SlidersHorizontal },
+  { name: "Audit Log", href: "/admin/apps/homechef/audit-logs", icon: ScrollText },
   { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
   { name: "Analytics", href: "/admin/apps/homechef/analytics", icon: BarChart3 },
 ];

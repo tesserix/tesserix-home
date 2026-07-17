@@ -649,3 +649,36 @@ export interface ReferralConfig {
   refereeReward: number;
   monthlySpendCap: number;
 }
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+// The record of who changed what. Note this is NOT the Paginated<T> envelope the
+// rest of the HomeChef admin uses — /admin/audit-logs returns a flat
+// { logs, total, page, limit }.
+
+export interface AuditUser {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  /** Null for system/cron-driven changes with no acting human. */
+  userId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  oldValue?: string;
+  newValue?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+  user?: AuditUser;
+}
+
+export interface AuditLogResponse {
+  logs: AuditLogEntry[];
+  total: number;
+  page: number;
+  limit: number;
+}
