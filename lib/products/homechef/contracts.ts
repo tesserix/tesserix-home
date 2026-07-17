@@ -406,3 +406,39 @@ export interface DeliveryFailuresResponse {
   groupOrders: GroupDeliveryFailure[];
   count: number;
 }
+
+// ── Win-back offers (#42) ────────────────────────────────────────────────────
+// Auto-offers a discounted promo when a customer lapses or a subscriber
+// cancels/suspends. Config is the winback.* PlatformSettings block, so every
+// value here is admin-tunable at runtime — no deploy.
+
+export interface WinbackConfig {
+  enabled: boolean;
+  discountPercent: number;
+  maxDiscount: number;
+  validityDays: number;
+  lapseThresholdDays: number;
+  cooldownDays: number;
+}
+
+export interface WinbackTriggerStat {
+  trigger: string;
+  total: number;
+  reactivated: number;
+}
+
+export interface WinbackAnalytics {
+  total: number;
+  offered: number;
+  reactivated: number;
+  expired: number;
+  reactivationRate: number;
+  byTrigger: WinbackTriggerStat[];
+}
+
+// What fired the offer. Kept in sync with the Go side's trigger values.
+export const WINBACK_TRIGGER_LABEL: Record<string, string> = {
+  lapsed: "Customer lapsed",
+  subscription_cancelled: "Subscription cancelled",
+  subscription_suspended: "Subscription suspended",
+};
