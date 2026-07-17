@@ -58,8 +58,13 @@ export async function getOnboardingFunnelStats(): Promise<OnboardingFunnelStats>
                        AND last_activity_at > now() - interval '${ABANDONED_AFTER_DAYS} days')::bigint AS in_flight,
       count(*) FILTER (WHERE status <> 'completed'
                        AND last_activity_at <= now() - interval '${ABANDONED_AFTER_DAYS} days')::bigint AS abandoned,
-      EXTRACT(EPOCH FROM percentile_cont(0.5) WITHIN GROUP (ORDER BY (completed_at - created_at)))
-        FILTER (WHERE completed_at IS NOT NULL)                          AS median_time_to_complete_seconds,
+      -- FILTER binds to the AGGREGATE, so it must sit inside EXTRACT(). Hanging
+      -- it off EXTRACT(...) — a plain function — is a parse error:
+      --   ERROR: syntax error at or near "FILTER"
+      -- which failed the whole statement, so the admin's mark8ly onboarding
+      -- funnel returned nothing at all rather than just a null median.
+      EXTRACT(EPOCH FROM percentile_cont(0.5) WITHIN GROUP (ORDER BY (completed_at - created_at))
+        FILTER (WHERE completed_at IS NOT NULL))                         AS median_time_to_complete_seconds,
       count(*) FILTER (WHERE created_at > now() - interval '24 hours')::bigint   AS started_24h,
       count(*) FILTER (WHERE completed_at IS NOT NULL
                        AND completed_at > now() - interval '24 hours')::bigint  AS completed_24h
