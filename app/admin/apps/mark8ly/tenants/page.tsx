@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import {
@@ -127,7 +129,14 @@ export default function TenantsPage() {
               ) : (
                 tenants.map((t) => (
                   <tr key={t.id} className="border-b border-border last:border-0">
-                    <td className="px-4 py-3 font-medium">{t.name}</td>
+                    <td className="px-4 py-3 font-medium">
+                      <Link
+                        href={`/admin/apps/mark8ly/tenants/${t.id}`}
+                        className="underline-offset-2 hover:underline"
+                      >
+                        {t.name}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs">{t.owner_email}</td>
                     <td className="px-4 py-3 capitalize">
                       <span
