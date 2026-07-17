@@ -604,3 +604,48 @@ export interface UpdateKeysResponse {
   verified?: boolean;
   testError?: string;
 }
+
+// ── Platform policy / pricing ────────────────────────────────────────────────
+// The PlatformSettings blocks that decide the economics of every order. These
+// are runtime-tunable on purpose (no deploy), which also means a typo here
+// re-prices the platform immediately.
+
+export interface PlatformPolicy {
+  /** Platform's cut of the order — the fee the customer is charged. */
+  serviceFeePercent: number;
+  taxPercent: number;
+  baseDeliveryFee: number;
+  perKmDeliveryFee: number;
+  /** Share of the order that reaches the chef. */
+  chefPayoutPercent: number;
+  driverPayoutPercent: number;
+  timezone: string;
+  openingTime: string;
+  closingTime: string;
+  /** ISO weekday numbers the platform accepts orders on. */
+  operatingDays: number[];
+  closedMessage: string;
+}
+
+export interface SubscriptionTierPrices {
+  monthly: number;
+  quarterly: number;
+  yearly: number;
+}
+
+export interface SubscriptionPricing {
+  country: string;
+  currency: string;
+  trialDays: number;
+  minEarningsThreshold: number;
+  standard: SubscriptionTierPrices;
+  premium: SubscriptionTierPrices;
+  premiumCommissionRate: number;
+}
+
+export interface ReferralConfig {
+  enabled: boolean;
+  referrerReward: number;
+  refereeReward: number;
+  monthlySpendCap: number;
+}
