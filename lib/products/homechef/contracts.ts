@@ -467,3 +467,17 @@ export interface LoyaltyAnalytics {
   activeStreaks: number;
   longestStreak: number;
 }
+
+// ── Order issues (#43) — status union ────────────────────────────────────────
+// The OrderIssue / OrderIssueConfig contracts already exist above; this only
+// names the status values the admin screen filters on.
+//
+// NOTE: resolving an issue credits the customer's WALLET (services/order_issue.go
+// RefundIssueToWallet -> CreditWallet, source=refund), NOT the original payment
+// method — and wallet store credit is unspendable in production while
+// WALLET_CHECKOUT_ENABLED is unset (its `false` default stands). Pre-existing
+// server behaviour carried over verbatim from the HomeChef admin-portal, not
+// introduced by this screen; rerouting it to the gateway means touching the
+// chef-clawback / platform-goodwill payout guards (#549/#582/#586/#618) and is
+// tracked separately.
+export type OrderIssueStatus = "pending" | "auto_refunded" | "resolved" | "rejected";

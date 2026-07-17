@@ -37,6 +37,7 @@ import {
   Scale,
   Gift,
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -126,6 +127,7 @@ const homechefNav: NavEntry[] = [
   { name: "Release Queue", href: "/admin/apps/homechef/payout-queue", icon: HandCoins },
   { name: "Delivery Failures", href: "/admin/apps/homechef/delivery-failures", icon: PackageX },
   { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
+  { name: "Order Issues", href: "/admin/apps/homechef/order-issues", icon: AlertTriangle },
   { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
   { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
   { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
