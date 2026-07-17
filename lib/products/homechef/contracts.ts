@@ -153,6 +153,16 @@ export interface ApprovalRequest {
   submittedData?: Record<string, unknown>;
   adminNotes?: string;
   reviewedAt?: string | null;
+
+  // Reminders / escalation (#697). A chef can bump a request the admin has not
+  // got to: 24h after raising it, then 24h after each of the next two bumps, then
+  // every 6h. Three bumps escalates it.
+  /** How many times the submitter has chased this. >= 3 means escalated. */
+  reminderCount?: number;
+  lastRemindedAt?: string | null;
+  /** Stamped once, on the bump that crossed the threshold. Never cleared. */
+  escalatedAt?: string | null;
+
   createdAt: string;
   updatedAt: string;
   documents?: ApprovalDocument[];
