@@ -39,6 +39,7 @@ import {
   Sparkles,
   AlertTriangle,
   TicketPercent,
+  MessageSquare,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -130,6 +131,7 @@ const homechefNav: NavEntry[] = [
   { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
   { name: "Order Issues", href: "/admin/apps/homechef/order-issues", icon: AlertTriangle },
   { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
+  { name: "Mediation", href: "/admin/apps/homechef/messaging", icon: MessageSquare },
   { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
   { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
   { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },

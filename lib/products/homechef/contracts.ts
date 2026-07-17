@@ -524,3 +524,50 @@ export interface PromoAnalytics {
   budgetRemaining: number;
   budgetUtilisation: number;
 }
+
+// ── Mediation / messaging (#53) ──────────────────────────────────────────────
+// Chat between a customer and a chef is ADMIN-MEDIATED: there is no direct
+// channel. Every message lands in the relay queue and reaches the recipient only
+// when an admin relays it. So an unattended inbox does not degrade the feature —
+// it silently stops it: nobody's message is delivered.
+//
+// piiDetected flags a message the server thinks leaks a phone number/address —
+// relaying it hands over contact details and lets the pair take the order
+// off-platform.
+
+export type MediationRole = "customer" | "chef" | "admin";
+export type RelayStatus = "pending" | "relayed" | "blocked";
+
+export interface MediatedMessage {
+  id: string;
+  conversationId: string;
+  orderId: string;
+  senderId: string;
+  senderRole: MediationRole;
+  recipientRole: MediationRole;
+  content: string;
+  piiDetected: boolean;
+  relayStatus: RelayStatus;
+  relayedById?: string;
+  relayedAt?: string;
+  attachmentId?: string;
+  filename?: string;
+  contentType?: string;
+  createdAt: string;
+}
+
+export interface Conversation {
+  id: string;
+  orderId: string;
+  customerId: string;
+  chefId: string;
+  status: "open" | "closed";
+  createdAt: string;
+  lastMessageAt?: string;
+}
+
+export const MEDIATION_ROLE_LABEL: Record<MediationRole, string> = {
+  customer: "Customer",
+  chef: "Chef",
+  admin: "Admin",
+};
