@@ -24,6 +24,7 @@ permissions:
   packages: write
   security-events: write
   id-token: write
+  actions: read
 
 jobs:
   build-and-push:
@@ -33,6 +34,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      actions: read # upload-sarif@v3 reads the run's metadata (else it 403s on push/tag)
     steps:
       - uses: actions/checkout@v4
 
@@ -87,6 +89,10 @@ jobs:
 
       - name: Upload scan results
         if: always()
+        # Code scanning needs GitHub Advanced Security, which is off while this repo is
+        # private; keep the SARIF upload best-effort so it succeeds when public/GHAS and
+        # never fails CI when it can't upload. The Trivy scan itself still runs above.
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
