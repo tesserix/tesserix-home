@@ -481,3 +481,46 @@ export interface LoyaltyAnalytics {
 // chef-clawback / platform-goodwill payout guards (#549/#582/#586/#618) and is
 // tracked separately.
 export type OrderIssueStatus = "pending" | "auto_refunded" | "resolved" | "rejected";
+
+// ── Promos (#39) ─────────────────────────────────────────────────────────────
+// Discount codes. fundingSource decides WHO PAYS: "platform" absorbs the
+// discount, "chef" deducts it from that chef's payout — so a chef-funded promo
+// needs chefId, and budgetCap bounds the exposure either way.
+
+export type PromoDiscountType = "percentage" | "fixed";
+export type PromoFundingSource = "platform" | "chef";
+
+export interface Promo {
+  id: string;
+  code: string;
+  description: string;
+  discountType: PromoDiscountType;
+  discountValue: number;
+  minOrderAmount: number;
+  maxDiscount: number;
+  usageLimit: number;
+  usageCount: number;
+  perUserLimit: number;
+  validFrom: string;
+  validUntil?: string;
+  isActive: boolean;
+  applicableTo: string;
+  fundingSource: PromoFundingSource;
+  chefId?: string;
+  budgetCap: number;
+  budgetSpent: number;
+}
+
+export interface PromoAnalytics {
+  code: string;
+  fundingSource: string;
+  redemptions: number;
+  totalDiscount: number;
+  uniqueUsers: number;
+  usageLimit: number;
+  usageCount: number;
+  budgetCap: number;
+  budgetSpent: number;
+  budgetRemaining: number;
+  budgetUtilisation: number;
+}
