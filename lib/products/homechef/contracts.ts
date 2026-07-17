@@ -571,3 +571,36 @@ export const MEDIATION_ROLE_LABEL: Record<MediationRole, string> = {
   chef: "Chef",
   admin: "Admin",
 };
+
+// ── Payment gateway (#262) ───────────────────────────────────────────────────
+// The LIVE Razorpay / Stripe credentials the platform charges with. Writing
+// these re-points every payment and refund at a different merchant account —
+// see the 2026-07-17 key swap, where a new test key meant the old merchant's
+// Route linked accounts and webhook no longer resolved.
+//
+// The API never returns a secret: status carries only keyPrefix (e.g.
+// "rzp_test_") and whether each secret is set. Nothing here should ever render
+// or echo a secret back.
+
+export interface PaymentGatewayStatus {
+  configured: boolean;
+  /** "test" | "live", derived server-side from the key itself. */
+  mode: string;
+  webhookUrl: string;
+  webhookSecretSet: boolean;
+  /** Leading fragment of the key id — enough to tell test from live, never the key. */
+  keyPrefix: string;
+  error: string;
+}
+
+export interface StripeGatewayStatus extends PaymentGatewayStatus {
+  publishableKeySet: boolean;
+}
+
+// The API test-fires the new credentials against the gateway before storing
+// them; `verified` is that result and `testError` the gateway's complaint.
+export interface UpdateKeysResponse {
+  message: string;
+  verified?: boolean;
+  testError?: string;
+}
