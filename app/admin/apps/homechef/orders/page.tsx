@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 // Fe3dr customer-ops: recent orders (read-only). Sourced from the Go /admin/orders
 // API via the signed gateway — no direct homechef_db reads.
 import { useState } from "react";
@@ -93,7 +95,12 @@ export default function HomechefOrdersPage() {
               rows.map((o) => (
                 <tr key={o.id} className="hover:bg-muted/30">
                   <td className="px-4 py-3 font-mono text-xs">
-                    {o.orderNumber || o.id.slice(0, 8)}
+                    <Link
+                      href={`/admin/apps/homechef/orders/${o.id}`}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      {o.orderNumber || o.id.slice(0, 8)}
+                    </Link>
                   </td>
                   <td className="px-4 py-3">
                     {o.customerName} <span className="text-muted-foreground">→</span> {o.chefName}

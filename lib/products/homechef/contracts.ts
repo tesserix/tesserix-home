@@ -776,3 +776,64 @@ export function parseSegment(raw: string): SegmentCriteria {
     return {};
   }
 }
+
+// ── Order detail (GET /admin/orders/:id) ─────────────────────────────────────
+// Distinct from OrderRow (the list projection): this returns the FULL order row
+// with Items preloaded, plus flattened customer/chef blocks. Envelope is
+// { order, customer, chef } — not the Paginated<T> shape.
+
+export interface OrderDetailItem {
+  id: string;
+  orderId: string;
+  menuItemId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  subtotal: number;
+  createdAt: string;
+}
+
+export interface OrderDetailOrder {
+  id: string;
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  fulfillmentType: string;
+  subtotal: number;
+  deliveryFee: number;
+  tax: number;
+  total: number;
+  /** "razorpay" | "stripe" | "wallet" — decides where a refund can go. */
+  paymentProvider: string;
+  refundAmount: number;
+  refundReason?: string;
+  /** "chef" | "admin" | "system" */
+  refundInitiatedBy?: string;
+  // NOTE: no razorpayPaymentId — the Go model tags it `json:"-"`, so the gateway
+  // id never leaves the server. Don't add it back expecting a value.
+  cancelReason?: string;
+  cancelledAt?: string | null;
+  createdAt: string;
+  /** Preloaded; nil in Go serialises to null on an order with no rows. */
+  items?: OrderDetailItem[] | null;
+}
+
+export interface OrderDetailCustomer {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  createdAt: string;
+}
+
+export interface OrderDetailChef {
+  id: string;
+  businessName: string;
+  city: string;
+}
+
+export interface OrderDetailResponse {
+  order: OrderDetailOrder;
+  customer: OrderDetailCustomer;
+  chef: OrderDetailChef;
+}
