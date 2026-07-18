@@ -859,6 +859,7 @@ export interface DeliveryUsageSnapshot {
   distanceDurableHits: number; // served from Postgres/CNPG — free
   distanceCacheHitRatio: number; // 0..1
   weatherProviderCalls: number; // uncached by design (short-TTL signal)
+  fuelProviderCalls: number; // fuel-index calls (cached daily, so rare)
   distancePricePerCall: number; // USD
   weatherPricePerCall: number; // USD
   estimatedSpendUsd: number; // live, since restart

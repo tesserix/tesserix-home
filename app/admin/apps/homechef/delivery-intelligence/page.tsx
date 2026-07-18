@@ -103,6 +103,11 @@ export default function HomechefDeliveryIntelligencePage() {
                 value={(u?.weatherProviderCalls ?? 0).toLocaleString()}
                 hint="uncached by design (live signal)"
               />
+              <Stat
+                label="Fuel-index calls"
+                value={(u?.fuelProviderCalls ?? 0).toLocaleString()}
+                hint="cached daily — rare"
+              />
             </div>
           </section>
 
