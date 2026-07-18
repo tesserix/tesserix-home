@@ -847,3 +847,36 @@ export interface OrderDetailResponse {
   customer: OrderDetailCustomer;
   chef: OrderDetailChef;
 }
+
+// Delivery-intelligence cost/usage read model — apps/api GET
+// /admin/delivery/intelligence (#699). Shows how many paid routing/weather
+// calls the self-delivery pricing is making, how often the two-tier
+// (Redis + CNPG) cache spares one, the per-tier zone pricing shape, and the
+// estimated spend (live since restart + all-time from the durable cache).
+export interface DeliveryUsageSnapshot {
+  distanceProviderCalls: number; // paid routing calls (a cache miss)
+  distanceHotHits: number; // served from Redis — free
+  distanceDurableHits: number; // served from Postgres/CNPG — free
+  distanceCacheHitRatio: number; // 0..1
+  weatherProviderCalls: number; // uncached by design (short-TTL signal)
+  distancePricePerCall: number; // USD
+  weatherPricePerCall: number; // USD
+  estimatedSpendUsd: number; // live, since restart
+}
+
+export interface DeliveryZoneTierSummary {
+  tier: string; // metro | mid_tier | standard | regional
+  count: number;
+  avgBaseFare: number;
+  avgPerKmRate: number;
+  avgMinimumFare: number;
+  avgSurgeMultiplier: number;
+  activeZoneCount: number;
+}
+
+export interface DeliveryIntelligenceResponse {
+  usage: DeliveryUsageSnapshot;
+  cachedTrips: number; // distinct chef→address trips paid for once, ever
+  allTimeDistanceSpendUsd: number;
+  zoneTiers: DeliveryZoneTierSummary[];
+}

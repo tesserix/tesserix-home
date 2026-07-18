@@ -127,6 +127,7 @@ const homechefNav: NavEntry[] = [
   { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
   { name: "Meal Plans", href: "/admin/apps/homechef/meal-plans", icon: CalendarRange },
   { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
+  { name: "Delivery Intelligence", href: "/admin/apps/homechef/delivery-intelligence", icon: Gauge },
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
   { name: "Release Queue", href: "/admin/apps/homechef/payout-queue", icon: HandCoins },
   { name: "Delivery Failures", href: "/admin/apps/homechef/delivery-failures", icon: PackageX },
