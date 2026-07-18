@@ -860,6 +860,7 @@ export interface DeliveryUsageSnapshot {
   distanceCacheHitRatio: number; // 0..1
   weatherProviderCalls: number; // uncached by design (short-TTL signal)
   fuelProviderCalls: number; // fuel-index calls (cached daily, so rare)
+  trafficProviderCalls: number; // traffic calls (very short TTL — live signal)
   distancePricePerCall: number; // USD
   weatherPricePerCall: number; // USD
   estimatedSpendUsd: number; // live, since restart
