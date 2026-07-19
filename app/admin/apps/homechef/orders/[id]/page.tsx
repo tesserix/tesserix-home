@@ -103,8 +103,26 @@ export default function HomechefOrderDetailPage({
         <h2 className="text-base font-semibold">Money</h2>
         <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
           <Fact label="Subtotal" value={formatINR(order.subtotal)} />
+          {order.serviceFee > 0 ? (
+            <Fact label="Service fee" value={formatINR(order.serviceFee)} />
+          ) : null}
           <Fact label="Delivery fee" value={formatINR(order.deliveryFee)} />
           <Fact label="Tax" value={formatINR(order.tax)} />
+          {order.chefTip > 0 ? (
+            <Fact label="Chef tip" value={formatINR(order.chefTip)} />
+          ) : null}
+          {order.driverTip > 0 ? (
+            <Fact label="Driver tip" value={formatINR(order.driverTip)} />
+          ) : null}
+          {order.discount > 0 ? (
+            <Fact
+              label={order.promoCode ? `Discount (${order.promoCode})` : "Discount"}
+              value={`−${formatINR(order.discount)}`}
+            />
+          ) : null}
+          {order.walletApplied > 0 ? (
+            <Fact label="Wallet applied" value={`−${formatINR(order.walletApplied)}`} />
+          ) : null}
           <Fact label="Total" value={formatINR(order.total)} />
           <Fact label="Paid via" value={titleCase(order.paymentProvider || "—")} />
           <Fact label="Refunded" value={refunded ? formatINR(order.refundAmount) : "—"} />

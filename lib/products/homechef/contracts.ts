@@ -181,8 +181,7 @@ export interface ReviewRow {
   id: string;
   chefId: string;
   customerId: string;
-  rating: number;
-  text?: string;
+  overallRating: number;
   comment?: string;
   isHidden: boolean;
   hiddenReason?: string;
@@ -209,6 +208,13 @@ export interface WalletResponse {
 }
 
 // ---- Meal Plans -------------------------------------------------------------
+export interface MealPlanDayRow {
+  id: string;
+  date?: string;
+  status?: string;
+  price?: number;
+}
+
 export interface MealPlanRow {
   id: string;
   chefId: string;
@@ -216,10 +222,8 @@ export interface MealPlanRow {
   status: string;
   startDate?: string;
   endDate?: string;
-  mealCount?: number;
-  daysPerWeek?: number;
-  pricePerMeal?: number;
-  totalPrice?: number;
+  total: number;
+  days?: MealPlanDayRow[];
   createdAt: string;
 }
 
@@ -279,10 +283,16 @@ export interface OrderIssue {
   requestedAmount: number;
   refundAmount: number;
   status: string;
+  /** Signed, short-lived customer-evidence image URLs (#618). */
+  photoUrls?: string[] | null;
   resolvedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+// Who bears a resolved issue's refund (#618): chef_clawback claws it back from the
+// chef's payout; platform_goodwill refunds the customer but the chef keeps theirs.
+export type IssueFaultPolicy = "chef_clawback" | "platform_goodwill";
 
 // Admin-tunable refund policy for order issues (#262/#618): refunds up to the cap
 // auto-approve; above it they queue for review. Mirrors GET/PUT /admin/order-issue/config.
@@ -335,14 +345,19 @@ export type PayoutHoldStatus =
   | "disputed";
 
 export interface PendingPayout {
-  aggType: "order" | "meal-plan-day";
+  aggType: "order" | "meal-plan-day" | "group-order";
   id: string;
   chefId: string;
+  /** Gross chef slice before commission + TDS. */
   amount: number;
+  /** The actual transfer released — net of commission + TDS (below `amount`). */
+  netPayout: number;
   holdStatus: PayoutHoldStatus;
   deliveredAt?: string | null;
   ageHours: number;
   customerConfirmedAt?: string | null;
+  /** Order aggregates with a still-open OrderIssue (#457) — release should hold. */
+  hasOpenIssue?: boolean;
   context: string;
 }
 
@@ -810,8 +825,14 @@ export interface OrderDetailOrder {
   paymentStatus: string;
   fulfillmentType: string;
   subtotal: number;
+  serviceFee: number;
   deliveryFee: number;
   tax: number;
+  chefTip: number;
+  driverTip: number;
+  discount: number;
+  walletApplied: number;
+  promoCode?: string;
   total: number;
   /** "razorpay" | "stripe" | "wallet" — decides where a refund can go. */
   paymentProvider: string;

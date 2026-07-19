@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { AlertTriangle, BellRing } from "lucide-react";
 
@@ -91,20 +92,26 @@ function priorityTone(p: ApprovalPriority): Tone {
   return "info";
 }
 
-export default function HomechefApprovalsPage() {
+function HomechefApprovalsInner() {
   const [tab, setTab] = useState<Tab>("pending");
+  // Deep-linked from the chefs page (?search=<businessName>) — seed the box from
+  // the URL on mount, then it is a normal controlled input.
+  const initialSearch = useSearchParams().get("search") ?? "";
+  const [search, setSearch] = useState(initialSearch);
   const remindedView = tab === REMINDED;
   const escalatedView = tab === ESCALATED;
 
   // Reminded/escalated are deliberately NOT status-filtered: a chef chases a
   // request whatever state it is in, and hiding a chased info_requested item behind
   // a status tab is how it would go quiet again. The API sorts these to the top and
-  // accepts reminded=true / escalated=true, so we just swap the param.
+  // accepts reminded=true / escalated=true, so we just swap the param. Search
+  // (title/description ILIKE, server-side) layers on top of any view.
+  const trimmedSearch = search.trim();
   const listParams = escalatedView
-    ? { escalated: "true", page: 1, limit: 50 }
+    ? { escalated: "true", search: trimmedSearch, page: 1, limit: 50 }
     : remindedView
-      ? { reminded: "true", page: 1, limit: 50 }
-      : { status: tab, page: 1, limit: 50 };
+      ? { reminded: "true", search: trimmedSearch, page: 1, limit: 50 }
+      : { status: tab, search: trimmedSearch, page: 1, limit: 50 };
   const { data, isLoading } = useSWR<Paginated<ApprovalRequest>>(
     ["/approvals", listParams],
     swrFetcher,
@@ -134,6 +141,23 @@ export default function HomechefApprovalsPage() {
                 ? `${data.pagination.total} ${titleCase(tab)}`
                 : "Review queue"}
         </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search title or description…"
+          className="h-9 w-72 rounded-md border border-border bg-background px-3 text-sm"
+        />
+        {search ? (
+          <button
+            onClick={() => setSearch("")}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Clear
+          </button>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap gap-1">
@@ -273,5 +297,13 @@ export default function HomechefApprovalsPage() {
         </table>
       </div>
     </div>
+  );
+}
+
+export default function HomechefApprovalsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading…</div>}>
+      <HomechefApprovalsInner />
+    </Suspense>
   );
 }

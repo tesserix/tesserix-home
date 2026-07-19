@@ -18,10 +18,16 @@ import { formatINR, formatDateTime, titleCase } from "@/lib/products/homechef/fo
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type {
+  IssueFaultPolicy,
   OrderIssue,
   OrderIssueConfig,
   OrderIssueStatus,
 } from "@/lib/products/homechef/contracts";
+
+const FAULT_POLICIES: ReadonlyArray<{ value: IssueFaultPolicy; label: string }> = [
+  { value: "chef_clawback", label: "Chef clawback" },
+  { value: "platform_goodwill", label: "Platform goodwill" },
+];
 
 const TABS: ReadonlyArray<{ value: OrderIssueStatus | "all"; label: string }> = [
   { value: "pending", label: "Pending" },
@@ -86,6 +92,26 @@ function ConfigCard() {
           Claims below this refund instantly, with no admin review.
         </span>
       </label>
+      <label className="space-y-1 text-sm">
+        <span className="block font-medium">Default fault policy</span>
+        <select
+          className="w-48 rounded-md border px-3 py-2"
+          value={form.defaultFaultPolicy ?? "chef_clawback"}
+          onChange={(e) =>
+            setForm({ ...form, defaultFaultPolicy: e.target.value as IssueFaultPolicy })
+          }
+        >
+          {FAULT_POLICIES.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <span className="block text-xs text-muted-foreground">
+          Who bears a resolved refund by default — clawed back from the chef or absorbed
+          by the platform.
+        </span>
+      </label>
       <button
         type="button"
         onClick={() => void save()}
@@ -103,9 +129,16 @@ export default function HomechefOrderIssuesPage() {
   const [tab, setTab] = useState<OrderIssueStatus | "all">("pending");
   // Per-row resolve amount, seeded from what the customer asked for.
   const [amounts, setAmounts] = useState<Record<string, string>>({});
+  // Per-row fault policy, seeded from the config default when unset.
+  const [policies, setPolicies] = useState<Record<string, IssueFaultPolicy>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm } = useConfirm();
+
+  // Shares SWR cache with the ConfigCard fetch; used to seed each row's policy.
+  const { data: config } = useSWR<OrderIssueConfig>(["/order-issue/config"], swrFetcher);
+  const defaultPolicy: IssueFaultPolicy =
+    (config?.defaultFaultPolicy as IssueFaultPolicy) ?? "chef_clawback";
 
   const { data, isLoading, mutate } = useSWR<{ data: OrderIssue[] }>(
     ["/order-issues", tab === "all" ? {} : { status: tab }],
@@ -122,6 +155,7 @@ export default function HomechefOrderIssuesPage() {
       setError("Enter a positive refund amount.");
       return;
     }
+    const faultPolicy = policies[issue.id] ?? defaultPolicy;
     // Name the amount and that it is final — the API will not let it be clawed
     // back from here.
     const ok = await confirm({
@@ -134,7 +168,7 @@ export default function HomechefOrderIssuesPage() {
     setBusyId(issue.id);
     setError(null);
     try {
-      await hcAdmin.post(`/order-issues/${issue.id}/resolve`, { amount });
+      await hcAdmin.post(`/order-issues/${issue.id}/resolve`, { amount, faultPolicy });
       await mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not resolve the issue.");
@@ -221,6 +255,26 @@ export default function HomechefOrderIssuesPage() {
                     {i.description ? (
                       <div className="text-xs text-muted-foreground">{i.description}</div>
                     ) : null}
+                    {i.photoUrls && i.photoUrls.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {i.photoUrls.map((url, idx) => (
+                          <a
+                            key={idx}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block h-14 w-14 overflow-hidden rounded-md border"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={url}
+                              alt={`Evidence ${idx + 1}`}
+                              className="h-full w-full object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="p-3 text-right tabular-nums">{formatINR(i.requestedAmount)}</td>
                   <td className="p-3 text-right tabular-nums">
@@ -240,6 +294,23 @@ export default function HomechefOrderIssuesPage() {
                           onChange={(e) => setAmounts({ ...amounts, [i.id]: e.target.value })}
                           aria-label="Refund amount"
                         />
+                        <select
+                          className="rounded-md border px-2 py-1 text-xs"
+                          value={policies[i.id] ?? defaultPolicy}
+                          onChange={(e) =>
+                            setPolicies({
+                              ...policies,
+                              [i.id]: e.target.value as IssueFaultPolicy,
+                            })
+                          }
+                          aria-label="Fault policy"
+                        >
+                          {FAULT_POLICIES.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {p.label}
+                            </option>
+                          ))}
+                        </select>
                         <button
                           type="button"
                           onClick={() => void resolve(i)}

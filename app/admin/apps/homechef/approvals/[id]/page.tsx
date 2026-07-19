@@ -12,6 +12,31 @@ import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ApprovalRequest } from "@/lib/products/homechef/contracts";
 
+// The detail payload preloads the reviewer as a nested User (`reviewedBy`), which
+// the shared ApprovalRequest contract does not name. Read it via a local widening.
+interface ReviewerRef {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+type ApprovalDetail = ApprovalRequest & { reviewedBy?: ReviewerRef | null };
+
+// Mirrors models.ApprovalRequestHistory (GET /approvals/:id/history → { data }).
+interface ApprovalHistoryEntry {
+  id: string;
+  fromStatus?: string;
+  toStatus: string;
+  notes?: string;
+  createdAt: string;
+  changedBy?: ReviewerRef | null;
+}
+
+function personName(p: ReviewerRef | null | undefined): string {
+  if (!p) return "";
+  const name = `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim();
+  return name || p.email || "";
+}
+
 function statusTone(s: string): Tone {
   if (s === "approved") return "success";
   if (s === "rejected") return "danger";
@@ -76,10 +101,15 @@ function Warning({ text }: { text: string }) {
 export default function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { data: a, isLoading, mutate } = useSWR<ApprovalRequest>(
+  const { data: a, isLoading, mutate } = useSWR<ApprovalDetail>(
     [`/approvals/${id}`],
     swrFetcher,
   );
+  const { data: historyData } = useSWR<{ data: ApprovalHistoryEntry[] }>(
+    [`/approvals/${id}/history`],
+    swrFetcher,
+  );
+  const history = historyData?.data ?? [];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [docBusy, setDocBusy] = useState<string | null>(null);
@@ -233,6 +263,12 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
             <dd className="font-medium text-foreground">{formatDateTime(a.reviewedAt)}</dd>
           </div>
         ) : null}
+        {personName(a.reviewedBy) ? (
+          <div>
+            <dt className="text-muted-foreground">Reviewed by</dt>
+            <dd className="font-medium text-foreground">{personName(a.reviewedBy)}</dd>
+          </div>
+        ) : null}
         {a.adminNotes ? (
           <div className="col-span-2">
             <dt className="text-muted-foreground">Admin notes</dt>
@@ -285,6 +321,34 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {history.length > 0 ? (
+        <div>
+          <h2 className="mb-2 text-sm font-semibold uppercase text-muted-foreground">
+            History
+          </h2>
+          <ol className="space-y-3 rounded-lg border border-border p-4 text-sm">
+            {history.map((h) => {
+              const actor = personName(h.changedBy);
+              return (
+                <li key={h.id} className="border-l-2 border-border pl-3">
+                  <div className="font-medium text-foreground">
+                    {h.fromStatus ? `${titleCase(h.fromStatus)} → ` : ""}
+                    {titleCase(h.toStatus)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatDateTime(h.createdAt)}
+                    {actor ? ` · ${actor}` : ""}
+                  </div>
+                  {h.notes ? (
+                    <div className="mt-1 text-foreground break-words">{h.notes}</div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ol>
         </div>
       ) : null}
 

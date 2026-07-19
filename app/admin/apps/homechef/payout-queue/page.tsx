@@ -58,7 +58,8 @@ export default function HomechefPayoutQueuePage() {
   const [error, setError] = useState<string | null>(null);
 
   const rows = data?.payouts ?? [];
-  const eligible = rows.filter((p) => p.holdStatus === "release_eligible");
+  // An open issue holds the money back — keep those out of the one-click batch.
+  const eligible = rows.filter((p) => p.holdStatus === "release_eligible" && !p.hasOpenIssue);
 
   function actionPath(p: PendingPayout, action: string): string {
     return `/payouts/${p.aggType}/${p.id}/${action}`;
@@ -80,8 +81,11 @@ export default function HomechefPayoutQueuePage() {
   async function release(p: PendingPayout) {
     const ok = await confirm({
       title: "Release payout",
-      message: `Release ${formatINR(p.amount)} to the chef for ${p.context}? This settles the held transfer (when escrow is live).`,
+      message: p.hasOpenIssue
+        ? `This payout has an OPEN ISSUE. Release ${formatINR(p.netPayout)} to the chef for ${p.context} anyway? Resolve the issue first unless you are sure.`
+        : `Release ${formatINR(p.netPayout)} to the chef for ${p.context}? This settles the held transfer (when escrow is live).`,
       confirmLabel: "Release",
+      tone: p.hasOpenIssue ? "destructive" : "default",
     });
     if (!ok) return;
     await run(() => hcAdmin.post(actionPath(p, "release")), p.id, "Release failed");
@@ -186,7 +190,7 @@ export default function HomechefPayoutQueuePage() {
             <tr>
               <th className="px-4 py-3">Context</th>
               <th className="px-4 py-3">Type</th>
-              <th className="px-4 py-3">Amount</th>
+              <th className="px-4 py-3">Net payout</th>
               <th className="px-4 py-3">Confirmed</th>
               <th className="px-4 py-3">Age</th>
               <th className="px-4 py-3">Status</th>
@@ -211,15 +215,29 @@ export default function HomechefPayoutQueuePage() {
                 const age = ageLabel(p.ageHours);
                 const busy = busyId === p.id;
                 const canRelease = p.holdStatus === "release_eligible";
+                const typeLabel =
+                  p.aggType === "meal-plan-day"
+                    ? "Tiffin day"
+                    : p.aggType === "group-order"
+                      ? "Group order"
+                      : "Order";
                 return (
                   <tr key={`${p.aggType}:${p.id}`} className="hover:bg-muted/30">
                     <td className="px-4 py-3 font-medium text-foreground">
-                      {p.context || p.id.slice(0, 8)}
+                      <div className="flex items-center gap-2">
+                        {p.context || p.id.slice(0, 8)}
+                        {p.hasOpenIssue ? (
+                          <StatusBadge label="Open issue" tone="danger" />
+                        ) : null}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {p.aggType === "meal-plan-day" ? "Tiffin day" : "Order"}
+                    <td className="px-4 py-3 text-muted-foreground">{typeLabel}</td>
+                    <td className="px-4 py-3 tabular-nums">
+                      <div>{formatINR(p.netPayout)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        gross {formatINR(p.amount)}
+                      </div>
                     </td>
-                    <td className="px-4 py-3 tabular-nums">{formatINR(p.amount)}</td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {p.customerConfirmedAt ? "Yes" : "Auto/—"}
                     </td>
@@ -235,9 +253,13 @@ export default function HomechefPayoutQueuePage() {
                           <button
                             onClick={() => release(p)}
                             disabled={busy}
-                            className="rounded-md bg-foreground px-2.5 py-1 text-xs font-medium text-background disabled:opacity-40"
+                            className={`rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-40 ${
+                              p.hasOpenIssue
+                                ? "border border-destructive/40 text-destructive hover:bg-destructive/10"
+                                : "bg-foreground text-background"
+                            }`}
                           >
-                            {busy ? "…" : "Release"}
+                            {busy ? "…" : p.hasOpenIssue ? "Release (issue)" : "Release"}
                           </button>
                         )}
                         <button

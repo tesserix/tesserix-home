@@ -10,6 +10,20 @@ import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { FSSAILockedChef, FSSAILockResponse } from "@/lib/products/homechef/contracts";
 
+// GET/POST /admin/fssai-expiry-backfill — chefs with a verified FSSAI licence but
+// no recorded expiry. GET is a dry run (list), POST sends the confirm-licence push.
+interface BackfillChef {
+  chefId: string;
+  userId: string;
+  businessName: string;
+}
+interface BackfillResponse {
+  count: number;
+  chefs: BackfillChef[];
+  executed: boolean;
+  notified: number;
+}
+
 export default function HomechefFssaiPage() {
   const { data, isLoading, mutate } = useSWR<FSSAILockResponse>(
     ["/chefs/fssai-locked"],
@@ -17,7 +31,54 @@ export default function HomechefFssaiPage() {
   );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [backfill, setBackfill] = useState<BackfillChef[] | null>(null);
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
   const { confirm, prompt } = useConfirm();
+
+  async function viewBackfill() {
+    if (backfillOpen) {
+      setBackfillOpen(false);
+      return;
+    }
+    setError(null);
+    setBackfillOpen(true);
+    if (backfill) return;
+    setBackfillLoading(true);
+    try {
+      const res = await hcAdmin.get<BackfillResponse>("/fssai-expiry-backfill");
+      setBackfill(res.chefs);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not load backfill list");
+      setBackfillOpen(false);
+    } finally {
+      setBackfillLoading(false);
+    }
+  }
+
+  async function notifyBackfill() {
+    const ok = await confirm({
+      title: "Send confirm-licence push",
+      message:
+        "Send a one-time push asking every chef with a missing FSSAI expiry to confirm their licence?",
+      confirmLabel: "Send push",
+    });
+    if (!ok) return;
+    setError(null);
+    setNotice(null);
+    setBackfillBusy(true);
+    try {
+      const res = await hcAdmin.post<BackfillResponse>("/fssai-expiry-backfill");
+      setBackfill(res.chefs);
+      setNotice(`Confirm-licence push sent to ${res.notified} chef(s).`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Notify failed");
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
 
   async function grant(ch: FSSAILockedChef) {
     setError(null);
@@ -96,14 +157,49 @@ export default function HomechefFssaiPage() {
         </div>
       ) : null}
 
+      {notice ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
+          {notice}
+        </div>
+      ) : null}
+
       {isLoading || !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
           {data.missingExpiryCount > 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {data.missingExpiryCount} chef(s) have no FSSAI expiry on record.
-            </p>
+            <div className="rounded-lg border border-border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">
+                  {data.missingExpiryCount} chef(s) have no FSSAI expiry on record.
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={viewBackfill}>
+                    {backfillOpen ? "Hide" : "View"}
+                  </Button>
+                  <Button size="sm" disabled={backfillBusy} onClick={notifyBackfill}>
+                    {backfillBusy ? "Notifying…" : "Notify"}
+                  </Button>
+                </div>
+              </div>
+              {backfillOpen ? (
+                backfillLoading ? (
+                  <p className="mt-3 text-sm text-muted-foreground">Loading…</p>
+                ) : backfill && backfill.length > 0 ? (
+                  <ul className="mt-3 space-y-1 text-sm">
+                    {backfill.map((ch) => (
+                      <li key={ch.chefId} className="text-foreground">
+                        {ch.businessName}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No chefs pending an expiry confirmation.
+                  </p>
+                )
+              ) : null}
+            </div>
           ) : null}
 
           <section>

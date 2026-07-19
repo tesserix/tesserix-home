@@ -8,6 +8,8 @@
 // Everything careful on this screen follows from that:
 //   - Preview before send is not optional decoration; it turns "some segment"
 //     into a number you agreed to.
+//   - Test-send delivers the composed message to you only — a dry run before the
+//     irreversible blast.
 //   - The send confirm names that number, because "Send now?" doesn't tell you
 //     whether you're about to message 12 people or 12,000.
 //   - matched vs reachable is shown separately: a customer with no FCM token is
@@ -18,7 +20,7 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime } from "@/lib/products/homechef/format";
+import { formatDateTime, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import {
@@ -42,6 +44,8 @@ const EMPTY: CampaignInput = {
   segment: { recency: "", subscription: "" },
 };
 
+const ROLES = ["customer", "chef", "delivery"];
+
 function statusTone(s: CampaignStatus): Tone {
   switch (s) {
     case "sent":
@@ -61,6 +65,12 @@ function isTerminal(s: CampaignStatus): boolean {
   return s === "sent" || s === "cancelled" || s === "sending" || s === "queued";
 }
 
+// Draft/scheduled campaigns can still be composed against (UpdateCampaign 409s
+// once a campaign has left that state).
+function isEditable(s: CampaignStatus): boolean {
+  return s === "draft" || s === "scheduled";
+}
+
 function describeSegment(seg: SegmentCriteria): string {
   const bits: string[] = [];
   if (seg.roles?.length) bits.push(seg.roles.join(", "));
@@ -72,17 +82,42 @@ function describeSegment(seg: SegmentCriteria): string {
   return bits.length ? bits.join(" · ") : "Everyone";
 }
 
-function CreateForm({ onCreated }: { onCreated: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<CampaignInput>(EMPTY);
+function fromCampaign(c: Campaign): CampaignInput {
+  return {
+    name: c.name,
+    sendPush: c.sendPush,
+    sendEmail: c.sendEmail,
+    pushTitle: c.pushTitle,
+    pushBody: c.pushBody,
+    emailSubject: c.emailSubject,
+    emailHtml: c.emailHtml,
+    segment: parseSegment(c.segment),
+  };
+}
+
+// Compose form shared by create (POST /campaigns) and edit (PUT /campaigns/:id).
+function CampaignForm({
+  initial,
+  onDone,
+  onCancel,
+}: {
+  initial?: Campaign;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState<CampaignInput>(initial ? fromCampaign(initial) : EMPTY);
   const [preview, setPreview] = useState<SegmentPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function set<K extends keyof CampaignInput>(k: K, v: CampaignInput[K]) {
     setForm((f) => ({ ...f, [k]: v }));
+  }
+
+  function setSeg(patch: Partial<SegmentCriteria>) {
+    setForm((f) => ({ ...f, segment: { ...f.segment, ...patch } }));
     // Any change to the audience invalidates the number we previewed.
-    if (k === "segment") setPreview(null);
+    setPreview(null);
   }
 
   async function runPreview() {
@@ -106,36 +141,27 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
 
     setBusy(true);
     try {
-      await hcAdmin.post<Campaign>("/campaigns", form);
-      setForm(EMPTY);
-      setPreview(null);
-      setOpen(false);
-      onCreated();
+      if (initial) {
+        await hcAdmin.put<Campaign>(`/campaigns/${initial.id}`, form);
+      } else {
+        await hcAdmin.post<Campaign>("/campaigns", form);
+      }
+      onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not create the campaign.");
+      setError(e instanceof Error ? e.message : "Could not save the campaign.");
     } finally {
       setBusy(false);
     }
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
-      >
-        New campaign
-      </button>
-    );
-  }
-
   return (
     <div className="space-y-4 rounded-lg border p-6">
-      <h2 className="text-base font-semibold">New campaign</h2>
-      <p className="text-sm text-muted-foreground">
-        Saved as a draft. Nothing is sent until you send it.
-      </p>
+      <h2 className="text-base font-semibold">{initial ? "Edit campaign" : "New campaign"}</h2>
+      {!initial ? (
+        <p className="text-sm text-muted-foreground">
+          Saved as a draft. Nothing is sent until you send it.
+        </p>
+      ) : null}
 
       <label className="block space-y-1 text-sm">
         <span className="font-medium">Name</span>
@@ -147,20 +173,41 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
         />
       </label>
 
-      <div className="space-y-2 rounded-md border p-4">
+      <div className="space-y-3 rounded-md border p-4">
         <h3 className="text-sm font-semibold">Audience</h3>
+
+        <div className="space-y-1 text-sm">
+          <span className="font-medium">Roles</span>
+          <div className="flex gap-4">
+            {ROLES.map((r) => {
+              const on = form.segment.roles?.includes(r) ?? false;
+              return (
+                <label key={r} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(e) => {
+                      const cur = form.segment.roles ?? [];
+                      setSeg({
+                        roles: e.target.checked ? [...cur, r] : cur.filter((x) => x !== r),
+                      });
+                    }}
+                  />
+                  {titleCase(r)}
+                </label>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">Defaults to customers when none are picked.</p>
+        </div>
+
         <div className="grid gap-3 sm:grid-cols-3">
           <label className="space-y-1 text-sm">
             <span className="font-medium">Recency</span>
             <select
               className="w-full rounded-md border px-3 py-2"
               value={form.segment.recency ?? ""}
-              onChange={(e) =>
-                set("segment", {
-                  ...form.segment,
-                  recency: e.target.value as SegmentCriteria["recency"],
-                })
-              }
+              onChange={(e) => setSeg({ recency: e.target.value as SegmentCriteria["recency"] })}
             >
               <option value="">Any</option>
               <option value="active">Recently active</option>
@@ -175,10 +222,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               className="w-full rounded-md border px-3 py-2"
               value={String(form.segment.recencyDays ?? "")}
               onChange={(e) =>
-                set("segment", {
-                  ...form.segment,
-                  recencyDays: e.target.value ? Number(e.target.value) : undefined,
-                })
+                setSeg({ recencyDays: e.target.value ? Number(e.target.value) : undefined })
               }
             />
           </label>
@@ -188,10 +232,7 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               className="w-full rounded-md border px-3 py-2"
               value={form.segment.subscription ?? ""}
               onChange={(e) =>
-                set("segment", {
-                  ...form.segment,
-                  subscription: e.target.value as SegmentCriteria["subscription"],
-                })
+                setSeg({ subscription: e.target.value as SegmentCriteria["subscription"] })
               }
             >
               <option value="">Any</option>
@@ -199,6 +240,38 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
               <option value="paused">Paused</option>
               <option value="none">None</option>
             </select>
+          </label>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">Cities</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              value={(form.segment.cities ?? []).join(", ")}
+              onChange={(e) =>
+                setSeg({
+                  cities: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+              placeholder="Bengaluru, Mumbai — comma separated"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">New within (days)</span>
+            <input
+              type="number"
+              min={1}
+              className="w-full rounded-md border px-3 py-2"
+              value={String(form.segment.newWithinDays ?? "")}
+              onChange={(e) =>
+                setSeg({ newWithinDays: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="Account age ≤ N days"
+            />
           </label>
         </div>
 
@@ -299,14 +372,11 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
           disabled={busy}
           className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
         >
-          Save draft
+          {initial ? "Save changes" : "Save draft"}
         </button>
         <button
           type="button"
-          onClick={() => {
-            setOpen(false);
-            setError(null);
-          }}
+          onClick={onCancel}
           className="rounded-md border px-4 py-2 text-sm"
         >
           Cancel
@@ -321,15 +391,75 @@ function MetricsRow({ id }: { id: string }) {
   if (!data) return null;
   return (
     <p className="text-xs text-muted-foreground">
-      {data.recipients} recipients · push {data.push.sent} sent / {data.push.failed} failed · email{" "}
-      {data.email.sent} sent / {data.email.opened} opened
+      {data.recipients} recipients · push {data.push.sent} sent / {data.push.failed} failed /{" "}
+      {data.push.opened} opened · email {data.email.sent} sent / {data.email.failed} failed /{" "}
+      {data.email.opened} opened
     </p>
+  );
+}
+
+// Inline datetime picker to set a future send time (POST /campaigns/:id/schedule).
+function SchedulePanel({
+  campaign,
+  onScheduled,
+  onCancel,
+}: {
+  campaign: Campaign;
+  onScheduled: () => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    if (!value) return setError("Pick a date and time.");
+    const at = new Date(value);
+    if (Number.isNaN(at.getTime())) return setError("That date is not valid.");
+    if (at.getTime() <= Date.now()) return setError("Pick a time in the future.");
+    setBusy(true);
+    setError(null);
+    try {
+      await hcAdmin.post(`/campaigns/${campaign.id}/schedule`, { scheduledAt: at.toISOString() });
+      onScheduled();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not schedule the campaign.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border p-3">
+      <input
+        type="datetime-local"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="rounded-md border px-3 py-1.5 text-sm"
+      />
+      <button
+        type="button"
+        onClick={() => void submit()}
+        disabled={busy}
+        className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-60"
+      >
+        Schedule
+      </button>
+      <button type="button" onClick={onCancel} className="rounded-md border px-3 py-1.5 text-xs">
+        Cancel
+      </button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </div>
   );
 }
 
 export default function HomechefCampaignsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [scheduleId, setScheduleId] = useState<string | null>(null);
   const { confirm } = useConfirm();
 
   const { data, isLoading, mutate } = useSWR<{ data: Campaign[] }>(
@@ -340,6 +470,7 @@ export default function HomechefCampaignsPage() {
 
   async function send(c: Campaign) {
     setError(null);
+    setNotice(null);
     // Resolve the audience FIRST so the confirm can state a real number. Sending
     // is irreversible, and "Send now?" alone doesn't say whether that's 12
     // people or 12,000.
@@ -376,6 +507,28 @@ export default function HomechefCampaignsPage() {
     }
   }
 
+  async function testSend(c: Campaign) {
+    const ok = await confirm({
+      title: `Send a test of "${c.name}"?`,
+      message:
+        "Delivers the composed push + email to you only — a safe dry run to check how it lands before the real blast.",
+      confirmLabel: "Send test",
+    });
+    if (!ok) return;
+
+    setBusyId(c.id);
+    setError(null);
+    setNotice(null);
+    try {
+      await hcAdmin.post(`/campaigns/${c.id}/test`);
+      setNotice(`Test of "${c.name}" sent to you.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send the test.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function cancel(c: Campaign) {
     const ok = await confirm({
       title: `Cancel "${c.name}"?`,
@@ -397,6 +550,27 @@ export default function HomechefCampaignsPage() {
     }
   }
 
+  async function remove(c: Campaign) {
+    const ok = await confirm({
+      title: `Delete "${c.name}"?`,
+      message: "Removes this campaign for good. Only drafts and cancelled campaigns can be deleted.",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!ok) return;
+
+    setBusyId(c.id);
+    setError(null);
+    try {
+      await hcAdmin.delete(`/campaigns/${c.id}`);
+      await mutate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete the campaign.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -407,9 +581,26 @@ export default function HomechefCampaignsPage() {
         </p>
       </div>
 
-      <CreateForm onCreated={() => void mutate()} />
+      {creating ? (
+        <CampaignForm
+          onDone={() => {
+            setCreating(false);
+            void mutate();
+          }}
+          onCancel={() => setCreating(false)}
+        />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+        >
+          New campaign
+        </button>
+      )}
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {notice ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{notice}</p> : null}
 
       {isLoading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -418,6 +609,19 @@ export default function HomechefCampaignsPage() {
       ) : (
         <div className="space-y-3">
           {campaigns.map((c) => {
+            if (editingId === c.id) {
+              return (
+                <CampaignForm
+                  key={c.id}
+                  initial={c}
+                  onDone={() => {
+                    setEditingId(null);
+                    void mutate();
+                  }}
+                  onCancel={() => setEditingId(null)}
+                />
+              );
+            }
             const seg = parseSegment(c.segment);
             return (
               <div key={c.id} className="space-y-2 rounded-lg border p-4">
@@ -439,7 +643,7 @@ export default function HomechefCampaignsPage() {
                     </p>
                   </div>
 
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {!isTerminal(c.status) ? (
                       <button
                         type="button"
@@ -448,6 +652,36 @@ export default function HomechefCampaignsPage() {
                         className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-60"
                       >
                         Send now
+                      </button>
+                    ) : null}
+                    {!isTerminal(c.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => void testSend(c)}
+                        disabled={busyId === c.id}
+                        className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-60"
+                      >
+                        Test send
+                      </button>
+                    ) : null}
+                    {!isTerminal(c.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => setScheduleId(scheduleId === c.id ? null : c.id)}
+                        disabled={busyId === c.id}
+                        className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-60"
+                      >
+                        {c.scheduledAt ? "Reschedule" : "Schedule"}
+                      </button>
+                    ) : null}
+                    {isEditable(c.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(c.id)}
+                        disabled={busyId === c.id}
+                        className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-60"
+                      >
+                        Edit
                       </button>
                     ) : null}
                     {c.status === "draft" || c.status === "scheduled" ? (
@@ -460,8 +694,29 @@ export default function HomechefCampaignsPage() {
                         Cancel
                       </button>
                     ) : null}
+                    {c.status === "draft" || c.status === "cancelled" ? (
+                      <button
+                        type="button"
+                        onClick={() => void remove(c)}
+                        disabled={busyId === c.id}
+                        className="rounded-md border border-destructive/40 px-3 py-1.5 text-xs text-destructive disabled:opacity-60"
+                      >
+                        Delete
+                      </button>
+                    ) : null}
                   </div>
                 </div>
+
+                {scheduleId === c.id ? (
+                  <SchedulePanel
+                    campaign={c}
+                    onScheduled={() => {
+                      setScheduleId(null);
+                      void mutate();
+                    }}
+                    onCancel={() => setScheduleId(null)}
+                  />
+                ) : null}
 
                 {c.status === "sent" ? <MetricsRow id={c.id} /> : null}
               </div>

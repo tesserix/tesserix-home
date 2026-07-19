@@ -159,8 +159,8 @@ function AnalyticsCard() {
     { label: "Delivered", value: String(data.offered) },
     { label: "Reactivated", value: String(data.reactivated) },
     { label: "Expired", value: String(data.expired) },
-    // Server sends a ratio; render it as a percentage.
-    { label: "Reactivation rate", value: `${(data.reactivationRate * 100).toFixed(1)}%` },
+    // Server already returns a percentage (reactivated/resolved*100).
+    { label: "Reactivation rate", value: `${data.reactivationRate.toFixed(1)}%` },
   ];
 
   return (

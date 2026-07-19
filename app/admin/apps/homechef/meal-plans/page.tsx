@@ -89,11 +89,10 @@ export default function HomechefMealPlansPage() {
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {p.daysPerWeek ? `${p.daysPerWeek} days/wk · ` : ""}
-                    {p.mealCount ?? 0} meals
+                    {p.days?.length ?? 0} meals
                   </td>
                   <td className="px-4 py-3 tabular-nums">
-                    {p.totalPrice != null ? formatINR(p.totalPrice) : "—"}
+                    {p.total != null ? formatINR(p.total) : "—"}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge label={titleCase(p.status)} tone={tone(p.status)} />

@@ -107,10 +107,10 @@ export default function HomechefReviewsPage() {
             return (
               <div key={r.id} className="rounded-lg border border-border p-4">
                 <div className="mb-2 flex items-center justify-between">
-                  <StatusBadge label={`${r.rating?.toFixed(1) ?? "0.0"}★`} tone={ratingTone(r.rating)} />
+                  <StatusBadge label={`${r.overallRating?.toFixed(1) ?? "0.0"}★`} tone={ratingTone(r.overallRating)} />
                   <span className="text-xs text-muted-foreground">{formatDateTime(r.createdAt)}</span>
                 </div>
-                <p className="text-sm text-foreground">{r.text || r.comment || "No comment"}</p>
+                <p className="text-sm text-foreground">{r.comment || "No comment"}</p>
                 {r.isHidden && r.hiddenReason ? (
                   <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                     Hidden: {r.hiddenReason}

@@ -6,7 +6,8 @@
 // homechef-api; disbursement is manual (RazorpayX automation gated on an Indian
 // entity). 5B / Wave 7E.
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { RefreshCw, Download, CheckCircle2 } from "lucide-react";
 import {
   Select,
@@ -47,7 +48,8 @@ interface ListResponse {
 
 const STATUS_OPTIONS = ["all", "pending", "paid"] as const;
 
-export default function HomechefPayoutsPage() {
+function HomechefPayoutsInner() {
+  const chefId = useSearchParams().get("chefId") ?? "";
   const [rows, setRows] = useState<StatementRow[]>([]);
   const [pagination, setPagination] = useState<ListResponse["pagination"]>({
     page: 1, limit: 20, total: 0, totalPages: 0,
@@ -63,10 +65,11 @@ export default function HomechefPayoutsPage() {
   const queryString = useCallback(() => {
     const p = new URLSearchParams();
     if (status !== "all") p.set("status", status);
+    if (chefId) p.set("chefId", chefId);
     if (week) p.set("week", week);
     p.set("page", String(page));
     return p.toString();
-  }, [status, week, page]);
+  }, [status, chefId, week, page]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -260,5 +263,13 @@ export default function HomechefPayoutsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function HomechefPayoutsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading…</div>}>
+      <HomechefPayoutsInner />
+    </Suspense>
   );
 }

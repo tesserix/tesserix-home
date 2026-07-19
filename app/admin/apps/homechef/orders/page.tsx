@@ -16,7 +16,7 @@ const STATUSES = [
   { key: "", label: "All" },
   { key: "pending", label: "Pending" },
   { key: "preparing", label: "Preparing" },
-  { key: "out_for_delivery", label: "On the way" },
+  { key: "delivering", label: "On the way" },
   { key: "delivered", label: "Delivered" },
   { key: "cancelled", label: "Cancelled" },
 ];
@@ -30,9 +30,10 @@ function statusTone(s: string): Tone {
 
 export default function HomechefOrdersPage() {
   const [status, setStatus] = useState("");
+  const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const { data, isLoading } = useSWR<Paginated<OrderRow>>(
-    ["/orders", { status, page, limit: 25 }],
+    ["/orders", { status, search: search.trim() || undefined, page, limit: 25 }],
     swrFetcher,
   );
   const rows = data?.data ?? [];
@@ -47,23 +48,36 @@ export default function HomechefOrdersPage() {
         </p>
       </div>
 
-      <div className="flex gap-1">
-        {STATUSES.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => {
-              setPage(1);
-              setStatus(s.key);
-            }}
-            className={`rounded-md px-3 py-1.5 text-sm ${
-              status === s.key
-                ? "bg-foreground text-background"
-                : "bg-muted text-muted-foreground hover:bg-muted/70"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1">
+          {STATUSES.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => {
+                setPage(1);
+                setStatus(s.key);
+              }}
+              className={`rounded-md px-3 py-1.5 text-sm ${
+                status === s.key
+                  ? "bg-foreground text-background"
+                  : "bg-muted text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => {
+            setPage(1);
+            setSearch(e.target.value);
+          }}
+          placeholder="Search order number…"
+          aria-label="Search order number"
+          className="h-9 w-64 rounded-md border border-border bg-background px-3 text-sm"
+        />
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-border">

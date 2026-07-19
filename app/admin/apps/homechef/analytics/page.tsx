@@ -55,7 +55,8 @@ export default function HomechefAnalyticsPage() {
   const analytics = useSWR<AdminAnalytics>(["/analytics"], swrFetcher, {
     refreshInterval: REFRESH,
   });
-  const activity = useSWR<{ data: Activity[] }>(
+  // /activities returns a bare array, not the { data } envelope.
+  const activity = useSWR<Activity[]>(
     ["/activities", { limit: 12 }],
     swrFetcher,
     { refreshInterval: REFRESH },
@@ -65,7 +66,7 @@ export default function HomechefAnalyticsPage() {
   const loading = stats.isLoading && !s;
 
   const statusRows = toStatusRows(analytics.data?.ordersByStatus);
-  const activities = activity.data?.data ?? [];
+  const activities = activity.data ?? [];
 
   const revenueUp = (s?.revenueChange ?? 0) >= 0;
   const ordersUp = (s?.ordersChange ?? 0) >= 0;
@@ -92,7 +93,7 @@ export default function HomechefAnalyticsPage() {
           <KpiCard
             label="Revenue today"
             value={formatINR(s?.revenueToday)}
-            sub="since 00:00 IST"
+            sub="since 00:00 UTC"
           />
           <KpiCard
             label="Total orders"

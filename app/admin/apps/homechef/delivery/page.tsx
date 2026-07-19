@@ -10,6 +10,7 @@ import { RefreshCw } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import { KpiTile } from "@/components/admin/metrics/kpi-tile";
 import { formatCurrency, formatNumber } from "@/components/admin/metrics/format";
+import { formatRelative } from "@/lib/products/homechef/format";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
 interface ProviderRow {
@@ -126,14 +127,16 @@ export default function HomechefDeliveryPage() {
                 <th className="px-3 py-2 text-right font-medium">Deliveries</th>
                 <th className="px-3 py-2 text-right font-medium">Success</th>
                 <th className="px-3 py-2 font-medium">Enabled</th>
+                <th className="px-3 py-2 font-medium">Active</th>
+                <th className="px-3 py-2 font-medium">Last used</th>
                 <th className="px-3 py-2 font-medium">Action</th>
               </tr>
             </thead>
             <tbody>
               {loading && providers.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
               ) : providers.length === 0 ? (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No providers configured.</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">No providers configured.</td></tr>
               ) : (
                 providers.map((p) => (
                   <tr key={p.id} className="border-t border-border">
@@ -150,6 +153,18 @@ export default function HomechefDeliveryPage() {
                       }>
                         {p.is_enabled ? "enabled" : "disabled"}
                       </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className="inline-flex items-center gap-1.5 text-xs">
+                        <span className={
+                          "h-2 w-2 rounded-full " +
+                          (p.is_active ? "bg-emerald-500" : "bg-muted-foreground/40")
+                        } />
+                        {p.is_active ? "active" : "inactive"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground tabular-nums">
+                      {p.last_used_at ? formatRelative(p.last_used_at) : "—"}
                     </td>
                     <td className="px-3 py-2">
                       <button
