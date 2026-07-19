@@ -1,6 +1,7 @@
 "use client";
 
 import { AuthProvider, useAuth } from "@/lib/auth/auth-context";
+import { OttoSupportChat } from "@/components/OttoSupportChat";
 import { AdminSidebar } from "@/components/admin/sidebar";
 import { CommandPaletteProvider } from "@/components/admin/command-palette";
 import { ConfirmProvider } from "@/components/admin/confirm-dialog";
@@ -33,6 +34,20 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Admin-only support chat — public pages deliberately have no chat widget
+// (visitors use /contact). Lives inside AuthGuard so it renders only for
+// authenticated staff, with identity from the auth context so the widget
+// skips the OTP step.
+function AdminSupportChat() {
+  const { user } = useAuth();
+  return (
+    <OttoSupportChat
+      userEmail={user?.email ?? undefined}
+      userName={user?.displayName ?? user?.name ?? undefined}
+    />
+  );
+}
+
 export default function AdminLayout({
   children,
 }: {
@@ -50,6 +65,7 @@ export default function AdminLayout({
                   <div id="main-content" className="lg:pl-72">
                     {children}
                   </div>
+                  <AdminSupportChat />
                 </div>
               </ConfirmProvider>
             </CommandPaletteProvider>
