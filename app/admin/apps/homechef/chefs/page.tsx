@@ -7,7 +7,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import Link from "next/link";
 
-import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatDate, formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ChefWithStats, Paginated } from "@/lib/products/homechef/contracts";
@@ -23,6 +23,216 @@ function chefStatus(c: ChefWithStats): { label: string; tone: Tone } {
   if (!c.isVerified) return { label: "Pending", tone: "warning" };
   if (!c.isActive) return { label: "Suspended", tone: "danger" };
   return { label: "Verified", tone: "success" };
+}
+
+// A compliance document for a kitchen (FSSAI licence, ID proof, …) plus its
+// per-document verification state. Mirrors GET /chefs/:id/documents; extra
+// fields on the wire are ignored.
+interface ChefDocument {
+  id: string;
+  type: string;
+  fileName: string;
+  fileUrl?: string;
+  status: "pending" | "verified" | "rejected";
+  rejectionReason?: string;
+  expiryDate?: string;
+  contentType?: string;
+}
+
+interface ChefDocumentsResponse {
+  documents: ChefDocument[];
+  kitchenPhotos: string[];
+}
+
+function docTone(status: ChefDocument["status"]): Tone {
+  if (status === "verified") return "success";
+  if (status === "rejected") return "danger";
+  return "warning";
+}
+
+// Kitchen media are bare URLs, so video is inferred from the extension.
+function isVideoUrl(url: string, contentType?: string): boolean {
+  if (contentType?.startsWith("video/")) return true;
+  return /\.(mp4|mov|webm)(\?|$)/i.test(url);
+}
+
+// Compliance documents + kitchen photos/video for one kitchen, verifiable in
+// place. Rendered only inside the open detail row, so the SWR fetch below is
+// scoped to the expanded chef and never runs for collapsed rows.
+function ChefDocuments({ chefId }: { chefId: string }) {
+  const { prompt } = useConfirm();
+  const { data, isLoading, error, mutate } = useSWR<ChefDocumentsResponse>(
+    [`/chefs/${chefId}/documents`],
+    swrFetcher,
+  );
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function verify(docId: string, verified: boolean) {
+    setActionError(null);
+    let reason = "";
+    if (!verified) {
+      const r = await prompt({
+        title: "Reject document",
+        message: "Tell the chef why this document was rejected.",
+        label: "Reason",
+        placeholder: "e.g. FSSAI licence expired / photo unreadable",
+        multiline: true,
+        required: true,
+        confirmLabel: "Reject document",
+        tone: "destructive",
+      });
+      if (r === null) return;
+      reason = r;
+    }
+    setBusyId(docId);
+    try {
+      await hcAdmin.put(
+        `/documents/${docId}/verify`,
+        verified ? { verified: true } : { verified: false, reason },
+      );
+      await mutate();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Action failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const documents = data?.documents ?? [];
+  const photos = data?.kitchenPhotos ?? [];
+
+  return (
+    <div className="space-y-3 border-t border-border pt-3">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Documents &amp; kitchen media
+      </h3>
+
+      {actionError ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+          {actionError}
+        </div>
+      ) : null}
+
+      <div>
+        <dt className="mb-1.5 text-xs text-muted-foreground">Compliance documents</dt>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : error ? (
+          <p className="text-sm text-red-700 dark:text-red-300">
+            Couldn&apos;t load documents.
+          </p>
+        ) : documents.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No documents uploaded.</p>
+        ) : (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {documents.map((doc) => {
+              const busy = busyId === doc.id;
+              return (
+                <li
+                  key={doc.id}
+                  className="flex flex-wrap items-start justify-between gap-3 px-3 py-2.5"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">
+                        {titleCase(doc.type) || "Document"}
+                      </span>
+                      <StatusBadge label={titleCase(doc.status)} tone={docTone(doc.status)} />
+                    </div>
+                    <div className="text-xs text-muted-foreground">{doc.fileName}</div>
+                    {doc.expiryDate ? (
+                      <div className="text-xs text-muted-foreground">
+                        Expires {formatDate(doc.expiryDate)}
+                      </div>
+                    ) : null}
+                    {doc.status === "rejected" && doc.rejectionReason ? (
+                      <div className="text-xs text-red-700 dark:text-red-300">
+                        Rejected: {doc.rejectionReason}
+                      </div>
+                    ) : null}
+                    {doc.fileUrl ? (
+                      <a
+                        href={doc.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block text-xs font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
+                      >
+                        View / download
+                      </a>
+                    ) : (
+                      <span className="inline-block text-xs text-muted-foreground">
+                        File unavailable
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      size="sm"
+                      disabled={busy || doc.status === "verified"}
+                      onClick={() => verify(doc.id, true)}
+                    >
+                      Verify
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={busy || doc.status === "rejected"}
+                      onClick={() => verify(doc.id, false)}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <dt className="mb-1.5 text-xs text-muted-foreground">Kitchen photos &amp; video</dt>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : photos.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No kitchen photos or video.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {photos.map((url) => {
+              const video = isVideoUrl(url);
+              return video ? (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex h-20 w-20 items-center justify-center rounded-md border border-border bg-muted text-xs font-medium text-muted-foreground hover:bg-muted/70"
+                >
+                  Video
+                </a>
+              ) : (
+                <a
+                  key={url}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block rounded-md focus:outline-none focus:ring-2 focus:ring-foreground/20"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt="Kitchen photo"
+                    loading="lazy"
+                    className="h-20 w-20 rounded-md border border-border object-cover"
+                  />
+                </a>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Chef metadata, expanded in place.
@@ -96,6 +306,8 @@ function ChefDetail({ chef }: { chef: ChefWithStats }) {
           Approval + documents
         </Link>
       </div>
+
+      <ChefDocuments chefId={chef.id} />
     </div>
   );
 }
