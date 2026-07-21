@@ -32,12 +32,9 @@ import {
   CalendarRange,
   UserCog,
   BarChart3,
-  HandCoins,
-  PackageX,
   Scale,
   Gift,
   Sparkles,
-  AlertTriangle,
   TicketPercent,
   MessageSquare,
   Wallet,
@@ -127,18 +124,23 @@ const homechefNav: NavEntry[] = [
   { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
   { name: "Meal Plans", href: "/admin/apps/homechef/meal-plans", icon: CalendarRange },
   { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
-  { name: "Delivery Intelligence", href: "/admin/apps/homechef/delivery-intelligence", icon: Gauge },
   { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
-  { name: "Release Queue", href: "/admin/apps/homechef/payout-queue", icon: HandCoins },
-  { name: "Delivery Failures", href: "/admin/apps/homechef/delivery-failures", icon: PackageX },
   { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
-  { name: "Order Issues", href: "/admin/apps/homechef/order-issues", icon: AlertTriangle },
+  // Order Issues + Delivery Failures live as tabs inside Support; Release Queue
+  // under Payouts; Delivery Intelligence under Delivery — dropped from the rail
+  // to cut duplication. Routes stay reachable by URL / deep-link.
   { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
   { name: "Mediation", href: "/admin/apps/homechef/messaging", icon: MessageSquare },
-  { name: "Campaigns", href: "/admin/apps/homechef/campaigns", icon: Megaphone },
-  { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
-  { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
-  { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
+  {
+    name: "Marketing",
+    icon: Megaphone,
+    items: [
+      { name: "Campaigns", href: "/admin/apps/homechef/campaigns", icon: Megaphone },
+      { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
+      { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
+      { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
+    ],
+  },
   { name: "Payment Gateway", href: "/admin/apps/homechef/payment-gateway", icon: Wallet },
   { name: "Platform Settings", href: "/admin/apps/homechef/platform-settings", icon: SlidersHorizontal },
   { name: "Audit Log", href: "/admin/apps/homechef/audit-logs", icon: ScrollText },
@@ -393,7 +395,7 @@ function LeftRail({
                 alt="Fe3dr"
                 width={24}
                 height={24}
-                className="rounded-md"
+                className="rounded-sm brightness-0 invert"
               />
             </Link>
           </TooltipTrigger>
