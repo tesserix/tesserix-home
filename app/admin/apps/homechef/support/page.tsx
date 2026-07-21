@@ -769,16 +769,28 @@ function DeliveryFailuresTab() {
                   <td className="px-4 py-3 text-muted-foreground">{formatDateTime(it.createdAt)}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex justify-end gap-2">
-                      {(["customer", "platform", "chef"] as const).map((f) => (
-                        <button
-                          key={f}
-                          disabled={busyId === it.issueId}
-                          onClick={() => resolveFault(it, f)}
-                          className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70 disabled:opacity-50"
-                        >
-                          {titleCase(f)}
-                        </button>
-                      ))}
+                      {(["customer", "platform", "chef"] as const).map((f) => {
+                        // Platform / Chef fault issue a full customer refund + reverse the
+                        // chef's payout hold — money-moving, so they read destructive.
+                        // Customer fault pays the chef and refunds nothing — a neutral action.
+                        const refunds = f !== "customer";
+                        return (
+                          <button
+                            key={f}
+                            type="button"
+                            disabled={busyId === it.issueId}
+                            onClick={() => resolveFault(it, f)}
+                            title={FAULT_OUTCOME[f]}
+                            className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 ${
+                              refunds
+                                ? "border-destructive/30 bg-destructive/5 text-destructive hover:border-destructive/50 hover:bg-destructive/10"
+                                : "border-border bg-background text-foreground hover:bg-muted"
+                            }`}
+                          >
+                            {titleCase(f)}
+                          </button>
+                        );
+                      })}
                     </div>
                   </td>
                 </tr>
