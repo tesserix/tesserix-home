@@ -116,5 +116,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
-// ci: re-trigger build to deploy delivery-failures admin tab (#36)
