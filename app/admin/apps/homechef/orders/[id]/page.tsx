@@ -214,7 +214,7 @@ export default function HomechefOrderDetailPage({
           Cancellation arbitration
         </Link>
         <Link
-          href="/admin/apps/homechef/order-issues"
+          href="/admin/apps/homechef/support?tab=issues"
           className="rounded-md bg-muted px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted/70"
         >
           Order issues

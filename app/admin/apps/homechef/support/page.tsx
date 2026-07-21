@@ -804,7 +804,14 @@ function DeliveryFailuresTab() {
 }
 
 export default function HomechefSupportPage() {
-  const [tab, setTab] = useState<"tickets" | "issues" | "delivery">("tickets");
+  // Honor a `?tab=` deep-link (issues/delivery) so links that used to point at
+  // the standalone order-issues / delivery-failures pages land on the right tab.
+  // Read client-side to avoid a useSearchParams Suspense boundary.
+  const [tab, setTab] = useState<"tickets" | "issues" | "delivery">(() => {
+    if (typeof window === "undefined") return "tickets";
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t === "issues" || t === "delivery" ? t : "tickets";
+  });
   return (
     <div className="space-y-6 p-6">
       <div>
