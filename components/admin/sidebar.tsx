@@ -391,7 +391,7 @@ function LeftRail({
               )}
             >
               <Image
-                src="/homechef-icon.png"
+                src="/homechef-icon-mono.png"
                 alt="Fe3dr"
                 width={24}
                 height={24}
