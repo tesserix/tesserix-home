@@ -56,7 +56,7 @@ export default function HomechefDeliveryIntelligencePage() {
     (u?.distanceProviderCalls ?? 0) + (u?.distanceHotHits ?? 0) + (u?.distanceDurableHits ?? 0);
 
   return (
-    <div className="space-y-8 p-6">
+    <div className="space-y-6 p-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Delivery intelligence</h1>
         <p className="text-sm text-muted-foreground">
