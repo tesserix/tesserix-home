@@ -32,12 +32,9 @@ import {
   CalendarRange,
   UserCog,
   BarChart3,
-  HandCoins,
-  PackageX,
   Scale,
   Gift,
   Sparkles,
-  AlertTriangle,
   TicketPercent,
   MessageSquare,
   Wallet,
@@ -116,34 +113,76 @@ const mark8lyNav: NavEntry[] = [
 // Fe3dr secondary nav. Phase A ships the Overview only; the deeper admin
 // surfaces (chefs/approvals, orders, payouts, delivery, customers) land with the
 // 5B admin sub-features.
+// Grouped to keep the rail scannable: two solo anchors (Overview, Analytics) +
+// collapsible sections. Order Issues + Delivery Failures were removed entirely
+// (they live as tabs in Support); Release Queue (payout-queue) and Delivery
+// Intelligence stay off-rail but reachable by URL.
 const homechefNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/homechef", icon: LayoutDashboard },
-  { name: "Chefs", href: "/admin/apps/homechef/chefs", icon: ChefHat },
-  { name: "Approvals", href: "/admin/apps/homechef/approvals", icon: BadgeCheck },
-  { name: "Users", href: "/admin/apps/homechef/users", icon: Users },
-  { name: "Wallets", href: "/admin/apps/homechef/wallets", icon: CreditCard },
-  { name: "FSSAI", href: "/admin/apps/homechef/fssai", icon: Shield },
-  { name: "Reviews", href: "/admin/apps/homechef/reviews", icon: ScrollText },
-  { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
-  { name: "Meal Plans", href: "/admin/apps/homechef/meal-plans", icon: CalendarRange },
-  { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
-  { name: "Delivery Intelligence", href: "/admin/apps/homechef/delivery-intelligence", icon: Gauge },
-  { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
-  { name: "Release Queue", href: "/admin/apps/homechef/payout-queue", icon: HandCoins },
-  { name: "Payout Setup", href: "/admin/apps/homechef/payout-setup", icon: Settings },
-  { name: "Delivery Failures", href: "/admin/apps/homechef/delivery-failures", icon: PackageX },
-  { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
-  { name: "Order Issues", href: "/admin/apps/homechef/order-issues", icon: AlertTriangle },
-  { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
-  { name: "Mediation", href: "/admin/apps/homechef/messaging", icon: MessageSquare },
-  { name: "Campaigns", href: "/admin/apps/homechef/campaigns", icon: Megaphone },
-  { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
-  { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
-  { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
-  { name: "Payment Gateway", href: "/admin/apps/homechef/payment-gateway", icon: Wallet },
-  { name: "Platform Settings", href: "/admin/apps/homechef/platform-settings", icon: SlidersHorizontal },
-  { name: "Audit Log", href: "/admin/apps/homechef/audit-logs", icon: ScrollText },
-  { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
+  {
+    name: "Chefs & Trust",
+    icon: ChefHat,
+    items: [
+      { name: "Chefs", href: "/admin/apps/homechef/chefs", icon: ChefHat },
+      { name: "Approvals", href: "/admin/apps/homechef/approvals", icon: BadgeCheck },
+      { name: "FSSAI", href: "/admin/apps/homechef/fssai", icon: Shield },
+      { name: "Reviews", href: "/admin/apps/homechef/reviews", icon: ScrollText },
+    ],
+  },
+  {
+    name: "Customers",
+    icon: Users,
+    items: [
+      { name: "Users", href: "/admin/apps/homechef/users", icon: Users },
+      { name: "Wallets", href: "/admin/apps/homechef/wallets", icon: CreditCard },
+    ],
+  },
+  {
+    name: "Orders & Delivery",
+    icon: ClipboardList,
+    items: [
+      { name: "Orders", href: "/admin/apps/homechef/orders", icon: ClipboardList },
+      { name: "Meal Plans", href: "/admin/apps/homechef/meal-plans", icon: CalendarRange },
+      { name: "Cancellations", href: "/admin/apps/homechef/cancellations", icon: Scale },
+      { name: "Delivery (3PL)", href: "/admin/apps/homechef/delivery", icon: Truck },
+    ],
+  },
+  {
+    name: "Payments",
+    icon: CreditCard,
+    items: [
+      { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
+      { name: "Payout Setup", href: "/admin/apps/homechef/payout-setup", icon: Settings },
+      { name: "Payment Gateway", href: "/admin/apps/homechef/payment-gateway", icon: Wallet },
+    ],
+  },
+  {
+    name: "Support",
+    icon: LifeBuoy,
+    items: [
+      { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
+      { name: "Mediation", href: "/admin/apps/homechef/messaging", icon: MessageSquare },
+    ],
+  },
+  {
+    name: "Marketing",
+    icon: Megaphone,
+    items: [
+      { name: "Campaigns", href: "/admin/apps/homechef/campaigns", icon: Megaphone },
+      { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
+      { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
+      { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
+    ],
+  },
+  {
+    name: "Settings",
+    icon: SlidersHorizontal,
+    items: [
+      { name: "Platform Settings", href: "/admin/apps/homechef/platform-settings", icon: SlidersHorizontal },
+      { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
+      { name: "Audit Log", href: "/admin/apps/homechef/audit-logs", icon: ScrollText },
+    ],
+  },
   { name: "Analytics", href: "/admin/apps/homechef/analytics", icon: BarChart3 },
 ];
 
@@ -390,11 +429,11 @@ function LeftRail({
               )}
             >
               <Image
-                src="/homechef-icon.png"
+                src="/homechef-icon-mono.png"
                 alt="Fe3dr"
                 width={24}
                 height={24}
-                className="rounded-md"
+                className="rounded-sm brightness-0 invert"
               />
             </Link>
           </TooltipTrigger>
