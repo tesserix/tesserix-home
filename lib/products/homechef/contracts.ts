@@ -366,6 +366,61 @@ export interface PendingPayoutsResponse {
   count: number;
 }
 
+// ---- Payout setup / blocked chefs (#747) ------------------------------------
+// Mirrors apps/api/handlers/admin_payout.go GetBlockedChefs + SetPayoutAutomation.
+// A chef is "blocked" while their Razorpay linked account is anything other than
+// "activated" — a payout attempt against them would simply fail, so this list is
+// every chef who currently cannot be paid, with Razorpay's own requirements
+// (models/chef.go RazorpaySettlementRequirements) so the blockage is actionable
+// rather than merely visible.
+
+/** Razorpay's activation_status for the chef's linked account. */
+export type SettlementStatus = "" | "created" | "needs_clarification" | "activated";
+
+/**
+ * The admin's per-chef automation switch (models/chef.go PayoutAutoRelease /
+ * services/payout_automation.go PayoutAutoOn/PayoutAutoOff): "on" always
+ * auto-releases eligible holds, "off" always withholds them for manual release,
+ * "" follows the platform-wide default (there is no endpoint to read that
+ * default — the UI must show "" as "following the default", not resolve it).
+ */
+export type PayoutAutomationValue = "on" | "off" | "";
+
+export interface BlockedChef {
+  chefId: string;
+  businessName: string;
+  settlementStatus: SettlementStatus;
+  /** Raw JSON string: an array of {field_reference, reason_code, resolution_url}, or "". */
+  requirements: string;
+  payoutAutoRelease: PayoutAutomationValue;
+}
+
+export interface BlockedChefsResponse {
+  chefs: BlockedChef[];
+}
+
+/** One entry of Razorpay's stakeholder-requirements array, from the raw `requirements` string. */
+export interface SettlementRequirement {
+  field_reference?: string;
+  reason_code?: string;
+  resolution_url?: string;
+}
+
+/**
+ * Parses the raw `requirements` JSON string. Returns null (not an empty array)
+ * for anything that isn't a well-formed array, so the caller can fall back to
+ * showing the raw string instead of silently swallowing a malformed blob.
+ */
+export function parseSettlementRequirements(raw: string): SettlementRequirement[] | null {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? (v as SettlementRequirement[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Staff ------------------------------------------------------------------
 export interface StaffMember {
   id: string;
