@@ -37,6 +37,19 @@ describe("evaluateCsrf", () => {
     expect(d.blocked).toBe(false);
   });
 
+  it("BLOCKS a mutating api request with BOTH a session cookie and a Bearer token", () => {
+    const d = evaluateCsrf(
+      req({
+        headers: {
+          host: "home.tesserix.app",
+          cookie: "tx_session=xyz",
+          authorization: "Bearer abc",
+        },
+      }),
+    );
+    expect(d.blocked).toBe(true);
+  });
+
   it("still allows /api/internal/ (existing exemption)", () => {
     expect(evaluateCsrf(req({ path: "/api/internal/tickets" })).blocked).toBe(false);
   });

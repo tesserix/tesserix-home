@@ -24,9 +24,14 @@ export function evaluateCsrf(request: CsrfRequest): CsrfDecision {
   }
   // Bearer-authenticated requests (the native mobile admin app) are not
   // cookie-based, so CSRF — a cookie-riding-attack defense — does not apply.
-  // Same rationale as /api/internal above; React Native sends no Origin/Referer.
-  // Verification still happens downstream (middleware auth + verifySession).
-  if (bearerToken(request.headers.get("authorization"))) {
+  // Exempt ONLY when there is no session cookie: a real mobile request carries
+  // a bearer and no cookie; this stays safe even if CORS is later relaxed to
+  // reflect origins (a cookie-bearing request never skips CSRF). Verification
+  // still happens downstream (middleware auth + verifySession).
+  const sessionCookieName = process.env.SESSION_COOKIE_NAME ?? "tx_session";
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const hasSessionCookie = new RegExp(`(?:^|;\\s*)${sessionCookieName}=`).test(cookieHeader);
+  if (!hasSessionCookie && bearerToken(request.headers.get("authorization"))) {
     return { blocked: false };
   }
 
