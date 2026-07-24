@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+import { bearerToken } from "@/lib/auth/bearer";
 import {
   sessionCookieName,
   verifySession,
 } from "@/lib/auth/session-jwt";
+import { evaluateCsrf } from "@/lib/security/csrf";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
 // (Edge runtime restricts node:crypto and forces wasm fallbacks).
@@ -58,70 +60,6 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
-interface CsrfDecision {
-  blocked: boolean;
-  message?: string;
-}
-
-function csrfCheck(request: NextRequest): CsrfDecision {
-  const isApiRoute = request.nextUrl.pathname.startsWith("/api/");
-  const isMutating = ["POST", "PUT", "DELETE", "PATCH"].includes(
-    request.method,
-  );
-  if (!isApiRoute || !isMutating) {
-    return { blocked: false };
-  }
-  // /api/internal/* is server-to-server with bearer-token auth (e.g.,
-  // mark8ly admin filing a platform ticket on a merchant's behalf).
-  // CSRF is irrelevant for non-cookie auth — the bearer token in
-  // INTERNAL_API_TOKEN is the access control. Skipping the Origin/
-  // Referer check here lets trusted callers POST without faking a
-  // browser-style request.
-  if (request.nextUrl.pathname.startsWith("/api/internal/")) {
-    return { blocked: false };
-  }
-
-  const origin = request.headers.get("origin");
-  const referer = request.headers.get("referer");
-
-  const allowedHostnames = new Set<string>();
-  const host = request.headers.get("host");
-  if (host) allowedHostnames.add(host.split(":")[0]);
-  const fwdHost = request.headers.get("x-forwarded-host");
-  if (fwdHost)
-    allowedHostnames.add(fwdHost.split(",")[0].trim().split(":")[0]);
-  const csrfDomains = process.env.CSRF_ALLOWED_DOMAINS;
-  if (csrfDomains) {
-    csrfDomains.split(",").forEach((d) => allowedHostnames.add(d.trim()));
-  }
-  if (allowedHostnames.size === 0) {
-    return { blocked: false };
-  }
-
-  const matches = (raw: string | null): boolean => {
-    if (!raw) return false;
-    try {
-      return allowedHostnames.has(new URL(raw).hostname);
-    } catch {
-      return false;
-    }
-  };
-
-  if (origin && !matches(origin)) {
-    return { blocked: true, message: "CSRF check failed" };
-  }
-  if (!origin && referer && !matches(referer)) {
-    return { blocked: true, message: "CSRF check failed" };
-  }
-  if (!origin && !referer && !request.nextUrl.pathname.startsWith("/api/auth")) {
-    return {
-      blocked: true,
-      message: "CSRF check failed: Origin header required",
-    };
-  }
-  return { blocked: false };
-}
-
 function unauthorized(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) {
@@ -142,7 +80,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return NextResponse.next();
   }
 
-  const csrf = csrfCheck(request);
+  const csrf = evaluateCsrf(request);
   if (csrf.blocked) {
     return NextResponse.json(
       { error: csrf.message ?? "CSRF check failed" },
@@ -162,11 +100,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   // `Authorization: Bearer <token>` header carrying the same encrypted session
   // (the mobile admin app — it can't use the .tesserix.app httpOnly cookie).
   // Both are the identical JWE minted by signSession, so verification is shared.
-  const authHeader = request.headers.get("authorization");
-  const bearer =
-    authHeader && authHeader.toLowerCase().startsWith("bearer ")
-      ? authHeader.slice(7).trim()
-      : null;
+  const bearer = bearerToken(request.headers.get("authorization"));
   const sessionToken =
     request.cookies.get(sessionCookieName())?.value ?? bearer;
   if (!sessionToken) {
