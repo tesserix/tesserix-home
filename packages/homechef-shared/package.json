@@ -18,7 +18,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "@tesserix/tsconfig": "workspace:*",
