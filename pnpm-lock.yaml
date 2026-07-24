@@ -39,6 +39,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.83.0
         version: 5.101.4(react@19.2.7)
+      '@tesserix/homechef-shared':
+        specifier: workspace:*
+        version: link:../../packages/homechef-shared
       axios:
         specifier: ^1.13.0
         version: 1.18.1

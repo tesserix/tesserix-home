@@ -1,6 +1,6 @@
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useStats, useActivities } from '../../lib/hooks';
-import { formatINR, formatCount, formatRelative } from '../../lib/format';
+import { formatINR, formatCount, formatRelative } from "@tesserix/homechef-shared";
 import { Card, EmptyState, LoadingRows, Screen, ScreenHeader, SectionLabel, StatCard } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
 

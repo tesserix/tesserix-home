@@ -12,7 +12,7 @@ import {
   useUpdateOrderIssueConfig,
 } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
-import { formatINR, formatDateTime, titleCase } from '../../lib/format';
+import { formatINR, formatDateTime, titleCase } from "@tesserix/homechef-shared";
 import {
   Badge,
   Button,
