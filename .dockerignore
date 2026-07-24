@@ -1,43 +1,40 @@
-# Dependencies
-node_modules
+# Dependencies (all workspaces)
+**/node_modules
 .pnp
 .pnp.js
 
+# Build output
+**/.next
+**/.expo
+**/out
+**/build
+**/dist
+
 # Testing
-coverage
+**/coverage
+**/test-results
+**/playwright-report
+**/playwright/.cache
 
-# Next.js
-.next
-out
-
-# Production
-build
-
-# Misc
-.DS_Store
-*.pem
-
-# Debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Local env files
-.env*.local
-.env
-
-# Vercel
-.vercel
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
-
-# IDE
+# Repo-level (not needed in image)
+.git
+.github
+docs
+.planning
 .idea
 .vscode
 
-# Playwright
-test-results/
-playwright-report/
-playwright/.cache/
+# Misc
+**/.DS_Store
+*.pem
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+# Env
+**/.env*.local
+**/.env
+
+# Debug
+**/npm-debug.log*
+**/yarn-debug.log*
+**/yarn-error.log*
