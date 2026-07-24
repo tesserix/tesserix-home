@@ -39,6 +39,7 @@ import {
   MessageSquare,
   Wallet,
   SlidersHorizontal,
+  RotateCcw,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
@@ -152,6 +153,7 @@ const homechefNav: NavEntry[] = [
     icon: CreditCard,
     items: [
       { name: "Payouts", href: "/admin/apps/homechef/payouts", icon: CreditCard },
+      { name: "Refund Payouts", href: "/admin/apps/homechef/refund-payouts", icon: RotateCcw },
       { name: "Payout Setup", href: "/admin/apps/homechef/payout-setup", icon: Settings },
       { name: "Payment Gateway", href: "/admin/apps/homechef/payment-gateway", icon: Wallet },
     ],
