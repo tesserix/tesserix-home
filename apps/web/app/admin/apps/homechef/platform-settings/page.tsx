@@ -223,6 +223,31 @@ function PolicySection() {
         </label>
       </div>
 
+      <div>
+        <h3 className="text-sm font-semibold">Order automation</h3>
+        <label className="mt-2 flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            // Undefined (older API) reads as the server default: ON.
+            checked={form.confirmReceiptFlowEnabled ?? true}
+            onChange={(e) =>
+              setForm({ ...form, confirmReceiptFlowEnabled: e.target.checked })
+            }
+          />
+          <span>
+            <span className="font-medium">Auto-confirm delivery</span>
+            <span className="block text-xs text-muted-foreground">
+              After an order is delivered, remind the customer to confirm receipt
+              (every 10&nbsp;min, up to 3&times;); if they never respond it
+              auto-confirms on their behalf so the chef&apos;s payout can proceed.
+              Turn off to require manual confirmation only. Money still releases on
+              the normal payout schedule either way.
+            </span>
+          </span>
+        </label>
+      </div>
+
       {msg ? (
         <p className={`text-sm ${msg.ok ? "text-emerald-600" : "text-destructive"}`}>{msg.text}</p>
       ) : null}
