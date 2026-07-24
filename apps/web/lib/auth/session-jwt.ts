@@ -14,6 +14,7 @@
 //                                other surface that re-uses the key)
 
 import { EncryptJWT, jwtDecrypt } from "jose";
+import { bearerToken } from "./bearer";
 
 const ISSUER = "tesserix-home";
 const AUDIENCE = "tesserix-home-admin";
@@ -100,14 +101,17 @@ export async function verifySession(
 // route so the session is guaranteed valid by the time we get here —
 // this is just for reading the claims.
 export async function getCurrentSession(): Promise<VerifiedSession | null> {
-  // Lazy import keeps this file usable in the Edge runtime if it ever
-  // moves there; cookies() is only available inside RSC/route-handler
-  // contexts which we know we're in when this is called.
-  const { cookies } = await import("next/headers");
+  // Lazy import keeps this usable only inside RSC / route-handler contexts,
+  // where cookies() and headers() are available.
+  const { cookies, headers } = await import("next/headers");
   const jar = await cookies();
-  const token = jar.get(sessionCookieName())?.value;
-  if (!token) return null;
-  return verifySession(token);
+  const cookieToken = jar.get(sessionCookieName())?.value;
+  if (cookieToken) return verifySession(cookieToken);
+  // Mobile clients hold no .tesserix.app cookie — they present the same
+  // encrypted session (minted by /api/auth/mobile/google) as a bearer token.
+  const bearer = bearerToken((await headers()).get("authorization"));
+  if (bearer) return verifySession(bearer);
+  return null;
 }
 
 export function sessionCookieName(): string {
