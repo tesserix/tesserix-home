@@ -4,16 +4,15 @@ on:
   push:
     branches: [main, 'feat/**', 'feature/**', 'bugfix/**', 'hotfix/**']
     paths:
-      - 'src/**'
-      - 'app/**'
-      - 'pages/**'
-      - 'components/**'
-      - 'lib/**'
-      - 'middleware.ts'
-      - 'next.config.ts'
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'pnpm-workspace.yaml'
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+      - '.npmrc'
       - 'Dockerfile'
+      - '.dockerignore'
       - 'package.json'
-      - 'package-lock.json'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
@@ -45,22 +44,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npx eslint . --max-warnings 0
+        run: pnpm --filter web lint
 
       - name: Unit tests
-        run: npm run test:unit
+        run: pnpm --filter web test:unit
 
       - name: Log in to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -76,8 +81,12 @@ jobs:
             echo "tag=main-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           fi
 
+      # Image build/push (and the scan steps below) run ONLY on pushes to main.
+      # A push to any other branch (feat/**, etc.) would otherwise publish a
+      # main-<sha> image that Kargo auto-promotes straight to prod — an
+      # unintended deploy. PRs validate lint/test without building an image.
       - name: Build and push
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         run: |
           docker build \
             --platform linux/amd64 \
@@ -95,7 +104,7 @@ jobs:
       # argocd/prod/apps/global/company.yaml.
 
       - name: Security scan
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         # Pinned off @master — @master regressed (cache-path failure). v0.36.0
         # pins setup-trivy/actions-cache to known-good versions.
         uses: aquasecurity/trivy-action@v0.36.0
@@ -107,7 +116,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload scan results
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main'
         # Code scanning needs GitHub Advanced Security, which is off while this repo is
         # private; keep the SARIF upload best-effort so it succeeds when public/GHAS and
         # never fails CI when it can't upload. The Trivy scan itself still runs above.

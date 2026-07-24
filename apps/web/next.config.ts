@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "node:path";
 
 /**
  * Security Headers Configuration for Tesserix Homepage & Admin Portal
@@ -6,6 +7,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
+
+  // Trace files from the monorepo root so the standalone bundle includes the
+  // hoisted workspace node_modules (server.js emits at apps/web/server.js).
+  outputFileTracingRoot: path.join(import.meta.dirname, "../../"),
 
   // @tesserix/otto-widget ships raw TypeScript source (no dist/) — Next.js
   // must transpile it from node_modules or the build fails with

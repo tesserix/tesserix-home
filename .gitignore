@@ -64,7 +64,15 @@ next-env.d.ts
 
 # Images (prevent accidental large asset commits)
 **.png
-# Allow public assets
-!public/*.png
+# Allow public assets (web app moved to apps/web/ in the monorepo restructure)
+!apps/web/public/**/*.png
 
 .claude/
+
+# Monorepo workspaces
+**/node_modules
+apps/*/.next
+apps/*/.expo
+packages/*/dist
+.turbo
+**/*.tsbuildinfo
