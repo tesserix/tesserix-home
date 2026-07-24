@@ -17,7 +17,7 @@ import Link from "next/link";
 import useSWR from "swr";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatDateTime, formatINR, titleCase } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import type { OrderDetailResponse } from "@/lib/products/homechef/contracts";
 

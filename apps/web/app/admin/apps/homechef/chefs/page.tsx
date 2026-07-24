@@ -7,7 +7,7 @@ import { Button } from "@tesserix/web";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import Link from "next/link";
 
-import { formatDate, formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatDate, formatDateTime, formatINR, titleCase } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { ChefWithStats, Paginated } from "@/lib/products/homechef/contracts";

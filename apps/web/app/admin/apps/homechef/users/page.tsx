@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatINR, titleCase } from "@tesserix/homechef-shared";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type { Paginated, UserWithStats } from "@/lib/products/homechef/contracts";

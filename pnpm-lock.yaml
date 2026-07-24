@@ -127,6 +127,9 @@ importers:
       '@tailwindcss/typography':
         specifier: ^0.5.19
         version: 0.5.20(tailwindcss@4.3.3)
+      '@tesserix/homechef-shared':
+        specifier: workspace:*
+        version: link:../../packages/homechef-shared
       '@tesserix/hooks':
         specifier: ^1.0.0
         version: 1.0.0(react@19.2.1)
