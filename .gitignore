@@ -68,3 +68,11 @@ next-env.d.ts
 !public/*.png
 
 .claude/
+
+# Monorepo workspaces
+**/node_modules
+apps/*/.next
+apps/*/.expo
+packages/*/dist
+.turbo
+**/*.tsbuildinfo
