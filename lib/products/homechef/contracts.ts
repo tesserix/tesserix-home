@@ -713,6 +713,13 @@ export interface PlatformPolicy {
    */
   operatingDays: number[] | null;
   closedMessage: string;
+  /**
+   * Runs the durable reminder + auto-confirm flow after delivery. Defaults ON
+   * server-side; optional here so an older API response (before the field
+   * existed) reads as the default-on value. Admins turn it OFF to require manual
+   * confirmation only.
+   */
+  confirmReceiptFlowEnabled?: boolean;
 }
 
 export interface SubscriptionTierPrices {
