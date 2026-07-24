@@ -1,0 +1,31 @@
+{
+  "name": "tesserix-home",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test:unit",
+    "dev": "turbo run dev"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "@babel/core": "^7.29.6",
+      "brace-expansion@1": "^1.1.13",
+      "brace-expansion@5": "^5.0.6",
+      "esbuild": "^0.28.1",
+      "flatted": "^3.4.2",
+      "js-yaml@4": "^4.2.0",
+      "linkify-it": "^5.0.1",
+      "markdown-it": "^14.2.0",
+      "picomatch@2": "^2.3.2",
+      "picomatch@4": "^4.0.4",
+      "postcss": "^8.5.10"
+    }
+  }
+}

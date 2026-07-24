@@ -1,12 +1,13 @@
 {
-  "name": "tesserix-home",
+  "name": "web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings 0",
+    "typecheck": "tsc --noEmit",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
@@ -60,29 +61,5 @@
     "typescript": "5.9.3",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4"
-  },
-  "pnpm": {
-    "overrides": {
-      "@babel/core": "^7.29.6",
-      "brace-expansion@1": "^1.1.13",
-      "brace-expansion@5": "^5.0.6",
-      "esbuild": "^0.28.1",
-      "flatted": "^3.4.2",
-      "js-yaml@4": "^4.2.0",
-      "linkify-it": "^5.0.1",
-      "markdown-it": "^14.2.0",
-      "picomatch@2": "^2.3.2",
-      "picomatch@4": "^4.0.4",
-      "postcss": "^8.5.10"
-    }
-  },
-  "overrides": {
-    "@babel/core": "^7.29.6",
-    "esbuild": "^0.28.1",
-    "js-yaml@4": "^4.2.0",
-    "postcss": "^8.5.10",
-    "brace-expansion@1": "^1.1.13",
-    "brace-expansion@2": "^2.0.3",
-    "brace-expansion@5": "^5.0.6"
   }
 }
