@@ -1,13 +1,14 @@
 "use client";
 
-// Fe3dr meal-plan refund payouts (v2 refund flow). A customer's late (<=12h) skip/cancel is
-// decided by the chef (Full/Half); this is where a Tesserix admin PAYS that approved refund out —
-// to the customer's HomeChef Wallet (instant, spend-on-HomeChef) or their original payment method
-// (reversed via Razorpay, RBI ~5-7 business days). The amount excludes the platform fee, GST, and
-// delivery. Every action flows through the HMAC gateway to the Go API (escrow/ledger/NATS intact).
+// Fe3dr meal-plan refund payouts (v2 refund flow, RBI). The CUSTOMER chooses where an approved
+// refund goes — wallet is instant (no admin step), the original method is a real Razorpay reversal.
+// This queue holds only the refunds the customer routed to their ORIGINAL method; a Tesserix admin
+// EXECUTES the gateway reversal here (RBI ~5-7 business days). The admin never picks the medium.
+// The amount excludes the platform fee, GST, and delivery. Every action flows through the HMAC
+// gateway to the Go API (escrow/ledger/NATS intact).
 
 import { useCallback, useEffect, useState } from "react";
-import { RefreshCw, Wallet, CreditCard } from "lucide-react";
+import { RefreshCw, CreditCard } from "lucide-react";
 
 import { AdminHeader } from "@/components/admin/header";
 import { formatCurrency } from "@/components/admin/metrics/format";
@@ -51,23 +52,30 @@ export default function HomechefRefundPayoutsPage() {
     void load();
   }, [load]);
 
-  async function pay(row: PendingRefundDay, destination: "wallet" | "source") {
-    const label = destination === "wallet" ? "HomeChef Wallet (instant)" : "original payment method (5-7 business days)";
-    if (!window.confirm(`Refund ${formatCurrency(row.refundAmount, "INR")} to ${row.customerName || "the customer"} via ${label}?\n\n${row.mealPlanNumber} · ${row.date} · ${row.dishName} (${row.chefChoice})`)) {
+  // Execute the customer-chosen ORIGINAL-method refund via Razorpay. The admin only runs it — the
+  // medium is already decided (RBI), so there's no wallet/source choice to make here.
+  async function execute(row: PendingRefundDay) {
+    if (
+      !window.confirm(
+        `Execute a ${formatCurrency(row.refundAmount, "INR")} refund to ${
+          row.customerName || "the customer"
+        }'s original payment method (Razorpay, 5-7 business days)?\n\n${row.mealPlanNumber} · ${
+          row.date
+        } · ${row.dishName} (${row.chefChoice})`,
+      )
+    ) {
       return;
     }
     setBusyId(row.dayId);
     try {
-      const res = await fetch(`${GW}/${row.dayId}/pay-refund`, {
+      const res = await fetch(`${GW}/${row.dayId}/execute-refund`, {
         method: "POST",
         credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ destination }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       await load();
     } catch (e) {
-      window.alert(`Failed to pay refund: ${e instanceof Error ? e.message : String(e)}`);
+      window.alert(`Failed to execute refund: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusyId(null);
     }
@@ -78,7 +86,7 @@ export default function HomechefRefundPayoutsPage() {
       <div className="flex items-start justify-between gap-4">
         <AdminHeader
           title="Fe3dr · Refund payouts"
-          description="Pay chef-approved meal-plan refunds to the customer's wallet or original method"
+          description="Execute customer-chosen original-method meal-plan refunds via Razorpay"
         />
         <button
           onClick={() => void load()}
@@ -103,7 +111,7 @@ export default function HomechefRefundPayoutsPage() {
               <th className="px-4 py-3">Chef · dish</th>
               <th className="px-4 py-3">Chef decision</th>
               <th className="px-4 py-3 text-right">Refund</th>
-              <th className="px-4 py-3 text-right">Pay via</th>
+              <th className="px-4 py-3 text-right">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -116,7 +124,7 @@ export default function HomechefRefundPayoutsPage() {
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
-                  No refunds awaiting payout.
+                  No refunds awaiting execution.
                 </td>
               </tr>
             ) : (
@@ -143,20 +151,13 @@ export default function HomechefRefundPayoutsPage() {
                     {formatCurrency(r.refundAmount, "INR")}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
+                    <div className="flex justify-end">
                       <button
                         disabled={busyId === r.dayId}
-                        onClick={() => void pay(r, "wallet")}
+                        onClick={() => void execute(r)}
                         className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background hover:opacity-90 disabled:opacity-50"
                       >
-                        <Wallet className="h-3.5 w-3.5" /> Wallet
-                      </button>
-                      <button
-                        disabled={busyId === r.dayId}
-                        onClick={() => void pay(r, "source")}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-50"
-                      >
-                        <CreditCard className="h-3.5 w-3.5" /> Original
+                        <CreditCard className="h-3.5 w-3.5" /> Execute refund
                       </button>
                     </div>
                   </td>
@@ -168,9 +169,9 @@ export default function HomechefRefundPayoutsPage() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Wallet is instant and spend-on-HomeChef only. Original method is reversed to the customer&apos;s
-        card/UPI via Razorpay and takes ~5–7 business days (RBI). The refund excludes the platform fee,
-        GST, and delivery.
+        The customer already chose their original payment method (RBI). Executing reverses the charge
+        to their card/UPI via Razorpay in ~5–7 business days. Wallet refunds are instant and never
+        appear here. The refund excludes the platform fee, GST, and delivery.
       </p>
     </div>
   );
