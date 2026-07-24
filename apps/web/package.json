@@ -50,6 +50,8 @@
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4",
+    "@tesserix/eslint-config": "workspace:*",
+    "@tesserix/tsconfig": "workspace:*",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",

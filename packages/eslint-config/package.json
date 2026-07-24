@@ -1,0 +1,7 @@
+{
+  "name": "@tesserix/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs"
+}

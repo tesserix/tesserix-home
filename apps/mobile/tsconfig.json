@@ -1,11 +1,9 @@
 {
-  "extends": "expo/tsconfig.base",
+  "extends": ["expo/tsconfig.base", "@tesserix/tsconfig/base.json"],
   "compilerOptions": {
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "paths": { "@/*": ["./*"] }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
