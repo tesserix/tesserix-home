@@ -127,3 +127,33 @@ export interface SubscriptionsListResponse {
   rows: SubscriptionRowItem[];
   generatedAt: string;
 }
+
+// ---- Onboarding funnel ------------------------------------------------------
+export interface OnboardingFunnelStats {
+  totalStarted: number;
+  emailVerified: number;
+  completed: number;
+  inFlight: number;
+  abandoned: number;
+  medianTimeToCompleteSeconds: number | null;
+  last24h: { started: number; completed: number };
+}
+export interface OnboardingSessionRow {
+  id: string;
+  email: string;
+  business_name: string | null;
+  status: string;
+  email_verified_at: string | null;
+  completed_at: string | null;
+  tenant_id: string | null;
+  last_activity_at: string;
+  created_at: string;
+  is_abandoned: boolean;
+  hours_idle: number;
+}
+export interface OnboardingResponse {
+  stats: OnboardingFunnelStats;
+  sessions: OnboardingSessionRow[];
+  filter: { status: string };
+  generatedAt: string;
+}
