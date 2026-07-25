@@ -15,7 +15,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronRight, type LucideIcon } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react-native';
 import { radius, space, text, usePalette, type Palette } from '../lib/theme';
 
 export type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info';
@@ -80,6 +80,72 @@ export function StatCard({ label, value, tone }: { label: string; value: string;
         {value}
       </Text>
     </Card>
+  );
+}
+
+/** Wraps StatCards into a responsive, gapped grid (2-per-row on phones). */
+export function StatGrid({ children }: { children: ReactNode }) {
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingHorizontal: space[4] }}>
+      {children}
+    </View>
+  );
+}
+
+/** A compact KPI tile (smaller than StatCard) for dense metric grids. */
+export function StatTile({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
+  const p = usePalette();
+  const accent = tone ? toneColors(p, tone).fg : p.foreground;
+  return (
+    <Card style={{ flexGrow: 1, flexBasis: '30%', minWidth: 96, padding: space[3] }}>
+      <Text style={{ fontFamily: 'InterTight-SemiBold', fontSize: 22, color: accent, fontVariant: ['tabular-nums'] }}>
+        {value}
+      </Text>
+      <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Card>
+  );
+}
+
+/** A small label-over-value pair used inside detail/metric cards. */
+export function Metric({ label, value, tone }: { label: string; value: string; tone?: Tone }) {
+  const p = usePalette();
+  const color = tone ? toneColors(p, tone).fg : p.foreground;
+  return (
+    <View style={{ minWidth: 88 }}>
+      <Text style={[text.caption, { color: p.mutedForeground }]}>{label}</Text>
+      <Text style={{ fontFamily: 'InterTight-Medium', fontSize: 15, color, marginTop: 2, fontVariant: ['tabular-nums'] }}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** A colored status dot. */
+export function StatusDot({ tone }: { tone: Tone }) {
+  const p = usePalette();
+  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneColors(p, tone).fg }} />;
+}
+
+/** An inline alert banner (warnings, "N need attention", "metrics unavailable"). */
+export function Banner({ text: msg, tone = 'warning' }: { text: string; tone?: Tone }) {
+  const p = usePalette();
+  const c = toneColors(p, tone);
+  return (
+    <View style={{ marginHorizontal: space[4], marginBottom: space[3], padding: space[3], borderRadius: radius.md, backgroundColor: c.bg }}>
+      <Text style={{ fontFamily: 'InterTight-Medium', fontSize: 13, color: c.fg }}>{msg}</Text>
+    </View>
+  );
+}
+
+/** A back chevron for detail-screen headers (use in ScreenHeader `right`/left). */
+export function BackButton({ onPress }: { onPress: () => void }) {
+  const p = usePalette();
+  return (
+    <Pressable onPress={onPress} hitSlop={12} style={{ paddingTop: 4, paddingRight: 8 }}>
+      <ChevronLeft size={24} color={p.mutedForeground} />
+    </Pressable>
   );
 }
 

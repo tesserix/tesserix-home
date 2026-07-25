@@ -1,0 +1,113 @@
+name: Mobile Admin - EAS Build
+
+# Cloud-builds the Tesserix Admin Expo app (apps/mobile) on Expo's EAS Build service.
+# The mobile app is NOT a Docker image — it ships as native iOS/Android binaries
+# built by EAS, so this is a separate path from the GHCR/Kargo/ArgoCD web build.
+#
+# Manual-only (workflow_dispatch) on purpose: native builds consume EAS minutes,
+# so we never auto-build on push. Pick the platform + profile at run time. Builds
+# are queued with --no-wait (the runner returns immediately; track progress at
+# https://expo.dev/accounts/tesserix-org/projects).
+#
+# Requires the EXPO_TOKEN repo secret — an Expo access token for the tesserix-org
+# account that owns the tesserix-admin EAS project. Create one at
+# https://expo.dev/accounts/tesserix-org/settings/access-tokens then:
+#   gh secret set EXPO_TOKEN --repo tesserix/tesserix-home
+#
+# One-time setup before the first build: from apps/mobile, run `eas init` (creates the
+# EAS project + writes extra.eas.projectId into app.json) and `eas credentials`
+# (iOS distribution cert + provisioning profile; Android keystore). iOS/production
+# profiles require those signing credentials to already exist on the EAS project,
+# else --non-interactive builds fail.
+#
+# submit=true appends `--auto-submit`, uploading the build to TestFlight / Play
+# internal using submit.production in eas.json (needs ascAppId set + store creds
+# configured on the EAS project).
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Target platform
+        type: choice
+        options: [all, ios, android]
+        default: all
+      profile:
+        description: EAS build profile (from eas.json)
+        type: choice
+        options: [preview, production, development]
+        default: preview
+      submit:
+        description: Submit to store (TestFlight / Play internal) after build
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-eas-${{ inputs.platform }}-${{ inputs.profile }}-${{ inputs.submit }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: EAS build (mobile)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Guard — EXPO_TOKEN present
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error::EXPO_TOKEN secret is not set. Add it with: gh secret set EXPO_TOKEN --repo tesserix/tesserix-home"
+            exit 1
+          fi
+
+      - name: EAS build
+        working-directory: apps/mobile
+        run: |
+          SUBMIT_FLAG=""
+          if [ "${{ inputs.submit }}" = "true" ]; then
+            SUBMIT_FLAG="--auto-submit"
+          fi
+          eas build \
+            --platform ${{ inputs.platform }} \
+            --profile ${{ inputs.profile }} \
+            --non-interactive \
+            --no-wait \
+            $SUBMIT_FLAG
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## EAS build — Tesserix Admin mobile"
+            echo ""
+            echo "- **Platform:** ${{ inputs.platform }}"
+            echo "- **Profile:** ${{ inputs.profile }}"
+            echo "- **Submit:** ${{ inputs.submit }}"
+            echo "- **Result:** ${{ job.status }}"
+            echo ""
+            echo "Track builds at https://expo.dev/accounts/tesserix-org/projects"
+          } >> "$GITHUB_STEP_SUMMARY"

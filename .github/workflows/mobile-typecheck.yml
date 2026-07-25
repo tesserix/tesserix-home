@@ -1,0 +1,74 @@
+name: Mobile Admin - Typecheck
+
+# Lightweight CI smoke for the Tesserix Admin Expo app (apps/mobile): runs
+# `tsc --noEmit` on any PR/push that touches the mobile app. No EAS minutes, no
+# native build — just type safety, so regressions are caught before a manual EAS
+# build. Mirrors the HomeChef mobile-typecheck workflow.
+#
+# apps/mobile is a pnpm workspace package and imports @tesserix/homechef-shared,
+# so we install the whole workspace from the root lockfile rather than just the
+# app — the shared package has to resolve for tsc to pass.
+
+on:
+  push:
+    branches: [main, 'feat/**', 'feature/**', 'bugfix/**', 'hotfix/**']
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/homechef-shared/**'
+      - '.github/workflows/mobile-typecheck.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/homechef-shared/**'
+      - '.github/workflows/mobile-typecheck.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: tsc (mobile)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # @tesserix/homechef-shared resolves through its dist/ (main/types point
+      # there) and dist/ isn't committed — without this, every import of it is a
+      # TS2307 in the app.
+      - name: Build shared package
+        run: pnpm --filter @tesserix/homechef-shared build
+
+      - name: Typecheck
+        working-directory: apps/mobile
+        run: pnpm exec tsc --noEmit
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Typecheck — Tesserix Admin mobile"
+            echo ""
+            echo "- **Result:** ${{ job.status }}"
+            echo "- \`tsc --noEmit\` over apps/mobile"
+          } >> "$GITHUB_STEP_SUMMARY"

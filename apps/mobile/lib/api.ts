@@ -24,6 +24,11 @@ export async function setToken(token: string | null): Promise<void> {
 
 api.interceptors.request.use((cfg) => {
   if (bearer) cfg.headers.Authorization = `Bearer ${bearer}`;
+  // The gateway's CSRF check rejects mutating /api/* calls whose Origin/Referer
+  // host isn't allow-listed; it always allow-lists its own request host. React
+  // Native sends no Origin by default, which would 403 every POST/PUT/PATCH — so
+  // we set it to the API base (same host) to pass the check. Harmless on GETs.
+  cfg.headers.Origin = BASE;
   return cfg;
 });
 
@@ -52,4 +57,6 @@ export const plat = {
     api.get<T>(`/api/admin${path}`, { params }).then((r) => r.data),
   post: <T>(path: string, body?: unknown) => api.post<T>(`/api/admin${path}`, body).then((r) => r.data),
   put: <T>(path: string, body?: unknown) => api.put<T>(`/api/admin${path}`, body).then((r) => r.data),
+  patch: <T>(path: string, body?: unknown) => api.patch<T>(`/api/admin${path}`, body).then((r) => r.data),
+  del: <T>(path: string) => api.delete<T>(`/api/admin${path}`).then((r) => r.data),
 };

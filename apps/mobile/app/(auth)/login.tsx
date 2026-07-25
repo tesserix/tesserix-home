@@ -12,9 +12,36 @@ import { palettes, radius, space, text } from '../../lib/theme';
 // regardless of OS theme.
 const p = palettes.dark;
 
-export default function Login() {
-  const { signInWithGoogle, signInDev, busy } = useAuth();
+// Whether native Google sign-in is configured. `useIdTokenAuthRequest` THROWS at
+// render if no platform client id is set, so the Google button is only mounted
+// when at least one id exists — otherwise the whole screen (and the dev-bypass
+// path, which is meant to work without Google) would crash on boot.
+const GOOGLE_CONFIGURED = !!(
+  process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID
+);
 
+export default function Login() {
+  return (
+    <SafeAreaView style={styles.root}>
+      <View style={styles.center}>
+        <View style={styles.badge}>
+          <ShieldCheck size={28} color={p.sidebar} />
+        </View>
+        <Text style={styles.wordmark}>Tesserix</Text>
+        <Text style={styles.tagline}>Platform admin console</Text>
+      </View>
+
+      <View style={styles.actions}>
+        {GOOGLE_CONFIGURED ? <GoogleSignIn /> : null}
+        <DevSignIn />
+        <Text style={styles.fine}>Access is limited to allow-listed Tesserix admins.</Text>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function GoogleSignIn() {
+  const { signInWithGoogle, busy } = useAuth();
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
     webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
@@ -29,32 +56,25 @@ export default function Login() {
   }, [response, signInWithGoogle]);
 
   return (
-    <SafeAreaView style={styles.root}>
-      <View style={styles.center}>
-        <View style={styles.badge}>
-          <ShieldCheck size={28} color={p.sidebar} />
-        </View>
-        <Text style={styles.wordmark}>Tesserix</Text>
-        <Text style={styles.tagline}>Platform admin console</Text>
-      </View>
+    <Button
+      label="Continue with Google"
+      loading={busy}
+      disabled={!request}
+      onPress={() => promptAsync().catch(() => {})}
+    />
+  );
+}
 
-      <View style={styles.actions}>
-        <Button
-          label="Continue with Google"
-          loading={busy}
-          disabled={!request}
-          onPress={() => promptAsync().catch(() => {})}
-        />
-        {devBypassEnabled ? (
-          <Button
-            label="Continue in dev mode"
-            variant="secondary"
-            onPress={() => signInDev().catch((e) => Alert.alert('Dev sign-in failed', apiError(e)))}
-          />
-        ) : null}
-        <Text style={styles.fine}>Access is limited to allow-listed Tesserix admins.</Text>
-      </View>
-    </SafeAreaView>
+function DevSignIn() {
+  const { signInDev, busy } = useAuth();
+  if (!devBypassEnabled) return null;
+  return (
+    <Button
+      label="Continue in dev mode"
+      variant="secondary"
+      loading={busy}
+      onPress={() => signInDev().catch((e) => Alert.alert('Dev sign-in failed', apiError(e)))}
+    />
   );
 }
 

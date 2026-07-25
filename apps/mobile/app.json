@@ -7,6 +7,13 @@
     "scheme": "tesserix-admin",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "jsEngine": "hermes",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.tesserix.admin"

@@ -1,14 +1,21 @@
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useStats, useActivities } from '../../lib/hooks';
+import { usePlatformDashboard } from '../../lib/platform-hooks';
 import { formatINR, formatCount, formatRelative } from "@tesserix/homechef-shared";
 import { Card, EmptyState, LoadingRows, Screen, ScreenHeader, SectionLabel, StatCard } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
 
 export default function Dashboard() {
+  const dash = usePlatformDashboard();
   const stats = useStats();
   const activities = useActivities();
   const p = usePalette();
+  const d = dash.data;
   const s = stats.data;
+
+  const converted = d?.leads.by_status.converted ?? 0;
+  const leadTotal = d?.leads.total ?? 0;
+  const conversionPct = leadTotal > 0 ? Math.round((converted / leadTotal) * 100) : 0;
 
   return (
     <Screen>
@@ -17,30 +24,57 @@ export default function Dashboard() {
         contentContainerStyle={{ paddingBottom: space[10], gap: space[5] }}
         refreshControl={
           <RefreshControl
-            refreshing={stats.isRefetching}
-            onRefresh={() => { stats.refetch(); activities.refetch(); }}
+            refreshing={dash.isRefetching || stats.isRefetching}
+            onRefresh={() => { dash.refetch(); stats.refetch(); activities.refetch(); }}
             tintColor={p.mutedForeground}
           />
         }
       >
-        {stats.isLoading ? (
-          <LoadingRows rows={4} />
-        ) : (
-          <View style={{ paddingHorizontal: space[4], gap: 12 }}>
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <StatCard label="Orders today" value={formatCount(s?.ordersToday ?? 0)} />
-              <StatCard label="GMV today" value={formatINR(s?.revenueToday ?? 0)} />
+        {/* Platform-wide KPIs */}
+        <View style={{ paddingHorizontal: space[4] }}>
+          <SectionLabel>Platform</SectionLabel>
+          {dash.isLoading ? (
+            <LoadingRows rows={4} />
+          ) : (
+            <View style={{ gap: 12 }}>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <StatCard label="Active tenants" value={formatCount(d?.tenants.active ?? 0)} />
+                <StatCard label="Stores" value={formatCount(d?.stores.total ?? 0)} />
+              </View>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <StatCard label="Products" value={formatCount(d?.apps.active ?? 0)} />
+                <StatCard
+                  label="Leads"
+                  value={formatCount(leadTotal)}
+                  tone={conversionPct >= 20 ? 'success' : undefined}
+                />
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <StatCard label="Active chefs" value={formatCount(s?.totalChefs ?? 0)} />
-              <StatCard
-                label="Pending approvals"
-                value={formatCount(s?.pendingVerifications ?? 0)}
-                tone={(s?.pendingVerifications ?? 0) > 0 ? 'warning' : 'neutral'}
-              />
+          )}
+        </View>
+
+        {/* HomeChef live metrics */}
+        <View style={{ paddingHorizontal: space[4] }}>
+          <SectionLabel>HomeChef</SectionLabel>
+          {stats.isLoading ? (
+            <LoadingRows rows={4} />
+          ) : (
+            <View style={{ gap: 12 }}>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <StatCard label="Orders today" value={formatCount(s?.ordersToday ?? 0)} />
+                <StatCard label="GMV today" value={formatINR(s?.revenueToday ?? 0)} />
+              </View>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <StatCard label="Active chefs" value={formatCount(s?.totalChefs ?? 0)} />
+                <StatCard
+                  label="Pending approvals"
+                  value={formatCount(s?.pendingVerifications ?? 0)}
+                  tone={(s?.pendingVerifications ?? 0) > 0 ? 'warning' : 'neutral'}
+                />
+              </View>
             </View>
-          </View>
-        )}
+          )}
+        </View>
 
         <View style={{ paddingHorizontal: space[4] }}>
           <SectionLabel>Recent activity</SectionLabel>

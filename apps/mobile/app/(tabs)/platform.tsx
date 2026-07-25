@@ -7,28 +7,28 @@ import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../compon
 import { space } from '../../lib/theme';
 import { View } from 'react-native';
 
-// Platform-wide ops. Live routes land on real screens; the rest are wired as the
-// phased build reaches them (Phase 3).
+// Platform-wide ops. Live routes land on real screens. Audit logs stays queued —
+// it's per-product (each app exposes its own audit trail), not a platform-wide feed.
 const SECTIONS = [
   { group: 'Support', items: [
-    { title: 'Platform tickets', sub: 'Cross-product support', icon: Ticket, route: '/platform/tickets', live: false },
-    { title: 'Announcements', sub: 'Broadcast to products', icon: Megaphone, route: '/platform/announcements', live: false },
+    { title: 'Platform tickets', sub: 'Cross-product support', icon: Ticket, route: '/platform/tickets', live: true },
+    { title: 'Announcements', sub: 'Broadcast to products', icon: Megaphone, route: '/platform/announcements', live: true },
   ]},
   { group: 'Reliability', items: [
-    { title: 'Service health', sub: 'Live status of services', icon: HeartPulse, route: '/platform/health', live: false },
-    { title: 'Uptime', sub: 'SLA + incident history', icon: Activity, route: '/platform/uptime', live: false },
-    { title: 'Observability', sub: 'Traces, logs, metrics', icon: Activity, route: '/platform/observability', live: false },
+    { title: 'Service health', sub: 'Live status of workloads', icon: HeartPulse, route: '/platform/health', live: true },
+    { title: 'Uptime', sub: 'Tenant endpoint probes', icon: Activity, route: '/platform/uptime', live: true },
+    { title: 'Observability', sub: 'Traces across products', icon: Activity, route: '/platform/observability', live: true },
   ]},
   { group: 'Data & access', items: [
-    { title: 'Users', sub: 'Cross-product directory', icon: Users, route: '/platform/users', live: false },
-    { title: 'Databases', sub: 'Managed instances', icon: Database, route: '/platform/databases', live: false },
-    { title: 'Custom domains', sub: 'DNS + verification', icon: Globe, route: '/platform/domains', live: false },
-    { title: 'Outbox', sub: 'Event delivery', icon: Inbox, route: '/platform/outbox', live: false },
+    { title: 'Users', sub: 'Cross-product directory', icon: Users, route: '/platform/users', live: true },
+    { title: 'Databases', sub: 'CloudNativePG clusters', icon: Database, route: '/platform/databases', live: true },
+    { title: 'Custom domains', sub: 'DNS + verification', icon: Globe, route: '/platform/domains', live: true },
+    { title: 'Outbox', sub: 'Event delivery', icon: Inbox, route: '/platform/outbox', live: true },
   ]},
   { group: 'Governance', items: [
-    { title: 'Audit logs', sub: 'Every admin action', icon: ScrollText, route: '/platform/audit', live: false },
-    { title: 'Erasure requests', sub: 'DPDP / GDPR queue', icon: Trash2, route: '/platform/erasure', live: false },
-    { title: 'Break-glass', sub: 'Emergency access', icon: ShieldAlert, route: '/platform/break-glass', live: false },
+    { title: 'Erasure requests', sub: 'DPDP / GDPR queue', icon: Trash2, route: '/platform/erasure', live: true },
+    { title: 'Break-glass', sub: 'Emergency access', icon: ShieldAlert, route: '/platform/break-glass', live: true },
+    { title: 'Audit logs', sub: 'Per-product admin trail', icon: ScrollText, route: '/platform/audit', live: false },
   ]},
 ] as const;
 

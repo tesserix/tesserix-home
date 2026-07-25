@@ -1,4 +1,5 @@
 import { Alert, ScrollView, Text, View } from 'react-native';
+import { router } from 'expo-router';
 import { Search, Settings } from 'lucide-react-native';
 import { useAuth } from '../../lib/auth';
 import { Card, ListRow, Screen, ScreenHeader, SectionLabel, Button } from '../../components/kit';
@@ -26,8 +27,18 @@ export default function More() {
         <View>
           <SectionLabel>Tools</SectionLabel>
           <View style={{ gap: 8 }}>
-            <ListRow title="Search" subtitle="Find anything across products" icon={Search} onPress={() => {}} />
-            <ListRow title="Settings" subtitle="Preferences" icon={Settings} onPress={() => {}} />
+            <ListRow
+              title="Search"
+              subtitle="Find people across every product"
+              icon={Search}
+              onPress={() => router.push('/platform/users')}
+            />
+            <ListRow
+              title="Settings"
+              subtitle="Session, appearance, connection"
+              icon={Settings}
+              onPress={() => router.push('/settings')}
+            />
           </View>
         </View>
 

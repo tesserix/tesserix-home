@@ -1,0 +1,71 @@
+{
+  "cli": {
+    "version": ">= 18.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "local-sim": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium",
+        "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "http://localhost:3002",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "true"
+      }
+    },
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "http://localhost:3002",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "true"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleTeamId": "2CRHRRYBPL",
+        "ascAppId": "REPLACE_WITH_ADMIN_ASC_APP_ID"
+      },
+      "android": {
+        "track": "internal",
+        "releaseStatus": "completed"
+      }
+    }
+  }
+}
