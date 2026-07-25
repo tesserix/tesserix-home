@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useChefs, useAdminAction, qk } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
-import { formatINR } from '../../lib/format';
+import { formatINR } from "@tesserix/homechef-shared";
 import {
   Badge, EmptyState, LoadingRows, ListRow, Screen, ScreenHeader, FilterChips, SearchField, type Tone,
 } from '../../components/kit';

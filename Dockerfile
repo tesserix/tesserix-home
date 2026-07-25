@@ -10,6 +10,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
+COPY packages/homechef-shared/package.json packages/homechef-shared/package.json
 
 # Install only what the web app needs (skips the React Native toolchain)
 RUN pnpm install --frozen-lockfile --filter web...
@@ -17,7 +18,7 @@ RUN pnpm install --frozen-lockfile --filter web...
 # Copy sources and build the web app
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm --filter web build
+RUN pnpm --filter @tesserix/homechef-shared build && pnpm --filter web build
 
 # Production stage
 FROM node:22-alpine AS runner

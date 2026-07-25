@@ -20,7 +20,7 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, titleCase } from "@/lib/products/homechef/format";
+import { formatDateTime, titleCase } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import {

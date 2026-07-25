@@ -6,7 +6,7 @@ import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatDateTime, formatINR, titleCase } from "@tesserix/homechef-shared";
 import type { WalletResponse } from "@/lib/products/homechef/contracts";
 
 function WalletsInner() {

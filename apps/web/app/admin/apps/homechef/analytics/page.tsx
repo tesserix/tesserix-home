@@ -10,7 +10,7 @@ import {
   formatINR,
   formatRelative,
   titleCase,
-} from "@/lib/products/homechef/format";
+} from "@tesserix/homechef-shared";
 import type {
   Activity,
   AdminAnalytics,

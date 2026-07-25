@@ -16,7 +16,7 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { titleCase } from "@/lib/products/homechef/format";
+import { titleCase } from "@tesserix/homechef-shared";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import {

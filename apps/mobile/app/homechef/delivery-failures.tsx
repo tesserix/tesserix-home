@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useDeliveryFailures, useResolveDeliveryFailure } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
-import { formatINR, titleCase } from '../../lib/format';
+import { formatINR, titleCase } from "@tesserix/homechef-shared";
 import { Badge, EmptyState, LoadingRows, Screen, ScreenHeader, SectionLabel, Button, type Tone } from '../../components/kit';
 import { usePalette, space, radius, text } from '../../lib/theme';
 import type { DeliveryFaultClass, PayoutHoldStatus } from '../../lib/contracts';

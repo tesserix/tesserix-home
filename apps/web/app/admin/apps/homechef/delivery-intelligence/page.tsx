@@ -12,7 +12,7 @@
 import useSWR from "swr";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, titleCase } from "@/lib/products/homechef/format";
+import { formatINR, titleCase } from "@tesserix/homechef-shared";
 import type { DeliveryIntelligenceResponse } from "@/lib/products/homechef/contracts";
 
 function usd(n: number | null | undefined): string {

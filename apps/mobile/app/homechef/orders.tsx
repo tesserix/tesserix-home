@@ -3,7 +3,7 @@ import { FlatList, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useOrders } from '../../lib/hooks';
-import { formatINR, titleCase } from '../../lib/format';
+import { formatINR, titleCase } from "@tesserix/homechef-shared";
 import { Badge, EmptyState, LoadingRows, ListRow, Screen, ScreenHeader, FilterChips, type Tone } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
 

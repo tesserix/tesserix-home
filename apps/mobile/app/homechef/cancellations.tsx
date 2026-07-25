@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
 import { useCancellations, useResolveCancellation } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
-import { formatINR } from '../../lib/format';
+import { formatINR } from "@tesserix/homechef-shared";
 import { Badge, Button, EmptyState, LoadingRows, Screen, ScreenHeader, type Tone } from '../../components/kit';
 import { usePalette, space, radius, text } from '../../lib/theme';
 import { CANCEL_REASONS, type AdminCancellationRequest, type CancelReasonValue } from '../../lib/contracts';

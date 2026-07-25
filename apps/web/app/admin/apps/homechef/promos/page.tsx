@@ -14,7 +14,7 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, formatDateTime } from "@/lib/products/homechef/format";
+import { formatINR, formatDateTime } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type {

@@ -10,7 +10,7 @@ import { RefreshCw } from "lucide-react";
 import { AdminHeader } from "@/components/admin/header";
 import { KpiTile } from "@/components/admin/metrics/kpi-tile";
 import { formatCurrency, formatNumber } from "@/components/admin/metrics/format";
-import { formatRelative } from "@/lib/products/homechef/format";
+import { formatRelative } from "@tesserix/homechef-shared";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
 interface ProviderRow {
