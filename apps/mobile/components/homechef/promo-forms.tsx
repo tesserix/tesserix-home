@@ -97,8 +97,10 @@ export function PromoCreateForm({ onDone }: { onDone: () => void }) {
   const [budgetCap, setBudgetCap] = useState('0');
   const [error, setError] = useState<string | null>(null);
 
-  // Chef list is fetched only once chef-funding is chosen (mirrors the web lazy fetch).
-  const chefsQ = useChefs(fundingSource === 'chef' ? { page: 1, limit: 200 } : {});
+  // Chef list is fetched lazily — the query is disabled until chef-funding is
+  // chosen (mirrors the web SWR null-key lazy fetch), so no /chefs call fires
+  // for platform-funded codes.
+  const chefsQ = useChefs({ page: 1, limit: 200 }, fundingSource === 'chef');
   const chefs = fundingSource === 'chef' ? chefsQ.data?.data ?? [] : [];
 
   function submit() {

@@ -126,8 +126,8 @@ export const useAnalytics = () =>
 export const useActivities = (limit = 15) =>
   useQuery({ queryKey: qk.activities(limit), queryFn: () => hc.get<Activity[]>('/activities', { limit }) });
 
-export const useChefs = (p: { search?: string; status?: string; page?: number; limit?: number }) =>
-  useQuery({ queryKey: qk.chefs(p), queryFn: () => hc.get<Paginated<ChefWithStats>>('/chefs', p) });
+export const useChefs = (p: { search?: string; status?: string; page?: number; limit?: number }, enabled = true) =>
+  useQuery({ queryKey: qk.chefs(p), queryFn: () => hc.get<Paginated<ChefWithStats>>('/chefs', p), enabled });
 export const useUsers = (p: { search?: string; role?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.users(p), queryFn: () => hc.get<Paginated<UserWithStats>>('/users', p) });
 export const useOrders = (p: { status?: string; page?: number; limit?: number }) =>
