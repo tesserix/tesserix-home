@@ -11,15 +11,15 @@ const SECTIONS = [
   ]},
   { group: 'Growth', items: [
     { title: 'Leads', sub: 'CRM — status, notes, email', icon: Users, route: '/mark8ly/leads', live: true },
-    { title: 'Onboarding', sub: 'Signup funnel', icon: Route, route: '/mark8ly/onboarding', live: false },
+    { title: 'Onboarding', sub: 'Signup funnel', icon: Route, route: '/mark8ly/onboarding', live: true },
   ]},
   { group: 'Tenants & billing', items: [
     { title: 'Tenants', sub: 'Stores — status management', icon: Store, route: '/mark8ly/tenants', live: true },
-    { title: 'Subscriptions', sub: 'Plans + MRR', icon: CreditCard, route: '/mark8ly/subscriptions', live: false },
+    { title: 'Subscriptions', sub: 'Plans + MRR', icon: CreditCard, route: '/mark8ly/subscriptions', live: true },
   ]},
   { group: 'Ops', items: [
-    { title: 'Audit logs', sub: 'Admin trail', icon: ScrollText, route: '/mark8ly/audit-logs', live: false },
-    { title: 'Email templates', sub: 'Notification templates', icon: Mail, route: '/mark8ly/templates', live: false },
+    { title: 'Audit logs', sub: 'Admin trail', icon: ScrollText, route: '/mark8ly/audit-logs', live: true },
+    { title: 'Email templates', sub: 'Notification templates', icon: Mail, route: '/mark8ly/templates', live: true },
   ]},
 ] as const;
 
