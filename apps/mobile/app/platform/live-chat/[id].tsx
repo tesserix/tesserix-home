@@ -77,7 +77,9 @@ export default function OttoThreadScreen() {
 
   const conv = convQ.data?.conversation;
   const messages = useMemo(
-    () => [...(msgsQ.data?.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    // Descending (newest first) — paired with `inverted` below so staff land
+    // on the latest message instead of scrolling from the oldest.
+    () => [...(msgsQ.data?.messages ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at)).reverse(),
     [msgsQ.data],
   );
 
@@ -146,7 +148,8 @@ export default function OttoThreadScreen() {
           <FlatList
             data={messages}
             keyExtractor={(m) => m.id}
-            contentContainerStyle={{ paddingHorizontal: space[4], paddingBottom: space[4], gap: 8 }}
+            inverted
+            contentContainerStyle={{ paddingHorizontal: space[4], paddingTop: space[4], gap: 8 }}
             renderItem={({ item }) => <MessageBubble msg={item} />}
           />
         )}

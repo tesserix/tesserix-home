@@ -35,6 +35,10 @@ function useOttoSocket(mintPath: string, wsPath: string, { enabled, onFrame }: O
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
     let stopped = false;
+    // Guards the window between kicking off connect() and the ticket mint
+    // resolving (ws is still null there) so a foreground event or a queued
+    // retry can't slip past the `!ws` check and open a second socket.
+    let connecting = false;
 
     const clearTimer = () => {
       if (reconnectTimer) {
@@ -48,39 +52,49 @@ function useOttoSocket(mintPath: string, wsPath: string, { enabled, onFrame }: O
       attempts += 1;
       const delay = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** (attempts - 1));
       clearTimer();
-      reconnectTimer = setTimeout(() => void connect(), delay);
+      reconnectTimer = setTimeout(() => {
+        if (!connecting && !ws) void connect();
+      }, delay);
     };
 
     async function connect() {
       if (stopped) return;
+      connecting = true;
       let ticket: string;
       try {
         const res = await plat.post<OttoWsTicketResponse>(mintPath);
         ticket = res.ticket;
       } catch {
+        connecting = false;
         scheduleReconnect();
         return;
       }
-      if (stopped || !ticket) return;
+      if (stopped || !ticket) {
+        connecting = false;
+        return;
+      }
       try {
         ws = new WebSocket(`${WS_BASE}${wsPath}?ticket=${encodeURIComponent(ticket)}`);
       } catch {
+        connecting = false;
         scheduleReconnect();
         return;
       }
       ws.onopen = () => {
+        connecting = false;
         attempts = 0;
       };
       ws.onmessage = () => onFrameRef.current();
       ws.onerror = () => {};
       ws.onclose = () => {
         ws = null;
+        connecting = false;
         if (!stopped) scheduleReconnect();
       };
     }
 
     const onAppState = (s: AppStateStatus) => {
-      if (s === 'active' && !ws) {
+      if (s === 'active' && !ws && !connecting) {
         clearTimer();
         attempts = 0;
         void connect();
@@ -94,6 +108,7 @@ function useOttoSocket(mintPath: string, wsPath: string, { enabled, onFrame }: O
       stopped = true;
       clearTimer();
       sub.remove();
+      connecting = false;
       if (ws) {
         ws.close();
         ws = null;
