@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, Tenant, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse } from './mark8ly-contracts';
 import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';

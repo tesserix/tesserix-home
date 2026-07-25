@@ -3,7 +3,6 @@
 import { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { Star } from 'lucide-react-native';
 import { useLeads, useLeadActivities, useSetLeadStatus, useToggleLeadStar, useLogLeadActivity, useSendLeadEmail } from '../../../lib/mark8ly-hooks';
 import { useLeadTemplates } from '../../../lib/platform-hooks';
 import type { LeadActivity } from '../../../lib/mark8ly-contracts';
@@ -58,10 +57,11 @@ export default function LeadDetail() {
   }
 
   const pickTemplateAndSend = () => {
+    if (templates.isLoading) { Alert.alert('Please wait', 'Templates are still loading.'); return; }
     const published = (templates.data?.templates ?? []).filter((t) => t.status === 'published');
     if (!lead.email) { Alert.alert('No email', 'This lead has no email address.'); return; }
     if (published.length === 0) { Alert.alert('No templates', 'No published templates to send.'); return; }
-    Alert.alert('Send test email', `Pick a template to send to ${lead.email}`, [
+    Alert.alert('Send email', `Pick a template to send to ${lead.email}`, [
       ...published.slice(0, 8).map((t) => ({
         text: t.label,
         onPress: () => sendEmail.mutate(t.key, {
