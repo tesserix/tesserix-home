@@ -428,3 +428,17 @@ export interface TestSendResponse {
   to: string;
   messageId?: string;
 }
+
+// ---- Product KPIs + resource metrics (per-product platform view) ------------
+// KPI keys are product-config-driven (homechef: chefs_active, orders_today,
+// gmv_today, approvals_pending), so this is a loose string→number map.
+export type ProductKpis = Record<string, number>;
+
+// Only the resource scalars are used on mobile; cost/email/sparklines are ignored.
+// cpu/memory are nullable in the source contract, so optional-chain `.current`.
+export interface ProductResourceMetrics {
+  resources: {
+    cpu: { current: number } | null;
+    memory: { current: number } | null;
+  };
+}

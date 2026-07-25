@@ -28,6 +28,8 @@ import type {
   EmailRecentResponse,
   LeadTemplatesResponse,
   TestSendResponse,
+  ProductKpis,
+  ProductResourceMetrics,
 } from './platform-contracts';
 
 export const pk = {
@@ -50,6 +52,8 @@ export const pk = {
   emailMetrics: (p: object) => ['plat', 'email-metrics', p] as const,
   emailRecent: (p: object) => ['plat', 'email-recent', p] as const,
   leadTemplates: ['plat', 'lead-templates'] as const,
+  productKpis: (product: string) => ['plat', 'product-kpis', product] as const,
+  productMetrics: (product: string, window: string) => ['plat', 'product-metrics', product, window] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -208,3 +212,18 @@ export function useTestSendTemplate(key: string) {
     mutationFn: (to: string) => plat.post<TestSendResponse>(`/lead-templates/${key}/test-send`, { to }),
   });
 }
+
+// ---- Product KPIs + resources (per-product) ---------------------------------
+export const useProductKpis = (product: string) =>
+  useQuery({
+    queryKey: pk.productKpis(product),
+    queryFn: () => plat.get<ProductKpis>(`/apps/${product}/kpis`),
+    enabled: !!product,
+  });
+
+export const useProductMetrics = (product: string, window = '24h') =>
+  useQuery({
+    queryKey: pk.productMetrics(product, window),
+    queryFn: () => plat.get<ProductResourceMetrics>(`/apps/${product}/metrics`, { window }),
+    enabled: !!product,
+  });
