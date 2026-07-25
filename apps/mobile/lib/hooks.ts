@@ -1,6 +1,7 @@
 // hooks.ts — TanStack Query hooks over the HomeChef admin gateway. Types are the
 // shared wire contracts. Every list is server-paginated (Paginated<T>).
 
+import { Linking } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { hc } from './api';
 import type {
@@ -22,7 +23,37 @@ import type {
   OrderIssueConfig,
   DeliveryFailuresResponse,
   DeliveryFaultClass,
+  FSSAILockResponse,
 } from '@tesserix/homechef-shared';
+
+// These three shapes are returned by the HomeChef admin gateway but are NOT part
+// of @tesserix/homechef-shared (the web pages declare them locally too). Keep them
+// next to the hooks that produce them.
+export interface ReviewerRef {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+export type ApprovalDetail = ApprovalRequest & { reviewedBy?: ReviewerRef | null };
+export interface ApprovalHistoryEntry {
+  id: string;
+  fromStatus?: string;
+  toStatus: string;
+  notes?: string;
+  createdAt: string;
+  changedBy?: ReviewerRef | null;
+}
+export interface BackfillChef {
+  chefId: string;
+  userId: string;
+  businessName: string;
+}
+export interface BackfillResponse {
+  count: number;
+  chefs: BackfillChef[];
+  executed: boolean;
+  notified: number;
+}
 
 export const qk = {
   stats: ['hc', 'stats'] as const,
@@ -34,6 +65,9 @@ export const qk = {
   reviews: (p: object) => ['hc', 'reviews', p] as const,
   mealPlans: (p: object) => ['hc', 'meal-plans', p] as const,
   approvals: (p: object) => ['hc', 'approvals', p] as const,
+  approval: (id: string) => ['hc', 'approval', id] as const,
+  approvalHistory: (id: string) => ['hc', 'approval-history', id] as const,
+  fssaiLocked: ['hc', 'fssai-locked'] as const,
   tickets: (p: object) => ['hc', 'tickets', p] as const,
   staff: (p: object) => ['hc', 'staff', p] as const,
   wallet: (id: string) => ['hc', 'wallet', id] as const,
@@ -55,7 +89,14 @@ export const useReviews = (p: { hidden?: boolean; page?: number; limit?: number 
   useQuery({ queryKey: qk.reviews(p), queryFn: () => hc.get<Paginated<ReviewRow>>('/reviews', p) });
 export const useMealPlans = (p: { status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.mealPlans(p), queryFn: () => hc.get<Paginated<MealPlanRow>>('/meal-plans', p) });
-export const useApprovals = (p: { status?: string; page?: number; limit?: number }) =>
+export const useApprovals = (p: {
+  status?: string;
+  search?: string;
+  reminded?: string;
+  escalated?: string;
+  page?: number;
+  limit?: number;
+}) =>
   useQuery({ queryKey: qk.approvals(p), queryFn: () => hc.get<Paginated<ApprovalRequest>>('/approvals', p) });
 export const useTickets = (p: { status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.tickets(p), queryFn: () => hc.get<Paginated<SupportTicket>>('/support/tickets', p) });
@@ -157,4 +198,61 @@ export function useAdminAction(invalidate: readonly unknown[]) {
           : hc.put(args.path, args.body),
     onSuccess: () => qc.invalidateQueries({ queryKey: invalidate }),
   });
+}
+
+// ---- Approvals detail + decide ---------------------------------------------
+export const useApproval = (id: string) =>
+  useQuery({
+    queryKey: qk.approval(id),
+    queryFn: () => hc.get<ApprovalDetail>(`/approvals/${id}`),
+    enabled: !!id,
+  });
+
+export const useApprovalHistory = (id: string) =>
+  useQuery({
+    queryKey: qk.approvalHistory(id),
+    queryFn: () => hc.get<{ data: ApprovalHistoryEntry[] }>(`/approvals/${id}/history`),
+    enabled: !!id,
+  });
+
+// Badge the Escalated filter chip without loading the whole view: total only.
+export const useEscalatedCount = () =>
+  useQuery({
+    queryKey: ['hc', 'approvals-escalated-count'] as const,
+    queryFn: () => hc.get<Paginated<ApprovalRequest>>('/approvals', { escalated: 'true', page: 1, limit: 1 }),
+    select: (d) => d.pagination.total,
+  });
+
+// approve | reject | request-info → PUT /approvals/:id/:action { notes }.
+export function useDecideApproval(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { action: 'approve' | 'reject' | 'request-info'; notes: string }) =>
+      hc.put(`/approvals/${id}/${a.action}`, { notes: a.notes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hc', 'approvals'] });
+      qc.invalidateQueries({ queryKey: qk.approval(id) });
+      qc.invalidateQueries({ queryKey: qk.approvalHistory(id) });
+    },
+  });
+}
+
+// Documents live privately in GCS; fetch a short-lived signed URL on demand and
+// open it in the system browser.
+export async function openApprovalDocument(id: string, docId: string): Promise<void> {
+  const { url } = await hc.get<{ url?: string }>(`/approvals/${id}/documents/${docId}`);
+  if (!url) throw new Error('Document is not available.');
+  await Linking.openURL(url);
+}
+
+// ---- FSSAI lockouts --------------------------------------------------------
+export const useFssaiLocked = () =>
+  useQuery({ queryKey: qk.fssaiLocked, queryFn: () => hc.get<FSSAILockResponse>('/chefs/fssai-locked') });
+
+// Dry-run list of chefs missing an FSSAI expiry (button-triggered, not a query).
+export const fetchFssaiBackfill = () => hc.get<BackfillResponse>('/fssai-expiry-backfill');
+
+// Send the one-time confirm-licence push to those chefs.
+export function useNotifyFssaiBackfill() {
+  return useMutation({ mutationFn: () => hc.post<BackfillResponse>('/fssai-expiry-backfill') });
 }
