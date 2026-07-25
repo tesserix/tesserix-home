@@ -184,3 +184,23 @@ export interface AuditLogsResponse {
   sinceHours: number;
   generatedAt: string;
 }
+
+// ---- Email templates --------------------------------------------------------
+export type Mark8lyDatabase = 'platform_api' | 'marketplace_api';
+export interface EmailTemplateRow {
+  database: Mark8lyDatabase;
+  key: string;
+  subject: string;
+  status: 'published' | 'draft';
+  version: number;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+export interface EmailTemplatesResponse {
+  database: Mark8lyDatabase;
+  templates: EmailTemplateRow[];
+}
+export interface EmailTestSendResponse {
+  sent: true;
+  to: string;
+}

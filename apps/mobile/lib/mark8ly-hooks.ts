@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse, SubscriptionsListResponse, OnboardingResponse, AuditLogsResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse, SubscriptionsListResponse, OnboardingResponse, AuditLogsResponse, EmailTemplatesResponse, EmailTestSendResponse } from './mark8ly-contracts';
 import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';
@@ -20,6 +20,7 @@ export const mk = {
   subscriptions: (filter: string) => ['mk', 'subscriptions', filter] as const,
   onboarding: (status: string) => ['mk', 'onboarding', status] as const,
   audit: (severity: string) => ['mk', 'audit', severity] as const,
+  emailTemplates: (database: string) => ['mk', 'email-templates', database] as const,
 };
 
 // ---- Overview ---------------------------------------------------------------
@@ -142,3 +143,18 @@ export const useMark8lyAuditLogs = (severity: string) =>
     queryKey: mk.audit(severity),
     queryFn: () => plat.get<AuditLogsResponse>(`/apps/${PRODUCT}/audit-logs`, { severity: severity !== 'all' ? severity : undefined }),
   });
+
+// ---- Email templates (flat /email-templates, not product-scoped) ------------
+export const useEmailTemplates = (database: string) =>
+  useQuery({
+    queryKey: mk.emailTemplates(database),
+    queryFn: () => plat.get<EmailTemplatesResponse>('/email-templates', { database }),
+  });
+
+export function useTestSendEmailTemplate(key: string, database: string) {
+  // plat.post has no params arg → database goes in the query string.
+  return useMutation({
+    mutationFn: (to: string) =>
+      plat.post<EmailTestSendResponse>(`/email-templates/${key}/test-send?database=${database}`, { to }),
+  });
+}
