@@ -12,8 +12,13 @@ COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 COPY packages/homechef-shared/package.json packages/homechef-shared/package.json
 
-# Install only what the web app needs (skips the React Native toolchain)
-RUN pnpm install --frozen-lockfile --filter web...
+# Install only what the web app needs (skips the React Native toolchain).
+# @tesserix/* deps live on GitHub Packages which always requires auth. The
+# token is mounted as a BuildKit secret so it never lands in an image layer;
+# pnpm reads it via NODE_AUTH_TOKEN, already interpolated into .npmrc.
+RUN --mount=type=secret,id=NODE_AUTH_TOKEN \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/NODE_AUTH_TOKEN)" \
+    pnpm install --frozen-lockfile --filter web...
 
 # Copy sources and build the web app
 COPY . .

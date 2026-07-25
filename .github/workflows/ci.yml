@@ -57,6 +57,8 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
       - name: Lint
         run: pnpm --filter web lint
@@ -89,11 +91,14 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           docker build \
+            --secret id=NODE_AUTH_TOKEN,env=NODE_AUTH_TOKEN \
             --platform linux/amd64 \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
             -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest \
             .
           docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
       # No GKE deploy step here. Cluster rollout is owned by Kargo:
       # the kargo-tesserix-home Project's prod Stage discovers the new
