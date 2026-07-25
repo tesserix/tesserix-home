@@ -33,6 +33,11 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/login",
   "/api/health",
   "/api/contact",
+  // "Notify me when this launches" on a coming-soon product page, plus the
+  // one-click unsubscribe the launch email links to. Both are used by anonymous
+  // visitors — requiring a session would mean nobody could ever join the list,
+  // and an unsubscribe link that demands a login isn't an unsubscribe link.
+  "/api/waitlist",
   // Support chat proxy — anonymous marketing visitors must be able to open
   // a chat (otto enforces its own OTP/session auth + the internal-auth
   // secret); a tesserix-home session is not required.
