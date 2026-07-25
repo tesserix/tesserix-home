@@ -40,6 +40,10 @@ import type {
   CampaignMetrics,
   SegmentCriteria,
   SegmentPreview,
+  Promo,
+  PromoAnalytics,
+  PromoDiscountType,
+  PromoFundingSource,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -112,6 +116,8 @@ export const qk = {
   loyaltyAnalytics: ['hc', 'loyalty-analytics'] as const,
   campaigns: ['hc', 'campaigns'] as const,
   campaignMetrics: (id: string) => ['hc', 'campaign-metrics', id] as const,
+  promos: (p: object) => ['hc', 'promos', p] as const,
+  promoAnalytics: (id: string) => ['hc', 'promo-analytics', id] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -462,5 +468,71 @@ export function useCampaignAction() {
     mutationFn: (a: { id: string; action: 'send' | 'test' | 'cancel' | 'delete' }) =>
       a.action === 'delete' ? hc.del(`/campaigns/${a.id}`) : hc.post(`/campaigns/${a.id}/${a.action}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.campaigns }),
+  });
+}
+
+// ---- Promos: search / analytics / create / edit / deactivate ---------------
+// Wire bodies (numbers, not the string-held form types). chefId is sent only for
+// chef-funded codes. applicableTo is a free string on the wire ('all' | 'new_users' | 'returning_users').
+export interface PromoCreateBody {
+  code: string;
+  description: string;
+  discountType: PromoDiscountType;
+  discountValue: number;
+  minOrderAmount: number;
+  maxDiscount: number;
+  usageLimit: number;
+  perUserLimit: number;
+  validUntil?: string;
+  fundingSource: PromoFundingSource;
+  applicableTo: string;
+  chefId?: string;
+  budgetCap: number;
+}
+
+export interface PromoUpdateBody {
+  description: string;
+  discountValue: number;
+  minOrderAmount: number;
+  maxDiscount: number;
+  usageLimit: number;
+  perUserLimit: number;
+  budgetCap: number;
+  applicableTo: string;
+  isActive?: boolean; // only set on reactivate
+}
+
+export const usePromos = (p: { search?: string; page?: number; limit?: number }) =>
+  useQuery({ queryKey: qk.promos(p), queryFn: () => hc.get<Paginated<Promo>>('/promos', p) });
+
+export const usePromoAnalytics = (id: string, enabled: boolean) =>
+  useQuery({
+    queryKey: qk.promoAnalytics(id),
+    queryFn: () => hc.get<PromoAnalytics>(`/promos/${id}/analytics`),
+    enabled: enabled && !!id,
+  });
+
+export function useCreatePromo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PromoCreateBody) => hc.post<Promo>('/promos', body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'promos'] }),
+  });
+}
+
+export function useUpdatePromo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; body: PromoUpdateBody }) => hc.put<Promo>(`/promos/${a.id}`, a.body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'promos'] }),
+  });
+}
+
+// DELETE = soft deactivate (reversible via useUpdatePromo with { isActive: true }).
+export function useDeactivatePromo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => hc.del(`/promos/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'promos'] }),
   });
 }
