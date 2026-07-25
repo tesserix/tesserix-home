@@ -100,3 +100,30 @@ export interface TenantBilling {
 export interface TenantDetailResponse {
   tenant: Tenant;
 }
+
+// ---- Subscriptions ----------------------------------------------------------
+export interface SubscriptionRowItem {
+  tenantId: string;
+  tenantName: string;
+  plan: string;
+  status: string;
+  mrr: number;
+  currency: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  trialDaysRemaining?: number | null;
+  conversionLikelihood?: 'low' | 'medium' | 'high';
+  dunningState?: 'retrying' | 'exhausted' | null;
+}
+export interface SubscriptionsListResponse {
+  summary: {
+    totalMrr: number;
+    currency: string;
+    activeCount: number;
+    trialCount: number;
+    pastDueCount: number;
+    cancelledThisMonth: number;
+  };
+  rows: SubscriptionRowItem[];
+  generatedAt: string;
+}
