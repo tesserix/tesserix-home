@@ -1,13 +1,13 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
-import { AlertTriangle, BellRing } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { swrFetcher } from "@/lib/products/homechef/client";
+import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime, formatRelative, titleCase } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import type {
@@ -112,11 +112,59 @@ function HomechefApprovalsInner() {
     : remindedView
       ? { reminded: "true", search: trimmedSearch, page: 1, limit: 50 }
       : { status: tab, search: trimmedSearch, page: 1, limit: 50 };
-  const { data, isLoading } = useSWR<Paginated<ApprovalRequest>>(
+  const { data, isLoading, mutate } = useSWR<Paginated<ApprovalRequest>>(
     ["/approvals", listParams],
     swrFetcher,
   );
   const items = data?.data ?? [];
+
+  // Bulk approve — the admin's "Approve selected" on the queue. Only offered on views that hold
+  // approvable rows (pending / info_requested, plus the reminded/escalated cross-cuts which are
+  // mostly those states). Approved/rejected tabs show no checkboxes.
+  const canBulk = tab === "pending" || tab === "info_requested" || remindedView || escalatedView;
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState(false);
+  // Drop any selection when the view changes — the visible rows change with it.
+  useEffect(() => setSelected(new Set()), [tab]);
+
+  const visibleIds = items.map((a) => a.id);
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(visibleIds));
+  }
+
+  async function approveSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (!window.confirm(`Approve ${ids.length} request${ids.length === 1 ? "" : "s"}? This is the same as approving each one — menu items become visible, chefs/drivers get verified.`)) {
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await hcAdmin.post<{ approved: number; failed: number; failures: { id: string; error: string }[] }>(
+        "/approvals/bulk-approve",
+        { ids },
+      );
+      setSelected(new Set());
+      await mutate();
+      if (res.failed > 0) {
+        window.alert(`Approved ${res.approved}. ${res.failed} could not be approved (e.g. already decided).`);
+      }
+    } catch (e) {
+      window.alert(`Bulk approve failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   // Badge the tab so an escalation is visible without opening it. Cheap: the
   // count comes back with the list.
@@ -213,10 +261,51 @@ function HomechefApprovalsInner() {
         </button>
       </div>
 
+      {/* Bulk action bar — appears once rows are selected. Sticky-feeling inline bar so the admin
+          can clear 24 pending items in one click instead of opening each. */}
+      {canBulk && selected.size > 0 ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 px-4 py-2.5">
+          <span className="text-sm text-foreground">
+            {selected.size} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+            <button
+              onClick={() => void approveSelected()}
+              disabled={submitting}
+              className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+            >
+              {submitting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
+              Approve selected ({selected.size})
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <tr>
+              {canBulk ? (
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleAll}
+                    aria-label="Select all rows"
+                    className="h-4 w-4 cursor-pointer accent-foreground"
+                  />
+                </th>
+              ) : null}
               <th className="px-4 py-3">Request</th>
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3">Priority</th>
@@ -228,13 +317,13 @@ function HomechefApprovalsInner() {
           <tbody className="divide-y divide-border">
             {isLoading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={canBulk ? 7 : 6} className="px-4 py-10 text-center text-muted-foreground">
                   Loading…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                <td colSpan={canBulk ? 7 : 6} className="px-4 py-10 text-center text-muted-foreground">
                   {escalatedView ? "Nothing escalated — nobody is waiting on us." : "Nothing in this state."}
                 </td>
               </tr>
@@ -245,6 +334,17 @@ function HomechefApprovalsInner() {
                 const chipTone = level.tone === "none" ? null : level.tone;
                 return (
                   <tr key={a.id} className={rowToneClasses[level.tone]}>
+                    {canBulk ? (
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(a.id)}
+                          onChange={() => toggleOne(a.id)}
+                          aria-label={`Select ${a.title || a.type}`}
+                          className="h-4 w-4 cursor-pointer accent-foreground"
+                        />
+                      </td>
+                    ) : null}
                     <td className={cn("px-4 py-3", accentClasses[level.tone])}>
                       <div className="flex items-center gap-2 font-medium text-foreground">
                         {level.showBell ? (
