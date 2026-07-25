@@ -404,3 +404,27 @@ export interface EmailEventLogRow {
 export interface EmailRecentResponse {
   events: EmailEventLogRow[];
 }
+
+// ---- Lead email templates --------------------------------------------------
+export type LeadTemplateStatus = 'published' | 'draft';
+export interface LeadTemplate {
+  key: string;
+  label: string;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+  variables: { name: string; type: string; required: boolean }[];
+  status: LeadTemplateStatus;
+  product: string;
+  version: number;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+export interface LeadTemplatesResponse {
+  templates: LeadTemplate[];
+}
+export interface TestSendResponse {
+  sent: true;
+  to: string;
+  messageId?: string;
+}

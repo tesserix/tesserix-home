@@ -26,6 +26,8 @@ import type {
   PlatformSupportStats,
   EmailMetricsResponse,
   EmailRecentResponse,
+  LeadTemplatesResponse,
+  TestSendResponse,
 } from './platform-contracts';
 
 export const pk = {
@@ -47,6 +49,7 @@ export const pk = {
   supportAnalytics: ['plat', 'support-analytics'] as const,
   emailMetrics: (p: object) => ['plat', 'email-metrics', p] as const,
   emailRecent: (p: object) => ['plat', 'email-recent', p] as const,
+  leadTemplates: ['plat', 'lead-templates'] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -195,3 +198,13 @@ export const useEmailRecent = (product?: string) =>
     queryKey: pk.emailRecent({ product }),
     queryFn: () => plat.get<EmailRecentResponse>('/email-events', { view: 'recent', product: product || undefined, limit: 100 }),
   });
+
+// ---- Lead email templates ----------------------------------------------------
+export const useLeadTemplates = () =>
+  useQuery({ queryKey: pk.leadTemplates, queryFn: () => plat.get<LeadTemplatesResponse>('/lead-templates') });
+
+export function useTestSendTemplate(key: string) {
+  return useMutation({
+    mutationFn: (to: string) => plat.post<TestSendResponse>(`/lead-templates/${key}/test-send`, { to }),
+  });
+}
