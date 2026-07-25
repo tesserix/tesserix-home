@@ -31,7 +31,6 @@ function eventTone(type: string): Tone {
 }
 
 export default function NotificationsLog() {
-  const p = usePalette();
   const [days, setDays] = useState('30');
   const [product, setProduct] = useState('all');
 
@@ -55,7 +54,7 @@ export default function NotificationsLog() {
   return (
     <Screen>
       <ScreenHeader title="Notifications log" subtitle="Email delivery" right={<BackButton onPress={() => router.back()} />} />
-      {metrics.isLoading ? (
+      {metrics.isLoading || recent.isLoading ? (
         <LoadingRows />
       ) : (
         <ScrollView
