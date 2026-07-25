@@ -14,6 +14,7 @@ import {
 import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { usePalette } from '../lib/theme';
+import { PromptProvider } from '../components/prompt';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -57,7 +58,9 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <StatusBar style="auto" />
-          <Gate />
+          <PromptProvider>
+            <Gate />
+          </PromptProvider>
         </AuthProvider>
       </QueryClientProvider>
     </GestureHandlerRootView>

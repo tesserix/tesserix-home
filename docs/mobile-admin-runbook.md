@@ -18,7 +18,7 @@ bearer exemption) are merged to `main` and promoted to prod (Kargo → Argo).
 
 ## 3. Mobile app config
 - Put the client IDs in the mobile env: `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`,
-  `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`; `EXPO_PUBLIC_API_BASE=https://home.tesserix.app`;
+  `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`; `EXPO_PUBLIC_API_BASE=https://tesserix.app`;
   `EXPO_PUBLIC_DEV_AUTH_BYPASS=false`.
 - For a **standalone/dev build** (not Expo Go), add the iOS reversed-client-id to
   `apps/mobile/app.json` so the OAuth redirect returns to the app:

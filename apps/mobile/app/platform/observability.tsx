@@ -127,6 +127,7 @@ export default function Observability() {
                     subtitle={`${t.service} · ${formatRelative(t.ts)}`}
                     meta={formatMs(t.durationMs)}
                     trailing={<Badge label={t.status} tone={t.status === 'Error' ? 'danger' : 'success'} />}
+                    onPress={() => router.push(`/platform/trace/${t.traceId}`)}
                   />
                 ))
               )}

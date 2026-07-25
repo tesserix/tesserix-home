@@ -2,32 +2,48 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   ChevronLeft, ShoppingBag, ChefHat, ClipboardCheck, Truck, ShieldCheck, CalendarRange,
-  Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale, PackageX,
+  Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale, PackageX, LayoutDashboard,
+  Landmark, RotateCcw, CreditCard, SlidersHorizontal, Megaphone, Gift, Sparkles, TicketPercent,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
 
 const SECTIONS = [
+  { group: 'Overview', items: [
+    { title: 'Overview', sub: 'KPIs + resources', icon: LayoutDashboard, route: '/homechef/overview', live: true },
+  ]},
   { group: 'Operations', items: [
     { title: 'Orders', sub: 'All orders + status', icon: ShoppingBag, route: '/homechef/orders', live: true },
     { title: 'Chefs / Kitchens', sub: 'Verify, suspend, review', icon: ChefHat, route: '/homechef/chefs', live: true },
-    { title: 'Approvals', sub: 'Onboarding queue', icon: ClipboardCheck, route: '/homechef/approvals', live: false },
-    { title: 'Delivery', sub: '3PL providers + reconcile', icon: Truck, route: '/homechef/delivery', live: false },
-    { title: 'FSSAI', sub: 'License compliance locks', icon: ShieldCheck, route: '/homechef/fssai', live: false },
-    { title: 'Meal plans', sub: 'Tiffin subscriptions', icon: CalendarRange, route: '/homechef/meal-plans', live: false },
+    { title: 'Approvals', sub: 'Onboarding queue', icon: ClipboardCheck, route: '/homechef/approvals', live: true },
+    { title: 'Delivery', sub: '3PL providers + reconcile', icon: Truck, route: '/homechef/delivery', live: true },
+    { title: 'FSSAI', sub: 'License compliance locks', icon: ShieldCheck, route: '/homechef/fssai', live: true },
+    { title: 'Meal plans', sub: 'Tiffin subscriptions', icon: CalendarRange, route: '/homechef/meal-plans', live: true },
   ]},
   { group: 'Money', items: [
     { title: 'Cancellations', sub: 'Refund arbitration', icon: Scale, route: '/homechef/cancellations', live: true },
     { title: 'Delivery failures', sub: 'Confirm fault + refund', icon: PackageX, route: '/homechef/delivery-failures', live: true },
-    { title: 'Payouts', sub: 'Weekly chef statements', icon: BadgeIndianRupee, route: '/homechef/payouts', live: false },
-    { title: 'Wallets', sub: 'Customer credit', icon: Wallet, route: '/homechef/wallets', live: false },
+    { title: 'Wallets', sub: 'Customer credit', icon: Wallet, route: '/homechef/wallets', live: true },
+  ]},
+  { group: 'Payments', items: [
+    { title: 'Payouts', sub: 'Weekly chef statements', icon: BadgeIndianRupee, route: '/homechef/payouts', live: true },
+    { title: 'Payout setup', sub: 'Blocked chefs + automation', icon: SlidersHorizontal, route: '/homechef/payout-setup', live: true },
+    { title: 'Payout queue', sub: 'Escrow release/withhold/reverse', icon: Landmark, route: '/homechef/payout-queue', live: true },
+    { title: 'Refund payouts', sub: 'Execute meal-plan refunds', icon: RotateCcw, route: '/homechef/refund-payouts', live: true },
+    { title: 'Payment gateway', sub: 'Razorpay + Stripe status', icon: CreditCard, route: '/homechef/payment-gateway', live: true },
+  ]},
+  { group: 'Marketing', items: [
+    { title: 'Campaigns', sub: 'Push/email blasts', icon: Megaphone, route: '/homechef/campaigns', live: false },
+    { title: 'Win-back', sub: 'Auto reactivation offers', icon: Gift, route: '/homechef/winback', live: true },
+    { title: 'Loyalty', sub: 'Points programme', icon: Sparkles, route: '/homechef/loyalty', live: true },
+    { title: 'Promos', sub: 'Discount codes', icon: TicketPercent, route: '/homechef/promos', live: false },
   ]},
   { group: 'People & quality', items: [
-    { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: false },
+    { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: true },
     { title: 'Support', sub: 'Tickets + refunds', icon: LifeBuoy, route: '/homechef/support', live: true },
-    { title: 'Users', sub: 'Customers, chefs, drivers', icon: Users, route: '/homechef/users', live: false },
+    { title: 'Users', sub: 'Customers, chefs, drivers', icon: Users, route: '/homechef/users', live: true },
     { title: 'Staff', sub: 'Internal team + roles', icon: UserCog, route: '/homechef/staff', live: false },
-    { title: 'Analytics', sub: 'KPIs + trends', icon: BarChart3, route: '/homechef/analytics', live: false },
+    { title: 'Analytics', sub: 'KPIs + trends', icon: BarChart3, route: '/homechef/analytics', live: true },
   ]},
 ] as const;
 
