@@ -5,7 +5,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-const BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://home.tesserix.app';
+const BASE = process.env.EXPO_PUBLIC_API_BASE ?? 'https://tesserix.app';
 const TOKEN_KEY = 'tx_admin_token';
 
 export const api = axios.create({ baseURL: BASE, timeout: 20000 });
