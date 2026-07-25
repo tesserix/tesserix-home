@@ -231,6 +231,7 @@ export function useDecideApproval(id: string) {
       hc.put(`/approvals/${id}/${a.action}`, { notes: a.notes }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['hc', 'approvals'] });
+      qc.invalidateQueries({ queryKey: ['hc', 'approvals-escalated-count'] });
       qc.invalidateQueries({ queryKey: qk.approval(id) });
       qc.invalidateQueries({ queryKey: qk.approvalHistory(id) });
     },
