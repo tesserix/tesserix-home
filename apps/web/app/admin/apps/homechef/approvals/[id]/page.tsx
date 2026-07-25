@@ -144,7 +144,10 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
     }
   }
 
-  async function decide(action: "approve" | "reject" | "request-info") {
+  async function decide(
+    action: "approve" | "reject" | "request-info",
+    mode: "live" | "test" = "live",
+  ) {
     setError(null);
     let notes = "";
     if (action === "reject" || action === "request-info") {
@@ -165,15 +168,20 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
       notes = r;
     } else {
       const ok = await confirm({
-        title: "Approve request",
-        message: "Approve this request? This triggers the related workflow.",
-        confirmLabel: "Approve",
+        title: mode === "test" ? "Approve as a TEST kitchen" : "Approve request",
+        message:
+          mode === "test"
+            ? "This kitchen will be visible only to the test-mode allowlist, and its payments " +
+              "will run through Razorpay test credentials. No real money will move, and no real " +
+              "customer will ever see it."
+            : "Approve this request? This triggers the related workflow.",
+        confirmLabel: mode === "test" ? "Approve as Test" : "Approve",
       });
       if (!ok) return;
     }
     setBusy(true);
     try {
-      await hcAdmin.put(`/approvals/${id}/${action}`, { notes });
+      await hcAdmin.put(`/approvals/${id}/${action}`, { notes, mode });
       await mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
@@ -353,9 +361,19 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
 
       {pending ? (
         <div className="flex flex-wrap gap-3 border-t border-border pt-4">
-          <Button disabled={busy} onClick={() => decide("approve")}>
+          <Button disabled={busy} onClick={() => decide("approve", "live")}>
             Approve
           </Button>
+          {a.type === "kitchen_onboarding" ? (
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => decide("approve", "test")}
+              title="Sandbox kitchen: visible only to the test-mode allowlist, paid with Razorpay test keys"
+            >
+              Approve as Test
+            </Button>
+          ) : null}
           <Button variant="secondary" disabled={busy} onClick={() => decide("request-info")}>
             Request more info
           </Button>

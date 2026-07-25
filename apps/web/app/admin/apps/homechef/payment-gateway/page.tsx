@@ -32,6 +32,22 @@ function modeTone(mode: string, configured: boolean): Tone {
   return mode === "live" ? "warning" : "info";
 }
 
+/**
+ * Flags a credential slot holding a key of the wrong kind.
+ *
+ * Deliberately a warning rather than a blocked save: the Live slot legitimately
+ * holds a test key until a real live key is issued, and refusing to save that
+ * would make the interim state unreachable.
+ */
+function SlotWarning({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <div className="rounded-md bg-amber-100 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      {text}
+    </div>
+  );
+}
+
 function StatusRow({ label, ok }: { label: string; ok: boolean }) {
   return (
     <div className="flex items-center justify-between py-1 text-sm">
@@ -41,9 +57,9 @@ function StatusRow({ label, ok }: { label: string; ok: boolean }) {
   );
 }
 
-function RazorpayCard() {
+function RazorpayCard({ slot }: { slot: "live" | "test" }) {
   const { data, isLoading, mutate } = useSWR<PaymentGatewayStatus>(
-    ["/payment-gateway/status"],
+    ["/payment-gateway/status", { mode: slot }],
     swrFetcher,
   );
   const [form, setForm] = useState({ keyId: "", keySecret: "", webhookSecret: "" });
@@ -62,7 +78,7 @@ function RazorpayCard() {
 
     const nextMode = form.keyId.startsWith("rzp_live_") ? "live" : "test";
     const ok = await confirm({
-      title: `Replace the Razorpay ${nextMode} keys?`,
+      title: `Replace the Razorpay ${slot} keys?`,
       message:
         "Every payment and refund from now on uses this merchant account. If it is a different account, existing chef payout links (Route linked accounts) and your webhook will stop resolving — silently. Re-check the webhook and chef payouts after saving.",
       confirmLabel: "Replace keys",
@@ -73,6 +89,7 @@ function RazorpayCard() {
     setSaving(true);
     try {
       const res = await hcAdmin.put<UpdateKeysResponse>("/payment-gateway/keys", {
+        mode: slot,
         keyId: form.keyId.trim(),
         keySecret: form.keySecret.trim(),
         webhookSecret: form.webhookSecret.trim() || undefined,
@@ -92,8 +109,14 @@ function RazorpayCard() {
     <div className="space-y-4 rounded-lg border p-6">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-base font-semibold">Razorpay</h2>
-          <p className="text-sm text-muted-foreground">The gateway HomeChef charges and refunds on.</p>
+          <h2 className="text-base font-semibold">
+            Razorpay — {slot === "live" ? "Live" : "Test"} credentials
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {slot === "live"
+              ? "Used by every real kitchen. Real money moves through these keys."
+              : "Used only by kitchens marked as Test. No real money moves through these keys."}
+          </p>
         </div>
         {isLoading ? null : (
           <StatusBadge
@@ -104,6 +127,8 @@ function RazorpayCard() {
           />
         )}
       </div>
+
+      <SlotWarning text={data?.slotWarning} />
 
       {data ? (
         <div className="rounded-md border p-3">
@@ -311,7 +336,8 @@ export default function HomechefPaymentGatewayPage() {
           stop resolving.
         </p>
       </div>
-      <RazorpayCard />
+      <RazorpayCard slot="live" />
+      <RazorpayCard slot="test" />
       <StripeCard />
     </div>
   );

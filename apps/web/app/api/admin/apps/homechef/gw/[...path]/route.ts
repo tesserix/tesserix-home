@@ -65,6 +65,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 export async function PUT(req: NextRequest, { params }: Ctx) {
   return proxy(req, (await params).path, "PUT");
 }
+export async function PATCH(req: NextRequest, { params }: Ctx) {
+  return proxy(req, (await params).path, "PATCH");
+}
 export async function DELETE(req: NextRequest, { params }: Ctx) {
   return proxy(req, (await params).path, "DELETE");
 }
