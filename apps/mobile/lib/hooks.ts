@@ -1,6 +1,7 @@
 // hooks.ts — TanStack Query hooks over the HomeChef admin gateway. Types are the
 // shared wire contracts. Every list is server-paginated (Paginated<T>).
 
+import { Linking } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { hc } from './api';
 import type {
@@ -22,28 +23,87 @@ import type {
   OrderIssueConfig,
   DeliveryFailuresResponse,
   DeliveryFaultClass,
+  FSSAILockResponse,
+  OrderDetailResponse,
+  DeliveryIntelligenceResponse,
+  BlockedChefsResponse,
+  PayoutAutomationValue,
+  PendingPayoutsResponse,
+  PaymentGatewayStatus,
+  StripeGatewayStatus,
 } from '@tesserix/homechef-shared';
+
+// These three shapes are returned by the HomeChef admin gateway but are NOT part
+// of @tesserix/homechef-shared (the web pages declare them locally too). Keep them
+// next to the hooks that produce them.
+export interface ReviewerRef {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+export type ApprovalDetail = ApprovalRequest & { reviewedBy?: ReviewerRef | null };
+export interface ApprovalHistoryEntry {
+  id: string;
+  fromStatus?: string;
+  toStatus: string;
+  notes?: string;
+  createdAt: string;
+  changedBy?: ReviewerRef | null;
+}
+export interface BackfillChef {
+  chefId: string;
+  userId: string;
+  businessName: string;
+}
+export interface BackfillResponse {
+  count: number;
+  chefs: BackfillChef[];
+  executed: boolean;
+  notified: number;
+}
+
+export interface PendingRefundDay {
+  dayId: string;
+  date: string;
+  slot: string;
+  dishName: string;
+  customerName: string;
+  chefName: string;
+  mealPlanNumber: string;
+  chefChoice: string; // full | half
+  refundAmount: number;
+}
 
 export const qk = {
   stats: ['hc', 'stats'] as const,
   analytics: ['hc', 'analytics'] as const,
-  activities: ['hc', 'activities'] as const,
+  activities: (limit: number) => ['hc', 'activities', limit] as const,
   chefs: (p: object) => ['hc', 'chefs', p] as const,
   users: (p: object) => ['hc', 'users', p] as const,
   orders: (p: object) => ['hc', 'orders', p] as const,
   reviews: (p: object) => ['hc', 'reviews', p] as const,
   mealPlans: (p: object) => ['hc', 'meal-plans', p] as const,
   approvals: (p: object) => ['hc', 'approvals', p] as const,
+  approval: (id: string) => ['hc', 'approval', id] as const,
+  approvalHistory: (id: string) => ['hc', 'approval-history', id] as const,
+  fssaiLocked: ['hc', 'fssai-locked'] as const,
   tickets: (p: object) => ['hc', 'tickets', p] as const,
   staff: (p: object) => ['hc', 'staff', p] as const,
   wallet: (id: string) => ['hc', 'wallet', id] as const,
+  order: (id: string) => ['hc', 'order', id] as const,
+  deliveryIntel: ['hc', 'delivery-intel'] as const,
+  blockedChefs: ['hc', 'blocked-chefs'] as const,
+  pendingPayouts: (include: string) => ['hc', 'pending-payouts', include] as const,
+  pendingRefunds: ['hc', 'pending-refunds'] as const,
+  gatewayStatus: ['hc', 'gateway-status'] as const,
+  stripeStatus: ['hc', 'stripe-status'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
 export const useAnalytics = () =>
   useQuery({ queryKey: qk.analytics, queryFn: () => hc.get<AdminAnalytics>('/analytics'), refetchInterval: 30_000 });
 export const useActivities = (limit = 15) =>
-  useQuery({ queryKey: qk.activities, queryFn: () => hc.get<{ data: Activity[] }>('/activities', { limit }) });
+  useQuery({ queryKey: qk.activities(limit), queryFn: () => hc.get<Activity[]>('/activities', { limit }) });
 
 export const useChefs = (p: { search?: string; status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.chefs(p), queryFn: () => hc.get<Paginated<ChefWithStats>>('/chefs', p) });
@@ -55,7 +115,14 @@ export const useReviews = (p: { hidden?: boolean; page?: number; limit?: number 
   useQuery({ queryKey: qk.reviews(p), queryFn: () => hc.get<Paginated<ReviewRow>>('/reviews', p) });
 export const useMealPlans = (p: { status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.mealPlans(p), queryFn: () => hc.get<Paginated<MealPlanRow>>('/meal-plans', p) });
-export const useApprovals = (p: { status?: string; page?: number; limit?: number }) =>
+export const useApprovals = (p: {
+  status?: string;
+  search?: string;
+  reminded?: string;
+  escalated?: string;
+  page?: number;
+  limit?: number;
+}) =>
   useQuery({ queryKey: qk.approvals(p), queryFn: () => hc.get<Paginated<ApprovalRequest>>('/approvals', p) });
 export const useTickets = (p: { status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.tickets(p), queryFn: () => hc.get<Paginated<SupportTicket>>('/support/tickets', p) });
@@ -158,3 +225,147 @@ export function useAdminAction(invalidate: readonly unknown[]) {
     onSuccess: () => qc.invalidateQueries({ queryKey: invalidate }),
   });
 }
+
+// ---- Approvals detail + decide ---------------------------------------------
+export const useApproval = (id: string) =>
+  useQuery({
+    queryKey: qk.approval(id),
+    queryFn: () => hc.get<ApprovalDetail>(`/approvals/${id}`),
+    enabled: !!id,
+  });
+
+export const useApprovalHistory = (id: string) =>
+  useQuery({
+    queryKey: qk.approvalHistory(id),
+    queryFn: () => hc.get<{ data: ApprovalHistoryEntry[] }>(`/approvals/${id}/history`),
+    enabled: !!id,
+  });
+
+// Badge the Escalated filter chip without loading the whole view: total only.
+export const useEscalatedCount = () =>
+  useQuery({
+    queryKey: ['hc', 'approvals-escalated-count'] as const,
+    queryFn: () => hc.get<Paginated<ApprovalRequest>>('/approvals', { escalated: 'true', page: 1, limit: 1 }),
+    select: (d) => d.pagination.total,
+  });
+
+// approve | reject | request-info → PUT /approvals/:id/:action { notes }.
+export function useDecideApproval(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { action: 'approve' | 'reject' | 'request-info'; notes: string }) =>
+      hc.put(`/approvals/${id}/${a.action}`, { notes: a.notes }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hc', 'approvals'] });
+      qc.invalidateQueries({ queryKey: ['hc', 'approvals-escalated-count'] });
+      qc.invalidateQueries({ queryKey: qk.approval(id) });
+      qc.invalidateQueries({ queryKey: qk.approvalHistory(id) });
+    },
+  });
+}
+
+// Documents live privately in GCS; fetch a short-lived signed URL on demand and
+// open it in the system browser.
+export async function openApprovalDocument(id: string, docId: string): Promise<void> {
+  const { url } = await hc.get<{ url?: string }>(`/approvals/${id}/documents/${docId}`);
+  if (!url) throw new Error('Document is not available.');
+  await Linking.openURL(url);
+}
+
+// ---- FSSAI lockouts --------------------------------------------------------
+export const useFssaiLocked = () =>
+  useQuery({ queryKey: qk.fssaiLocked, queryFn: () => hc.get<FSSAILockResponse>('/chefs/fssai-locked') });
+
+// Dry-run list of chefs missing an FSSAI expiry (button-triggered, not a query).
+export const fetchFssaiBackfill = () => hc.get<BackfillResponse>('/fssai-expiry-backfill');
+
+// Send the one-time confirm-licence push to those chefs.
+export function useNotifyFssaiBackfill() {
+  return useMutation({ mutationFn: () => hc.post<BackfillResponse>('/fssai-expiry-backfill') });
+}
+
+// Adjust a customer wallet (credit/debit). Amounts are RUPEES. reason ≥ 3 chars.
+export function useAdjustWallet(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { amount: number; reason: string; type: 'credit' | 'debit' }) =>
+      hc.post(`/wallet/${userId}/adjust`, a),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.wallet(userId) }),
+  });
+}
+
+// ---- Order detail + delivery intelligence ----------------------------------
+export const useOrder = (id: string) =>
+  useQuery({
+    queryKey: qk.order(id),
+    queryFn: () => hc.get<OrderDetailResponse>(`/orders/${id}`),
+    enabled: !!id,
+  });
+
+export const useDeliveryIntelligence = () =>
+  useQuery({
+    queryKey: qk.deliveryIntel,
+    queryFn: () => hc.get<DeliveryIntelligenceResponse>('/delivery/intelligence'),
+    refetchInterval: 30_000,
+  });
+
+// ---- Payout setup: blocked chefs + automation toggle -----------------------
+export const useBlockedChefs = () =>
+  useQuery({ queryKey: qk.blockedChefs, queryFn: () => hc.get<BlockedChefsResponse>('/payouts/blocked-chefs') });
+
+export function useSetPayoutAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { chefId: string; value: PayoutAutomationValue }) =>
+      hc.put(`/chefs/${a.chefId}/payout-automation`, { value: a.value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.blockedChefs }),
+  });
+}
+
+// ---- Payout queue: escrow release/withhold/reverse + bulk -------------------
+export const usePendingPayouts = (includeAwaiting: boolean) =>
+  useQuery({
+    queryKey: qk.pendingPayouts(includeAwaiting ? 'awaiting' : 'eligible'),
+    queryFn: () =>
+      hc.get<PendingPayoutsResponse>('/payouts/pending', includeAwaiting ? { include: 'awaiting' } : undefined),
+    refetchInterval: 30_000,
+  });
+
+// release (no reason) | withhold | reverse (reason) — path built by the caller.
+export function usePayoutAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { path: string; reason?: string }) =>
+      hc.post(a.path, a.reason !== undefined ? { reason: a.reason } : undefined),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'pending-payouts'] }),
+  });
+}
+
+export function useBulkReleasePayouts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { aggType: string; id: string }[]) => hc.post('/payouts/release-bulk', { items }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'pending-payouts'] }),
+  });
+}
+
+// ---- Refund payouts --------------------------------------------------------
+export const usePendingRefunds = () =>
+  useQuery({
+    queryKey: qk.pendingRefunds,
+    queryFn: () => hc.get<{ data: PendingRefundDay[] }>('/meal-plan-days/pending-refunds'),
+  });
+
+export function useExecuteRefund() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dayId: string) => hc.post(`/meal-plan-days/${dayId}/execute-refund`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.pendingRefunds }),
+  });
+}
+
+// ---- Payment gateway status (read-only) ------------------------------------
+export const useGatewayStatus = () =>
+  useQuery({ queryKey: qk.gatewayStatus, queryFn: () => hc.get<PaymentGatewayStatus>('/payment-gateway/status') });
+export const useStripeStatus = () =>
+  useQuery({ queryKey: qk.stripeStatus, queryFn: () => hc.get<StripeGatewayStatus>('/payment-gateway/stripe/status') });

@@ -1,7 +1,7 @@
 import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useStats, useActivities } from '../../lib/hooks';
 import { usePlatformDashboard } from '../../lib/platform-hooks';
-import { formatINR, formatCount, formatRelative } from "@tesserix/homechef-shared";
+import { formatINR, formatCount, formatRelative, type Activity } from "@tesserix/homechef-shared";
 import { Card, EmptyState, LoadingRows, Screen, ScreenHeader, SectionLabel, StatCard } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
 
@@ -80,11 +80,11 @@ export default function Dashboard() {
           <SectionLabel>Recent activity</SectionLabel>
           {activities.isLoading ? (
             <LoadingRows rows={4} />
-          ) : (activities.data?.data.length ?? 0) === 0 ? (
+          ) : (activities.data?.length ?? 0) === 0 ? (
             <Card><EmptyState title="Nothing yet" body="Platform activity will show up here." /></Card>
           ) : (
             <Card style={{ padding: 0 }}>
-              {activities.data?.data.map((a, i) => (
+              {activities.data?.map((a: Activity, i: number) => (
                 <View
                   key={a.id}
                   style={{

@@ -176,6 +176,24 @@ export interface Observability {
   recentTraces: ObsTrace[];
 }
 
+// ---- Observability trace detail --------------------------------------------
+// Span shape is SQL-derived (no shared TS type on the web side); nanosecond
+// numerics may arrive as strings from ClickHouse.
+export interface TraceSpan {
+  spanId: string;
+  parentId: string;
+  service: string;
+  op: string;
+  kind: string;
+  startNs: number | string;
+  durationNs: number | string;
+  status: 'Error' | 'OK';
+}
+export interface TraceDetail {
+  traceId: string;
+  spans: TraceSpan[];
+}
+
 // ---- Erasure requests -------------------------------------------------------
 export interface ErasureRow {
   id: string;
@@ -338,4 +356,135 @@ export interface OutboxResponse {
   summaries: OutboxDatabaseSummary[];
   recent: OutboxRow[];
   generatedAt: string;
+}
+
+// ---- Support analytics (Otto cross-tenant rollup) --------------------------
+export interface PlatformSupportStats {
+  total: number;
+  open: number;
+  by_status: Record<string, number>;
+  by_reason: Record<string, number>;
+  by_tenant: Record<string, number>;
+  escalated: number;
+  ai_resolved: number;
+  avg_resolution_seconds: number;
+  csat: number;
+  resolved_rate: number;
+  feedback_count: number;
+  tenant_names?: Record<string, string>;
+}
+
+// ---- Email events (notifications log) --------------------------------------
+export interface EmailMetricsRow {
+  product: string;
+  tenantId: string | null;
+  sent: number;
+  delivered: number;
+  opens: number;
+  clicks: number;
+  bounces: number;
+  drops: number;
+  unsubscribes: number;
+}
+export interface EmailMetricsResponse {
+  days: number;
+  rows: EmailMetricsRow[];
+}
+export interface EmailEventLogRow {
+  id: number;
+  sgEventId: string;
+  eventType: string;
+  product: string | null;
+  tenantId: string | null;
+  templateKey: string | null;
+  recipient: string | null;
+  reason: string | null;
+  eventAt: string;
+}
+export interface EmailRecentResponse {
+  events: EmailEventLogRow[];
+}
+
+// ---- Lead email templates --------------------------------------------------
+export type LeadTemplateStatus = 'published' | 'draft';
+export interface LeadTemplate {
+  key: string;
+  label: string;
+  subject: string;
+  htmlBody: string;
+  textBody: string;
+  variables: { name: string; type: string; required: boolean }[];
+  status: LeadTemplateStatus;
+  product: string;
+  version: number;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+export interface LeadTemplatesResponse {
+  templates: LeadTemplate[];
+}
+export interface TestSendResponse {
+  sent: true;
+  to: string;
+  messageId?: string;
+}
+
+// ---- Product KPIs + resource metrics (per-product platform view) ------------
+// KPI keys are product-config-driven (homechef: chefs_active, orders_today,
+// gmv_today, approvals_pending), so this is a loose string→number map.
+export type ProductKpis = Record<string, number>;
+
+// Only the resource scalars are used on mobile; cost/email/sparklines are ignored.
+// cpu/memory are nullable in the source contract, so optional-chain `.current`.
+export interface ProductResourceMetrics {
+  resources: {
+    cpu: { current: number } | null;
+    memory: { current: number } | null;
+  };
+}
+
+// ---- HomeChef delivery (3PL) — snake_case wire from the Go delivery admin ----
+export interface ProviderRow {
+  id: string;
+  name: string;
+  code: string;
+  is_enabled: boolean;
+  is_active: boolean;
+  priority: number;
+  base_cost: number;
+  currency: string;
+  total_deliveries: number;
+  success_rate: number;
+  last_used_at: string | null;
+}
+export interface Reconciliation {
+  total_3pl_deliveries: number;
+  provider_cost: number;
+  collected_fee: number;
+  margin: number;
+}
+
+// ---- HomeChef weekly settlement statements (plat route, snake_case wire) -----
+export interface StatementRow {
+  id: string;
+  chef_id: string;
+  chef_name: string | null;
+  week_start: string;
+  week_end: string;
+  currency: string;
+  orders_count: number;
+  gross_revenue: number;
+  platform_commission: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  tds: number;
+  net_payout: number;
+  status: string;
+  paid_at: string | null;
+  payout_ref: string | null;
+}
+export interface StatementsResponse {
+  data: StatementRow[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
 }

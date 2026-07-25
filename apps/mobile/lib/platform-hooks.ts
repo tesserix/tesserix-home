@@ -15,6 +15,7 @@ import type {
   ServiceHealth,
   UptimeResponse,
   Observability,
+  TraceDetail,
   ErasureRequests,
   BreakGlass,
   UserSearchResponse,
@@ -22,6 +23,17 @@ import type {
   DatabasesResponse,
   CustomDomainsResponse,
   OutboxResponse,
+  PlatformSupportStats,
+  EmailMetricsResponse,
+  EmailRecentResponse,
+  LeadTemplatesResponse,
+  TestSendResponse,
+  ProductKpis,
+  ProductResourceMetrics,
+  ProviderRow,
+  Reconciliation,
+  StatementRow,
+  StatementsResponse,
 } from './platform-contracts';
 
 export const pk = {
@@ -32,6 +44,7 @@ export const pk = {
   health: ['plat', 'health'] as const,
   uptime: (hours: number) => ['plat', 'uptime', hours] as const,
   observability: (p: object) => ['plat', 'observability', p] as const,
+  trace: (id: string) => ['plat', 'trace', id] as const,
   erasure: (status: string) => ['plat', 'erasure', status] as const,
   breakGlass: ['plat', 'break-glass'] as const,
   userSearch: (q: string) => ['plat', 'user-search', q] as const,
@@ -39,6 +52,15 @@ export const pk = {
   databases: ['plat', 'databases'] as const,
   domains: ['plat', 'domains'] as const,
   outbox: ['plat', 'outbox'] as const,
+  supportAnalytics: ['plat', 'support-analytics'] as const,
+  emailMetrics: (p: object) => ['plat', 'email-metrics', p] as const,
+  emailRecent: (p: object) => ['plat', 'email-recent', p] as const,
+  leadTemplates: ['plat', 'lead-templates'] as const,
+  productKpis: (product: string) => ['plat', 'product-kpis', product] as const,
+  productMetrics: (product: string, window: string) => ['plat', 'product-metrics', product, window] as const,
+  deliveryProviders: ['plat', 'delivery-providers'] as const,
+  deliveryReconciliation: ['plat', 'delivery-reconciliation'] as const,
+  statements: (p: object) => ['plat', 'statements', p] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -120,6 +142,13 @@ export const useObservability = (p: { range: string; app: string }) =>
     refetchInterval: 30_000,
   });
 
+export const useTrace = (id: string) =>
+  useQuery({
+    queryKey: pk.trace(id),
+    queryFn: () => plat.get<TraceDetail>('/observability/trace', { id }),
+    enabled: !!id,
+  });
+
 // ---- Data & access ----------------------------------------------------------
 export const useUserSearch = (q: string) =>
   useQuery({
@@ -159,3 +188,86 @@ export const useErasureRequests = (status: string) =>
 
 export const useBreakGlass = () =>
   useQuery({ queryKey: pk.breakGlass, queryFn: () => plat.get<BreakGlass>('/break-glass') });
+
+// ---- Support analytics -------------------------------------------------------
+export const useSupportAnalytics = () =>
+  useQuery({
+    queryKey: pk.supportAnalytics,
+    queryFn: () => plat.get<PlatformSupportStats>('/analytics/support'),
+    refetchInterval: 30_000,
+  });
+
+// ---- Email events (notifications log) ----------------------------------------
+export const useEmailMetrics = (days: number, product?: string) =>
+  useQuery({
+    queryKey: pk.emailMetrics({ days, product }),
+    queryFn: () => plat.get<EmailMetricsResponse>('/email-events', { view: 'metrics', days, product: product || undefined }),
+  });
+
+export const useEmailRecent = (product?: string) =>
+  useQuery({
+    queryKey: pk.emailRecent({ product }),
+    queryFn: () => plat.get<EmailRecentResponse>('/email-events', { view: 'recent', product: product || undefined, limit: 100 }),
+  });
+
+// ---- Lead email templates ----------------------------------------------------
+export const useLeadTemplates = () =>
+  useQuery({ queryKey: pk.leadTemplates, queryFn: () => plat.get<LeadTemplatesResponse>('/lead-templates') });
+
+export function useTestSendTemplate(key: string) {
+  return useMutation({
+    mutationFn: (to: string) => plat.post<TestSendResponse>(`/lead-templates/${key}/test-send`, { to }),
+  });
+}
+
+// ---- Product KPIs + resources (per-product) ---------------------------------
+export const useProductKpis = (product: string) =>
+  useQuery({
+    queryKey: pk.productKpis(product),
+    queryFn: () => plat.get<ProductKpis>(`/apps/${product}/kpis`),
+    enabled: !!product,
+  });
+
+export const useProductMetrics = (product: string, window = '24h') =>
+  useQuery({
+    queryKey: pk.productMetrics(product, window),
+    queryFn: () => plat.get<ProductResourceMetrics>(`/apps/${product}/metrics`, { window }),
+    enabled: !!product,
+  });
+
+// ---- HomeChef delivery (3PL) ------------------------------------------------
+export const useDeliveryProviders = () =>
+  useQuery({
+    queryKey: pk.deliveryProviders,
+    queryFn: () => plat.get<{ data: ProviderRow[] }>('/apps/homechef/delivery/providers'),
+  });
+
+export const useDeliveryReconciliation = () =>
+  useQuery({
+    queryKey: pk.deliveryReconciliation,
+    queryFn: () => plat.get<{ data: Reconciliation }>('/apps/homechef/delivery/reconciliation'),
+  });
+
+export function useToggleDeliveryProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => plat.put(`/apps/homechef/delivery/providers/${id}/toggle`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: pk.deliveryProviders });
+      qc.invalidateQueries({ queryKey: pk.deliveryReconciliation });
+    },
+  });
+}
+
+// ---- HomeChef weekly settlement statements ----------------------------------
+export const useStatements = (p: { status?: string; page?: number }) =>
+  useQuery({ queryKey: pk.statements(p), queryFn: () => plat.get<StatementsResponse>('/apps/homechef/payouts', p) });
+
+export function useMarkPaid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; payoutRef: string }) =>
+      plat.put(`/apps/homechef/payouts/${a.id}/mark-paid`, { payoutRef: a.payoutRef }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plat', 'statements'] }),
+  });
+}

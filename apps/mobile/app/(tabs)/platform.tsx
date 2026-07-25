@@ -1,7 +1,7 @@
 import { ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
-  Ticket, Megaphone, Activity, HeartPulse, Users, Database, Globe, Inbox, ShieldAlert, Trash2, ScrollText,
+  Ticket, Megaphone, Activity, HeartPulse, Users, Database, Globe, Inbox, ShieldAlert, Trash2, ScrollText, BarChart3, Mail, FileText,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { space } from '../../lib/theme';
@@ -13,6 +13,11 @@ const SECTIONS = [
   { group: 'Support', items: [
     { title: 'Platform tickets', sub: 'Cross-product support', icon: Ticket, route: '/platform/tickets', live: true },
     { title: 'Announcements', sub: 'Broadcast to products', icon: Megaphone, route: '/platform/announcements', live: true },
+    { title: 'Support analytics', sub: 'Otto support rollup', icon: BarChart3, route: '/platform/analytics-support', live: true },
+  ]},
+  { group: 'Notifications', items: [
+    { title: 'Notifications log', sub: 'Email delivery + events', icon: Mail, route: '/platform/notifications-log', live: true },
+    { title: 'Lead templates', sub: 'Marketing emails + test send', icon: FileText, route: '/platform/lead-templates', live: true },
   ]},
   { group: 'Reliability', items: [
     { title: 'Service health', sub: 'Live status of workloads', icon: HeartPulse, route: '/platform/health', live: true },

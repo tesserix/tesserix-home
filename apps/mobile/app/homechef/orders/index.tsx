@@ -2,10 +2,10 @@ import { useState } from 'react';
 import { FlatList, Pressable, View } from 'react-native';
 import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useOrders } from '../../lib/hooks';
-import { formatINR, titleCase } from "@tesserix/homechef-shared";
-import { Badge, EmptyState, LoadingRows, ListRow, Screen, ScreenHeader, FilterChips, type Tone } from '../../components/kit';
-import { usePalette, space } from '../../lib/theme';
+import { useOrders } from '../../../lib/hooks';
+import { formatINR, titleCase } from '@tesserix/homechef-shared';
+import { Badge, EmptyState, FilterChips, ListRow, LoadingRows, Screen, ScreenHeader, type Tone } from '../../../components/kit';
+import { usePalette, space } from '../../../lib/theme';
 
 const STATUSES = [
   { key: '', label: 'All' },
@@ -59,6 +59,7 @@ export default function Orders() {
               subtitle={`${item.customerName} → ${item.chefName} · ${item.itemCount} item${item.itemCount === 1 ? '' : 's'}`}
               meta={formatINR(item.total)}
               trailing={<Badge label={titleCase(item.status)} tone={orderTone(item.status)} />}
+              onPress={() => router.push(('/homechef/orders/' + item.id) as never)}
             />
           )}
         />
