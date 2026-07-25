@@ -33,10 +33,10 @@ const SECTIONS = [
     { title: 'Payment gateway', sub: 'Razorpay + Stripe status', icon: CreditCard, route: '/homechef/payment-gateway', live: true },
   ]},
   { group: 'Marketing', items: [
-    { title: 'Campaigns', sub: 'Push/email blasts', icon: Megaphone, route: '/homechef/campaigns', live: false },
+    { title: 'Campaigns', sub: 'Push/email blasts', icon: Megaphone, route: '/homechef/campaigns', live: true },
     { title: 'Win-back', sub: 'Auto reactivation offers', icon: Gift, route: '/homechef/winback', live: true },
     { title: 'Loyalty', sub: 'Points programme', icon: Sparkles, route: '/homechef/loyalty', live: true },
-    { title: 'Promos', sub: 'Discount codes', icon: TicketPercent, route: '/homechef/promos', live: false },
+    { title: 'Promos', sub: 'Discount codes', icon: TicketPercent, route: '/homechef/promos', live: true },
   ]},
   { group: 'People & quality', items: [
     { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: true },
