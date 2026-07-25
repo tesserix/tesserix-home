@@ -24,6 +24,8 @@ import type {
   CustomDomainsResponse,
   OutboxResponse,
   PlatformSupportStats,
+  EmailMetricsResponse,
+  EmailRecentResponse,
 } from './platform-contracts';
 
 export const pk = {
@@ -43,6 +45,8 @@ export const pk = {
   domains: ['plat', 'domains'] as const,
   outbox: ['plat', 'outbox'] as const,
   supportAnalytics: ['plat', 'support-analytics'] as const,
+  emailMetrics: (p: object) => ['plat', 'email-metrics', p] as const,
+  emailRecent: (p: object) => ['plat', 'email-recent', p] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -177,4 +181,17 @@ export const useSupportAnalytics = () =>
     queryKey: pk.supportAnalytics,
     queryFn: () => plat.get<PlatformSupportStats>('/analytics/support'),
     refetchInterval: 30_000,
+  });
+
+// ---- Email events (notifications log) ----------------------------------------
+export const useEmailMetrics = (days: number, product?: string) =>
+  useQuery({
+    queryKey: pk.emailMetrics({ days, product }),
+    queryFn: () => plat.get<EmailMetricsResponse>('/email-events', { view: 'metrics', days, product: product || undefined }),
+  });
+
+export const useEmailRecent = (product?: string) =>
+  useQuery({
+    queryKey: pk.emailRecent({ product }),
+    queryFn: () => plat.get<EmailRecentResponse>('/email-events', { view: 'recent', product: product || undefined, limit: 100 }),
   });

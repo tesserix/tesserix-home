@@ -373,3 +373,34 @@ export interface PlatformSupportStats {
   feedback_count: number;
   tenant_names?: Record<string, string>;
 }
+
+// ---- Email events (notifications log) --------------------------------------
+export interface EmailMetricsRow {
+  product: string;
+  tenantId: string | null;
+  sent: number;
+  delivered: number;
+  opens: number;
+  clicks: number;
+  bounces: number;
+  drops: number;
+  unsubscribes: number;
+}
+export interface EmailMetricsResponse {
+  days: number;
+  rows: EmailMetricsRow[];
+}
+export interface EmailEventLogRow {
+  id: number;
+  sgEventId: string;
+  eventType: string;
+  product: string | null;
+  tenantId: string | null;
+  templateKey: string | null;
+  recipient: string | null;
+  reason: string | null;
+  eventAt: string;
+}
+export interface EmailRecentResponse {
+  events: EmailEventLogRow[];
+}
