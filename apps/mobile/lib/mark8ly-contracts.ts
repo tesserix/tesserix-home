@@ -157,3 +157,30 @@ export interface OnboardingResponse {
   filter: { status: string };
   generatedAt: string;
 }
+
+// ---- Audit logs -------------------------------------------------------------
+export interface AuditEventRow {
+  id: string;
+  tenant_id: string;
+  tenantName: string;
+  store_id: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  actor_type: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  status: string;
+  severity: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+export interface AuditLogsResponse {
+  summary: { criticalLast24h: number };
+  filterOptions: { actions: string[]; resourceTypes: string[] };
+  rows: AuditEventRow[];
+  sinceHours: number;
+  generatedAt: string;
+}

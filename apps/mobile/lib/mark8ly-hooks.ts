@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse, SubscriptionsListResponse, OnboardingResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse, SubscriptionsListResponse, OnboardingResponse, AuditLogsResponse } from './mark8ly-contracts';
 import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';
@@ -19,6 +19,7 @@ export const mk = {
   tenantBilling: (id: string) => ['mk', 'tenant-billing', id] as const,
   subscriptions: (filter: string) => ['mk', 'subscriptions', filter] as const,
   onboarding: (status: string) => ['mk', 'onboarding', status] as const,
+  audit: (severity: string) => ['mk', 'audit', severity] as const,
 };
 
 // ---- Overview ---------------------------------------------------------------
@@ -133,4 +134,11 @@ export const useOnboarding = (status: string) =>
   useQuery({
     queryKey: mk.onboarding(status),
     queryFn: () => plat.get<OnboardingResponse>(`/apps/${PRODUCT}/onboarding`, { status }),
+  });
+
+// ---- Audit logs -------------------------------------------------------------
+export const useMark8lyAuditLogs = (severity: string) =>
+  useQuery({
+    queryKey: mk.audit(severity),
+    queryFn: () => plat.get<AuditLogsResponse>(`/apps/${PRODUCT}/audit-logs`, { severity: severity !== 'all' ? severity : undefined }),
   });
