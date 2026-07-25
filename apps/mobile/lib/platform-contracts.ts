@@ -176,6 +176,24 @@ export interface Observability {
   recentTraces: ObsTrace[];
 }
 
+// ---- Observability trace detail --------------------------------------------
+// Span shape is SQL-derived (no shared TS type on the web side); nanosecond
+// numerics may arrive as strings from ClickHouse.
+export interface TraceSpan {
+  spanId: string;
+  parentId: string;
+  service: string;
+  op: string;
+  kind: string;
+  startNs: number | string;
+  durationNs: number | string;
+  status: 'Error' | 'OK';
+}
+export interface TraceDetail {
+  traceId: string;
+  spans: TraceSpan[];
+}
+
 // ---- Erasure requests -------------------------------------------------------
 export interface ErasureRow {
   id: string;

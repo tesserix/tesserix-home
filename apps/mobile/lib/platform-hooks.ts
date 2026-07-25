@@ -15,6 +15,7 @@ import type {
   ServiceHealth,
   UptimeResponse,
   Observability,
+  TraceDetail,
   ErasureRequests,
   BreakGlass,
   UserSearchResponse,
@@ -32,6 +33,7 @@ export const pk = {
   health: ['plat', 'health'] as const,
   uptime: (hours: number) => ['plat', 'uptime', hours] as const,
   observability: (p: object) => ['plat', 'observability', p] as const,
+  trace: (id: string) => ['plat', 'trace', id] as const,
   erasure: (status: string) => ['plat', 'erasure', status] as const,
   breakGlass: ['plat', 'break-glass'] as const,
   userSearch: (q: string) => ['plat', 'user-search', q] as const,
@@ -118,6 +120,13 @@ export const useObservability = (p: { range: string; app: string }) =>
     queryKey: pk.observability(p),
     queryFn: () => plat.get<Observability>('/observability', { range: p.range, app: p.app || undefined }),
     refetchInterval: 30_000,
+  });
+
+export const useTrace = (id: string) =>
+  useQuery({
+    queryKey: pk.trace(id),
+    queryFn: () => plat.get<TraceDetail>('/observability/trace', { id }),
+    enabled: !!id,
   });
 
 // ---- Data & access ----------------------------------------------------------
