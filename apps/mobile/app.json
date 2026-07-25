@@ -16,7 +16,17 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.tesserix.admin"
+      "bundleIdentifier": "app.tesserix.admin",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": ["tesserix-admin"]
+          },
+          {
+            "CFBundleURLSchemes": ["com.googleusercontent.apps.849928263410-rbk6kuskqgurberff8ppl5enqdn9b0ph"]
+          }
+        ]
+      }
     },
     "android": {
       "package": "app.tesserix.admin",
