@@ -24,6 +24,8 @@ import type {
   DeliveryFailuresResponse,
   DeliveryFaultClass,
   FSSAILockResponse,
+  OrderDetailResponse,
+  DeliveryIntelligenceResponse,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -71,6 +73,8 @@ export const qk = {
   tickets: (p: object) => ['hc', 'tickets', p] as const,
   staff: (p: object) => ['hc', 'staff', p] as const,
   wallet: (id: string) => ['hc', 'wallet', id] as const,
+  order: (id: string) => ['hc', 'order', id] as const,
+  deliveryIntel: ['hc', 'delivery-intel'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -267,3 +271,18 @@ export function useAdjustWallet(userId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.wallet(userId) }),
   });
 }
+
+// ---- Order detail + delivery intelligence ----------------------------------
+export const useOrder = (id: string) =>
+  useQuery({
+    queryKey: qk.order(id),
+    queryFn: () => hc.get<OrderDetailResponse>(`/orders/${id}`),
+    enabled: !!id,
+  });
+
+export const useDeliveryIntelligence = () =>
+  useQuery({
+    queryKey: qk.deliveryIntel,
+    queryFn: () => hc.get<DeliveryIntelligenceResponse>('/delivery/intelligence'),
+    refetchInterval: 30_000,
+  });
