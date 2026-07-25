@@ -64,12 +64,12 @@ export default function Leads() {
             <Card>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {item.is_starred ? <Star size={14} color={p.warning} fill={p.warning} /> : null}
-                <Text style={[text.title, { color: p.foreground, flex: 1 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}`)}>
+                <Text style={[text.title, { color: p.foreground, flex: 1 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}` as never)}>
                   {leadName(item)}
                 </Text>
                 <Badge label={titleCase(item.status)} tone={STATUS_TONE[item.status]} />
               </View>
-              <Text style={[text.caption, { color: p.mutedForeground, marginTop: 4 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}`)}>
+              <Text style={[text.caption, { color: p.mutedForeground, marginTop: 4 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}` as never)}>
                 {[item.email, item.instagram_handle, item.location].filter(Boolean).join(' · ') || '—'}
               </Text>
               <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]} numberOfLines={1}>
