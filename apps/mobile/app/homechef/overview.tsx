@@ -26,7 +26,7 @@ export default function Overview() {
           contentContainerStyle={{ paddingBottom: space[10], gap: space[4] }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refetchAll} />}
         >
-          {kpis.isError ? (
+          {kpis.isError || metrics.isError ? (
             <View style={{ paddingHorizontal: space[4] }}>
               <Banner text="Some data could not be loaded." tone="danger" />
             </View>

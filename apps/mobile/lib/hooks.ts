@@ -58,7 +58,7 @@ export interface BackfillResponse {
 export const qk = {
   stats: ['hc', 'stats'] as const,
   analytics: ['hc', 'analytics'] as const,
-  activities: ['hc', 'activities'] as const,
+  activities: (limit: number) => ['hc', 'activities', limit] as const,
   chefs: (p: object) => ['hc', 'chefs', p] as const,
   users: (p: object) => ['hc', 'users', p] as const,
   orders: (p: object) => ['hc', 'orders', p] as const,
@@ -77,7 +77,7 @@ export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.g
 export const useAnalytics = () =>
   useQuery({ queryKey: qk.analytics, queryFn: () => hc.get<AdminAnalytics>('/analytics'), refetchInterval: 30_000 });
 export const useActivities = (limit = 15) =>
-  useQuery({ queryKey: qk.activities, queryFn: () => hc.get<Activity[]>('/activities', { limit }) });
+  useQuery({ queryKey: qk.activities(limit), queryFn: () => hc.get<Activity[]>('/activities', { limit }) });
 
 export const useChefs = (p: { search?: string; status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.chefs(p), queryFn: () => hc.get<Paginated<ChefWithStats>>('/chefs', p) });
