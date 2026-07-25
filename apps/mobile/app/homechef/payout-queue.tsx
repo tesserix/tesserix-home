@@ -104,6 +104,7 @@ export default function PayoutQueue() {
           ) : (
             rows.map((pp) => {
               const age = ageLabel(pp.ageHours);
+              const canRelease = pp.holdStatus === 'release_eligible';
               return (
                 <Card key={`${pp.aggType}-${pp.id}`}>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
@@ -123,8 +124,10 @@ export default function PayoutQueue() {
                     {pp.hasOpenIssue ? <Badge label="Open issue" tone="danger" /> : null}
                   </View>
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-                    <Button label="Release" disabled={busy} tone={pp.hasOpenIssue ? 'danger' : 'default'} onPress={() => release(pp)} />
-                    <Button label="Withhold" variant="secondary" disabled={busy} onPress={() => withhold(pp)} />
+                    {canRelease ? (
+                      <Button label="Release" disabled={busy} tone={pp.hasOpenIssue ? 'danger' : 'default'} onPress={() => release(pp)} />
+                    ) : null}
+                    <Button label="Withhold" variant="secondary" disabled={busy || !canRelease} onPress={() => withhold(pp)} />
                     <Button label="Reverse" variant="secondary" tone="danger" disabled={busy} onPress={() => reverse(pp)} />
                   </View>
                 </Card>

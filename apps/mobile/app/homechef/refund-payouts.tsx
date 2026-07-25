@@ -48,7 +48,7 @@ export default function RefundPayouts() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={[text.title, { color: p.foreground }]}>{item.dishName}</Text>
-                  <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>{item.date} · {item.slot} · {item.customerName}</Text>
+                  <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>{item.date} · {titleCase(item.slot)} · {item.customerName}</Text>
                   <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>{item.chefName} · plan {item.mealPlanNumber}</Text>
                 </View>
                 <View style={{ alignItems: 'flex-end', gap: 4 }}>
