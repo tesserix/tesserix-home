@@ -15,7 +15,6 @@ import { usePalette, space, text } from '../../lib/theme';
 const PAGE_LIMIT = 20;
 
 export default function Promos() {
-  const p = usePalette();
   const [rawSearch, setRawSearch] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);

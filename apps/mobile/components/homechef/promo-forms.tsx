@@ -2,9 +2,8 @@
 // app/, so these form components live here (outside app/) to avoid becoming routes.
 // Numeric fields are string-held and Number()-converted on submit (web pattern).
 import { useMemo, useState } from 'react';
-import { Alert, Switch, Text, TextInput, View } from 'react-native';
+import { Alert, Text, TextInput, View } from 'react-native';
 import {
-  formatINR,
   type Promo,
   type PromoDiscountType,
   type PromoFundingSource,
@@ -13,7 +12,7 @@ import { Banner, Button, Card, FilterChips } from '../kit';
 import { useChefs, useCreatePromo, useUpdatePromo, type PromoCreateBody, type PromoUpdateBody } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
 import { useConfirm } from '../prompt';
-import { usePalette, radius, space, text } from '../../lib/theme';
+import { usePalette, radius, text } from '../../lib/theme';
 
 export type ApplicableTo = 'all' | 'new_users' | 'returning_users';
 

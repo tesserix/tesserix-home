@@ -1,12 +1,11 @@
 // campaigns.tsx — HomeChef push/email campaigns: compose, preview, schedule, send,
 // test, cancel, delete + sent-campaign metrics. hc gateway. Sends are irreversible.
 import { useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { Alert, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import { formatDateTime, parseSegment, titleCase, type Campaign } from '@tesserix/homechef-shared';
 import {
-  Badge, BackButton, Button, Card, EmptyState, LoadingRows, Metric, Screen, ScreenHeader, SectionLabel,
+  Badge, BackButton, Button, Card, EmptyState, LoadingRows, Metric, Screen, ScreenHeader,
 } from '../../components/kit';
 import { CampaignForm, CAMPAIGN_STATUS_TONE, isEditableCampaign, isTerminalCampaign } from '../../components/homechef/campaign-form';
 import { previewCampaign, useCampaignAction, useCampaignMetrics, useCampaigns } from '../../lib/hooks';
@@ -15,7 +14,6 @@ import { useConfirm } from '../../components/prompt';
 import { usePalette, space, text } from '../../lib/theme';
 
 export default function Campaigns() {
-  const p = usePalette();
   const q = useCampaigns();
   const [composing, setComposing] = useState(false);
   const campaigns = q.data?.data ?? [];

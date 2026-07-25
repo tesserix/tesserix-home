@@ -13,7 +13,7 @@ import {
 import { Banner, Button, Card, FilterChips, type Tone } from '../kit';
 import { previewCampaign, useCreateCampaign, useScheduleCampaign, useUpdateCampaign } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
-import { usePalette, radius, space, text } from '../../lib/theme';
+import { usePalette, radius, text } from '../../lib/theme';
 
 export const CAMPAIGN_STATUS_TONE: Record<CampaignStatus, Tone> = {
   draft: 'neutral',
