@@ -32,6 +32,8 @@ import type {
   ProductResourceMetrics,
   ProviderRow,
   Reconciliation,
+  StatementRow,
+  StatementsResponse,
 } from './platform-contracts';
 
 export const pk = {
@@ -58,6 +60,7 @@ export const pk = {
   productMetrics: (product: string, window: string) => ['plat', 'product-metrics', product, window] as const,
   deliveryProviders: ['plat', 'delivery-providers'] as const,
   deliveryReconciliation: ['plat', 'delivery-reconciliation'] as const,
+  statements: (p: object) => ['plat', 'statements', p] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -253,5 +256,18 @@ export function useToggleDeliveryProvider() {
       qc.invalidateQueries({ queryKey: pk.deliveryProviders });
       qc.invalidateQueries({ queryKey: pk.deliveryReconciliation });
     },
+  });
+}
+
+// ---- HomeChef weekly settlement statements ----------------------------------
+export const useStatements = (p: { status?: string; page?: number }) =>
+  useQuery({ queryKey: pk.statements(p), queryFn: () => plat.get<StatementsResponse>('/apps/homechef/payouts', p) });
+
+export function useMarkPaid() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; payoutRef: string }) =>
+      plat.put(`/apps/homechef/payouts/${a.id}/mark-paid`, { payoutRef: a.payoutRef }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['plat', 'statements'] }),
   });
 }

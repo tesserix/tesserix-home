@@ -463,3 +463,28 @@ export interface Reconciliation {
   collected_fee: number;
   margin: number;
 }
+
+// ---- HomeChef weekly settlement statements (plat route, snake_case wire) -----
+export interface StatementRow {
+  id: string;
+  chef_id: string;
+  chef_name: string | null;
+  week_start: string;
+  week_end: string;
+  currency: string;
+  orders_count: number;
+  gross_revenue: number;
+  platform_commission: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  tds: number;
+  net_payout: number;
+  status: string;
+  paid_at: string | null;
+  payout_ref: string | null;
+}
+export interface StatementsResponse {
+  data: StatementRow[];
+  pagination: { page: number; limit: number; total: number; totalPages: number };
+}
