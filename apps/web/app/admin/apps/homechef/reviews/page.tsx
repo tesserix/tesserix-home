@@ -4,10 +4,9 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime } from "@tesserix/homechef-shared";
+import { formatDateTime, type Paginated, type ReviewRow } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import type { Paginated, ReviewRow } from "@/lib/products/homechef/contracts";
 
 function ratingTone(r: number): Tone {
   if (r >= 4) return "success";

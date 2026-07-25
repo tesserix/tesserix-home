@@ -16,8 +16,7 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, titleCase } from "@tesserix/homechef-shared";
-import type { AuditLogEntry, AuditLogResponse } from "@/lib/products/homechef/contracts";
+import { formatDateTime, titleCase, type AuditLogEntry, type AuditLogResponse } from "@tesserix/homechef-shared";
 
 const LIMIT = 50;
 

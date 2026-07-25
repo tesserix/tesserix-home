@@ -7,10 +7,9 @@ import { AlertTriangle } from "lucide-react";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, titleCase } from "@tesserix/homechef-shared";
+import { formatDateTime, titleCase, type ApprovalRequest } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import type { ApprovalRequest } from "@/lib/products/homechef/contracts";
 
 // The detail payload preloads the reviewer as a nested User (`reviewedBy`), which
 // the shared ApprovalRequest contract does not name. Read it via a local widening.

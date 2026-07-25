@@ -20,18 +20,9 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, titleCase } from "@tesserix/homechef-shared";
+import { formatDateTime, titleCase, parseSegment, type Campaign, type CampaignInput, type CampaignMetrics, type CampaignStatus, type SegmentCriteria, type SegmentPreview } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import {
-  parseSegment,
-  type Campaign,
-  type CampaignInput,
-  type CampaignMetrics,
-  type CampaignStatus,
-  type SegmentCriteria,
-  type SegmentPreview,
-} from "@/lib/products/homechef/contracts";
 
 const EMPTY: CampaignInput = {
   name: "",

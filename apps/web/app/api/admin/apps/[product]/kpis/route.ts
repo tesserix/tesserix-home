@@ -12,7 +12,7 @@ import { HomechefAdminError, homechefAdmin } from "@/lib/api/homechef-admin";
 import { chQuery, clickhouseConfigured } from "@/lib/db/clickhouse";
 import { tesserixQuery } from "@/lib/db/tesserix";
 import { logger } from "@/lib/logger";
-import type { AdminStats } from "@/lib/products/homechef/contracts";
+import type { AdminStats } from "@tesserix/homechef-shared";
 
 export async function GET(
   _req: Request,
