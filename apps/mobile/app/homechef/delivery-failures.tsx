@@ -6,7 +6,7 @@ import { apiError } from '../../lib/api';
 import { formatINR, titleCase } from "@tesserix/homechef-shared";
 import { Badge, EmptyState, LoadingRows, Screen, ScreenHeader, SectionLabel, Button, type Tone } from '../../components/kit';
 import { usePalette, space, radius, text } from '../../lib/theme';
-import type { DeliveryFaultClass, PayoutHoldStatus } from '../../lib/contracts';
+import type { DeliveryFaultClass, PayoutHoldStatus } from "@tesserix/homechef-shared";
 
 // Delivery-failure fault arbitration (#613) — the mobile twin of the web queue.
 // CUSTOMER fault → chef paid, customer NOT refunded (delivery fee retained);

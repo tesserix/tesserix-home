@@ -23,7 +23,7 @@ import type {
   PlatformPolicy,
   ReferralConfig,
   SubscriptionPricing,
-} from "@/lib/products/homechef/contracts";
+} from "@tesserix/homechef-shared";
 
 // Index IS the value the API stores: 0=Sunday..6=Saturday (services/
 // platform_policy.go IsPlatformOpen compares against time.Weekday()). Listing

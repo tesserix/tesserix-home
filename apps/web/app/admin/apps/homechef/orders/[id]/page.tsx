@@ -17,9 +17,8 @@ import Link from "next/link";
 import useSWR from "swr";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatINR, titleCase } from "@tesserix/homechef-shared";
+import { formatDateTime, formatINR, titleCase, type OrderDetailResponse } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
-import type { OrderDetailResponse } from "@/lib/products/homechef/contracts";
 
 function statusTone(s: string): Tone {
   if (s === "delivered") return "success";

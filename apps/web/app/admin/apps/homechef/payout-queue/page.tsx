@@ -13,14 +13,9 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, titleCase } from "@tesserix/homechef-shared";
+import { formatINR, titleCase, type PayoutHoldStatus, type PendingPayout, type PendingPayoutsResponse } from "@tesserix/homechef-shared";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
-import type {
-  PayoutHoldStatus,
-  PendingPayout,
-  PendingPayoutsResponse,
-} from "@/lib/products/homechef/contracts";
 
 const SLA_HOURS = 24;
 

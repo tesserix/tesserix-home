@@ -5,17 +5,7 @@ import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@tesserix/web";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import {
-  formatCount,
-  formatINR,
-  formatRelative,
-  titleCase,
-} from "@tesserix/homechef-shared";
-import type {
-  Activity,
-  AdminAnalytics,
-  AdminStats,
-} from "@/lib/products/homechef/contracts";
+import { formatCount, formatINR, formatRelative, titleCase, type Activity, type AdminAnalytics, type AdminStats } from "@tesserix/homechef-shared";
 import {
   AnalyticsShell,
   BarChartCard,

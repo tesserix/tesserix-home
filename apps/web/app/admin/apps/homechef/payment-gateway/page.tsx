@@ -24,7 +24,7 @@ import type {
   PaymentGatewayStatus,
   StripeGatewayStatus,
   UpdateKeysResponse,
-} from "@/lib/products/homechef/contracts";
+} from "@tesserix/homechef-shared";
 
 function modeTone(mode: string, configured: boolean): Tone {
   if (!configured) return "neutral";

@@ -8,14 +8,8 @@ import { AlertTriangle, BellRing, CheckCircle2, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatRelative, titleCase } from "@tesserix/homechef-shared";
+import { formatDateTime, formatRelative, titleCase, type ApprovalPriority, type ApprovalRequest, type ApprovalStatus, type Paginated } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
-import type {
-  ApprovalPriority,
-  ApprovalRequest,
-  ApprovalStatus,
-  Paginated,
-} from "@/lib/products/homechef/contracts";
 
 const STATUSES: { key: ApprovalStatus; label: string }[] = [
   { key: "pending", label: "Pending" },

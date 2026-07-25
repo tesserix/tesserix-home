@@ -14,7 +14,7 @@ import {
   WINBACK_TRIGGER_LABEL,
   type WinbackAnalytics,
   type WinbackConfig,
-} from "@/lib/products/homechef/contracts";
+} from "@tesserix/homechef-shared";
 
 const PERCENT_FIELDS: ReadonlyArray<{
   key: keyof WinbackConfig;

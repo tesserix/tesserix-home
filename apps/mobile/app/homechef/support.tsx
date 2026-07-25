@@ -25,7 +25,7 @@ import {
   type Tone,
 } from '../../components/kit';
 import { usePalette, space, radius, text } from '../../lib/theme';
-import type { OrderIssue, SupportTicket } from '../../lib/contracts';
+import type { OrderIssue, SupportTicket } from "@tesserix/homechef-shared";
 
 // Support desk (#262/#618): the Refunds tab resolves customer-reported order
 // issues — Resolve (chef_clawback), Goodwill (platform_goodwill, partial-only), or

@@ -14,17 +14,9 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, formatDateTime } from "@tesserix/homechef-shared";
+import { formatINR, formatDateTime, type ChefWithStats, type Paginated, type Promo, type PromoAnalytics, type PromoDiscountType, type PromoFundingSource } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import type {
-  ChefWithStats,
-  Paginated,
-  Promo,
-  PromoAnalytics,
-  PromoDiscountType,
-  PromoFundingSource,
-} from "@/lib/products/homechef/contracts";
 
 type ApplicableTo = "all" | "new_users" | "returning_users";
 

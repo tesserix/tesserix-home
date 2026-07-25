@@ -5,10 +5,9 @@ import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDate } from "@tesserix/homechef-shared";
+import { formatDate, type FSSAILockedChef, type FSSAILockResponse } from "@tesserix/homechef-shared";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import type { FSSAILockedChef, FSSAILockResponse } from "@/lib/products/homechef/contracts";
 
 // GET/POST /admin/fssai-expiry-backfill — chefs with a verified FSSAI licence but
 // no recorded expiry. GET is a dry run (list), POST sends the confirm-licence push.

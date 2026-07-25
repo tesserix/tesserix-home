@@ -15,13 +15,9 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime } from "@tesserix/homechef-shared";
+import { formatDateTime, MEDIATION_ROLE_LABEL, type MediatedMessage } from "@tesserix/homechef-shared";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
-import {
-  MEDIATION_ROLE_LABEL,
-  type MediatedMessage,
-} from "@/lib/products/homechef/contracts";
 
 export default function HomechefMessagingPage() {
   const [busyId, setBusyId] = useState<string | null>(null);

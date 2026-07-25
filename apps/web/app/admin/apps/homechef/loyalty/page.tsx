@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import type { LoyaltyAnalytics, LoyaltyConfig } from "@/lib/products/homechef/contracts";
+import type { LoyaltyAnalytics, LoyaltyConfig } from "@tesserix/homechef-shared";
 
 const FIELDS: ReadonlyArray<{
   key: keyof LoyaltyConfig;

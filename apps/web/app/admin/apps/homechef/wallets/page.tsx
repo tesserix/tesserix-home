@@ -6,8 +6,7 @@ import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatINR, titleCase } from "@tesserix/homechef-shared";
-import type { WalletResponse } from "@/lib/products/homechef/contracts";
+import { formatDateTime, formatINR, titleCase, type WalletResponse } from "@tesserix/homechef-shared";
 
 function WalletsInner() {
   const initial = useSearchParams().get("userId") ?? "";

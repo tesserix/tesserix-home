@@ -12,8 +12,7 @@
 import useSWR from "swr";
 
 import { swrFetcher } from "@/lib/products/homechef/client";
-import { formatINR, titleCase } from "@tesserix/homechef-shared";
-import type { DeliveryIntelligenceResponse } from "@/lib/products/homechef/contracts";
+import { formatINR, titleCase, type DeliveryIntelligenceResponse } from "@tesserix/homechef-shared";
 
 function usd(n: number | null | undefined): string {
   const v = typeof n === "number" && isFinite(n) ? n : 0;

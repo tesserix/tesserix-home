@@ -16,15 +16,9 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { titleCase } from "@tesserix/homechef-shared";
+import { titleCase, parseSettlementRequirements, type BlockedChef, type BlockedChefsResponse, type PayoutAutomationValue } from "@tesserix/homechef-shared";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
-import {
-  parseSettlementRequirements,
-  type BlockedChef,
-  type BlockedChefsResponse,
-  type PayoutAutomationValue,
-} from "@/lib/products/homechef/contracts";
 
 function settlementTone(status: string): Tone {
   switch (status) {
