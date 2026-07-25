@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, Lead, LeadsResponse } from './mark8ly-contracts';
 
 const PRODUCT = 'mark8ly';
 
@@ -26,4 +26,16 @@ export const useCriticalCount = () =>
   useQuery({
     queryKey: mk.critical,
     queryFn: () => plat.get<Mark8lyCriticalSummary>(`/apps/${PRODUCT}/audit-logs`, { severity: 'critical', since_hours: 24 }),
+  });
+
+// ---- Leads ------------------------------------------------------------------
+export const useLeads = (filters: { status?: string; q?: string; starred?: boolean }) =>
+  useQuery({
+    queryKey: mk.leads(filters),
+    queryFn: () =>
+      plat.get<LeadsResponse>('/leads', {
+        status: filters.status && filters.status !== 'all' ? filters.status : undefined,
+        q: filters.q || undefined,
+        starred: filters.starred ? 'true' : undefined,
+      }),
   });
