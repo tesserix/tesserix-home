@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, Tenant, TenantsResponse, TenantStatus } from './mark8ly-contracts';
 import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';
@@ -90,6 +90,24 @@ export function useSendLeadEmail(id: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: mk.leadActivities(id) });
       qc.invalidateQueries({ queryKey: ['mk', 'leads'] });
+    },
+  });
+}
+
+// ---- Tenants ----------------------------------------------------------------
+export const useTenants = (status: string) =>
+  useQuery({
+    queryKey: mk.tenants(status),
+    queryFn: () => plat.get<TenantsResponse>('/tenants', { status: status !== 'all' ? status : undefined }),
+  });
+
+export function useSetTenantStatus(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (status: TenantStatus) => plat.patch<{ tenant: unknown }>(`/tenants/${id}`, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mk', 'tenants'] });
+      qc.invalidateQueries({ queryKey: mk.tenant(id) });
     },
   });
 }

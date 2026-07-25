@@ -66,3 +66,18 @@ export interface LeadActivity {
 export interface LeadActivitiesResponse {
   activities: LeadActivity[];
 }
+
+// ---- Tenants ----------------------------------------------------------------
+export type TenantStatus = 'active' | 'suspended' | 'archived';
+export interface Tenant {
+  id: string;
+  name: string;
+  owner_user_id: string;
+  owner_email: string;
+  status: TenantStatus;
+  created_at: string;
+  updated_at: string;
+}
+export interface TenantsResponse {
+  tenants: Tenant[];
+}
