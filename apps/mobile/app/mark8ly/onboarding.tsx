@@ -4,7 +4,7 @@ import { FlatList, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useOnboarding } from '../../lib/mark8ly-hooks';
 import type { OnboardingSessionRow } from '../../lib/mark8ly-contracts';
-import { formatCount, formatDuration, formatRelative, titleCase } from '@tesserix/homechef-shared';
+import { formatCount, formatDuration, formatRelative } from '@tesserix/homechef-shared';
 import {
   Screen, ScreenHeader, BackButton, Card, Badge, StatGrid, StatTile, FilterChips,
   EmptyState, LoadingRows, Banner, type Tone,
