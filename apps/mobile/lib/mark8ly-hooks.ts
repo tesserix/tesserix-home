@@ -4,7 +4,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse } from './mark8ly-contracts';
+import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';
 
@@ -39,3 +40,56 @@ export const useLeads = (filters: { status?: string; q?: string; starred?: boole
         starred: filters.starred ? 'true' : undefined,
       }),
   });
+
+// ---- Lead detail actions ----------------------------------------------------
+export const useLeadActivities = (id: string) =>
+  useQuery({
+    queryKey: mk.leadActivities(id),
+    queryFn: () => plat.get<LeadActivitiesResponse>(`/leads/${id}/activities`),
+    enabled: !!id,
+  });
+
+export function useSetLeadStatus(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (status: LeadStatus) => plat.patch<{ lead: unknown }>(`/leads/${id}`, { status }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mk', 'leads'] });
+      qc.invalidateQueries({ queryKey: mk.leadActivities(id) });
+    },
+  });
+}
+
+export function useToggleLeadStar(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (is_starred: boolean) => plat.patch<{ lead: unknown }>(`/leads/${id}`, { is_starred }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['mk', 'leads'] }),
+  });
+}
+
+export function useLogLeadActivity(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { kind: string; body: string }) => plat.post<{ activity: unknown }>(`/leads/${id}/activities`, a),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mk.leadActivities(id) });
+      qc.invalidateQueries({ queryKey: ['mk', 'leads'] });
+    },
+  });
+}
+
+export function useSendLeadEmail(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (templateKey: string) =>
+      plat.post<{ sent: true; recipient: string; messageId: string }>(`/leads/${id}/send-email`, {
+        templateKey,
+        idempotencyKey: `lead-${id}-${templateKey}-${Date.now()}`,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: mk.leadActivities(id) });
+      qc.invalidateQueries({ queryKey: ['mk', 'leads'] });
+    },
+  });
+}

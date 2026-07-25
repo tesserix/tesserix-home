@@ -48,3 +48,21 @@ export interface Lead {
 export interface LeadsResponse {
   leads: Lead[];
 }
+
+// ---- Lead activities --------------------------------------------------------
+export type LeadActivityKind =
+  | 'note' | 'dm_sent' | 'dm_received' | 'email_sent' | 'email_received'
+  | 'call' | 'status_change' | 'assigned';
+
+export interface LeadActivity {
+  id: string;
+  lead_id: string;
+  kind: LeadActivityKind;
+  actor_email: string;
+  body: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+export interface LeadActivitiesResponse {
+  activities: LeadActivity[];
+}
