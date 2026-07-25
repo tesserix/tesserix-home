@@ -1,6 +1,6 @@
 // Mark8ly leads — CRM list with search + status/starred filters.
 import { useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { Star } from 'lucide-react-native';
 import { useLeads } from '../../../lib/mark8ly-hooks';
@@ -61,21 +61,26 @@ export default function Leads() {
           onRefresh={() => query.refetch()}
           ListEmptyComponent={<EmptyState title="No leads" body="No leads match this filter." />}
           renderItem={({ item }) => (
-            <Card>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                {item.is_starred ? <Star size={14} color={p.warning} fill={p.warning} /> : null}
-                <Text style={[text.title, { color: p.foreground, flex: 1 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}` as never)}>
-                  {leadName(item)}
+            <Pressable
+              onPress={() => router.push(`/mark8ly/leads/${item.id}` as never)}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            >
+              <Card>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {item.is_starred ? <Star size={14} color={p.warning} fill={p.warning} /> : null}
+                  <Text style={[text.title, { color: p.foreground, flex: 1 }]} numberOfLines={1}>
+                    {leadName(item)}
+                  </Text>
+                  <Badge label={titleCase(item.status)} tone={STATUS_TONE[item.status]} />
+                </View>
+                <Text style={[text.caption, { color: p.mutedForeground, marginTop: 4 }]} numberOfLines={1}>
+                  {[item.email, item.instagram_handle, item.location].filter(Boolean).join(' · ') || '—'}
                 </Text>
-                <Badge label={titleCase(item.status)} tone={STATUS_TONE[item.status]} />
-              </View>
-              <Text style={[text.caption, { color: p.mutedForeground, marginTop: 4 }]} numberOfLines={1} onPress={() => router.push(`/mark8ly/leads/${item.id}` as never)}>
-                {[item.email, item.instagram_handle, item.location].filter(Boolean).join(' · ') || '—'}
-              </Text>
-              <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]} numberOfLines={1}>
-                {[item.owner ? `owner ${item.owner}` : null, item.activity_count != null ? `${formatCount(item.activity_count)} activities` : null, formatRelative(item.created_at)].filter(Boolean).join(' · ')}
-              </Text>
-            </Card>
+                <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]} numberOfLines={1}>
+                  {[item.owner ? `owner ${item.owner}` : null, item.activity_count != null ? `${formatCount(item.activity_count)} activities` : null, formatRelative(item.created_at)].filter(Boolean).join(' · ')}
+                </Text>
+              </Card>
+            </Pressable>
           )}
         />
       )}

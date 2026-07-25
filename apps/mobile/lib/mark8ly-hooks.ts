@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, Lead, LeadsResponse } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse } from './mark8ly-contracts';
 
 const PRODUCT = 'mark8ly';
 
