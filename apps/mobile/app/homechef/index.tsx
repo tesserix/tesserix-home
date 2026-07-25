@@ -15,9 +15,9 @@ const SECTIONS = [
     { title: 'Orders', sub: 'All orders + status', icon: ShoppingBag, route: '/homechef/orders', live: true },
     { title: 'Chefs / Kitchens', sub: 'Verify, suspend, review', icon: ChefHat, route: '/homechef/chefs', live: true },
     { title: 'Approvals', sub: 'Onboarding queue', icon: ClipboardCheck, route: '/homechef/approvals', live: true },
-    { title: 'Delivery', sub: '3PL providers + reconcile', icon: Truck, route: '/homechef/delivery', live: false },
+    { title: 'Delivery', sub: '3PL providers + reconcile', icon: Truck, route: '/homechef/delivery', live: true },
     { title: 'FSSAI', sub: 'License compliance locks', icon: ShieldCheck, route: '/homechef/fssai', live: true },
-    { title: 'Meal plans', sub: 'Tiffin subscriptions', icon: CalendarRange, route: '/homechef/meal-plans', live: false },
+    { title: 'Meal plans', sub: 'Tiffin subscriptions', icon: CalendarRange, route: '/homechef/meal-plans', live: true },
   ]},
   { group: 'Money', items: [
     { title: 'Cancellations', sub: 'Refund arbitration', icon: Scale, route: '/homechef/cancellations', live: true },

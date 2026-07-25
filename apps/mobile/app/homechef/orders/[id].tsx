@@ -147,10 +147,10 @@ export default function OrderDetail() {
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
           <View style={{ flexGrow: 1, flexBasis: '45%' }}>
-            <Button label="Cancellation arbitration" variant="secondary" onPress={() => router.push('/homechef/cancellations' as never)} />
+            <Button label="Cancellation arbitration" variant="secondary" onPress={() => router.push('/homechef/cancellations')} />
           </View>
           <View style={{ flexGrow: 1, flexBasis: '45%' }}>
-            <Button label="Order issues" variant="secondary" onPress={() => router.push('/homechef/support' as never)} />
+            <Button label="Order issues" variant="secondary" onPress={() => router.push('/homechef/support')} />
           </View>
         </View>
 
