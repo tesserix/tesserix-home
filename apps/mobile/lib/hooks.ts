@@ -77,7 +77,7 @@ export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.g
 export const useAnalytics = () =>
   useQuery({ queryKey: qk.analytics, queryFn: () => hc.get<AdminAnalytics>('/analytics'), refetchInterval: 30_000 });
 export const useActivities = (limit = 15) =>
-  useQuery({ queryKey: qk.activities, queryFn: () => hc.get<{ data: Activity[] }>('/activities', { limit }) });
+  useQuery({ queryKey: qk.activities, queryFn: () => hc.get<Activity[]>('/activities', { limit }) });
 
 export const useChefs = (p: { search?: string; status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.chefs(p), queryFn: () => hc.get<Paginated<ChefWithStats>>('/chefs', p) });
@@ -256,4 +256,14 @@ export const fetchFssaiBackfill = () => hc.get<BackfillResponse>('/fssai-expiry-
 // Send the one-time confirm-licence push to those chefs.
 export function useNotifyFssaiBackfill() {
   return useMutation({ mutationFn: () => hc.post<BackfillResponse>('/fssai-expiry-backfill') });
+}
+
+// Adjust a customer wallet (credit/debit). Amounts are RUPEES. reason ≥ 3 chars.
+export function useAdjustWallet(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { amount: number; reason: string; type: 'credit' | 'debit' }) =>
+      hc.post(`/wallet/${userId}/adjust`, a),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.wallet(userId) }),
+  });
 }
