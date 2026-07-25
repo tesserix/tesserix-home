@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { router, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { formatRelative, titleCase } from '@tesserix/homechef-shared';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Badge,
   BackButton,
@@ -31,6 +32,7 @@ import {
 import { apiError } from '../../../lib/api';
 import { usePalette, radius, space, text } from '../../../lib/theme';
 import {
+  ok,
   useAcceptOtto,
   useCloseOtto,
   useOttoConversation,
@@ -38,6 +40,7 @@ import {
   useSendOttoMessage,
 } from '../../../lib/otto-hooks';
 import { ottoTenantLabel, type OttoMessage, type OttoStatus } from '../../../lib/otto-contracts';
+import { useOttoThreadSocket } from '../../../lib/otto-realtime';
 
 function statusLabel(s: OttoStatus): string {
   if (s === 'pending') return 'Waiting';
@@ -55,6 +58,7 @@ export default function OttoThreadScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const focused = useIsFocused();
   const p = usePalette();
+  const qc = useQueryClient();
 
   const convQ = useOttoConversation(id, focused ? 3_000 : false);
   const msgsQ = useOttoMessages(id, focused ? 3_000 : false);
@@ -63,6 +67,13 @@ export default function OttoThreadScreen() {
   const close = useCloseOtto(id);
 
   const [draft, setDraft] = useState('');
+  useOttoThreadSocket(id, {
+    enabled: focused && !!id,
+    onFrame: () => {
+      qc.invalidateQueries({ queryKey: ok.messages(id) });
+      qc.invalidateQueries({ queryKey: ok.conversation(id) });
+    },
+  });
 
   const conv = convQ.data?.conversation;
   const messages = useMemo(

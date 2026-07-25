@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from 'react';
 import { FlatList, View } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { router, useIsFocused } from 'expo-router';
 import { formatRelative, titleCase } from '@tesserix/homechef-shared';
 import {
@@ -19,6 +20,7 @@ import {
 import { space } from '../../../lib/theme';
 import { useOttoInbox, type OttoInboxParams } from '../../../lib/otto-hooks';
 import { ottoTenantLabel, type OttoConversation } from '../../../lib/otto-contracts';
+import { useOttoInboxSocket } from '../../../lib/otto-realtime';
 
 type TabKey = 'waiting' | 'active' | 'closed';
 
@@ -58,9 +60,14 @@ export default function OttoInboxScreen() {
   const [tab, setTab] = useState<TabKey>('waiting');
   const [tenant, setTenant] = useState('');
   const focused = useIsFocused();
+  const qc = useQueryClient();
 
   const params = useMemo(() => tabToParams(tab, tenant), [tab, tenant]);
   const q = useOttoInbox(params, focused ? 10_000 : false);
+  useOttoInboxSocket({
+    enabled: focused,
+    onFrame: () => qc.invalidateQueries({ queryKey: ['otto', 'inbox'] }),
+  });
 
   const rows = q.data?.conversations ?? [];
 
