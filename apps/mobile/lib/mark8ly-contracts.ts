@@ -81,3 +81,22 @@ export interface Tenant {
 export interface TenantsResponse {
   tenants: Tenant[];
 }
+
+// ---- Tenant billing (detail) ------------------------------------------------
+export interface TenantBilling {
+  subscription: {
+    plan: string;
+    status: string;
+    current_period_end: string | null;
+    cancel_at_period_end: boolean;
+  } | null;
+  synthesized: boolean;
+  currency: string;
+  trial: { daysRemaining: number | null; conversionLikelihood: 'low' | 'medium' | 'high' } | null;
+  lifetimeRevenue: { amount: number; currency: string } | null;
+  margin: { revenue: number; infraCost: number; margin: number; currency: string; inTrial: boolean; hasSubscription: boolean } | null;
+  generatedAt: string;
+}
+export interface TenantDetailResponse {
+  tenant: Tenant;
+}

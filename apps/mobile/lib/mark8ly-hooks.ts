@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { plat } from './api';
-import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, Tenant, TenantsResponse, TenantStatus } from './mark8ly-contracts';
+import type { RevenueData, Mark8lyCriticalSummary, LeadsResponse, LeadActivitiesResponse, Tenant, TenantsResponse, TenantStatus, TenantBilling, TenantDetailResponse } from './mark8ly-contracts';
 import type { LeadStatus } from './platform-contracts';
 
 const PRODUCT = 'mark8ly';
@@ -111,3 +111,10 @@ export function useSetTenantStatus(id: string) {
     },
   });
 }
+
+// ---- Tenant detail ----------------------------------------------------------
+export const useTenant = (id: string) =>
+  useQuery({ queryKey: mk.tenant(id), queryFn: () => plat.get<TenantDetailResponse>(`/tenants/${id}`), enabled: !!id });
+
+export const useTenantBilling = (id: string) =>
+  useQuery({ queryKey: mk.tenantBilling(id), queryFn: () => plat.get<TenantBilling>(`/apps/${PRODUCT}/tenants/${id}/billing`), enabled: !!id });
