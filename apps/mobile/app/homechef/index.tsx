@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import {
   ChevronLeft, ShoppingBag, ChefHat, ClipboardCheck, Truck, ShieldCheck, CalendarRange,
   Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale, PackageX, LayoutDashboard,
+  Landmark, RotateCcw, CreditCard, SlidersHorizontal,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
@@ -22,8 +23,14 @@ const SECTIONS = [
   { group: 'Money', items: [
     { title: 'Cancellations', sub: 'Refund arbitration', icon: Scale, route: '/homechef/cancellations', live: true },
     { title: 'Delivery failures', sub: 'Confirm fault + refund', icon: PackageX, route: '/homechef/delivery-failures', live: true },
-    { title: 'Payouts', sub: 'Weekly chef statements', icon: BadgeIndianRupee, route: '/homechef/payouts', live: false },
     { title: 'Wallets', sub: 'Customer credit', icon: Wallet, route: '/homechef/wallets', live: true },
+  ]},
+  { group: 'Payments', items: [
+    { title: 'Payouts', sub: 'Weekly chef statements', icon: BadgeIndianRupee, route: '/homechef/payouts', live: true },
+    { title: 'Payout setup', sub: 'Blocked chefs + automation', icon: SlidersHorizontal, route: '/homechef/payout-setup', live: true },
+    { title: 'Payout queue', sub: 'Escrow release/withhold/reverse', icon: Landmark, route: '/homechef/payout-queue', live: true },
+    { title: 'Refund payouts', sub: 'Execute meal-plan refunds', icon: RotateCcw, route: '/homechef/refund-payouts', live: true },
+    { title: 'Payment gateway', sub: 'Razorpay + Stripe status', icon: CreditCard, route: '/homechef/payment-gateway', live: true },
   ]},
   { group: 'People & quality', items: [
     { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: true },
