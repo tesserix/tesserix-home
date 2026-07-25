@@ -56,7 +56,12 @@ export default function HomechefAnalyticsPage() {
   const loading = stats.isLoading && !s;
 
   const statusRows = toStatusRows(analytics.data?.ordersByStatus);
-  const activities = activity.data ?? [];
+  // Array.isArray, not `?? []`. The nullish default only catches null and
+  // undefined, so any other shape — an error envelope, or the `{}` the gateway
+  // used to substitute for an empty response — sailed past it, past the
+  // `.length === 0` check (undefined !== 0), and threw at `.map`. The upstream
+  // causes are fixed, but a page should not crash on a shape it did not expect.
+  const activities = Array.isArray(activity.data) ? activity.data : [];
 
   const revenueUp = (s?.revenueChange ?? 0) >= 0;
   const ordersUp = (s?.ordersChange ?? 0) >= 0;

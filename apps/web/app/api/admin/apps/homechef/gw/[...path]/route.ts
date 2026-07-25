@@ -33,7 +33,18 @@ async function proxy(req: NextRequest, segments: string[], method: AdminMethod) 
 
   try {
     const { status, data } = await homechefAdmin(method, adminPath, { body, search });
-    return NextResponse.json(data ?? {}, { status });
+    // Pass the body through UNCHANGED — `data ?? {}` used to sit here, and it
+    // silently changed the shape of every empty response.
+    //
+    // A Go handler that returns a nil slice serialises as JSON `null`, so an
+    // endpoint with no rows yet (GET /admin/activities on a quiet day) arrived
+    // here as null and left as `{}`. Callers then did `data ?? []`, which does
+    // not catch `{}`, and the next `.map` threw "v.map is not a function" —
+    // meaning a page broke precisely because it had no data to show.
+    //
+    // null is a valid JSON body. Forwarding it lets the caller's own `?? []`
+    // work as written.
+    return NextResponse.json(data ?? null, { status });
   } catch (err) {
     if (err instanceof HomechefAdminError) {
       return NextResponse.json({ error: err.code }, { status: err.status });
