@@ -35,6 +35,11 @@ import type {
   WinbackAnalytics,
   LoyaltyConfig,
   LoyaltyAnalytics,
+  Campaign,
+  CampaignInput,
+  CampaignMetrics,
+  SegmentCriteria,
+  SegmentPreview,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -105,6 +110,8 @@ export const qk = {
   winbackAnalytics: ['hc', 'winback-analytics'] as const,
   loyaltyConfig: ['hc', 'loyalty-config'] as const,
   loyaltyAnalytics: ['hc', 'loyalty-analytics'] as const,
+  campaigns: ['hc', 'campaigns'] as const,
+  campaignMetrics: (id: string) => ['hc', 'campaign-metrics', id] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -400,5 +407,60 @@ export function useSaveLoyalty() {
   return useMutation({
     mutationFn: (c: LoyaltyConfig) => hc.put('/loyalty/config', c),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.loyaltyConfig }),
+  });
+}
+
+// ---- Campaigns: list / metrics / preview / lifecycle -----------------------
+export const useCampaigns = () =>
+  useQuery({
+    queryKey: qk.campaigns,
+    queryFn: () => hc.get<{ data: Campaign[] }>('/campaigns', { page: 1, limit: 100 }),
+  });
+
+// Metrics exist only once a campaign has sent; caller passes enabled=status==='sent'.
+export const useCampaignMetrics = (id: string, enabled: boolean) =>
+  useQuery({
+    queryKey: qk.campaignMetrics(id),
+    queryFn: () => hc.get<CampaignMetrics>(`/campaigns/${id}/metrics`),
+    enabled: enabled && !!id,
+  });
+
+// Imperative audience-size probe — used live in the compose form and re-run
+// (best-effort) immediately before the send confirm so the count is never stale.
+export const previewCampaign = (segment: SegmentCriteria) =>
+  hc.post<SegmentPreview>('/campaigns/preview', { segment });
+
+export function useCreateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CampaignInput) => hc.post<Campaign>('/campaigns', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.campaigns }),
+  });
+}
+
+export function useUpdateCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; input: CampaignInput }) => hc.put<Campaign>(`/campaigns/${a.id}`, a.input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.campaigns }),
+  });
+}
+
+export function useScheduleCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; scheduledAt: string }) =>
+      hc.post(`/campaigns/${a.id}/schedule`, { scheduledAt: a.scheduledAt }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.campaigns }),
+  });
+}
+
+// send (irreversible mass-send) | test (admin only) | cancel | delete (draft/cancelled only).
+export function useCampaignAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; action: 'send' | 'test' | 'cancel' | 'delete' }) =>
+      a.action === 'delete' ? hc.del(`/campaigns/${a.id}`) : hc.post(`/campaigns/${a.id}/${a.action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.campaigns }),
   });
 }
