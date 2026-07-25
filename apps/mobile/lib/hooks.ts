@@ -31,6 +31,10 @@ import type {
   PendingPayoutsResponse,
   PaymentGatewayStatus,
   StripeGatewayStatus,
+  WinbackConfig,
+  WinbackAnalytics,
+  LoyaltyConfig,
+  LoyaltyAnalytics,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -97,6 +101,10 @@ export const qk = {
   pendingRefunds: ['hc', 'pending-refunds'] as const,
   gatewayStatus: ['hc', 'gateway-status'] as const,
   stripeStatus: ['hc', 'stripe-status'] as const,
+  winbackConfig: ['hc', 'winback-config'] as const,
+  winbackAnalytics: ['hc', 'winback-analytics'] as const,
+  loyaltyConfig: ['hc', 'loyalty-config'] as const,
+  loyaltyAnalytics: ['hc', 'loyalty-analytics'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -369,3 +377,28 @@ export const useGatewayStatus = () =>
   useQuery({ queryKey: qk.gatewayStatus, queryFn: () => hc.get<PaymentGatewayStatus>('/payment-gateway/status') });
 export const useStripeStatus = () =>
   useQuery({ queryKey: qk.stripeStatus, queryFn: () => hc.get<StripeGatewayStatus>('/payment-gateway/stripe/status') });
+
+// ---- Winback + Loyalty config/analytics -------------------------------------
+export const useWinbackConfig = () =>
+  useQuery({ queryKey: qk.winbackConfig, queryFn: () => hc.get<WinbackConfig>('/winback/config') });
+export const useWinbackAnalytics = () =>
+  useQuery({ queryKey: qk.winbackAnalytics, queryFn: () => hc.get<WinbackAnalytics>('/winback/analytics') });
+export function useSaveWinback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: WinbackConfig) => hc.put('/winback/config', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.winbackConfig }),
+  });
+}
+
+export const useLoyaltyConfig = () =>
+  useQuery({ queryKey: qk.loyaltyConfig, queryFn: () => hc.get<LoyaltyConfig>('/loyalty/config') });
+export const useLoyaltyAnalytics = () =>
+  useQuery({ queryKey: qk.loyaltyAnalytics, queryFn: () => hc.get<LoyaltyAnalytics>('/loyalty/analytics') });
+export function useSaveLoyalty() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: LoyaltyConfig) => hc.put('/loyalty/config', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.loyaltyConfig }),
+  });
+}
