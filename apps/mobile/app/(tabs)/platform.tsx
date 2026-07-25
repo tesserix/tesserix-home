@@ -1,7 +1,7 @@
 import { ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
-  Ticket, Megaphone, Activity, HeartPulse, Users, Database, Globe, Inbox, ShieldAlert, Trash2, ScrollText, BarChart3, Mail, FileText,
+  Ticket, Megaphone, Activity, HeartPulse, Users, Database, Globe, Inbox, ShieldAlert, Trash2, ScrollText, BarChart3, Mail, FileText, MessageSquare,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { space } from '../../lib/theme';
@@ -11,6 +11,7 @@ import { View } from 'react-native';
 // it's per-product (each app exposes its own audit trail), not a platform-wide feed.
 const SECTIONS = [
   { group: 'Support', items: [
+    { title: 'Live chat', sub: 'Customer support inbox', icon: MessageSquare, route: '/platform/live-chat', live: true },
     { title: 'Platform tickets', sub: 'Cross-product support', icon: Ticket, route: '/platform/tickets', live: true },
     { title: 'Announcements', sub: 'Broadcast to products', icon: Megaphone, route: '/platform/announcements', live: true },
     { title: 'Support analytics', sub: 'Otto support rollup', icon: BarChart3, route: '/platform/analytics-support', live: true },
