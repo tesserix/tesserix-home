@@ -4,7 +4,7 @@
 // refund goes — wallet is instant (no admin step), the original method is a real Razorpay reversal.
 // This queue holds only the refunds the customer routed to their ORIGINAL method; a Tesserix admin
 // EXECUTES the gateway reversal here (RBI ~5-7 business days). The admin never picks the medium.
-// The amount excludes the platform fee, GST, and delivery. Every action flows through the HMAC
+// The amount covers the food + that day's delivery fee, excluding GST + the platform fee. Every action flows through the HMAC
 // gateway to the Go API (escrow/ledger/NATS intact).
 
 import { useCallback, useEffect, useState } from "react";
@@ -171,7 +171,7 @@ export default function HomechefRefundPayoutsPage() {
       <p className="text-xs text-muted-foreground">
         The customer already chose their original payment method (RBI). Executing reverses the charge
         to their card/UPI via Razorpay in ~5–7 business days. Wallet refunds are instant and never
-        appear here. The refund excludes the platform fee, GST, and delivery.
+        appear here. The refund covers the food + that day&apos;s delivery fee; GST and the platform fee are not refunded.
       </p>
     </div>
   );
