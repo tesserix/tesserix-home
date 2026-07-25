@@ -5,7 +5,7 @@ import { useTrace } from '../../../lib/platform-hooks';
 import type { TraceSpan } from '../../../lib/platform-contracts';
 import { formatMs } from '@tesserix/homechef-shared';
 import {
-  Screen, ScreenHeader, BackButton, Card, Badge, EmptyState, LoadingRows, StatusDot, type Tone,
+  Screen, ScreenHeader, BackButton, Card, EmptyState, LoadingRows, StatusDot, type Tone,
 } from '../../../components/kit';
 import { usePalette, space, text } from '../../../lib/theme';
 

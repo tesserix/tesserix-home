@@ -2,18 +2,18 @@
 import { ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSupportAnalytics } from '../../lib/platform-hooks';
-import { formatCount, formatDuration, formatRatioPct } from '@tesserix/homechef-shared';
+import { formatCount, formatDuration, formatRatioPct, titleCase } from '@tesserix/homechef-shared';
 import {
   Screen, ScreenHeader, BackButton, Card, StatGrid, StatTile, SectionLabel, EmptyState, LoadingRows,
 } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
 
-type Row = { label: string; value: number };
+type Row = { key: string; label: string; value: number };
 
 function toRows(m: Record<string, number> | undefined, rename?: (k: string) => string): Row[] {
   if (!m) return [];
   return Object.entries(m)
-    .map(([k, v]) => ({ label: rename ? rename(k) : k, value: v }))
+    .map(([k, v]) => ({ key: k, label: rename ? rename(k) : k, value: v }))
     .sort((a, b) => b.value - a.value);
 }
 
@@ -28,7 +28,7 @@ function RankedList({ title, rows }: { title: string; rows: Row[] }) {
       ) : (
         <View style={{ gap: 8 }}>
           {rows.map((r) => (
-            <Card key={r.label}>
+            <Card key={r.key}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={[text.body, { color: p.foreground, flex: 1 }]} numberOfLines={1}>{r.label}</Text>
                 <Text style={[text.mono, { color: p.mutedForeground }]}>{formatCount(r.value)}</Text>
@@ -68,8 +68,8 @@ export default function SupportAnalytics() {
             <StatTile label="Resolved rate" value={d.feedback_count ? formatRatioPct(d.resolved_rate) : '—'} />
             <StatTile label="Feedback" value={formatCount(d.feedback_count)} />
           </StatGrid>
-          <RankedList title="By status" rows={toRows(d.by_status)} />
-          <RankedList title="By reason" rows={toRows(d.by_reason)} />
+          <RankedList title="By status" rows={toRows(d.by_status, titleCase)} />
+          <RankedList title="By reason" rows={toRows(d.by_reason, titleCase)} />
           <RankedList title="By tenant" rows={toRows(d.by_tenant, (id) => d.tenant_names?.[id] ?? id)} />
         </ScrollView>
       )}

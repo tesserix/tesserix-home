@@ -8,7 +8,7 @@ import { useAuth } from '../../lib/auth';
 import { apiError } from '../../lib/api';
 import { formatRelative } from '@tesserix/homechef-shared';
 import {
-  Screen, ScreenHeader, BackButton, Card, Badge, Button, SectionLabel, EmptyState, LoadingRows, type Tone,
+  Screen, ScreenHeader, BackButton, Card, Badge, Button, EmptyState, LoadingRows, type Tone,
 } from '../../components/kit';
 import { usePalette, radius, space, text } from '../../lib/theme';
 

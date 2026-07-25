@@ -6,7 +6,7 @@ import { useEmailMetrics, useEmailRecent } from '../../lib/platform-hooks';
 import type { EmailMetricsRow, EmailEventLogRow } from '../../lib/platform-contracts';
 import { formatCount, formatPct, formatRelative, titleCase } from '@tesserix/homechef-shared';
 import {
-  Screen, ScreenHeader, BackButton, Card, StatGrid, StatTile, SectionLabel, Badge,
+  Screen, ScreenHeader, BackButton, Card, StatGrid, StatTile, SectionLabel, Badge, Banner,
   EmptyState, LoadingRows, FilterChips, type Tone,
 } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
@@ -47,7 +47,7 @@ export default function NotificationsLog() {
   const delivered = sum(rows, (r) => r.delivered);
   const opens = sum(rows, (r) => r.opens);
   const clicks = sum(rows, (r) => r.clicks);
-  const bounces = sum(rows, (r) => r.bounces);
+  const bounces = sum(rows, (r) => r.bounces) + sum(rows, (r) => r.drops);
   const unsub = sum(rows, (r) => r.unsubscribes);
   const events = recent.data?.events ?? [];
 
@@ -60,6 +60,11 @@ export default function NotificationsLog() {
         <ScrollView
           contentContainerStyle={{ paddingBottom: space[10], gap: space[4] }}
         >
+          {metrics.isError || recent.isError ? (
+            <View style={{ paddingHorizontal: space[4] }}>
+              <Banner text="Could not load email events." tone="danger" />
+            </View>
+          ) : null}
           <View style={{ paddingHorizontal: space[4], gap: 8 }}>
             <FilterChips options={DAY_OPTS} value={days} onChange={setDays} />
             {productOpts.length > 1 ? <FilterChips options={productOpts} value={product} onChange={setProduct} /> : null}
