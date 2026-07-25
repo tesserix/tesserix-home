@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
+import { isComingSoon } from "./[slug]/products-data";
 
 type Status = "live" | "soon";
 
 interface ProductEntry {
+  slug: string;
   title: string;
   tagline: string;
   description: string;
@@ -17,76 +19,81 @@ interface ProductEntry {
   features: string[];
 }
 
-const products: ProductEntry[] = [
-  {
-    title: "Mark8ly",
-    tagline: "Quiet commerce for people who make things",
-    description:
-      "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
-    status: "live",
-    href: "/products/mark8ly",
-    website: "mark8ly.com",
-    pricing: "90 days free, then from $19/mo",
-    features: [
-      "Custom domains",
-      "0% transaction fees",
-      "Considered theme system",
-      "Up to 100 products on Starter",
-      "Cards, UPI, and wallets",
-      "Real human support",
-    ],
-  },
-  {
-    title: "FanZone Battle Ground",
-    tagline: "Your cricket opinions finally matter",
-    description:
-      "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-    status: "live",
-    href: "/products/fanzone",
-    website: "fanzonebattleground.com",
-    pricing: "Free to join — 50 pts on signup",
-    features: [
-      "Live battle rooms",
-      "Match prediction markets",
-      "Ranked leaderboards",
-      "Hot takes & fan connect",
-      "Live match scores",
-      "Match alerts",
-    ],
-  },
-  {
-    title: "MediCare",
-    tagline: "Hospital management without the bloat",
-    description:
-      "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-    status: "soon",
-    href: "/products/medicare",
-    features: [
-      "Electronic health records",
-      "Appointment scheduling",
-      "Billing & invoicing",
-      "Pharmacy & inventory",
-      "Staff management",
-      "Lab & diagnostics",
-    ],
-  },
-  {
-    title: "HomeChef",
-    tagline: "Home cooks, real customers",
-    description:
-      "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
-    status: "soon",
-    href: "/products/homechef",
-    features: [
-      "Chef onboarding & verification",
-      "Menu management",
-      "Real-time order tracking",
-      "Delivery coordination",
-      "Customer reviews & ratings",
-      "Payment processing",
-    ],
-  },
-];
+// Status comes from products-data.ts, the one place launch state is recorded,
+// rather than being restated here where it had drifted out of date.
+// Shipped products lead; the numbering down the left is positional, so ordering
+// them this way keeps it meaningful rather than arbitrary.
+const products: ProductEntry[] = (
+  [
+    {
+      slug: "mark8ly",
+      title: "Mark8ly",
+      tagline: "Quiet commerce for people who make things",
+      description:
+        "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
+      website: "mark8ly.com",
+      pricing: "90 days free, then from $19/mo",
+      features: [
+        "Custom domains",
+        "0% transaction fees",
+        "Considered theme system",
+        "Up to 100 products on Starter",
+        "Cards, UPI, and wallets",
+        "Real human support",
+      ],
+    },
+    {
+      slug: "homechef",
+      title: "HomeChef",
+      tagline: "Home cooks, real customers",
+      description:
+        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
+      website: "fe3dr.com",
+      features: [
+        "Chef onboarding & verification",
+        "Menu management",
+        "Real-time order tracking",
+        "Delivery coordination",
+        "Customer reviews & ratings",
+        "Payment processing",
+      ],
+    },
+    {
+      slug: "medicare",
+      title: "MediCare",
+      tagline: "Hospital management without the bloat",
+      description:
+        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
+      features: [
+        "Electronic health records",
+        "Appointment scheduling",
+        "Billing & invoicing",
+        "Pharmacy & inventory",
+        "Staff management",
+        "Lab & diagnostics",
+      ],
+    },
+    {
+      slug: "fanzone",
+      title: "FanZone Battle Ground",
+      tagline: "Your cricket opinions finally matter",
+      description:
+        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
+      features: [
+        "Live battle rooms",
+        "Match prediction markets",
+        "Ranked leaderboards",
+        "Hot takes & fan connect",
+        "Live match scores",
+        "Match alerts",
+      ],
+    },
+  ] satisfies ReadonlyArray<Omit<ProductEntry, "status" | "href">>
+).map((p) => ({
+  ...p,
+  href: `/products/${p.slug}`,
+  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
+}));
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {
@@ -133,12 +140,14 @@ function ProductRow({
           <p className="mt-2 text-sm text-muted-foreground">
             {product.tagline}
           </p>
-          {product.pricing ? (
+          {/* Prices and destinations are only real for products you can use
+              today — an unreleased one advertises neither. */}
+          {product.status === "live" && product.pricing ? (
             <p className="mt-4 font-mono text-xs text-foreground">
               {product.pricing}
             </p>
           ) : null}
-          {product.website ? (
+          {product.status === "live" && product.website ? (
             <a
               href={`https://${product.website}`}
               target="_blank"

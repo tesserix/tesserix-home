@@ -6,33 +6,40 @@ import Image from "next/image";
 import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Hospital, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
+import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
 
+// `slug` drives both the link and the launch state — the status itself lives in
+// products-data.ts so this menu can't claim a product is shipped when it isn't.
 const products = [
   {
+    slug: "mark8ly",
     name: "Mark8ly",
     description: "Multi-tenant marketplace platform",
-    href: "/products/mark8ly",
     icon: ShoppingBag,
   },
   {
+    slug: "homechef",
     name: "HomeChef",
     description: "Home cooked food delivery",
-    href: "/products/homechef",
     icon: ChefHat,
   },
   {
+    slug: "medicare",
     name: "MediCare",
     description: "Hospital management system",
-    href: "/products/medicare",
     icon: Hospital,
   },
   {
+    slug: "fanzone",
     name: "FanZone",
     description: "Cricket live scores & banter",
-    href: "/products/fanzone",
     icon: Trophy,
   },
-];
+].map((p) => ({
+  ...p,
+  href: `/products/${p.slug}`,
+  comingSoon: isComingSoon(p.slug),
+}));
 
 const navigation = [
   { name: "About", href: "/about" },
@@ -161,7 +168,14 @@ export function Navbar() {
                       <product.icon className="h-5 w-5 text-foreground" />
                     </div>
                     <div>
-                      <span className="font-medium text-foreground">{product.name}</span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-foreground">{product.name}</span>
+                        {product.comingSoon ? (
+                          <span className="inline-flex items-center rounded-full border bg-muted/50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                            Soon
+                          </span>
+                        ) : null}
+                      </span>
                       <p className="text-sm text-muted-foreground">{product.description}</p>
                     </div>
                   </Link>
@@ -250,6 +264,11 @@ export function Navbar() {
                 >
                   <product.icon className="h-5 w-5" aria-hidden="true" />
                   {product.name}
+                  {product.comingSoon ? (
+                    <span className="rounded-full border bg-muted/50 px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Soon
+                    </span>
+                  ) : null}
                 </Link>
               ))}
             </div>

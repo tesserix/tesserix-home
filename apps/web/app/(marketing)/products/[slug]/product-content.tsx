@@ -13,6 +13,7 @@ import {
   BreadcrumbPage,
   AnimateOnScroll,
 } from "@tesserix/web";
+import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { products } from "./products-data";
 
 export function ProductContent({ slug }: { slug: string }) {
@@ -73,12 +74,7 @@ export function ProductContent({ slug }: { slug: string }) {
 
             <div className="mt-10 flex flex-wrap items-center gap-4">
               {isComingSoon ? (
-                <Button size="lg" asChild>
-                  <Link href="/contact">
-                    Get notified when we launch
-                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </Button>
+                <WaitlistForm slug={slug} title={product.title} />
               ) : (
                 <Button size="lg" asChild>
                   <Link href="/contact">
@@ -87,7 +83,8 @@ export function ProductContent({ slug }: { slug: string }) {
                   </Link>
                 </Button>
               )}
-              {product.website && (
+              {/* An unreleased product has nowhere to send people yet. */}
+              {!isComingSoon && product.website && (
                 <a
                   href={product.website}
                   target="_blank"
@@ -98,23 +95,13 @@ export function ProductContent({ slug }: { slug: string }) {
                   <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </a>
               )}
-              {product.github && (
-                <a
-                  href={product.github}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 font-mono text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
-                >
-                  GitHub
-                  <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-                </a>
-              )}
             </div>
-            <p className="mt-4 text-sm text-muted-foreground">
-              {isComingSoon
-                ? `We'll let you know when ${product.title} is ready.`
-                : "No credit card required · 14-day free trial"}
-            </p>
+            {/* The signup form carries its own microcopy, so this would repeat it. */}
+            {!isComingSoon && (
+              <p className="mt-4 text-sm text-muted-foreground">
+                No credit card required · 14-day free trial
+              </p>
+            )}
           </AnimateOnScroll>
         </div>
       </section>
@@ -187,6 +174,7 @@ export function ProductContent({ slug }: { slug: string }) {
               delay={0.1}
               className="lg:col-span-5 lg:col-start-8"
             >
+              {product.pricing ? (
               <div className="rounded-2xl border bg-card p-8">
                 <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
                   Pricing
@@ -228,11 +216,52 @@ export function ProductContent({ slug }: { slug: string }) {
                   ))}
                 </div>
                 <Button className="mt-8 w-full" asChild>
-                  <Link href="/contact">
-                    {isComingSoon ? "Get in touch" : "Get started today"}
-                  </Link>
+                  <Link href="/contact">Get started today</Link>
                 </Button>
               </div>
+              ) : (
+                /* No prices to quote yet, so the slot states where the product
+                   actually stands instead of leaving a hole in the layout. The
+                   signup form lives once, in the header — repeating it here
+                   would duplicate both the ask and the field's id. */
+                <div className="rounded-2xl border bg-card p-8">
+                  <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    Status
+                  </p>
+                  <dl className="mt-6">
+                    {[
+                      {
+                        term: "Stage",
+                        detail: "In development",
+                      },
+                      {
+                        term: "Pricing",
+                        detail: "Announced at launch",
+                      },
+                      {
+                        term: "Early access",
+                        detail: "Join the list above",
+                      },
+                    ].map((row) => (
+                      <div
+                        key={row.term}
+                        className="flex items-baseline justify-between gap-6 border-t py-4 first:border-t-0"
+                      >
+                        <dt className="font-medium text-foreground">
+                          {row.term}
+                        </dt>
+                        <dd className="text-right font-mono text-sm text-muted-foreground">
+                          {row.detail}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
+                    {product.title} isn&apos;t available yet. We&apos;ll email
+                    you the day it launches — once, and nothing else.
+                  </p>
+                </div>
+              )}
             </AnimateOnScroll>
           </div>
         </div>
@@ -251,18 +280,21 @@ export function ProductContent({ slug }: { slug: string }) {
                 <div>
                   <h2 className="max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
                     {isComingSoon
-                      ? `Interested in ${product.title}?`
+                      ? `Want ${product.title} sooner?`
                       : `Ready to try ${product.title}?`}
                   </h2>
+                  {/* Deliberately not a second "we'll tell you when it ships" —
+                      the waitlist above already owns that. This is the other
+                      reason someone reads this page: they want to talk to us. */}
                   <p className="mt-4 max-w-md text-base leading-relaxed text-primary-foreground/70">
                     {isComingSoon
-                      ? "Leave your email and we'll reach out when it's ready."
+                      ? "Tell us how you'd use it. Early conversations shape what we build first."
                       : "Get started with a free trial — no credit card required."}
                   </p>
                 </div>
                 <Button size="lg" variant="secondary" asChild>
                   <Link href="/contact">
-                    {isComingSoon ? "Get in touch" : "Start your free trial"}
+                    {isComingSoon ? "Talk to us" : "Start your free trial"}
                     <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
                   </Link>
                 </Button>

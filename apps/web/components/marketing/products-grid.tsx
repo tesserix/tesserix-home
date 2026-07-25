@@ -19,6 +19,7 @@ import {
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 import { AnimateOnScroll, Button } from "@tesserix/web";
+import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -35,78 +36,78 @@ interface Product {
   iconClass: string;
 }
 
-const products: Product[] = [
-  {
-    slug: "mark8ly",
-    title: "Mark8ly",
-    tagline: "Quiet commerce for people who make things",
-    description:
-      "An editorial commerce platform for independent merchants. Launch your storefront in an afternoon, keep every sale, and look considered from day one.",
-    status: "live",
-    icon: ShoppingBag,
-    website: "mark8ly.com",
-    href: "/products/mark8ly",
-    highlights: [
-      "90 days free, then from $19/mo",
-      "0% transaction fees",
-      "Custom domains",
-      "Quiet, considered theme system",
-    ],
-    iconClass: "text-chart-5",
-  },
-  {
-    slug: "fanzone",
-    title: "FanZone Battle Ground",
-    tagline: "Your cricket opinions finally matter",
-    description:
-      "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-    status: "live",
-    icon: Trophy,
-    website: "fanzonebattleground.com",
-    href: "/products/fanzone",
-    highlights: [
-      "Free to join — 50 pts on signup",
-      "Live battle rooms",
-      "Match-by-match prediction markets",
-      "Ranked leaderboards",
-    ],
-    iconClass: "text-success",
-  },
-  {
-    slug: "medicare",
-    title: "MediCare",
-    tagline: "Hospital management without the bloat",
-    description:
-      "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-    status: "soon",
-    icon: Hospital,
-    href: "/products/medicare",
-    highlights: [
-      "Electronic health records",
-      "Appointment scheduling",
-      "Pharmacy & inventory",
-      "HIPAA-aligned",
-    ],
-    iconClass: "text-info",
-  },
-  {
-    slug: "homechef",
-    title: "HomeChef",
-    tagline: "Home cooks, real customers",
-    description:
-      "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
-    status: "soon",
-    icon: ChefHat,
-    href: "/products/homechef",
-    highlights: [
-      "Chef onboarding & verification",
-      "Menu management",
-      "Real-time order tracking",
-      "Delivery coordination",
-    ],
-    iconClass: "text-warning",
-  },
-];
+// Launch state is read from products-data.ts rather than repeated here; the
+// cards scroll-stack in order, so shipped products lead.
+const products: Product[] = (
+  [
+    {
+      slug: "mark8ly",
+      title: "Mark8ly",
+      tagline: "Quiet commerce for people who make things",
+      description:
+        "An editorial commerce platform for independent merchants. Launch your storefront in an afternoon, keep every sale, and look considered from day one.",
+      icon: ShoppingBag,
+      website: "mark8ly.com",
+      highlights: [
+        "90 days free, then from $19/mo",
+        "0% transaction fees",
+        "Custom domains",
+        "Quiet, considered theme system",
+      ],
+      iconClass: "text-chart-5",
+    },
+    {
+      slug: "homechef",
+      title: "HomeChef",
+      tagline: "Home cooks, real customers",
+      description:
+        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
+      icon: ChefHat,
+      website: "fe3dr.com",
+      highlights: [
+        "Chef onboarding & verification",
+        "Menu management",
+        "Real-time order tracking",
+        "Delivery coordination",
+      ],
+      iconClass: "text-warning",
+    },
+    {
+      slug: "medicare",
+      title: "MediCare",
+      tagline: "Hospital management without the bloat",
+      description:
+        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
+      icon: Hospital,
+      highlights: [
+        "Electronic health records",
+        "Appointment scheduling",
+        "Pharmacy & inventory",
+        "HIPAA-aligned",
+      ],
+      iconClass: "text-info",
+    },
+    {
+      slug: "fanzone",
+      title: "FanZone Battle Ground",
+      tagline: "Your cricket opinions finally matter",
+      description:
+        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
+      icon: Trophy,
+      highlights: [
+        "Live battle rooms",
+        "Match-by-match prediction markets",
+        "Ranked leaderboards",
+        "Hot takes & fan connect",
+      ],
+      iconClass: "text-success",
+    },
+  ] satisfies ReadonlyArray<Omit<Product, "status" | "href">>
+).map((p) => ({
+  ...p,
+  href: `/products/${p.slug}`,
+  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
+}));
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {

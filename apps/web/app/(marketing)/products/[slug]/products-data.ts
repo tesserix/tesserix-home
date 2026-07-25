@@ -40,12 +40,13 @@ export const products: Record<
       description: string;
     }>;
     benefits: string[];
-    pricing: {
+    // Live products only. A product that hasn't shipped has no prices to quote,
+    // so its page shows the launch notice where the pricing card would be.
+    pricing?: {
       starter: string;
       professional: string;
       enterprise: string;
     };
-    github?: string;
     website?: string;
   }
 > = {
@@ -119,8 +120,7 @@ export const products: Record<
     longDescription:
       "HomeChef is a complete platform that connects talented home cooks with hungry customers in their community. From chef onboarding and menu management to order tracking and delivery coordination, HomeChef provides everything you need to run a successful home food delivery business.",
     icon: ChefHat,
-    status: "coming-soon",
-    github: "https://github.com/Tesseract-Nexus/Home-Chef-App",
+    status: "available",
     features: [
       {
         icon: UserCheck,
@@ -182,7 +182,6 @@ export const products: Record<
       "MediCare is a comprehensive hospital management system designed to streamline healthcare operations. From patient registration and electronic health records to appointment scheduling, billing, and inventory management, MediCare digitizes every aspect of hospital administration.",
     icon: Hospital,
     status: "coming-soon",
-    github: "https://github.com/Tesseract-Nexus/hospital-management",
     features: [
       {
         icon: FileText,
@@ -229,23 +228,16 @@ export const products: Record<
       "Multi-location support",
       "Integration with medical devices",
     ],
-    pricing: {
-      starter: "$199/month",
-      professional: "$499/month",
-      enterprise: "Custom",
-    },
   },
   fanzone: {
     title: "FanZone Battle Ground",
     tagline: "Your cricket opinions finally matter",
     description:
       "Live predictions, trash-talk battle rooms, and ranked fan leaderboards.",
-    website: "https://fanzonebattleground.com",
     longDescription:
-      "FanZone Battle Ground is a competitive fan engagement platform for cricket. Predict match outcomes, hop into live battle rooms during play, and climb ranked leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions. Free to join with a 50-point bonus on signup.",
+      "FanZone Battle Ground is a competitive fan engagement platform for cricket. Predict match outcomes, hop into live battle rooms during play, and climb ranked leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
     icon: Trophy,
-    status: "available",
-    github: "https://github.com/Tesseract-Nexus/FanZone-Battle-Ground",
+    status: "coming-soon",
     features: [
       {
         icon: Zap,
@@ -285,17 +277,51 @@ export const products: Record<
       },
     ],
     benefits: [
-      "Free to join — 50 points on signup",
       "Live battle rooms during every match",
       "Match-by-match prediction markets",
-      "Ranked leaderboards",
-      "Available on the web today",
+      "Ranked seasonal leaderboards",
+      "Hot takes and fan connect feeds",
+      "Alerts for your teams and players",
       "IPL, internationals, and local leagues",
     ],
-    pricing: {
-      starter: "Free",
-      professional: "Premium tier available",
-      enterprise: "Custom",
-    },
   },
 };
+
+/**
+ * Every product slug. Derived from `products` so the two can never drift —
+ * the waitlist API validates signups against this, and the launch-announce job
+ * walks it to find products that have gone live.
+ */
+export const productSlugs: string[] = Object.keys(products);
+
+/**
+ * Slugs whose status has flipped to "available", i.e. products that have
+ * actually launched. Flipping a product's status here and deploying is what
+ * triggers its waitlist announcement — there is no separate switch to remember.
+ */
+export function launchedProductSlugs(): string[] {
+  return Object.entries(products)
+    .filter(([, p]) => p.status === "available")
+    .map(([slug]) => slug);
+}
+
+/** Display title for a slug, for email subject/body copy. */
+export function productTitle(slug: string): string {
+  return products[slug]?.title ?? slug;
+}
+
+/**
+ * Whether a product is still unreleased.
+ *
+ * `status` above is the one place launch state is recorded. Every surface that
+ * renders a product — the navbar dropdown, the homepage stack, /products, and
+ * the detail page — reads it through here rather than repeating it inline.
+ * They used to each hold their own copy and had drifted badly: FanZone showed
+ * "Live" on three of them while HomeChef showed "Coming soon" despite being
+ * deployed.
+ *
+ * Unknown slugs read as coming-soon — never advertise something unconfirmed.
+ */
+export function isComingSoon(slug: string): boolean {
+  return products[slug]?.status !== "available";
+}
