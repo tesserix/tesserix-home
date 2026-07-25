@@ -1,7 +1,6 @@
 "use client";
 
 import { AuthProvider, useAuth } from "@/lib/auth/auth-context";
-import { OttoSupportChat } from "@/components/OttoSupportChat";
 import { AdminSidebar } from "@/components/admin/sidebar";
 import { CommandPaletteProvider } from "@/components/admin/command-palette";
 import { ConfirmProvider } from "@/components/admin/confirm-dialog";
@@ -34,19 +33,20 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// Admin-only support chat — public pages deliberately have no chat widget
-// (visitors use /contact). Lives inside AuthGuard so it renders only for
-// authenticated staff, with identity from the auth context so the widget
-// skips the OTP step.
-function AdminSupportChat() {
-  const { user } = useAuth();
-  return (
-    <OttoSupportChat
-      userEmail={user?.email ?? undefined}
-      userName={user?.displayName ?? user?.name ?? undefined}
-    />
-  );
-}
+// The admin console deliberately mounts NO support-chat widget.
+//
+// OttoSupportChat is a *storefront* surface: it posts to otto's
+// /api/v1/storefront/otto/* endpoints as the "platform" tenant, and the
+// /api/otto proxy forwards a signed-in admin as the CUSTOMER identity so they
+// skip the OTP step. Rendering it here therefore let staff open new customer
+// support conversations against their own platform inbox — the "What can we
+// help with?" composer in the admin chrome. Admins consume queued customer
+// conversations, they never originate them.
+//
+// Read-only support visibility lives in the console proper: /admin/analytics/
+// support (cross-tenant otto rollup) and, for HomeChef, Support -> Tickets and
+// Support -> Mediation. Anything added here in future must be a read/reply
+// agent surface, not the storefront composer.
 
 export default function AdminLayout({
   children,
@@ -65,7 +65,6 @@ export default function AdminLayout({
                   <div id="main-content" className="lg:pl-72">
                     {children}
                   </div>
-                  <AdminSupportChat />
                 </div>
               </ConfirmProvider>
             </CommandPaletteProvider>

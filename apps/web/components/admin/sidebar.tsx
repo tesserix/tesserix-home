@@ -77,6 +77,7 @@ const platformNav: NavEntry[] = [
   { name: "Apps", href: "/admin/apps", icon: Cloud },
   { name: "Tickets", href: "/admin/platform-tickets", icon: LifeBuoy },
   { name: "Support analytics", href: "/admin/analytics/support", icon: BarChart3 },
+  { name: "Live chat", href: "/admin/support/live-chat", icon: MessageSquare },
   { name: "Announcements", href: "/admin/platform-announcements", icon: Megaphone },
   { name: "Uptime", href: "/admin/uptime", icon: Activity },
   { name: "Service health", href: "/admin/health", icon: HeartPulse },

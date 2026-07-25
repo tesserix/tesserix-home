@@ -140,8 +140,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(react@19.2.1)
       '@tesserix/otto-widget':
-        specifier: ^0.5.1
-        version: 0.5.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
+        specifier: ^0.6.0
+        version: 0.6.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       '@tesserix/web':
         specifier: ^1.7.1
         version: 1.7.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.1(react@19.2.1))(react@19.2.1))(react-dom@19.2.1(react@19.2.1))(react@19.2.1)(tailwindcss@4.3.3)
@@ -2190,34 +2190,31 @@ packages:
       react: ^18 || ^19
 
   '@tesserix/hooks@1.0.0':
-    resolution: {integrity: sha512-wddwrjuDkR0yu93DbhkqyZwhVcUZkJ03PNQYjGRi3jok5FjMh6SaLooIY1q+tyV0JvCxPOPkGdTSNaeqj597aQ==}
+    resolution: {integrity: sha512-1MxiKUtiI7NPfmh41GYn5Bfrziwv8gcKt3v5161jXmqJ/Qbwh/T+oEKV8hWvKzMp0XJqEV8W6gS5uLp7eLA2Kg==, tarball: https://npm.pkg.github.com/download/@tesserix/hooks/1.0.0/60c67e981047356fc504bcf1378154d843a6e44d}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
-  '@tesserix/otto-widget@0.5.1':
-    resolution: {integrity: sha512-c1gN4egcOUoU73Jp/WbMeZKbxC4l6hr9EBcVCGRx7yFVWtEYrqx6n38pfx7siZyiK1WS3tsLfaY+fStVpNADvA==}
+  '@tesserix/otto-widget@0.6.0':
+    resolution: {integrity: sha512-Wsd2EBXRYqW1J7shOBbF5Q0pwVx1ri6uNsmDhYQdep6ZjkVg3fo1o4Sm1/cBKah3Hl7s5gR6oeZRJH7Bia3MNg==, tarball: https://npm.pkg.github.com/download/@tesserix/otto-widget/0.6.0/e7e6a22a4b9035d0b198fe5ec921644ee94c52c3}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
 
   '@tesserix/tokens@1.0.0':
-    resolution: {integrity: sha512-d28KWQxt/QnNRiWzrkqxC1row+A3Oq1OYrt++0rDQFyJVhZ3+Vv9sDmtyxySyP0OLrS7zlpUgs6blJUpgzN2Mg==}
+    resolution: {integrity: sha512-grimAfdmmFAo5f0+rTyZ06PrtNCUkgaTGQ7lRR4E5dsbBhhthIKpw/d7mm8X42cOCVke6FIoHu0vG6JDJHBsiw==, tarball: https://npm.pkg.github.com/download/@tesserix/tokens/1.0.0/8d0661040a60420abea18bdd61a2701d166a9f17}
 
   '@tesserix/utils@1.0.0':
-    resolution: {integrity: sha512-kKxY38ClYLulU/MGIkuBJbnfn9Ra09CR3mdC8NgTPSEx9qa9e8i2v5QJ1rHNHtaqRdjHyGiR/iPDRzxYObwYmg==}
+    resolution: {integrity: sha512-9adoLCg82aWWGnMEDXT+a/1aYk5k9D5HuCYHNID9CJl4m/DXxSu0g603GwkKC7/TomWsRYlU5N3yDVIHvnOL/A==, tarball: https://npm.pkg.github.com/download/@tesserix/utils/1.0.0/a3b6095d050faff9a1a2c11e259cbee82c6e4009}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
   '@tesserix/web@1.7.1':
-    resolution: {integrity: sha512-glD34DYjJ9rmxNzEuixf0bWYxYA8IS2+oPwZsKBvWyt3ailSt3jZIRmXszymMCatNEtn+XrRPzrdIqaQ8cgw9w==}
+    resolution: {integrity: sha512-GsZPLKZajOY+Wwpl8Hpv4LJaYcrOLUy+8BWXghwK/VQQ4Hhvt9IZ0T3lsRNDFh1vxOiFGkPi3MMBS4pk9A9aIQ==, tarball: https://npm.pkg.github.com/download/@tesserix/web/1.7.1/4e2c98eb12450103de795d73b915bc9f82cec508}
     peerDependencies:
       framer-motion: ^11.0.0 || ^12.0.0
       react: ^19.0.0
       react-dom: ^19.0.0
       tailwindcss: ^4.1.0
-    peerDependenciesMeta:
-      framer-motion:
-        optional: true
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -8190,7 +8187,9 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.85.3': {}
 
@@ -8389,7 +8388,7 @@ snapshots:
     dependencies:
       react: 19.2.1
 
-  '@tesserix/otto-widget@0.5.1(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
+  '@tesserix/otto-widget@0.6.0(react-dom@19.2.1(react@19.2.1))(react@19.2.1)':
     dependencies:
       react: 19.2.1
       react-dom: 19.2.1(react@19.2.1)
@@ -8422,13 +8421,12 @@ snapshots:
       class-variance-authority: 0.7.1
       clsx: 2.1.1
       date-fns: 4.4.0
+      framer-motion: 12.42.2(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
       react: 19.2.1
       react-day-picker: 9.14.0(react@19.2.1)
       react-dom: 19.2.1(react@19.2.1)
       tailwind-merge: 3.6.0
       tailwindcss: 4.3.3
-    optionalDependencies:
-      framer-motion: 12.42.2(react-dom@19.2.1(react@19.2.1))(react@19.2.1)
     transitivePeerDependencies:
       - '@types/react'
       - '@types/react-dom'
@@ -9800,7 +9798,7 @@ snapshots:
       '@next/eslint-plugin-next': 16.0.10
       eslint: 9.39.5(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.5(jiti@2.7.0))
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.5(jiti@2.7.0))
       eslint-plugin-jsx-a11y: 6.10.2(eslint@9.39.5(jiti@2.7.0))
       eslint-plugin-react: 7.37.5(eslint@9.39.5(jiti@2.7.0))
@@ -9823,7 +9821,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0)):
+  eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.5(jiti@2.7.0)):
     dependencies:
       '@nolyfill/is-core-module': 1.0.39
       debug: 4.4.3
@@ -9838,14 +9836,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  eslint-module-utils@2.14.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0)):
+  eslint-module-utils@2.14.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.5(jiti@2.7.0)):
     dependencies:
       debug: 3.2.7
     optionalDependencies:
       '@typescript-eslint/parser': 8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
       eslint: 9.39.5(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0))
+      eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.39.5(jiti@2.7.0))
     transitivePeerDependencies:
       - supports-color
 
@@ -9860,7 +9858,7 @@ snapshots:
       doctrine: 2.1.0
       eslint: 9.39.5(jiti@2.7.0)
       eslint-import-resolver-node: 0.3.10
-      eslint-module-utils: 2.14.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1(eslint-plugin-import@2.32.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0)))(eslint@9.39.5(jiti@2.7.0))
+      eslint-module-utils: 2.14.0(@typescript-eslint/parser@8.65.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint-import-resolver-node@0.3.10)(eslint-import-resolver-typescript@3.10.1)(eslint@9.39.5(jiti@2.7.0))
       hasown: 2.0.4
       is-core-module: 2.16.2
       is-glob: 4.0.3
