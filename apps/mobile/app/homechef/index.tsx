@@ -11,9 +11,9 @@ const SECTIONS = [
   { group: 'Operations', items: [
     { title: 'Orders', sub: 'All orders + status', icon: ShoppingBag, route: '/homechef/orders', live: true },
     { title: 'Chefs / Kitchens', sub: 'Verify, suspend, review', icon: ChefHat, route: '/homechef/chefs', live: true },
-    { title: 'Approvals', sub: 'Onboarding queue', icon: ClipboardCheck, route: '/homechef/approvals', live: false },
+    { title: 'Approvals', sub: 'Onboarding queue', icon: ClipboardCheck, route: '/homechef/approvals', live: true },
     { title: 'Delivery', sub: '3PL providers + reconcile', icon: Truck, route: '/homechef/delivery', live: false },
-    { title: 'FSSAI', sub: 'License compliance locks', icon: ShieldCheck, route: '/homechef/fssai', live: false },
+    { title: 'FSSAI', sub: 'License compliance locks', icon: ShieldCheck, route: '/homechef/fssai', live: true },
     { title: 'Meal plans', sub: 'Tiffin subscriptions', icon: CalendarRange, route: '/homechef/meal-plans', live: false },
   ]},
   { group: 'Money', items: [
@@ -23,7 +23,7 @@ const SECTIONS = [
     { title: 'Wallets', sub: 'Customer credit', icon: Wallet, route: '/homechef/wallets', live: false },
   ]},
   { group: 'People & quality', items: [
-    { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: false },
+    { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: true },
     { title: 'Support', sub: 'Tickets + refunds', icon: LifeBuoy, route: '/homechef/support', live: true },
     { title: 'Users', sub: 'Customers, chefs, drivers', icon: Users, route: '/homechef/users', live: false },
     { title: 'Staff', sub: 'Internal team + roles', icon: UserCog, route: '/homechef/staff', live: false },

@@ -11,7 +11,7 @@ import { titleCase, formatDateTime } from '@tesserix/homechef-shared';
 import {
   Badge, Banner, Button, Card, LoadingRows, Screen, ScreenHeader, SectionLabel, type Tone,
 } from '../../../components/kit';
-import { usePalette, space, radius, text } from '../../../lib/theme';
+import { usePalette, space, text } from '../../../lib/theme';
 
 function statusTone(s: string): Tone {
   if (s === 'approved') return 'success';
