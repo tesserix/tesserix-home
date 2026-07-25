@@ -9,7 +9,7 @@ import {
   Badge, EmptyState, LoadingRows, ListRow, Screen, ScreenHeader, FilterChips, SearchField, type Tone,
 } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
-import type { ChefWithStats } from '../../lib/contracts';
+import type { ChefWithStats } from "@tesserix/homechef-shared";
 
 const STATUSES = [
   { key: '', label: 'All' },

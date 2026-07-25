@@ -22,7 +22,7 @@ import type {
   OrderIssueConfig,
   DeliveryFailuresResponse,
   DeliveryFaultClass,
-} from './contracts';
+} from '@tesserix/homechef-shared';
 
 export const qk = {
   stats: ['hc', 'stats'] as const,

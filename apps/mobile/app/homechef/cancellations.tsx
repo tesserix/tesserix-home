@@ -7,7 +7,7 @@ import { apiError } from '../../lib/api';
 import { formatINR } from "@tesserix/homechef-shared";
 import { Badge, Button, EmptyState, LoadingRows, Screen, ScreenHeader, type Tone } from '../../components/kit';
 import { usePalette, space, radius, text } from '../../lib/theme';
-import { CANCEL_REASONS, type AdminCancellationRequest, type CancelReasonValue } from '../../lib/contracts';
+import { CANCEL_REASONS, type AdminCancellationRequest, type CancelReasonValue } from "@tesserix/homechef-shared";
 
 // Admin arbitration of cancellation requests (#475/#480) — the mobile twin of the
 // tesserix-home web page + the HomeChef mobile-admin screen. Disputes + vendor
