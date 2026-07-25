@@ -23,6 +23,7 @@ import type {
   DatabasesResponse,
   CustomDomainsResponse,
   OutboxResponse,
+  PlatformSupportStats,
 } from './platform-contracts';
 
 export const pk = {
@@ -41,6 +42,7 @@ export const pk = {
   databases: ['plat', 'databases'] as const,
   domains: ['plat', 'domains'] as const,
   outbox: ['plat', 'outbox'] as const,
+  supportAnalytics: ['plat', 'support-analytics'] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -168,3 +170,11 @@ export const useErasureRequests = (status: string) =>
 
 export const useBreakGlass = () =>
   useQuery({ queryKey: pk.breakGlass, queryFn: () => plat.get<BreakGlass>('/break-glass') });
+
+// ---- Support analytics -------------------------------------------------------
+export const useSupportAnalytics = () =>
+  useQuery({
+    queryKey: pk.supportAnalytics,
+    queryFn: () => plat.get<PlatformSupportStats>('/analytics/support'),
+    refetchInterval: 30_000,
+  });

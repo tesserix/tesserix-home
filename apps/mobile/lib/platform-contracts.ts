@@ -357,3 +357,19 @@ export interface OutboxResponse {
   recent: OutboxRow[];
   generatedAt: string;
 }
+
+// ---- Support analytics (Otto cross-tenant rollup) --------------------------
+export interface PlatformSupportStats {
+  total: number;
+  open: number;
+  by_status: Record<string, number>;
+  by_reason: Record<string, number>;
+  by_tenant: Record<string, number>;
+  escalated: number;
+  ai_resolved: number;
+  avg_resolution_seconds: number;
+  csat: number;
+  resolved_rate: number;
+  feedback_count: number;
+  tenant_names?: Record<string, string>;
+}
