@@ -26,6 +26,11 @@ import type {
   FSSAILockResponse,
   OrderDetailResponse,
   DeliveryIntelligenceResponse,
+  BlockedChefsResponse,
+  PayoutAutomationValue,
+  PendingPayoutsResponse,
+  PaymentGatewayStatus,
+  StripeGatewayStatus,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -57,6 +62,18 @@ export interface BackfillResponse {
   notified: number;
 }
 
+export interface PendingRefundDay {
+  dayId: string;
+  date: string;
+  slot: string;
+  dishName: string;
+  customerName: string;
+  chefName: string;
+  mealPlanNumber: string;
+  chefChoice: string; // full | half
+  refundAmount: number;
+}
+
 export const qk = {
   stats: ['hc', 'stats'] as const,
   analytics: ['hc', 'analytics'] as const,
@@ -75,6 +92,11 @@ export const qk = {
   wallet: (id: string) => ['hc', 'wallet', id] as const,
   order: (id: string) => ['hc', 'order', id] as const,
   deliveryIntel: ['hc', 'delivery-intel'] as const,
+  blockedChefs: ['hc', 'blocked-chefs'] as const,
+  pendingPayouts: (include: string) => ['hc', 'pending-payouts', include] as const,
+  pendingRefunds: ['hc', 'pending-refunds'] as const,
+  gatewayStatus: ['hc', 'gateway-status'] as const,
+  stripeStatus: ['hc', 'stripe-status'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -286,3 +308,64 @@ export const useDeliveryIntelligence = () =>
     queryFn: () => hc.get<DeliveryIntelligenceResponse>('/delivery/intelligence'),
     refetchInterval: 30_000,
   });
+
+// ---- Payout setup: blocked chefs + automation toggle -----------------------
+export const useBlockedChefs = () =>
+  useQuery({ queryKey: qk.blockedChefs, queryFn: () => hc.get<BlockedChefsResponse>('/payouts/blocked-chefs') });
+
+export function useSetPayoutAutomation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { chefId: string; value: PayoutAutomationValue }) =>
+      hc.put(`/chefs/${a.chefId}/payout-automation`, { value: a.value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.blockedChefs }),
+  });
+}
+
+// ---- Payout queue: escrow release/withhold/reverse + bulk -------------------
+export const usePendingPayouts = (includeAwaiting: boolean) =>
+  useQuery({
+    queryKey: qk.pendingPayouts(includeAwaiting ? 'awaiting' : 'eligible'),
+    queryFn: () =>
+      hc.get<PendingPayoutsResponse>('/payouts/pending', includeAwaiting ? { include: 'awaiting' } : undefined),
+    refetchInterval: 30_000,
+  });
+
+// release (no reason) | withhold | reverse (reason) — path built by the caller.
+export function usePayoutAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { path: string; reason?: string }) =>
+      hc.post(a.path, a.reason !== undefined ? { reason: a.reason } : undefined),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'pending-payouts'] }),
+  });
+}
+
+export function useBulkReleasePayouts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { aggType: string; id: string }[]) => hc.post('/payouts/release-bulk', { items }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'pending-payouts'] }),
+  });
+}
+
+// ---- Refund payouts --------------------------------------------------------
+export const usePendingRefunds = () =>
+  useQuery({
+    queryKey: qk.pendingRefunds,
+    queryFn: () => hc.get<{ data: PendingRefundDay[] }>('/meal-plan-days/pending-refunds'),
+  });
+
+export function useExecuteRefund() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (dayId: string) => hc.post(`/meal-plan-days/${dayId}/execute-refund`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.pendingRefunds }),
+  });
+}
+
+// ---- Payment gateway status (read-only) ------------------------------------
+export const useGatewayStatus = () =>
+  useQuery({ queryKey: qk.gatewayStatus, queryFn: () => hc.get<PaymentGatewayStatus>('/payment-gateway/status') });
+export const useStripeStatus = () =>
+  useQuery({ queryKey: qk.stripeStatus, queryFn: () => hc.get<StripeGatewayStatus>('/payment-gateway/stripe/status') });
