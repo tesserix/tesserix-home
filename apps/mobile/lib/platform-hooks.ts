@@ -30,6 +30,8 @@ import type {
   TestSendResponse,
   ProductKpis,
   ProductResourceMetrics,
+  ProviderRow,
+  Reconciliation,
 } from './platform-contracts';
 
 export const pk = {
@@ -54,6 +56,8 @@ export const pk = {
   leadTemplates: ['plat', 'lead-templates'] as const,
   productKpis: (product: string) => ['plat', 'product-kpis', product] as const,
   productMetrics: (product: string, window: string) => ['plat', 'product-metrics', product, window] as const,
+  deliveryProviders: ['plat', 'delivery-providers'] as const,
+  deliveryReconciliation: ['plat', 'delivery-reconciliation'] as const,
 };
 
 // ---- Dashboard --------------------------------------------------------------
@@ -227,3 +231,27 @@ export const useProductMetrics = (product: string, window = '24h') =>
     queryFn: () => plat.get<ProductResourceMetrics>(`/apps/${product}/metrics`, { window }),
     enabled: !!product,
   });
+
+// ---- HomeChef delivery (3PL) ------------------------------------------------
+export const useDeliveryProviders = () =>
+  useQuery({
+    queryKey: pk.deliveryProviders,
+    queryFn: () => plat.get<{ data: ProviderRow[] }>('/apps/homechef/delivery/providers'),
+  });
+
+export const useDeliveryReconciliation = () =>
+  useQuery({
+    queryKey: pk.deliveryReconciliation,
+    queryFn: () => plat.get<{ data: Reconciliation }>('/apps/homechef/delivery/reconciliation'),
+  });
+
+export function useToggleDeliveryProvider() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => plat.put(`/apps/homechef/delivery/providers/${id}/toggle`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: pk.deliveryProviders });
+      qc.invalidateQueries({ queryKey: pk.deliveryReconciliation });
+    },
+  });
+}

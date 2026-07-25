@@ -442,3 +442,24 @@ export interface ProductResourceMetrics {
     memory: { current: number } | null;
   };
 }
+
+// ---- HomeChef delivery (3PL) — snake_case wire from the Go delivery admin ----
+export interface ProviderRow {
+  id: string;
+  name: string;
+  code: string;
+  is_enabled: boolean;
+  is_active: boolean;
+  priority: number;
+  base_cost: number;
+  currency: string;
+  total_deliveries: number;
+  success_rate: number;
+  last_used_at: string | null;
+}
+export interface Reconciliation {
+  total_3pl_deliveries: number;
+  provider_cost: number;
+  collected_fee: number;
+  margin: number;
+}
