@@ -44,6 +44,9 @@ import type {
   PromoAnalytics,
   PromoDiscountType,
   PromoFundingSource,
+  PlatformPolicy,
+  SubscriptionPricing,
+  ReferralConfig,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -118,6 +121,9 @@ export const qk = {
   campaignMetrics: (id: string) => ['hc', 'campaign-metrics', id] as const,
   promos: (p: object) => ['hc', 'promos', p] as const,
   promoAnalytics: (id: string) => ['hc', 'promo-analytics', id] as const,
+  platformPolicy: ['hc', 'platform-policy'] as const,
+  subscriptionPricing: ['hc', 'subscription-pricing'] as const,
+  referralConfig: ['hc', 'referral-config'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -534,5 +540,38 @@ export function useDeactivatePromo() {
   return useMutation({
     mutationFn: (id: string) => hc.del(`/promos/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'promos'] }),
+  });
+}
+
+// ---- Platform Settings: policy / subscription pricing / referral -----------
+// Each save PUTs the COMPLETE typed object (no partial-PUT wipe) and invalidates
+// only its own query. Money is rupees throughout (no ÷100).
+export const usePlatformPolicy = () =>
+  useQuery({ queryKey: qk.platformPolicy, queryFn: () => hc.get<PlatformPolicy>('/platform/policy') });
+export function useSavePlatformPolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: PlatformPolicy) => hc.put('/platform/policy', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.platformPolicy }),
+  });
+}
+
+export const useSubscriptionPricing = () =>
+  useQuery({ queryKey: qk.subscriptionPricing, queryFn: () => hc.get<SubscriptionPricing>('/subscription-pricing') });
+export function useSaveSubscriptionPricing() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: SubscriptionPricing) => hc.put('/subscription-pricing', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.subscriptionPricing }),
+  });
+}
+
+export const useReferralConfig = () =>
+  useQuery({ queryKey: qk.referralConfig, queryFn: () => hc.get<ReferralConfig>('/referral/config') });
+export function useSaveReferralConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: ReferralConfig) => hc.put('/referral/config', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.referralConfig }),
   });
 }
