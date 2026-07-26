@@ -22,8 +22,8 @@ Hub wiring (`app/homechef/index.tsx`): a new **"Settings & mediation"** group wi
 ## Decisions (resolved during brainstorming)
 
 - **All four areas in one slice** (one spec → plan → SDD cycle) — the final parity push.
-- **Platform Settings: full parity, editable + confirm** (user's call). The 3 config forms re-price the platform live on save, so each save is confirm-gated (reuse the H1 `useConfirm` PromptSheet). Numeric fields string-held, `Number()`-converted on submit (established pattern). Money-sensitive → extra SDD review weight.
-- **Mediation: full parity — inbox + relay + block** (user's call). Relay forwards customer PII irreversibly; block is silent. BOTH actions are confirm-gated (destructive tone). Trust-sensitive → extra SDD review weight.
+- **Platform Settings: full parity, editable.** Confirm-gating (resolved post-extraction, deviates from web toward phone safety): **the two money saves — Policy and Subscription Pricing — are confirm-gated** (reuse the H1 `useConfirm` PromptSheet); **Referral config saves directly, no confirm** (matches web). Web only confirms the Policy save; mobile adds a confirm to Subscription Pricing because it re-prices on a phone. Numeric fields string-held, `Number()`-converted on submit (established pattern). Money-sensitive → extra SDD review weight.
+- **Mediation: full parity — inbox + relay + block** (user's call). Relay forwards customer PII irreversibly; block is silent. **BOTH actions are ALWAYS confirm-gated on mobile** (destructive tone) — this deviates from web, which skips the confirm on non-PII relays (`piiDetected === false`); mobile confirms every relay for fat-finger safety. Trust-sensitive → extra SDD review weight.
 - **Staff type fix: mobile-local correct type** (user's call). The shared `StaffMember` contract is mis-shaped (nested `user` vs the actual flat wire); the web page already works around it with a page-local type. Mobile declares the correct flat shape locally (next to the staff hooks in `lib/hooks.ts`) and stops using the shared `StaffMember` for the staff list. Contained to this slice — no change to `@tesserix/homechef-shared`, zero risk to web or other services.
 - **Audit Log: read-only.** It returns a FLAT `{ logs, total, page, limit }` envelope (NOT the usual `Paginated<T>`) — the hook and screen handle that shape explicitly rather than forcing it into `Paginated<T>`.
 
@@ -32,39 +32,39 @@ Hub wiring (`app/homechef/index.tsx`): a new **"Settings & mediation"** group wi
 ### 1. Platform Settings (`platform-settings.tsx`) — hc, editable, money-sensitive
 
 **Reads:** `GET /platform/policy` → `PlatformPolicy`; `GET /subscription-pricing` → `SubscriptionPricing`; `GET /referral/config` → `ReferralConfig`.
-**Actions:** `PUT /platform/policy` (full `PlatformPolicy`); `PUT /subscription-pricing` (full `SubscriptionPricing`); `PUT /referral/config` (full `ReferralConfig`). Each PUT sends the COMPLETE typed object (no partial-PUT wipe — same discipline as the winback/loyalty saves), confirm-gated.
+**Actions:** `PUT /platform/policy` (full `PlatformPolicy`); `PUT /subscription-pricing` (full `SubscriptionPricing`); `PUT /referral/config` (full `ReferralConfig`). Each PUT sends the COMPLETE typed object (no partial-PUT wipe — same discipline as the winback/loyalty saves). **Confirm-gating: Policy + Subscription Pricing saves are confirm-gated; Referral config saves directly (no confirm).**
 
-**UI:** three stacked config cards (one per resource), each: load current values → editable fields (numeric string-held → `Number()` on save; booleans as `Switch`; any enum/day-set as appropriate controls) → Save button → confirm dialog (message states the change re-prices/affects the platform live) → saved/error state (`Banner` + `Alert` on failure). Each card saves independently and invalidates its own query. Money is rupees where applicable (raw numbers via `formatINR`, no ÷100). **Gotcha:** `operatingDays: []` (if present in `PlatformPolicy`) means "open EVERY day", not "closed" — the extraction pins the exact meaning and the editor must not silently coerce empty → closed.
+**UI:** three stacked config cards (one per resource), each: load current values → editable fields (numeric string-held → `Number()` on save; booleans as `Switch`; any enum/day-set as appropriate controls) → Save button → (for Policy + Subscription Pricing) confirm dialog stating the change re-prices the platform live → saved/error state (`Banner` + `Alert` on failure). Each card saves independently and invalidates its own query. Money is rupees where applicable (raw numbers via `formatINR`, **no ÷100** — extraction confirmed rupees throughout). **Gotcha (extraction-confirmed):** `operatingDays: []` (or `null`, coalesced to `[]` on load) in `PlatformPolicy` means "open EVERY day", NOT "closed" — the editor must not silently coerce empty → closed.
 
 **Exact field lists** for `PlatformPolicy` / `SubscriptionPricing` / `ReferralConfig` come from the extraction step (they drive the three forms).
 
 ### 2. Staff (`staff.tsx`) — hc, authoring
 
 **Reads:** `GET /staff` → staff list (flat wire shape — mobile-local type, NOT the shared `StaffMember`); `GET /staff/invitations` → pending invitations.
-**Actions:** `POST /staff/invitations` (invite — email + role, from a small form/prompt); `PUT /staff/invitations/:id/revoke`; `PUT /staff/invitations/:id/resend`; `PUT /staff/:id/activate`; `PUT /staff/:id/deactivate`.
+**Actions:** `POST /staff/invitations` (invite — email + role, from a small form/prompt); `PUT /staff/invitations/:id/revoke`; `PUT /staff/invitations/:id/resend`; `PUT /staff/:id/deactivate`; `PUT /staff/:id/reactivate`. **(Extraction correction:** the reactivate verb is `/reactivate`, NOT `/activate` — a deactivated member is brought back via `PUT /staff/:id/reactivate`.)
 
-**UI:** a staff-member list (name/email/role + active badge, with activate/deactivate action gated on current state) and a pending-invitations list (email/role + revoke/resend actions). An "Invite staff" affordance (form or `useConfirm().prompt`-style entry capturing email + role). Deactivate uses a confirm. Not money-sensitive. Mobile-local flat staff type declared beside the hooks; `useStaff` is corrected to that type (its current shared-`StaffMember` import is the bug being fixed).
+**UI:** a staff-member list (name/email/role + active badge, with deactivate/reactivate action gated on current active state) and a pending-invitations list (email/role + revoke/resend actions). An "Invite staff" affordance (form or `useConfirm().prompt`-style entry capturing email + role). **Confirm-gating (matches web):** revoke and deactivate/reactivate are confirm-gated; **resend-invite is NOT confirmed** (single tap). Not money-sensitive. Mobile-local flat staff type declared beside the hooks (email/firstName/lastName/role/`joinedAt?` all top-level — the shared `StaffMember` has a nested `user:{...}` shape + `createdAt`, which is the mis-shape being worked around); `useStaff` is corrected to the local flat type (its current shared-`StaffMember` import is the live bug being fixed).
 
 ### 3. Audit Log (`audit-log.tsx`) — hc, read-only
 
-**Reads:** `GET /audit-logs` with filter query params → FLAT `{ logs: AuditLogEntry[]; total: number; page: number; limit: number }` (NOT `Paginated<T>`).
-**UI:** a filtered, paginated read-only list — each entry shows actor / action / target / timestamp (+ tap-to-expand metadata if the entry carries a detail blob, mirroring the Mark8ly audit screen pattern). Filter chips for whatever dimensions the endpoint supports (extraction pins the exact filter params + entry shape). Prev/next pagination off `total`/`page`/`limit`. No mutations.
+**Reads:** `GET /audit-logs` with filter query params `{ action?, entityType?, from?, to?, page?, limit? }` (**filters are free-text, NOT enums**) → FLAT `{ logs: AuditLogEntry[]; total: number; page: number; limit: number }` (NOT `Paginated<T>`; note the key is `logs`, not `data`). Both `AuditLogEntry` and `AuditLogResponse` are SHARED (from contracts.ts) — reuse, no local re-declare.
+**UI:** a filtered, paginated read-only list — each entry shows actor / action / entity / timestamp (+ tap-to-expand metadata if the entry carries a detail blob, mirroring the Mark8ly audit screen pattern). `action`/`entityType` as free-text search inputs (not fixed chips, since values are open). Prev/next pagination off `total`/`page`/`limit`. No mutations.
 
 ### 4. Mediation (`mediation.tsx`) — hc, trust-sensitive
 
-**Reads:** `GET /messages/inbox` → mediated-message inbox (local `MediatedMessage` type — extraction pins the shape).
-**Actions:** `POST /messages/:id/relay` (forwards the message/PII — irreversible); `POST /messages/:id/block` (silently blocks — effectively irreversible). BOTH behind a destructive `useConfirm` with copy that states the consequence (relay: "forwards the customer's details, can't be undone"; block: "silently blocks this sender").
-**UI:** an inbox list (sender/recipient/preview/flagged-reason + state) with per-message Relay and Block actions. Confirm-gated, `Alert` on failure, invalidates the inbox on success. No forms.
+**Reads:** `GET /messages/inbox` → `{ data: MediatedMessage[] }` (enveloped; no query params; web polls every 20s). `MediatedMessage`, `MediationRole`, `RelayStatus`, and `MEDIATION_ROLE_LABEL` are all SHARED (from contracts.ts) — reuse them, no local re-declare. `piiDetected` is the field that gates web's relay-confirm; `relayStatus` is not read on this page.
+**Actions:** `POST /messages/:id/relay` (forwards the message/PII — irreversible); `POST /messages/:id/block` (silently blocks — effectively irreversible). **BOTH behind a destructive `useConfirm` on mobile — every relay and block confirms** (mobile deviates from web, which single-taps non-PII relays). Copy states the consequence (relay: "forwards the customer's details, can't be undone"; block: "silently blocks this sender").
+**UI:** an inbox list (sender/recipient/preview/flagged-reason via `MEDIATION_ROLE_LABEL` + `piiDetected` badge + state) with per-message Relay and Block actions. Confirm-gated, `Alert` on failure, invalidates the inbox on success. No forms.
 
 ## Data-layer summary
 
 **`lib/hooks.ts` (hc):** new `qk` keys + hooks —
 - Settings: `usePlatformPolicy`/`useSavePlatformPolicy`, `useSubscriptionPricing`/`useSaveSubscriptionPricing`, `useReferralConfig`/`useSaveReferralConfig` (each save PUTs the full typed object, invalidates its own key).
-- Staff: `useStaff` (corrected to a mobile-local flat `StaffRow` type), `useStaffInvitations`, `useInviteStaff`, `useRevokeInvitation`/`useResendInvitation`, `useSetStaffActive` (activate/deactivate).
-- Audit: `useAuditLogs(filters)` returning the flat `{logs,total,page,limit}` shape + a local `AuditLogEntry` type (if not shared).
-- Mediation: `useMediationInbox`, `useRelayMessage`, `useBlockMessage` + a local `MediatedMessage` type.
+- Staff: `useStaff` (corrected to a mobile-local flat `StaffRow` type), `useStaffInvitations`, `useInviteStaff`, `useRevokeInvitation`/`useResendInvitation`, `useSetStaffActive` (handles both `/deactivate` and `/reactivate`).
+- Audit: `useAuditLogs(filters)` returning the flat `{logs,total,page,limit}` shape; reuse shared `AuditLogEntry`/`AuditLogResponse`.
+- Mediation: `useMediationInbox`, `useRelayMessage`, `useBlockMessage`; reuse shared `MediatedMessage`/`MediationRole`/`RelayStatus`/`MEDIATION_ROLE_LABEL`.
 
-**Exact wire shapes** (`PlatformPolicy`/`SubscriptionPricing`/`ReferralConfig` field lists incl. money/day-set semantics; the flat staff wire shape + invitation shape; audit filter params + `AuditLogEntry`; `MediatedMessage`) — a general-purpose extraction agent pulls these verbatim from `@tesserix/homechef-shared` and the four web pages BEFORE the plan. Critical given the settings-form density and the two shape surprises (flat staff, flat audit envelope).
+**Exact wire shapes already extracted** to `.superpowers/sdd/h6-extraction.md` (`PlatformPolicy`/`SubscriptionPricing`/`ReferralConfig` field lists with money/day-set semantics; the flat staff wire shape + invitation shape + role set; audit filter params + shared `AuditLogEntry`; shared `MediatedMessage` + `piiDetected` gating). Extraction confirmed: only the flat staff type is mobile-local; audit + mediation types are all shared; every endpoint is under `/gw` (no `plat`). The plan consumes this file — no re-extraction needed.
 
 ## Testing & gate
 
