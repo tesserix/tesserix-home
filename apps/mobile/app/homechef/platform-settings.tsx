@@ -1,6 +1,6 @@
 // platform-settings.tsx — HomeChef platform config: fees/payouts, subscription
 // pricing, referrals. Three independently-saved editable cards.
-import { RefreshControl, ScrollView, View } from 'react-native';
+import { RefreshControl, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { BackButton, LoadingRows, Screen, ScreenHeader } from '../../components/kit';
 import { PolicyCard, PricingCard, ReferralCard } from '../../components/homechef/settings-sections';

@@ -19,6 +19,16 @@ import { usePalette, radius, space, text } from '../../lib/theme';
 // time.Weekday()). Do not reorder: Monday-first would shift every day by one.
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
+// Guards money-sensitive saves: every listed numeric field must be a non-empty,
+// finite number. Number('') is 0 and 'abc' is NaN — either would silently corrupt
+// a fee/price/reward on save.
+function numericFieldsValid(num: Record<string, string>, keys: string[]): boolean {
+  return keys.every((k) => {
+    const v = num[k];
+    return v !== undefined && v.trim() !== '' && Number.isFinite(Number(v));
+  });
+}
+
 function LabeledInput({ label, value, onChangeText, numeric, hint }: { label: string; value: string; onChangeText: (t: string) => void; numeric?: boolean; hint?: string }) {
   const p = usePalette();
   return (
@@ -82,6 +92,10 @@ export function PolicyCard() {
 
   async function onSave() {
     if (!form) return;
+    if (!numericFieldsValid(num, ['serviceFeePercent', 'taxPercent', 'chefPayoutPercent', 'driverPayoutPercent', 'baseDeliveryFee', 'perKmDeliveryFee'])) {
+      setNotice({ ok: false, text: 'Every number must be a valid amount.' });
+      return;
+    }
     const body: PlatformPolicy = {
       ...form,
       serviceFeePercent: Number(num.serviceFeePercent),
@@ -186,6 +200,10 @@ export function PricingCard() {
 
   async function onSave() {
     if (!form) return;
+    if (!numericFieldsValid(num, ['trialDays', 'minEarningsThreshold', 'premiumCommissionRate', 'standard_monthly', 'standard_quarterly', 'standard_yearly', 'premium_monthly', 'premium_quarterly', 'premium_yearly'])) {
+      setNotice({ ok: false, text: 'Every number must be a valid amount.' });
+      return;
+    }
     const body: SubscriptionPricing = {
       ...form, // keeps country/currency pass-through (not edited on this screen)
       trialDays: Number(num.trialDays),
@@ -255,6 +273,10 @@ export function ReferralCard() {
 
   function onSave() {
     if (!form) return;
+    if (!numericFieldsValid(num, ['referrerReward', 'refereeReward', 'monthlySpendCap'])) {
+      setNotice({ ok: false, text: 'Every number must be a valid amount.' });
+      return;
+    }
     const body: ReferralConfig = {
       enabled: form.enabled,
       referrerReward: Number(num.referrerReward),
