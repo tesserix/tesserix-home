@@ -4,12 +4,19 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
-import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
+import { GatewayError, hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import Link from "next/link";
 
 import { formatDate, formatDateTime, formatINR, titleCase, type ChefWithStats, type Paginated } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
+import { useHomechefMode } from "@/components/admin/homechef/mode-toggle";
 import { useConfirm } from "@/components/admin/confirm-dialog";
+
+const MODE_FILTERS = [
+  { key: "", label: "All modes" },
+  { key: "live", label: "Live" },
+  { key: "test", label: "Test" },
+];
 
 const STATUS_FILTERS = [
   { key: "", label: "All" },
@@ -319,10 +326,72 @@ export default function HomechefChefsPage() {
   const [error, setError] = useState<string | null>(null);
   const { confirm, prompt } = useConfirm();
 
+  const [modeFilter, setModeFilter] = useState("");
+  const { setMode } = useHomechefMode();
+
   const { data, isLoading, mutate } = useSWR<Paginated<ChefWithStats>>(
-    ["/chefs", { search, status, page: 1, limit: 50 }],
+    ["/chefs", { search, status, mode: modeFilter, page: 1, limit: 50 }],
     swrFetcher,
   );
+
+  // Move a kitchen between the real marketplace and the sandbox.
+  //
+  // live→test opens a numbered debugging session and clones the kitchen's setup
+  // plus recent orders into it. test→live closes the session; the kitchen's live
+  // data is exactly as it was, because nothing wrote to it while in test.
+  async function setChefMode(c: ChefWithStats, next: "live" | "test") {
+    setError(null);
+    let reason = "";
+    if (next === "test") {
+      const r = await prompt({
+        title: `Move ${c.businessName} to Test mode`,
+        message:
+          "The kitchen will be hidden from ordering and its setup plus the last 30 days of orders " +
+          "will be cloned into a fresh sandbox session. Its live data is untouched and comes back " +
+          "exactly as it is when you switch back.",
+        label: "Why are you doing this?",
+        placeholder: "e.g. reproducing the double-charge on order HC-4821",
+        multiline: true,
+        required: true,
+        confirmLabel: "Move to Test",
+      });
+      if (r === null) return;
+      reason = r;
+    } else {
+      const ok = await confirm({
+        title: `Return ${c.businessName} to Live`,
+        message:
+          "The sandbox session will be closed and kept for reference. The kitchen returns to its " +
+          "real data and can take real orders again.",
+        confirmLabel: "Return to Live",
+      });
+      if (!ok) return;
+    }
+
+    setBusyId(c.id);
+    try {
+      await hcAdmin.patch(`/chefs/${c.id}/mode`, { mode: next, reason });
+      // Follow the kitchen into the world it now lives in, so the admin isn't
+      // left looking at an empty list wondering where it went.
+      setMode(next);
+      await mutate();
+    } catch (e) {
+      // A blocked flip comes back as 409 with a list of what is in the way.
+      const blockers =
+        e instanceof GatewayError && e.body && typeof e.body === "object" && "blockers" in e.body
+          ? (e.body.blockers as string[])
+          : undefined;
+      setError(
+        blockers?.length
+          ? `Cannot move to Test yet — ${blockers.join(", ")}.`
+          : e instanceof Error
+            ? e.message
+            : "Could not change mode",
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function act(id: string, action: "verify" | "suspend" | "reject") {
     setError(null);
@@ -383,7 +452,25 @@ export default function HomechefChefsPage() {
           className="h-9 w-72 rounded-md border border-border bg-background px-3 text-sm"
         />
         <div className="flex gap-1">
-          {STATUS_FILTERS.map((f) => (
+          <div className="inline-flex items-center gap-1">
+          {MODE_FILTERS.map((f) => (
+            <button
+              key={f.key || "all"}
+              type="button"
+              onClick={() => setModeFilter(f.key)}
+              className={
+                "rounded-md px-2.5 py-1 text-xs font-medium transition-colors " +
+                (modeFilter === f.key
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground")
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {STATUS_FILTERS.map((f) => (
             <button
               key={f.key}
               onClick={() => setStatus(f.key)}
@@ -461,7 +548,10 @@ export default function HomechefChefsPage() {
                     <td className="px-4 py-3 tabular-nums">{c.totalOrders}</td>
                     <td className="px-4 py-3 tabular-nums">{formatINR(c.totalRevenue)}</td>
                     <td className="px-4 py-3">
-                      <StatusBadge label={s.label} tone={s.tone} />
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge label={s.label} tone={s.tone} />
+                        {c.mode === "test" && <StatusBadge label="TEST" tone="warning" />}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
@@ -496,6 +586,26 @@ export default function HomechefChefsPage() {
                           <Button size="sm" disabled={busy} onClick={() => act(c.id, "verify")}>
                             Reinstate
                           </Button>
+                        )}
+                        {/* Only a verified kitchen can be sandboxed — an
+                            unapproved one has nothing worth cloning yet. */}
+                        {c.isVerified && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => setChefMode(c, c.mode === "test" ? "live" : "test")}
+                          >
+                            {c.mode === "test" ? "Return to Live" : "Move to Test"}
+                          </Button>
+                        )}
+                        {c.mode === "test" && (
+                          <Link
+                            href={`/admin/apps/homechef/chefs/${c.id}/test-sessions`}
+                            className="inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                          >
+                            Sessions
+                          </Link>
                         )}
                       </div>
                     </td>

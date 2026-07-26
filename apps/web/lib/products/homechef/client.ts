@@ -9,6 +9,12 @@ export class GatewayError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    /**
+     * The full parsed error body. Some endpoints answer with more than a code —
+     * a blocked chef mode flip returns 409 with `blockers: [...]` naming exactly
+     * what is in the way — and the UI can only show that if it survives here.
+     */
+    readonly body?: unknown,
   ) {
     super(code);
     this.name = "GatewayError";
@@ -32,7 +38,7 @@ async function parse<T>(res: Response): Promise<T> {
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
     const code = (data && typeof data === "object" && "error" in data && String(data.error)) || `http_${res.status}`;
-    throw new GatewayError(res.status, code);
+    throw new GatewayError(res.status, code, data);
   }
   return data as T;
 }
@@ -44,6 +50,14 @@ export const hcAdmin = {
   put<T>(adminPath: string, body?: unknown): Promise<T> {
     return fetch(buildUrl(adminPath), {
       method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }).then((r) => parse<T>(r));
+  },
+  patch<T>(adminPath: string, body?: unknown): Promise<T> {
+    return fetch(buildUrl(adminPath), {
+      method: "PATCH",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: body !== undefined ? JSON.stringify(body) : undefined,

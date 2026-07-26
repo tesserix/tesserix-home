@@ -87,6 +87,27 @@ export interface ChefWithStats {
   menuItemCount: number;
   documentCount: number;
   onlineStatus: string;
+  /** "live" (a real kitchen) or "test" (a sandbox kitchen). Absent reads live. */
+  mode?: "live" | "test";
+  /** Set once the kitchen has ever been live. Absent = born-test, hidden from customers. */
+  firstLiveAt?: string | null;
+  activeTestSessionId?: string | null;
+}
+
+/** One debugging episode for one kitchen. See GET /admin/chefs/:id/test-sessions. */
+export interface ChefTestSession {
+  id: string;
+  chefId: string;
+  sessionNo: number;
+  status: "open" | "closed" | "purged";
+  reason: string;
+  orderWindowDays: number;
+  clonedAt?: string | null;
+  /** Per-table row counts written by the clone, e.g. {"menu_items":42,"orders":118}. */
+  cloneSummary?: string;
+  openedAt: string;
+  closedAt?: string | null;
+  purgedAt?: string | null;
 }
 
 export interface FSSAILockedChef {
@@ -671,6 +692,14 @@ export interface PaymentGatewayStatus {
   webhookSecretSet: boolean;
   /** Leading fragment of the key id — enough to tell test from live, never the key. */
   keyPrefix: string;
+  /** Which credential slot this status describes: "live" or "test". */
+  slot?: string;
+  /**
+   * Set when the slot holds a key of the wrong kind — e.g. a test key sitting
+   * in the Live slot while a real live key is still pending. A warning rather
+   * than a hard error, because that interim state is legitimate.
+   */
+  slotWarning?: string;
   error: string;
 }
 

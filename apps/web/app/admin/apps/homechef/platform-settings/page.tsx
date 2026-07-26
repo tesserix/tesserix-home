@@ -19,6 +19,7 @@ import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { useConfirm } from "@/components/admin/confirm-dialog";
+import { TestModeViewersSection } from "@/components/admin/homechef/test-mode-viewers";
 import type {
   PlatformPolicy,
   ReferralConfig,
@@ -451,6 +452,7 @@ export default function HomechefPlatformSettingsPage() {
       <PolicySection />
       <SubscriptionPricingSection />
       <ReferralSection />
+      <TestModeViewersSection />
     </div>
   );
 }

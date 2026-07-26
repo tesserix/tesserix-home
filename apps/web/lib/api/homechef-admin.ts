@@ -106,7 +106,7 @@ export function buildSignedHeaders(
   };
 }
 
-export type AdminMethod = "GET" | "POST" | "PUT" | "DELETE";
+export type AdminMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 interface RequestOptions {
   body?: unknown;
