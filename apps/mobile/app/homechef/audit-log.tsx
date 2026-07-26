@@ -36,6 +36,8 @@ export default function AuditLog() {
   const p = usePalette();
   const [action, setAction] = useState('');
   const [entityType, setEntityType] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
 
   const q = useAuditLogs({
@@ -43,13 +45,15 @@ export default function AuditLog() {
     limit: LIMIT,
     ...(action ? { action } : {}),
     ...(entityType ? { entityType } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
   });
   const logs = q.data?.logs ?? [];
   const total = q.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / (q.data?.limit || LIMIT)));
 
   function setFilter(fn: () => void) { fn(); setPage(1); }
-  const hasFilter = action !== '' || entityType !== '';
+  const hasFilter = action !== '' || entityType !== '' || from !== '' || to !== '';
 
   return (
     <Screen>
@@ -57,7 +61,9 @@ export default function AuditLog() {
       <View style={{ paddingHorizontal: space[4], gap: 10, paddingBottom: space[2] }}>
         <SearchField value={action} onChangeText={(t) => setFilter(() => setAction(t))} placeholder="Filter action (e.g. chef.payout.update)" />
         <SearchField value={entityType} onChangeText={(t) => setFilter(() => setEntityType(t))} placeholder="Filter entity (e.g. chef)" />
-        {hasFilter ? <Button label="Clear filters" variant="secondary" onPress={() => setFilter(() => { setAction(''); setEntityType(''); })} /> : null}
+        <SearchField value={from} onChangeText={(t) => setFilter(() => setFrom(t))} placeholder="From (YYYY-MM-DD)" />
+        <SearchField value={to} onChangeText={(t) => setFilter(() => setTo(t))} placeholder="To (YYYY-MM-DD)" />
+        {hasFilter ? <Button label="Clear filters" variant="secondary" onPress={() => setFilter(() => { setAction(''); setEntityType(''); setFrom(''); setTo(''); })} /> : null}
       </View>
       {q.isLoading ? (
         <LoadingRows />

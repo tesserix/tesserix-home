@@ -13,7 +13,7 @@ import {
 } from '../../lib/hooks';
 import { apiError } from '../../lib/api';
 import { useConfirm } from '../prompt';
-import { usePalette, radius, space, text } from '../../lib/theme';
+import { usePalette, radius, text } from '../../lib/theme';
 
 // 0=Sunday..6=Saturday — index IS the value stored in operatingDays (matches Go's
 // time.Weekday()). Do not reorder: Monday-first would shift every day by one.

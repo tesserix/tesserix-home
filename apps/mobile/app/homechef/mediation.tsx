@@ -67,7 +67,7 @@ export default function Mediation() {
                 {m.filename ? <Text style={[text.caption, { color: p.mutedForeground, marginTop: 6 }]}>Attachment: {m.filename}</Text> : null}
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
                   <View style={{ flex: 1 }}><Button label="Relay" onPress={() => relay(m)} loading={busy && act.variables?.action === 'relay'} disabled={busy} /></View>
-                  <View style={{ flex: 1 }}><Button label="Block" variant="secondary" tone="danger" onPress={() => block(m)} disabled={busy} /></View>
+                  <View style={{ flex: 1 }}><Button label="Block" variant="secondary" tone="danger" onPress={() => block(m)} loading={busy && act.variables?.action === 'block'} disabled={busy} /></View>
                 </View>
               </Card>
             );
