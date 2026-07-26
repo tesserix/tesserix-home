@@ -4,6 +4,7 @@ import {
   ChevronLeft, ShoppingBag, ChefHat, ClipboardCheck, Truck, ShieldCheck, CalendarRange,
   Wallet, Star, LifeBuoy, Users, BadgeIndianRupee, UserCog, BarChart3, Scale, PackageX, LayoutDashboard,
   Landmark, RotateCcw, CreditCard, SlidersHorizontal, Megaphone, Gift, Sparkles, TicketPercent,
+  Settings2, ScrollText, MessagesSquare,
 } from 'lucide-react-native';
 import { ListRow, Screen, ScreenHeader, SectionLabel, Badge } from '../../components/kit';
 import { usePalette, space } from '../../lib/theme';
@@ -42,8 +43,13 @@ const SECTIONS = [
     { title: 'Reviews', sub: 'Moderate ratings', icon: Star, route: '/homechef/reviews', live: true },
     { title: 'Support', sub: 'Tickets + refunds', icon: LifeBuoy, route: '/homechef/support', live: true },
     { title: 'Users', sub: 'Customers, chefs, drivers', icon: Users, route: '/homechef/users', live: true },
-    { title: 'Staff', sub: 'Internal team + roles', icon: UserCog, route: '/homechef/staff', live: false },
+    { title: 'Staff', sub: 'Internal team + roles', icon: UserCog, route: '/homechef/staff', live: true },
     { title: 'Analytics', sub: 'KPIs + trends', icon: BarChart3, route: '/homechef/analytics', live: true },
+  ]},
+  { group: 'Settings & mediation', items: [
+    { title: 'Platform settings', sub: 'Fees, pricing & referrals', icon: Settings2, route: '/homechef/platform-settings', live: true },
+    { title: 'Audit log', sub: 'Admin action trail', icon: ScrollText, route: '/homechef/audit-log', live: true },
+    { title: 'Mediation', sub: 'Message relay queue', icon: MessagesSquare, route: '/homechef/mediation', live: true },
   ]},
 ] as const;
 
