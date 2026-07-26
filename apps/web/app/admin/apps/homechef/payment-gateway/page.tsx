@@ -76,10 +76,21 @@ function RazorpayCard({ slot }: { slot: "live" | "test" }) {
       return;
     }
 
-    const nextMode = form.keyId.startsWith("rzp_live_") ? "live" : "test";
+    // A Razorpay key says which kind it is. Saving a mismatched one is allowed —
+    // the Live slot legitimately holds a test key until a real live key exists —
+    // but the admin should be told at the moment they decide, not discover it
+    // later from a banner.
+    const keyKind = form.keyId.startsWith("rzp_live_") ? "live" : "test";
+    const mismatch = keyKind !== slot;
     const ok = await confirm({
       title: `Replace the Razorpay ${slot} keys?`,
       message:
+        (mismatch
+          ? `Heads up: this is a ${keyKind.toUpperCase()} key going into the ${slot.toUpperCase()} slot. ` +
+            (slot === "live"
+              ? "No real payment will be captured until a live key replaces it. "
+              : "Sandbox orders would charge real cards. ")
+          : "") +
         "Every payment and refund from now on uses this merchant account. If it is a different account, existing chef payout links (Route linked accounts) and your webhook will stop resolving — silently. Re-check the webhook and chef payouts after saving.",
       confirmLabel: "Replace keys",
       tone: "destructive",
