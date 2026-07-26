@@ -63,8 +63,7 @@
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "2CRHRRYBPL",
-        "ascAppId": "REPLACE_WITH_ADMIN_ASC_APP_ID"
+        "appleTeamId": "2CRHRRYBPL"
       },
       "android": {
         "track": "internal",
