@@ -18,6 +18,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.tesserix.admin",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": ["tesserix-admin"]
