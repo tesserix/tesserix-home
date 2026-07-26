@@ -34,6 +34,12 @@ export default function Winback() {
   }, [cfg.data]);
 
   function onSave() {
+    // Guard blank/NaN inputs: Number('') is 0 and 'abc' is NaN — either would
+    // silently persist a wrong discount/day value on this live config save.
+    if (FIELDS.some((f) => { const v = form[f.key] ?? ''; return v.trim() === '' || !Number.isFinite(Number(v)); })) {
+      Alert.alert('Check your numbers', 'Every field must be a valid amount.');
+      return;
+    }
     const body: WinbackConfig = {
       enabled,
       discountPercent: Number(form.discountPercent),

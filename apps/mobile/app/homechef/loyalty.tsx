@@ -37,6 +37,12 @@ export default function Loyalty() {
   }, [cfg.data]);
 
   function onSave() {
+    // Guard blank/NaN inputs: Number('') is 0 and 'abc' is NaN — either would
+    // silently persist a wrong points/tier value on this live config save.
+    if (FIELDS.some((f) => { const v = form[f.key] ?? ''; return v.trim() === '' || !Number.isFinite(Number(v)); })) {
+      Alert.alert('Check your numbers', 'Every field must be a valid amount.');
+      return;
+    }
     const body: LoyaltyConfig = {
       enabled,
       pointsPerRupee: Number(form.pointsPerRupee),
