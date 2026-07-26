@@ -9,7 +9,6 @@ import Link from "next/link";
 
 import { formatDate, formatDateTime, formatINR, titleCase, type ChefWithStats, type Paginated } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
-import { useHomechefMode } from "@/components/admin/homechef/mode-toggle";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
 const MODE_FILTERS = [
@@ -327,7 +326,6 @@ export default function HomechefChefsPage() {
   const { confirm, prompt } = useConfirm();
 
   const [modeFilter, setModeFilter] = useState("");
-  const { setMode } = useHomechefMode();
 
   const { data, isLoading, mutate } = useSWR<Paginated<ChefWithStats>>(
     ["/chefs", { search, status, mode: modeFilter, page: 1, limit: 50 }],
@@ -371,9 +369,9 @@ export default function HomechefChefsPage() {
     setBusyId(c.id);
     try {
       await hcAdmin.patch(`/chefs/${c.id}/mode`, { mode: next, reason });
-      // Follow the kitchen into the world it now lives in, so the admin isn't
-      // left looking at an empty list wondering where it went.
-      setMode(next);
+      // Show the kitchen in its new world rather than leaving the admin staring
+      // at a filter that no longer matches the row they just changed.
+      if (modeFilter && modeFilter !== next) setModeFilter(next);
       await mutate();
     } catch (e) {
       // A blocked flip comes back as 409 with a list of what is in the way.
