@@ -16,7 +16,6 @@ import type {
   MealPlanRow,
   ApprovalRequest,
   SupportTicket,
-  StaffMember,
   WalletResponse,
   AdminCancellationRequest,
   OrderIssue,
@@ -47,6 +46,8 @@ import type {
   PlatformPolicy,
   SubscriptionPricing,
   ReferralConfig,
+  AuditLogResponse,
+  MediatedMessage,
 } from '@tesserix/homechef-shared';
 
 // These three shapes are returned by the HomeChef admin gateway but are NOT part
@@ -90,6 +91,32 @@ export interface PendingRefundDay {
   refundAmount: number;
 }
 
+// The Go StaffMemberResponse is FLAT — email/name/joinedAt at the top level, not
+// nested under `user`. The shared StaffMember is mis-shaped (nested user + createdAt);
+// declare the real wire shape locally, matching the web page's page-local override.
+export interface StaffRow {
+  id: string;
+  userId: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  staffRole: string;
+  department?: string;
+  title?: string;
+  isActive: boolean;
+  permissions?: string[];
+  lastActiveAt?: string;
+  joinedAt?: string;
+}
+
+export interface StaffInvitation {
+  id: string;
+  email: string;
+  staffRole: string;
+  status: string;
+  createdAt: string;
+}
+
 export const qk = {
   stats: ['hc', 'stats'] as const,
   analytics: ['hc', 'analytics'] as const,
@@ -124,6 +151,9 @@ export const qk = {
   platformPolicy: ['hc', 'platform-policy'] as const,
   subscriptionPricing: ['hc', 'subscription-pricing'] as const,
   referralConfig: ['hc', 'referral-config'] as const,
+  staffInvitations: (p: object) => ['hc', 'staff-invitations', p] as const,
+  auditLogs: (p: object) => ['hc', 'audit-logs', p] as const,
+  mediationInbox: ['hc', 'mediation-inbox'] as const,
 };
 
 export const useStats = () => useQuery({ queryKey: qk.stats, queryFn: () => hc.get<AdminStats>('/stats') });
@@ -154,7 +184,7 @@ export const useApprovals = (p: {
 export const useTickets = (p: { status?: string; page?: number; limit?: number }) =>
   useQuery({ queryKey: qk.tickets(p), queryFn: () => hc.get<Paginated<SupportTicket>>('/support/tickets', p) });
 export const useStaff = (p: { page?: number; limit?: number }) =>
-  useQuery({ queryKey: qk.staff(p), queryFn: () => hc.get<Paginated<StaffMember>>('/staff', p) });
+  useQuery({ queryKey: qk.staff(p), queryFn: () => hc.get<Paginated<StaffRow>>('/staff', p) });
 export const useWallet = (userId: string) =>
   useQuery({ queryKey: qk.wallet(userId), queryFn: () => hc.get<WalletResponse>(`/wallet/${userId}`), enabled: !!userId });
 
@@ -573,5 +603,59 @@ export function useSaveReferralConfig() {
   return useMutation({
     mutationFn: (c: ReferralConfig) => hc.put('/referral/config', c),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.referralConfig }),
+  });
+}
+
+// ---- Staff: invitations + activate/deactivate ------------------------------
+export const useStaffInvitations = (p: { page?: number; limit?: number }) =>
+  useQuery({ queryKey: qk.staffInvitations(p), queryFn: () => hc.get<Paginated<StaffInvitation>>('/staff/invitations', p) });
+
+export function useInviteStaff() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { email: string; staffRole: string }) => hc.post('/staff/invitations', a),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'staff-invitations'] }),
+  });
+}
+
+// revoke | resend → PUT /staff/invitations/:id/:action (no body).
+export function useStaffInvitationAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; action: 'revoke' | 'resend' }) => hc.put(`/staff/invitations/${a.id}/${a.action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'staff-invitations'] }),
+  });
+}
+
+// deactivate | reactivate → PUT /staff/:id/:action (no body). NOTE: bring-back is
+// `/reactivate`, NOT `/activate`.
+export function useSetStaffActive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; action: 'deactivate' | 'reactivate' }) => hc.put(`/staff/${a.id}/${a.action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hc', 'staff'] }),
+  });
+}
+
+// ---- Audit Log (read-only) -------------------------------------------------
+// FLAT envelope { logs, total, page, limit } — NOT Paginated<T>. Filters are free
+// text; only non-empty ones are sent.
+export const useAuditLogs = (p: { action?: string; entityType?: string; from?: string; to?: string; page?: number; limit?: number }) =>
+  useQuery({ queryKey: qk.auditLogs(p), queryFn: () => hc.get<AuditLogResponse>('/audit-logs', p) });
+
+// ---- Mediation: inbox + relay/block ----------------------------------------
+export const useMediationInbox = () =>
+  useQuery({
+    queryKey: qk.mediationInbox,
+    queryFn: () => hc.get<{ data: MediatedMessage[] }>('/messages/inbox'),
+    refetchInterval: 20_000,
+  });
+
+// relay | block → POST /messages/:id/:action (no body).
+export function useMediationAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (a: { id: string; action: 'relay' | 'block' }) => hc.post(`/messages/${a.id}/${a.action}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.mediationInbox }),
   });
 }
