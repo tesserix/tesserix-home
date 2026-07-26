@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import { formatDateTime, titleCase, type AuditLogEntry } from '@tesserix/homechef-shared';
 import { BackButton, Button, Card, EmptyState, LoadingRows, Screen, ScreenHeader, SearchField } from '../../components/kit';
 import { useAuditLogs } from '../../lib/hooks';
-import { usePalette, radius, space, text } from '../../lib/theme';
+import { usePalette, space, text } from '../../lib/theme';
 
 const LIMIT = 50;
 
