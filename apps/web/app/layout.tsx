@@ -48,14 +48,9 @@ export const metadata: Metadata = {
     title: "Tesserix - Commerce Infrastructure for Growing Businesses",
     description:
       "Launch your marketplace in days, not months. Tesserix provides enterprise-grade commerce infrastructure for growing businesses.",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Tesserix - Commerce Infrastructure",
-      },
-    ],
+    // og:image is supplied by app/opengraph-image.tsx (Next file convention) —
+    // an on-domain generated PNG. Do not re-add an explicit `images` here, or
+    // it overrides the generated route and can point at a 404 again.
   },
   twitter: {
     card: "summary_large_image",
@@ -64,7 +59,7 @@ export const metadata: Metadata = {
       "Launch your marketplace in days, not months. Enterprise-grade commerce infrastructure for growing businesses.",
     site: "@tesserix",
     creator: "@tesserix",
-    images: ["/og-image.png"],
+    // twitter:image also comes from app/opengraph-image.tsx.
   },
   robots: {
     index: true,
