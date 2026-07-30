@@ -30,6 +30,10 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/about",
   "/contact",
   "/products",
+  // Public launch countdown pages (and their generated OG images) — shared
+  // on social media, so they must render for anonymous visitors and for the
+  // Facebook/LinkedIn link-preview crawlers.
+  "/launch",
   "/login",
   "/api/health",
   "/api/contact",
