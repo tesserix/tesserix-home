@@ -707,6 +707,28 @@ export interface StripeGatewayStatus extends PaymentGatewayStatus {
   publishableKeySet: boolean;
 }
 
+/**
+ * Cashfree's per-slot status. Same shape as Razorpay's — including the ?mode=
+ * slot selector — because the two gateways have identical live/test credential
+ * slots.
+ *
+ * `environment` is the one field with no Razorpay counterpart, and it is the
+ * field that matters most here. Razorpay serves live and test from ONE host and
+ * tells them apart by key prefix; Cashfree uses two different hosts
+ * (sandbox.cashfree.com vs api.cashfree.com). So "which environment is this slot
+ * actually talking to" is a real, separate question from "what is the slot
+ * called", and a disagreement between the two is exactly what slotWarning flags:
+ * test credentials in the Live slot do not degrade gracefully, they 401.
+ *
+ * keyPrefix carries the leading fragment of the App ID (Cashfree's x-client-id).
+ * The App ID is a public client identifier, not a secret — but only a prefix is
+ * returned, matching the Razorpay contract.
+ */
+export interface CashfreeGatewayStatus extends PaymentGatewayStatus {
+  /** "sandbox" | "production" | "unknown" — derived from the resolved host. */
+  environment: string;
+}
+
 // The API test-fires the new credentials against the gateway before storing
 // them; `verified` is that result and `testError` the gateway's complaint.
 export interface UpdateKeysResponse {
