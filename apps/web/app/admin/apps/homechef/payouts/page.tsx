@@ -19,11 +19,14 @@ import {
 
 import { AdminHeader } from "@/components/admin/header";
 import { PayoutRailPanel } from "@/components/admin/homechef/payout-rail-panel";
+import { ChefPayoutProfileCard } from "@/components/admin/homechef/chef-payout-profile";
+import { PayoutBatchesPanel } from "@/components/admin/homechef/payout-batches-panel";
 import {
   formatCurrency,
   formatNumber,
 } from "@/components/admin/metrics/format";
 import { useConfirm } from "@/components/admin/confirm-dialog";
+import { hcAdmin } from "@/lib/products/homechef/client";
 
 interface StatementRow {
   id: string;
@@ -72,7 +75,10 @@ function HomechefPayoutsInner() {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const { prompt } = useConfirm();
+  // Bumped after a prepare so the batches panel refetches and shows the new
+  // batch awaiting approval.
+  const [batchesReload, setBatchesReload] = useState(0);
+  const { prompt, confirm } = useConfirm();
 
   const queryString = useCallback(() => {
     const p = new URLSearchParams();
@@ -140,6 +146,28 @@ function HomechefPayoutsInner() {
     }
   }
 
+  // Builds the Cashfree batch for a pending statement. No money moves here —
+  // the batch lands in the queue above, where approval and execution live.
+  async function payViaCashfree(row: StatementRow) {
+    const ok = await confirm({
+      title: "Prepare Cashfree payout",
+      message: `Build a disbursement batch for ${inr(row.net_payout)} to ${row.chef_name ?? row.chef_id.slice(0, 8)} (week of ${row.week_start.slice(0, 10)})? The batch waits for approval — nothing is sent yet.`,
+      confirmLabel: "Prepare batch",
+    });
+    if (!ok) return;
+    setBusyId(row.id);
+    try {
+      await hcAdmin.post(`/payouts/statements/${row.id}/prepare`);
+      setBatchesReload((n) => n + 1);
+    } catch (e) {
+      window.alert(
+        `Failed to prepare: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const inr = (n: number) => formatCurrency(n, "INR");
 
   return (
@@ -154,6 +182,10 @@ function HomechefPayoutsInner() {
         </p>
 
         <PayoutRailPanel />
+
+        {chefId ? <ChefPayoutProfileCard chefId={chefId} /> : null}
+
+        <PayoutBatchesPanel key={batchesReload} chefId={chefId || undefined} />
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-3">
@@ -296,13 +328,22 @@ function HomechefPayoutsInner() {
                           {r.payout_ref?.slice(0, 16) ?? "paid"}
                         </span>
                       ) : (
-                        <button
-                          onClick={() => void markPaid(r)}
-                          disabled={busyId === r.id}
-                          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
-                        >
-                          {busyId === r.id ? "Saving…" : "Mark paid"}
-                        </button>
+                        <div className="flex gap-1.5">
+                          <button
+                            onClick={() => void payViaCashfree(r)}
+                            disabled={busyId === r.id}
+                            className="rounded-md bg-foreground px-2 py-1 text-xs font-medium text-background disabled:opacity-50"
+                          >
+                            {busyId === r.id ? "…" : "Pay via Cashfree"}
+                          </button>
+                          <button
+                            onClick={() => void markPaid(r)}
+                            disabled={busyId === r.id}
+                            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+                          >
+                            Mark paid
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
