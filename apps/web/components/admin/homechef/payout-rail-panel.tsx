@@ -36,6 +36,8 @@ interface PayoutRailStatus {
    * is one IP change away from silently disbursing nothing.
    */
   signatureConfigured: boolean;
+  signingKeyFingerprint?: string;
+  clientSecretSet?: boolean;
   webhookSecretSet: boolean;
   slotWarning?: string;
   error: string;
@@ -71,13 +73,20 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
   async function save() {
     setError(null);
     setResult(null);
-    if (!form.clientId.trim() || !form.clientSecret.trim()) {
-      setError("Both the Client ID and Client Secret are required.");
+    const clientId = form.clientId.trim();
+    const clientSecret = form.clientSecret.trim();
+    const publicKey = form.publicKey.trim();
+    if (!clientId && !clientSecret && !publicKey) {
+      setError("Enter the fields you want to update — untouched ones keep their stored value.");
+      return;
+    }
+    if (Boolean(clientId) !== Boolean(clientSecret)) {
+      setError("Client ID and Client Secret must be replaced together.");
       return;
     }
 
     const ok = await confirm({
-      title: `Replace the Cashfree Payouts ${slot} credentials?`,
+      title: `Update the Cashfree Payouts ${slot} credentials?`,
       message:
         slot === "live"
           ? "Every automatic chef and rider payout from now on is sent from this account. A payout cannot be reversed by the platform — unlike a refund, getting money back means asking the recipient to return it."
@@ -91,9 +100,9 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
     try {
       const res = await hcAdmin.put<UpdateResponse>("/payouts/cashfree/keys", {
         mode: slot,
-        clientId: form.clientId.trim(),
-        clientSecret: form.clientSecret.trim(),
-        publicKey: form.publicKey.trim() || undefined,
+        clientId: clientId || undefined,
+        clientSecret: clientSecret || undefined,
+        publicKey: publicKey || undefined,
       });
       setResult(res);
       // Never keep a secret in component state after it has been sent.
@@ -153,9 +162,21 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
             <span className="font-mono text-xs">{data.keyPrefix || "—"}</span>
           </div>
           <div className="flex items-center justify-between py-1">
+            <span className="text-muted-foreground">Client Secret</span>
+            <span className="font-mono text-xs">
+              {data.clientSecretSet ? "••••••••  on file" : "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between py-1">
             <span className="text-muted-foreground">Environment</span>
             <span className="font-mono text-xs">{data.environment || "—"}</span>
           </div>
+          {data.signingKeyFingerprint ? (
+            <div className="flex items-center justify-between py-1">
+              <span className="text-muted-foreground">Signing key</span>
+              <span className="font-mono text-xs">{data.signingKeyFingerprint}</span>
+            </div>
+          ) : null}
           {/* Called out on its own row rather than buried in the warning,
               because it is a standing property of the slot, not an error. */}
           <div className="flex items-center justify-between py-1">
@@ -182,7 +203,11 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
             className="w-full rounded-md border px-3 py-2 font-mono text-xs"
             value={form.clientId}
             onChange={(e) => setForm({ ...form, clientId: e.target.value })}
-            placeholder="CF1234567ABCDEF…"
+            placeholder={
+              data?.configured && data.keyPrefix
+                ? `On file: ${data.keyPrefix} — type to replace`
+                : "CF1234567ABCDEF…"
+            }
             autoComplete="off"
           />
           <span className="block text-xs text-muted-foreground">
@@ -197,6 +222,7 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
             className="w-full rounded-md border px-3 py-2 font-mono text-xs"
             value={form.clientSecret}
             onChange={(e) => setForm({ ...form, clientSecret: e.target.value })}
+            placeholder={data?.clientSecretSet ? "•••••••• on file — type to replace" : ""}
             autoComplete="new-password"
           />
         </label>
@@ -208,7 +234,11 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
           className="h-24 w-full rounded-md border px-3 py-2 font-mono text-xs"
           value={form.publicKey}
           onChange={(e) => setForm({ ...form, publicKey: e.target.value })}
-          placeholder="-----BEGIN PUBLIC KEY-----&#10;…&#10;-----END PUBLIC KEY-----"
+          placeholder={
+            data?.signingKeyFingerprint
+              ? `On file (${data.signingKeyFingerprint}) — paste a new PEM to replace`
+              : "-----BEGIN PUBLIC KEY-----\n…\n-----END PUBLIC KEY-----"
+          }
           autoComplete="off"
         />
         <span className="block text-xs text-muted-foreground">
@@ -235,7 +265,11 @@ function PayoutRailCard({ slot }: { slot: "live" | "test" }) {
         disabled={saving}
         className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
       >
-        {saving ? "Verifying…" : "Replace credentials"}
+        {saving
+          ? "Verifying…"
+          : data?.configured
+            ? "Save changes"
+            : "Save credentials"}
       </button>
     </div>
   );
