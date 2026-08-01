@@ -46,6 +46,11 @@ interface ChefPayoutProfile {
     autoCapMinor: number;
     autoCapUnreadable: boolean;
   };
+  easySplit?: {
+    enabled: boolean;
+    vendorId: string;
+    status: string;
+  };
 }
 
 const AUTOMATION_CHOICES = [
@@ -117,6 +122,27 @@ export function ChefPayoutProfileCard({ chefId }: { chefId: string }) {
     }
     await run(`auto-${value || "default"}`, () =>
       hcAdmin.put(`/chefs/${chefId}/disburse-automation`, { value }),
+    );
+  }
+
+  async function registerEasySplit() {
+    const ok = await confirm({
+      title: "Register this chef as an Easy Split vendor?",
+      message:
+        "Sends the chef's bank details on file to Cashfree Easy Split. Once Cashfree verifies " +
+        "the destination (status ACTIVE), paid orders settle the chef's net share straight " +
+        "from capture — the platform never holds their money.",
+      confirmLabel: "Register vendor",
+    });
+    if (!ok) return;
+    await run("es-register", () =>
+      hcAdmin.post(`/chefs/${chefId}/easy-split/register`),
+    );
+  }
+
+  async function refreshEasySplit() {
+    await run("es-refresh", () =>
+      hcAdmin.post(`/chefs/${chefId}/easy-split/refresh`),
     );
   }
 
@@ -228,6 +254,58 @@ export function ChefPayoutProfileCard({ chefId }: { chefId: string }) {
           )}
         </div>
       </div>
+
+      {data.easySplit ? (
+        <div className="space-y-2 rounded-md border border-border p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">Easy Split vendor</span>
+              <StatusBadge
+                tone={
+                  data.easySplit.status === "ACTIVE"
+                    ? "success"
+                    : data.easySplit.status
+                      ? "warning"
+                      : "neutral"
+                }
+                label={data.easySplit.status || "Not registered"}
+              />
+              {!data.easySplit.enabled ? (
+                <span className="text-xs text-muted-foreground">
+                  (split-at-capture is off platform-wide)
+                </span>
+              ) : null}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void registerEasySplit()}
+                disabled={busy !== null}
+                className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent disabled:opacity-50"
+              >
+                {busy === "es-register"
+                  ? "Registering…"
+                  : data.easySplit.vendorId
+                    ? "Re-register"
+                    : "Register vendor"}
+              </button>
+              {data.easySplit.vendorId ? (
+                <button
+                  onClick={() => void refreshEasySplit()}
+                  disabled={busy !== null}
+                  className="rounded-md border border-border px-3 py-1 text-xs hover:bg-accent disabled:opacity-50"
+                >
+                  {busy === "es-refresh" ? "Refreshing…" : "Refresh status"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            ACTIVE means Cashfree pays this chef&apos;s net share straight from
+            each capture; anything else keeps the chef on the weekly statement
+            path.
+          </p>
+        </div>
+      ) : null}
 
       {data.automation ? (
         <div className="space-y-2 rounded-md border border-border p-3 text-sm">

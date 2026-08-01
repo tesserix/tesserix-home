@@ -20,6 +20,7 @@ import {
 import { AdminHeader } from "@/components/admin/header";
 import { PayoutRailPanel } from "@/components/admin/homechef/payout-rail-panel";
 import { PayoutAutomationPanel } from "@/components/admin/homechef/payout-automation-panel";
+import { SettlementAccountPanel } from "@/components/admin/homechef/settlement-account-panel";
 import { ChefPayoutProfileCard } from "@/components/admin/homechef/chef-payout-profile";
 import { PayoutBatchesPanel } from "@/components/admin/homechef/payout-batches-panel";
 import {
@@ -185,6 +186,8 @@ function HomechefPayoutsInner() {
         <PayoutRailPanel />
 
         <PayoutAutomationPanel />
+
+        <SettlementAccountPanel />
 
         {chefId ? <ChefPayoutProfileCard chefId={chefId} /> : null}
 

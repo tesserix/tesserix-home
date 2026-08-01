@@ -11,6 +11,9 @@ interface PayoutSettings {
   autoDisburseEnabled: boolean;
   autoCapMinor: number;
   autoCapUnreadable: boolean;
+  easySplitEnabled: boolean;
+  platformFeeFlatMinor: number;
+  platformFeeUnreadable: boolean;
 }
 
 export function PayoutAutomationPanel() {
@@ -19,15 +22,23 @@ export function PayoutAutomationPanel() {
     swrFetcher,
   );
   const [capRupees, setCapRupees] = useState("");
+  const [feeRupees, setFeeRupees] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { confirm } = useConfirm();
 
   useEffect(() => {
-    if (data) setCapRupees(data.autoCapMinor > 0 ? String(data.autoCapMinor / 100) : "");
+    if (!data) return;
+    setCapRupees(data.autoCapMinor > 0 ? String(data.autoCapMinor / 100) : "");
+    setFeeRupees(data.platformFeeFlatMinor > 0 ? String(data.platformFeeFlatMinor / 100) : "");
   }, [data]);
 
-  async function save(body: { autoDisburseEnabled?: boolean; autoCapMinor?: number }) {
+  async function save(body: {
+    autoDisburseEnabled?: boolean;
+    autoCapMinor?: number;
+    easySplitEnabled?: boolean;
+    platformFeeFlatMinor?: number;
+  }) {
     setBusy(true);
     setError(null);
     try {
@@ -64,6 +75,33 @@ export function PayoutAutomationPanel() {
       return;
     }
     await save({ autoCapMinor: Math.round(rupees * 100) });
+  }
+
+  async function toggleEasySplit() {
+    if (!data) return;
+    if (!data.easySplitEnabled) {
+      const ok = await confirm({
+        title: "Enable split-at-capture (Easy Split)?",
+        message:
+          "New Cashfree checkouts will pay each chef's net share straight from capture — the " +
+          "platform never holds their money. Only chefs with an ACTIVE Easy Split vendor are " +
+          "split; everyone else stays on the weekly statement path. The remainder (commission, " +
+          "GST, TDS, delivery money and the flat fee) settles to the company account.",
+        confirmLabel: "Enable Easy Split",
+      });
+      if (!ok) return;
+    }
+    await save({ easySplitEnabled: !data.easySplitEnabled });
+  }
+
+  async function saveFee() {
+    const trimmed = feeRupees.trim();
+    const rupees = trimmed === "" ? 0 : Number(trimmed);
+    if (!Number.isFinite(rupees) || rupees < 0) {
+      setError("Fee must be a non-negative amount in rupees.");
+      return;
+    }
+    await save({ platformFeeFlatMinor: Math.round(rupees * 100) });
   }
 
   if (isLoading || !data) return null;
@@ -119,6 +157,59 @@ export function PayoutAutomationPanel() {
         the default setting; per-chef switches override it. A first disbursement
         to a new destination always waits for a human, an empty cap means no
         amount limit, and every batch still requires an explicit Execute.
+      </p>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+        <div className="flex items-center gap-2">
+          <h3 className="font-semibold">Split at capture (Easy Split)</h3>
+          <StatusBadge
+            tone={data.easySplitEnabled ? "success" : "neutral"}
+            label={data.easySplitEnabled ? "On" : "Off"}
+          />
+          {data.platformFeeUnreadable ? (
+            <StatusBadge tone="danger" label="Fee unreadable — splits paused" />
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Flat platform fee ₹
+            <input
+              value={feeRupees}
+              onChange={(e) => setFeeRupees(e.target.value)}
+              placeholder="0"
+              inputMode="decimal"
+              className="h-8 w-24 rounded-md border border-border bg-background px-2 tabular-nums"
+              aria-label="Flat platform fee per order in rupees"
+            />
+          </label>
+          <button
+            onClick={() => void saveFee()}
+            disabled={busy}
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
+          >
+            Save fee
+          </button>
+          <button
+            onClick={() => void toggleEasySplit()}
+            disabled={busy}
+            className={
+              "rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 " +
+              (data.easySplitEnabled
+                ? "border border-border hover:bg-accent"
+                : "bg-foreground text-background")
+            }
+          >
+            {data.easySplitEnabled ? "Turn off" : "Turn on"}
+          </button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        With Easy Split on, each paid order settles the chef&apos;s net share
+        from capture directly to their verified vendor account — the platform
+        never holds it. The flat fee is deducted from the chef&apos;s share on
+        top of commission; the company&apos;s remainder settles to the current
+        account on file with Cashfree. Chefs without an ACTIVE vendor, credit-
+        funded orders and lapsed-FSSAI kitchens stay on the statement path.
       </p>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </section>
