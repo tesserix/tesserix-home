@@ -10,6 +10,7 @@ import Link from "next/link";
 import { formatDate, formatDateTime, formatINR, titleCase, type ChefWithStats, type Paginated } from "@tesserix/homechef-shared";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
+import { ChefExpensesPanel } from "@/components/admin/homechef/chef-expenses";
 
 const MODE_FILTERS = [
   { key: "", label: "All modes" },
@@ -313,6 +314,8 @@ function ChefDetail({ chef }: { chef: ChefWithStats }) {
       </div>
 
       <ChefDocuments chefId={chef.id} />
+
+      <ChefExpensesPanel chefId={chef.id} />
     </div>
   );
 }
