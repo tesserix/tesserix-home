@@ -39,7 +39,20 @@ interface ChefPayoutProfile {
   razorpaySettlementStatus: string;
   methods: ChefPayoutMethod[];
   rail: { configured: boolean; sandbox: boolean; mode: string };
+  automation?: {
+    disburse: string;
+    globalAutoDisburse: boolean;
+    effective: boolean;
+    autoCapMinor: number;
+    autoCapUnreadable: boolean;
+  };
 }
+
+const AUTOMATION_CHOICES = [
+  { value: "", label: "Default" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+] as const;
 
 function methodTone(status: string): Tone {
   switch (status) {
@@ -86,6 +99,24 @@ export function ChefPayoutProfileCard({ chefId }: { chefId: string }) {
   async function refresh() {
     await run("refresh", () =>
       hcAdmin.post(`/chefs/${chefId}/payout-methods/refresh`),
+    );
+  }
+
+  async function setAutomation(value: string) {
+    if (value === "on") {
+      const ok = await confirm({
+        title: "Auto-approve this chef's payout batches?",
+        message:
+          "New batches for this chef will skip manual approval and land ready to execute. " +
+          "Guardrails still hold: the destination must be Cashfree-verified, the first " +
+          "disbursement to a new bank account always waits for a human, and amounts above " +
+          "the auto-approval cap queue for review.",
+        confirmLabel: "Enable auto-approve",
+      });
+      if (!ok) return;
+    }
+    await run(`auto-${value || "default"}`, () =>
+      hcAdmin.put(`/chefs/${chefId}/disburse-automation`, { value }),
     );
   }
 
@@ -197,6 +228,50 @@ export function ChefPayoutProfileCard({ chefId }: { chefId: string }) {
           )}
         </div>
       </div>
+
+      {data.automation ? (
+        <div className="space-y-2 rounded-md border border-border p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">Batch auto-approve</span>
+              <StatusBadge
+                tone={data.automation.effective ? "success" : "neutral"}
+                label={data.automation.effective ? "Active" : "Manual approval"}
+              />
+            </div>
+            <div className="flex overflow-hidden rounded-md border border-border">
+              {AUTOMATION_CHOICES.map((c) => (
+                <button
+                  key={c.value}
+                  onClick={() => void setAutomation(c.value)}
+                  disabled={busy !== null}
+                  className={
+                    "px-3 py-1 text-xs disabled:opacity-50 " +
+                    (data.automation?.disburse === c.value
+                      ? "bg-foreground text-background"
+                      : "hover:bg-accent")
+                  }
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {data.automation.disburse === ""
+              ? `Following the global auto-disburse flag (${data.automation.globalAutoDisburse ? "on" : "off"}). `
+              : `Overriding the global flag (${data.automation.globalAutoDisburse ? "on" : "off"}). `}
+            Auto-approved batches still require a verified destination; the
+            first disbursement to a new account is always manual
+            {data.automation.autoCapUnreadable
+              ? "; the auto-cap setting is unreadable, so everything queues for review"
+              : data.automation.autoCapMinor > 0
+                ? `; amounts above ₹${(data.automation.autoCapMinor / 100).toLocaleString("en-IN")} queue for review`
+                : ""}
+            . Execution remains a separate admin step.
+          </p>
+        </div>
+      ) : null}
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}

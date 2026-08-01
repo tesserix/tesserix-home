@@ -597,6 +597,14 @@ export default function HomechefChefsPage() {
                             {c.mode === "test" ? "Return to Live" : "Move to Test"}
                           </Button>
                         )}
+                        {c.isVerified && (
+                          <Link
+                            href={`/admin/apps/homechef/payouts?chefId=${c.id}`}
+                            className="inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                          >
+                            Payouts
+                          </Link>
+                        )}
                         {c.mode === "test" && (
                           <Link
                             href={`/admin/apps/homechef/chefs/${c.id}/test-sessions`}
