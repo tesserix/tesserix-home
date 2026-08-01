@@ -174,6 +174,7 @@ const homechefNav: NavEntry[] = [
       { name: "Campaigns", href: "/admin/apps/homechef/campaigns", icon: Megaphone },
       { name: "Win-back", href: "/admin/apps/homechef/winback", icon: Gift },
       { name: "Loyalty", href: "/admin/apps/homechef/loyalty", icon: Sparkles },
+      { name: "Chef Rewards", href: "/admin/apps/homechef/chef-rewards", icon: Gift },
       { name: "Promos", href: "/admin/apps/homechef/promos", icon: TicketPercent },
     ],
   },
