@@ -37,6 +37,7 @@ import {
   Sparkles,
   TicketPercent,
   MessageSquare,
+  MessagesSquare,
   Wallet,
   SlidersHorizontal,
   RotateCcw,
@@ -181,6 +182,9 @@ const homechefNav: NavEntry[] = [
     items: [
       { name: "Support", href: "/admin/apps/homechef/support", icon: LifeBuoy },
       { name: "Mediation", href: "/admin/apps/homechef/messaging", icon: MessageSquare },
+      // The Otto inbox is cross-tenant and lives in the platform nav; surface
+      // it here too, since a chat escalation is what creates the tickets above.
+      { name: "Live chat", href: "/admin/support/live-chat", icon: MessagesSquare },
     ],
   },
   {
