@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { Component, useCallback, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { useToast } from "@tesserix/web";
 
@@ -19,6 +19,40 @@ const OttoInbox = dynamic(
     ),
   },
 );
+
+// Keeps an inbox failure inside the inbox. Without this any render error —
+// including a chunk that 404s after a redeploy — takes down the whole admin
+// route with a bare "Something went wrong", which says nothing about why.
+class InboxBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: { componentStack?: string | null }) {
+    console.error("[live-chat] inbox failed to render", error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
+        <p className="font-medium text-foreground">The chat inbox failed to load.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {this.state.error.message}
+        </p>
+        <p className="mt-3 text-sm text-muted-foreground">
+          A hard refresh (Cmd/Ctrl + Shift + R) clears a stale cached bundle,
+          which is the usual cause right after a deploy.
+        </p>
+      </div>
+    );
+  }
+}
 
 // Cross-tenant "platform mode" inbox for Tesserix support staff. Points the
 // widget at the /api/admin/otto platform proxy and the platform WS routes,
@@ -61,14 +95,16 @@ export function PlatformLiveChatInbox({ currentUserId }: PlatformLiveChatInboxPr
     [toast],
   );
   return (
-    <OttoInbox
-      apiBaseUrl="/api/admin/otto"
-      buildInboxWsUrl={buildInboxWsUrl}
-      buildConversationWsUrl={buildConversationWsUrl}
-      currentUserId={currentUserId}
-      onToast={handleToast}
-      tenantLabels={TENANT_LABELS}
-    />
+    <InboxBoundary>
+      <OttoInbox
+        apiBaseUrl="/api/admin/otto"
+        buildInboxWsUrl={buildInboxWsUrl}
+        buildConversationWsUrl={buildConversationWsUrl}
+        currentUserId={currentUserId}
+        onToast={handleToast}
+        tenantLabels={TENANT_LABELS}
+      />
+    </InboxBoundary>
   );
 }
 
