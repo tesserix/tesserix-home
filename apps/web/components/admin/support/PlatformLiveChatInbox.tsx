@@ -1,10 +1,24 @@
 "use client";
 
 import { useCallback } from "react";
-import { OttoInbox } from "@tesserix/otto-widget";
+import dynamic from "next/dynamic";
 import { useToast } from "@tesserix/web";
 
 import "@tesserix/otto-widget/styles/inbox.css";
+
+// Browser-only: the inbox reaches for AudioContext, Notification and
+// WebSocket, none of which exist while server-rendering. Loading it with
+// ssr:false keeps it off the server pass entirely instead of letting a
+// server render fail the whole route.
+const OttoInbox = dynamic(
+  () => import("@tesserix/otto-widget").then((m) => m.OttoInbox),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="p-6 text-sm text-muted-foreground">Loading the inbox…</div>
+    ),
+  },
+);
 
 // Cross-tenant "platform mode" inbox for Tesserix support staff. Points the
 // widget at the /api/admin/otto platform proxy and the platform WS routes,
