@@ -116,6 +116,9 @@ const mark8lyNav: NavEntry[] = [
   { name: "Subscriptions", href: "/admin/apps/mark8ly/subscriptions", icon: CreditCard },
   { name: "Audit logs", href: "/admin/apps/mark8ly/audit-logs", icon: ScrollText },
   { name: "Leads", href: "/admin/apps/mark8ly/leads", icon: ClipboardList },
+  // Same cross-tenant Otto inbox as the HomeChef rail — staff answer
+  // mark8ly chats from here without switching product context.
+  { name: "Live chat", href: "/admin/support/live-chat", icon: MessagesSquare },
   {
     name: "Notifications",
     icon: Mail,
