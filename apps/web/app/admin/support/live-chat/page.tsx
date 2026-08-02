@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { MessageSquare, Ticket } from "lucide-react";
-import { Button } from "@tesserix/web";
 
 import { AdminHeader } from "@/components/admin/header";
 import { getCurrentSession } from "@/lib/auth/session-jwt";
@@ -28,13 +27,18 @@ export default async function LiveChatPage() {
         description="Real-time support conversations across every Tesserix product."
         icon={<MessageSquare className="h-6 w-6 text-muted-foreground" />}
       />
+      {/* A plain styled Link, not the design-system Button: this page is a
+          server component, and @tesserix/web is in optimizePackageImports —
+          importing a client component through that rewritten barrel breaks
+          the client reference, so it hydrates as undefined (React #130). */}
       <div className="flex items-center justify-end border-b border-border px-6 py-3">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/admin/platform-tickets">
-            <Ticket className="mr-2 h-4 w-4" />
-            Create support ticket
-          </Link>
-        </Button>
+        <Link
+          href="/admin/platform-tickets"
+          className="inline-flex h-8 items-center rounded-md border border-input bg-background px-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <Ticket className="mr-2 h-4 w-4" />
+          Create support ticket
+        </Link>
       </div>
       <div className="min-h-0 flex-1 p-6">
         <PlatformLiveChatInbox currentUserId={session?.sub ?? ""} />
