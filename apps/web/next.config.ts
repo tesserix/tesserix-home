@@ -118,6 +118,11 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+
+  // Ship browser source maps so a production stack trace names the real
+  // component and file. Without them a client-side failure reduces to a
+  // minified React error code, which cannot be diagnosed from the console.
+  productionBrowserSourceMaps: true,
 };
 
 export default nextConfig;
