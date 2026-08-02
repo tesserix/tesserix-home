@@ -49,7 +49,9 @@ export function SupportQueueProvider({ children }: { children: React.ReactNode }
   // Toasting is suppressed on the live-chat page itself (the inbox is the
   // notification there) — tracked via ref so the WS handler stays stable.
   const onLiveChatRef = useRef(false);
-  onLiveChatRef.current = pathname?.startsWith(LIVE_CHAT_PATH) ?? false;
+  useEffect(() => {
+    onLiveChatRef.current = pathname?.startsWith(LIVE_CHAT_PATH) ?? false;
+  }, [pathname]);
   // Escalation toasts can repeat per conversation (each handoff matters),
   // but a reconnect snapshot must not re-toast everything already seen.
   const seenRef = useRef<Set<string>>(new Set());
