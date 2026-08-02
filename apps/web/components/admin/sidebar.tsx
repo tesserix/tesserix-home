@@ -4,6 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
+  Building2,
   LayoutDashboard,
   Settings,
   LogOut,
@@ -224,12 +225,23 @@ const devaiNav: NavEntry[] = [
   { name: "Incidents", href: "/admin/platform-tickets", icon: LifeBuoy },
 ];
 
-type RailContext = "platform" | "mark8ly" | "homechef" | "devai";
+// Dwellm8 secondary nav. Phase A ships the Overview only, like Fe3dr's first
+// cut — the deeper product pages arrive with the dwellm8 branch of the
+// product-scoped API routes.
+const dwellm8Nav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/dwellm8", icon: LayoutDashboard },
+  { name: "Service health", href: "/admin/health", icon: HeartPulse },
+  { name: "Observability", href: "/admin/observability", icon: Gauge },
+  { name: "Incidents", href: "/admin/platform-tickets", icon: LifeBuoy },
+];
+
+type RailContext = "platform" | "mark8ly" | "homechef" | "devai" | "dwellm8";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
   if (pathname.startsWith("/admin/apps/homechef")) return "homechef";
   if (pathname.startsWith("/admin/apps/devai")) return "devai";
+  if (pathname.startsWith("/admin/apps/dwellm8")) return "dwellm8";
   return "platform";
 }
 
@@ -241,6 +253,8 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
       return { label: "Fe3dr", entries: homechefNav };
     case "devai":
       return { label: "DevAI", entries: devaiNav };
+    case "dwellm8":
+      return { label: "Dwellm8", entries: dwellm8Nav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
@@ -466,6 +480,25 @@ function LeftRail({
           </TooltipTrigger>
           <TooltipContent side="right" sideOffset={8}>
             Fe3dr
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/admin/apps/dwellm8"
+              onClick={() => onContextChange("dwellm8")}
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg transition-colors",
+                activeContext === "dwellm8"
+                  ? "bg-sidebar-accent"
+                  : "hover:bg-sidebar-accent/50"
+              )}
+            >
+              <Building2 className="h-5 w-5 text-sidebar-foreground" />
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            Dwellm8
           </TooltipContent>
         </Tooltip>
       </div>

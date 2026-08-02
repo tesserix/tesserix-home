@@ -108,10 +108,38 @@ const devai: ProductConfig = {
   ],
 };
 
+// Dwellm8 — India-first rental management (six Expo apps + one Go API,
+// modular monolith per its ADR-0001). Single namespace `dwellm8`, CNPG
+// cluster `dwellm8-postgres`, one database (dwellm8). No subscriptions —
+// revenue is a payout fee — so pricing is omitted and the billing UI hides.
+// KPI tiles are declared ahead of the product-scoped route; the shared
+// /api/admin/apps/[product]/kpis returns {} for unknown products, so tiles
+// render "—" until the dwellm8 branch lands there.
+const dwellm8: ProductConfig = {
+  id: "dwellm8",
+  name: "Dwellm8",
+  namespace: "dwellm8",
+  cnpgClusterName: "dwellm8-postgres",
+  sendGridProductTag: "dwellm8",
+  rowCountTables: [],
+  costAttribution: {
+    requests: 0.5,
+    storage: 0.3,
+    egress: 0.2,
+  },
+  businessKpiTiles: [
+    { key: "organisations_total", label: "Organisations", hint: "owners + firms", source: "product" },
+    { key: "tenancies_active", label: "Active tenancies", hint: "active + in notice", source: "product" },
+    { key: "listings_live", label: "Live listings", source: "product" },
+    { key: "tickets_open", label: "Open tickets", hint: "maintenance", source: "product" },
+  ],
+};
+
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
   mark8ly,
   homechef,
   devai,
+  dwellm8,
 };
 
 export function getProductConfig(id: string): ProductConfig {

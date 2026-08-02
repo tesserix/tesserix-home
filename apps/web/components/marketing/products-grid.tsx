@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   ArrowUpRight,
+  Building2,
   ChefHat,
   Hospital,
   ShoppingBag,
@@ -71,6 +72,22 @@ const products: Product[] = (
         "Delivery coordination",
       ],
       iconClass: "text-warning",
+    },
+    {
+      slug: "dwellm8",
+      title: "Dwellm8",
+      tagline: "Rent, managed like a record",
+      description:
+        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, the whole tenancy from listing to move-out.",
+      icon: Building2,
+      website: "dwellm8.com",
+      highlights: [
+        "UPI rent, instant receipts",
+        "Maintenance & cost-sharing engine",
+        "Delegated portfolio management",
+        "Six mobile apps, one platform",
+      ],
+      iconClass: "text-primary",
     },
     {
       slug: "medicare",
@@ -257,7 +274,7 @@ export function ProductsGrid() {
                 01 — Products
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
-                Four products.
+                Five products.
                 <br />
                 Each one focused.
               </h2>

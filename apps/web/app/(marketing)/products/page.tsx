@@ -59,6 +59,23 @@ const products: ProductEntry[] = (
       ],
     },
     {
+      slug: "dwellm8",
+      title: "Dwellm8",
+      tagline: "Rent, managed like a record",
+      description:
+        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, and the whole tenancy from listing to move-out.",
+      website: "dwellm8.com",
+      pricing: "Free for owners, 2.99% on payouts",
+      features: [
+        "Tenancy agreements & rent schedules",
+        "UPI rent collection, instant receipts",
+        "Maintenance & cost-sharing engine",
+        "Delegated portfolio management",
+        "Listings, enquiries & applications",
+        "Six mobile apps, one platform",
+      ],
+    },
+    {
       slug: "medicare",
       title: "MediCare",
       tagline: "Hospital management without the bloat",
@@ -209,7 +226,7 @@ export default function ProductsPage() {
               The portfolio.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Four products, four industries. Each one focused on doing a
+              Five products, five industries. Each one focused on doing a
               specific job well — and nothing else.
             </p>
           </AnimateOnScroll>

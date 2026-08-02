@@ -1,6 +1,10 @@
 import {
   ShoppingBag,
   Users,
+  Building2,
+  KeyRound,
+  Wrench,
+  MessageSquare,
   Palette,
   CreditCard,
   Package,
@@ -171,6 +175,68 @@ export const products: Record<
       starter: "$79/month",
       professional: "$199/month",
       enterprise: "Custom",
+    },
+  },
+  dwellm8: {
+    title: "Dwellm8",
+    tagline: "Rent, managed like a record",
+    description:
+      "India-first rental management — owners, managers and tenants on one record, from listing to move-out.",
+    website: "https://dwellm8.com",
+    longDescription:
+      "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
+    icon: Building2,
+    status: "available",
+    features: [
+      {
+        icon: KeyRound,
+        title: "The tenancy on one record",
+        description:
+          "Agreements, rent schedules, deposits, notice and move-out — effective-dated history, never edited in place.",
+      },
+      {
+        icon: CreditCard,
+        title: "Rent by UPI, receipts instantly",
+        description:
+          "Collections land on an append-only ledger and the receipt issues the moment money confirms. No platform fee added to rent.",
+      },
+      {
+        icon: Wrench,
+        title: "Maintenance with a liability answer",
+        description:
+          "Tenants raise a request in thirty seconds; the cost-sharing engine says who pays before any work is approved.",
+      },
+      {
+        icon: MessageSquare,
+        title: "Everything on the record",
+        description:
+          "The tenancy conversation, gate passes and notices live in the apps — not in somebody's chat history.",
+      },
+      {
+        icon: Users,
+        title: "Six apps, one platform",
+        description:
+          "Own, Ops, Live, Find, Pro and Admin — owners, managing firms, tenants and seekers each get their own surface.",
+      },
+      {
+        icon: Shield,
+        title: "Isolation the database enforces",
+        description:
+          "Row-level security scopes every query to one organisation, and a tenant to their own lease — not a WHERE clause somebody remembered.",
+      },
+    ],
+    benefits: [
+      "Owners see income, dues and documents per property",
+      "Managing firms run delegated portfolios under scoped mandates",
+      "Tenants pay rent by UPI with zero platform fees",
+      "Deposits, lock-ins and notice handled per the agreement",
+      "Discovery to move-in: listings, enquiries, applications",
+      "Mobile apps for every side of the tenancy",
+    ],
+    pricing: {
+      starter: "Free for owners",
+      professional: "2.99% on payouts",
+      enterprise: "Custom for firms",
     },
   },
   medicare: {
