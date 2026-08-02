@@ -23,6 +23,7 @@ interface PlatformLiveChatInboxProps {
 const TENANT_LABELS: Record<string, string> = {
   platform: "Tesserix",
   homechef: "HomeChef",
+  "homechef-vendor": "HomeChef Chefs",
   fanzone: "FanZone",
   mark8ly: "mark8ly",
   horoscope: "Horoscope",

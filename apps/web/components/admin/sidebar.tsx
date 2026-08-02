@@ -53,6 +53,22 @@ import {
   TooltipTrigger,
 } from "@tesserix/web";
 import { useAuth } from "@/lib/auth/auth-context";
+import { useSupportQueueCount } from "@/components/admin/support/SupportQueueNotifier";
+
+// Live pending-chat count next to the "Live chat" nav item, fed by the
+// SupportQueueProvider WebSocket. Hidden at zero.
+function LiveChatBadge({ href }: { href: string }) {
+  const count = useSupportQueueCount();
+  if (href !== "/admin/support/live-chat" || count === 0) return null;
+  return (
+    <span
+      className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-semibold text-primary-foreground"
+      aria-label={`${count} chats waiting`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
 
 type NavItem = {
   name: string;
@@ -529,6 +545,7 @@ function SecondarySidebar({
               >
                 <entry.icon className="h-4 w-4" aria-hidden="true" />
                 {entry.name}
+                <LiveChatBadge href={entry.href} />
               </Link>
             );
           })}
@@ -651,6 +668,7 @@ export function AdminSidebar() {
                     >
                       <entry.icon className="h-5 w-5" aria-hidden="true" />
                       {entry.name}
+                      <LiveChatBadge href={entry.href} />
                     </Link>
                   );
                 })}
