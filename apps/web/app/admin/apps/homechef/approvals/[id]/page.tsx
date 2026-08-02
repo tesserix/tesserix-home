@@ -18,7 +18,19 @@ interface ReviewerRef {
   lastName?: string;
   email?: string;
 }
-type ApprovalDetail = ApprovalRequest & { reviewedBy?: ReviewerRef | null };
+type ApprovalDetail = ApprovalRequest & {
+  reviewedBy?: ReviewerRef | null;
+  // Kitchen onboarding only: which of the three required documents (id_proof,
+  // address_proof, fssai_license) are still missing. Approve is refused
+  // server-side while non-empty; the UI disables the buttons to match.
+  requiredDocsMissing?: string[];
+};
+
+const REQUIRED_DOC_LABELS: Record<string, string> = {
+  id_proof: "ID proof",
+  address_proof: "Address proof (gas/electricity bill)",
+  fssai_license: "FSSAI licence",
+};
 
 // Mirrors models.ApprovalRequestHistory (GET /approvals/:id/history → { data }).
 interface ApprovalHistoryEntry {
@@ -199,6 +211,8 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
 
   const submitted = Object.entries(asObject(a.submittedData));
   const pending = a.status === "pending" || a.status === "info_requested";
+  const docsMissing = a.requiredDocsMissing ?? [];
+  const docsIncomplete = a.type === "kitchen_onboarding" && docsMissing.length > 0;
 
   return (
     <div className="max-w-3xl space-y-6 p-6">
@@ -224,6 +238,13 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
       ) : null}
       {a.fssaiLooksCommercial ? (
         <Warning text="FSSAI licence looks like a commercial (State/Central) registration — verify this is a home kitchen." />
+      ) : null}
+      {docsIncomplete ? (
+        <Warning
+          text={`Required documents not uploaded yet: ${docsMissing
+            .map((d) => REQUIRED_DOC_LABELS[d] ?? titleCase(d))
+            .join(", ")}. The chef has 30 days from submission; this application cannot be approved until they are in.`}
+        />
       ) : null}
 
       {error ? (
@@ -361,13 +382,17 @@ export default function ApprovalDetailPage({ params }: { params: Promise<{ id: s
 
       {pending ? (
         <div className="flex flex-wrap gap-3 border-t border-border pt-4">
-          <Button disabled={busy} onClick={() => decide("approve", "live")}>
+          <Button
+            disabled={busy || docsIncomplete}
+            title={docsIncomplete ? "Required documents are missing — cannot approve yet" : undefined}
+            onClick={() => decide("approve", "live")}
+          >
             Approve
           </Button>
           {a.type === "kitchen_onboarding" ? (
             <Button
               variant="outline"
-              disabled={busy}
+              disabled={busy || docsIncomplete}
               onClick={() => decide("approve", "test")}
               title="Sandbox kitchen: visible only to the test-mode allowlist, paid with Razorpay test keys"
             >
