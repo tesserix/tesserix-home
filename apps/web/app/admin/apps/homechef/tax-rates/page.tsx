@@ -121,15 +121,15 @@ function Field({
 }) {
   return (
     <label className="space-y-1 text-sm">
-      <span className="block font-medium text-ink">{label}</span>
+      <span className="block font-medium text-foreground">{label}</span>
       <input
         type="number"
         step={step}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-mist bg-white px-3 py-2 text-sm tabular-nums"
+        className="w-full w-full rounded-md border px-3 py-2 text-sm tabular-nums"
       />
-      {hint ? <span className="block text-xs text-ink-muted">{hint}</span> : null}
+      {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
     </label>
   );
 }
@@ -154,8 +154,8 @@ function Toggle({
         className="mt-1 h-4 w-4"
       />
       <span>
-        <span className="block font-medium text-ink">{label}</span>
-        {hint ? <span className="block text-xs text-ink-muted">{hint}</span> : null}
+        <span className="block font-medium text-foreground">{label}</span>
+        {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
       </span>
     </label>
   );
@@ -223,8 +223,8 @@ export default function TaxRatesPage() {
   return (
     <div className="space-y-8 p-6">
       <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-ink">Tax rates</h1>
-        <p className="max-w-3xl text-sm text-ink-muted">
+        <h1 className="text-xl font-semibold text-foreground">Tax rates</h1>
+        <p className="max-w-3xl text-sm text-muted-foreground">
           The single source of truth for tax across the platform. Order pricing, the
           checkout quote, meal plans, subscription billing, invoices and refunds all
           read these rates — a change here lands everywhere at once, with no deploy.
@@ -232,7 +232,7 @@ export default function TaxRatesPage() {
         </p>
       </header>
 
-      {isLoading ? <p className="text-sm text-ink-muted">Loading…</p> : null}
+      {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
       {error ? (
         <p className="text-sm text-red-600">
           Could not load tax rates: {error instanceof Error ? error.message : String(error)}
@@ -241,16 +241,16 @@ export default function TaxRatesPage() {
 
       {editing ? (
         <>
-          <section className="space-y-4 rounded-xl bg-bone p-6 shadow-1">
+          <section className="space-y-4 rounded-lg border p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-ink">
+              <h2 className="text-lg font-semibold text-foreground">
                 {editing.countryCode}
                 {editing.region ? ` · ${editing.region}` : ""} — {editing.taxName}
               </h2>
               <select
                 value={editing.id}
                 onChange={(e) => setDraft(rows.find((r) => r.id === e.target.value) ?? null)}
-                className="rounded-md border border-mist bg-white px-3 py-1.5 text-sm"
+                className="rounded-md border px-3 py-1.5 text-sm"
               >
                 {rows.map((r) => (
                   <option key={r.id} value={r.id}>
@@ -300,7 +300,7 @@ export default function TaxRatesPage() {
               />
             </div>
 
-            <div className="grid gap-4 border-t border-mist pt-4 sm:grid-cols-2">
+            <div className="grid gap-4 border-t border-border pt-4 sm:grid-cols-2">
               <Toggle
                 label="Platform fee is quoted all-in"
                 hint="On: the customer's fee does not move and the tax is taken out of it — your margin absorbs it. Off: the tax is added on top and the customer pays more."
@@ -315,12 +315,12 @@ export default function TaxRatesPage() {
               />
             </div>
 
-            <div className="flex items-center gap-3 border-t border-mist pt-4">
+            <div className="flex items-center gap-3 border-t border-border pt-4">
               <button
                 type="button"
                 onClick={() => void save()}
                 disabled={saving || !draft}
-                className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
               >
                 {saving ? "Saving…" : "Save rates"}
               </button>
@@ -328,7 +328,7 @@ export default function TaxRatesPage() {
                 <button
                   type="button"
                   onClick={() => setDraft(null)}
-                  className="text-sm text-ink-muted underline"
+                  className="text-sm text-muted-foreground underline"
                 >
                   Discard changes
                 </button>
@@ -381,10 +381,10 @@ function Calculator() {
   }
 
   return (
-    <section className="space-y-4 rounded-xl bg-bone p-6 shadow-1">
+    <section className="space-y-4 rounded-lg border p-6">
       <div className="space-y-1">
-        <h2 className="text-lg font-semibold text-ink">Calculator</h2>
-        <p className="max-w-3xl text-sm text-ink-muted">
+        <h2 className="text-lg font-semibold text-foreground">Calculator</h2>
+        <p className="max-w-3xl text-sm text-muted-foreground">
           Runs an order through the rates saved above, in every fulfilment mode and
           every refund tier. It calls the same pricing and refund functions that
           charge real money, so nothing here is a separate model that can drift.
@@ -408,7 +408,7 @@ function Calculator() {
         type="button"
         onClick={() => void run()}
         disabled={running}
-        className="rounded-md bg-ink px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
       >
         {running ? "Calculating…" : "Calculate"}
       </button>
@@ -423,8 +423,16 @@ function Calculator() {
               platform-rider row below is shown for comparison only.
             </p>
           ) : null}
+          {/* The three modes side by side, so the difference between them is read
+              across a row rather than reconstructed from three separate cards. */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            {sim.scenarios.map((s) => (
+              <BreakdownColumn key={s.fulfillment} scenario={s} />
+            ))}
+          </div>
+
           {sim.scenarios.map((s) => (
-            <ScenarioCard key={s.fulfillment} scenario={s} />
+            <RefundBlock key={`r-${s.fulfillment}`} scenario={s} />
           ))}
         </div>
       ) : null}
@@ -432,116 +440,135 @@ function Calculator() {
   );
 }
 
-function ScenarioCard({ scenario: s }: { scenario: Scenario }) {
+// One fulfilment mode as a single column: the invoice-grade lines, the footing
+// check, what the customer actually sees, and what Cashfree takes.
+function BreakdownColumn({ scenario: s }: { scenario: Scenario }) {
   const p = s.pricing;
+  const rows =
+    Math.round(
+      (p.subtotal + p.deliveryFee + p.platformFee - p.discount + p.tip + p.tax + (p.rounding ?? 0)) *
+        100,
+    ) / 100;
+  const foots = rows === p.total;
+
   return (
-    <div className="space-y-4 rounded-lg border border-mist bg-white p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-semibold text-ink">{s.label}</h3>
-        <span className="text-xs text-ink-muted">
+    <div className="space-y-3 rounded-lg border p-4">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{s.label}</h3>
+        <p className="text-[11px] text-muted-foreground">
           food {pct(s.rates.food)} · fee {pct(s.rates.service)}
-          {s.rates.serviceInclusive ? " (all-in)" : ""} · delivery {pct(s.rates.delivery)}
-        </span>
+          {s.rates.serviceInclusive ? " all-in" : ""}
+          {p.deliveryFee > 0 ? ` · delivery ${pct(s.rates.delivery)}` : ""}
+        </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            What the customer pays
-          </h4>
-          <table className="w-full text-sm">
-            <tbody>
-              <Row label="Food" value={p.subtotal} />
-              {p.deliveryFee > 0 ? <Row label="Delivery" value={p.deliveryFee} /> : null}
-              {p.platformFee > 0 ? <Row label="Platform fee" value={p.platformFee} /> : null}
-              {/* The INVOICE view — per rate, naming what each sits on. The
-                  customer app shows the collapsed version below. */}
-              {p.taxBreakdown.map((l, i) => (
-                <Row key={`${l.code}-${i}`} label={l.label} value={l.amount} />
-              ))}
-              {p.discount > 0 ? <Row label="Discount" value={-p.discount} /> : null}
-              {p.tip > 0 ? <Row label="Tip" value={p.tip} /> : null}
-              {p.rounding ? <Row label="Rounding" value={p.rounding} /> : null}
-              <Row label="Total" value={p.total} bold />
-            </tbody>
-          </table>
+      <table className="w-full text-sm">
+        <tbody>
+          <Row label="Food" value={p.subtotal} />
+          {p.deliveryFee > 0 ? <Row label="Delivery" value={p.deliveryFee} /> : null}
+          {p.platformFee > 0 ? <Row label="Platform fee" value={p.platformFee} /> : null}
+          {p.taxBreakdown.map((l, i) => (
+            <Row key={`${l.code}-${i}`} label={l.label} value={l.amount} />
+          ))}
+          {p.discount > 0 ? <Row label="Discount" value={-p.discount} /> : null}
+          {p.tip > 0 ? <Row label="Tip" value={p.tip} /> : null}
+          {p.rounding ? <Row label="Rounding" value={p.rounding} /> : null}
+          <Row label="TOTAL" value={p.total} bold />
+        </tbody>
+      </table>
 
-          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            What the customer sees
-          </p>
-          <p className="text-xs text-ink-muted">
-            The app collapses the rows above to one per tax head. Same money, less
-            detail — the itemised form stays on the invoice PDF.
-          </p>
-          <table className="mt-1 w-full text-sm">
-            <tbody>
-              {p.taxLines.map((l, i) => (
-                <Row key={`s-${l.code}-${i}`} label={l.label} value={l.amount} />
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-2 text-xs text-ink-muted">
-            Gateway takes {inr(s.gateway.fee)} + {inr(s.gateway.taxOnFee)} tax at capture.
-            After reclaiming that tax it costs {inr(s.gateway.real)}, and none of it comes
-            back on a refund.
-          </p>
-        </div>
+      <p className={`text-xs ${foots ? "text-emerald-600" : "text-red-600"}`}>
+        {foots ? `foots ✓  (rows = ${inr(rows)})` : `DOES NOT FOOT ✗  rows ${inr(rows)}`}
+      </p>
 
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-            If it is refunded
-          </h4>
-          <table className="w-full text-left text-xs">
-            <thead className="text-ink-muted">
-              <tr>
-                <th className="py-1 font-medium">Scenario</th>
-                <th className="py-1 text-right font-medium">Customer</th>
-                <th className="py-1 text-right font-medium">Chef</th>
-                <th className="py-1 text-right font-medium">Credit note</th>
-                <th className="py-1 text-right font-medium">You</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.refunds.map((r, i) => (
-                <tr key={i} className="border-t border-mist align-top">
-                  <td className="py-1.5 pr-2">
-                    {r.label}
-                    {r.creditNote > 0 ? (
-                      <span className="block text-[11px] text-ink-muted">
-                        credit note: food {inr(r.taxRefundFood)}
-                        {r.taxRefundDelivery > 0 ? ` + delivery ${inr(r.taxRefundDelivery)}` : ""} · fee
-                        tax {inr(r.taxKeptOnFee)} kept
-                      </span>
-                    ) : null}
-                    {(r.warnings ?? []).map((w) => (
-                      <span key={w} className="block text-[11px] text-amber-700">
-                        {w}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.customerGets)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.chefKeeps)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.creditNote)}</td>
-                  <td
-                    className={`py-1.5 text-right tabular-nums ${
-                      r.platformMargin < 0 ? "text-red-600" : "text-ink"
-                    }`}
-                  >
-                    {inr(r.platformMargin)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-2 text-xs text-ink-muted">
-            &ldquo;You&rdquo; is what the platform is left with after the gateway fee,
-            which is sunk at capture. A negative figure is a cancellation that costs
-            money — recoverable from the chef when the gateway-fee levy is on.
+      <div className="rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
+        <p className="font-medium text-foreground">What the customer sees</p>
+        {p.taxLines.map((l, i) => (
+          <p key={`s-${l.code}-${i}`} className="flex justify-between tabular-nums">
+            <span>{l.label}</span>
+            <span>{inr(l.amount)}</span>
           </p>
-        </div>
+        ))}
+      </div>
+
+      <div className="rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
+        <p className="font-medium text-foreground">Cashfree ({pct(s.gateway.percent)} MDR)</p>
+        <p className="flex justify-between tabular-nums">
+          <span>MDR</span>
+          <span>{inr(s.gateway.fee)}</span>
+        </p>
+        <p className="flex justify-between tabular-nums">
+          <span>GST on MDR</span>
+          <span>{inr(s.gateway.taxOnFee)}</span>
+        </p>
+        <p className="flex justify-between tabular-nums font-medium text-foreground">
+          <span>Real cost (after ITC)</span>
+          <span>{inr(s.gateway.real)}</span>
+        </p>
+        <p className="mt-1">Sunk at capture — never returned on a refund.</p>
       </div>
 
       <Validations checks={s.validations} />
+    </div>
+  );
+}
+
+// The refund tiers for one mode. Full width because the columns are wide.
+function RefundBlock({ scenario: s }: { scenario: Scenario }) {
+  return (
+    <div className="space-y-2 rounded-lg border p-4">
+      <h3 className="text-sm font-semibold text-foreground">If refunded — {s.label}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="py-1 font-medium">Scenario</th>
+              <th className="py-1 text-right font-medium">Customer gets</th>
+              <th className="py-1 text-right font-medium">Chef keeps</th>
+              <th className="py-1 text-right font-medium">Credit note</th>
+              <th className="py-1 text-right font-medium">You keep</th>
+              <th className="py-1 text-right font-medium">Your margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.refunds.map((r, i) => (
+              <tr key={i} className="border-t align-top">
+                <td className="py-1.5 pr-2">
+                  {r.label}
+                  {r.creditNote > 0 ? (
+                    <span className="block text-[11px] text-muted-foreground">
+                      credit note: food {inr(r.taxRefundFood)}
+                      {r.taxRefundDelivery > 0 ? ` + delivery ${inr(r.taxRefundDelivery)}` : ""} ·
+                      fee tax {inr(r.taxKeptOnFee)} kept
+                    </span>
+                  ) : null}
+                  {(r.warnings ?? []).map((w) => (
+                    <span key={w} className="block text-[11px] text-amber-700">
+                      {w}
+                    </span>
+                  ))}
+                </td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.customerGets)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.chefKeeps)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.creditNote)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.platformKeeps)}</td>
+                <td
+                  className={`py-1.5 text-right tabular-nums ${
+                    r.platformMargin < 0 ? "text-red-600" : ""
+                  }`}
+                >
+                  {inr(r.platformMargin)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        &ldquo;Your margin&rdquo; is what is left after the gateway fee, which is sunk at
+        capture. Negative means the cancellation costs money — recoverable from the chef
+        when the gateway-fee levy is on.
+      </p>
     </div>
   );
 }
@@ -553,15 +580,15 @@ function Validations({ checks }: { checks: ValidationCheck[] }) {
   return (
     <div
       className={`rounded-md border px-3 py-2 text-xs ${
-        failed.length ? "border-red-300 bg-red-50" : "border-mist bg-white"
+        failed.length ? "border-red-300 bg-red-50" : "border-border bg-background"
       }`}
     >
-      <p className="mb-1 font-semibold text-ink">
+      <p className="mb-1 font-semibold text-foreground">
         {failed.length ? `${failed.length} check failed` : `All ${checks.length} checks passed`}
       </p>
       <ul className="space-y-0.5">
         {checks.map((c) => (
-          <li key={c.name} className={c.passed ? "text-ink-muted" : "text-red-700"}>
+          <li key={c.name} className={c.passed ? "text-muted-foreground" : "text-red-700"}>
             {c.passed ? "✓" : "✗"} {c.name}
             {c.passed ? null : <span className="ml-1 opacity-80">— {c.detail}</span>}
           </li>
@@ -573,7 +600,7 @@ function Validations({ checks }: { checks: ValidationCheck[] }) {
 
 function Row({ label, value, bold }: { label: string; value: number; bold?: boolean }) {
   return (
-    <tr className={bold ? "border-t border-mist font-semibold" : ""}>
+    <tr className={bold ? "border-t border-border font-semibold" : ""}>
       <td className="py-1">{label}</td>
       <td className="py-1 text-right tabular-nums">{inr(value)}</td>
     </tr>
