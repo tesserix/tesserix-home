@@ -423,8 +423,16 @@ function Calculator() {
               platform-rider row below is shown for comparison only.
             </p>
           ) : null}
+          {/* The three modes side by side, so the difference between them is read
+              across a row rather than reconstructed from three separate cards. */}
+          <div className="grid gap-4 lg:grid-cols-3">
+            {sim.scenarios.map((s) => (
+              <BreakdownColumn key={s.fulfillment} scenario={s} />
+            ))}
+          </div>
+
           {sim.scenarios.map((s) => (
-            <ScenarioCard key={s.fulfillment} scenario={s} />
+            <RefundBlock key={`r-${s.fulfillment}`} scenario={s} />
           ))}
         </div>
       ) : null}
@@ -432,116 +440,135 @@ function Calculator() {
   );
 }
 
-function ScenarioCard({ scenario: s }: { scenario: Scenario }) {
+// One fulfilment mode as a single column: the invoice-grade lines, the footing
+// check, what the customer actually sees, and what Cashfree takes.
+function BreakdownColumn({ scenario: s }: { scenario: Scenario }) {
   const p = s.pricing;
+  const rows =
+    Math.round(
+      (p.subtotal + p.deliveryFee + p.platformFee - p.discount + p.tip + p.tax + (p.rounding ?? 0)) *
+        100,
+    ) / 100;
+  const foots = rows === p.total;
+
   return (
-    <div className="space-y-4 rounded-lg border p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-semibold text-foreground">{s.label}</h3>
-        <span className="text-xs text-muted-foreground">
+    <div className="space-y-3 rounded-lg border p-4">
+      <div>
+        <h3 className="text-sm font-semibold text-foreground">{s.label}</h3>
+        <p className="text-[11px] text-muted-foreground">
           food {pct(s.rates.food)} · fee {pct(s.rates.service)}
-          {s.rates.serviceInclusive ? " (all-in)" : ""} · delivery {pct(s.rates.delivery)}
-        </span>
+          {s.rates.serviceInclusive ? " all-in" : ""}
+          {p.deliveryFee > 0 ? ` · delivery ${pct(s.rates.delivery)}` : ""}
+        </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            What the customer pays
-          </h4>
-          <table className="w-full text-sm">
-            <tbody>
-              <Row label="Food" value={p.subtotal} />
-              {p.deliveryFee > 0 ? <Row label="Delivery" value={p.deliveryFee} /> : null}
-              {p.platformFee > 0 ? <Row label="Platform fee" value={p.platformFee} /> : null}
-              {/* The INVOICE view — per rate, naming what each sits on. The
-                  customer app shows the collapsed version below. */}
-              {p.taxBreakdown.map((l, i) => (
-                <Row key={`${l.code}-${i}`} label={l.label} value={l.amount} />
-              ))}
-              {p.discount > 0 ? <Row label="Discount" value={-p.discount} /> : null}
-              {p.tip > 0 ? <Row label="Tip" value={p.tip} /> : null}
-              {p.rounding ? <Row label="Rounding" value={p.rounding} /> : null}
-              <Row label="Total" value={p.total} bold />
-            </tbody>
-          </table>
+      <table className="w-full text-sm">
+        <tbody>
+          <Row label="Food" value={p.subtotal} />
+          {p.deliveryFee > 0 ? <Row label="Delivery" value={p.deliveryFee} /> : null}
+          {p.platformFee > 0 ? <Row label="Platform fee" value={p.platformFee} /> : null}
+          {p.taxBreakdown.map((l, i) => (
+            <Row key={`${l.code}-${i}`} label={l.label} value={l.amount} />
+          ))}
+          {p.discount > 0 ? <Row label="Discount" value={-p.discount} /> : null}
+          {p.tip > 0 ? <Row label="Tip" value={p.tip} /> : null}
+          {p.rounding ? <Row label="Rounding" value={p.rounding} /> : null}
+          <Row label="TOTAL" value={p.total} bold />
+        </tbody>
+      </table>
 
-          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            What the customer sees
-          </p>
-          <p className="text-xs text-muted-foreground">
-            The app collapses the rows above to one per tax head. Same money, less
-            detail — the itemised form stays on the invoice PDF.
-          </p>
-          <table className="mt-1 w-full text-sm">
-            <tbody>
-              {p.taxLines.map((l, i) => (
-                <Row key={`s-${l.code}-${i}`} label={l.label} value={l.amount} />
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Gateway takes {inr(s.gateway.fee)} + {inr(s.gateway.taxOnFee)} tax at capture.
-            After reclaiming that tax it costs {inr(s.gateway.real)}, and none of it comes
-            back on a refund.
-          </p>
-        </div>
+      <p className={`text-xs ${foots ? "text-emerald-600" : "text-red-600"}`}>
+        {foots ? `foots ✓  (rows = ${inr(rows)})` : `DOES NOT FOOT ✗  rows ${inr(rows)}`}
+      </p>
 
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            If it is refunded
-          </h4>
-          <table className="w-full text-left text-xs">
-            <thead className="text-muted-foreground">
-              <tr>
-                <th className="py-1 font-medium">Scenario</th>
-                <th className="py-1 text-right font-medium">Customer</th>
-                <th className="py-1 text-right font-medium">Chef</th>
-                <th className="py-1 text-right font-medium">Credit note</th>
-                <th className="py-1 text-right font-medium">You</th>
-              </tr>
-            </thead>
-            <tbody>
-              {s.refunds.map((r, i) => (
-                <tr key={i} className="border-t border-border align-top">
-                  <td className="py-1.5 pr-2">
-                    {r.label}
-                    {r.creditNote > 0 ? (
-                      <span className="block text-[11px] text-muted-foreground">
-                        credit note: food {inr(r.taxRefundFood)}
-                        {r.taxRefundDelivery > 0 ? ` + delivery ${inr(r.taxRefundDelivery)}` : ""} · fee
-                        tax {inr(r.taxKeptOnFee)} kept
-                      </span>
-                    ) : null}
-                    {(r.warnings ?? []).map((w) => (
-                      <span key={w} className="block text-[11px] text-amber-700">
-                        {w}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.customerGets)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.chefKeeps)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{inr(r.creditNote)}</td>
-                  <td
-                    className={`py-1.5 text-right tabular-nums ${
-                      r.platformMargin < 0 ? "text-red-600" : "text-foreground"
-                    }`}
-                  >
-                    {inr(r.platformMargin)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="mt-2 text-xs text-muted-foreground">
-            &ldquo;You&rdquo; is what the platform is left with after the gateway fee,
-            which is sunk at capture. A negative figure is a cancellation that costs
-            money — recoverable from the chef when the gateway-fee levy is on.
+      <div className="rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
+        <p className="font-medium text-foreground">What the customer sees</p>
+        {p.taxLines.map((l, i) => (
+          <p key={`s-${l.code}-${i}`} className="flex justify-between tabular-nums">
+            <span>{l.label}</span>
+            <span>{inr(l.amount)}</span>
           </p>
-        </div>
+        ))}
+      </div>
+
+      <div className="rounded-md bg-muted/40 p-2 text-[11px] text-muted-foreground">
+        <p className="font-medium text-foreground">Cashfree ({pct(s.gateway.percent)} MDR)</p>
+        <p className="flex justify-between tabular-nums">
+          <span>MDR</span>
+          <span>{inr(s.gateway.fee)}</span>
+        </p>
+        <p className="flex justify-between tabular-nums">
+          <span>GST on MDR</span>
+          <span>{inr(s.gateway.taxOnFee)}</span>
+        </p>
+        <p className="flex justify-between tabular-nums font-medium text-foreground">
+          <span>Real cost (after ITC)</span>
+          <span>{inr(s.gateway.real)}</span>
+        </p>
+        <p className="mt-1">Sunk at capture — never returned on a refund.</p>
       </div>
 
       <Validations checks={s.validations} />
+    </div>
+  );
+}
+
+// The refund tiers for one mode. Full width because the columns are wide.
+function RefundBlock({ scenario: s }: { scenario: Scenario }) {
+  return (
+    <div className="space-y-2 rounded-lg border p-4">
+      <h3 className="text-sm font-semibold text-foreground">If refunded — {s.label}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-left text-xs">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th className="py-1 font-medium">Scenario</th>
+              <th className="py-1 text-right font-medium">Customer gets</th>
+              <th className="py-1 text-right font-medium">Chef keeps</th>
+              <th className="py-1 text-right font-medium">Credit note</th>
+              <th className="py-1 text-right font-medium">You keep</th>
+              <th className="py-1 text-right font-medium">Your margin</th>
+            </tr>
+          </thead>
+          <tbody>
+            {s.refunds.map((r, i) => (
+              <tr key={i} className="border-t align-top">
+                <td className="py-1.5 pr-2">
+                  {r.label}
+                  {r.creditNote > 0 ? (
+                    <span className="block text-[11px] text-muted-foreground">
+                      credit note: food {inr(r.taxRefundFood)}
+                      {r.taxRefundDelivery > 0 ? ` + delivery ${inr(r.taxRefundDelivery)}` : ""} ·
+                      fee tax {inr(r.taxKeptOnFee)} kept
+                    </span>
+                  ) : null}
+                  {(r.warnings ?? []).map((w) => (
+                    <span key={w} className="block text-[11px] text-amber-700">
+                      {w}
+                    </span>
+                  ))}
+                </td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.customerGets)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.chefKeeps)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.creditNote)}</td>
+                <td className="py-1.5 text-right tabular-nums">{inr(r.platformKeeps)}</td>
+                <td
+                  className={`py-1.5 text-right tabular-nums ${
+                    r.platformMargin < 0 ? "text-red-600" : ""
+                  }`}
+                >
+                  {inr(r.platformMargin)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        &ldquo;Your margin&rdquo; is what is left after the gateway fee, which is sunk at
+        capture. Negative means the cancellation costs money — recoverable from the chef
+        when the gateway-fee levy is on.
+      </p>
     </div>
   );
 }
