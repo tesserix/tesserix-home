@@ -78,10 +78,21 @@ export const hcAdmin = {
   },
 };
 
-/** SWR fetcher: `useSWR(["/chefs", { status }], swrFetcher)`. */
-export function swrFetcher<T>([adminPath, search]: [
-  string,
-  Record<string, string | number | undefined>?,
-]): Promise<T> {
+/**
+ * SWR fetcher: `useSWR(["/chefs", { status }], swrFetcher)`.
+ *
+ * The key MUST be a tuple. A bare string key type-checks — SWR's Key is loose
+ * enough that TypeScript will not object — and then destructures CHARACTER-WISE:
+ * `"/tax-rates"` becomes path `"/"` and search `"t"`, which requests `/gw?0=t`
+ * and 404s with nothing to explain why. So reject it here rather than let a page
+ * ship a silent empty state.
+ */
+export function swrFetcher<T>(key: [string, Record<string, string | number | undefined>?]): Promise<T> {
+  if (typeof key === "string") {
+    throw new Error(
+      `swrFetcher: key must be a tuple, got the string "${key}". Use useSWR(["${key}"], swrFetcher).`,
+    );
+  }
+  const [adminPath, search] = key;
   return hcAdmin.get<T>(adminPath, search);
 }

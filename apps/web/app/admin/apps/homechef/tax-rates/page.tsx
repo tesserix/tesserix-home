@@ -163,8 +163,11 @@ function Toggle({
 
 export default function TaxRatesPage() {
   const { confirm } = useConfirm();
+  // The key MUST be a tuple — swrFetcher destructures it as [path, search], so a
+  // bare string is destructured character-wise into path "/" and search "t",
+  // which requested /gw?0=t and 404'd.
   const { data, error, isLoading, mutate } = useSWR<{ data: TaxRate[] }>(
-    "/tax-rates",
+    ["/tax-rates"],
     swrFetcher,
   );
   const [saving, setSaving] = useState(false);
@@ -230,7 +233,11 @@ export default function TaxRatesPage() {
       </header>
 
       {isLoading ? <p className="text-sm text-ink-muted">Loading…</p> : null}
-      {error ? <p className="text-sm text-red-600">Could not load tax rates.</p> : null}
+      {error ? (
+        <p className="text-sm text-red-600">
+          Could not load tax rates: {error instanceof Error ? error.message : String(error)}
+        </p>
+      ) : null}
 
       {editing ? (
         <>
@@ -330,9 +337,13 @@ export default function TaxRatesPage() {
             </div>
           </section>
 
-          <Calculator />
         </>
       ) : null}
+
+      {/* Outside the editor block on purpose: the calculator simulates against
+          the rates the API already holds, so it must still work when the editor
+          could not load — which is exactly when an operator most wants it. */}
+      <Calculator />
     </div>
   );
 }
