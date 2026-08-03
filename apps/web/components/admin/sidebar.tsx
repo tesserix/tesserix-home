@@ -207,6 +207,7 @@ const homechefNav: NavEntry[] = [
     icon: SlidersHorizontal,
     items: [
       { name: "Platform Settings", href: "/admin/apps/homechef/platform-settings", icon: SlidersHorizontal },
+      { name: "Tax Rates", href: "/admin/apps/homechef/tax-rates", icon: SlidersHorizontal },
       { name: "Staff", href: "/admin/apps/homechef/staff", icon: UserCog },
       { name: "Audit Log", href: "/admin/apps/homechef/audit-logs", icon: ScrollText },
     ],
