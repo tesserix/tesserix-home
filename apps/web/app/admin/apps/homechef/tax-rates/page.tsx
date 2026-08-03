@@ -51,9 +51,12 @@ type Pricing = {
   taxService: number;
   taxDelivery: number;
   taxLines: TaxLine[];
+  taxBreakdown: TaxLine[];
   rounding?: number;
   total: number;
 };
+
+type ValidationCheck = { name: string; passed: boolean; detail: string };
 
 type Refund = {
   label: string;
@@ -67,7 +70,11 @@ type Refund = {
   platformKeeps: number;
   creditNote: number;
   platformMargin: number;
+  taxRefundFood: number;
+  taxRefundDelivery: number;
+  taxKeptOnFee: number;
   conserves: boolean;
+  warnings?: string[];
 };
 
 type Scenario = {
@@ -83,6 +90,7 @@ type Scenario = {
   };
   gateway: { percent: number; fee: number; taxOnFee: number; gross: number; real: number };
   refunds: Refund[];
+  validations: ValidationCheck[];
 };
 
 type Simulation = {
@@ -435,13 +443,30 @@ function ScenarioCard({ scenario: s }: { scenario: Scenario }) {
               <Row label="Food" value={p.subtotal} />
               {p.deliveryFee > 0 ? <Row label="Delivery" value={p.deliveryFee} /> : null}
               {p.platformFee > 0 ? <Row label="Platform fee" value={p.platformFee} /> : null}
-              {p.taxLines.map((l) => (
-                <Row key={l.code + l.label} label={l.label} value={l.amount} />
+              {/* The INVOICE view — per rate, naming what each sits on. The
+                  customer app shows the collapsed version below. */}
+              {p.taxBreakdown.map((l, i) => (
+                <Row key={`${l.code}-${i}`} label={l.label} value={l.amount} />
               ))}
               {p.discount > 0 ? <Row label="Discount" value={-p.discount} /> : null}
               {p.tip > 0 ? <Row label="Tip" value={p.tip} /> : null}
               {p.rounding ? <Row label="Rounding" value={p.rounding} /> : null}
               <Row label="Total" value={p.total} bold />
+            </tbody>
+          </table>
+
+          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+            What the customer sees
+          </p>
+          <p className="text-xs text-ink-muted">
+            The app collapses the rows above to one per tax head. Same money, less
+            detail — the itemised form stays on the invoice PDF.
+          </p>
+          <table className="mt-1 w-full text-sm">
+            <tbody>
+              {p.taxLines.map((l, i) => (
+                <Row key={`s-${l.code}-${i}`} label={l.label} value={l.amount} />
+              ))}
             </tbody>
           </table>
           <p className="mt-2 text-xs text-ink-muted">
@@ -467,8 +492,22 @@ function ScenarioCard({ scenario: s }: { scenario: Scenario }) {
             </thead>
             <tbody>
               {s.refunds.map((r, i) => (
-                <tr key={i} className="border-t border-mist">
-                  <td className="py-1.5 pr-2">{r.label}</td>
+                <tr key={i} className="border-t border-mist align-top">
+                  <td className="py-1.5 pr-2">
+                    {r.label}
+                    {r.creditNote > 0 ? (
+                      <span className="block text-[11px] text-ink-muted">
+                        credit note: food {inr(r.taxRefundFood)}
+                        {r.taxRefundDelivery > 0 ? ` + delivery ${inr(r.taxRefundDelivery)}` : ""} · fee
+                        tax {inr(r.taxKeptOnFee)} kept
+                      </span>
+                    ) : null}
+                    {(r.warnings ?? []).map((w) => (
+                      <span key={w} className="block text-[11px] text-amber-700">
+                        {w}
+                      </span>
+                    ))}
+                  </td>
                   <td className="py-1.5 text-right tabular-nums">{inr(r.customerGets)}</td>
                   <td className="py-1.5 text-right tabular-nums">{inr(r.chefKeeps)}</td>
                   <td className="py-1.5 text-right tabular-nums">{inr(r.creditNote)}</td>
@@ -490,6 +529,33 @@ function ScenarioCard({ scenario: s }: { scenario: Scenario }) {
           </p>
         </div>
       </div>
+
+      <Validations checks={s.validations} />
+    </div>
+  );
+}
+
+// The invariants, checked on the numbers above rather than assumed. A rate change
+// that breaks one shows here immediately instead of at the next reconciliation.
+function Validations({ checks }: { checks: ValidationCheck[] }) {
+  const failed = checks.filter((c) => !c.passed);
+  return (
+    <div
+      className={`rounded-md border px-3 py-2 text-xs ${
+        failed.length ? "border-red-300 bg-red-50" : "border-mist bg-white"
+      }`}
+    >
+      <p className="mb-1 font-semibold text-ink">
+        {failed.length ? `${failed.length} check failed` : `All ${checks.length} checks passed`}
+      </p>
+      <ul className="space-y-0.5">
+        {checks.map((c) => (
+          <li key={c.name} className={c.passed ? "text-ink-muted" : "text-red-700"}>
+            {c.passed ? "✓" : "✗"} {c.name}
+            {c.passed ? null : <span className="ml-1 opacity-80">— {c.detail}</span>}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
