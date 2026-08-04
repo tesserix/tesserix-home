@@ -12,6 +12,7 @@ import { HomechefAdminError, homechefAdmin } from "@/lib/api/homechef-admin";
 import { chQuery, clickhouseConfigured } from "@/lib/db/clickhouse";
 import { tesserixQuery } from "@/lib/db/tesserix";
 import { logger } from "@/lib/logger";
+import { queryInstant } from "@/lib/metrics/prometheus";
 import type { AdminStats } from "@tesserix/homechef-shared";
 
 export async function GET(
@@ -59,6 +60,41 @@ export async function GET(
     } catch (err) {
       logger.warn(`[devai-kpis] incidents: ${err instanceof Error ? err.message : "failed"}`);
     }
+    return NextResponse.json(out);
+  }
+
+  // Kora's overview KPIs are OPERATING signals, all PromQL over the kora-api
+  // exporter (#43). Each query degrades to 0 independently so one dead series
+  // blanks one tile rather than the whole set — same rule as devai above.
+  //
+  // The 1.5 in the budget query is ai.textBudget, and it is a HISTOGRAM BUCKET
+  // BOUNDARY on purpose (metrics.go latencyBuckets). Do not "tidy" it: if the
+  // exporter's buckets are ever changed to the library defaults this query
+  // silently starts interpolating instead of reading an exact bucket.
+  if (product === "kora") {
+    const queries: Record<string, string> = {
+      food_index_missing: "kora_food_index_missing",
+      ai_calls_24h: 'sum(increase(kora_ai_calls_total{outcome="ok"}[24h]))',
+      ai_failures_24h: 'sum(increase(kora_ai_calls_total{outcome=~"error|timeout"}[24h]))',
+      decompose_over_budget_pct:
+        "100 * (1 - (" +
+        'sum(rate(kora_ai_latency_seconds_bucket{call_type="decompose",le="1.5"}[24h])) / ' +
+        'sum(rate(kora_ai_latency_seconds_count{call_type="decompose"}[24h]))))',
+    };
+
+    const out: Record<string, number> = {};
+    await Promise.all(
+      Object.entries(queries).map(async ([key, promql]) => {
+        try {
+          const rows = await queryInstant(promql);
+          const v = rows[0]?.value.value;
+          out[key] = typeof v === "number" && Number.isFinite(v) ? v : 0;
+        } catch (err) {
+          logger.warn(`[kora-kpis] ${key}: ${err instanceof Error ? err.message : "failed"}`);
+          out[key] = 0;
+        }
+      }),
+    );
     return NextResponse.json(out);
   }
 
