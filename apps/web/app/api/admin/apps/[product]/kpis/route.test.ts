@@ -38,6 +38,20 @@ describe("kora kpis", () => {
     expect(body.ai_calls_24h).toBe(122);
     expect(body.ai_failures_24h).toBe(3);
     expect(body.decompose_over_budget_pct).toBe(4.5);
+
+    // The mock branch above matches the budget query loosely (by substring),
+    // so a mutation to its filters would still resolve to sample(4.5) and
+    // pass the assertions above — this is the assertion that actually
+    // discriminates on the query's content. `le="1.5"` is ai.textBudget and
+    // a deliberate histogram bucket boundary (see route.ts); a mutant value
+    // would silently make the panel interpolate instead of reading an exact
+    // bucket while looking equally authoritative. `call_type="decompose"` is
+    // what scopes the whole tile to the decompose call path.
+    const budgetQuery = queryInstant.mock.calls
+      .map(([q]) => q as string)
+      .find((q) => q.includes("kora_ai_latency_seconds"));
+    expect(budgetQuery).toContain('le="1.5"');
+    expect(budgetQuery).toContain('call_type="decompose"');
   });
 
   // The "must not" — one dead query must not blank the others...
