@@ -67,4 +67,16 @@ describe("readKeyHealth", () => {
     await readKeyHealth("p", ["gemini", "openai"]);
     expect(accessSecretVersion).not.toHaveBeenCalled();
   });
+
+  // The other tests key off `parent.endsWith("gemini")`, which a mutant
+  // resource path like `secrets/${name}` (dropping `projects/${projectId}/`)
+  // would still satisfy — every other assertion stays green while
+  // listSecretVersions receives an INVALID_ARGUMENT-shaped parent in
+  // production. Pin the exact resource path Secret Manager requires.
+  it("requests the full projects/{id}/secrets/{name} resource path", async () => {
+    listSecretVersions.mockImplementation(() => versionsCreatedDaysAgo(3));
+    await readKeyHealth("p", ["gemini", "openai"]);
+    expect(listSecretVersions).toHaveBeenCalledWith({ parent: "projects/p/secrets/gemini" });
+    expect(listSecretVersions).toHaveBeenCalledWith({ parent: "projects/p/secrets/openai" });
+  });
 });
