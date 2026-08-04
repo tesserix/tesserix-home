@@ -116,3 +116,38 @@ ON CONFLICT (slug) DO UPDATE SET
   db_databases          = EXCLUDED.db_databases,
   primary_domain        = EXCLUDED.primary_domain,
   admin_url             = EXCLUDED.admin_url;
+
+-- Kora — AI food logging (photo, voice and text meal capture with a nutrition
+-- index and coaching). Namespace `kora`, CNPG `kora-postgres`. db_admin_secret_name
+-- is NULL: Phase 1 is read-only and gets everything from Prometheus, so no
+-- cross-DB admin role has been provisioned. Mirrors
+-- db/migrations/0015_seed_kora_app.sql.
+INSERT INTO apps (
+  slug, name, description, status,
+  db_namespace, db_host, db_port, db_admin_secret_name, db_databases,
+  primary_domain, admin_url
+) VALUES
+(
+  'kora',
+  'Kora',
+  'AI food logging — photo, voice and text meal capture with a nutrition index and coaching.',
+  'active',
+  'kora',
+  'kora-postgres-rw.kora.svc.cluster.local',
+  5432,
+  NULL,
+  '["kora_db"]'::jsonb,
+  'kora-api.tesserix.app',
+  'https://kora-api.tesserix.app'
+)
+ON CONFLICT (slug) DO UPDATE SET
+  name                  = EXCLUDED.name,
+  description           = EXCLUDED.description,
+  status                = EXCLUDED.status,
+  db_namespace          = EXCLUDED.db_namespace,
+  db_host               = EXCLUDED.db_host,
+  db_port               = EXCLUDED.db_port,
+  db_admin_secret_name  = EXCLUDED.db_admin_secret_name,
+  db_databases          = EXCLUDED.db_databases,
+  primary_domain        = EXCLUDED.primary_domain,
+  admin_url             = EXCLUDED.admin_url;

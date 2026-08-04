@@ -3,6 +3,7 @@
     "name": "Tesserix Admin",
     "slug": "tesserix-admin",
     "version": "1.0.0",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "scheme": "tesserix-admin",
     "userInterfaceStyle": "automatic",
@@ -18,12 +19,17 @@
       "supportsTablet": true,
       "bundleIdentifier": "app.tesserix.admin",
       "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
-            "CFBundleURLSchemes": ["tesserix-admin"]
+            "CFBundleURLSchemes": [
+              "tesserix-admin"
+            ]
           },
           {
-            "CFBundleURLSchemes": ["com.googleusercontent.apps.849928263410-rbk6kuskqgurberff8ppl5enqdn9b0ph"]
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.849928263410-rbk6kuskqgurberff8ppl5enqdn9b0ph"
+            ]
           }
         ]
       }
@@ -48,7 +54,10 @@
       "typedRoutes": true
     },
     "extra": {
-      "router": {}
+      "router": {},
+      "eas": {
+        "projectId": "8e1d871c-44ab-478c-9192-166a42325c76"
+      }
     },
     "owner": "tesserix-org"
   }

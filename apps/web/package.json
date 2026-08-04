@@ -16,12 +16,13 @@
     "db:migrate": "node scripts/db-migrate.mjs"
   },
   "dependencies": {
+    "@google-cloud/secret-manager": "^6.3.0",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/typography": "^0.5.19",
-    "@tesserix/hooks": "^1.0.0",
     "@tesserix/homechef-shared": "workspace:*",
+    "@tesserix/hooks": "^1.0.0",
     "@tesserix/otto-widget": "^0.6.0",
     "@tesserix/web": "^1.7.1",
     "@tiptap/extension-highlight": "^3.19.0",

@@ -236,13 +236,24 @@ const dwellm8Nav: NavEntry[] = [
   { name: "Incidents", href: "/admin/platform-tickets", icon: LifeBuoy },
 ];
 
-type RailContext = "platform" | "mark8ly" | "homechef" | "devai" | "dwellm8";
+
+// Kora secondary nav. Phase 1 is the Overview only — logs (Phase 2), user
+// management (Phase 3) and economics (Phase 4) are scoped but not designed,
+// and each needs its own brainstorm. Service health is namespace-keyed and
+// already works for kora.
+const koraNav: NavEntry[] = [
+  { name: "Overview", href: "/admin/apps/kora", icon: LayoutDashboard },
+  { name: "Service health", href: "/admin/health", icon: HeartPulse },
+];
+
+type RailContext = "platform" | "mark8ly" | "homechef" | "devai" | "dwellm8" | "kora";
 
 function getActiveContext(pathname: string): RailContext {
   if (pathname.startsWith("/admin/apps/mark8ly")) return "mark8ly";
   if (pathname.startsWith("/admin/apps/homechef")) return "homechef";
   if (pathname.startsWith("/admin/apps/devai")) return "devai";
   if (pathname.startsWith("/admin/apps/dwellm8")) return "dwellm8";
+  if (pathname.startsWith("/admin/apps/kora")) return "kora";
   return "platform";
 }
 
@@ -256,6 +267,8 @@ function getSecondaryNav(context: RailContext): { label: string; entries: NavEnt
       return { label: "DevAI", entries: devaiNav };
     case "dwellm8":
       return { label: "Dwellm8", entries: dwellm8Nav };
+    case "kora":
+      return { label: "Kora", entries: koraNav };
     case "platform":
     default:
       return { label: "Platform", entries: platformNav };
@@ -502,6 +515,31 @@ function LeftRail({
             Dwellm8
           </TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Link
+              href="/admin/apps/kora"
+              onClick={() => onContextChange("kora")}
+              className={cn(
+                "flex h-10 w-10 items-center justify-center rounded-lg transition-colors",
+                activeContext === "kora"
+                  ? "bg-sidebar-accent"
+                  : "hover:bg-sidebar-accent/50"
+              )}
+            >
+              <Image
+                src="/kora-icon.png"
+                alt="Kora"
+                width={24}
+                height={24}
+                className="rounded-sm brightness-0 invert"
+              />
+            </Link>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            Kora
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* User avatar + Logout at bottom */}
@@ -673,6 +711,21 @@ export function AdminSidebar() {
                 )}
               >
                 Mark8ly
+              </Link>
+              <Link
+                href="/admin/apps/kora"
+                onClick={() => setMobileMenuOpen(false)}
+                role="tab"
+                aria-selected={activeContext === "kora"}
+                aria-current={activeContext === "kora" ? "page" : undefined}
+                className={cn(
+                  "flex-1 rounded-lg px-3 py-2 text-center text-sm font-medium transition-colors",
+                  activeContext === "kora"
+                    ? "bg-sidebar-accent text-sidebar-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50"
+                )}
+              >
+                Kora
               </Link>
             </div>
 

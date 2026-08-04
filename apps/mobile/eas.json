@@ -40,8 +40,10 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
-        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false"
+        "EXPO_PUBLIC_API_BASE": "https://tesserix.app",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "849928263410-rbk6kuskqgurberff8ppl5enqdn9b0ph.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "849928263410-eq63i2v34j61mbaghf0opu9fubmrkqua.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -51,16 +53,17 @@
         "resourceClass": "m-medium"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE": "https://home.tesserix.app",
-        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false"
+        "EXPO_PUBLIC_API_BASE": "https://tesserix.app",
+        "EXPO_PUBLIC_DEV_AUTH_BYPASS": "false",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "849928263410-rbk6kuskqgurberff8ppl5enqdn9b0ph.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "849928263410-eq63i2v34j61mbaghf0opu9fubmrkqua.apps.googleusercontent.com"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "2CRHRRYBPL",
-        "ascAppId": "REPLACE_WITH_ADMIN_ASC_APP_ID"
+        "appleTeamId": "2CRHRRYBPL"
       },
       "android": {
         "track": "internal",
