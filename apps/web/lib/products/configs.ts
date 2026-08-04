@@ -143,8 +143,10 @@ const dwellm8: ProductConfig = {
 // Its overview KPIs are OPERATING signals rather than business ones: this
 // surface exists to catch things like the food index sitting at 42% embedded
 // for the life of the project, invisible because cmd/embed exits 0 when it
-// gives up and the Kubernetes Job therefore reports Complete (#97). All four
-// are PromQL over the kora-api exporter, served by
+// gives up and the Kubernetes Job therefore reports Complete (#97). The first
+// four are PromQL over the kora-api exporter; the last two are read-only
+// Secret Manager metadata (listSecretVersions only, never a secret value —
+// see lib/secrets/key-health.ts). All six are served by
 // /api/admin/apps/kora/kpis. There is deliberately no per-user metric —
 // Prometheus carries no user_id label (unbounded cardinality on a Managed
 // Prometheus bill); ai_usage_events stays authoritative for that, see
@@ -166,6 +168,8 @@ const kora: ProductConfig = {
     { key: "ai_calls_24h", label: "AI calls (24h)", hint: "successful provider calls", source: "product" },
     { key: "ai_failures_24h", label: "AI failures (24h)", hint: "errors + timeouts", source: "product" },
     { key: "decompose_over_budget_pct", label: "Decompose over budget", hint: "% past the 1.5s textBudget", source: "product" },
+    { key: "ai_keys_configured", label: "AI keys configured", hint: "gemini + openai — should be 2", source: "product" },
+    { key: "ai_key_age_days", label: "Oldest AI key", hint: "days since last rotation", source: "product" },
   ],
 };
 

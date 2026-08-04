@@ -23,16 +23,18 @@ describe("kora product config", () => {
     expect(getProductConfig("kora").pricingByPlan).toBeUndefined();
   });
 
-  // These four keys are the contract with /api/admin/apps/kora/kpis.
+  // These six keys are the contract with /api/admin/apps/kora/kpis.
   // resolveKpiValue looks each tile up BY KEY in the KPI map; a key that
   // disagrees renders "—" with no error anywhere.
-  it("declares the four tiles the kpis route populates", () => {
+  it("declares the six tiles the kpis route populates", () => {
     const keys = getProductConfig("kora").businessKpiTiles.map((t) => t.key);
     expect(keys).toEqual([
       "food_index_missing",
       "ai_calls_24h",
       "ai_failures_24h",
       "decompose_over_budget_pct",
+      "ai_keys_configured",
+      "ai_key_age_days",
     ]);
     for (const tile of getProductConfig("kora").businessKpiTiles) {
       expect(tile.source).toBe("product");
