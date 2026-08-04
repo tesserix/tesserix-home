@@ -166,8 +166,8 @@ const kora: ProductConfig = {
   businessKpiTiles: [
     { key: "food_index_missing", label: "Food index gaps", hint: "rows with no embedding — should be 0", source: "product" },
     { key: "ai_calls_24h", label: "AI calls (24h)", hint: "successful provider calls", source: "product" },
-    { key: "ai_failures_24h", label: "AI failures (24h)", hint: "errors + timeouts", source: "product" },
-    { key: "decompose_over_budget_pct", label: "Decompose over budget", hint: "% past the 1.5s textBudget", source: "product" },
+    { key: "ai_failures_24h", label: "AI failures (24h)", hint: "errors + timeouts, excl. decompose/coach/embed", source: "product" },
+    { key: "decompose_over_budget_pct", label: "Decompose over budget", hint: "% past 1.5s, successes only — 0% if decompose is failing", source: "product" },
     { key: "ai_keys_configured", label: "AI keys configured", hint: "gemini + openai — should be 2", source: "product" },
     { key: "ai_key_age_days", label: "Oldest AI key", hint: "days since last rotation", source: "product" },
   ],
