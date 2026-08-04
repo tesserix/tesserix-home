@@ -135,11 +135,46 @@ const dwellm8: ProductConfig = {
   ],
 };
 
+// Kora — AI food logging (Expo mobile app + a single Go API, kora-api). One
+// namespace `kora`, dedicated CNPG cluster `kora-postgres` (provisioned
+// 2026-08-04; it was on the shared global-postgres before that). No
+// subscriptions, so pricing is omitted and the billing section hides.
+//
+// Its overview KPIs are OPERATING signals rather than business ones: this
+// surface exists to catch things like the food index sitting at 42% embedded
+// for the life of the project, invisible because cmd/embed exits 0 when it
+// gives up and the Kubernetes Job therefore reports Complete (#97). All four
+// are PromQL over the kora-api exporter, served by
+// /api/admin/apps/kora/kpis. There is deliberately no per-user metric —
+// Prometheus carries no user_id label (unbounded cardinality on a Managed
+// Prometheus bill); ai_usage_events stays authoritative for that, see
+// kora/docs/ai-usage-queries.md.
+const kora: ProductConfig = {
+  id: "kora",
+  name: "Kora",
+  namespace: "kora",
+  cnpgClusterName: "kora-postgres",
+  sendGridProductTag: "kora",
+  rowCountTables: [],
+  costAttribution: {
+    requests: 0.5,
+    storage: 0.3,
+    egress: 0.2,
+  },
+  businessKpiTiles: [
+    { key: "food_index_missing", label: "Food index gaps", hint: "rows with no embedding — should be 0", source: "product" },
+    { key: "ai_calls_24h", label: "AI calls (24h)", hint: "successful provider calls", source: "product" },
+    { key: "ai_failures_24h", label: "AI failures (24h)", hint: "errors + timeouts", source: "product" },
+    { key: "decompose_over_budget_pct", label: "Decompose over budget", hint: "% past the 1.5s textBudget", source: "product" },
+  ],
+};
+
 const REGISTRY: Readonly<Record<string, ProductConfig>> = {
   mark8ly,
   homechef,
   devai,
   dwellm8,
+  kora,
 };
 
 export function getProductConfig(id: string): ProductConfig {
