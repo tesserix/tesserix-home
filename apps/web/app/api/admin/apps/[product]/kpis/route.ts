@@ -74,7 +74,13 @@ export async function GET(
   // silently starts interpolating instead of reading an exact bucket.
   if (product === "kora") {
     const queries: Record<string, string> = {
-      food_index_missing: "kora_food_index_missing",
+      // max(...): kora_food_index_missing is a bare gauge, not a counter, and
+      // during a rolling update there are two pods — a freshly started pod's
+      // gauge reads 0 until its first 60s refresh. sum() would double count
+      // (worse) and rows[0] alone would pick an arbitrary pod's series
+      // (silently wrong: the healthy-looking 0 while the truth is 4078).
+      // max() is the one aggregation that can't understate a real gap.
+      food_index_missing: "max(kora_food_index_missing)",
       ai_calls_24h: 'sum(increase(kora_ai_calls_total{outcome="ok"}[24h]))',
       ai_failures_24h: 'sum(increase(kora_ai_calls_total{outcome=~"error|timeout"}[24h]))',
       decompose_over_budget_pct:
@@ -84,26 +90,38 @@ export async function GET(
     };
 
     const out: Record<string, number> = {};
-    await Promise.all(
-      Object.entries(queries).map(async ([key, promql]) => {
-        try {
-          const rows = await queryInstant(promql);
-          const v = rows[0]?.value.value;
-          out[key] = typeof v === "number" && Number.isFinite(v) ? v : 0;
-        } catch (err) {
-          logger.warn(`[kora-kpis] ${key}: ${err instanceof Error ? err.message : "failed"}`);
-          out[key] = 0;
-        }
-      }),
-    );
 
-    // AI provider key health. Metadata only — see lib/secrets/key-health.ts.
-    // Independent of the Prometheus block above: a Secret Manager failure must
-    // blank these two tiles, not the four operating ones.
-    const keys = await readKeyHealth("tesseracthub-480811", [
-      "prod-kora-gemini-api-key",
-      "prod-kora-openai-api-key",
+    // Prometheus (four operating tiles) and Secret Manager (two key-health
+    // tiles) are independent upstreams, run in the SAME Promise.all so
+    // neither can block the other — previously Prometheus was awaited to
+    // completion before readKeyHealth was even called, so a hanging Secret
+    // Manager request held up four tiles that had already resolved. Each
+    // upstream also degrades independently on failure: one dead Prometheus
+    // series blanks only that tile, and a Secret Manager error (including a
+    // rejected readKeyHealth call, which has no internal deadline either)
+    // blanks only the two key-health tiles below, never all six.
+    const [, keys] = await Promise.all([
+      Promise.all(
+        Object.entries(queries).map(async ([key, promql]) => {
+          try {
+            const rows = await queryInstant(promql);
+            const v = rows[0]?.value.value;
+            out[key] = typeof v === "number" && Number.isFinite(v) ? v : 0;
+          } catch (err) {
+            logger.warn(`[kora-kpis] ${key}: ${err instanceof Error ? err.message : "failed"}`);
+            out[key] = 0;
+          }
+        }),
+      ),
+      readKeyHealth("tesseracthub-480811", [
+        "prod-kora-gemini-api-key",
+        "prod-kora-openai-api-key",
+      ]).catch((err) => {
+        logger.warn(`[kora-kpis] key-health: ${err instanceof Error ? err.message : "failed"}`);
+        return { configured: 0, oldestAgeDays: 0 };
+      }),
     ]);
+
     out.ai_keys_configured = keys.configured;
     out.ai_key_age_days = keys.oldestAgeDays;
 
