@@ -28,6 +28,22 @@ import { logger } from "@/lib/logger";
 const API_URL = (process.env.KORA_API_URL ?? "").replace(/\/+$/, "");
 const HMAC_KEY_B64 = process.env.KORA_BFF_HMAC_KEY ?? "";
 
+// Live testing of this slice's infra established the failure mode when the
+// NetworkPolicy that allows tesserix-home -> kora-api is not yet in place:
+// the connection HANGS (TCP retries) rather than being refused, and without
+// a client-side timeout Node eventually gives up on its own after ~2 minutes.
+// This page is a server component, so that hang blocks the render — a user
+// sees what looks like a frozen page, the worst of the available failure
+// modes, and the one most likely to occur (it happens whenever the three
+// repos in this slice land in the wrong deploy order). 10s matches the
+// UPSTREAM_TIMEOUT_MS convention already used by the otto proxy routes
+// (app/api/otto/[...path]/route.ts, app/api/admin/otto/[...path]/route.ts):
+// generous enough to absorb a Knative cold start for kora-api's pod (scale-
+// to-zero) and ordinary in-cluster latency, but it fails fast — nowhere near
+// the ~2 minute hang, and comfortably under Istio's 30s perTryTimeout so it
+// resolves before the mesh's own retry budget would kick in.
+const UPSTREAM_TIMEOUT_MS = 10_000; // abort the upstream fetch after 10s
+
 /**
  * Every Kora admin endpoint lives under this prefix. NOTE: kora-api mounts its
  * routes under /v1, NOT /api/v1 like HomeChef. A mismatch here is a 404 that
@@ -212,8 +228,18 @@ export async function koraAdmin<T = unknown>(
       headers,
       body: bodyBytes.length ? bodyBytes : undefined,
       cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
   } catch (err) {
+    // AbortSignal.timeout() rejects with a DOMException named "TimeoutError"
+    // (verified against this repo's Node/undici version) — distinguish it
+    // from a hard connection failure so a timed-out request never collapses
+    // into the same generic "upstream_unreachable" as a refused connection,
+    // and never surfaces as an empty index.
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      logger.error(`[kora-admin] upstream timed out after ${UPSTREAM_TIMEOUT_MS}ms`, err);
+      throw new KoraAdminError(504, "upstream_timeout", `kora-api did not respond within ${UPSTREAM_TIMEOUT_MS}ms`);
+    }
     logger.error("[kora-admin] upstream unreachable", err);
     throw new KoraAdminError(502, "upstream_unreachable");
   }

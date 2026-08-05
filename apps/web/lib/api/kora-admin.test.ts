@@ -182,6 +182,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  // Minor 2: `vi.resetModules()` is called by the trailing-slash test below,
+  // but the module registry reset was never undone. It happens to be the
+  // last test in the file today, so nothing downstream inherits the reset —
+  // but that's an ordering dependence, not a guarantee, and any test appended
+  // after it would silently start from a cleared module cache. Always
+  // resetting here (a no-op for every other test) removes the dependence.
+  vi.resetModules();
 });
 
 describe("koraAdmin / listKoraFoods", () => {
@@ -240,6 +247,23 @@ describe("koraAdmin / listKoraFoods", () => {
     expect(initArg.headers["X-Internal-Auth"]).toBe(expectedSig);
   });
 
+  // Minor 1: the query-building test above is ASCII-only end to end
+  // (`q=chicken`), so the URLSearchParams pass-through is exercised only as
+  // an identity transform — an encoding bug would never trip it. Kora is a
+  // food index; accented names are ordinary user input on the query side too
+  // (the request-body vector above pins the same concern for POST bodies).
+  // This asserts the ACTUAL outgoing URL string, not a value the test itself
+  // supplied, against the exact percent-encoding Go's `c.Query` decodes back
+  // to the original string.
+  it("percent-encodes a non-ASCII, space- and symbol-bearing query", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraFoods({ q: "crème brûlée + 50% fat" });
+
+    const [urlArg] = fetchMock.mock.calls[0] as [string];
+    expect(urlArg).toContain("q=cr%C3%A8me+br%C3%BBl%C3%A9e+%2B+50%25+fat");
+  });
+
   it("sends no body on a GET", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
 
@@ -247,6 +271,32 @@ describe("koraAdmin / listKoraFoods", () => {
 
     const [, initArg] = fetchMock.mock.calls[0] as [string, { body?: unknown }];
     expect(initArg.body).toBeUndefined();
+  });
+
+  // Important 1: with no request timeout, live testing of this slice's infra
+  // established that a missing NetworkPolicy makes the upstream fetch HANG
+  // (TCP retry) rather than fail fast — roughly two minutes before Node gives
+  // up on its own. Since this is a server component, that blocks the render:
+  // the worst available failure mode, and the likeliest to occur (any wrong
+  // deploy order across the three repos in this slice triggers it). This
+  // proves the timeout fires AND that it surfaces as a distinguishable error
+  // — not a generic "upstream_unreachable", and not an empty page (which
+  // `isKoraFoodPage`'s catch-only-on-mismatch path would never save us from,
+  // since a hang never reaches that code at all).
+  it("surfaces a distinguishable error when the upstream request times out", async () => {
+    fetchMock.mockRejectedValue(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    );
+
+    await expect(listKoraFoods({})).rejects.toMatchObject({
+      status: 504,
+      code: "upstream_timeout",
+    });
+
+    // Distinguishable from a hard connection failure (upstream_unreachable,
+    // 502) — a paged operator must be able to tell "kora-api is slow/
+    // unreachable-by-timeout" from "kora-api actively refused/errored".
+    await expect(listKoraFoods({})).rejects.not.toMatchObject({ code: "upstream_unreachable" });
   });
 
   it("throws on a non-200 rather than silently returning an empty page", async () => {
