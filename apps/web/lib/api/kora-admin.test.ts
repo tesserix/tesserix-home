@@ -24,7 +24,6 @@ import {
   ADMIN_PREFIX,
   buildSignedHeaders,
   computeSignature,
-  koraAdmin,
   listKoraFoods,
   KoraAdminError,
 } from "./kora-admin";
@@ -307,6 +306,30 @@ describe("koraAdmin / listKoraFoods", () => {
     // The logged line must carry the same diagnostic, not just the bare
     // status code.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("forbidden: admin identity required"));
+  });
+
+  // Task 6 defect: `res.data.data` in listKoraFoods was an unchecked cast —
+  // a 200 with an unexpected body shape returned `undefined` TYPED as
+  // KoraFoodPage, without throwing. Every caller (the food index page) would
+  // then render that as a genuinely empty index rather than as the failure
+  // it is. A narrow runtime shape check (items is an array, total is a
+  // number) must catch this and throw instead.
+  it("throws when a 200 body does not have the KoraFoodPage shape (items array + total number)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { not: "a page" } }));
+
+    await expect(listKoraFoods({})).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  it("throws when the 200 body is missing the data envelope entirely", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+
+    await expect(listKoraFoods({})).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  it("throws when total is not a number, even if items is a valid array", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: "3" } }));
+
+    await expect(listKoraFoods({})).rejects.toBeInstanceOf(KoraAdminError);
   });
 
   // Minor 3: KORA_API_URL + path is plain string concatenation. A trailing

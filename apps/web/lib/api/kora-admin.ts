@@ -262,6 +262,22 @@ export interface KoraFoodPage {
   total: number;
 }
 
+/**
+ * Narrow runtime check that a value actually has KoraFoodPage's shape. `res.data.data`
+ * below is only a TypeScript-level assertion (`koraAdmin<{ data: KoraFoodPage }>`) — it
+ * does not verify anything at runtime. A 200 with an unexpected body (kora-api's route
+ * shape drifts, a proxy swallows the response, a misconfigured mock in a test) would
+ * otherwise return `undefined` TYPED as `KoraFoodPage`, and every caller would render
+ * that as a genuinely empty food index rather than as the failure it is. Deliberately
+ * narrow: only checks the two fields callers actually rely on (`items` as an array,
+ * `total` as a number), not every field of every `KoraFood`.
+ */
+function isKoraFoodPage(value: unknown): value is KoraFoodPage {
+  if (!value || typeof value !== "object") return false;
+  const page = value as { items?: unknown; total?: unknown };
+  return Array.isArray(page.items) && typeof page.total === "number";
+}
+
 export async function listKoraFoods(params: {
   q?: string;
   limit?: number;
@@ -281,5 +297,10 @@ export async function listKoraFoods(params: {
     throw new KoraAdminError(res.status, koraError?.error ?? "list_foods_failed", koraError?.message);
   }
   // kora wraps every response in {"data": ...} (internal/httpx.OK).
-  return res.data.data;
+  const page = res.data?.data;
+  if (!isKoraFoodPage(page)) {
+    logger.warn(`[kora-admin] GET /foods -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "food index response did not match the expected shape");
+  }
+  return page;
 }
