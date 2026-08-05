@@ -7,7 +7,7 @@
 // documents to download, and the status to set afterwards. Every status set
 // here is what the chef's tracker shows, so the wording is written for them.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
@@ -102,7 +102,24 @@ function RequestCard({
   onError: (m: string | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const certRef = useRef<HTMLInputElement>(null);
   const { prompt } = useConfirm();
+
+  async function uploadCertificate(file?: File | null) {
+    if (!file) return;
+    onError(null);
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      await hcAdmin.postForm(`/fssai/requests/${r.id}/license`, form);
+      onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Could not upload the certificate");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const nextStates = FSSAI_TRANSITIONS[r.status] ?? [];
 
@@ -266,6 +283,48 @@ function RequestCard({
               ) : null}
             </section>
           )}
+
+          {/* The certificate itself, once FoSCoS issues it. Whoever filed it has
+              the PDF; the chef needs it to show an inspector, and it is the
+              document their compliance record is missing until someone attaches
+              it. A chef who received it by email instead uploads it on their own
+              Documents screen, which is what feeds expiry tracking. */}
+          <section>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Issued certificate
+            </h4>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <input
+                ref={certRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                className="hidden"
+                onChange={(e) => void uploadCertificate(e.target.files?.[0])}
+              />
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => certRef.current?.click()}
+              >
+                {busy ? "Uploading…" : r.licenseFileUrl ? "Replace certificate" : "Upload certificate"}
+              </Button>
+              {r.licenseFileUrl ? (
+                <a
+                  href={r.licenseFileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium underline"
+                >
+                  {r.licenseFileName || "Open current"}
+                </a>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  Optional — attach it and the chef can download it from their app.
+                </span>
+              )}
+            </div>
+          </section>
 
           <section>
             <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
