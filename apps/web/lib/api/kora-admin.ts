@@ -20,7 +20,12 @@ import crypto from "node:crypto";
 import { getCurrentSession } from "@/lib/auth/session-jwt";
 import { logger } from "@/lib/logger";
 
-const API_URL = process.env.KORA_API_URL ?? "";
+// Trailing slash stripped: `KORA_API_URL` + `path` is plain concatenation
+// below, and Node's URL parser does not collapse "http://host//v1/admin" —
+// Gin's router won't match it either. That 404s BEFORE kora's bffauth
+// middleware runs, so there is no signature evidence anywhere to diagnose
+// from (see task-5-report.md, Minor 3).
+const API_URL = (process.env.KORA_API_URL ?? "").replace(/\/+$/, "");
 const HMAC_KEY_B64 = process.env.KORA_BFF_HMAC_KEY ?? "";
 
 /**
@@ -39,6 +44,31 @@ export class KoraAdminError extends Error {
     super(message ?? code);
     this.name = "KoraAdminError";
   }
+}
+
+/** Kora's error envelope (internal/httpx.Error / errorBody): `{"error": code, "message": msg}`. */
+interface KoraErrorBody {
+  error: string;
+  message?: string;
+}
+
+/**
+ * Kora's middleware deliberately distinguishes 401 (bad signature/clock/key),
+ * 403 (correctly signed but not an admin identity), and 400 (unreadable body)
+ * — see api/internal/bffauth/bffauth.go's comments. Without surfacing `error`/
+ * `message` here, every one of those collapses into the same blanket failure
+ * on this side, and whoever is paged has no way to tell a signature problem
+ * from an authorization problem from a clock problem. Only returns a value
+ * for bodies that actually match Kora's envelope — never fabricates a code.
+ */
+function extractKoraError(data: unknown): KoraErrorBody | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const body = data as { error?: unknown; message?: unknown };
+  if (typeof body.error !== "string") return undefined;
+  return {
+    error: body.error,
+    message: typeof body.message === "string" ? body.message : undefined,
+  };
 }
 
 /** Identity fields bound into the signature (must match Go's `bffauth.Identity`). */
@@ -135,7 +165,15 @@ function toQuery(search: RequestOptions["search"]): string {
 
 /**
  * Call a Kora admin endpoint, signed as a trusted BFF.
- * @param adminPath path UNDER /v1/admin, e.g. "/foods".
+ * @param adminPath path UNDER /v1/admin, e.g. "/foods". MUST already be a
+ * valid, pre-encoded path segment. `adminPath` is signed as the raw string
+ * (see `computeSignature`) but `fetch` percent-encodes the URL on the wire,
+ * so the two can diverge: a literal `%` in a segment makes Go reject the
+ * request with 400 before it reaches gin, and a pre-encoded `%2F` is signed
+ * literally while Go's router decodes it to `/`, giving a 401. Harmless today
+ * (the only caller is the constant "/foods"), but the first path parameter
+ * this function gains will need real encoding handled by the caller, not
+ * assumed away here.
  */
 export async function koraAdmin<T = unknown>(
   method: AdminMethod,
@@ -190,7 +228,14 @@ export async function koraAdmin<T = unknown>(
     }
   }
   if (!res.ok) {
-    logger.warn(`[kora-admin] ${method} ${path} -> ${res.status}`);
+    const koraError = extractKoraError(data);
+    logger.warn(
+      koraError
+        ? `[kora-admin] ${method} ${path} -> ${res.status} ${koraError.error}${
+            koraError.message ? `: ${koraError.message}` : ""
+          }`
+        : `[kora-admin] ${method} ${path} -> ${res.status}`,
+    );
   }
   return { status: res.status, data: data as T };
 }
@@ -230,7 +275,10 @@ export async function listKoraFoods(params: {
     },
   });
   if (res.status !== 200) {
-    throw new KoraAdminError(res.status, "list_foods_failed");
+    // Carry Kora's own diagnostic (see extractKoraError) rather than a bare
+    // code, so a 401/403/400 stay distinguishable this far up the stack.
+    const koraError = extractKoraError(res.data as unknown);
+    throw new KoraAdminError(res.status, koraError?.error ?? "list_foods_failed", koraError?.message);
   }
   // kora wraps every response in {"data": ...} (internal/httpx.OK).
   return res.data.data;

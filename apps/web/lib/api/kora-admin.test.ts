@@ -1,6 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ADMIN_PREFIX, buildSignedHeaders, computeSignature } from "./kora-admin";
+// `koraAdmin`/`listKoraFoods` read KORA_API_URL / KORA_BFF_HMAC_KEY from
+// process.env at MODULE LOAD time (top-level consts), not at call time. Since
+// `import` statements are hoisted above ordinary statements, a plain
+// `process.env.X = ...` written above the static import below would still run
+// AFTER the module's top-level code. `vi.hoisted` is the escape hatch: its
+// callback is hoisted above even the hoisted imports, so these are set before
+// "./kora-admin" is first evaluated.
+const { TEST_KEY_B64 } = vi.hoisted(() => {
+  process.env.KORA_API_URL = "http://kora-api-direct.kora.svc.cluster.local:8080";
+  process.env.KORA_BFF_HMAC_KEY = "a29yYS10ZXN0LWhtYWMta2V5LTEyMzQ1Ng==";
+  return { TEST_KEY_B64: process.env.KORA_BFF_HMAC_KEY };
+});
+
+const getCurrentSession = vi.fn();
+vi.mock("@/lib/auth/session-jwt", () => ({ getCurrentSession: () => getCurrentSession() }));
+
+const warn = vi.fn();
+const error = vi.fn();
+vi.mock("@/lib/logger", () => ({ logger: { warn: (...a: unknown[]) => warn(...a), error: (...a: unknown[]) => error(...a) } }));
+
+import {
+  ADMIN_PREFIX,
+  buildSignedHeaders,
+  computeSignature,
+  koraAdmin,
+  listKoraFoods,
+  KoraAdminError,
+} from "./kora-admin";
 
 // Decodes to "kora-test-hmac-key-123456". The SAME constant and the SAME
 // expected digest are pinned in kora's api/internal/bffauth/bffauth_test.go.
@@ -117,5 +144,187 @@ describe("ADMIN_PREFIX", () => {
     // wrong prefix fails fast in CI instead of surfacing as a 404 against
     // kora-api that looks like a routing bug.
     expect(ADMIN_PREFIX).toBe("/v1/admin");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// koraAdmin / listKoraFoods — the real call path. Nothing above this point
+// exercises path assembly, query building, the non-200 throw, or the
+// response unwrap; ADMIN_PREFIX's value could be hardcoded past entirely
+// (see the ADMIN_PREFIX describe's comment) and every test above would still
+// be green. These tests drive koraAdmin/listKoraFoods with a stubbed global
+// fetch and a mocked session, so the assertions bind to what is ACTUALLY sent
+// over the wire, not to the constants in isolation.
+
+const fetchMock = vi.fn();
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+const ACTOR = { userId: "admin-uid-1", email: "admin@tesserix.app" };
+
+// NB: block body, not an expression arrow — `mockReset()` returns the mock
+// itself, and Vitest treats a value returned from `beforeEach` as an
+// implicit cleanup callback, invoking it (with no args) after the test. See
+// app/api/admin/apps/[product]/kpis/route.test.ts for the same note.
+beforeEach(() => {
+  fetchMock.mockReset();
+  getCurrentSession.mockReset();
+  warn.mockReset();
+  error.mockReset();
+  getCurrentSession.mockResolvedValue({ sub: ACTOR.userId, email: ACTOR.email });
+  vi.stubGlobal("fetch", fetchMock);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+describe("koraAdmin / listKoraFoods", () => {
+  it("builds the request path from ADMIN_PREFIX (not a hardcoded mount) and signs exactly that path", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraFoods({});
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [urlArg, initArg] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }];
+    const signedPath = new URL(urlArg).pathname;
+
+    // Catches a hardcoded "/api/v1/admin" + adminPath assembly: ADMIN_PREFIX
+    // (the exported constant, not a string literal) is used to compute the
+    // expectation, so this fails if the runtime path assembly ever diverges
+    // from it — unlike the ADMIN_PREFIX describe above, which only pins the
+    // constant's own value and never touches the real assembly.
+    expect(signedPath).toBe(`${ADMIN_PREFIX}/foods`);
+
+    // The load-bearing identity: whatever path fetch was actually told to
+    // hit is the SAME path that was signed. Recomputed from the OBSERVED
+    // path (not from a constant) so it holds independently of the assertion
+    // above.
+    const expectedSig = computeSignature(
+      "GET",
+      signedPath,
+      Buffer.alloc(0),
+      initArg.headers["X-Auth-Ts"],
+      Buffer.from(TEST_KEY_B64, "base64"),
+      { userId: ACTOR.userId, email: ACTOR.email, role: "admin", pool: "internal" },
+    );
+    expect(initArg.headers["X-Internal-Auth"]).toBe(expectedSig);
+  });
+
+  it("builds the query string from search params, excluded from the signed path", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraFoods({ q: "chicken", limit: 20, offset: 40 });
+
+    const [urlArg, initArg] = fetchMock.mock.calls[0] as [string, { headers: Record<string, string> }];
+    const url = new URL(urlArg);
+    expect(url.search).toBe("?q=chicken&limit=20&offset=40");
+    expect(url.pathname).toBe("/v1/admin/foods");
+
+    // Go's r.URL.Path never includes the query string — the signature must
+    // be computed over the pathname alone, or every filtered/paginated list
+    // call 401s while the unfiltered first page happens to work.
+    const expectedSig = computeSignature(
+      "GET",
+      url.pathname,
+      Buffer.alloc(0),
+      initArg.headers["X-Auth-Ts"],
+      Buffer.from(TEST_KEY_B64, "base64"),
+      { userId: ACTOR.userId, email: ACTOR.email, role: "admin", pool: "internal" },
+    );
+    expect(initArg.headers["X-Internal-Auth"]).toBe(expectedSig);
+  });
+
+  it("sends no body on a GET", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraFoods({});
+
+    const [, initArg] = fetchMock.mock.calls[0] as [string, { body?: unknown }];
+    expect(initArg.body).toBeUndefined();
+  });
+
+  it("throws on a non-200 rather than silently returning an empty page", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(500, { error: "internal_error", message: "something went wrong" }),
+    );
+
+    await expect(listKoraFoods({})).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  it("unwraps kora's {data: ...} envelope exactly once", async () => {
+    const page = {
+      items: [
+        {
+          id: "food-1",
+          name: "Apple",
+          brand: "",
+          provenance: "usda",
+          serving_desc: "1 medium",
+          serving_grams: 182,
+          kcal_per_100g: 52,
+          protein_per_100g: 0.3,
+          carbs_per_100g: 13.8,
+          fat_per_100g: 0.2,
+          fiber_per_100g: 2.4,
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      total: 1,
+    };
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: page }));
+
+    const result = await listKoraFoods({});
+
+    // Unwrapped exactly once: still-wrapped (`{data: page}`) or double-
+    // unwrapped (`page.items[0]` itself) would both fail this.
+    expect(result).toEqual(page);
+    expect(result).not.toHaveProperty("data");
+  });
+
+  // Important 2: Kora's bffauth middleware deliberately distinguishes 401
+  // (bad signature/clock/key), 403 (correctly signed but not an admin
+  // identity), and 400 (unreadable body) — see
+  // api/internal/bffauth/bffauth.go. Losing that distinction here sends
+  // whoever is paged hunting a key mismatch that does not exist.
+  it("surfaces Kora's error code and message on a 403 (correctly signed, not an admin identity)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(403, { error: "forbidden", message: "admin identity required" }),
+    );
+
+    await expect(listKoraFoods({})).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden",
+      message: "admin identity required",
+    });
+
+    // The logged line must carry the same diagnostic, not just the bare
+    // status code.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("forbidden: admin identity required"));
+  });
+
+  // Minor 3: KORA_API_URL + path is plain string concatenation. A trailing
+  // slash on the configured base URL gives "http://host//v1/admin/foods" —
+  // Node's URL parser does not collapse the double slash, and Gin's router
+  // won't match it, so it 404s BEFORE bffauth runs (no signature evidence to
+  // diagnose from). API_URL is read from process.env at module load, so this
+  // needs a fresh module instance with the trailing-slash value in place
+  // before that top-level code runs.
+  it("strips a trailing slash from KORA_API_URL so the request path has no double slash", async () => {
+    vi.resetModules();
+    vi.stubEnv("KORA_API_URL", "http://kora-api-direct.kora.svc.cluster.local:8080/");
+    const mod = await import("./kora-admin");
+
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+    await mod.listKoraFoods({});
+
+    const [urlArg] = fetchMock.mock.calls[0] as [string];
+    expect(new URL(urlArg).pathname).toBe("/v1/admin/foods");
   });
 });
