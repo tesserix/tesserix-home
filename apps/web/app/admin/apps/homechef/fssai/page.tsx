@@ -196,6 +196,37 @@ export default function HomechefFssaiPage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
+          {/* Expiring, not yet expired. A lapse takes the kitchen offline, and
+              renewing through us is a fresh paid request at the same fee — so
+              this list is worth working before it becomes the LOCKED one. */}
+          {(data.expiringSoon?.length ?? 0) > 0 ? (
+            <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+              <h2 className="text-sm font-semibold text-foreground">
+                Expiring within {data.expiringWithinDays ?? 60} days ({data.expiringSoonCount})
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Remind these chefs to renew. If they want us to file it again that is a new
+                request at the same fee — an expired licence takes their kitchen offline.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {data.expiringSoon!.map((ch) => (
+                  <li
+                    key={ch.chefId}
+                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                  >
+                    <span className="font-medium">{ch.businessName}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {/* daysSinceExpiry is negative here — days remaining. */}
+                      {Math.abs(ch.daysSinceExpiry)} day
+                      {Math.abs(ch.daysSinceExpiry) === 1 ? "" : "s"} left
+                      {ch.fssaiExpiry ? ` · expires ${formatDate(ch.fssaiExpiry)}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           {data.missingExpiryCount > 0 ? (
             <div className="rounded-lg border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">

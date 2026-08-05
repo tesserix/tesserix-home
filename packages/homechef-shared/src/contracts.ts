@@ -121,11 +121,20 @@ export interface FSSAILockedChef {
   overrideBy?: string | null;
 }
 
+/** A licence lapsing inside the window. Same shape as a locked chef, with
+ *  daysSinceExpiry NEGATIVE — it reads as days remaining. */
+export type FSSAIExpiringChef = FSSAILockedChef;
+
 export interface FSSAILockResponse {
   locked: FSSAILockedChef[];
   overridden: FSSAILockedChef[];
   lockedCount: number;
   overriddenCount: number;
+  /** Licences due to lapse inside expiringWithinDays. Renewing means a fresh
+   *  paid filing request at the same fee, so these are worth chasing early. */
+  expiringSoon?: FSSAIExpiringChef[];
+  expiringSoonCount?: number;
+  expiringWithinDays?: number;
   missingExpiryCount: number;
 }
 
