@@ -8,6 +8,7 @@ import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDate, type FSSAILockedChef, type FSSAILockResponse } from "@tesserix/homechef-shared";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
+import { FssaiRequestsPanel } from "@/components/admin/homechef/fssai-requests";
 
 // GET/POST /admin/fssai-expiry-backfill — chefs with a verified FSSAI licence but
 // no recorded expiry. GET is a dry run (list), POST sends the confirm-licence push.
@@ -23,7 +24,14 @@ interface BackfillResponse {
   notified: number;
 }
 
+// Two unrelated jobs share the FSSAI name, so they share the page rather than
+// hiding one of them behind a nav item nobody looks for: REQUESTS is chefs
+// paying us to obtain a registration, LOCKOUTS is chefs whose licence expired.
+// Requests leads because it is the one with a queue and a chef waiting.
+type FssaiTab = "requests" | "lockouts";
+
 export default function HomechefFssaiPage() {
+  const [tab, setTab] = useState<FssaiTab>("requests");
   const { data, isLoading, mutate } = useSWR<FSSAILockResponse>(
     ["/chefs/fssai-locked"],
     swrFetcher,
@@ -142,30 +150,83 @@ export default function HomechefFssaiPage() {
   return (
     <div className="space-y-6 p-6">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">FSSAI Lockouts</h1>
+        <h1 className="text-2xl font-semibold text-foreground">FSSAI</h1>
         <p className="text-sm text-muted-foreground">
-          {data
-            ? `${data.lockedCount} locked · ${data.overriddenCount} overridden`
-            : "Expired licences"}
+          {tab === "requests"
+            ? "Chefs who have paid us to obtain their registration"
+            : data
+              ? `${data.lockedCount} locked · ${data.overriddenCount} overridden`
+              : "Expired licences"}
         </p>
       </div>
 
-      {error ? (
+      <div className="flex gap-1 border-b border-border">
+        {(["requests", "lockouts"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={
+              "px-4 py-2 text-sm font-medium -mb-px border-b-2 " +
+              (tab === t
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground")
+            }
+          >
+            {t === "requests" ? "Filing requests" : "Lockouts"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "requests" ? <FssaiRequestsPanel /> : null}
+
+      {tab === "lockouts" && error ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {error}
         </div>
       ) : null}
 
-      {notice ? (
+      {tab === "lockouts" && notice ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-300">
           {notice}
         </div>
       ) : null}
 
-      {isLoading || !data ? (
+      {tab !== "lockouts" ? null : isLoading || !data ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <>
+          {/* Expiring, not yet expired. A lapse takes the kitchen offline, and
+              renewing through us is a fresh paid request at the same fee — so
+              this list is worth working before it becomes the LOCKED one. */}
+          {(data.expiringSoon?.length ?? 0) > 0 ? (
+            <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+              <h2 className="text-sm font-semibold text-foreground">
+                Expiring within {data.expiringWithinDays ?? 60} days ({data.expiringSoonCount})
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Remind these chefs to renew. If they want us to file it again that is a new
+                request at the same fee — an expired licence takes their kitchen offline.
+              </p>
+              <ul className="mt-2 space-y-1">
+                {data.expiringSoon!.map((ch) => (
+                  <li
+                    key={ch.chefId}
+                    className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                  >
+                    <span className="font-medium">{ch.businessName}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {/* daysSinceExpiry is negative here — days remaining. */}
+                      {Math.abs(ch.daysSinceExpiry)} day
+                      {Math.abs(ch.daysSinceExpiry) === 1 ? "" : "s"} left
+                      {ch.fssaiExpiry ? ` · expires ${formatDate(ch.fssaiExpiry)}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           {data.missingExpiryCount > 0 ? (
             <div className="rounded-lg border border-border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">

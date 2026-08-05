@@ -121,11 +121,20 @@ export interface FSSAILockedChef {
   overrideBy?: string | null;
 }
 
+/** A licence lapsing inside the window. Same shape as a locked chef, with
+ *  daysSinceExpiry NEGATIVE — it reads as days remaining. */
+export type FSSAIExpiringChef = FSSAILockedChef;
+
 export interface FSSAILockResponse {
   locked: FSSAILockedChef[];
   overridden: FSSAILockedChef[];
   lockedCount: number;
   overriddenCount: number;
+  /** Licences due to lapse inside expiringWithinDays. Renewing means a fresh
+   *  paid filing request at the same fee, so these are worth chasing early. */
+  expiringSoon?: FSSAIExpiringChef[];
+  expiringSoonCount?: number;
+  expiringWithinDays?: number;
   missingExpiryCount: number;
 }
 
@@ -1016,3 +1025,107 @@ export interface DeliveryIntelligenceResponse {
   allTimeDistanceSpendUsd: number;
   zoneTiers: DeliveryZoneTierSummary[];
 }
+
+// ── FSSAI filing requests ────────────────────────────────────────────────────
+// A chef paying us to obtain their registration. Distinct from the lockout
+// above: that one polices an EXPIRED licence, this one is the errand of getting
+// a new one. Admin works the queue and files on FoSCoS by hand — FSSAI exposes
+// no API — and every status an admin sets is what the chef's tracker shows.
+
+/** Statuses an admin can see. Unpaid drafts never reach the queue. */
+export type FssaiRequestStatus =
+  | "awaiting_payment"
+  | "submitted"
+  | "in_progress"
+  | "more_info_required"
+  | "filed"
+  | "issued"
+  | "rejected"
+  | "refunded";
+
+export interface FssaiRequestDocument {
+  kind: "photo" | "identity" | "address_proof";
+  fileName: string;
+  /** Short-lived signed URL, minted per response. Never store or share it. */
+  fileUrl?: string;
+}
+
+export interface FssaiRequestRow {
+  id: string;
+  chefId: string;
+  status: FssaiRequestStatus;
+  kitchenName: string;
+  applicantName: string;
+  contactPhone: string;
+  contactEmail: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  termYears: number;
+  feeAmount: number;
+  feeTax: number;
+  feeTotal: number;
+  currency: string;
+  paymentRef: string;
+  paidAt?: string | null;
+  /** The FoSCoS reference. Required to mark a request filed — it is how the
+   *  chef tracks their own application with the state authority. */
+  applicationRef?: string;
+  registrationNo?: string;
+  rejectedReason?: string;
+  /** What we asked the chef for. Shown to them verbatim. */
+  infoRequested?: string;
+  infoRequestedAt?: string | null;
+  adminNotes?: string;
+  /** The issued certificate, once uploaded. Signed, short-lived. */
+  licenseFileName?: string;
+  licenseFileUrl?: string;
+  submittedAt?: string | null;
+  filedAt?: string | null;
+  issuedAt?: string | null;
+  documents: FssaiRequestDocument[];
+  needsDocuments: boolean;
+  mode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FssaiRequestListResponse {
+  requests: FssaiRequestRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+/** What an admin may move a request to, and what each transition requires.
+ *  Mirrors services.FssaiAdminMayTransition — the server enforces it; this is
+ *  only so the UI does not offer a move that will be refused. */
+export const FSSAI_TRANSITIONS: Record<string, FssaiRequestStatus[]> = {
+  submitted: ["in_progress", "more_info_required", "rejected", "refunded"],
+  in_progress: ["filed", "more_info_required", "rejected", "refunded"],
+  more_info_required: ["in_progress", "filed", "rejected", "refunded"],
+  filed: ["issued", "more_info_required", "rejected", "refunded"],
+  rejected: ["refunded"],
+};
+
+/** The field an admin must supply to reach a status, or null. */
+export function fssaiTransitionRequires(to: FssaiRequestStatus): string | null {
+  if (to === "filed") return "applicationRef";
+  if (to === "issued") return "registrationNo";
+  if (to === "rejected") return "rejectedReason";
+  if (to === "more_info_required") return "infoRequested";
+  return null;
+}
+
+export const FSSAI_STATUS_LABELS: Record<FssaiRequestStatus, string> = {
+  awaiting_payment: "Draft (unpaid)",
+  submitted: "New — needs picking up",
+  in_progress: "Being prepared",
+  more_info_required: "Waiting on chef",
+  filed: "Filed with FSSAI",
+  issued: "Registration issued",
+  rejected: "Could not proceed",
+  refunded: "Refunded",
+};
