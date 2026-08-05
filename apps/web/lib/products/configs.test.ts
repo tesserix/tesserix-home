@@ -81,3 +81,22 @@ describe("kora nav", () => {
     expect(isNavItemActive("/admin/apps/kora/", "/admin/apps/kora")).toBe(true);
   });
 });
+
+// homechef has the identical prefix-collision shape as kora/mark8ly: its
+// Overview entry (`/admin/apps/homechef`) is a strict prefix of ~20 nested
+// routes (chefs, orders, payouts, ...), so a bare `startsWith` would keep
+// Overview marked active on every one of them, permanently. This was the one
+// instance the generalized EXACT_MATCH_ROOTS allowlist fix (added for kora)
+// left unfixed even though it fixes the exact same class of bug. Both halves
+// asserted, same reasoning as the kora case above: the "not active on a
+// nested route" half alone would also pass against a function that always
+// returns false.
+describe("homechef nav active-state", () => {
+  it("does not keep Overview active on a nested homechef route", () => {
+    expect(isNavItemActive("/admin/apps/homechef/chefs", "/admin/apps/homechef")).toBe(false);
+  });
+
+  it("still marks Overview active on its own route", () => {
+    expect(isNavItemActive("/admin/apps/homechef", "/admin/apps/homechef")).toBe(true);
+  });
+});

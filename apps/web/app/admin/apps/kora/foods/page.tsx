@@ -13,6 +13,14 @@ function formatCount(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+// Next.js hands back `string | string[]` for a repeated query key (`?q=a&q=b`
+// yields `["a", "b"]`) — typing this narrower than that let `defaultValue`
+// (and the value sent upstream via `listKoraFoods`) silently stringify the
+// array via `Array#toString` ("a,b"). Always take the first value.
+function firstParam(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function buildHref(params: { q: string; offset: number }): string {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
@@ -24,11 +32,11 @@ function buildHref(params: { q: string; offset: number }): string {
 export default async function KoraFoodsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; offset?: string }>;
+  searchParams: Promise<{ q?: string | string[]; offset?: string | string[] }>;
 }) {
   const sp = await searchParams;
-  const q = sp.q ?? "";
-  const parsedOffset = Number.parseInt(sp.offset ?? "0", 10);
+  const q = firstParam(sp.q) ?? "";
+  const parsedOffset = Number.parseInt(firstParam(sp.offset) ?? "0", 10);
   const offset = Number.isFinite(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
 
   let items: KoraFood[] = [];
@@ -53,20 +61,34 @@ export default async function KoraFoodsPage({
         : new KoraAdminError(0, "unknown_error", err instanceof Error ? err.message : String(err));
   }
 
-  const rangeStart = total === 0 ? 0 : offset + 1;
-  const rangeEnd = Math.min(offset + items.length, total);
+  // A hand-edited or stale shared URL can carry an offset past the end of
+  // the index — the pager itself never produces one, `hasNext` stops that —
+  // so this has to be handled as real input, not assumed unreachable.
+  // Without it, `rangeStart` (offset + 1) exceeds `total`, producing an
+  // inverted "Showing 100,001-7,898 of 7,898" alongside a zero-row table:
+  // an empty state rendered over a non-empty index, the exact false fact
+  // this slice exists to prevent. Detect it and render an explicit
+  // "past the end" state instead of falling into the ordinary empty-results
+  // state, and send Previous to the last real page rather than to
+  // `offset - PAGE_SIZE`, which would usually still be out of range.
+  const isOutOfRange = !loadError && total > 0 && offset > 0 && items.length === 0;
+  const lastValidOffset = total === 0 ? 0 : Math.floor((total - 1) / PAGE_SIZE) * PAGE_SIZE;
+  const rangeStart = total === 0 ? 0 : Math.min(offset + 1, total);
+  const rangeEnd = total === 0 ? 0 : Math.min(offset + items.length, total);
   const hasPrev = offset > 0;
   const hasNext = rangeEnd < total;
+  const prevOffset = isOutOfRange ? lastValidOffset : Math.max(0, offset - PAGE_SIZE);
+  const rangeLabel = loadError
+    ? "Kora's food catalog"
+    : isOutOfRange
+      ? `Offset ${formatCount(offset)} is past the end of the index (${formatCount(total)} total)`
+      : `Showing ${formatCount(rangeStart)}–${formatCount(rangeEnd)} of ${formatCount(total)}`;
 
   return (
     <div className="space-y-6 p-6">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Food index</h1>
-        <p className="text-sm text-muted-foreground">
-          {loadError
-            ? "Kora's food catalog"
-            : `Showing ${formatCount(rangeStart)}–${formatCount(rangeEnd)} of ${formatCount(total)}`}
-        </p>
+        <p className="text-sm text-muted-foreground">{rangeLabel}</p>
       </div>
 
       <form action="/admin/apps/kora/foods" method="get" className="flex flex-wrap items-center gap-3">
@@ -127,7 +149,22 @@ export default async function KoraFoodsPage({
                   {items.length === 0 ? (
                     <tr>
                       <td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">
-                        {q ? `No foods matched "${q}".` : "No foods found."}
+                        {isOutOfRange ? (
+                          <>
+                            That page doesn&apos;t exist — the index has {formatCount(total)}{" "}
+                            items.{" "}
+                            <Link
+                              href={buildHref({ q, offset: lastValidOffset })}
+                              className="text-foreground underline"
+                            >
+                              Go to the last page
+                            </Link>
+                          </>
+                        ) : q ? (
+                          `No foods matched "${q}".`
+                        ) : (
+                          "No foods found."
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -151,12 +188,10 @@ export default async function KoraFoodsPage({
           </div>
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>
-              Showing {formatCount(rangeStart)}–{formatCount(rangeEnd)} of {formatCount(total)}
-            </span>
+            <span>{rangeLabel}</span>
             <div className="flex gap-2">
               <Link
-                href={buildHref({ q, offset: Math.max(0, offset - PAGE_SIZE) })}
+                href={buildHref({ q, offset: prevOffset })}
                 aria-disabled={!hasPrev}
                 tabIndex={hasPrev ? undefined : -1}
                 className={`rounded-md border border-border px-3 py-1.5 ${

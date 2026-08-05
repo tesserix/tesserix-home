@@ -261,7 +261,15 @@ export function getSecondaryNav(context: RailContext): { label: string; entries:
 // mark8ly hit this first (tenants/onboarding/etc. all nest under
 // `/admin/apps/mark8ly`), and kora's food index is the same shape now that
 // /admin/apps/kora/foods exists.
-const EXACT_MATCH_ROOTS = ["/admin/apps/mark8ly", "/admin/apps/kora"];
+// homechef has the identical shape and has had it all along — its Overview
+// entry (`/admin/apps/homechef`) is a strict prefix of ~20 nested routes
+// (chefs, orders, payouts, ...) — it just hadn't been generalized to yet.
+// devai and dwellm8 do NOT need an entry here: their non-Overview links all
+// point at shared platform routes (/admin/observability, /admin/health,
+// /admin/platform-tickets), none of which nest under /admin/apps/devai or
+// /admin/apps/dwellm8, so `startsWith` never produces a false-positive match
+// for either of those two.
+const EXACT_MATCH_ROOTS = ["/admin/apps/mark8ly", "/admin/apps/kora", "/admin/apps/homechef"];
 
 export function isNavItemActive(pathname: string, href: string): boolean {
   if (EXACT_MATCH_ROOTS.includes(href)) {
