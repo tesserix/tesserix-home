@@ -127,6 +127,22 @@ export default function HomechefFssaiPage() {
     }
   }
 
+  // The 30/15/7-day cron reaches a chef eventually; this is for one between
+  // windows that ops wants to chase now.
+  async function remind(ch: FSSAILockedChef) {
+    setError(null);
+    setNotice(null);
+    setBusyId(ch.chefId);
+    try {
+      await hcAdmin.post(`/chefs/${ch.chefId}/fssai-reminder`);
+      setNotice(`Renewal reminder sent to ${ch.businessName}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send the reminder");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function clear(ch: FSSAILockedChef) {
     const ok = await confirm({
       title: "Clear override",
@@ -215,11 +231,21 @@ export default function HomechefFssaiPage() {
                     className="flex flex-wrap items-center justify-between gap-2 text-sm"
                   >
                     <span className="font-medium">{ch.businessName}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {/* daysSinceExpiry is negative here — days remaining. */}
-                      {Math.abs(ch.daysSinceExpiry)} day
-                      {Math.abs(ch.daysSinceExpiry) === 1 ? "" : "s"} left
-                      {ch.fssaiExpiry ? ` · expires ${formatDate(ch.fssaiExpiry)}` : ""}
+                    <span className="flex items-center gap-3">
+                      <span className="text-xs text-muted-foreground">
+                        {/* daysSinceExpiry is negative here — days remaining. */}
+                        {Math.abs(ch.daysSinceExpiry)} day
+                        {Math.abs(ch.daysSinceExpiry) === 1 ? "" : "s"} left
+                        {ch.fssaiExpiry ? ` · expires ${formatDate(ch.fssaiExpiry)}` : ""}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busyId === ch.chefId}
+                        onClick={() => void remind(ch)}
+                      >
+                        {busyId === ch.chefId ? "Sending…" : "Remind"}
+                      </Button>
                     </span>
                   </li>
                 ))}
