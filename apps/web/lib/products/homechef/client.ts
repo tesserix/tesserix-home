@@ -71,6 +71,16 @@ export const hcAdmin = {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }).then((r) => parse<T>(r));
   },
+  /** Multipart upload. Content-Type is deliberately UNSET: the browser has to
+   *  set it so the multipart boundary goes with it, and naming it application/json
+   *  the way the other verbs do would make the server reject the body. */
+  postForm<T>(adminPath: string, form: FormData): Promise<T> {
+    return fetch(buildUrl(adminPath), {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    }).then((r) => parse<T>(r));
+  },
   delete<T>(adminPath: string): Promise<T> {
     return fetch(buildUrl(adminPath), { method: "DELETE", credentials: "include" }).then((r) =>
       parse<T>(r),
