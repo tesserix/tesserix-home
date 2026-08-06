@@ -100,3 +100,37 @@ describe("homechef nav active-state", () => {
     expect(isNavItemActive("/admin/apps/homechef", "/admin/apps/homechef")).toBe(true);
   });
 });
+
+describe("kora audit nav (slice 2)", () => {
+  it("has an Audit trail entry pointing at /admin/apps/kora/audit", () => {
+    const audit = koraNav.find((entry) => entry.name === "Audit trail") as
+      | { href: string }
+      | undefined;
+    expect(audit).toBeDefined();
+    expect(audit?.href).toBe("/admin/apps/kora/audit");
+  });
+
+  // The brief said to CONFIRM rather than assume that /admin/apps/kora being
+  // in EXACT_MATCH_ROOTS keeps the Overview active-state bug from recurring
+  // with the second nested route. Both halves asserted — the "not active"
+  // half alone would pass against a function that always returns false.
+  it("does not keep Overview active on the nested audit route", () => {
+    expect(isNavItemActive("/admin/apps/kora/audit", "/admin/apps/kora")).toBe(false);
+    expect(isNavItemActive("/admin/apps/kora/audit", "/admin/apps/kora/audit")).toBe(true);
+  });
+
+  // Slice 2 added the first route nested UNDER the food index. Food index must
+  // stay active there (it is the section the user is in) while Audit trail
+  // must not — a prefix match on the wrong entry would light up both.
+  it("keeps Food index active on a food detail route without lighting up Audit trail", () => {
+    expect(isNavItemActive("/admin/apps/kora/foods/3bd526ec-ab82-42fb-bf47-083fa0c4cde5", "/admin/apps/kora/foods")).toBe(true);
+    expect(isNavItemActive("/admin/apps/kora/foods/3bd526ec-ab82-42fb-bf47-083fa0c4cde5", "/admin/apps/kora/audit")).toBe(false);
+    expect(isNavItemActive("/admin/apps/kora/foods/new", "/admin/apps/kora/foods")).toBe(true);
+  });
+
+  // The audit route must not make the food index look active either — they are
+  // siblings, and /admin/apps/kora/audit does not start with .../foods.
+  it("does not light up Food index on the audit route", () => {
+    expect(isNavItemActive("/admin/apps/kora/audit", "/admin/apps/kora/foods")).toBe(false);
+  });
+});

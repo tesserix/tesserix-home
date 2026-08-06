@@ -25,6 +25,11 @@ import {
   buildSignedHeaders,
   computeSignature,
   listKoraFoods,
+  getKoraFood,
+  createKoraFood,
+  updateKoraFood,
+  deleteKoraFood,
+  listKoraEvents,
   KoraAdminError,
 } from "./kora-admin";
 
@@ -399,5 +404,258 @@ describe("koraAdmin / listKoraFoods", () => {
 
     const [urlArg] = fetchMock.mock.calls[0] as [string];
     expect(new URL(urlArg).pathname).toBe("/v1/admin/foods");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 2: detail, mutations, audit.
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT = {
+  id: "3bd526ec-ab82-42fb-bf47-083fa0c4cde5",
+  name: "Rolled oats, dry",
+  brand: "Store brand",
+  normalized_name: "rolled oats dry",
+  provenance: "curated",
+  serving_desc: "1/2 cup (40g)",
+  serving_grams: 40,
+  kcal_per_100g: 389,
+  protein_per_100g: 16.9,
+  carbs_per_100g: 66,
+  fat_per_100g: 6.9,
+  fiber_per_100g: 10.6,
+  has_embedding: true,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-08-05T12:30:45.123456Z",
+};
+
+const INPUT = {
+  name: "Rolled oats, dry",
+  brand: "Store brand",
+  serving_desc: "1/2 cup (40g)",
+  serving_grams: 40,
+  kcal_per_100g: 389,
+  protein_per_100g: 16.9,
+  carbs_per_100g: 66,
+  fat_per_100g: 6.9,
+  fiber_per_100g: 10.6,
+};
+
+function lastRequest(): { url: string; init: RequestInit } {
+  const [url, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+  return { url, init };
+}
+
+describe("getKoraFood", () => {
+  it("signs the id into the path and unwraps the detail envelope", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { food: SNAPSHOT, log_count: 42 } }));
+
+    const detail = await getKoraFood(SNAPSHOT.id);
+
+    expect(detail.log_count).toBe(42);
+    expect(detail.food.updated_at).toBe(SNAPSHOT.updated_at);
+    const { url, init } = lastRequest();
+    expect(url).toContain(`/v1/admin/foods/${SNAPSHOT.id}`);
+    // Signed over the path that was actually requested — a signature computed
+    // over "/v1/admin/foods" would 401 against kora's URL.Path.
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Internal-Auth"]).toBe(
+      computeSignature("GET", `/v1/admin/foods/${SNAPSHOT.id}`, Buffer.alloc(0), headers["X-Auth-Ts"], Buffer.from(TEST_KEY_B64, "base64"), {
+        userId: ACTOR.userId,
+        email: ACTOR.email,
+        role: "admin",
+        pool: "internal",
+      }),
+    );
+  });
+
+  // A non-UUID must be rejected BEFORE anything is signed or sent. koraAdmin
+  // signs the raw path while fetch percent-encodes it and Go percent-decodes,
+  // so a segment carrying `%` or `/` produces a 400-before-gin or a 401 —
+  // neither of which reads as "that isn't an id".
+  it("rejects a non-UUID id without touching the network", async () => {
+    await expect(getKoraFood("../events")).rejects.toMatchObject({ code: "invalid_id" });
+    await expect(getKoraFood("not-a-uuid")).rejects.toMatchObject({ code: "invalid_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves kora's code and message on a 404", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(404, { error: "not_found", message: "food not found" }));
+    await expect(getKoraFood(SNAPSHOT.id)).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+      message: "food not found",
+    });
+  });
+
+  // The shape guard checks `updated_at` specifically. A body that looks like a
+  // food but lacks it is unusable — the edit form would submit `undefined` as
+  // its concurrency precondition and every PATCH would 400.
+  it("rejects a 200 whose food is missing updated_at", async () => {
+    const { updated_at: _omitted, ...withoutUpdatedAt } = SNAPSHOT;
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { food: withoutUpdatedAt, log_count: 0 } }));
+    await expect(getKoraFood(SNAPSHOT.id)).rejects.toMatchObject({ code: "unexpected_response_shape" });
+  });
+
+  it("rejects a 200 with no body rather than returning undefined typed as a food", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, {}));
+    await expect(getKoraFood(SNAPSHOT.id)).rejects.toMatchObject({ code: "unexpected_response_shape" });
+  });
+});
+
+describe("createKoraFood", () => {
+  // Kora answers 201, following this repo's c.JSON(StatusCreated,…) convention.
+  // A client checking for 200 would reject every SUCCESSFUL create — the kind
+  // of bug that only shows up against the real service.
+  it("accepts kora's 201 and returns the created food", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { data: SNAPSHOT }));
+
+    const result = await createKoraFood(INPUT);
+
+    expect(result.food.id).toBe(SNAPSHOT.id);
+    expect(result.cacheBumpFailed).toBe(false);
+    const { init } = lastRequest();
+    expect(JSON.parse(String(init.body))).toMatchObject({ name: INPUT.name, kcal_per_100g: 389 });
+    expect(init.method).toBe("POST");
+  });
+
+  it("treats a 200 as a failure, not a success", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: SNAPSHOT }));
+    await expect(createKoraFood(INPUT)).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  // Rider 2's payoff has to survive the client: a duplicate barcode is a 409
+  // whose MESSAGE names what was collided with. Collapsing it into a generic
+  // failure would throw away the only actionable part.
+  it("preserves the 409 duplicate_barcode code and message", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        error: "duplicate_barcode",
+        message: 'barcode "9300675024235" already belongs to an already-retired food "Old oats"',
+      }),
+    );
+    await expect(createKoraFood({ ...INPUT, barcode: "9300675024235" })).rejects.toMatchObject({
+      status: 409,
+      code: "duplicate_barcode",
+      message: expect.stringContaining("Old oats"),
+    });
+  });
+});
+
+describe("updateKoraFood", () => {
+  it("sends the loaded updated_at as the concurrency precondition", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: SNAPSHOT, meta: { cache_bump_failed: false } }));
+
+    await updateKoraFood(SNAPSHOT.id, INPUT, SNAPSHOT.updated_at);
+
+    const { init } = lastRequest();
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toMatchObject({ updated_at: SNAPSHOT.updated_at });
+  });
+
+  // An optional precondition is one every caller forgets, and forgetting it
+  // silently reinstates the clobber rider 1 exists to prevent. Fail loudly,
+  // locally, before anything is sent.
+  it("refuses to send a PATCH with no precondition", async () => {
+    await expect(updateKoraFood(SNAPSHOT.id, INPUT, "")).rejects.toMatchObject({
+      code: "missing_precondition",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the 409 stale_update code so the UI can say 'reload'", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, { error: "stale_update", message: "this food was changed by someone else" }),
+    );
+    await expect(updateKoraFood(SNAPSHOT.id, INPUT, SNAPSHOT.updated_at)).rejects.toMatchObject({
+      status: 409,
+      code: "stale_update",
+    });
+  });
+
+  // Rider 4 end-to-end through the client: the edit COMMITTED and must be
+  // reported as success. If this resolved to a rejection, an operator would
+  // redo an edit that already landed — which, with the precondition above now
+  // in place, would then 409 against their own write.
+  it("reports a cache-bump failure as SUCCESS with the flag set", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: SNAPSHOT, meta: { cache_bump_failed: true } }));
+
+    const result = await updateKoraFood(SNAPSHOT.id, INPUT, SNAPSHOT.updated_at);
+
+    expect(result.food.id).toBe(SNAPSHOT.id);
+    expect(result.cacheBumpFailed).toBe(true);
+  });
+});
+
+describe("deleteKoraFood", () => {
+  it("returns the retired snapshot carrying deleted_at", async () => {
+    const retired = { ...SNAPSHOT, deleted_at: "2026-08-06T01:00:00Z" };
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: retired, meta: { cache_bump_failed: false } }));
+
+    const result = await deleteKoraFood(SNAPSHOT.id);
+
+    expect(result.food.deleted_at).toBe("2026-08-06T01:00:00Z");
+    expect(lastRequest().init.method).toBe("DELETE");
+  });
+
+  // Regression: `meta` sits ALONGSIDE `data` in kora's envelope, not inside
+  // the food. Reading the flag off the snapshot returns false for every
+  // response, silently losing the warning — which was the first version of
+  // this function.
+  it("reads cache_bump_failed off the envelope's meta, not off the food", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: { ...SNAPSHOT, deleted_at: "2026-08-06T01:00:00Z" }, meta: { cache_bump_failed: true } }),
+    );
+
+    const result = await deleteKoraFood(SNAPSHOT.id);
+
+    expect(result.cacheBumpFailed).toBe(true);
+  });
+
+  it("rejects a non-UUID id without touching the network", async () => {
+    await expect(deleteKoraFood("nope")).rejects.toMatchObject({ code: "invalid_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("listKoraEvents", () => {
+  it("puts target_id in the QUERY and signs the bare path", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraEvents({ targetId: SNAPSHOT.id, limit: 25, offset: 50 });
+
+    const { url, init } = lastRequest();
+    expect(url).toContain(`target_id=${SNAPSHOT.id}`);
+    expect(url).toContain("limit=25");
+    expect(url).toContain("offset=50");
+    // The query string is EXCLUDED from the signature (kora signs URL.Path).
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-Internal-Auth"]).toBe(
+      computeSignature("GET", "/v1/admin/events", Buffer.alloc(0), headers["X-Auth-Ts"], Buffer.from(TEST_KEY_B64, "base64"), {
+        userId: ACTOR.userId,
+        email: ACTOR.email,
+        role: "admin",
+        pool: "internal",
+      }),
+    );
+  });
+
+  it("omits target_id entirely when unfiltered", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+    await listKoraEvents({});
+    expect(lastRequest().url).not.toContain("target_id");
+  });
+
+  it("rejects a malformed target_id without touching the network", async () => {
+    await expect(listKoraEvents({ targetId: "nope" })).rejects.toMatchObject({ code: "invalid_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Same guard the food index has: an unexpected 200 must be an error, never
+  // an empty audit trail. "No admin has ever changed anything" is a dangerous
+  // thing to render as a fact.
+  it("rejects a 200 with an unexpected body shape", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: "nope", total: 0 } }));
+    await expect(listKoraEvents({})).rejects.toMatchObject({ code: "unexpected_response_shape" });
   });
 });
