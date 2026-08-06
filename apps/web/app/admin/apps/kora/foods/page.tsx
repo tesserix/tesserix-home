@@ -86,9 +86,17 @@ export default async function KoraFoodsPage({
 
   return (
     <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">Food index</h1>
-        <p className="text-sm text-muted-foreground">{rangeLabel}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-foreground">Food index</h1>
+          <p className="text-sm text-muted-foreground">{rangeLabel}</p>
+        </div>
+        <Link
+          href="/admin/apps/kora/foods/new"
+          className="h-9 shrink-0 rounded-md bg-foreground px-4 text-sm font-medium leading-9 text-background hover:bg-foreground/90"
+        >
+          New food
+        </Link>
       </div>
 
       <form action="/admin/apps/kora/foods" method="get" className="flex flex-wrap items-center gap-3">
@@ -170,7 +178,14 @@ export default async function KoraFoodsPage({
                   ) : (
                     items.map((food) => (
                       <tr key={food.id} className="hover:bg-muted/30">
-                        <td className="px-4 py-3 font-medium text-foreground">{food.name}</td>
+                        <td className="px-4 py-3 font-medium text-foreground">
+                          <Link
+                            href={`/admin/apps/kora/foods/${food.id}`}
+                            className="underline decoration-transparent hover:decoration-inherit"
+                          >
+                            {food.name}
+                          </Link>
+                        </td>
                         <td className="px-4 py-3 text-muted-foreground">{food.brand || "—"}</td>
                         <td className="px-4 py-3 text-muted-foreground">{food.provenance}</td>
                         <td className="px-4 py-3 text-right tabular-nums">{food.kcal_per_100g}</td>

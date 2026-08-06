@@ -330,3 +330,291 @@ export async function listKoraFoods(params: {
   }
   return page;
 }
+
+// ---------------------------------------------------------------------------
+// Slice 2: food detail, mutations, and the audit trail.
+// ---------------------------------------------------------------------------
+
+/**
+ * One food as kora's `admin.FoodSnapshot` serialises it — the shape EVERY
+ * mutation returns and the detail endpoint carries.
+ *
+ * This is deliberately a different type from `KoraFood` above rather than an
+ * extension of it. `KoraFood` mirrors `nutrition.FoodItem`, which has no
+ * `updated_at` and no `deleted_at`: kora returns that shape from the food
+ * INDEX and this shape from everything else. Collapsing the two would mean
+ * either pretending index rows carry `updated_at` (they do not — the edit
+ * form would send `undefined` as its concurrency precondition and every PATCH
+ * would 400) or making the fields optional everywhere, which pushes the same
+ * problem into every call site.
+ */
+export interface KoraFoodSnapshot {
+  id: string;
+  name: string;
+  brand: string;
+  normalized_name: string;
+  provenance: string;
+  barcode?: string;
+  serving_desc: string;
+  serving_grams: number;
+  kcal_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  fiber_per_100g: number;
+  has_embedding: boolean;
+  created_at: string;
+  updated_at: string;
+  /** Present only on a retired food. Its presence IS the retirement. */
+  deleted_at?: string;
+}
+
+/** `admin.FoodDetail` — the food plus how many logs reference it. */
+export interface KoraFoodDetail {
+  food: KoraFoodSnapshot;
+  log_count: number;
+}
+
+/** The editable fields. Mirrors kora's `admin.foodPayload` exactly. */
+export interface KoraFoodInput {
+  name: string;
+  brand: string;
+  provenance?: string;
+  barcode?: string | null;
+  serving_desc: string;
+  serving_grams: number;
+  kcal_per_100g: number;
+  protein_per_100g: number;
+  carbs_per_100g: number;
+  fat_per_100g: number;
+  fiber_per_100g: number;
+}
+
+/**
+ * What a mutation returns. `cacheBumpFailed` carries kora's
+ * `meta.cache_bump_failed` (rider 4): the mutation COMMITTED, but the resolve
+ * cache could not be invalidated, so users may be served the old macros for
+ * up to 24h. It is not a failure and must never be rendered as one — but it
+ * is not nothing either, so it is surfaced rather than dropped.
+ */
+export interface KoraMutationResult {
+  food: KoraFoodSnapshot;
+  cacheBumpFailed: boolean;
+}
+
+/**
+ * Narrow runtime check for a food snapshot. Same reasoning as
+ * `isKoraFoodPage`: `res.data.data` is a TypeScript-level assertion that
+ * verifies nothing at runtime, so an unexpected 200 body would otherwise
+ * hand every caller `undefined` TYPED as a food — and an edit form would
+ * render blank fields over a real row, then submit them.
+ *
+ * Checks `updated_at` specifically, not just `id`: it is the field the edit
+ * form depends on, and a response missing it is unusable even though it looks
+ * like a food.
+ */
+function isKoraFoodSnapshot(value: unknown): value is KoraFoodSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const f = value as Record<string, unknown>;
+  return (
+    typeof f.id === "string" &&
+    typeof f.name === "string" &&
+    typeof f.updated_at === "string" &&
+    typeof f.kcal_per_100g === "number"
+  );
+}
+
+function isKoraFoodDetail(value: unknown): value is KoraFoodDetail {
+  if (!value || typeof value !== "object") return false;
+  const d = value as { food?: unknown; log_count?: unknown };
+  return isKoraFoodSnapshot(d.food) && typeof d.log_count === "number";
+}
+
+/**
+ * Turn a non-200 into a KoraAdminError carrying kora's own `code`/`message`.
+ * Every mutation routes its failures through here so a 409 stays a 409 with
+ * its reason intact — `stale_update` and `duplicate_barcode` are the two the
+ * UI must be able to tell apart, and collapsing them into a generic failure
+ * would make both unactionable.
+ */
+function throwKoraError(status: number, data: unknown, fallbackCode: string): never {
+  const koraError = extractKoraError(data);
+  throw new KoraAdminError(status, koraError?.error ?? fallbackCode, koraError?.message);
+}
+
+/**
+ * Read `meta.cache_bump_failed` off a mutation response. Absent (kora's POST
+ * carries no meta) or malformed reads as `false` — the flag is a warning
+ * about cache freshness, so the safe default is "nothing to warn about"
+ * rather than alarming an operator on every create.
+ */
+function readCacheBumpFailed(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const meta = (body as { meta?: unknown }).meta;
+  if (!meta || typeof meta !== "object") return false;
+  return (meta as { cache_bump_failed?: unknown }).cache_bump_failed === true;
+}
+
+/**
+ * `GET /v1/admin/foods/:id` — the food plus its log-reference count.
+ *
+ * The edit form and the delete confirmation both need this endpoint rather
+ * than the index: the index returns `nutrition.FoodItem`, which carries no
+ * `updated_at` (PATCH's precondition) and no reference count.
+ *
+ * @param id MUST be a UUID. It is interpolated into the signed path, and
+ * `koraAdmin`'s doc comment explains why an arbitrary string there is unsafe:
+ * the path is signed raw but percent-encoded on the wire. A UUID is
+ * ASCII-safe, so this is the encoding-free case — validated below rather than
+ * assumed, since the caller is ultimately a URL segment.
+ */
+export async function getKoraFood(id: string): Promise<KoraFoodDetail> {
+  assertUuid(id);
+  const res = await koraAdmin<{ data: KoraFoodDetail }>("GET", `/foods/${id}`);
+  if (res.status !== 200) throwKoraError(res.status, res.data, "get_food_failed");
+
+  const detail = res.data?.data;
+  if (!isKoraFoodDetail(detail)) {
+    logger.warn(`[kora-admin] GET /foods/${id} -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "food detail response did not match the expected shape");
+  }
+  return detail;
+}
+
+/** `POST /v1/admin/foods`. Kora answers 201 on success, not 200. */
+export async function createKoraFood(input: KoraFoodInput): Promise<KoraMutationResult> {
+  const res = await koraAdmin<{ data: KoraFoodSnapshot }>("POST", "/foods", { body: input });
+  // 201, not 200 — kora's create follows the repo's `c.JSON(StatusCreated,…)`
+  // convention. Checking for 200 here would reject every successful create.
+  if (res.status !== 201) throwKoraError(res.status, res.data, "create_food_failed");
+
+  const food = res.data?.data;
+  if (!isKoraFoodSnapshot(food)) {
+    logger.warn("[kora-admin] POST /foods -> 201 with an unexpected body shape");
+    throw new KoraAdminError(201, "unexpected_response_shape", "create response did not match the expected shape");
+  }
+  return { food, cacheBumpFailed: readCacheBumpFailed(res.data) };
+}
+
+/**
+ * `PATCH /v1/admin/foods/:id`.
+ *
+ * @param expectedUpdatedAt the `updated_at` the caller LOADED. Kora only
+ * applies the edit if the stored row still matches, and answers 409
+ * `stale_update` otherwise — so two admins editing different fields of the
+ * same food can no longer silently clobber each other. Required, not
+ * optional: an optional precondition is one every caller forgets.
+ */
+export async function updateKoraFood(
+  id: string,
+  input: KoraFoodInput,
+  expectedUpdatedAt: string,
+): Promise<KoraMutationResult> {
+  assertUuid(id);
+  if (!expectedUpdatedAt) {
+    throw new KoraAdminError(400, "missing_precondition", "updated_at is required to edit a food");
+  }
+  const res = await koraAdmin<{ data: KoraFoodSnapshot }>("PATCH", `/foods/${id}`, {
+    body: { ...input, updated_at: expectedUpdatedAt },
+  });
+  if (res.status !== 200) throwKoraError(res.status, res.data, "update_food_failed");
+
+  const food = res.data?.data;
+  if (!isKoraFoodSnapshot(food)) {
+    logger.warn(`[kora-admin] PATCH /foods/${id} -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "update response did not match the expected shape");
+  }
+  return { food, cacheBumpFailed: readCacheBumpFailed(res.data) };
+}
+
+/**
+ * `DELETE /v1/admin/foods/:id` — a SOFT delete (retirement).
+ *
+ * The returned snapshot carries `deleted_at`, which is the point of kora
+ * returning a snapshot rather than a food item: the response can state that
+ * the food is now retired. Callers should trust that field over assuming
+ * success from the status alone.
+ */
+export async function deleteKoraFood(id: string): Promise<KoraMutationResult> {
+  assertUuid(id);
+  const res = await koraAdmin<{ data: KoraFoodSnapshot }>("DELETE", `/foods/${id}`);
+  if (res.status !== 200) throwKoraError(res.status, res.data, "delete_food_failed");
+
+  const food = res.data?.data;
+  if (!isKoraFoodSnapshot(food)) {
+    logger.warn(`[kora-admin] DELETE /foods/${id} -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "delete response did not match the expected shape");
+  }
+  // res.data, NOT food: `meta` sits alongside `data` in kora's envelope
+  // (httpx.OKWithMeta), not inside the food.
+  return { food, cacheBumpFailed: readCacheBumpFailed(res.data) };
+}
+
+/** One row of `kora_admin_events`. */
+export interface KoraAdminEvent {
+  id: string;
+  actor_id: string;
+  actor_email: string;
+  action: string;
+  target_type: string;
+  target_id?: string;
+  before?: unknown;
+  after?: unknown;
+  created_at: string;
+}
+
+export interface KoraEventPage {
+  items: KoraAdminEvent[];
+  total: number;
+}
+
+function isKoraEventPage(value: unknown): value is KoraEventPage {
+  if (!value || typeof value !== "object") return false;
+  const page = value as { items?: unknown; total?: unknown };
+  return Array.isArray(page.items) && typeof page.total === "number";
+}
+
+/**
+ * `GET /v1/admin/events` — the admin audit trail, newest first.
+ *
+ * @param targetId optional; scopes the list to one food's history. Validated
+ * as a UUID here because kora 400s a malformed one, and a 400 surfacing as
+ * "the audit page is broken" is less useful than never sending it.
+ */
+export async function listKoraEvents(params: {
+  targetId?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<KoraEventPage> {
+  if (params.targetId) assertUuid(params.targetId);
+  const res = await koraAdmin<{ data: KoraEventPage }>("GET", "/events", {
+    search: {
+      target_id: params.targetId ?? "",
+      limit: params.limit ? String(params.limit) : "",
+      offset: params.offset ? String(params.offset) : "",
+    },
+  });
+  if (res.status !== 200) throwKoraError(res.status, res.data, "list_events_failed");
+
+  const page = res.data?.data;
+  if (!isKoraEventPage(page)) {
+    logger.warn("[kora-admin] GET /events -> 200 with an unexpected body shape");
+    throw new KoraAdminError(200, "unexpected_response_shape", "audit response did not match the expected shape");
+  }
+  return page;
+}
+
+/**
+ * Guards every id interpolated into a signed path. `koraAdmin` signs the raw
+ * path string while `fetch` percent-encodes on the wire and Go percent-DECODES
+ * — so a segment containing `%` or `/` makes the two disagree and produces a
+ * 400-before-gin or a 401, neither of which reads as "bad id". A UUID is
+ * ASCII-safe, so enforcing that shape removes the divergence entirely rather
+ * than trying to encode around it.
+ */
+function assertUuid(id: string): void {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(id)) {
+    throw new KoraAdminError(400, "invalid_id", "food id must be a UUID");
+  }
+}

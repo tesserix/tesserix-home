@@ -221,6 +221,10 @@ export const dwellm8Nav: NavEntry[] = [
 export const koraNav: NavEntry[] = [
   { name: "Overview", href: "/admin/apps/kora", icon: LayoutDashboard },
   { name: "Food index", href: "/admin/apps/kora/foods", icon: Database },
+  // Slice 2. Sits beside the food index rather than under it: the trail spans
+  // every food (and, later, other admin target types), so nesting it under
+  // /foods would misdescribe its scope.
+  { name: "Audit trail", href: "/admin/apps/kora/audit", icon: ScrollText },
   { name: "Service health", href: "/admin/health", icon: HeartPulse },
 ];
 
