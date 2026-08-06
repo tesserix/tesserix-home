@@ -26,34 +26,13 @@ import {
   type KoraFoodInput,
 } from "@/lib/api/kora-admin";
 import { logger } from "@/lib/logger";
+import type { FoodActionState } from "./action-state";
 
-/**
- * What every action returns to `useActionState`.
- *
- * `error` is a plain object, not a KoraAdminError: an Error instance does not
- * survive the server-action serialization boundary intact (the class is lost
- * and only `message` reliably crosses), so the fields the UI actually branches
- * on — `code` above all — are lifted out explicitly rather than left to
- * whatever survives.
- */
-export interface FoodActionState {
-  status: "idle" | "success" | "error";
-  /** Kora's error code, e.g. "stale_update" or "duplicate_barcode". */
-  code?: string;
-  message?: string;
-  httpStatus?: number;
-  /**
-   * Rider 4: the mutation COMMITTED but the resolve cache could not be
-   * invalidated. Rendered as a warning ON a success, never as a failure.
-   */
-  cacheBumpFailed?: boolean;
-  /** The id a create produced, so the form can link to the new food. */
-  createdId?: string;
-  /** Fresh updated_at after a successful edit, so the form can keep editing. */
-  updatedAt?: string;
-}
+// FoodActionState and IDLE_STATE live in ./action-state.ts, NOT here: a
+// "use server" file may only export async functions (every export becomes a
+// callable server endpoint), so exporting the IDLE_STATE object from this file
+// fails the build. Re-exported below for the actions' own callers.
 
-export const IDLE_STATE: FoodActionState = { status: "idle" };
 
 /**
  * Reads one required number from the form. Returns `null` for absent, blank,

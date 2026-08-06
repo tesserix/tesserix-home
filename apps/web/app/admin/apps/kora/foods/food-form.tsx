@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
-import { IDLE_STATE, type FoodActionState } from "./actions";
+import { IDLE_STATE, type FoodActionState } from "./action-state";
 import type { KoraFoodSnapshot } from "@/lib/api/kora-admin";
 
 const INPUT_CLASS =
