@@ -10,6 +10,7 @@ import useSWR from "swr";
 import { RefreshCw } from "lucide-react";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
+import { vendorStatusHint, vendorStatusLabel } from "@/lib/products/homechef/vendor-status";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
@@ -238,7 +239,9 @@ export function EasySplitPanel() {
                   <td className="px-3 py-2">{chef.businessName || chef.chefId.slice(0, 8)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
                     <div className="flex items-center gap-2">
-                      <span>{chef.vendorStatus || "not registered"}</span>
+                      <span title={chef.vendorStatus || undefined}>
+                        {vendorStatusLabel(chef.vendorStatus)}
+                      </span>
                       {chef.vendorStatus === VENDOR_ACTIVE ? null : (
                         <button
                           onClick={() => void syncVendor(chef)}
@@ -249,6 +252,9 @@ export function EasySplitPanel() {
                         </button>
                       )}
                     </div>
+                    {vendorStatusHint(chef.vendorStatus) ? (
+                      <p className="mt-1 max-w-xs">{vendorStatusHint(chef.vendorStatus)}</p>
+                    ) : null}
                   </td>
                   <td className="px-3 py-2">
                     {chef.payable ? (
