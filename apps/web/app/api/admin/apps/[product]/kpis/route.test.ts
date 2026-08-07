@@ -78,19 +78,26 @@ describe("kora kpis", () => {
     );
   });
 
-  // Prometheus returns NaN for a 0/0 ratio (decompose had no calls in the
-  // window), and NaN serializes to `null` in JSON, rendering as a broken "—"
-  // tile instead of an honest 0. Pins the Number.isFinite guard in route.ts —
-  // `out[key] = v ?? 0` would leave this value as NaN (NaN ?? 0 is NaN, since
-  // NaN is not null/undefined) and still pass every other test.
-  it("reads a NaN prometheus value as 0", async () => {
+  // Prometheus returns NaN for a 0/0 ratio, which — as the original version of
+  // this test noted itself — means decompose had NO calls in the window. So 0
+  // is the one answer that is definitely wrong: it asserts that 0% of decompose
+  // calls breached the budget when no decompose call was measured at all. The
+  // key is omitted and the tile reads "—".
+  //
+  // Still pins the Number.isFinite guard in route.ts: NaN must not reach the
+  // response either, where it would serialize to `null`. `out[key] = v ?? 0`
+  // would leave it NaN (NaN ?? 0 is NaN, since NaN is not null/undefined) and
+  // still pass every other test.
+  it("omits a NaN prometheus value rather than reporting it as 0", async () => {
     queryInstant.mockImplementation((q: string) => {
       if (q.includes("kora_ai_latency_seconds")) return Promise.resolve(sample(NaN));
       return Promise.resolve(sample(7));
     });
 
     const body = await (await req("kora")).json();
-    expect(body.decompose_over_budget_pct).toBe(0);
+    expect("decompose_over_budget_pct" in body).toBe(false);
+    // the other three still measured fine
+    expect(body.ai_calls_24h).toBe(7);
   });
 
   // The "must not" — one dead query must not blank the others...
@@ -103,17 +110,33 @@ describe("kora kpis", () => {
     const res = await req("kora");
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.food_index_missing).toBe(0);
+    // OMITTED, not 0. These tiles are all worded so that 0 is the good value,
+    // so a failed query reported as 0 renders a clean bill of health for a
+    // system nobody measured. An absent key renders "—" in the UI instead.
+    expect("food_index_missing" in body).toBe(false);
     expect(body.ai_calls_24h).toBe(7);
     expect(body.ai_failures_24h).toBe(7);
     expect(body.decompose_over_budget_pct).toBe(7);
   });
 
   // ...and its twin: an EMPTY result set (the metric exists in no series yet)
-  // must read as 0 rather than NaN or undefined, both of which render as a
-  // broken tile rather than an honest zero.
-  it("reads an empty prometheus result as 0", async () => {
+  // is also "not measured", not zero — same reasoning as above. This is the
+  // case that actually bit: the monitoring namespace was scaled to 0 replicas,
+  // every query returned nothing, and the overview reported food_index_missing
+  // as 0 while the database held 1,071 rows with a NULL embedding.
+  it("omits keys entirely when the prometheus result is empty", async () => {
     queryInstant.mockResolvedValue([]);
+    const body = await (await req("kora")).json();
+    for (const k of ["food_index_missing", "ai_calls_24h", "ai_failures_24h", "decompose_over_budget_pct"]) {
+      expect(k in body).toBe(false);
+    }
+  });
+
+  // The other half of the contract: a real measured 0 must survive as 0, or
+  // the fix above would just move the lie (every healthy system would read
+  // "unknown"). Distinguishing these two is the entire point.
+  it("passes a genuine measured zero through as 0", async () => {
+    queryInstant.mockResolvedValue(sample(0));
     const body = await (await req("kora")).json();
     for (const k of ["food_index_missing", "ai_calls_24h", "ai_failures_24h", "decompose_over_budget_pct"]) {
       expect(body[k]).toBe(0);
