@@ -157,7 +157,9 @@ describe("kora kpis", () => {
 
   // The two blocks are independent data sources (Prometheus vs Secret
   // Manager metadata) — a failure in one must not blank the other's tiles.
-  it("blanks the key-health tiles without losing the prometheus tiles when Secret Manager is unreachable", async () => {
+  // A MEASURED zero (Secret Manager answered; no key has an enabled version)
+  // must still surface as 0 — that is the alarm the tile exists to raise.
+  it("reports a measured zero from Secret Manager as 0", async () => {
     queryInstant.mockResolvedValue(sample(5));
     readKeyHealth.mockResolvedValue({ configured: 0, oldestAgeDays: 0 });
 
@@ -166,6 +168,19 @@ describe("kora kpis", () => {
     expect(body.ai_calls_24h).toBe(5);
     expect(body.ai_key_age_days).toBe(0);
     expect(body.ai_keys_configured).toBe(0);
+  });
+
+  // Its twin: readKeyHealth now signals "could not check" with null, and that
+  // must blank the two key tiles without touching the four Prometheus ones.
+  it("blanks only the key-health tiles when readKeyHealth returns null", async () => {
+    queryInstant.mockResolvedValue(sample(5));
+    readKeyHealth.mockResolvedValue(null);
+
+    const body = await (await req("kora")).json();
+    expect(body.food_index_missing).toBe(5);
+    expect(body.decompose_over_budget_pct).toBe(5);
+    expect("ai_keys_configured" in body).toBe(false);
+    expect("ai_key_age_days" in body).toBe(false);
   });
 
   // readKeyHealth already catches its own errors internally (see
@@ -185,8 +200,10 @@ describe("kora kpis", () => {
     expect(body.ai_calls_24h).toBe(5);
     expect(body.ai_failures_24h).toBe(5);
     expect(body.decompose_over_budget_pct).toBe(5);
-    expect(body.ai_keys_configured).toBe(0);
-    expect(body.ai_key_age_days).toBe(0);
+    // Omitted rather than zeroed — a rejected lookup is "unknown", and
+    // `ai_keys_configured: 0` is the alarm state, not the unknown state.
+    expect("ai_keys_configured" in body).toBe(false);
+    expect("ai_key_age_days" in body).toBe(false);
   });
 
   // Proves the two upstreams run CONCURRENTLY rather than sequentially: with

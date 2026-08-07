@@ -134,12 +134,16 @@ export async function GET(
         "prod-kora-openai-api-key",
       ]).catch((err) => {
         logger.warn(`[kora-kpis] key-health: ${err instanceof Error ? err.message : "failed"}`);
-        return { configured: 0, oldestAgeDays: 0 };
+        return null;
       }),
     ]);
 
-    out.ai_keys_configured = keys.configured;
-    out.ai_key_age_days = keys.oldestAgeDays;
+    // Same rule as the Prometheus tiles above: omitted, not zeroed. A real
+    // `configured: 0` still reports 0 — that is the alarm this tile exists for.
+    if (keys) {
+      out.ai_keys_configured = keys.configured;
+      out.ai_key_age_days = keys.oldestAgeDays;
+    }
 
     return NextResponse.json(out);
   }

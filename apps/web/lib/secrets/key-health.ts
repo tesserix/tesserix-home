@@ -48,10 +48,19 @@ async function currentVersionAgeDays(projectId: string, name: string): Promise<n
 // readKeyHealth reports how many of the named secrets have a usable version,
 // and how stale the STALEST of them is — the oldest key is the one at risk, so
 // a fresh rotation of one key must not mask another that was never touched.
+//
+// Returns null when Secret Manager could not be reached at all. That is NOT
+// the same as `configured: 0`, and collapsing the two is a real bug: zero
+// usable keys is the alarm state this tile exists to raise, so reporting it
+// for a failed lookup cries wolf. In production this fired constantly — the
+// portal's workload identity lacks iam.serviceAccounts.getAccessToken, every
+// call 403s, and the overview read "AI keys configured: 0 — should be 2"
+// while both keys were present and kora-api (which refuses to boot without
+// them) was serving traffic. Callers render null as "—".
 export async function readKeyHealth(
   projectId: string,
   secretNames: ReadonlyArray<string>,
-): Promise<KeyHealth> {
+): Promise<KeyHealth | null> {
   try {
     const ages = await Promise.all(
       secretNames.map((name) => currentVersionAgeDays(projectId, name)),
@@ -63,6 +72,6 @@ export async function readKeyHealth(
     };
   } catch (err) {
     logger.warn(`[key-health] ${err instanceof Error ? err.message : "failed"}`);
-    return { configured: 0, oldestAgeDays: 0 };
+    return null;
   }
 }
