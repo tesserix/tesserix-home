@@ -428,13 +428,8 @@ export interface PayoutRegistration {
 export interface BlockedChef {
   chefId: string;
   businessName: string;
-  /** Cashfree Easy Split vendor id, empty until the chef is registered. */
-  vendorId: string;
   /** Raw Cashfree vendor status. Operator-only — chefs never see it (#1082). */
   vendorStatus: string;
-  /** Whose move it is next: not_registered | bank_validation_failed |
-   *  blocked_by_gateway | pending_activation. */
-  reason: string;
   registration: PayoutRegistration;
   payoutAutoRelease: PayoutAutomationValue;
 }
