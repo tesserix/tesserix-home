@@ -1,11 +1,10 @@
 "use client";
 
-// HomeChef PAYOUT SETUP page (#747). Lists every chef whose Razorpay linked
-// account is not yet "activated" — so any payout attempt to them would simply
-// fail — alongside Razorpay's own requirements (what it needs before it will
-// activate the account) and the per-chef payout-automation switch. This is the
-// surface an admin uses to see why a chef is unpaid and fix it: chase the
-// Razorpay requirement, or suspend automation until the chef sorts it out.
+// HomeChef PAYOUT SETUP page (#747). Lists every chef whose Cashfree vendor is
+// not ACTIVE — order money cannot reach them — with the server's plain-words
+// reason and the per-chef payout-automation switch. This is the surface an
+// admin uses to see why a chef is unpaid and fix it: chase the failed
+// verification, or suspend automation until the chef sorts it out.
 //
 // Distinct from the release queue (/payout-queue, #388): that page moves money
 // on already-eligible holds. This page is about chefs who cannot be paid at
@@ -16,37 +15,20 @@ import { useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { titleCase, parseSettlementRequirements, type BlockedChef, type BlockedChefsResponse, type PayoutAutomationValue } from "@tesserix/homechef-shared";
+import { titleCase, type BlockedChef, type BlockedChefsResponse, type PayoutAutomationValue, type PayoutRegistrationState } from "@tesserix/homechef-shared";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 
-function settlementTone(status: string): Tone {
-  switch (status) {
-    case "needs_clarification":
-      return "warning";
-    case "created":
-      return "info";
-    case "activated":
+function registrationTone(state: PayoutRegistrationState): Tone {
+  switch (state) {
+    case "verified":
       return "success";
+    case "failed":
+      return "warning";
+    case "pending":
+      return "info";
     default:
       return "neutral";
-  }
-}
-
-function settlementLabel(status: string): string {
-  return status ? titleCase(status) : "Not started";
-}
-
-// Shown whenever Razorpay gave no requirements string for this chef — status
-// alone doesn't tell an admin what to do, so every status gets an explanation.
-function noRequirementsNote(status: string): string {
-  switch (status) {
-    case "needs_clarification":
-      return "Razorpay flagged this account but returned no specific field.";
-    case "created":
-      return "Awaiting Razorpay review.";
-    default:
-      return "Chef has not submitted bank details.";
   }
 }
 
@@ -56,42 +38,16 @@ const AUTOMATION_OPTIONS: { value: PayoutAutomationValue; label: string }[] = [
   { value: "", label: "Default" },
 ];
 
-function RequirementsCell({ chef }: { chef: BlockedChef }) {
-  if (!chef.requirements) {
-    return <p className="text-xs text-muted-foreground">{noRequirementsNote(chef.settlementStatus)}</p>;
-  }
-  const parsed = parseSettlementRequirements(chef.requirements);
-  if (parsed === null) {
-    // Malformed blob — show it raw rather than hiding it or crashing the page.
-    return <p className="break-all text-xs text-muted-foreground">{chef.requirements}</p>;
-  }
-  if (parsed.length === 0) {
-    return <p className="text-xs text-muted-foreground">{noRequirementsNote(chef.settlementStatus)}</p>;
-  }
+// The server owns the wording (#1082); the raw Cashfree status sits underneath
+// it for the operator, who is the only reader allowed to see gateway strings.
+function ReasonCell({ chef }: { chef: BlockedChef }) {
   return (
-    <ul className="space-y-1 text-xs">
-      {parsed.map((r, i) => (
-        <li key={i}>
-          <span className="font-medium text-foreground">
-            {r.field_reference ? titleCase(r.field_reference.replace(/[._]+/g, " ")) : "Unspecified field"}
-          </span>
-          {r.reason_code ? <span className="text-muted-foreground"> — {titleCase(r.reason_code)}</span> : null}
-          {r.resolution_url ? (
-            <>
-              {" · "}
-              <a
-                href={r.resolution_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-foreground underline underline-offset-2"
-              >
-                Resolve
-              </a>
-            </>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-0.5">
+      <p className="text-xs text-foreground">{chef.registration.message}</p>
+      {chef.settlementStatus ? (
+        <p className="text-xs text-muted-foreground">Cashfree: {chef.settlementStatus}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -140,7 +96,7 @@ export default function HomechefPayoutSetupPage() {
         <p className="text-sm text-muted-foreground">
           {data
             ? `${rows.length} chef${rows.length === 1 ? "" : "s"} blocked from payout`
-            : "Chefs Razorpay has not activated for payout, and their automation switch"}
+            : "Chefs Cashfree has not verified for payout, and their automation switch"}
         </p>
       </div>
 
@@ -155,8 +111,8 @@ export default function HomechefPayoutSetupPage() {
           <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
             <tr>
               <th className="px-4 py-3">Chef</th>
-              <th className="px-4 py-3">Settlement status</th>
-              <th className="px-4 py-3">What Razorpay needs</th>
+              <th className="px-4 py-3">Registration</th>
+              <th className="px-4 py-3">Why they&apos;re blocked</th>
               <th className="px-4 py-3 text-right">Payout automation</th>
             </tr>
           </thead>
@@ -186,12 +142,12 @@ export default function HomechefPayoutSetupPage() {
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge
-                        label={settlementLabel(chef.settlementStatus)}
-                        tone={settlementTone(chef.settlementStatus)}
+                        label={titleCase(chef.registration.state)}
+                        tone={registrationTone(chef.registration.state)}
                       />
                     </td>
                     <td className="max-w-md px-4 py-3">
-                      <RequirementsCell chef={chef} />
+                      <ReasonCell chef={chef} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col items-end gap-1">

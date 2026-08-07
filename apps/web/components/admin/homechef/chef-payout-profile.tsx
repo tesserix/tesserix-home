@@ -36,7 +36,6 @@ interface ChefPayoutProfile {
   bankAccountNumber: string;
   bankIFSC: string;
   upiId: string;
-  razorpaySettlementStatus: string;
   methods: ChefPayoutMethod[];
   rail: { configured: boolean; sandbox: boolean; mode: string };
   automation?: {
@@ -216,10 +215,6 @@ export function ChefPayoutProfileCard({ chefId }: { chefId: string }) {
           <div className="flex justify-between py-0.5">
             <span className="text-muted-foreground">IFSC</span>
             <span className="font-mono text-xs">{data.bankIFSC || "—"}</span>
-          </div>
-          <div className="flex justify-between py-0.5">
-            <span className="text-muted-foreground">Razorpay settlement</span>
-            <span>{data.razorpaySettlementStatus || "—"}</span>
           </div>
         </div>
 
