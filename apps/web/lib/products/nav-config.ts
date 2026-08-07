@@ -225,6 +225,7 @@ export const koraNav: NavEntry[] = [
   // every food (and, later, other admin target types), so nesting it under
   // /foods would misdescribe its scope.
   { name: "Audit trail", href: "/admin/apps/kora/audit", icon: ScrollText },
+  { name: "Feedback", href: "/admin/apps/kora/feedback", icon: MessageSquare },
   // No "Service health" entry. It used to point at /admin/health, which is the
   // PLATFORM-wide health page — so an item inside Kora's own rail navigated the
   // operator out of the product entirely, with no way back except the rail
