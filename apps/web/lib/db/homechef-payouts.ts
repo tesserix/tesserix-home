@@ -22,8 +22,10 @@ export interface StatementRow {
   sgst: number;
   igst: number;
   tds: number;
-  /** Outstanding chef debt collected off this settlement (HomeChef #1092). */
-  recovery_deductions: number;
+  /** Penalty levies netted off this settlement; net_payout is already after it. */
+  penalty_deductions: number;
+  /** Referral-bonus credits added on; net_payout is already after it. */
+  bonus_additions: number;
   net_payout: number;
   status: string;
   paid_at: string | null;
@@ -76,7 +78,8 @@ function mapRow(r: Record<string, unknown>): StatementRow {
     sgst: toNum(r.sgst as string),
     igst: toNum(r.igst as string),
     tds: toNum(r.tds as string),
-    recovery_deductions: toNum(r.recovery_deductions as string),
+    penalty_deductions: toNum(r.penalty_deductions as string),
+    bonus_additions: toNum(r.bonus_additions as string),
     net_payout: toNum(r.net_payout as string),
     status: (r.status as string) ?? "pending",
     paid_at: (r.paid_at as string) ?? null,
@@ -88,7 +91,9 @@ function mapRow(r: Record<string, unknown>): StatementRow {
 const SELECT_COLS = `
   s.id, s.chef_id, cp.business_name AS chef_name, s.week_start, s.week_end,
   s.currency, s.orders_count, s.gross_revenue, s.platform_commission,
-  s.cgst, s.sgst, s.igst, s.tds, COALESCE(s.recovery_deductions, 0) AS recovery_deductions,
+  s.cgst, s.sgst, s.igst, s.tds,
+  COALESCE(s.penalty_deductions, 0) AS penalty_deductions,
+  COALESCE(s.bonus_additions, 0) AS bonus_additions,
   s.net_payout, s.status, s.paid_at, s.payout_ref, s.created_at`;
 
 export async function listStatements(filter: StatementFilter): Promise<StatementRow[]> {

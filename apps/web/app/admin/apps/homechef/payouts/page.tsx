@@ -3,8 +3,8 @@
 // Fe3dr chef-payout admin. Lists all chefs' weekly settlement statements
 // (homechef_db, direct) with filters, a CSV export, and a mark-paid action that
 // records a manual disbursement reference. Statement calculation is automated in
-// homechef-api; disbursement is manual (RazorpayX automation gated on an Indian
-// entity). 5B / Wave 7E.
+// homechef-api; disbursement runs on the Cashfree Payouts rail, and mark-paid
+// stays for transfers settled outside it. 5B / Wave 7E.
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -45,7 +45,8 @@ interface StatementRow {
   sgst: number;
   igst: number;
   tds: number;
-  recovery_deductions: number;
+  penalty_deductions: number;
+  bonus_additions: number;
   net_payout: number;
   status: string;
   paid_at: string | null;
@@ -123,7 +124,7 @@ function HomechefPayoutsInner() {
       title: "Mark statement paid",
       message: `Record a disbursement for ${row.chef_name ?? row.chef_id}'s ${row.week_start.slice(0, 10)} statement.`,
       label: "Payout reference",
-      placeholder: "UTR / RazorpayX id / bank ref",
+      placeholder: "UTR / Cashfree transfer id / bank ref",
       required: true,
       confirmLabel: "Mark paid",
     });
@@ -265,7 +266,8 @@ function HomechefPayoutsInner() {
                 <th className="px-3 py-2 text-right font-medium">Commission</th>
                 <th className="px-3 py-2 text-right font-medium">GST</th>
                 <th className="px-3 py-2 text-right font-medium">TDS</th>
-                <th className="px-3 py-2 text-right font-medium">Recovery</th>
+                <th className="px-3 py-2 text-right font-medium">Penalties</th>
+                <th className="px-3 py-2 text-right font-medium">Bonuses</th>
                 <th className="px-3 py-2 text-right font-medium">Net payout</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Action</th>
@@ -275,7 +277,7 @@ function HomechefPayoutsInner() {
               {loading && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={12}
                     className="px-3 py-6 text-center text-muted-foreground"
                   >
                     Loading…
@@ -284,7 +286,7 @@ function HomechefPayoutsInner() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={11}
+                    colSpan={12}
                     className="px-3 py-6 text-center text-muted-foreground"
                   >
                     No statements.
@@ -315,7 +317,10 @@ function HomechefPayoutsInner() {
                       {inr(r.tds)}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                      {r.recovery_deductions > 0 ? inr(r.recovery_deductions) : "—"}
+                      {r.penalty_deductions > 0 ? `−${inr(r.penalty_deductions)}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      {r.bonus_additions > 0 ? `+${inr(r.bonus_additions)}` : "—"}
                     </td>
                     <td className="px-3 py-2 text-right font-medium tabular-nums">
                       {inr(r.net_payout)}
