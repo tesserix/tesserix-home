@@ -226,7 +226,16 @@ export const koraNav: NavEntry[] = [
   // /foods would misdescribe its scope.
   { name: "Audit trail", href: "/admin/apps/kora/audit", icon: ScrollText },
   { name: "Feedback", href: "/admin/apps/kora/feedback", icon: MessageSquare },
-  { name: "Service health", href: "/admin/health", icon: HeartPulse },
+  // No "Service health" entry. It used to point at /admin/health, which is the
+  // PLATFORM-wide health page — so an item inside Kora's own rail navigated the
+  // operator out of the product entirely, with no way back except the rail
+  // switcher. A link that leaves the product context is worse than no link.
+  //
+  // Kora's health already lives on Overview above (the Phase 1 gauges: AI calls
+  // by outcome, budget risk, food index completeness). If a Kora-scoped health
+  // page is ever built — one surfacing Kora's own dependencies, e.g. the Redis
+  // the resolve cache needs (kora#105) — add it here then, pointing at
+  // /admin/apps/kora/..., not at the platform page.
 ];
 
 export type RailContext = "platform" | "mark8ly" | "homechef" | "devai" | "dwellm8" | "kora";
