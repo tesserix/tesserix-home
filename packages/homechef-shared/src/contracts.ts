@@ -429,7 +429,7 @@ export interface BlockedChef {
   chefId: string;
   businessName: string;
   /** Raw Cashfree vendor status. Operator-only — chefs never see it (#1082). */
-  settlementStatus: string;
+  vendorStatus: string;
   registration: PayoutRegistration;
   payoutAutoRelease: PayoutAutomationValue;
 }

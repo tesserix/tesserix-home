@@ -75,6 +75,9 @@ const BLOCKER_COPY: Record<string, string> = {
   no_order: "No order",
 };
 
+// The one Cashfree vendor status that can take a split (services.CashfreeVendorActive).
+const VENDOR_ACTIVE = "ACTIVE";
+
 const RAIL_FILTERS = ["all", "split", "payout", "exception"] as const;
 type RailFilter = (typeof RAIL_FILTERS)[number];
 
@@ -120,6 +123,23 @@ export function EasySplitPanel() {
     setError(null);
     try {
       await hcAdmin.put(`/chefs/${chef.chefId}/easy-split-mode`, { value });
+      await roster.mutate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setBusyChef(null);
+    }
+  }
+
+  // Submit the chef's stored bank details to Cashfree, or re-read the verdict on
+  // a submission already in flight (Home-Chef-App #1122). No detail is entered
+  // here and none is returned — the chef owns them, in the vendor app.
+  async function syncVendor(chef: RosterChef) {
+    setBusyChef(chef.chefId);
+    setError(null);
+    try {
+      const action = chef.vendorId ? "refresh" : "register";
+      await hcAdmin.post(`/chefs/${chef.chefId}/easy-split/${action}`);
       await roster.mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
@@ -217,7 +237,18 @@ export function EasySplitPanel() {
                 <tr key={chef.chefId} className="border-t border-border">
                   <td className="px-3 py-2">{chef.businessName || chef.chefId.slice(0, 8)}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {chef.vendorStatus || "not registered"}
+                    <div className="flex items-center gap-2">
+                      <span>{chef.vendorStatus || "not registered"}</span>
+                      {chef.vendorStatus === VENDOR_ACTIVE ? null : (
+                        <button
+                          onClick={() => void syncVendor(chef)}
+                          disabled={busyChef === chef.chefId}
+                          className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+                        >
+                          {chef.vendorId ? "Re-check" : "Register"}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     {chef.payable ? (
