@@ -81,12 +81,13 @@ export function PayoutAutomationPanel() {
     if (!data) return;
     if (!data.easySplitEnabled) {
       const ok = await confirm({
-        title: "Enable split-at-capture (Easy Split)?",
+        title: "Enable Easy Split?",
         message:
-          "New Cashfree checkouts will pay each chef's net share straight from capture — the " +
-          "platform never holds their money. Only chefs with an ACTIVE Easy Split vendor are " +
-          "split; everyone else stays on the weekly statement path. The remainder (commission, " +
-          "GST, TDS, delivery money and the flat fee) settles to the company account.",
+          "Each chef's net share will be paid straight out of the capture once the release " +
+          "governor clears the order — the platform never holds their money. Only chefs with " +
+          "an ACTIVE Easy Split vendor are split; everyone else stays on the weekly statement " +
+          "path. The remainder (commission, GST, TDS, delivery money and the flat fee) settles " +
+          "to the company account.",
         confirmLabel: "Enable Easy Split",
       });
       if (!ok) return;
@@ -161,7 +162,7 @@ export function PayoutAutomationPanel() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
         <div className="flex items-center gap-2">
-          <h3 className="font-semibold">Split at capture (Easy Split)</h3>
+          <h3 className="font-semibold">Split after payment (Easy Split)</h3>
           <StatusBadge
             tone={data.easySplitEnabled ? "success" : "neutral"}
             label={data.easySplitEnabled ? "On" : "Off"}
@@ -204,9 +205,9 @@ export function PayoutAutomationPanel() {
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        With Easy Split on, each paid order settles the chef&apos;s net share
-        from capture directly to their verified vendor account — the platform
-        never holds it. The flat fee is deducted from the chef&apos;s share on
+        With Easy Split on, each released order settles the chef&apos;s net
+        share out of the capture directly to their verified vendor account — the
+        platform never holds it. The flat fee is deducted from the chef&apos;s share on
         top of commission; the company&apos;s remainder settles to the current
         account on file with Cashfree. Chefs without an ACTIVE vendor, credit-
         funded orders and lapsed-FSSAI kitchens stay on the statement path.
