@@ -44,8 +44,8 @@ function ReasonCell({ chef }: { chef: BlockedChef }) {
   return (
     <div className="space-y-0.5">
       <p className="text-xs text-foreground">{chef.registration.message}</p>
-      {chef.settlementStatus ? (
-        <p className="text-xs text-muted-foreground">Cashfree: {chef.settlementStatus}</p>
+      {chef.vendorStatus ? (
+        <p className="text-xs text-muted-foreground">Cashfree: {chef.vendorStatus}</p>
       ) : null}
     </div>
   );
