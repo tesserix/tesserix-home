@@ -80,6 +80,12 @@ describe("kora nav", () => {
     expect(isNavItemActive("/admin/apps/kora", "/admin/apps/kora")).toBe(true);
     expect(isNavItemActive("/admin/apps/kora/", "/admin/apps/kora")).toBe(true);
   });
+
+  it("has a Feedback entry pointing at /admin/apps/kora/feedback", () => {
+    const fb = koraNav.find((entry) => entry.name === "Feedback") as { href: string } | undefined;
+    expect(fb).toBeDefined();
+    expect(fb?.href).toBe("/admin/apps/kora/feedback");
+  });
 });
 
 // homechef has the identical prefix-collision shape as kora/mark8ly: its
