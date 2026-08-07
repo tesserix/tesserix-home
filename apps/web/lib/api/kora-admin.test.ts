@@ -30,6 +30,8 @@ import {
   updateKoraFood,
   deleteKoraFood,
   listKoraEvents,
+  listKoraFeedback,
+  updateKoraFeedbackStatus,
   KoraAdminError,
 } from "./kora-admin";
 
@@ -657,5 +659,88 @@ describe("listKoraEvents", () => {
   it("rejects a 200 with an unexpected body shape", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: "nope", total: 0 } }));
     await expect(listKoraEvents({})).rejects.toMatchObject({ code: "unexpected_response_shape" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 3: in-app feedback triage — listKoraFeedback / updateKoraFeedbackStatus.
+
+const FEEDBACK = {
+  id: "6d1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8",
+  user_id: "user-uid-1",
+  kind: "bug",
+  subject: "Crashes on save",
+  description: "App closes when I hit save on the log screen.",
+  status: "open",
+  app_version: "1.4.0",
+  platform: "ios",
+  os_version: "18.1",
+  device_model: "iPhone 15",
+  created_at: "2026-08-01T12:00:00Z",
+  email: "user@example.com",
+  display_name: "Jamie",
+};
+
+describe("listKoraFeedback", () => {
+  it("sends the status/kind/limit/offset filters as query params", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
+
+    await listKoraFeedback({ status: "open", kind: "bug", limit: 25, offset: 50 });
+
+    const { url } = lastRequest();
+    expect(url).toContain(`${ADMIN_PREFIX}/feedback`);
+    expect(url).toContain("status=open");
+    expect(url).toContain("kind=bug");
+    expect(url).toContain("limit=25");
+    expect(url).toContain("offset=50");
+  });
+
+  // Asserted first, in the same suite as the shape-rejection test below, so
+  // that test proves shape-rejection rather than a function that always
+  // throws.
+  it("returns the page on a well-formed 200", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [FEEDBACK], total: 1 } }));
+
+    const result = await listKoraFeedback({});
+
+    expect(result).toEqual({ items: [FEEDBACK], total: 1 });
+  });
+
+  it("throws when a 200 body does not have the KoraFeedbackPage shape", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: {} }));
+
+    await expect(listKoraFeedback({})).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  it("throws on a non-200", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { error: "internal_error" }));
+
+    await expect(listKoraFeedback({})).rejects.toBeInstanceOf(KoraAdminError);
+  });
+});
+
+describe("updateKoraFeedbackStatus", () => {
+  it("PATCHes /feedback/<id> with the new status", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: FEEDBACK }));
+
+    const result = await updateKoraFeedbackStatus(FEEDBACK.id, "resolved");
+
+    expect(result).toEqual(FEEDBACK);
+    const { url, init } = lastRequest();
+    expect(url).toContain(`${ADMIN_PREFIX}/feedback/${FEEDBACK.id}`);
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ status: "resolved" });
+  });
+
+  // The transport must never be touched for a non-UUID id: koraAdmin signs
+  // the raw path while fetch percent-encodes it on the wire and Go
+  // percent-decodes, so a bad segment produces a 401 that doesn't read as
+  // "bad id" at all. Asserting only that this throws would also pass a
+  // function that issued the request and threw afterward.
+  it("rejects a non-UUID id without touching the network", async () => {
+    await expect(updateKoraFeedbackStatus("not-a-uuid", "resolved")).rejects.toMatchObject({
+      code: "invalid_id",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
