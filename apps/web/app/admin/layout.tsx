@@ -75,8 +75,26 @@ export default function AdminLayout({
         </TooltipProvider>
         {/* Top-right so queue/status toasts land where the eye already goes
             (bell corner), pushed below the h-16 header so the bell itself is
-            never covered. */}
-        <ToastViewport position="top-right" className="top-20" />
+            never covered.
+
+            pointer-events-none is load-bearing, not cosmetic. The viewport is
+            `fixed` and always mounted, and its p-4 gives it a 32px height even
+            with zero toasts — a full-width invisible strip sitting at y=80,
+            which is exactly the first entry of the product rail. That made
+            "Overview" unclickable in every product (kora, mark8ly, homechef):
+            the click landed on the empty toast container instead of the link.
+
+            The child override is spelled `[&>*]:pointer-events-auto` rather
+            than relying on the `pointer-events-auto` that @tesserix/web's Toast
+            already carries, because this app's Tailwind content globs do not
+            scan node_modules/@tesserix/web — that class name is emitted by the
+            library but has no CSS rule here, so it would silently fail to
+            re-enable clicks and leave every toast's close/action button dead.
+            Written here, in app source, the rule is guaranteed to be generated. */}
+        <ToastViewport
+          position="top-right"
+          className="top-20 pointer-events-none [&>*]:pointer-events-auto"
+        />
       </ToastProvider>
     </AuthProvider>
   );
