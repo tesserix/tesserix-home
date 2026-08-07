@@ -681,6 +681,13 @@ const FEEDBACK = {
   display_name: "Jamie",
 };
 
+// What PATCH /v1/admin/feedback/:id actually returns: the bare row, with NO
+// `email`/`display_name` — those come from the LIST query's join
+// (feedback.Item), which UpdateStatus's re-read (feedback.Feedback) does not
+// perform. Deliberately built by omitting the two keys from FEEDBACK, so
+// this fixture cannot silently drift back to a 13-key superset.
+const { email: _email, display_name: _displayName, ...FEEDBACK_ROW } = FEEDBACK;
+
 describe("listKoraFeedback", () => {
   it("sends the status/kind/limit/offset filters as query params", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], total: 0 } }));
@@ -721,11 +728,11 @@ describe("listKoraFeedback", () => {
 
 describe("updateKoraFeedbackStatus", () => {
   it("PATCHes /feedback/<id> with the new status", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, { data: FEEDBACK }));
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: FEEDBACK_ROW }));
 
     const result = await updateKoraFeedbackStatus(FEEDBACK.id, "resolved");
 
-    expect(result).toEqual(FEEDBACK);
+    expect(result).toEqual(FEEDBACK_ROW);
     const { url, init } = lastRequest();
     expect(url).toContain(`${ADMIN_PREFIX}/feedback/${FEEDBACK.id}`);
     expect(init.method).toBe("PATCH");

@@ -615,7 +615,7 @@ export async function listKoraEvents(params: {
 function assertUuid(id: string): void {
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!UUID_RE.test(id)) {
-    throw new KoraAdminError(400, "invalid_id", "food id must be a UUID");
+    throw new KoraAdminError(400, "invalid_id", "id must be a UUID");
   }
 }
 
@@ -647,13 +647,21 @@ export interface KoraFeedbackPage {
   total: number;
 }
 
+/**
+ * What PATCH /v1/admin/feedback/:id actually returns: the bare feedback row,
+ * with no `email`/`display_name`. Those two are a join that only the LIST
+ * query performs (see `feedback.Item` vs `feedback.Feedback` on the Go
+ * side) — kora's `UpdateStatus` re-reads the plain row, not the joined one.
+ */
+export type KoraFeedbackRow = Omit<KoraFeedback, "email" | "display_name">;
+
 function isKoraFeedbackPage(value: unknown): value is KoraFeedbackPage {
   if (!value || typeof value !== "object") return false;
   const page = value as { items?: unknown; total?: unknown };
   return Array.isArray(page.items) && typeof page.total === "number";
 }
 
-function isKoraFeedback(value: unknown): value is KoraFeedback {
+function isKoraFeedbackRow(value: unknown): value is KoraFeedbackRow {
   if (!value || typeof value !== "object") return false;
   const f = value as { id?: unknown; status?: unknown };
   return typeof f.id === "string" && typeof f.status === "string";
@@ -698,15 +706,15 @@ export async function listKoraFeedback(params: {
  * `getKoraFood`'s `id` param: it is interpolated into the signed path, and
  * `koraAdmin` signs the raw path while `fetch` percent-encodes on the wire.
  */
-export async function updateKoraFeedbackStatus(id: string, status: string): Promise<KoraFeedback> {
+export async function updateKoraFeedbackStatus(id: string, status: string): Promise<KoraFeedbackRow> {
   assertUuid(id);
-  const res = await koraAdmin<{ data: KoraFeedback }>("PATCH", `/feedback/${id}`, {
+  const res = await koraAdmin<{ data: KoraFeedbackRow }>("PATCH", `/feedback/${id}`, {
     body: { status },
   });
   if (res.status !== 200) throwKoraError(res.status, res.data, "update_feedback_failed");
 
   const updated = res.data?.data;
-  if (!isKoraFeedback(updated)) {
+  if (!isKoraFeedbackRow(updated)) {
     logger.warn("[kora-admin] PATCH /feedback -> 200 with an unexpected body shape");
     throw new KoraAdminError(200, "unexpected_response_shape", "feedback response did not match the expected shape");
   }
