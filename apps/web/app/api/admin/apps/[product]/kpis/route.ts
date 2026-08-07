@@ -103,13 +103,29 @@ export async function GET(
     const [, keys] = await Promise.all([
       Promise.all(
         Object.entries(queries).map(async ([key, promql]) => {
+          // A key is OMITTED — never set to 0 — when the query fails or comes
+          // back empty. The frontend renders a missing key as "—" (unknown),
+          // which is the truth; 0 is a MEASUREMENT and this code has none.
+          //
+          // The distinction is not academic. Every tile here is worded so that
+          // 0 is the good value ("rows with no embedding — should be 0",
+          // "errors + timeouts"), so collapsing "could not measure" into 0
+          // renders a perfect scorecard precisely when monitoring is broken.
+          // That is not hypothetical: the entire monitoring namespace is
+          // currently scaled to 0 replicas, so every one of these queries fails
+          // — and this endpoint reported `food_index_missing: 0` while the
+          // database held 1,071 food_items rows with a NULL embedding.
+          //
+          // A genuine 0 from Prometheus is still passed through as 0. Only
+          // absence is reported as absence.
           try {
             const rows = await queryInstant(promql);
             const v = rows[0]?.value.value;
-            out[key] = typeof v === "number" && Number.isFinite(v) ? v : 0;
+            if (typeof v === "number" && Number.isFinite(v)) {
+              out[key] = v;
+            }
           } catch (err) {
             logger.warn(`[kora-kpis] ${key}: ${err instanceof Error ? err.message : "failed"}`);
-            out[key] = 0;
           }
         }),
       ),
