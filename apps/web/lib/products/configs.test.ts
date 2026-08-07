@@ -57,6 +57,18 @@ describe("kora product config", () => {
 });
 
 describe("kora nav", () => {
+  // Regression: "Service health" used to sit in this rail pointing at
+  // /admin/health — the PLATFORM health page — so clicking it inside Kora
+  // navigated the operator out of the product with no way back but the rail
+  // switcher. Asserting the entries are non-empty first means this is a
+  // genuine containment check and not a rail that happens to be empty.
+  it("never links out of the Kora product surface", () => {
+    expect(koraNav.length).toBeGreaterThan(0);
+    for (const entry of koraNav as Array<{ name: string; href: string }>) {
+      expect(entry.href).toMatch(/^\/admin\/apps\/kora(\/|$)/);
+    }
+  });
+
   it("has a Food index entry pointing at /admin/apps/kora/foods", () => {
     const foods = koraNav.find((entry) => entry.name === "Food index") as
       | { href: string }
