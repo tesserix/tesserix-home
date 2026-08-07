@@ -398,14 +398,11 @@ export interface PendingPayoutsResponse {
 
 // ---- Payout setup / blocked chefs (#747) ------------------------------------
 // Mirrors apps/api/handlers/admin_payout.go GetBlockedChefs + SetPayoutAutomation.
-// A chef is "blocked" while their Razorpay linked account is anything other than
-// "activated" — a payout attempt against them would simply fail, so this list is
-// every chef who currently cannot be paid, with Razorpay's own requirements
-// (models/chef.go RazorpaySettlementRequirements) so the blockage is actionable
-// rather than merely visible.
-
-/** Razorpay's activation_status for the chef's linked account. */
-export type SettlementStatus = "" | "created" | "needs_clarification" | "activated";
+// A chef is "blocked" while their Cashfree vendor is anything other than ACTIVE
+// — order money cannot reach them — so this list is every chef who currently
+// cannot be paid. Keyed on Cashfree since Home-Chef-App#1086; the Route
+// activation_status it read before was never written for any chef, so this page
+// listed the whole platform.
 
 /**
  * The admin's per-chef automation switch (models/chef.go PayoutAutoRelease /
@@ -416,39 +413,29 @@ export type SettlementStatus = "" | "created" | "needs_clarification" | "activat
  */
 export type PayoutAutomationValue = "on" | "off" | "";
 
+export type PayoutRegistrationState = "none" | "pending" | "verified" | "failed";
+
+/**
+ * services/easy_split_status.go PayoutRegistrationFor — the server's plain-words
+ * verdict. The message is the server's wording so it can be corrected without a
+ * client release; never re-interpret the state into one of our own.
+ */
+export interface PayoutRegistration {
+  state: PayoutRegistrationState;
+  message: string;
+}
+
 export interface BlockedChef {
   chefId: string;
   businessName: string;
-  settlementStatus: SettlementStatus;
-  /** Raw JSON string: an array of {field_reference, reason_code, resolution_url}, or "". */
-  requirements: string;
+  /** Raw Cashfree vendor status. Operator-only — chefs never see it (#1082). */
+  settlementStatus: string;
+  registration: PayoutRegistration;
   payoutAutoRelease: PayoutAutomationValue;
 }
 
 export interface BlockedChefsResponse {
   chefs: BlockedChef[];
-}
-
-/** One entry of Razorpay's stakeholder-requirements array, from the raw `requirements` string. */
-export interface SettlementRequirement {
-  field_reference?: string;
-  reason_code?: string;
-  resolution_url?: string;
-}
-
-/**
- * Parses the raw `requirements` JSON string. Returns null (not an empty array)
- * for anything that isn't a well-formed array, so the caller can fall back to
- * showing the raw string instead of silently swallowing a malformed blob.
- */
-export function parseSettlementRequirements(raw: string): SettlementRequirement[] | null {
-  if (!raw) return [];
-  try {
-    const v: unknown = JSON.parse(raw);
-    return Array.isArray(v) ? (v as SettlementRequirement[]) : null;
-  } catch {
-    return null;
-  }
 }
 
 // ---- Staff ------------------------------------------------------------------
