@@ -28,7 +28,7 @@ import type {
   BlockedChefsResponse,
   PayoutAutomationValue,
   PendingPayoutsResponse,
-  PaymentGatewayStatus,
+  CashfreeGatewayStatus,
   StripeGatewayStatus,
   WinbackConfig,
   WinbackAnalytics,
@@ -138,7 +138,7 @@ export const qk = {
   blockedChefs: ['hc', 'blocked-chefs'] as const,
   pendingPayouts: (include: string) => ['hc', 'pending-payouts', include] as const,
   pendingRefunds: ['hc', 'pending-refunds'] as const,
-  gatewayStatus: ['hc', 'gateway-status'] as const,
+  cashfreeStatus: (mode: string) => ['hc', 'cashfree-status', mode] as const,
   stripeStatus: ['hc', 'stripe-status'] as const,
   winbackConfig: ['hc', 'winback-config'] as const,
   winbackAnalytics: ['hc', 'winback-analytics'] as const,
@@ -422,8 +422,11 @@ export function useExecuteRefund() {
 }
 
 // ---- Payment gateway status (read-only) ------------------------------------
-export const useGatewayStatus = () =>
-  useQuery({ queryKey: qk.gatewayStatus, queryFn: () => hc.get<PaymentGatewayStatus>('/payment-gateway/status') });
+export const useCashfreeStatus = (mode: 'live' | 'test') =>
+  useQuery({
+    queryKey: qk.cashfreeStatus(mode),
+    queryFn: () => hc.get<CashfreeGatewayStatus>(`/payment-gateway/cashfree/status?mode=${mode}`),
+  });
 export const useStripeStatus = () =>
   useQuery({ queryKey: qk.stripeStatus, queryFn: () => hc.get<StripeGatewayStatus>('/payment-gateway/stripe/status') });
 

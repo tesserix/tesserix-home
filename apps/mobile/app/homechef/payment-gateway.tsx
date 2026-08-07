@@ -1,8 +1,8 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { ChevronLeft } from 'lucide-react-native';
-import { useGatewayStatus, useStripeStatus } from '../../lib/hooks';
-import type { PaymentGatewayStatus } from '@tesserix/homechef-shared';
+import { useCashfreeStatus, useStripeStatus } from '../../lib/hooks';
+import type { CashfreeGatewayStatus, PaymentGatewayStatus } from '@tesserix/homechef-shared';
 import { Badge, Card, LoadingRows, Screen, ScreenHeader, SectionLabel, type Tone } from '../../components/kit';
 import { usePalette, space, text } from '../../lib/theme';
 
@@ -45,23 +45,40 @@ function GatewayCard({ title, s, secretLabel, extraLabel, extraOk }: {
   );
 }
 
+// Cashfree splits sandbox from production by HOST, so which environment a slot
+// actually resolves to is a separate fact from what the slot is called — and the
+// only one that says whether real money can move.
+function CashfreeCard({ title, s }: { title: string; s: CashfreeGatewayStatus }) {
+  const p = usePalette();
+  return (
+    <View>
+      <GatewayCard title={title} s={s} secretLabel="Secret key" />
+      <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>
+        Environment: {s.environment || '—'}
+      </Text>
+    </View>
+  );
+}
+
 export default function PaymentGateway() {
   const p = usePalette();
-  const rz = useGatewayStatus();
+  const cfLive = useCashfreeStatus('live');
+  const cfTest = useCashfreeStatus('test');
   const st = useStripeStatus();
 
   return (
     <Screen>
       <ScreenHeader
         title="Payment gateway"
-        subtitle="Razorpay + Stripe · read-only"
+        subtitle="Cashfree + Stripe · read-only"
         right={<Pressable onPress={() => router.back()} hitSlop={10} style={{ paddingTop: 4 }}><ChevronLeft size={24} color={p.mutedForeground} /></Pressable>}
       />
-      {rz.isLoading || st.isLoading ? (
+      {cfLive.isLoading || cfTest.isLoading || st.isLoading ? (
         <LoadingRows />
       ) : (
         <ScrollView contentContainerStyle={{ paddingHorizontal: space[4], paddingBottom: space[10], gap: space[4] }}>
-          {rz.data ? <GatewayCard title="Razorpay" s={rz.data} secretLabel="Key secret" /> : null}
+          {cfLive.data ? <CashfreeCard title="Cashfree — Live" s={cfLive.data} /> : null}
+          {cfTest.data ? <CashfreeCard title="Cashfree — Test" s={cfTest.data} /> : null}
           {st.data ? <GatewayCard title="Stripe" s={st.data} secretLabel="Secret key" extraLabel="Publishable key" extraOk={st.data.publishableKeySet} /> : null}
           <Text style={[text.caption, { color: p.mutedForeground }]}>Credentials are managed on the web admin.</Text>
         </ScrollView>
