@@ -34,9 +34,10 @@ describe("readKeyHealth", () => {
     );
 
     const health = await readKeyHealth("p", ["gemini", "openai"]);
-    expect(health.configured).toBe(2);
+    expect(health).not.toBeNull();
+    expect(health?.configured).toBe(2);
     // The oldest key is the one at risk, so the tile must surface 30, not 7.
-    expect(health.oldestAgeDays).toBe(30);
+    expect(health?.oldestAgeDays).toBe(30);
   });
 
   // The whole point of the tile: a key that vanished or was disabled must
@@ -49,12 +50,24 @@ describe("readKeyHealth", () => {
     );
 
     const health = await readKeyHealth("p", ["gemini", "openai"]);
-    expect(health.configured).toBe(1);
-    expect(health.oldestAgeDays).toBe(7);
+    expect(health).not.toBeNull();
+    expect(health?.configured).toBe(1);
+    expect(health?.oldestAgeDays).toBe(7);
   });
 
-  it("degrades to zeros when Secret Manager is unreachable", async () => {
+  // Unreachable is UNKNOWN, not zero. `configured: 0` is the alarm state the
+  // tile above exists to raise ("a key vanished"), so returning it for a failed
+  // lookup raises that alarm for a healthy system — which is exactly what
+  // happened in production against a 403 from workload identity.
+  it("returns null, not zeros, when Secret Manager is unreachable", async () => {
     listSecretVersions.mockRejectedValue(new Error("PERMISSION_DENIED"));
+    const health = await readKeyHealth("p", ["gemini", "openai"]);
+    expect(health).toBeNull();
+  });
+
+  // The other side of that line: a genuine zero must still be reported as zero.
+  it("reports a measured zero as zero, not as unknown", async () => {
+    listSecretVersions.mockResolvedValue([[{ state: "DESTROYED", createTime: { seconds: 1 } }]]);
     const health = await readKeyHealth("p", ["gemini", "openai"]);
     expect(health).toEqual({ configured: 0, oldestAgeDays: 0 });
   });
