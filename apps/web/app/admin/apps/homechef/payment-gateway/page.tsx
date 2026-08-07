@@ -1,6 +1,6 @@
 "use client";
 
-// HomeChef PAYMENT GATEWAY (#262). The live Razorpay / Stripe credentials the
+// HomeChef PAYMENT GATEWAY (#262). The live Cashfree / Stripe credentials the
 // platform charges with. Migrated from the HomeChef admin-portal into the
 // unified Tesserix admin.
 //
@@ -22,7 +22,6 @@ import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge
 import { useConfirm } from "@/components/admin/confirm-dialog";
 import type {
   CashfreeGatewayStatus,
-  PaymentGatewayStatus,
   StripeGatewayStatus,
   UpdateKeysResponse,
 } from "@tesserix/homechef-shared";
@@ -58,163 +57,6 @@ function StatusRow({ label, ok }: { label: string; ok: boolean }) {
   );
 }
 
-function RazorpayCard({ slot }: { slot: "live" | "test" }) {
-  const { data, isLoading, mutate } = useSWR<PaymentGatewayStatus>(
-    ["/payment-gateway/status", { mode: slot }],
-    swrFetcher,
-  );
-  const [form, setForm] = useState({ keyId: "", keySecret: "", webhookSecret: "" });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<UpdateKeysResponse | null>(null);
-  const { confirm } = useConfirm();
-
-  async function save() {
-    setError(null);
-    setResult(null);
-    if (!form.keyId.trim() || !form.keySecret.trim()) {
-      setError("Both the key id and key secret are required.");
-      return;
-    }
-
-    // A Razorpay key says which kind it is. Saving a mismatched one is allowed —
-    // the Live slot legitimately holds a test key until a real live key exists —
-    // but the admin should be told at the moment they decide, not discover it
-    // later from a banner.
-    const keyKind = form.keyId.startsWith("rzp_live_") ? "live" : "test";
-    const mismatch = keyKind !== slot;
-    const ok = await confirm({
-      title: `Replace the Razorpay ${slot} keys?`,
-      message:
-        (mismatch
-          ? `Heads up: this is a ${keyKind.toUpperCase()} key going into the ${slot.toUpperCase()} slot. ` +
-            (slot === "live"
-              ? "No real payment will be captured until a live key replaces it. "
-              : "Sandbox orders would charge real cards. ")
-          : "") +
-        "Every payment and refund from now on uses this merchant account. If it is a different account, existing chef payout links (Route linked accounts) and your webhook will stop resolving — silently. Re-check the webhook and chef payouts after saving.",
-      confirmLabel: "Replace keys",
-      tone: "destructive",
-    });
-    if (!ok) return;
-
-    setSaving(true);
-    try {
-      const res = await hcAdmin.put<UpdateKeysResponse>("/payment-gateway/keys", {
-        mode: slot,
-        keyId: form.keyId.trim(),
-        keySecret: form.keySecret.trim(),
-        webhookSecret: form.webhookSecret.trim() || undefined,
-      });
-      setResult(res);
-      // Never keep a secret in component state after it has been sent.
-      setForm({ keyId: "", keySecret: "", webhookSecret: "" });
-      await mutate();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not update the Razorpay keys.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="space-y-4 rounded-lg border p-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h2 className="text-base font-semibold">
-            Razorpay — {slot === "live" ? "Live" : "Test"} credentials
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {slot === "live"
-              ? "Used by every real kitchen. Real money moves through these keys."
-              : "Used only by kitchens marked as Test. No real money moves through these keys."}
-          </p>
-        </div>
-        {isLoading ? null : (
-          <StatusBadge
-            tone={modeTone(data?.mode ?? "", data?.configured ?? false)}
-            label={
-              !data?.configured ? "Not configured" : data.mode === "live" ? "LIVE" : "Test mode"
-            }
-          />
-        )}
-      </div>
-
-      <SlotWarning text={data?.slotWarning} />
-
-      {data ? (
-        <div className="rounded-md border p-3">
-          <StatusRow label="Key secret" ok={data.configured} />
-          <StatusRow label="Webhook secret" ok={data.webhookSecretSet} />
-          <div className="flex items-center justify-between py-1 text-sm">
-            <span className="text-muted-foreground">Key prefix</span>
-            <span className="font-mono text-xs">{data.keyPrefix || "—"}</span>
-          </div>
-          <div className="flex items-center justify-between py-1 text-sm">
-            <span className="text-muted-foreground">Webhook URL</span>
-            <span className="font-mono text-xs">{data.webhookUrl || "—"}</span>
-          </div>
-          {data.error ? <p className="pt-2 text-sm text-destructive">{data.error}</p> : null}
-        </div>
-      ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <label className="space-y-1 text-sm">
-          <span className="font-medium">Key ID</span>
-          <input
-            className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-            value={form.keyId}
-            onChange={(e) => setForm({ ...form, keyId: e.target.value })}
-            placeholder="rzp_test_… / rzp_live_…"
-            autoComplete="off"
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="font-medium">Key secret</span>
-          <input
-            type="password"
-            className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-            value={form.keySecret}
-            onChange={(e) => setForm({ ...form, keySecret: e.target.value })}
-            autoComplete="new-password"
-          />
-        </label>
-        <label className="space-y-1 text-sm">
-          <span className="font-medium">Webhook secret</span>
-          <input
-            type="password"
-            className="w-full rounded-md border px-3 py-2 font-mono text-xs"
-            value={form.webhookSecret}
-            onChange={(e) => setForm({ ...form, webhookSecret: e.target.value })}
-            autoComplete="new-password"
-          />
-          <span className="block text-xs text-muted-foreground">
-            Must match the secret set on the webhook in the Razorpay dashboard, or every webhook
-            fails signature verification.
-          </span>
-        </label>
-      </div>
-
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {result ? (
-        <p className={`text-sm ${result.verified === false ? "text-destructive" : "text-emerald-600"}`}>
-          {result.message}
-          {result.testError ? ` — gateway said: ${result.testError}` : ""}
-        </p>
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => void save()}
-        disabled={saving}
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
-      >
-        {saving ? "Verifying…" : "Replace keys"}
-      </button>
-    </div>
-  );
-}
-
 function CashfreeCard({ slot }: { slot: "live" | "test" }) {
   const { data, isLoading, mutate } = useSWR<CashfreeGatewayStatus>(
     ["/payment-gateway/cashfree/status", { mode: slot }],
@@ -234,11 +76,11 @@ function CashfreeCard({ slot }: { slot: "live" | "test" }) {
       return;
     }
 
-    // Cashfree sandbox App IDs are prefixed "TEST". Unlike Razorpay, a mismatch
-    // here does NOT degrade gracefully: Cashfree separates environments by host,
-    // so test credentials in the Live slot are a permanent 401 against
-    // api.cashfree.com, not a "captures nothing" state. Say so at the moment the
-    // admin decides, rather than leaving them to find it in a banner later.
+    // Cashfree sandbox App IDs are prefixed "TEST". A mismatch here does NOT
+    // degrade gracefully: Cashfree separates environments by host, so test
+    // credentials in the Live slot are a permanent 401 against api.cashfree.com,
+    // not a "captures nothing" state. Say so at the moment the admin decides,
+    // rather than leaving them to find it in a banner later.
     const keyKind = form.appId.trim().toUpperCase().startsWith("TEST") ? "test" : "live";
     const mismatch = keyKind !== slot;
     const ok = await confirm({
@@ -247,7 +89,7 @@ function CashfreeCard({ slot }: { slot: "live" | "test" }) {
         (mismatch
           ? `Heads up: this looks like a ${keyKind.toUpperCase()} App ID going into the ${slot.toUpperCase()} slot. ` +
             (slot === "live"
-              ? "Cashfree splits sandbox and production by host, so live payments will fail with 401 until real live credentials are entered — checkout falls back to Razorpay meanwhile. "
+              ? "Cashfree splits sandbox and production by host, so live payments will fail with 401 until real live credentials are entered — checkout has no other rail to fall back to. "
               : "Sandbox orders would charge real cards. ")
           : "") +
         "Every Cashfree payment and refund from now on uses this merchant account. Refunds are issued against the ORDER, so orders taken on the previous account can no longer be refunded through this one — check for in-flight refunds before saving.",
@@ -436,7 +278,7 @@ function StripeCard() {
         <div>
           <h2 className="text-base font-semibold">Stripe</h2>
           <p className="text-sm text-muted-foreground">
-            Secondary gateway. Unconfigured is fine — the API degrades to Razorpay-only.
+            Secondary gateway. Unconfigured is fine — the API degrades to Cashfree-only.
           </p>
         </div>
         {isLoading ? null : (
@@ -520,14 +362,8 @@ export default function HomechefPaymentGatewayPage() {
           stop resolving.
         </p>
       </div>
-      {/* Cashfree first: it is the preferred gateway for new kitchens, so it is
-          the one an operator is most often here to configure. Razorpay stays
-          fully supported below — existing kitchens settle through it, and live
-          checkout falls back to it whenever Cashfree's slot is unusable. */}
       <CashfreeCard slot="live" />
       <CashfreeCard slot="test" />
-      <RazorpayCard slot="live" />
-      <RazorpayCard slot="test" />
       <StripeCard />
     </div>
   );
