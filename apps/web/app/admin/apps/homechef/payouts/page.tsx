@@ -45,6 +45,7 @@ interface StatementRow {
   sgst: number;
   igst: number;
   tds: number;
+  recovery_deductions: number;
   net_payout: number;
   status: string;
   paid_at: string | null;
@@ -264,6 +265,7 @@ function HomechefPayoutsInner() {
                 <th className="px-3 py-2 text-right font-medium">Commission</th>
                 <th className="px-3 py-2 text-right font-medium">GST</th>
                 <th className="px-3 py-2 text-right font-medium">TDS</th>
+                <th className="px-3 py-2 text-right font-medium">Recovery</th>
                 <th className="px-3 py-2 text-right font-medium">Net payout</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Action</th>
@@ -273,7 +275,7 @@ function HomechefPayoutsInner() {
               {loading && rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={11}
                     className="px-3 py-6 text-center text-muted-foreground"
                   >
                     Loading…
@@ -282,7 +284,7 @@ function HomechefPayoutsInner() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={11}
                     className="px-3 py-6 text-center text-muted-foreground"
                   >
                     No statements.
@@ -311,6 +313,9 @@ function HomechefPayoutsInner() {
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {inr(r.tds)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      {r.recovery_deductions > 0 ? inr(r.recovery_deductions) : "—"}
                     </td>
                     <td className="px-3 py-2 text-right font-medium tabular-nums">
                       {inr(r.net_payout)}

@@ -66,8 +66,8 @@ export default function PayoutSetup() {
               </View>
               <Text style={[text.label, { color: p.mutedForeground, marginTop: 12, marginBottom: 4 }]}>Why they're blocked</Text>
               <Text style={[text.body, { color: p.foreground }]}>{chef.registration.message}</Text>
-              {chef.settlementStatus ? (
-                <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>Cashfree: {chef.settlementStatus}</Text>
+              {chef.vendorStatus ? (
+                <Text style={[text.caption, { color: p.mutedForeground, marginTop: 2 }]}>Cashfree: {chef.vendorStatus}</Text>
               ) : null}
               <Text style={[text.label, { color: p.mutedForeground, marginTop: 12, marginBottom: 6 }]}>Payout automation</Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>

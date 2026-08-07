@@ -10,7 +10,7 @@ import { logger } from "@/lib/logger";
 const HEADER = [
   "statement_id", "chef_id", "chef_name", "week_start", "week_end",
   "orders", "gross_revenue", "platform_commission", "cgst", "sgst", "igst",
-  "tds", "net_payout", "currency", "status", "paid_at", "payout_ref",
+  "tds", "recovery_deductions", "net_payout", "currency", "status", "paid_at", "payout_ref",
 ];
 
 function csvCell(v: string | number | null): string {
@@ -44,7 +44,8 @@ export async function GET(
         s.id, s.chef_id, s.chef_name ?? "", s.week_start.slice(0, 10), s.week_end.slice(0, 10),
         s.orders_count, s.gross_revenue.toFixed(2), s.platform_commission.toFixed(2),
         s.cgst.toFixed(2), s.sgst.toFixed(2), s.igst.toFixed(2), s.tds.toFixed(2),
-        s.net_payout.toFixed(2), s.currency, s.status, s.paid_at ?? "", s.payout_ref ?? "",
+        s.recovery_deductions.toFixed(2), s.net_payout.toFixed(2), s.currency, s.status,
+        s.paid_at ?? "", s.payout_ref ?? "",
       ].map(csvCell).join(","));
     }
     return new Response(lines.join("\n"), {
