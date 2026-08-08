@@ -790,6 +790,27 @@ function isKoraUserList(value: unknown): value is KoraUserList {
   return Array.isArray(list.items) && !!list.summary && typeof list.summary === "object";
 }
 
+/**
+ * Repairs `transfers: null` into `transfers: []` before the type guards run.
+ *
+ * Go's `encoding/json` marshals a NIL slice as `null`, not `[]`, so a user who
+ * owns no multi-member group could arrive here with `transfers: null` while
+ * being a perfectly valid 200. `Array.isArray(null)` is false, so the guards
+ * below would reject it -- harmless-looking on the detail panel, but on DELETE
+ * the account is already destroyed and the transaction already committed, and
+ * the operator would be told an irreversible deletion failed when it in fact
+ * succeeded (never seeing `firebase_identity_removed`, and a retry answering
+ * 404).
+ *
+ * The API side initialises the slice so this should never fire; it is kept as
+ * belt and braces because of what the failure mode costs on this seam.
+ */
+function normaliseTransfers(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  if ((value as { transfers?: unknown }).transfers !== null) return value;
+  return { ...(value as object), transfers: [] };
+}
+
 function isKoraUserDetail(value: unknown): value is KoraUserDetail {
   if (!value || typeof value !== "object") return false;
   const d = value as { id?: unknown; transfers?: unknown; counts?: unknown };
@@ -824,7 +845,7 @@ export async function getKoraUser(id: string): Promise<KoraUserDetail> {
   const res = await koraAdmin<{ data: KoraUserDetail }>("GET", `/users/${id}`);
   if (res.status !== 200) throwKoraError(res.status, res.data, "get_user_failed");
 
-  const detail = res.data?.data;
+  const detail = normaliseTransfers(res.data?.data);
   if (!isKoraUserDetail(detail)) {
     logger.warn(`[kora-admin] GET /users/${id} -> 200 with an unexpected body shape`);
     throw new KoraAdminError(200, "unexpected_response_shape", "user detail response did not match the expected shape");
@@ -843,7 +864,7 @@ export async function deleteKoraUser(id: string): Promise<KoraDeleteResult> {
   const res = await koraAdmin<{ data: KoraDeleteResult }>("DELETE", `/users/${id}`);
   if (res.status !== 200) throwKoraError(res.status, res.data, "delete_user_failed");
 
-  const result = res.data?.data;
+  const result = normaliseTransfers(res.data?.data);
   if (!isKoraDeleteResult(result)) {
     logger.warn(`[kora-admin] DELETE /users/${id} -> 200 with an unexpected body shape`);
     throw new KoraAdminError(200, "unexpected_response_shape", "delete response did not match the expected shape");

@@ -861,6 +861,19 @@ describe("getKoraUser", () => {
     });
   });
 
+  // Go marshals a NIL slice as JSON `null`, not `[]`, so a user who owns no
+  // multi-member group can legitimately arrive as `transfers: null`. The Go
+  // side now initialises the slice, but this seam stays tolerant anyway:
+  // Array.isArray(null) is false, so the un-tolerant guard turned a good 200
+  // into a red error banner for very nearly every user.
+  it("tolerates transfers:null from Go and normalises it to an empty array", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ...DETAIL, transfers: null } }));
+
+    const detail = await getKoraUser(USER_ROW.id);
+
+    expect(detail.transfers).toEqual([]);
+  });
+
   it("throws when a 200 body does not have the KoraUserDetail shape", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { id: USER_ROW.id } }));
     await expect(getKoraUser(USER_ROW.id)).rejects.toBeInstanceOf(KoraAdminError);
@@ -895,6 +908,22 @@ describe("deleteKoraUser", () => {
   it("surfaces a 404 from delete as a KoraAdminError", async () => {
     fetchMock.mockResolvedValue(jsonResponse(404, { error: "not_found", message: "user not found" }));
     await expect(deleteKoraUser(USER_ROW.id)).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  // The same `transfers: null` Go emits for a user who owns no multi-member
+  // group. Rejecting it here is the worst failure on this surface: the
+  // account is already destroyed and the transaction has already committed,
+  // so the operator is told an irreversible deletion failed when it
+  // succeeded, never sees firebase_identity_removed, and a retry answers 404.
+  it("tolerates transfers:null from Go and normalises it to an empty array", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: { ...DELETE_RESULT, transfers: null } }),
+    );
+
+    const result = await deleteKoraUser(USER_ROW.id);
+
+    expect(result.transfers).toEqual([]);
+    expect(result.firebase_identity_removed).toBe(true);
   });
 
   it("throws when a 200 body does not have the KoraDeleteResult shape", async () => {
