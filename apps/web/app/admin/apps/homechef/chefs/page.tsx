@@ -4,7 +4,8 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 import { Button } from "@tesserix/web";
 
-import { GatewayError, hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
+import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
+import { flipBlockersFrom, forceFlipMessage } from "@/lib/products/homechef/test-flip";
 import Link from "next/link";
 
 import { formatDate, formatDateTime, formatINR, titleCase, type ChefWithStats, type Paginated } from "@tesserix/homechef-shared";
@@ -371,27 +372,48 @@ export default function HomechefChefsPage() {
 
     setBusyId(c.id);
     try {
-      await hcAdmin.patch(`/chefs/${c.id}/mode`, { mode: next, reason });
-      // Show the kitchen in its new world rather than leaving the admin staring
-      // at a filter that no longer matches the row they just changed.
-      if (modeFilter && modeFilter !== next) setModeFilter(next);
-      await mutate();
+      await flipMode(c, next, reason, false);
     } catch (e) {
-      // A blocked flip comes back as 409 with a list of what is in the way.
-      const blockers =
-        e instanceof GatewayError && e.body && typeof e.body === "object" && "blockers" in e.body
-          ? (e.body.blockers as string[])
-          : undefined;
-      setError(
-        blockers?.length
-          ? `Cannot move to Test yet — ${blockers.join(", ")}.`
-          : e instanceof Error
-            ? e.message
-            : "Could not change mode",
-      );
+      // A blocked flip comes back as 409 naming what is in the way. A kitchen
+      // that trades every day is never fully settled, so refusing outright would
+      // mean it can never be sandboxed — offer to park the work instead.
+      const blockers = flipBlockersFrom(e);
+      if (!blockers) {
+        setError(e instanceof Error ? e.message : "Could not change mode");
+        setBusyId(null);
+        return;
+      }
+      const forced = await confirm({
+        title: `Move ${c.businessName} to Test anyway?`,
+        message: forceFlipMessage(blockers),
+        confirmLabel: "Park it and move to Test",
+      });
+      if (!forced) {
+        setError(`Cannot move to Test yet — ${blockers.join(", ")}.`);
+        setBusyId(null);
+        return;
+      }
+      try {
+        await flipMode(c, next, reason, true);
+      } catch (e2) {
+        setError(e2 instanceof Error ? e2.message : "Could not change mode");
+      }
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function flipMode(
+    c: ChefWithStats,
+    next: "live" | "test",
+    reason: string,
+    force: boolean,
+  ) {
+    await hcAdmin.patch(`/chefs/${c.id}/mode`, { mode: next, reason, force });
+    // Show the kitchen in its new world rather than leaving the admin staring
+    // at a filter that no longer matches the row they just changed.
+    if (modeFilter && modeFilter !== next) setModeFilter(next);
+    await mutate();
   }
 
   async function act(id: string, action: "verify" | "suspend" | "reject") {
