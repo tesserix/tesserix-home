@@ -34,3 +34,12 @@ export function vendorStatusHint(status?: string | null): string | null {
   if (!key) return NOT_REGISTERED_HINT;
   return HINTS[key] ?? null;
 }
+
+// Whether to offer the sandbox bank seed, which puts Cashfree's documented test
+// account on file so no operator types a real account number. Only a test-mode
+// kitchen resolves to the sandbox payout rail, and the API refuses any other —
+// an unknown mode reads as live, because that is the reading that cannot pay a
+// stranger.
+export function canSeedSandboxBank(mode?: string | null): boolean {
+  return normalize(mode) === "TEST";
+}

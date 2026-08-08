@@ -10,7 +10,11 @@ import useSWR from "swr";
 import { RefreshCw } from "lucide-react";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { vendorStatusHint, vendorStatusLabel } from "@/lib/products/homechef/vendor-status";
+import {
+  canSeedSandboxBank,
+  vendorStatusHint,
+  vendorStatusLabel,
+} from "@/lib/products/homechef/vendor-status";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
@@ -149,6 +153,29 @@ export function EasySplitPanel() {
     }
   }
 
+  // Put Cashfree's documented sandbox account on file for a test kitchen, so a
+  // split and a payout can both be exercised without anyone typing a bank
+  // account number. The server picks the account and refuses on a live rail.
+  async function seedSandboxBank(chef: RosterChef) {
+    const ok = await confirm({
+      title: `Seed a sandbox bank account for ${chef.businessName}?`,
+      message:
+        "Cashfree's own test account goes on file and is registered as this kitchen's payout destination. Sandbox only — the request is refused if the kitchen's rail is live.",
+      confirmLabel: "Seed test account",
+    });
+    if (!ok) return;
+    setBusyChef(chef.chefId);
+    setError(null);
+    try {
+      await hcAdmin.post(`/chefs/${chef.chefId}/payout-methods/test-bank`);
+      await roster.mutate();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setBusyChef(null);
+    }
+  }
+
   const summary = ledger.data?.summary;
 
   return (
@@ -251,6 +278,15 @@ export function EasySplitPanel() {
                           {chef.vendorId ? "Re-check" : "Register"}
                         </button>
                       )}
+                      {chef.vendorStatus !== VENDOR_ACTIVE && canSeedSandboxBank(chef.mode) ? (
+                        <button
+                          onClick={() => void seedSandboxBank(chef)}
+                          disabled={busyChef === chef.chefId}
+                          className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+                        >
+                          Seed sandbox bank
+                        </button>
+                      ) : null}
                     </div>
                     {vendorStatusHint(chef.vendorStatus) ? (
                       <p className="mt-1 max-w-xs">{vendorStatusHint(chef.vendorStatus)}</p>
