@@ -1,8 +1,11 @@
+import Link from "next/link";
+
 import { everLogged, formatDate, isEmpty } from "./format";
 import type { KoraUser } from "@/lib/api/kora-admin";
 
-// Presentational only — no mutation, no "use client" needed. The detail
-// panel and delete flow are a later task; this page is read-only.
+// Presentational only — no mutation, no "use client" needed. Rows link to
+// the per-user detail panel ([id]/page.tsx); the delete flow lives entirely
+// on that page, not here.
 //
 // formatDate/everLogged/isEmpty live in ./format.ts, NOT here, so they are
 // directly unit-testable — see format.ts's header comment for why a .tsx
@@ -17,7 +20,14 @@ function YesNo({ value }: { value: boolean }) {
 function UserRow({ item }: { item: KoraUser }) {
   return (
     <tr className="align-top hover:bg-muted/30">
-      <td className="px-4 py-3 text-foreground">{item.email}</td>
+      <td className="px-4 py-3 text-foreground">
+        <Link
+          href={`/admin/apps/kora/users/${item.id}`}
+          className="underline-offset-2 hover:underline"
+        >
+          {item.email}
+        </Link>
+      </td>
       <td className="px-4 py-3 text-foreground">{item.display_name || "—"}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDate(item.created_at)}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDate(item.onboarded_at)}</td>
