@@ -12,6 +12,7 @@ interface PayoutSettings {
   autoCapMinor: number;
   autoCapUnreadable: boolean;
   easySplitEnabled: boolean;
+  commissionRatePercent: number;
   platformFeeFlatMinor: number;
   platformFeeUnreadable: boolean;
 }
@@ -86,8 +87,8 @@ export function PayoutAutomationPanel() {
           "Each chef's net share will be paid straight out of the capture once the release " +
           "governor clears the order — the platform never holds their money. Only chefs with " +
           "an ACTIVE Easy Split vendor are split; everyone else stays on the weekly statement " +
-          "path. The remainder (commission, GST, TDS, delivery money and the flat fee) settles " +
-          "to the company account.",
+          `path. The remainder — the ${data.commissionRatePercent}% commission, GST, TDS, ` +
+          "delivery money and any extra flat fee — settles to the company account.",
         confirmLabel: "Enable Easy Split",
       });
       if (!ok) return;
@@ -167,20 +168,24 @@ export function PayoutAutomationPanel() {
             tone={data.easySplitEnabled ? "success" : "neutral"}
             label={data.easySplitEnabled ? "On" : "Off"}
           />
+          <StatusBadge
+            tone="neutral"
+            label={`Commission ${data.commissionRatePercent}%`}
+          />
           {data.platformFeeUnreadable ? (
             <StatusBadge tone="danger" label="Fee unreadable — splits paused" />
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            Flat platform fee ₹
+            Extra flat fee ₹
             <input
               value={feeRupees}
               onChange={(e) => setFeeRupees(e.target.value)}
               placeholder="0"
               inputMode="decimal"
               className="h-8 w-24 rounded-md border border-border bg-background px-2 tabular-nums"
-              aria-label="Flat platform fee per order in rupees"
+              aria-label="Extra flat platform fee per order in rupees, optional"
             />
           </label>
           <button
@@ -207,10 +212,13 @@ export function PayoutAutomationPanel() {
       <p className="text-xs text-muted-foreground">
         With Easy Split on, each released order settles the chef&apos;s net
         share out of the capture directly to their verified vendor account — the
-        platform never holds it. The flat fee is deducted from the chef&apos;s share on
-        top of commission; the company&apos;s remainder settles to the current
-        account on file with Cashfree. Chefs without an ACTIVE vendor, credit-
-        funded orders and lapsed-FSSAI kitchens stay on the statement path.
+        platform never holds it. The platform&apos;s cut is the{" "}
+        {data.commissionRatePercent}% commission every order already carries — it
+        is netted off before the split is built, so leaving the extra flat fee
+        empty is correct unless you want a per-order charge on top of it. The
+        company&apos;s remainder settles to the current account on file with
+        Cashfree. Chefs without an ACTIVE vendor, credit-funded orders and
+        lapsed-FSSAI kitchens stay on the statement path.
       </p>
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </section>
