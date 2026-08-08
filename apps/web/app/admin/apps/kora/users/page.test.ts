@@ -107,13 +107,17 @@ describe("KoraUsersPage", () => {
     const alert = findByRole(element, "alert");
     expect(alert).toBeDefined();
     const alertText = collectText(alert);
+    // These four are the real invariant for the error branch: the alert must
+    // carry the fixed "could not be loaded" copy plus Kora's own status/code/
+    // message, so an operator can tell a 403 from a 401 or a 5xx. (A
+    // `not.toContain("No users yet.")` assertion was here previously — it was
+    // vacuous, since page.tsx renders the alert INSTEAD of <UsersTable> on
+    // this branch, so that string could never appear regardless of what
+    // UsersTable's empty-state logic does. The empty-state guard itself is
+    // now covered directly by format.test.ts's `isEmpty` tests.)
     expect(alertText).toContain("could not be loaded");
     expect(alertText).toContain("403");
     expect(alertText).toContain("forbidden");
     expect(alertText).toContain("not an admin identity");
-
-    // An error must never render as an empty table — "no users" and "the API
-    // is unreachable" are visually distinguishable states.
-    expect(collectText(element)).not.toContain("No users yet.");
   });
 });

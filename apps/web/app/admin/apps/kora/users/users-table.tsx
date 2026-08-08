@@ -1,14 +1,12 @@
+import { everLogged, formatDate, isEmpty } from "./format";
 import type { KoraUser } from "@/lib/api/kora-admin";
 
 // Presentational only — no mutation, no "use client" needed. The detail
 // panel and delete flow are a later task; this page is read-only.
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-}
+//
+// formatDate/everLogged/isEmpty live in ./format.ts, NOT here, so they are
+// directly unit-testable — see format.ts's header comment for why a .tsx
+// module can't be reached by this repo's vitest `include` pattern.
 
 function YesNo({ value }: { value: boolean }) {
   return (
@@ -17,11 +15,6 @@ function YesNo({ value }: { value: boolean }) {
 }
 
 function UserRow({ item }: { item: KoraUser }) {
-  // "Ever logged" is derived from log_count, not from first_log/last_write
-  // presence — log_count is the field the summary's `ever_logged` tally is
-  // itself built from on the API side, so the row-level and strip-level
-  // figures stay consistent by construction.
-  const everLogged = item.log_count > 0;
   return (
     <tr className="align-top hover:bg-muted/30">
       <td className="px-4 py-3 text-foreground">{item.email}</td>
@@ -29,7 +22,7 @@ function UserRow({ item }: { item: KoraUser }) {
       <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDate(item.created_at)}</td>
       <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDate(item.onboarded_at)}</td>
       <td className="px-4 py-3">
-        <YesNo value={everLogged} />
+        <YesNo value={everLogged(item.log_count)} />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDate(item.first_log)}</td>
       <td className="px-4 py-3 text-foreground">{item.log_count}</td>
@@ -71,7 +64,7 @@ export function UsersTable({ items }: { items: KoraUser[] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {items.length === 0 ? (
+            {isEmpty(items) ? (
               <tr>
                 <td colSpan={11} className="px-4 py-10 text-center text-muted-foreground">
                   No users yet.
