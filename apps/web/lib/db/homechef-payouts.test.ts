@@ -10,14 +10,15 @@ const { listStatements, listStatementsForExport } = await import("./homechef-pay
 
 // Every column weekly_statements actually has (Home-Chef-App
 // models/statement.go). The admin payouts page returned HTTP 500 in production
-// because the SELECT named recovery_deductions, a column #1092 has not shipped
-// yet — Postgres rejects the whole query, so the operator saw no statements at
-// all. Anything selected off `s.` must exist here.
+// because the SELECT named recovery_deductions before #1092 had shipped it —
+// Postgres rejects the whole query, so the operator saw no statements at all.
+// Anything selected off `s.` must exist here, and must exist in production
+// first: this page queries homechef_db directly, not through the API.
 const WEEKLY_STATEMENT_COLUMNS = new Set([
   "id", "chef_id", "user_id", "week_start", "week_end", "currency",
   "orders_count", "gross_revenue", "platform_commission", "cgst", "sgst",
-  "igst", "tds", "penalty_deductions", "bonus_additions", "net_payout",
-  "status", "paid_at", "payout_ref", "created_at",
+  "igst", "tds", "penalty_deductions", "bonus_additions", "recovery_deductions",
+  "net_payout", "status", "paid_at", "payout_ref", "created_at",
 ]);
 
 function selectedStatementColumns(sql: string): string[] {
@@ -39,6 +40,18 @@ describe("weekly-statement queries", () => {
         expect(WEEKLY_STATEMENT_COLUMNS).toContain(col);
       }
     }
+  });
+
+  // A transfer smaller than the week's earnings is the operator's first support
+  // question. Without this line the page cannot answer it.
+  it("reports the debt collected off the settlement", async () => {
+    homechefQuery.mockResolvedValue({
+      rows: [{ id: "s-3", chef_id: "c-3", recovery_deductions: "500.00", net_payout: "1104.75" }],
+    });
+
+    const [row] = await listStatements({});
+
+    expect(row?.recovery_deductions).toBe(500);
   });
 
   it("reports the penalty and bonus adjustments that move net payout", async () => {
@@ -78,12 +91,21 @@ describe("weekly-statement queries", () => {
 
   it("treats a statement with no adjustments as zero, not null", async () => {
     homechefQuery.mockResolvedValue({
-      rows: [{ id: "s-2", chef_id: "c-2", penalty_deductions: null, bonus_additions: null }],
+      rows: [
+        {
+          id: "s-2",
+          chef_id: "c-2",
+          penalty_deductions: null,
+          bonus_additions: null,
+          recovery_deductions: null,
+        },
+      ],
     });
 
     const [row] = await listStatements({});
 
     expect(row?.penalty_deductions).toBe(0);
     expect(row?.bonus_additions).toBe(0);
+    expect(row?.recovery_deductions).toBe(0);
   });
 });

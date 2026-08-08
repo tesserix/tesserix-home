@@ -26,6 +26,8 @@ export interface StatementRow {
   penalty_deductions: number;
   /** Referral-bonus credits added on; net_payout is already after it. */
   bonus_additions: number;
+  /** Outstanding chef debt collected off this settlement; net_payout is already after it. */
+  recovery_deductions: number;
   net_payout: number;
   status: string;
   paid_at: string | null;
@@ -80,6 +82,7 @@ function mapRow(r: Record<string, unknown>): StatementRow {
     tds: toNum(r.tds as string),
     penalty_deductions: toNum(r.penalty_deductions as string),
     bonus_additions: toNum(r.bonus_additions as string),
+    recovery_deductions: toNum(r.recovery_deductions as string),
     net_payout: toNum(r.net_payout as string),
     status: (r.status as string) ?? "pending",
     paid_at: (r.paid_at as string) ?? null,
@@ -94,6 +97,7 @@ const SELECT_COLS = `
   s.cgst, s.sgst, s.igst, s.tds,
   COALESCE(s.penalty_deductions, 0) AS penalty_deductions,
   COALESCE(s.bonus_additions, 0) AS bonus_additions,
+  COALESCE(s.recovery_deductions, 0) AS recovery_deductions,
   s.net_payout, s.status, s.paid_at, s.payout_ref, s.created_at`;
 
 export async function listStatements(filter: StatementFilter): Promise<StatementRow[]> {
