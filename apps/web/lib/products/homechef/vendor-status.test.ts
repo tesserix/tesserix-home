@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { vendorStatusLabel, vendorStatusHint } from "./vendor-status";
+import { vendorStatusLabel, vendorStatusHint, canSeedSandboxBank } from "./vendor-status";
 
 // Home-Chef-App #1122: the roster showed Cashfree's raw verdict —
 // BANK_VALIDATION_FAILED, or a blank cell — and an operator could press
@@ -44,5 +44,28 @@ describe("vendorStatusHint", () => {
 
   it("has nothing to say about an active vendor", () => {
     expect(vendorStatusHint("ACTIVE")).toBeNull();
+  });
+});
+
+// The seeder puts Cashfree's own documented sandbox account on file so nobody
+// types a bank account number by hand. The API refuses it unless the chef's
+// mode resolves to the sandbox payout rail, so offering it on a live kitchen
+// would only ever produce a 409 — and inviting the press is the risk itself.
+describe("canSeedSandboxBank", () => {
+  it("offers the seed only to a test-mode kitchen", () => {
+    expect(canSeedSandboxBank("test")).toBe(true);
+  });
+
+  it("withholds it from a live kitchen, whose rail is real money", () => {
+    expect(canSeedSandboxBank("live")).toBe(false);
+  });
+
+  it("treats an unset mode as live — the safer reading", () => {
+    expect(canSeedSandboxBank("")).toBe(false);
+    expect(canSeedSandboxBank(undefined)).toBe(false);
+  });
+
+  it("is case-insensitive, matching the server's mode normaliser", () => {
+    expect(canSeedSandboxBank("TEST")).toBe(true);
   });
 });
