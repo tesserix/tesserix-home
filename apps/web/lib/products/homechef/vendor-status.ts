@@ -10,10 +10,12 @@ const LABELS: Record<string, string> = {
 };
 
 const HINTS: Record<string, string> = {
-  IN_BANK_VALIDATION: "Cashfree is still verifying — press Re-check to read the verdict.",
+  IN_BANK_VALIDATION:
+    "Cashfree is still verifying — press Re-check to read the verdict.",
   BANK_VALIDATION_FAILED:
-    "Cashfree rejected the account. The chef must re-enter their payout details in the vendor app; Re-check will not clear this on its own.",
-  BLOCKED: "Cashfree has blocked this vendor — raise it with the account manager.",
+    "Cashfree rejected the account. The chef must re-enter their payout details in the vendor app, then Re-submit sends the corrected ones — re-submitting the same account fails again.",
+  BLOCKED:
+    "Cashfree has blocked this vendor — raise it with the account manager.",
 };
 
 const NOT_REGISTERED_HINT =
@@ -33,6 +35,27 @@ export function vendorStatusHint(status?: string | null): string | null {
   const key = normalize(status);
   if (!key) return NOT_REGISTERED_HINT;
   return HINTS[key] ?? null;
+}
+
+export type VendorSyncAction = {
+  endpoint: "register" | "refresh";
+  label: string;
+};
+
+// Which sync a chef's vendor state calls for (#88). BANK_VALIDATION_FAILED is a
+// refusal, not a stage — re-reading it returns the same verdict forever, and
+// only a re-submission carries corrected details to Cashfree. A submission
+// still in flight must not be re-sent on every click.
+export function vendorSyncAction(
+  status: string | null | undefined,
+  vendorId: string | null | undefined,
+): VendorSyncAction | null {
+  const key = normalize(status);
+  if (key === "ACTIVE") return null;
+  if (!vendorId) return { endpoint: "register", label: "Register" };
+  if (key === "BANK_VALIDATION_FAILED")
+    return { endpoint: "register", label: "Re-submit" };
+  return { endpoint: "refresh", label: "Re-check" };
 }
 
 // Whether to offer the sandbox bank seed, which puts Cashfree's documented test

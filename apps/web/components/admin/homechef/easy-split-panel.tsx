@@ -14,6 +14,8 @@ import {
   canSeedSandboxBank,
   vendorStatusHint,
   vendorStatusLabel,
+  vendorSyncAction,
+  type VendorSyncAction,
 } from "@/lib/products/homechef/vendor-status";
 import { StatusBadge } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
@@ -111,12 +113,19 @@ export function EasySplitPanel() {
     swrFetcher,
   );
   const ledger = useSWR<OrdersResponse>(
-    ["/payouts/easy-split/orders", { days, rail: rail === "all" ? undefined : rail }],
+    [
+      "/payouts/easy-split/orders",
+      { days, rail: rail === "all" ? undefined : rail },
+    ],
     swrFetcher,
   );
 
   async function setMode(chef: RosterChef, value: string) {
-    if (value === "on" && !chef.payable && chef.blocker !== "not_enabled_for_chef") {
+    if (
+      value === "on" &&
+      !chef.payable &&
+      chef.blocker !== "not_enabled_for_chef"
+    ) {
       const ok = await confirm({
         title: `Force Easy Split on for ${chef.businessName}?`,
         message: `${blockerLabel(chef.blocker)} still blocks this chef, so their orders will keep settling through the weekly statement path until it is cleared. Turning the switch on now only decides what happens once it is.`,
@@ -139,12 +148,14 @@ export function EasySplitPanel() {
   // Submit the chef's stored bank details to Cashfree, or re-read the verdict on
   // a submission already in flight (Home-Chef-App #1122). No detail is entered
   // here and none is returned — the chef owns them, in the vendor app.
-  async function syncVendor(chef: RosterChef) {
+  async function syncVendor(
+    chef: RosterChef,
+    endpoint: VendorSyncAction["endpoint"],
+  ) {
     setBusyChef(chef.chefId);
     setError(null);
     try {
-      const action = chef.vendorId ? "refresh" : "register";
-      await hcAdmin.post(`/chefs/${chef.chefId}/easy-split/${action}`);
+      await hcAdmin.post(`/chefs/${chef.chefId}/easy-split/${endpoint}`);
       await roster.mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
@@ -185,10 +196,17 @@ export function EasySplitPanel() {
           <h3 className="font-semibold">Easy Split</h3>
           <StatusBadge
             tone={roster.data?.globalEnabled ? "success" : "neutral"}
-            label={roster.data?.globalEnabled ? "Platform flag on" : "Platform flag off"}
+            label={
+              roster.data?.globalEnabled
+                ? "Platform flag on"
+                : "Platform flag off"
+            }
           />
           {roster.data && !roster.data.windowFits ? (
-            <StatusBadge tone="danger" label="Maturation window exceeds split delay" />
+            <StatusBadge
+              tone="danger"
+              label="Maturation window exceeds split delay"
+            />
           ) : null}
           {roster.data && !roster.data.feeReadable ? (
             <StatusBadge tone="danger" label="Fee unreadable — splits paused" />
@@ -218,7 +236,10 @@ export function EasySplitPanel() {
           >
             <RefreshCw
               className={
-                "h-3 w-3 " + (roster.isValidating || ledger.isValidating ? "animate-spin" : "")
+                "h-3 w-3 " +
+                (roster.isValidating || ledger.isValidating
+                  ? "animate-spin"
+                  : "")
               }
             />
             Refresh
@@ -255,74 +276,94 @@ export function EasySplitPanel() {
                 <th className="px-3 py-2 font-medium">Kitchen</th>
                 <th className="px-3 py-2 font-medium">Vendor</th>
                 <th className="px-3 py-2 font-medium">Split-payable</th>
-                <th className="px-3 py-2 text-right font-medium">Orders split</th>
-                <th className="px-3 py-2 text-right font-medium">Split value</th>
+                <th className="px-3 py-2 text-right font-medium">
+                  Orders split
+                </th>
+                <th className="px-3 py-2 text-right font-medium">
+                  Split value
+                </th>
                 <th className="px-3 py-2 font-medium">Rollout</th>
               </tr>
             </thead>
             <tbody>
-              {(roster.data?.chefs ?? []).map((chef) => (
-                <tr key={chef.chefId} className="border-t border-border">
-                  <td className="px-3 py-2">{chef.businessName || chef.chefId.slice(0, 8)}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <span title={chef.vendorStatus || undefined}>
-                        {vendorStatusLabel(chef.vendorStatus)}
-                      </span>
-                      {chef.vendorStatus === VENDOR_ACTIVE ? null : (
-                        <button
-                          onClick={() => void syncVendor(chef)}
-                          disabled={busyChef === chef.chefId}
-                          className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
-                        >
-                          {chef.vendorId ? "Re-check" : "Register"}
-                        </button>
-                      )}
-                      {chef.vendorStatus !== VENDOR_ACTIVE && canSeedSandboxBank(chef.mode) ? (
-                        <button
-                          onClick={() => void seedSandboxBank(chef)}
-                          disabled={busyChef === chef.chefId}
-                          className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
-                        >
-                          Seed sandbox bank
-                        </button>
+              {(roster.data?.chefs ?? []).map((chef) => {
+                const sync = vendorSyncAction(chef.vendorStatus, chef.vendorId);
+                return (
+                  <tr key={chef.chefId} className="border-t border-border">
+                    <td className="px-3 py-2">
+                      {chef.businessName || chef.chefId.slice(0, 8)}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <span title={chef.vendorStatus || undefined}>
+                          {vendorStatusLabel(chef.vendorStatus)}
+                        </span>
+                        {sync ? (
+                          <button
+                            onClick={() => void syncVendor(chef, sync.endpoint)}
+                            disabled={busyChef === chef.chefId}
+                            className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+                          >
+                            {sync.label}
+                          </button>
+                        ) : null}
+                        {chef.vendorStatus !== VENDOR_ACTIVE &&
+                        canSeedSandboxBank(chef.mode) ? (
+                          <button
+                            onClick={() => void seedSandboxBank(chef)}
+                            disabled={busyChef === chef.chefId}
+                            className="rounded-md border border-border px-2 py-0.5 text-xs hover:bg-accent disabled:opacity-50"
+                          >
+                            Seed sandbox bank
+                          </button>
+                        ) : null}
+                      </div>
+                      {vendorStatusHint(chef.vendorStatus) ? (
+                        <p className="mt-1 max-w-xs">
+                          {vendorStatusHint(chef.vendorStatus)}
+                        </p>
                       ) : null}
-                    </div>
-                    {vendorStatusHint(chef.vendorStatus) ? (
-                      <p className="mt-1 max-w-xs">{vendorStatusHint(chef.vendorStatus)}</p>
-                    ) : null}
-                  </td>
-                  <td className="px-3 py-2">
-                    {chef.payable ? (
-                      <StatusBadge tone="success" label="Yes" />
-                    ) : (
-                      <StatusBadge tone="warning" label={blockerLabel(chef.blocker)} />
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{chef.splitOrders}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {rupees(chef.splitPaise)}
-                  </td>
-                  <td className="px-3 py-2">
-                    <select
-                      value={chef.easySplitMode || ""}
-                      disabled={busyChef === chef.chefId}
-                      onChange={(e) => void setMode(chef, e.target.value)}
-                      className="h-8 rounded-md border border-border bg-background px-2 text-xs disabled:opacity-50"
-                      aria-label={`Easy Split rollout for ${chef.businessName}`}
-                    >
-                      <option value="">
-                        Inherit ({roster.data?.globalEnabled ? "on" : "off"})
-                      </option>
-                      <option value="on">On</option>
-                      <option value="off">Off</option>
-                    </select>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-3 py-2">
+                      {chef.payable ? (
+                        <StatusBadge tone="success" label="Yes" />
+                      ) : (
+                        <StatusBadge
+                          tone="warning"
+                          label={blockerLabel(chef.blocker)}
+                        />
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {chef.splitOrders}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {rupees(chef.splitPaise)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        value={chef.easySplitMode || ""}
+                        disabled={busyChef === chef.chefId}
+                        onChange={(e) => void setMode(chef, e.target.value)}
+                        className="h-8 rounded-md border border-border bg-background px-2 text-xs disabled:opacity-50"
+                        aria-label={`Easy Split rollout for ${chef.businessName}`}
+                      >
+                        <option value="">
+                          Inherit ({roster.data?.globalEnabled ? "on" : "off"})
+                        </option>
+                        <option value="on">On</option>
+                        <option value="off">Off</option>
+                      </select>
+                    </td>
+                  </tr>
+                );
+              })}
               {roster.data && roster.data.chefs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                  <td
+                    colSpan={6}
+                    className="px-3 py-6 text-center text-muted-foreground"
+                  >
                     No kitchens match.
                   </td>
                 </tr>
@@ -345,7 +386,9 @@ export function EasySplitPanel() {
                 onClick={() => setRail(f)}
                 className={
                   "rounded-md px-2.5 py-1 text-xs capitalize " +
-                  (rail === f ? "bg-foreground text-background" : "border border-border hover:bg-accent")
+                  (rail === f
+                    ? "bg-foreground text-background"
+                    : "border border-border hover:bg-accent")
                 }
               >
                 {f}
@@ -359,9 +402,10 @@ export function EasySplitPanel() {
 
         {summary ? (
           <p className="text-xs text-muted-foreground tabular-nums">
-            {summary.splitCount} split · {rupees(summary.splitPaise)} paid from capture ·{" "}
-            {summary.payoutCount} on the statement path · {summary.exceptionCount} to review ·
-            net delta {rupees(summary.deltaPaise)}
+            {summary.splitCount} split · {rupees(summary.splitPaise)} paid from
+            capture · {summary.payoutCount} on the statement path ·{" "}
+            {summary.exceptionCount} to review · net delta{" "}
+            {rupees(summary.deltaPaise)}
           </p>
         ) : null}
 
@@ -382,10 +426,17 @@ export function EasySplitPanel() {
               {(ledger.data?.orders ?? []).map((order) => (
                 <tr
                   key={order.orderId}
-                  className={"border-t border-border " + (order.exception ? "bg-destructive/5" : "")}
+                  className={
+                    "border-t border-border " +
+                    (order.exception ? "bg-destructive/5" : "")
+                  }
                 >
-                  <td className="px-3 py-2 tabular-nums">{order.orderNumber}</td>
-                  <td className="px-3 py-2">{order.chefName || order.chefId.slice(0, 8)}</td>
+                  <td className="px-3 py-2 tabular-nums">
+                    {order.orderNumber}
+                  </td>
+                  <td className="px-3 py-2">
+                    {order.chefName || order.chefId.slice(0, 8)}
+                  </td>
                   <td className="px-3 py-2">
                     <StatusBadge
                       tone={order.rail === "split" ? "success" : "neutral"}
@@ -401,7 +452,9 @@ export function EasySplitPanel() {
                   <td
                     className={
                       "px-3 py-2 text-right tabular-nums " +
-                      (order.deltaPaise ? "text-destructive" : "text-muted-foreground")
+                      (order.deltaPaise
+                        ? "text-destructive"
+                        : "text-muted-foreground")
                     }
                   >
                     {order.deltaPaise ? rupees(order.deltaPaise) : "—"}
@@ -417,7 +470,10 @@ export function EasySplitPanel() {
               ))}
               {ledger.data && ledger.data.orders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
+                  <td
+                    colSpan={7}
+                    className="px-3 py-6 text-center text-muted-foreground"
+                  >
                     {rail === "exception"
                       ? "Nothing to review in this window."
                       : "No paid orders in this window."}
@@ -428,9 +484,9 @@ export function EasySplitPanel() {
           </table>
         </div>
         <p className="text-xs text-muted-foreground">
-          Expected is the chef&apos;s net share less the flat platform fee; Split
-          is what the gateway confirmed and we stamped on the order. A delta
-          means those two disagree — it is not a comparison against
+          Expected is the chef&apos;s net share less the flat platform fee;
+          Split is what the gateway confirmed and we stamped on the order. A
+          delta means those two disagree — it is not a comparison against
           Cashfree&apos;s settlement file.
         </p>
       </div>

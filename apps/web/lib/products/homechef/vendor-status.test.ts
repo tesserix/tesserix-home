@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { vendorStatusLabel, vendorStatusHint, canSeedSandboxBank } from "./vendor-status";
+import {
+  vendorStatusLabel,
+  vendorStatusHint,
+  canSeedSandboxBank,
+  vendorSyncAction,
+} from "./vendor-status";
 
 // Home-Chef-App #1122: the roster showed Cashfree's raw verdict —
 // BANK_VALIDATION_FAILED, or a blank cell — and an operator could press
@@ -8,11 +13,15 @@ import { vendorStatusLabel, vendorStatusHint, canSeedSandboxBank } from "./vendo
 // themselves, in the vendor app. Neither is something admin can enter here.
 describe("vendorStatusLabel", () => {
   it("names the failure in words an operator can act on", () => {
-    expect(vendorStatusLabel("BANK_VALIDATION_FAILED")).toBe("Bank details rejected");
+    expect(vendorStatusLabel("BANK_VALIDATION_FAILED")).toBe(
+      "Bank details rejected",
+    );
   });
 
   it("distinguishes a verdict still pending from one that failed", () => {
-    expect(vendorStatusLabel("IN_BANK_VALIDATION")).toBe("Bank details verifying");
+    expect(vendorStatusLabel("IN_BANK_VALIDATION")).toBe(
+      "Bank details verifying",
+    );
   });
 
   it("reads as not registered when Cashfree has never seen the chef", () => {
@@ -25,7 +34,9 @@ describe("vendorStatusLabel", () => {
   });
 
   it("is case-insensitive — the status is echoed from the gateway", () => {
-    expect(vendorStatusLabel("bank_validation_failed")).toBe("Bank details rejected");
+    expect(vendorStatusLabel("bank_validation_failed")).toBe(
+      "Bank details rejected",
+    );
   });
 });
 
@@ -67,5 +78,44 @@ describe("canSeedSandboxBank", () => {
 
   it("is case-insensitive, matching the server's mode normaliser", () => {
     expect(canSeedSandboxBank("TEST")).toBe(true);
+  });
+});
+
+// #88. A rejected vendor was offered Re-check, which re-reads a verdict that
+// never changes. Only a re-submission carries the corrected details to Cashfree.
+describe("vendorSyncAction", () => {
+  it("re-submits a rejected vendor instead of re-reading the refusal", () => {
+    expect(vendorSyncAction("BANK_VALIDATION_FAILED", "hc_abc")).toEqual({
+      endpoint: "register",
+      label: "Re-submit",
+    });
+  });
+
+  it("registers a kitchen Cashfree has never seen", () => {
+    expect(vendorSyncAction("", "")).toEqual({
+      endpoint: "register",
+      label: "Register",
+    });
+  });
+
+  it("re-checks a submission still in flight rather than sending it again", () => {
+    expect(vendorSyncAction("IN_BANK_VALIDATION", "hc_abc")).toEqual({
+      endpoint: "refresh",
+      label: "Re-check",
+    });
+    expect(vendorSyncAction("IN_BENE_CREATION", "hc_abc")).toEqual({
+      endpoint: "refresh",
+      label: "Re-check",
+    });
+  });
+
+  it("offers nothing on an active vendor — there is nothing left to do", () => {
+    expect(vendorSyncAction("ACTIVE", "hc_abc")).toBeNull();
+  });
+
+  it("is case-insensitive, like every other reading of this status", () => {
+    expect(vendorSyncAction("bank_validation_failed", "hc_abc")?.endpoint).toBe(
+      "register",
+    );
   });
 });
