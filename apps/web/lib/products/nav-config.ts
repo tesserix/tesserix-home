@@ -226,6 +226,11 @@ export const koraNav: NavEntry[] = [
   // /foods would misdescribe its scope.
   { name: "Audit trail", href: "/admin/apps/kora/audit", icon: ScrollText },
   { name: "Feedback", href: "/admin/apps/kora/feedback", icon: MessageSquare },
+  // Task 11: the activation funnel — every user plus onboarded/ever-logged/
+  // tried-but-never-logged tallies. Sits beside Feedback, not nested under
+  // any other entry: it is its own top-level surface, same as Food index and
+  // Audit trail.
+  { name: "Users", href: "/admin/apps/kora/users", icon: Users },
   // No "Service health" entry. It used to point at /admin/health, which is the
   // PLATFORM-wide health page — so an item inside Kora's own rail navigated the
   // operator out of the product entirely, with no way back except the rail

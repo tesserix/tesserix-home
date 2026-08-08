@@ -32,6 +32,9 @@ import {
   listKoraEvents,
   listKoraFeedback,
   updateKoraFeedbackStatus,
+  listKoraUsers,
+  getKoraUser,
+  deleteKoraUser,
   KoraAdminError,
 } from "./kora-admin";
 
@@ -749,5 +752,182 @@ describe("updateKoraFeedbackStatus", () => {
       code: "invalid_id",
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10: admin user management -- listKoraUsers / getKoraUser / deleteKoraUser.
+//
+// The field set below is copied verbatim from kora-api's shipped `AdminRow`
+// json tags (task-10-brief.md's authoritative header), NOT from the brief's
+// pre-implementation TypeScript sketch. A previous bug on this exact seam
+// declared `email`/`display_name` on a response the endpoint never sent and
+// went unnoticed because the fixture's `toEqual` matched its own fiction and
+// the caller discarded the value -- the exact-key-set test below is the
+// direct countermeasure.
+
+const USER_ROW = {
+  id: "8f14e45f-ceea-467e-9db1-b8b0c2c3c4d5",
+  email: "a@b.com",
+  display_name: "A",
+  created_at: "2026-08-01T00:00:00Z",
+  onboarded_at: null,
+  timezone: "Australia/Sydney",
+  has_targets: true,
+  log_count: 3,
+  first_log: null,
+  last_write: null,
+  ai_calls: 41,
+};
+
+const USER_SUMMARY = { users: 1, onboarded: 0, ever_logged: 1, tried_never_logged: 0 };
+
+describe("listKoraUsers", () => {
+  it("declares exactly the keys the Go AdminRow emits", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: { items: [USER_ROW], summary: USER_SUMMARY } }),
+    );
+
+    const page = await listKoraUsers();
+
+    expect(Object.keys(page.items[0]).sort()).toEqual([
+      "ai_calls", "created_at", "display_name", "email", "first_log", "has_targets",
+      "id", "last_write", "log_count", "onboarded_at", "timezone",
+    ]);
+    expect(page.summary.tried_never_logged).toBe(0);
+  });
+
+  it("hits GET /users under ADMIN_PREFIX", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [], summary: USER_SUMMARY } }));
+
+    await listKoraUsers();
+
+    const { url, init } = lastRequest();
+    expect(new URL(url).pathname).toBe(`${ADMIN_PREFIX}/users`);
+    expect(init.method).toBe("GET");
+  });
+
+  it("throws on a non-200 rather than silently returning an empty page", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(500, { error: "internal_error" }));
+    await expect(listKoraUsers()).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  it("throws when a 200 body does not have the KoraUserList shape", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { items: [] } }));
+    await expect(listKoraUsers()).rejects.toBeInstanceOf(KoraAdminError);
+  });
+});
+
+describe("getKoraUser", () => {
+  const DETAIL = {
+    ...USER_ROW,
+    counts: { logs: 3, targets: 1 },
+    transfers: [{ kind: "household", id: "h1", name: "Home", new_owner_id: "u2" }],
+    has_apple_token: false,
+  };
+
+  it("returns the flattened AdminDetail (no nested user/row key)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: DETAIL }));
+
+    const detail = await getKoraUser(USER_ROW.id);
+
+    expect(detail.id).toBe(USER_ROW.id);
+    expect(detail.email).toBe(USER_ROW.email);
+    expect(detail.counts).toEqual({ logs: 3, targets: 1 });
+    expect(detail.transfers).toHaveLength(1);
+    expect(detail.has_apple_token).toBe(false);
+  });
+
+  it("hits GET /users/:id under ADMIN_PREFIX", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: DETAIL }));
+
+    await getKoraUser(USER_ROW.id);
+
+    const { url, init } = lastRequest();
+    expect(new URL(url).pathname).toBe(`${ADMIN_PREFIX}/users/${USER_ROW.id}`);
+    expect(init.method).toBe("GET");
+  });
+
+  it("rejects a non-UUID id without touching the network", async () => {
+    await expect(getKoraUser("not-a-uuid")).rejects.toMatchObject({ code: "invalid_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a 404 as a KoraAdminError", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(404, { error: "not_found", message: "user not found" }));
+    await expect(getKoraUser(USER_ROW.id)).rejects.toMatchObject({
+      status: 404,
+      code: "not_found",
+    });
+  });
+
+  // Go marshals a NIL slice as JSON `null`, not `[]`, so a user who owns no
+  // multi-member group can legitimately arrive as `transfers: null`. The Go
+  // side now initialises the slice, but this seam stays tolerant anyway:
+  // Array.isArray(null) is false, so the un-tolerant guard turned a good 200
+  // into a red error banner for very nearly every user.
+  it("tolerates transfers:null from Go and normalises it to an empty array", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ...DETAIL, transfers: null } }));
+
+    const detail = await getKoraUser(USER_ROW.id);
+
+    expect(detail.transfers).toEqual([]);
+  });
+
+  it("throws when a 200 body does not have the KoraUserDetail shape", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { id: USER_ROW.id } }));
+    await expect(getKoraUser(USER_ROW.id)).rejects.toBeInstanceOf(KoraAdminError);
+  });
+});
+
+describe("deleteKoraUser", () => {
+  const DELETE_RESULT = {
+    transfers: [{ kind: "household", id: "h1", name: "Home", new_owner_id: "u2" }],
+    firebase_identity_removed: true,
+    apple_token_revoked: false,
+  };
+
+  it("DELETEs /users/:id and returns the 200 body (not a bare 204)", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: DELETE_RESULT }));
+
+    const result = await deleteKoraUser(USER_ROW.id);
+
+    expect(result).toEqual(DELETE_RESULT);
+    const { url, init } = lastRequest();
+    expect(new URL(url).pathname).toBe(`${ADMIN_PREFIX}/users/${USER_ROW.id}`);
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("rejects a non-UUID id without touching the network", async () => {
+    await expect(deleteKoraUser("not-a-uuid")).rejects.toMatchObject({ code: "invalid_id" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // Surfaces a 404 as a KoraAdminError -- the case this whole task's brief
+  // singled out (`GET /users/:id` -> 200 or 404) also applies to DELETE.
+  it("surfaces a 404 from delete as a KoraAdminError", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(404, { error: "not_found", message: "user not found" }));
+    await expect(deleteKoraUser(USER_ROW.id)).rejects.toBeInstanceOf(KoraAdminError);
+  });
+
+  // The same `transfers: null` Go emits for a user who owns no multi-member
+  // group. Rejecting it here is the worst failure on this surface: the
+  // account is already destroyed and the transaction has already committed,
+  // so the operator is told an irreversible deletion failed when it
+  // succeeded, never sees firebase_identity_removed, and a retry answers 404.
+  it("tolerates transfers:null from Go and normalises it to an empty array", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { data: { ...DELETE_RESULT, transfers: null } }),
+    );
+
+    const result = await deleteKoraUser(USER_ROW.id);
+
+    expect(result.transfers).toEqual([]);
+    expect(result.firebase_identity_removed).toBe(true);
+  });
+
+  it("throws when a 200 body does not have the KoraDeleteResult shape", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { transfers: [] } }));
+    await expect(deleteKoraUser(USER_ROW.id)).rejects.toBeInstanceOf(KoraAdminError);
   });
 });

@@ -720,3 +720,154 @@ export async function updateKoraFeedbackStatus(id: string, status: string): Prom
   }
   return updated;
 }
+
+// ---------------------------------------------------------------------------
+// Task 10: admin user management -- list, detail, delete.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of a user/tenant transfer performed as part of an admin delete —
+ * mirrors kora's `admin.Transfer` (Go embeds no nesting, this is its own
+ * struct on the wire).
+ */
+export interface KoraTransfer {
+  kind: string;
+  id: string;
+  name: string;
+  new_owner_id: string;
+}
+
+/**
+ * One user row exactly as kora's `admin.AdminRow` serialises it. Field set
+ * pinned against the shipped Go json tags — NOT the brief's pre-implementation
+ * draft, which is stale where the two differ (see task-10-brief.md's header).
+ */
+export interface KoraUser {
+  id: string;
+  email: string;
+  display_name: string;
+  created_at: string;
+  onboarded_at: string | null;
+  timezone: string;
+  has_targets: boolean;
+  log_count: number;
+  first_log: string | null;
+  last_write: string | null;
+  ai_calls: number;
+}
+
+export interface KoraUserSummary {
+  users: number;
+  onboarded: number;
+  ever_logged: number;
+  tried_never_logged: number;
+}
+
+export interface KoraUserList {
+  items: KoraUser[];
+  summary: KoraUserSummary;
+}
+
+/**
+ * `admin.AdminDetail` — Go embeds `AdminRow` with no nesting, so its fields
+ * are FLATTENED onto this type, not nested under a `user`/`row` key.
+ */
+export interface KoraUserDetail extends KoraUser {
+  counts: Record<string, number>;
+  transfers: KoraTransfer[];
+  has_apple_token: boolean;
+}
+
+export interface KoraDeleteResult {
+  transfers: KoraTransfer[];
+  firebase_identity_removed: boolean;
+  apple_token_revoked: boolean;
+}
+
+function isKoraUserList(value: unknown): value is KoraUserList {
+  if (!value || typeof value !== "object") return false;
+  const list = value as { items?: unknown; summary?: unknown };
+  return Array.isArray(list.items) && !!list.summary && typeof list.summary === "object";
+}
+
+/**
+ * Repairs `transfers: null` into `transfers: []` before the type guards run.
+ *
+ * Go's `encoding/json` marshals a NIL slice as `null`, not `[]`, so a user who
+ * owns no multi-member group could arrive here with `transfers: null` while
+ * being a perfectly valid 200. `Array.isArray(null)` is false, so the guards
+ * below would reject it -- harmless-looking on the detail panel, but on DELETE
+ * the account is already destroyed and the transaction already committed, and
+ * the operator would be told an irreversible deletion failed when it in fact
+ * succeeded (never seeing `firebase_identity_removed`, and a retry answering
+ * 404).
+ *
+ * The API side initialises the slice so this should never fire; it is kept as
+ * belt and braces because of what the failure mode costs on this seam.
+ */
+function normaliseTransfers(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  if ((value as { transfers?: unknown }).transfers !== null) return value;
+  return { ...(value as object), transfers: [] };
+}
+
+function isKoraUserDetail(value: unknown): value is KoraUserDetail {
+  if (!value || typeof value !== "object") return false;
+  const d = value as { id?: unknown; transfers?: unknown; counts?: unknown };
+  return typeof d.id === "string" && Array.isArray(d.transfers) && !!d.counts && typeof d.counts === "object";
+}
+
+function isKoraDeleteResult(value: unknown): value is KoraDeleteResult {
+  if (!value || typeof value !== "object") return false;
+  const d = value as { transfers?: unknown; firebase_identity_removed?: unknown };
+  return Array.isArray(d.transfers) && typeof d.firebase_identity_removed === "boolean";
+}
+
+/** `GET /v1/admin/users` — the admin user index plus its summary tallies. */
+export async function listKoraUsers(): Promise<KoraUserList> {
+  const res = await koraAdmin<{ data: KoraUserList }>("GET", "/users");
+  if (res.status !== 200) throwKoraError(res.status, res.data, "list_users_failed");
+
+  const list = res.data?.data;
+  if (!isKoraUserList(list)) {
+    logger.warn("[kora-admin] GET /users -> 200 with an unexpected body shape");
+    throw new KoraAdminError(200, "unexpected_response_shape", "user list response did not match the expected shape");
+  }
+  return list;
+}
+
+/**
+ * `GET /v1/admin/users/:id` — one user's activation row plus a preview of
+ * what deleting them would destroy and hand over.
+ */
+export async function getKoraUser(id: string): Promise<KoraUserDetail> {
+  assertUuid(id);
+  const res = await koraAdmin<{ data: KoraUserDetail }>("GET", `/users/${id}`);
+  if (res.status !== 200) throwKoraError(res.status, res.data, "get_user_failed");
+
+  const detail = normaliseTransfers(res.data?.data);
+  if (!isKoraUserDetail(detail)) {
+    logger.warn(`[kora-admin] GET /users/${id} -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "user detail response did not match the expected shape");
+  }
+  return detail;
+}
+
+/**
+ * `DELETE /v1/admin/users/:id` — irreversible, no grace period. Answers 200
+ * WITH A BODY (not a bare 204): the body reports whether the Firebase
+ * identity survived the deletion, which matters because a surviving identity
+ * means the deleted user can sign back in and reappear via EnsureUser.
+ */
+export async function deleteKoraUser(id: string): Promise<KoraDeleteResult> {
+  assertUuid(id);
+  const res = await koraAdmin<{ data: KoraDeleteResult }>("DELETE", `/users/${id}`);
+  if (res.status !== 200) throwKoraError(res.status, res.data, "delete_user_failed");
+
+  const result = normaliseTransfers(res.data?.data);
+  if (!isKoraDeleteResult(result)) {
+    logger.warn(`[kora-admin] DELETE /users/${id} -> 200 with an unexpected body shape`);
+    throw new KoraAdminError(200, "unexpected_response_shape", "delete response did not match the expected shape");
+  }
+  return result;
+}
