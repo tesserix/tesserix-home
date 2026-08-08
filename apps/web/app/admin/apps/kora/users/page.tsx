@@ -8,6 +8,30 @@ import { KoraAdminError, listKoraUsers, type KoraUserList, type KoraUserSummary 
 // between them producing 3 food logs. Diluting any of the three labelling
 // decisions below would erase exactly the cohorts that make that visible.
 
+// LOAD-BEARING. Without this the page is STATICALLY PRERENDERED at build time
+// and permanently broken in production — verified, this actually shipped:
+// `.next/server/app/admin/apps/kora/users.html` existed in the deployed image
+// and every request served it.
+//
+// The mechanism is worth understanding before anyone "tidies" this away.
+// koraAdmin() throws `not_configured` when KORA_API_URL / KORA_BFF_HMAC_KEY
+// are unset, and it throws BEFORE it reaches getCurrentSession(). During
+// `next build` those env vars are absent, so the page renders its error
+// banner and — crucially — never touches cookies, so Next sees no dynamic
+// API, classifies the route as static, and bakes that error banner into HTML.
+// At runtime the env IS set, but nothing re-renders: every pod serves the
+// build-time error forever.
+//
+// The sibling kora pages escaped this only by accident: feedback, foods and
+// audit all read `searchParams`, which forces them dynamic. This page takes
+// no params, so nothing made it dynamic. That is luck, not design — any of
+// them losing its searchParams would land here too.
+//
+// force-dynamic, not `revalidate = 0`: this is an authenticated admin surface
+// over live data with an irreversible delete one click away. It must never be
+// prerendered and must never be cached.
+export const dynamic = "force-dynamic";
+
 /**
  * The summary strip is built from the API's `summary` tallies, NOT derived
  * by counting `items` client-side — the two can legitimately diverge (the

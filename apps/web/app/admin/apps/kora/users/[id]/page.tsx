@@ -4,6 +4,14 @@ import { DeleteUser } from "./delete-user";
 import { transferLine } from "./guards";
 import { KoraAdminError, getKoraUser, type KoraUserDetail } from "@/lib/api/kora-admin";
 
+// Same reasoning as ../page.tsx, which shipped statically prerendered and
+// permanently broken. This route escapes it today only because `[id]` is a
+// dynamic segment with no generateStaticParams — i.e. by accident of its
+// shape, not by intent. Stated explicitly so it survives a refactor: an
+// authenticated admin surface over live data, with an irreversible delete on
+// it, must never be prerendered and must never be cached.
+export const dynamic = "force-dynamic";
+
 // Server component, matching ../page.tsx's + ../../foods/[id]/page.tsx's
 // server-component + error-banner shape. This is the last stop before an
 // irreversible, no-grace-period delete, so it exists to answer one question
