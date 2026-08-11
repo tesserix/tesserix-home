@@ -49,20 +49,22 @@ export function ContactCTA() {
                 </div>
               </div>
 
-              <Image
-                src="/tesseract-render.jpg"
-                alt=""
-                aria-hidden="true"
-                width={900}
-                height={900}
-                className="relative z-10 order-last w-full rounded-[14px] opacity-95 xl:order-none"
-                style={{
-                  maskImage:
-                    "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
-                  WebkitMaskImage:
-                    "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
-                }}
-              />
+              <div className="relative z-10 order-last mx-auto w-full max-w-[17rem] xl:order-none xl:mx-0 xl:max-w-none">
+                <Image
+                  src="/tesseract-render.jpg"
+                  alt=""
+                  aria-hidden="true"
+                  width={900}
+                  height={900}
+                  className="w-full rounded-[14px] opacity-95"
+                  style={{
+                    maskImage:
+                      "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+                    WebkitMaskImage:
+                      "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+                  }}
+                />
+              </div>
             </div>
           </div>
         </Reveal>
