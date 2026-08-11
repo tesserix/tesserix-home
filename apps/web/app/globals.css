@@ -89,7 +89,7 @@
   --secondary-foreground: #3d434f;
 
   --muted: #eef1f6;
-  --muted-foreground: #6f7686;
+  --muted-foreground: #5f6675;
 
   --accent: rgba(46, 92, 255, 0.08);
   --accent-foreground: #1f3fd4;
@@ -197,13 +197,12 @@
   body {
     /* The closed mobile nav drawer sits off-screen via `translate-x-full`,
        which still extends the document's scrollable area at mobile widths.
-       `clip` hides that overflow without creating a scroll container —
-       `hidden` would, and that breaks the homepage's sticky product cards,
-       which need the viewport itself (not an intermediate scroll container)
-       to compute their sticky offsets against. Both `html` and `body` need
-       it: `body` establishes the document's actual scrolling box, so
-       clipping only `html` leaves `document.documentElement.scrollWidth`
-       (and real scrolling) unaffected. */
+       `clip` keeps the off-screen mobile drawer from widening the
+       scrollable area without creating a scroll container — `hidden`
+       would. Both `html` and `body` need it: `body` establishes the
+       document's actual scrolling box, so clipping only `html` leaves
+       `document.documentElement.scrollWidth` (and real scrolling)
+       unaffected. */
     overflow-x: clip;
   }
   body {
@@ -279,10 +278,31 @@
 
 :focus-visible {
   outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
 @layer components {
+  /* Reveal (components/marketing/reveal.tsx) — visible by default so there
+     is real content below the fold with no JS and no flash before hydration.
+     Only elements the client determines are NOT already in the viewport get
+     `data-armed`, which is what actually hides them for the fly-in. */
+  .sl-reveal {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .sl-reveal[data-armed] {
+      opacity: 0;
+      transform: translateY(26px);
+      transition:
+        opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+        transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .sl-reveal[data-armed][data-inview] {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   .hero-rise {
     opacity: 1;
   }

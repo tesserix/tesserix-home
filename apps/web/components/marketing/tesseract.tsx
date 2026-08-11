@@ -26,6 +26,10 @@ export function Tesseract({ className }: TesseractProps) {
     let W = 0;
     let H = 0;
     let resizeTimeout: ReturnType<typeof setTimeout> | undefined;
+    let reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches;
+    let isVisible = true;
+    let animationId: number | null = null;
 
     function size(): void {
       if (!canvas || !ctx) return;
@@ -40,7 +44,13 @@ export function Tesseract({ className }: TesseractProps) {
 
     function handleResize(): void {
       clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(size, 150);
+      resizeTimeout = setTimeout(() => {
+        size();
+        // A reduced-motion viewer never re-enters the rAF loop, so a resize
+        // (rotation, window drag) would otherwise leave the canvas showing a
+        // frame drawn at the old size until something else redraws it.
+        if (reduced) frame(16000);
+      }, 150);
     }
 
     window.addEventListener("resize", handleResize);
@@ -146,25 +156,63 @@ export function Tesseract({ className }: TesseractProps) {
       ctx.globalAlpha = 1;
     }
 
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
-      .matches;
+    function run(t: number): void {
+      frame(t || 0);
+      animationId = requestAnimationFrame(run);
+    }
 
-    let animationId: number | null = null;
+    function startAnimation(): void {
+      if (reduced || animationId !== null) return;
+      animationId = requestAnimationFrame(run);
+    }
+
+    function stopAnimation(): void {
+      if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+    }
 
     if (reduced) {
       frame(16000);
     } else {
-      function run(t: number): void {
-        frame(t || 0);
-        animationId = requestAnimationFrame(run);
-      }
-      run(0);
+      startAnimation();
     }
 
-    return () => {
-      if (animationId !== null) {
-        cancelAnimationFrame(animationId);
+    // Pause the rAF loop while the canvas is off-screen — it's decorative,
+    // so there's no reason to keep animating it once it scrolls out of view.
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      isVisible = entry.isIntersecting;
+      if (isVisible) {
+        if (reduced) {
+          frame(16000);
+        } else {
+          startAnimation();
+        }
+      } else {
+        stopAnimation();
       }
+    });
+    intersectionObserver.observe(canvas);
+
+    // Switch modes live if the OS-level reduced-motion setting changes
+    // mid-session, rather than requiring a reload to take effect.
+    const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    function handleMotionChange(event: MediaQueryListEvent): void {
+      reduced = event.matches;
+      if (reduced) {
+        stopAnimation();
+        frame(16000);
+      } else if (isVisible) {
+        startAnimation();
+      }
+    }
+    motionQuery.addEventListener("change", handleMotionChange);
+
+    return () => {
+      stopAnimation();
+      intersectionObserver.disconnect();
+      motionQuery.removeEventListener("change", handleMotionChange);
       clearTimeout(resizeTimeout);
       window.removeEventListener("resize", handleResize);
     };
