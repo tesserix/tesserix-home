@@ -4,6 +4,8 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
 import { principles } from "./principles";
+import { team } from "./team";
+import { TeamMemberCard } from "@/components/marketing/team-member-card";
 
 const focus = [
   { area: "Commerce", product: "Mark8ly", status: "Live" },
@@ -104,12 +106,32 @@ export function AboutContent() {
         </div>
       </section>
 
+      {/* Who we are */}
+      <section className="border-t py-16 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              02 — Who we are
+            </p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
+              The two people behind Tesserix.
+            </h2>
+          </AnimateOnScroll>
+
+          <div className="mt-4 max-w-3xl">
+            {team.map((member) => (
+              <TeamMemberCard key={member.slug} member={member} />
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* How we work */}
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              02 — How we work
+              03 — How we work
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               The rules we run on.
@@ -150,7 +172,7 @@ export function AboutContent() {
             <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
               <div>
                 <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  03 — Next
+                  04 — Next
                 </p>
                 <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                   See what we&apos;re building.

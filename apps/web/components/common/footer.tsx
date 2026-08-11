@@ -124,8 +124,16 @@ export function Footer() {
           </div>
         </div>
 
+        {/* Legal entity */}
+        <div className="mt-12 border-t pt-8">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Tesserix Pty Ltd &middot; ACN 694 070 865 &middot; ABN 59 694 070
+            865 &middot; 5 Tagu Place, Kings Park NSW 2148, Australia
+          </p>
+        </div>
+
         {/* Copyright */}
-        <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="mt-6 border-t pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <p className="text-sm text-muted-foreground">
             &copy; {new Date().getFullYear()} Tesserix. All rights reserved.
           </p>
