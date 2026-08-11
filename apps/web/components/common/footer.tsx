@@ -160,7 +160,7 @@ export function Footer() {
           </p>
           <div className="flex gap-6">
             <a
-              href="https://twitter.com/tesserix"
+              href="https://x.com/tesserix_app"
               className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Twitter"
               target="_blank"
@@ -182,7 +182,7 @@ export function Footer() {
               </svg>
             </a>
             <a
-              href="https://linkedin.com/company/tesserix"
+              href="https://au.linkedin.com/company/tesserix-pty-ltd"
               className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="LinkedIn"
               target="_blank"

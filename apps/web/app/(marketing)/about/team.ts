@@ -29,7 +29,7 @@ export const team: TeamMember[] = [
   },
   {
     slug: "samyak-r",
-    name: "Samyak R",
+    name: "Samyak Rout",
     title: "Co-founder",
     linkedIn: "https://www.linkedin.com/in/samyak-r-96551a21/",
     github: "https://github.com/sam123ben",
