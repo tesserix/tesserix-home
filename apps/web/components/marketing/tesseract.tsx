@@ -149,33 +149,28 @@ export function Tesseract({ className }: TesseractProps) {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
       .matches;
 
+    let animationId: number | null = null;
+
     if (reduced) {
       frame(16000);
     } else {
-      let animationId: number;
       function run(t: number): void {
         frame(t || 0);
         animationId = requestAnimationFrame(run);
       }
       run(0);
-
-      return () => {
-        cancelAnimationFrame(animationId);
-      };
     }
 
     return () => {
+      if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+      }
       clearTimeout(resizeTimeout);
       window.removeEventListener("resize", handleResize);
     };
   }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      className={className}
-      style={{ display: "block" }}
-    />
+    <canvas ref={canvasRef} aria-hidden="true" className={className} />
   );
 }
