@@ -25,13 +25,6 @@ export const COMPANY = {
   email: "sales@tesserix.app",
   acn: "694 070 865",
   abn: "59 694 070 865",
-  address: {
-    streetAddress: "5 Tagu Place",
-    addressLocality: "Kings Park",
-    addressRegion: "NSW",
-    postalCode: "2148",
-    addressCountry: "AU",
-  },
   /**
    * Real product domains with a live site — omit anything unshipped.
    * dwellm8.com does not resolve (connection fails outright), so it's
@@ -60,14 +53,6 @@ interface OrganizationSchema {
   url: string;
   logo: string;
   description: string;
-  address: {
-    "@type": "PostalAddress";
-    streetAddress: string;
-    addressLocality: string;
-    addressRegion: string;
-    postalCode: string;
-    addressCountry: string;
-  };
   identifier: Array<{
     "@type": "PropertyValue";
     propertyID: string;
@@ -92,10 +77,6 @@ export function buildOrganizationSchema(team: TeamMember[]): OrganizationSchema 
     url: COMPANY.url,
     logo: COMPANY.logo,
     description: COMPANY.description,
-    address: {
-      "@type": "PostalAddress",
-      ...COMPANY.address,
-    },
     identifier: [
       { "@type": "PropertyValue", propertyID: "ACN", value: COMPANY.acn },
       { "@type": "PropertyValue", propertyID: "ABN", value: COMPANY.abn },
