@@ -6,13 +6,31 @@ import { AnimateOnScroll, Button } from "@tesserix/web";
 import { principles } from "./principles";
 import { team } from "./team";
 import { TeamMemberCard } from "@/components/marketing/team-member-card";
+import type { Industry } from "../products/[slug]/products-data";
+import {
+  isComingSoon,
+  productSlugs,
+  products,
+} from "../products/[slug]/products-data";
 
-const focus = [
-  { area: "Commerce", product: "Mark8ly", status: "Live" },
-  { area: "Rental management", product: "Dwellm8", status: "In development" },
-  { area: "Food", product: "Fe3dr", status: "Live" },
-  { area: "Healthcare", product: "MediCare", status: "In development" },
-];
+/** Human-readable label for each industry the portfolio covers. */
+const industryLabels: Record<Industry, string> = {
+  commerce: "Commerce",
+  food: "Food",
+  rentals: "Rental management",
+  healthcare: "Healthcare",
+  nutrition: "Nutrition",
+};
+
+// One row per product, in portfolio order, derived from products-data.ts —
+// the one place launch state and the industry mapping are recorded. This list
+// used to be hand-maintained and had drifted: it omitted Kora entirely while
+// the copy beside it promises one product per industry.
+const focus = productSlugs.map((slug) => ({
+  area: industryLabels[products[slug].industry],
+  product: products[slug].title,
+  status: isComingSoon(slug) ? "In development" : "Live",
+}));
 
 export function AboutContent() {
   return (
@@ -118,9 +136,17 @@ export function AboutContent() {
             </h2>
           </AnimateOnScroll>
 
-          <div className="mt-4 max-w-3xl">
-            {team.map((member) => (
-              <TeamMemberCard key={member.slug} member={member} />
+          {/* `mt-14` matches "How we work" below, so the first card's hairline
+              reads as a section divider rather than an underline on the h2. */}
+          <div className="mt-14 max-w-3xl">
+            {team.map((member, index) => (
+              <AnimateOnScroll
+                key={member.slug}
+                variant="fade-up"
+                delay={index * 0.08}
+              >
+                <TeamMemberCard member={member} />
+              </AnimateOnScroll>
             ))}
           </div>
         </div>

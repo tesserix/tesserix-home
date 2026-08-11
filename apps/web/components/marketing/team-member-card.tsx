@@ -50,7 +50,7 @@ export function TeamMemberCard({ member }: { member: TeamMember }) {
       <div className="h-24 w-24 shrink-0 overflow-hidden rounded-full bg-muted sm:h-28 sm:w-28">
         {imageFailed ? (
           <div
-            className="flex h-full w-full items-center justify-center font-mono text-xl font-medium text-muted-foreground"
+            className="flex h-full w-full items-center justify-center font-mono text-2xl font-medium text-muted-foreground"
             aria-hidden="true"
           >
             {initialsFor(member.name)}
