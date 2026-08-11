@@ -65,22 +65,40 @@ export default async function OpenGraphImage() {
             </div>
           </div>
 
-          {/* Headline */}
+          {/* Headline — word-level spans for deterministic wrap in satori */}
           <div
             style={{
               display: "flex",
               flexWrap: "wrap",
               fontSize: 64,
-              fontWeight: 650,
+              fontWeight: 600,
               color: "#0b0e14",
               letterSpacing: "-2px",
               lineHeight: 1.05,
               maxWidth: "700px",
             }}
           >
-            <span>Specialized software, built for the&nbsp;</span>
-            <span style={{ color: "#2e5cff" }}>people</span>
-            <span>&nbsp;who use it.</span>
+            {[
+              "Specialized",
+              "software,",
+              "built",
+              "for",
+              "the",
+              "people",
+              "who",
+              "use",
+              "it.",
+            ].map((word) => (
+              <span
+                key={word}
+                style={{
+                  marginRight: "14px",
+                  color: word === "people" ? "#2e5cff" : "#0b0e14",
+                }}
+              >
+                {word}
+              </span>
+            ))}
           </div>
 
           {/* Bottom row */}
