@@ -1,8 +1,16 @@
 import type { MetadataRoute } from "next";
 import { getLaunchReleases } from "./(marketing)/launch/launch-config";
+import { productSlugs } from "./(marketing)/products/[slug]/products-data";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = "https://tesserix.app";
+
+  const productEntries: MetadataRoute.Sitemap = productSlugs.map((slug) => ({
+    url: `${baseUrl}/products/${slug}`,
+    lastModified: new Date(),
+    changeFrequency: "weekly" as const,
+    priority: 0.9,
+  }));
 
   const launchEntries: MetadataRoute.Sitemap = [
     {
@@ -33,18 +41,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "weekly",
       priority: 0.9,
     },
-    {
-      url: `${baseUrl}/products/mark8ly`,
-      lastModified: new Date(),
-      changeFrequency: "weekly",
-      priority: 0.9,
-    },
-    {
-      url: `${baseUrl}/products/dwellm8`,
-      lastModified: new Date(),
-      changeFrequency: "weekly",
-      priority: 0.9,
-    },
+    ...productEntries,
     {
       url: `${baseUrl}/about`,
       lastModified: new Date(),
