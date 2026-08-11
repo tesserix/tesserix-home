@@ -29,11 +29,11 @@ const SAT_2PM_AEST_DISPLAY = "Sat 1 Aug 2026 · 2:00 PM AEST";
 
 const RELEASES: readonly LaunchRelease[] = [
   {
-    slug: "homechef",
-    name: "HomeChef",
+    slug: "fe3dr",
+    name: "Fe3dr",
     tagline:
-      "Home-cooked meals from real neighbourhood kitchens, delivered to your door.",
-    href: "/products/homechef",
+      "Real home-cooked food from verified kitchens near you. Ghar ka khana, delivered.",
+    href: "/products/fe3dr",
     targetIso: SAT_2PM_AEST_ISO,
     displayDate: SAT_2PM_AEST_DISPLAY,
     dotClass: "bg-amber-500",
