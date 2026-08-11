@@ -61,6 +61,12 @@ export const products: Record<
      * they now read this field instead of restating it.
      */
     highlights: string[];
+    /**
+     * Honest target for a coming-soon product's launch, shown on the
+     * homepage's "In development" card (`products-grid.tsx`). Omit rather
+     * than guess a date for a product with no committed timeline.
+     */
+    eta?: string;
     features: Array<{
       icon: React.ComponentType<{ className?: string }>;
       title: string;
@@ -319,6 +325,7 @@ export const products: Record<
     icon: Building2,
     status: "coming-soon",
     industry: "rentals",
+    eta: "2026",
     highlights: [
       "Tenancy agreements & rent schedules",
       "UPI rent, instant receipts, zero platform fees",
@@ -384,6 +391,7 @@ export const products: Record<
     icon: Hospital,
     status: "coming-soon",
     industry: "healthcare",
+    eta: "2026",
     highlights: [
       "Electronic health records",
       "Appointment scheduling",
@@ -449,6 +457,7 @@ export const products: Record<
     status: "coming-soon",
     industry: "nutrition",
     operatingSystem: "iOS, Android",
+    eta: "2026",
     highlights: [
       "Photo, chat, voice & barcode logging",
       "Manual editing",

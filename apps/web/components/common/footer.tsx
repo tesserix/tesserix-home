@@ -168,7 +168,7 @@ export function Footer() {
             footer ends on a single rule instead of three stacked ones. */}
         <div className="mt-12 flex flex-col gap-6 border-t pt-8 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-2">
-            <p className="max-w-prose font-mono text-[0.66rem] tracking-[0.04em] text-muted-foreground">
+            <p className="max-w-prose font-mono text-xs tracking-[0.04em] text-muted-foreground">
               Tesserix Pty Ltd &middot; ACN 694 070 865 &middot; ABN 59 694 070
               865 &middot; &copy; {new Date().getFullYear()} Tesserix. All
               rights reserved.

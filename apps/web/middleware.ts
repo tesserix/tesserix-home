@@ -43,6 +43,7 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/opengraph-image",
   "/robots.txt",
   "/sitemap.xml",
+  "/llms.txt",
   "/api/health",
   "/api/contact",
   // "Notify me when this launches" on a coming-soon product page, plus the
