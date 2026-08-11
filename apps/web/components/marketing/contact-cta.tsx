@@ -1,76 +1,90 @@
 "use client";
 
-import { useRef } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { ArrowRight, Mail } from "lucide-react";
-import {
-  motion,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "framer-motion";
-import { Button } from "@tesserix/web";
+import { AnimateOnScroll } from "@tesserix/web";
 
 export function ContactCTA() {
-  const prefersReducedMotion = useReducedMotion();
-  const sectionRef = useRef<HTMLElement>(null);
-
-  // Panel scales and settles into place as it enters the viewport
-  const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start end", "center center"],
-  });
-  const scale = useTransform(scrollYProgress, [0, 1], [0.94, 1]);
-  const opacity = useTransform(scrollYProgress, [0, 0.6], [0.4, 1]);
-
   return (
-    <section ref={sectionRef} className="relative py-20 sm:py-28">
+    <section className="relative py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <motion.div
-          style={prefersReducedMotion ? undefined : { scale, opacity }}
-          className="relative overflow-hidden rounded-3xl bg-primary px-6 py-20 text-primary-foreground shadow-xl sm:px-16 sm:py-24"
-        >
-          {/* Faint dot grid in the panel's own foreground token */}
+        <AnimateOnScroll variant="fade-up">
           <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 bg-[radial-gradient(color-mix(in_srgb,var(--primary-foreground)_10%,transparent)_1px,transparent_1px)] [background-size:26px_26px] [mask-image:radial-gradient(ellipse_70%_90%_at_80%_0%,black,transparent)]"
-          />
+            className="relative overflow-hidden rounded-[22px] px-6 py-20 text-[#f0f3f9] sm:px-16 sm:py-24"
+            style={{
+              backgroundColor: "#0b0e14",
+              backgroundImage:
+                "radial-gradient(50rem 26rem at 82% -30%, rgba(106,165,255,0.14), transparent 60%)",
+            }}
+          >
+            <Image
+              src="/tesseract-render.jpg"
+              alt=""
+              aria-hidden="true"
+              width={1200}
+              height={669}
+              className="pointer-events-none absolute right-[-5%] top-1/2 z-0 w-[clamp(20rem,44%,34rem)] -translate-y-1/2 opacity-95 max-[860px]:hidden"
+              style={{
+                maskImage:
+                  "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+                WebkitMaskImage:
+                  "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+              }}
+            />
 
-          <div className="relative grid grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-12">
-            <div className="lg:col-span-7">
-              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-primary-foreground/60">
-                04 — Contact
-              </p>
-              <h2 className="mt-5 text-3xl font-semibold tracking-tight sm:text-5xl">
-                Have a question?
-                <br />
-                You&apos;ll get a human.
-              </h2>
-            </div>
+            <div className="relative z-10 grid grid-cols-12 gap-x-12 gap-y-10 max-[860px]:grid-cols-1">
+              <div className="col-span-7 max-[860px]:col-span-1">
+                <h2 className="text-[clamp(2rem,4.6vw,3.4rem)] font-[650] leading-[1.04] tracking-[-0.04em] text-balance">
+                  Have a question?
+                  <br />
+                  You&apos;ll get a human.
+                </h2>
+              </div>
 
-            <div className="flex flex-col justify-end gap-8 lg:col-span-4 lg:col-start-9">
-              <p className="max-w-md text-base leading-relaxed text-primary-foreground/70">
-                No sales pitch, no chatbot queue — just a conversation with the
-                people who build the products.
-              </p>
-              <div className="flex flex-wrap items-center gap-5">
-                <Button size="lg" variant="secondary" asChild>
-                  <Link href="/contact">
+              <div className="col-span-4 col-start-9 flex flex-col justify-end gap-4 max-[860px]:col-span-1 max-[860px]:col-start-1">
+                <p className="max-w-md text-base leading-relaxed text-[#aab2c2]">
+                  No sales pitch, no chatbot queue — just a conversation with
+                  the people who build the products.
+                </p>
+                <div className="flex flex-col items-start gap-4">
+                  <Link
+                    href="/contact"
+                    className="inline-flex items-center rounded-full bg-white px-[1.7rem] py-[0.9rem] text-[0.98rem] font-semibold text-[#0b0e14] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_30px_-10px_rgba(46,92,255,0.6)]"
+                  >
                     Get in touch
                     <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
                   </Link>
-                </Button>
-                <a
-                  href="mailto:sales@tesserix.app"
-                  className="inline-flex items-center gap-2 font-mono text-sm text-primary-foreground/70 transition-colors hover:text-primary-foreground"
-                >
-                  <Mail className="h-4 w-4" aria-hidden="true" />
-                  sales@tesserix.app
-                </a>
+                  <a
+                    href="mailto:sales@tesserix.app"
+                    className="inline-flex items-center gap-2 font-mono text-sm text-[#aab2c2] transition-colors hover:text-[#f0f3f9]"
+                  >
+                    <Mail className="h-4 w-4" aria-hidden="true" />
+                    sales@tesserix.app
+                  </a>
+                </div>
               </div>
             </div>
+
+            {/* Full-width render below content on small screens */}
+            <div className="relative z-10 mt-10 hidden max-[860px]:block">
+              <Image
+                src="/tesseract-render.jpg"
+                alt=""
+                aria-hidden="true"
+                width={1200}
+                height={669}
+                className="w-full opacity-95"
+                style={{
+                  maskImage:
+                    "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+                  WebkitMaskImage:
+                    "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
+                }}
+              />
+            </div>
           </div>
-        </motion.div>
+        </AnimateOnScroll>
       </div>
     </section>
   );

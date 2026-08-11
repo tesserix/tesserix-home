@@ -36,7 +36,7 @@ const footerNavigation = {
 
 /** The mono uppercase eyebrow used for every label on the marketing site. */
 const EYEBROW_CLASS =
-  "font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground";
+  "font-mono text-[0.7rem] font-medium uppercase tracking-[0.14em] text-muted-foreground";
 
 interface FooterColumnProps {
   title: string;
@@ -168,12 +168,10 @@ export function Footer() {
             footer ends on a single rule instead of three stacked ones. */}
         <div className="mt-12 flex flex-col gap-6 border-t pt-8 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-2">
-            <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+            <p className="max-w-prose font-mono text-[0.66rem] tracking-[0.04em] text-muted-foreground">
               Tesserix Pty Ltd &middot; ACN 694 070 865 &middot; ABN 59 694 070
-              865 &middot; 5 Tagu Place, Kings Park NSW 2148, Australia
-            </p>
-            <p className="text-xs text-muted-foreground">
-              &copy; {new Date().getFullYear()} Tesserix. All rights reserved.
+              865 &middot; &copy; {new Date().getFullYear()} Tesserix. All
+              rights reserved.
             </p>
           </div>
           <div className="flex shrink-0 gap-6">

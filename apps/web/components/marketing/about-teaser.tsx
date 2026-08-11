@@ -10,7 +10,7 @@ import {
   useTransform,
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll, Button } from "@tesserix/web";
+import { AnimateOnScroll } from "@tesserix/web";
 import {
   industryListExcluding,
   isComingSoon,
@@ -67,7 +67,7 @@ function ScrollRevealStatement() {
 
   if (prefersReducedMotion) {
     return (
-      <p className="max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
+      <p className="max-w-[44rem] text-balance text-[clamp(1.5rem,3.4vw,2.5rem)] font-semibold leading-[1.24] tracking-[-0.035em] text-foreground">
         {STATEMENT}
       </p>
     );
@@ -76,7 +76,7 @@ function ScrollRevealStatement() {
   return (
     <p
       ref={ref}
-      className="relative max-w-4xl text-2xl font-medium leading-snug tracking-tight sm:text-3xl lg:text-4xl"
+      className="relative max-w-[44rem] text-balance text-[clamp(1.5rem,3.4vw,2.5rem)] font-semibold leading-[1.24] tracking-[-0.035em]"
     >
       {words.map((word, index) => (
         <Word
@@ -96,13 +96,17 @@ export function AboutTeaser() {
     <section className="border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
         <AnimateOnScroll variant="fade-up">
-          <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            03 — The studio
+          <p className="inline-flex items-center gap-[0.7rem] font-mono text-[0.7rem] uppercase tracking-[0.14em] text-cobalt">
+            <span className="h-px w-[2.2rem] bg-cobalt" aria-hidden="true" />
+            The studio
           </p>
         </AnimateOnScroll>
 
         <div className="mt-8">
           <ScrollRevealStatement />
+          <p className="mt-[1.8rem] font-mono text-[0.72rem] uppercase tracking-[0.1em] text-muted-foreground">
+            The studio &middot; Sydney &amp; remote
+          </p>
         </div>
 
         <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-12 lg:grid-cols-12">
@@ -113,12 +117,13 @@ export function AboutTeaser() {
               genuinely good.
             </p>
             <div className="mt-8">
-              <Button variant="outline" asChild>
-                <Link href="/about">
-                  More about us
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
+              <Link
+                href="/about"
+                className="inline-flex items-center rounded-[10px] border bg-card px-6 py-3.5 text-[0.98rem] font-medium text-foreground transition-colors hover:border-cobalt"
+              >
+                More about us
+                <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+              </Link>
             </div>
           </div>
 
