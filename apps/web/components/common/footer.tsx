@@ -21,10 +21,12 @@ const footerNavigation = {
     { name: "Contact", href: "/contact" },
     { name: "Careers", href: "/careers" },
   ],
-  // docs.tesserix.app and ui.tesserix.app both currently 503 — dropped
-  // rather than shipping a column where every link errors. blog.tesserix.app
-  // is live and takes their place.
-  resources: [{ name: "Blog", href: "https://blog.tesserix.app" }],
+  resources: [
+    { name: "Documentation", href: "https://docs.tesserix.app", external: true },
+    { name: "Design System", href: "https://ui.tesserix.app", external: true },
+    { name: "Blog", href: "https://blog.tesserix.app", external: true },
+    { name: "GitHub", href: "https://github.com/tesserix", external: true },
+  ],
   legal: [
     { name: "Privacy Policy", href: "/privacy" },
     { name: "Terms of Service", href: "/terms" },
@@ -38,8 +40,11 @@ const EYEBROW_CLASS =
 
 interface FooterColumnProps {
   title: string;
-  items: ReadonlyArray<{ name: string; href: string }>;
+  items: ReadonlyArray<{ name: string; href: string; external?: boolean }>;
 }
+
+const FOOTER_LINK_CLASS =
+  "text-sm text-foreground/80 transition-colors hover:text-foreground";
 
 function FooterColumn({ title, items }: FooterColumnProps) {
   return (
@@ -48,12 +53,20 @@ function FooterColumn({ title, items }: FooterColumnProps) {
       <ul role="list" className="mt-5 space-y-3">
         {items.map((item) => (
           <li key={item.name}>
-            <Link
-              href={item.href}
-              className="text-sm text-foreground/80 transition-colors hover:text-foreground"
-            >
-              {item.name}
-            </Link>
+            {item.external ? (
+              <a
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={FOOTER_LINK_CLASS}
+              >
+                {item.name}
+              </a>
+            ) : (
+              <Link href={item.href} className={FOOTER_LINK_CLASS}>
+                {item.name}
+              </Link>
+            )}
           </li>
         ))}
       </ul>
