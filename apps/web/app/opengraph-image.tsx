@@ -8,11 +8,15 @@ import { ImageResponse } from "next/og";
  * and made link unfurls (LinkedIn, Slack, X) fail. Mirrors the working
  * mark8ly generator so previews stay on-domain and always return 200.
  *
+ * Every product page under /products/[slug] gets its own generated image
+ * (see that route's opengraph-image.tsx); every other marketing page falls
+ * back to this root one automatically via Next's metadata resolution.
+ *
  * Brand: deep slate (#0F172A) on which the Tesserix wordmark sits — the
  * same navy used for --primary/--foreground and the mobile splash.
  */
 
-export const alt = "Tesserix — Commerce Infrastructure for Growing Businesses";
+export const alt = "Tesserix — specialized SaaS, one industry at a time.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -56,15 +60,15 @@ export default async function OpenGraphImage() {
             lineHeight: 1.02,
           }}
         >
-          <span>Commerce infrastructure</span>
-          <span>for growing businesses.</span>
+          <span>Specialized software,</span>
+          <span>built for the people who use it.</span>
         </div>
 
         {/* Bottom: accent rule + tagline */}
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
           <div style={{ width: "80px", height: "4px", background: "#38BDF8" }} />
           <div style={{ display: "flex", fontSize: 30, color: "#CBD5E1" }}>
-            Launch your marketplace in days, not months.
+            A product studio building specialized SaaS, one industry at a time.
           </div>
         </div>
       </div>

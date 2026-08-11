@@ -13,21 +13,35 @@ import {
   ChefHat,
   Utensils,
   Truck,
-  Star,
-  Clock,
   Hospital,
   Stethoscope,
   Calendar,
   FileText,
   Pill,
   UserCheck,
-  Trophy,
-  MessageCircle,
-  TrendingUp,
-  Bell,
-  Zap,
-  Users2,
+  Salad,
+  Camera,
+  Mic,
+  ScanLine,
+  Pencil,
+  ShieldCheck,
 } from "lucide-react";
+
+interface ProductMediaImage {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  orientation: "landscape" | "portrait";
+}
+
+/**
+ * The five industries the current portfolio covers, one per product. This is
+ * the single source of truth for the "one industry at a time" marketing
+ * copy repeated on the hero, footer and /about — those sites derive their
+ * industry list from `industryNames` below instead of holding their own copy.
+ */
+export type Industry = "commerce" | "food" | "rentals" | "healthcare" | "nutrition";
 
 export const products: Record<
   string,
@@ -38,20 +52,74 @@ export const products: Record<
     longDescription: string;
     icon: React.ComponentType<{ className?: string }>;
     status: "available" | "coming-soon";
+    industry: Industry;
+    /**
+     * Short bullet points used everywhere a product is summarized rather
+     * than detailed: the /products index rows and the homepage card stack
+     * (`products-grid.tsx`). Both used to keep their own copies of this list
+     * and drifted (that's how Mark8ly ended up with three descriptions) —
+     * they now read this field instead of restating it.
+     */
+    highlights: string[];
     features: Array<{
       icon: React.ComponentType<{ className?: string }>;
       title: string;
       description: string;
     }>;
     benefits: string[];
-    // Live products only. A product that hasn't shipped has no prices to quote,
-    // so its page shows the launch notice where the pricing card would be.
-    pricing?: {
-      starter: string;
-      professional: string;
-      enterprise: string;
-    };
+    // Pricing lives on each product's own site, not here — see product-content.tsx.
     website?: string;
+    /**
+     * The detail page's primary CTA for `available` products only — the
+     * label must match where the link actually goes, so it's authored per
+     * product rather than a single generic "Start free trial" that isn't
+     * true for every product (e.g. Fe3dr has no trial). Links to the
+     * product's own site (`website`), not `/contact`.
+     */
+    ctaLabel?: string;
+    /** Honest one-line subtext for the bottom CTA band; omit if there's nothing true to add. */
+    ctaSubtext?: string;
+    /**
+     * The real trial/pricing offer, stated exactly as the product's own
+     * site states it. Omit entirely for products with no trial (e.g. Fe3dr)
+     * rather than falling back to generic trial language.
+     */
+    trialLine?: string;
+    /**
+     * JSON-LD `operatingSystem` for the SoftwareApplication schema. Defaults
+     * to "Web" when omitted — set explicitly for products that are actually
+     * mobile-only (Kora, Fe3dr's app), since asserting "Web" for those is a
+     * verifiable-false claim to a crawler.
+     */
+    operatingSystem?: string;
+    /**
+     * App store presence, keyed by platform. A listing with `url: ""` is a
+     * real platform we're on that has no live link yet (e.g. iOS apps under
+     * App Store review) — `AppStoreBadges` renders it as a coming-soon plate
+     * rather than a dead link. Omit a platform entirely if there is no app.
+     */
+    listings?: Partial<
+      Record<"ios" | "android", { url: string; artworkSrc: string }>
+    >;
+    /**
+     * The Fe3dr vendor (home-cook) Android app is a second audience beyond
+     * the customer app in `listings`. Only Fe3dr has one today, so it's kept
+     * as a separate optional field rather than widening the platform union.
+     */
+    vendorListing?: { url: string; artworkSrc: string };
+    /**
+     * Real product imagery for the detail page. Only populated for products
+     * that have actually shipped (`status: "available"`) — a mockup for
+     * unreleased software erodes trust on a due-diligence read, so
+     * coming-soon products must leave this undefined rather than get a
+     * placeholder.
+     */
+    media?: {
+      /** A capture of the live marketing site or storefront, landscape. */
+      site?: ProductMediaImage;
+      /** Portrait phone screenshots, shown as a row of two or three. */
+      screenshots?: ProductMediaImage[];
+    };
   }
 > = {
   mark8ly: {
@@ -64,6 +132,18 @@ export const products: Record<
       "Mark8ly is a quiet, considered commerce platform for people who actually make things. Set up your store in an afternoon, keep every sale, and sell on a storefront that doesn't look like everyone else's. Real merchants worked on the design. Real engineers built the infrastructure. The result is a tool that does fewer things, but does them properly.",
     icon: ShoppingBag,
     status: "available",
+    industry: "commerce",
+    ctaLabel: "Start free trial",
+    ctaSubtext: "Free for ninety days. No card required.",
+    trialLine: "Free for ninety days. No card required.",
+    highlights: [
+      "0% transaction fees, ever",
+      "Custom domains from day one",
+      "Considered theme system",
+      "Unlimited products & orders",
+      "Cards, UPI, and wallets",
+      "Real human support",
+    ],
     features: [
       {
         icon: Palette,
@@ -79,9 +159,9 @@ export const products: Record<
       },
       {
         icon: Package,
-        title: "Up to 100 products on Starter",
+        title: "Unlimited products and orders",
         description:
-          "Studio and Pro are unlimited. Add as many products, photos, and variants as you like as you grow.",
+          "Every plan includes unlimited products and orders. Plans differ by number of stores and images per product, not a product cap.",
       },
       {
         icon: BarChart,
@@ -107,74 +187,122 @@ export const products: Record<
       "0% transaction fees from Mark8ly, ever",
       "Use your own domain from day one",
       "Export your data and leave anytime",
-      "Optional white-label mobile app on Pro",
+      "White-label mobile app available as a paid add-on",
       "Three plans, one price page — no bait and switch",
     ],
-    pricing: {
-      starter: "$19/mo",
-      professional: "$49/mo (Studio)",
-      enterprise: "$119/mo (Pro)",
+    listings: {
+      ios: { url: "", artworkSrc: "/badges/app-store-badge.svg" },
+      android: {
+        url: "https://play.google.com/store/apps/details?id=com.mark8ly.admin",
+        artworkSrc: "/badges/google-play-badge.png",
+      },
+    },
+    media: {
+      site: {
+        src: "/screens/mark8ly-storefront.jpg",
+        alt: "The Mark8ly marketing homepage, headlined “A storefront worth opening,” with a live demo of a working store and checkout below the fold",
+        width: 1568,
+        height: 682,
+        orientation: "landscape",
+      },
     },
   },
-  homechef: {
-    title: "HomeChef",
-    tagline: "Home Cooked Food Delivery Platform",
+  fe3dr: {
+    title: "Fe3dr",
+    tagline: "Ghar ka khana, delivered.",
     description:
-      "Connect home chefs with food lovers for authentic, home-cooked meal delivery.",
+      "Real home-cooked food from verified kitchens near you. Cooked to order, collect it or have it delivered.",
+    website: "https://fe3dr.com",
     longDescription:
-      "HomeChef is a complete platform that connects talented home cooks with hungry customers in their community. From chef onboarding and menu management to order tracking and delivery coordination, HomeChef provides everything you need to run a successful home food delivery business.",
+      "Fe3dr connects verified home cooks with people who want a real home-cooked meal. Every meal is cooked to order — nothing sits pre-made or reheated — and you choose to collect it yourself or have it delivered. Fe3dr is currently live in Pune.",
     icon: ChefHat,
     status: "available",
+    industry: "food",
+    operatingSystem: "iOS, Android",
+    // No trialLine: Fe3dr is a marketplace where customers buy meals, not a
+    // subscription product — there is no trial to offer.
+    ctaLabel: "Order on Fe3dr",
+    ctaSubtext: "Browse home-cooked meals from verified kitchens near you.",
+    highlights: [
+      "Verified home cooks",
+      "Cooked to order",
+      "Collection or delivery",
+      "Live in Pune",
+    ],
     features: [
       {
         icon: UserCheck,
-        title: "Chef Onboarding & Verification",
+        title: "Verified home cooks",
         description:
-          "Streamlined chef registration with identity verification, food safety certifications, and kitchen inspections.",
+          "Every cook is verified before their menu goes live, so an order comes from a real home kitchen you can trust.",
       },
       {
         icon: Utensils,
-        title: "Menu Management",
+        title: "Cooked to order",
         description:
-          "Easy-to-use tools for chefs to create, update, and manage their menus with photos, pricing, and availability.",
-      },
-      {
-        icon: Clock,
-        title: "Real-time Order Tracking",
-        description:
-          "Live order status updates for customers from preparation to delivery with ETA notifications.",
+          "Meals are cooked fresh once you order — not held in inventory or reheated ahead of time.",
       },
       {
         icon: Truck,
-        title: "Delivery Coordination",
+        title: "Collection or delivery",
         description:
-          "Integrated delivery management with route optimization, driver assignment, and live tracking.",
+          "Pick up your order yourself or have it delivered — whichever suits you on the day.",
       },
       {
-        icon: Star,
-        title: "Reviews & Ratings",
+        icon: ChefHat,
+        title: "Home kitchens, not restaurants",
         description:
-          "Built-in review system to build trust and help customers discover the best home chefs.",
-      },
-      {
-        icon: CreditCard,
-        title: "Secure Payments",
-        description:
-          "Multiple payment options with automatic chef payouts and transparent fee structure.",
+          "Every meal comes from a real home kitchen, cooked the way home food actually tastes.",
       },
     ],
     benefits: [
-      "Support local home chefs in your community",
-      "Authentic home-cooked meals delivered fresh",
-      "Quality control and food safety compliance",
-      "Flexible scheduling for chefs",
-      "Customer loyalty programs",
-      "Mobile apps for iOS and Android",
+      "Verified home cooks, not commercial kitchens",
+      "Cooked to order, never pre-made",
+      "Collect it yourself or have it delivered",
+      "Currently live in Pune",
     ],
-    pricing: {
-      starter: "$79/month",
-      professional: "$199/month",
-      enterprise: "Custom",
+    listings: {
+      ios: { url: "", artworkSrc: "/badges/app-store-badge.svg" },
+      android: {
+        url: "https://play.google.com/store/apps/details?id=com.tesserix.homechef.customer",
+        artworkSrc: "/badges/google-play-badge.png",
+      },
+    },
+    vendorListing: {
+      url: "https://play.google.com/store/apps/details?id=com.tesserix.homechef.vendor",
+      artworkSrc: "/badges/google-play-badge.png",
+    },
+    media: {
+      site: {
+        src: "/screens/fe3dr-web.jpg",
+        alt: "The Fe3dr homepage, headlined “Ghar ka khana, delivered,” showing home-cooked dishes on offer and a live delivery tracker",
+        width: 1568,
+        height: 682,
+        orientation: "landscape",
+      },
+      screenshots: [
+        {
+          src: "/screens/fe3dr-app-browse.png",
+          alt: "The Fe3dr app home screen, showing nearby home kitchens by cuisine with an active order tracked at the bottom",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/fe3dr-app-chef-menu.png",
+          alt: "A home kitchen's menu inside the Fe3dr app, showing dish photos, dietary tags and prices",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/fe3dr-app-orders.png",
+          alt: "The Fe3dr app order history screen, listing past and pending orders with their status and price",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+      ],
     },
   },
   dwellm8: {
@@ -182,11 +310,23 @@ export const products: Record<
     tagline: "Rent, managed like a record",
     description:
       "India-first rental management — owners, managers and tenants on one record, from listing to move-out.",
-    website: "https://dwellm8.com",
+    // No `website`: dwellm8.com does not resolve. Dwellm8 is coming-soon, so
+    // every surface that renders a product website link already gates on
+    // `website` being present / status being "available" and simply omits
+    // the link here.
     longDescription:
       "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
     icon: Building2,
-    status: "available",
+    status: "coming-soon",
+    industry: "rentals",
+    highlights: [
+      "Tenancy agreements & rent schedules",
+      "UPI rent, instant receipts, zero platform fees",
+      "Maintenance & cost-sharing engine",
+      "Delegated portfolio management",
+      "Listings, enquiries & applications",
+      "Six mobile apps, one platform",
+    ],
     features: [
       {
         icon: KeyRound,
@@ -233,122 +373,133 @@ export const products: Record<
       "Discovery to move-in: listings, enquiries, applications",
       "Mobile apps for every side of the tenancy",
     ],
-    pricing: {
-      starter: "Free for owners",
-      professional: "2.99% on payouts",
-      enterprise: "Custom for firms",
-    },
   },
   medicare: {
     title: "MediCare",
-    tagline: "Complete Hospital Management System",
+    tagline: "Hospital management without the bloat",
     description:
-      "End-to-end hospital management solution for clinics and hospitals of all sizes.",
+      "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab, without enterprise software's bloat.",
     longDescription:
-      "MediCare is a comprehensive hospital management system designed to streamline healthcare operations. From patient registration and electronic health records to appointment scheduling, billing, and inventory management, MediCare digitizes every aspect of hospital administration.",
+      "MediCare handles hospital operations end to end: patient registration and electronic health records, appointment scheduling, billing, and pharmacy inventory. It's built for clinics and hospitals that outgrew spreadsheets but never wanted enterprise software's bloat.",
     icon: Hospital,
     status: "coming-soon",
+    industry: "healthcare",
+    highlights: [
+      "Electronic health records",
+      "Appointment scheduling",
+      "Billing & invoicing",
+      "Pharmacy & inventory",
+      "Staff management",
+      "HIPAA-aligned",
+    ],
     features: [
       {
         icon: FileText,
-        title: "Electronic Health Records",
+        title: "Electronic health records",
         description:
           "Secure, centralized patient records with medical history, prescriptions, lab results, and imaging.",
       },
       {
         icon: Calendar,
-        title: "Appointment Scheduling",
+        title: "Appointment scheduling",
         description:
           "Smart scheduling system with doctor availability, patient reminders, and waitlist management.",
       },
       {
         icon: CreditCard,
-        title: "Billing & Insurance",
+        title: "Billing & invoicing",
         description:
           "Automated billing, insurance claim processing, and payment tracking with detailed financial reports.",
       },
       {
         icon: Pill,
-        title: "Pharmacy & Inventory",
+        title: "Pharmacy & inventory",
         description:
           "Complete pharmacy management with drug inventory, expiry tracking, and prescription fulfillment.",
       },
       {
         icon: Users,
-        title: "Staff Management",
+        title: "Staff management",
         description:
           "Employee scheduling, attendance tracking, payroll integration, and performance management.",
       },
       {
         icon: Stethoscope,
-        title: "Lab & Diagnostics",
+        title: "Lab & diagnostics",
         description:
           "Lab test ordering, result tracking, and integration with diagnostic equipment for seamless workflows.",
       },
     ],
     benefits: [
-      "Reduce administrative overhead by 60%",
-      "HIPAA compliant data security",
       "Improve patient care coordination",
       "Real-time bed and resource management",
       "Multi-location support",
+      "HIPAA-aligned data security",
       "Integration with medical devices",
     ],
   },
-  fanzone: {
-    title: "FanZone Battle Ground",
-    tagline: "Your cricket opinions finally matter",
+  kora: {
+    title: "Kora",
+    tagline: "The easiest nutrition tracking experience, built with AI",
     description:
-      "Live predictions, trash-talk battle rooms, and ranked fan leaderboards.",
+      "AI-powered nutrition tracking for iOS and Android — log meals by photo, chat, or voice instead of manual data entry.",
     longDescription:
-      "FanZone Battle Ground is a competitive fan engagement platform for cricket. Predict match outcomes, hop into live battle rooms during play, and climb ranked leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-    icon: Trophy,
+      "Kora is an AI-powered nutrition tracking app for iOS and Android. It isn't meant to be another calorie counter — the goal is the easiest nutrition tracking experience ever built, one that feels conversational rather than like data entry. Log a meal with a food photo, a natural-language message, or your voice. Nutrition data is sourced from the USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a nutrition value.",
+    icon: Salad,
     status: "coming-soon",
+    industry: "nutrition",
+    operatingSystem: "iOS, Android",
+    highlights: [
+      "Photo, chat, voice & barcode logging",
+      "Manual editing",
+      "USDA, OpenFoodFacts & AU databases",
+      "Built to never hallucinate a value",
+      "iOS and Android",
+    ],
     features: [
       {
-        icon: Zap,
-        title: "Live Match Scores",
+        icon: Camera,
+        title: "AI photo logging",
         description:
-          "Real-time cricket action and statistics with ball-by-ball tracking and key match moments.",
+          "Photograph a meal and Kora identifies the foods, ingredients, and portion sizes.",
       },
       {
-        icon: MessageCircle,
-        title: "Battle Rooms",
+        icon: MessageSquare,
+        title: "Chat logging",
         description:
-          "Live competitive commentary and trash-talk during matches. Defend your team, call your shots, react to every wicket.",
+          "Describe what you ate in plain language and Kora understands and logs it.",
       },
       {
-        icon: TrendingUp,
-        title: "Predictions Game",
+        icon: Mic,
+        title: "Voice logging",
         description:
-          "Test your instincts on match outcomes. Stake points on calls; build a track record over the season.",
+          "Speak a meal out loud and it converts straight to a food log.",
       },
       {
-        icon: Trophy,
-        title: "Leaderboards",
+        icon: ScanLine,
+        title: "Barcode scanning",
         description:
-          "Ranked standings for top fans. Climb week-on-week through accurate predictions and active battle play.",
+          "Scan a barcode for an instant nutrition lookup on packaged food.",
       },
       {
-        icon: Users2,
-        title: "Hot Takes & Fan Connect",
+        icon: Pencil,
+        title: "Manual editing",
         description:
-          "Share your opinions in structured posts, react to other fans' takes, and find your people.",
+          "Adjust any logged meal by hand whenever you want to fine-tune the details yourself.",
       },
       {
-        icon: Bell,
-        title: "Match Alerts",
+        icon: ShieldCheck,
+        title: "Verified nutrition data",
         description:
-          "Never miss a wicket or milestone with customizable alerts for your favorite teams and players.",
+          "Nutrition figures are sourced from the USDA, OpenFoodFacts, and Australian food databases — built to never hallucinate a value.",
       },
     ],
     benefits: [
-      "Live battle rooms during every match",
-      "Match-by-match prediction markets",
-      "Ranked seasonal leaderboards",
-      "Hot takes and fan connect feeds",
-      "Alerts for your teams and players",
-      "IPL, internationals, and local leagues",
+      "Log meals by photo, chat, voice, or barcode",
+      "Nutrition data sourced from USDA, OpenFoodFacts, and Australian databases",
+      "Built to never hallucinate a nutrition value",
+      "Conversational logging, not data entry",
+      "iOS and Android",
     ],
   },
 };
@@ -382,12 +533,47 @@ export function productTitle(slug: string): string {
  * `status` above is the one place launch state is recorded. Every surface that
  * renders a product — the navbar dropdown, the homepage stack, /products, and
  * the detail page — reads it through here rather than repeating it inline.
- * They used to each hold their own copy and had drifted badly: FanZone showed
- * "Live" on three of them while HomeChef showed "Coming soon" despite being
- * deployed.
+ * They used to each hold their own copy and had drifted badly: a now-removed
+ * product showed "Live" on some surfaces while Fe3dr showed "Coming soon" on
+ * others despite being deployed.
  *
  * Unknown slugs read as coming-soon — never advertise something unconfirmed.
  */
 export function isComingSoon(slug: string): boolean {
   return products[slug]?.status !== "available";
+}
+
+/**
+ * The industries covered by the current lineup, in portfolio order
+ * (commerce, food, rentals, healthcare, nutrition). Derived from `products`
+ * so the marketing copy that quotes this list can't drift from the actual
+ * products again.
+ */
+export const industryNames: Industry[] = Object.values(products).map(
+  (product) => product.industry,
+);
+
+/**
+ * Full industry list as a sentence-start phrase, e.g.
+ * "Commerce, food, rentals, healthcare, nutrition" — used where the original
+ * copy read as a standalone list (hero, footer, /about metadata).
+ */
+export function industryListPlain(): string {
+  return industryNames
+    .map((name, index) => (index === 0 ? `${name[0].toUpperCase()}${name.slice(1)}` : name))
+    .join(", ");
+}
+
+/**
+ * Industry list with one name excluded and an Oxford "and" before the last
+ * item, e.g. industryListExcluding("commerce") => "food, rentals, healthcare,
+ * and nutrition" — used for mid-sentence copy that already names the
+ * excluded industry's product separately (e.g. the about-teaser statement,
+ * which names Mark8ly/commerce in the sentence before this list).
+ */
+export function industryListExcluding(exclude: Industry): string {
+  const names = industryNames.filter((name) => name !== exclude);
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }

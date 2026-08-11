@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Hospital, Trophy } from "lucide-react";
+import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Building2, Hospital, Salad } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
 import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
@@ -18,10 +18,16 @@ const products = [
     icon: ShoppingBag,
   },
   {
-    slug: "homechef",
-    name: "HomeChef",
-    description: "Home cooked food delivery",
+    slug: "fe3dr",
+    name: "Fe3dr",
+    description: "Real home-cooked food, delivered",
     icon: ChefHat,
+  },
+  {
+    slug: "dwellm8",
+    name: "Dwellm8",
+    description: "Rental management, one record",
+    icon: Building2,
   },
   {
     slug: "medicare",
@@ -30,10 +36,10 @@ const products = [
     icon: Hospital,
   },
   {
-    slug: "fanzone",
-    name: "FanZone",
-    description: "Cricket live scores & banter",
-    icon: Trophy,
+    slug: "kora",
+    name: "Kora",
+    description: "AI-powered nutrition tracking",
+    icon: Salad,
   },
 ].map((p) => ({
   ...p,
@@ -100,7 +106,14 @@ export function Navbar() {
         {/* Logo */}
         <div className="flex lg:flex-1">
           <Link href="/" className="-m-1.5 p-1.5">
-            <Image src="/logo.png" alt="Tesserix" width={108} height={32} priority />
+            <Image
+              src="/logo.png"
+              alt="Tesserix"
+              width={132}
+              height={32}
+              sizes="132px"
+              priority
+            />
           </Link>
         </div>
 
@@ -227,15 +240,31 @@ export function Navbar() {
         id="mobile-menu"
         ref={mobileMenuRef}
         className={cn(
-          "fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-background shadow-xl lg:hidden transition-transform duration-300 ease-in-out",
-          mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+          // Closed, the panel is only translated off-screen, so its links stay
+          // in the tab order and its role="dialog" stays in the accessibility
+          // tree — keyboard and screen-reader users could reach a menu nobody
+          // can see. `invisible` takes it out of both. `visibility` is
+          // transitioned alongside the transform (it interpolates as a step at
+          // the end) so the panel still slides out rather than vanishing.
+          // Note: this does not stop the off-screen panel widening the
+          // document — that needs `overflow-x: clip` on the root layout.
+          "fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-background shadow-xl lg:hidden transition-[transform,visibility] duration-300 ease-in-out",
+          mobileMenuOpen
+            ? "visible translate-x-0"
+            : "invisible translate-x-full"
         )}
         role="dialog"
         aria-modal="true"
         aria-label="Mobile navigation"
       >
         <div className="flex items-center justify-between px-6 py-4 border-b">
-          <Image src="/logo.png" alt="Tesserix" width={108} height={32} />
+          <Image
+            src="/logo.png"
+            alt="Tesserix"
+            width={132}
+            height={32}
+            sizes="132px"
+          />
           <Button
             type="button"
             variant="ghost"

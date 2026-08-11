@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { isComingSoon } from "./[slug]/products-data";
+import { isComingSoon, products as productsData } from "./[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -15,102 +15,27 @@ interface ProductEntry {
   status: Status;
   href: string;
   website?: string;
-  pricing?: string;
   features: string[];
 }
 
-// Status comes from products-data.ts, the one place launch state is recorded,
-// rather than being restated here where it had drifted out of date.
-// Shipped products lead; the numbering down the left is positional, so ordering
-// them this way keeps it meaningful rather than arbitrary.
-const products: ProductEntry[] = (
-  [
-    {
-      slug: "mark8ly",
-      title: "Mark8ly",
-      tagline: "Quiet commerce for people who make things",
-      description:
-        "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
-      website: "mark8ly.com",
-      pricing: "90 days free, then from $19/mo",
-      features: [
-        "Custom domains",
-        "0% transaction fees",
-        "Considered theme system",
-        "Up to 100 products on Starter",
-        "Cards, UPI, and wallets",
-        "Real human support",
-      ],
-    },
-    {
-      slug: "homechef",
-      title: "HomeChef",
-      tagline: "Home cooks, real customers",
-      description:
-        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
-      website: "fe3dr.com",
-      features: [
-        "Chef onboarding & verification",
-        "Menu management",
-        "Real-time order tracking",
-        "Delivery coordination",
-        "Customer reviews & ratings",
-        "Payment processing",
-      ],
-    },
-    {
-      slug: "dwellm8",
-      title: "Dwellm8",
-      tagline: "Rent, managed like a record",
-      description:
-        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, and the whole tenancy from listing to move-out.",
-      website: "dwellm8.com",
-      pricing: "Free for owners, 2.99% on payouts",
-      features: [
-        "Tenancy agreements & rent schedules",
-        "UPI rent collection, instant receipts",
-        "Maintenance & cost-sharing engine",
-        "Delegated portfolio management",
-        "Listings, enquiries & applications",
-        "Six mobile apps, one platform",
-      ],
-    },
-    {
-      slug: "medicare",
-      title: "MediCare",
-      tagline: "Hospital management without the bloat",
-      description:
-        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-      features: [
-        "Electronic health records",
-        "Appointment scheduling",
-        "Billing & invoicing",
-        "Pharmacy & inventory",
-        "Staff management",
-        "Lab & diagnostics",
-      ],
-    },
-    {
-      slug: "fanzone",
-      title: "FanZone Battle Ground",
-      tagline: "Your cricket opinions finally matter",
-      description:
-        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-      features: [
-        "Live battle rooms",
-        "Match prediction markets",
-        "Ranked leaderboards",
-        "Hot takes & fan connect",
-        "Live match scores",
-        "Match alerts",
-      ],
-    },
-  ] satisfies ReadonlyArray<Omit<ProductEntry, "status" | "href">>
-).map((p) => ({
-  ...p,
-  href: `/products/${p.slug}`,
-  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
-}));
+// Title, tagline, description, highlights and launch state all come from
+// products-data.ts — the single source of truth for product copy — rather
+// than being restated here, where they had drifted (Mark8ly alone had three
+// different descriptions across this file, products-grid.tsx and
+// products-data.ts). Shipped products lead in products-data.ts; the
+// numbering down the left is positional, so that ordering stays meaningful.
+const products: ProductEntry[] = Object.entries(productsData).map(
+  ([slug, product]) => ({
+    slug,
+    title: product.title,
+    tagline: product.tagline,
+    description: product.description,
+    website: product.website?.replace(/^https?:\/\//, ""),
+    features: product.highlights,
+    href: `/products/${slug}`,
+    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
+  }),
+);
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {
@@ -157,13 +82,9 @@ function ProductRow({
           <p className="mt-2 text-sm text-muted-foreground">
             {product.tagline}
           </p>
-          {/* Prices and destinations are only real for products you can use
-              today — an unreleased one advertises neither. */}
-          {product.status === "live" && product.pricing ? (
-            <p className="mt-4 font-mono text-xs text-foreground">
-              {product.pricing}
-            </p>
-          ) : null}
+          {/* Destinations are only real for products you can use today — an
+              unreleased one has nowhere to send anyone yet. Pricing lives on
+              each product's own site, not here. */}
           {product.status === "live" && product.website ? (
             <a
               href={`https://${product.website}`}

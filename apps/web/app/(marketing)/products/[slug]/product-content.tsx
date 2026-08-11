@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { ArrowRight, ArrowUpRight, Check } from "lucide-react";
 import {
@@ -12,9 +13,18 @@ import {
   BreadcrumbSeparator,
   BreadcrumbPage,
   AnimateOnScroll,
+  AppStoreBadges,
 } from "@tesserix/web";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { products } from "./products-data";
+
+// Pricing lives on each product's own site — the only place it can stay
+// accurate (Mark8ly's is location-based, so no static figure here would be
+// correct for every visitor). Only products with a public pricing page get
+// a link out; the rest render nothing in that slot.
+const PRICING_LINKS: Record<string, string> = {
+  mark8ly: "https://mark8ly.com/#pricing",
+};
 
 export function ProductContent({ slug }: { slug: string }) {
   const product = products[slug];
@@ -24,6 +34,17 @@ export function ProductContent({ slug }: { slug: string }) {
   }
 
   const isComingSoon = product.status === "coming-soon";
+  const pricingLink = PRICING_LINKS[slug];
+
+  // Section eyebrows are numbered positionally, as they are on /about and
+  // /careers. Only shipped products have a gallery, so the numbering has to be
+  // computed rather than hard-coded — otherwise the gallery sits unnumbered
+  // above "01 — Features" and breaks the sequence on exactly those pages.
+  const sectionNumbers = {
+    gallery: product.media ? "01" : null,
+    features: product.media ? "02" : "01",
+    why: product.media ? "03" : "02",
+  };
 
   return (
     <div>
@@ -75,14 +96,19 @@ export function ProductContent({ slug }: { slug: string }) {
             <div className="mt-10 flex flex-wrap items-center gap-4">
               {isComingSoon ? (
                 <WaitlistForm slug={slug} title={product.title} />
-              ) : (
+              ) : product.website && product.ctaLabel ? (
+                // The primary CTA links to the product's own site — where the
+                // real signup/ordering flow lives — rather than /contact, and
+                // its label is authored per product in products-data.ts so it
+                // never promises an offer (e.g. a trial) the product doesn't
+                // actually have.
                 <Button size="lg" asChild>
-                  <Link href="/contact">
-                    Start free trial
+                  <a href={product.website} target="_blank" rel="noopener noreferrer">
+                    {product.ctaLabel}
                     <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
+                  </a>
                 </Button>
-              )}
+              ) : null}
               {/* An unreleased product has nowhere to send people yet. */}
               {!isComingSoon && product.website && (
                 <a
@@ -96,22 +122,109 @@ export function ProductContent({ slug }: { slug: string }) {
                 </a>
               )}
             </div>
-            {/* The signup form carries its own microcopy, so this would repeat it. */}
-            {!isComingSoon && (
+            {/* Only rendered when the product actually has a trial to state
+                (products-data.ts `trialLine`) — e.g. Fe3dr has none, since it's
+                a marketplace you buy meals on, not a subscription. */}
+            {!isComingSoon && product.trialLine && (
               <p className="mt-4 text-sm text-muted-foreground">
-                No credit card required · 14-day free trial
+                {product.trialLine}
               </p>
+            )}
+
+            {product.listings && (
+              <div className="mt-8 space-y-4">
+                {product.vendorListing && (
+                  <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    For diners
+                  </p>
+                )}
+                <AppStoreBadges
+                  appName={product.title}
+                  listings={product.listings}
+                  placeholder="coming-soon"
+                />
+                {product.vendorListing && (
+                  <>
+                    <p className="pt-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                      For home cooks
+                    </p>
+                    <AppStoreBadges
+                      appName={`${product.title} for home cooks`}
+                      listings={{ android: product.vendorListing }}
+                      placeholder="coming-soon"
+                    />
+                  </>
+                )}
+              </div>
             )}
           </AnimateOnScroll>
         </div>
       </section>
+
+      {/* Product imagery — only products that have actually shipped get a
+          gallery here. See `media` on products-data.ts. */}
+      {product.media && (
+        <section className="border-b py-16 sm:py-24">
+          <div className="mx-auto max-w-7xl px-6 lg:px-8">
+            <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                {sectionNumbers.gallery} — See it live
+              </p>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                {product.title}, in the wild.
+              </h2>
+            </AnimateOnScroll>
+
+            {product.media.site && (
+              <AnimateOnScroll variant="fade-up" delay={0.05} className="mt-10">
+                <div className="overflow-hidden rounded-2xl border">
+                  <Image
+                    src={product.media.site.src}
+                    alt={product.media.site.alt}
+                    width={product.media.site.width}
+                    height={product.media.site.height}
+                    loading="lazy"
+                    className="h-auto w-full"
+                    sizes="(min-width: 1280px) 1152px, 100vw"
+                  />
+                </div>
+              </AnimateOnScroll>
+            )}
+
+            {product.media.screenshots && (
+              <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3">
+                {product.media.screenshots.map((shot, index) => (
+                  <AnimateOnScroll
+                    key={shot.src}
+                    variant="fade-up"
+                    delay={0.1 + index * 0.05}
+                    className={index === 0 ? "col-span-2 sm:col-span-1" : ""}
+                  >
+                    <div className="overflow-hidden rounded-2xl border">
+                      <Image
+                        src={shot.src}
+                        alt={shot.alt}
+                        width={shot.width}
+                        height={shot.height}
+                        loading="lazy"
+                        className="h-auto w-full"
+                        sizes="(min-width: 640px) 33vw, 50vw"
+                      />
+                    </div>
+                  </AnimateOnScroll>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Features */}
       <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              01 — Features
+              {sectionNumbers.features} — Features
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
               What&apos;s in the box.
@@ -149,7 +262,7 @@ export function ProductContent({ slug }: { slug: string }) {
           <div className="grid grid-cols-1 gap-x-8 gap-y-12 lg:grid-cols-12 lg:items-start">
             <AnimateOnScroll variant="fade-up" className="lg:col-span-6">
               <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                02 — Why {product.title}
+                {sectionNumbers.why} — Why {product.title}
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 Built for the job,
@@ -174,52 +287,7 @@ export function ProductContent({ slug }: { slug: string }) {
               delay={0.1}
               className="lg:col-span-5 lg:col-start-8"
             >
-              {product.pricing ? (
-              <div className="rounded-2xl border bg-card p-8">
-                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  Pricing
-                </p>
-                <div className="mt-6">
-                  {[
-                    {
-                      name: "Starter",
-                      note: "For individuals & small teams",
-                      price: product.pricing.starter,
-                    },
-                    {
-                      name: "Professional",
-                      note: "For growing businesses",
-                      price: product.pricing.professional,
-                    },
-                    {
-                      name: "Enterprise",
-                      note: "For large organizations",
-                      price: product.pricing.enterprise,
-                    },
-                  ].map((plan) => (
-                    <div
-                      key={plan.name}
-                      className="flex items-center justify-between border-t py-4 first:border-t-0"
-                    >
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {plan.name}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {plan.note}
-                        </p>
-                      </div>
-                      <p className="font-mono text-base font-medium text-foreground">
-                        {plan.price}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                <Button className="mt-8 w-full" asChild>
-                  <Link href="/contact">Get started today</Link>
-                </Button>
-              </div>
-              ) : (
+              {isComingSoon ? (
                 /* No prices to quote yet, so the slot states where the product
                    actually stands instead of leaving a hole in the layout. The
                    signup form lives once, in the header — repeating it here
@@ -261,7 +329,31 @@ export function ProductContent({ slug }: { slug: string }) {
                     you the day it launches — once, and nothing else.
                   </p>
                 </div>
-              )}
+              ) : pricingLink ? (
+                /* Pricing lives on the product's own site — it's the only
+                   place a figure can stay accurate. See PRICING_LINKS above. */
+                <div className="rounded-2xl border bg-card p-8">
+                  <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    Pricing
+                  </p>
+                  <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
+                    See current {product.title} pricing on its own site.
+                  </p>
+                  <Button className="mt-8 w-full" asChild>
+                    <a
+                      href={pricingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View {product.title} pricing
+                      <ArrowUpRight
+                        className="ml-1.5 h-4 w-4"
+                        aria-hidden="true"
+                      />
+                    </a>
+                  </Button>
+                </div>
+              ) : null}
             </AnimateOnScroll>
           </div>
         </div>
@@ -285,19 +377,33 @@ export function ProductContent({ slug }: { slug: string }) {
                   </h2>
                   {/* Deliberately not a second "we'll tell you when it ships" —
                       the waitlist above already owns that. This is the other
-                      reason someone reads this page: they want to talk to us. */}
+                      reason someone reads this page: they want to talk to us.
+                      For live products, the subtext is the product's own
+                      honest offer (products-data.ts `ctaSubtext`) rather than
+                      a generic trial claim that isn't true for every product. */}
                   <p className="mt-4 max-w-md text-base leading-relaxed text-primary-foreground/70">
                     {isComingSoon
                       ? "Tell us how you'd use it. Early conversations shape what we build first."
-                      : "Get started with a free trial — no credit card required."}
+                      : product.ctaSubtext}
                   </p>
                 </div>
-                <Button size="lg" variant="secondary" asChild>
-                  <Link href="/contact">
-                    {isComingSoon ? "Talk to us" : "Start your free trial"}
-                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </Button>
+                {isComingSoon ? (
+                  <Button size="lg" variant="secondary" asChild>
+                    <Link href="/contact">
+                      Talk to us
+                      <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                    </Link>
+                  </Button>
+                ) : product.website && product.ctaLabel ? (
+                  // Same reasoning as the header CTA: link to the product's
+                  // own site, not /contact, and use its real, honest label.
+                  <Button size="lg" variant="secondary" asChild>
+                    <a href={product.website} target="_blank" rel="noopener noreferrer">
+                      {product.ctaLabel}
+                      <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                    </a>
+                  </Button>
+                ) : null}
               </div>
             </div>
           </AnimateOnScroll>

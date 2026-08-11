@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import { Inter_Tight, JetBrains_Mono } from "next/font/google";
+import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
+import { team } from "./(marketing)/about/team";
+import { buildOrganizationSchema, buildWebSiteSchema } from "./seo/structured-data";
 import "./globals.css";
+
+const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain()}.`;
 
 
 const sans = Inter_Tight({
@@ -17,21 +22,22 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Tesserix - Commerce Infrastructure for Growing Businesses",
+    default: "Tesserix — Specialized SaaS, One Industry at a Time",
     template: "%s | Tesserix",
   },
-  description:
-    "Tesserix creates innovative SaaS solutions that empower businesses to thrive in the digital economy. Launch your marketplace in days with Mark8ly.",
+  description: SITE_DESCRIPTION,
   keywords: [
     "SaaS",
-    "marketplace platform",
-    "e-commerce",
-    "multi-tenant",
-    "business software",
+    "product studio",
     "Tesserix",
     "Mark8ly",
-    "online marketplace",
-    "commerce infrastructure",
+    "Fe3dr",
+    "Dwellm8",
+    "specialized software",
+    "commerce platform",
+    "home-cooked food delivery",
+    "rental management software",
+    "nutrition tracking",
   ],
   authors: [{ name: "Tesserix", url: "https://tesserix.app" }],
   creator: "Tesserix",
@@ -45,20 +51,18 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: "https://tesserix.app",
     siteName: "Tesserix",
-    title: "Tesserix - Commerce Infrastructure for Growing Businesses",
-    description:
-      "Launch your marketplace in days, not months. Tesserix provides enterprise-grade commerce infrastructure for growing businesses.",
+    title: "Tesserix — Specialized SaaS, One Industry at a Time",
+    description: SITE_DESCRIPTION,
     // og:image is supplied by app/opengraph-image.tsx (Next file convention) —
     // an on-domain generated PNG. Do not re-add an explicit `images` here, or
     // it overrides the generated route and can point at a 404 again.
   },
   twitter: {
     card: "summary_large_image",
-    title: "Tesserix - Commerce Infrastructure for Growing Businesses",
-    description:
-      "Launch your marketplace in days, not months. Enterprise-grade commerce infrastructure for growing businesses.",
-    site: "@tesserix",
-    creator: "@tesserix",
+    title: "Tesserix — Specialized SaaS, One Industry at a Time",
+    description: SITE_DESCRIPTION,
+    site: "@tesserix_app",
+    creator: "@tesserix_app",
     // twitter:image also comes from app/opengraph-image.tsx.
   },
   robots: {
@@ -84,44 +88,12 @@ export const metadata: Metadata = {
   },
 };
 
-// JSON-LD structured data for organization
-const organizationSchema = {
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  name: "Tesserix",
-  url: "https://tesserix.app",
-  logo: "https://tesserix.app/logo.png",
-  description:
-    "Tesserix creates innovative SaaS solutions that empower businesses to thrive in the digital economy.",
-  sameAs: [
-    "https://twitter.com/tesserix",
-    "https://linkedin.com/company/tesserix",
-    "https://github.com/tesserix",
-  ],
-  contactPoint: {
-    "@type": "ContactPoint",
-    telephone: "+1-555-123-4567",
-    contactType: "sales",
-    email: "sales@tesserix.app",
-  },
-};
-
-// JSON-LD for software product
-const softwareSchema = {
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  name: "Mark8ly",
-  applicationCategory: "BusinessApplication",
-  operatingSystem: "Web",
-  offers: {
-    "@type": "Offer",
-    price: "99",
-    priceCurrency: "USD",
-    priceValidUntil: "2025-12-31",
-  },
-  description:
-    "Multi-tenant marketplace platform enabling businesses to launch and scale their own branded online stores.",
-};
+// JSON-LD structured data for the company and site — see app/seo/structured-data.ts
+// for the verified facts and why price/rating are deliberately never emitted.
+// Per-product SoftwareApplication + BreadcrumbList schema lives on each
+// product detail page instead of a single hardcoded product here.
+const organizationSchema = buildOrganizationSchema(team);
+const websiteSchema = buildWebSiteSchema();
 
 export default function RootLayout({
   children,
@@ -142,7 +114,7 @@ export default function RootLayout({
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
-            __html: JSON.stringify(softwareSchema),
+            __html: JSON.stringify(websiteSchema),
           }}
         />
       </head>

@@ -3,36 +3,34 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
+import { principles } from "./principles";
+import { team } from "./team";
+import { TeamMemberCard } from "@/components/marketing/team-member-card";
+import type { Industry } from "../products/[slug]/products-data";
+import {
+  isComingSoon,
+  productSlugs,
+  products,
+} from "../products/[slug]/products-data";
 
-const principles = [
-  {
-    number: "01",
-    title: "Small on purpose",
-    body: "We're a small team by choice. Fewer layers means faster decisions — and the person fixing your bug is usually the person who wrote the feature.",
-  },
-  {
-    number: "02",
-    title: "Opinionated by default",
-    body: "Good tools make choices. We'd rather ship strong defaults you can override than a settings page with forty toggles nobody understands.",
-  },
-  {
-    number: "03",
-    title: "Ship fast, fix faster",
-    body: "We'd rather get something useful in your hands today than something perfect next year — and then improve it every single week.",
-  },
-  {
-    number: "04",
-    title: "Built to last",
-    body: "Fair prices for working software, so we're still here in ten years. No growth hacks, no dark patterns, no surprise pivots.",
-  },
-];
+/** Human-readable label for each industry the portfolio covers. */
+const industryLabels: Record<Industry, string> = {
+  commerce: "Commerce",
+  food: "Food",
+  rentals: "Rental management",
+  healthcare: "Healthcare",
+  nutrition: "Nutrition",
+};
 
-const focus = [
-  { area: "Commerce", product: "Mark8ly", status: "Live" },
-  { area: "Sports", product: "FanZone Battle Ground", status: "Live" },
-  { area: "Healthcare", product: "MediCare", status: "In development" },
-  { area: "Food", product: "HomeChef", status: "In development" },
-];
+// One row per product, in portfolio order, derived from products-data.ts —
+// the one place launch state and the industry mapping are recorded. This list
+// used to be hand-maintained and had drifted: it omitted Kora entirely while
+// the copy beside it promises one product per industry.
+const focus = productSlugs.map((slug) => ({
+  area: industryLabels[products[slug].industry],
+  product: products[slug].title,
+  status: isComingSoon(slug) ? "In development" : "Live",
+}));
 
 export function AboutContent() {
   return (
@@ -126,12 +124,40 @@ export function AboutContent() {
         </div>
       </section>
 
+      {/* Who we are */}
+      <section className="border-t py-16 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              02 — Who we are
+            </p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
+              The two people behind Tesserix.
+            </h2>
+          </AnimateOnScroll>
+
+          {/* `mt-14` matches "How we work" below, so the first card's hairline
+              reads as a section divider rather than an underline on the h2. */}
+          <div className="mt-14 max-w-3xl">
+            {team.map((member, index) => (
+              <AnimateOnScroll
+                key={member.slug}
+                variant="fade-up"
+                delay={index * 0.08}
+              >
+                <TeamMemberCard member={member} />
+              </AnimateOnScroll>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* How we work */}
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              02 — How we work
+              03 — How we work
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               The rules we run on.
@@ -172,7 +198,7 @@ export function AboutContent() {
             <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
               <div>
                 <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  03 — Next
+                  04 — Next
                 </p>
                 <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                   See what we&apos;re building.

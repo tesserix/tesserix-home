@@ -8,8 +8,8 @@ import {
   Building2,
   ChefHat,
   Hospital,
+  Salad,
   ShoppingBag,
-  Trophy,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -19,8 +19,11 @@ import {
   useTransform,
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll, Button } from "@tesserix/web";
-import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
+import { AnimateOnScroll, AppStoreBadges, Button } from "@tesserix/web";
+import {
+  isComingSoon,
+  products as productsData,
+} from "@/app/(marketing)/products/[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -35,96 +38,52 @@ interface Product {
   href: string;
   highlights: string[];
   iconClass: string;
+  listings?: Partial<
+    Record<"ios" | "android", { url: string; artworkSrc: string }>
+  >;
 }
 
-// Launch state is read from products-data.ts rather than repeated here; the
-// cards scroll-stack in order, so shipped products lead.
-const products: Product[] = (
-  [
-    {
-      slug: "mark8ly",
-      title: "Mark8ly",
-      tagline: "Quiet commerce for people who make things",
-      description:
-        "An editorial commerce platform for independent merchants. Launch your storefront in an afternoon, keep every sale, and look considered from day one.",
-      icon: ShoppingBag,
-      website: "mark8ly.com",
-      highlights: [
-        "90 days free, then from $19/mo",
-        "0% transaction fees",
-        "Custom domains",
-        "Quiet, considered theme system",
-      ],
-      iconClass: "text-chart-5",
-    },
-    {
-      slug: "homechef",
-      title: "HomeChef",
-      tagline: "Home cooks, real customers",
-      description:
-        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
-      icon: ChefHat,
-      website: "fe3dr.com",
-      highlights: [
-        "Chef onboarding & verification",
-        "Menu management",
-        "Real-time order tracking",
-        "Delivery coordination",
-      ],
-      iconClass: "text-warning",
-    },
-    {
-      slug: "dwellm8",
-      title: "Dwellm8",
-      tagline: "Rent, managed like a record",
-      description:
-        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, the whole tenancy from listing to move-out.",
-      icon: Building2,
-      website: "dwellm8.com",
-      highlights: [
-        "UPI rent, instant receipts",
-        "Maintenance & cost-sharing engine",
-        "Delegated portfolio management",
-        "Six mobile apps, one platform",
-      ],
-      iconClass: "text-primary",
-    },
-    {
-      slug: "medicare",
-      title: "MediCare",
-      tagline: "Hospital management without the bloat",
-      description:
-        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-      icon: Hospital,
-      highlights: [
-        "Electronic health records",
-        "Appointment scheduling",
-        "Pharmacy & inventory",
-        "HIPAA-aligned",
-      ],
-      iconClass: "text-info",
-    },
-    {
-      slug: "fanzone",
-      title: "FanZone Battle Ground",
-      tagline: "Your cricket opinions finally matter",
-      description:
-        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-      icon: Trophy,
-      highlights: [
-        "Live battle rooms",
-        "Match-by-match prediction markets",
-        "Ranked leaderboards",
-        "Hot takes & fan connect",
-      ],
-      iconClass: "text-success",
-    },
-  ] satisfies ReadonlyArray<Omit<Product, "status" | "href">>
-).map((p) => ({
-  ...p,
-  href: `/products/${p.slug}`,
-  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
-}));
+// Card accent colors are purely presentational and have no equivalent in
+// products-data.ts, so they stay here keyed by slug.
+const ICON_CLASSES: Record<string, string> = {
+  mark8ly: "text-chart-5",
+  fe3dr: "text-warning",
+  dwellm8: "text-primary",
+  medicare: "text-info",
+  kora: "text-success",
+};
+
+const ICONS: Record<string, LucideIcon> = {
+  mark8ly: ShoppingBag,
+  fe3dr: ChefHat,
+  dwellm8: Building2,
+  medicare: Hospital,
+  kora: Salad,
+};
+
+// Title, tagline, description, highlights and launch state all come from
+// products-data.ts — the single source of truth for product copy — rather
+// than being restated here, where they had drifted (Mark8ly alone had three
+// different descriptions across this file, products/page.tsx and
+// products-data.ts). Cards scroll-stack in the order products-data lists
+// them, which already leads with shipped products.
+const products: Product[] = Object.entries(productsData).map(
+  ([slug, product]) => ({
+    slug,
+    title: product.title,
+    tagline: product.tagline,
+    description: product.description,
+    icon: ICONS[slug] ?? ShoppingBag,
+    website: product.website?.replace(/^https?:\/\//, ""),
+    href: `/products/${slug}`,
+    highlights: product.highlights,
+    iconClass: ICON_CLASSES[slug] ?? "text-foreground",
+    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
+    // Only the customer-facing app belongs here — Fe3dr's vendor app is a
+    // second audience shown on the product detail page, not the homepage card.
+    listings: product.listings,
+  }),
+);
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {
@@ -228,6 +187,15 @@ function StackCard({
                 </Link>
               </Button>
             </div>
+
+            {product.listings && (
+              <AppStoreBadges
+                className="mt-6"
+                appName={product.title}
+                listings={product.listings}
+                placeholder="coming-soon"
+              />
+            )}
           </div>
 
           <div className="lg:border-l lg:pl-12">
@@ -281,7 +249,7 @@ export function ProductsGrid() {
             </div>
             <div className="lg:col-span-5 lg:col-start-8 lg:self-end">
               <p className="text-lg leading-relaxed text-muted-foreground">
-                We&apos;d rather make four products that do specific things
+                We&apos;d rather make five products that do specific things
                 well than one platform that does everything badly.
               </p>
             </div>

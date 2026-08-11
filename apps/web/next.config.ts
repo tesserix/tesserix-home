@@ -17,6 +17,31 @@ const nextConfig: NextConfig = {
   // "Unknown module type" on its src/index.ts.
   transpilePackages: ['@tesserix/otto-widget'],
 
+  async redirects() {
+    return [
+      {
+        source: "/products/homechef",
+        destination: "/products/fe3dr",
+        permanent: true,
+      },
+      {
+        source: "/products/fanzone",
+        destination: "/products",
+        permanent: true,
+      },
+      {
+        source: "/launch",
+        destination: "/products",
+        permanent: true,
+      },
+      {
+        source: "/launch/:slug",
+        destination: "/products",
+        permanent: true,
+      },
+    ];
+  },
+
   async headers() {
     const cspDirectives = [
       "default-src 'self'",

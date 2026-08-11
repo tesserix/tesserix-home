@@ -205,9 +205,10 @@ export default function ContactPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="mark8ly">Mark8ly</SelectItem>
-                        <SelectItem value="fanzone">FanZone</SelectItem>
+                        <SelectItem value="fe3dr">Fe3dr</SelectItem>
+                        <SelectItem value="dwellm8">Dwellm8</SelectItem>
                         <SelectItem value="medicare">MediCare</SelectItem>
-                        <SelectItem value="homechef">HomeChef</SelectItem>
+                        <SelectItem value="kora">Kora</SelectItem>
                         <SelectItem value="other">
                           Other / General inquiry
                         </SelectItem>

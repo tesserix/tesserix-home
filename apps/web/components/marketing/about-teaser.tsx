@@ -11,16 +11,32 @@ import {
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 import { AnimateOnScroll, Button } from "@tesserix/web";
+import {
+  industryListExcluding,
+  isComingSoon,
+  productSlugs,
+  products,
+} from "@/app/(marketing)/products/[slug]/products-data";
 
-const STATEMENT =
-  "Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for healthcare, food, and sport — each product designed to solve one problem well, not to check a feature list.";
+const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for ${industryListExcluding("commerce")} — each product designed to solve one problem well, not to check a feature list.`;
 
-const roadmap = [
-  { name: "Mark8ly", note: "Editorial commerce", status: "Live" },
-  { name: "FanZone", note: "Cricket communities", status: "Live" },
-  { name: "MediCare", note: "Clinic operations", status: "In development" },
-  { name: "HomeChef", note: "Home-cooked delivery", status: "In development" },
-];
+/** Short editorial gloss per product; names and launch state come from data. */
+const roadmapNotes: Record<string, string> = {
+  mark8ly: "Editorial commerce",
+  fe3dr: "Home-cooked delivery",
+  dwellm8: "Rental management",
+  medicare: "Clinic operations",
+  kora: "AI nutrition tracking",
+};
+
+// Derived from products-data.ts rather than restated here: this list had
+// drifted and showed Dwellm8 as "Live" while the product stack directly above
+// it on the same page showed the same product as "Coming soon".
+const roadmap = productSlugs.map((slug) => ({
+  name: products[slug].title,
+  note: roadmapNotes[slug] ?? "",
+  status: isComingSoon(slug) ? "In development" : "Live",
+}));
 
 interface WordProps {
   word: string;
