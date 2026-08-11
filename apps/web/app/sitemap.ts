@@ -1,5 +1,4 @@
 import type { MetadataRoute } from "next";
-import { getLaunchReleases } from "./(marketing)/launch/launch-config";
 import { productSlugs } from "./(marketing)/products/[slug]/products-data";
 
 export default function sitemap(): MetadataRoute.Sitemap {
@@ -12,23 +11,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.9,
   }));
 
-  const launchEntries: MetadataRoute.Sitemap = [
-    {
-      url: `${baseUrl}/launch`,
-      lastModified: new Date(),
-      changeFrequency: "daily" as const,
-      priority: 0.9,
-    },
-    ...getLaunchReleases().map((release) => ({
-      url: `${baseUrl}/launch/${release.slug}`,
-      lastModified: new Date(),
-      changeFrequency: "daily" as const,
-      priority: 0.8,
-    })),
-  ];
-
   return [
-    ...launchEntries,
     {
       url: baseUrl,
       lastModified: new Date(),
