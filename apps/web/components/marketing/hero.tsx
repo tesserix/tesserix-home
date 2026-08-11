@@ -54,7 +54,10 @@ const stats = [
     value: String(totalProductCount).padStart(2, "0"),
     label: "Industries, one each",
   },
-  { value: "0%", label: "Transaction fees, ever" },
+  // Scoped to Mark8ly by name — Fe3dr, the other live product, does charge
+  // fees (platform fee + chef commission), so "0% transaction fees" isn't
+  // true portfolio-wide.
+  { value: "0%", label: "Mark8ly transaction fees, ever" },
 ];
 
 const marqueeItems = productSlugs.map((slug) => productTitle(slug));
