@@ -1,18 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Mail } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { principles } from "./principles";
+import { principles } from "../about/principles";
 
-const focus = [
-  { area: "Commerce", product: "Mark8ly", status: "Live" },
-  { area: "Sports", product: "FanZone Battle Ground", status: "Live" },
-  { area: "Healthcare", product: "MediCare", status: "In development" },
-  { area: "Food", product: "HomeChef", status: "In development" },
+const lookingFor = [
+  "People who'd rather ship something small and useful than debate it for a quarter.",
+  "A bias toward ownership — you notice what's broken and you fix it, without waiting to be asked.",
+  "Craft. We care as much about the code nobody sees as the interface everybody does.",
+  "Comfort with a small team's pace: fewer meetings, more building, direct feedback.",
 ];
 
-export function AboutContent() {
+export function CareersContent() {
   return (
     <div>
       {/* Header */}
@@ -24,87 +24,43 @@ export function AboutContent() {
         <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-3xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              About
+              Careers
             </p>
             <h1 className="mt-4 text-4xl font-semibold tracking-tight text-foreground sm:text-6xl">
-              A small studio
+              No open roles
               <br />
-              <span className="text-muted-foreground">
-                with strong opinions.
-              </span>
+              <span className="text-muted-foreground">right now.</span>
             </h1>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
-              Tesserix builds specialized SaaS products — one industry at a
-              time. No platform play, no feature checklists. Just focused
-              software for people who are tired of tools that almost fit.
+              Tesserix is a two-person studio. We&apos;re not hiring at the
+              moment — but we&apos;re always glad to hear from people who
+              think the way we build software.
             </p>
           </AnimateOnScroll>
         </div>
       </section>
 
-      {/* Why we exist */}
+      {/* What Tesserix is */}
       <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              01 — Why we exist
+              01 — What we are
             </p>
             <p className="mt-8 max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
-              Too many businesses choose between expensive enterprise suites
-              and flimsy consumer tools.{" "}
+              Two people, building specialized SaaS products one industry at
+              a time.{" "}
               <span className="text-muted-foreground">
-                We build the missing middle — software that's specialized,
-                affordable, and genuinely good at the one job it was hired to
-                do.
+                No platform play, no headcount targets, no roadmap built
+                around hiring. Just focused software and the two of us
+                building it.
               </span>
             </p>
           </AnimateOnScroll>
-
-          <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-4 lg:grid-cols-12">
-            <div className="lg:col-span-5">
-              <p className="leading-relaxed text-muted-foreground">
-                We started with Mark8ly because launching an online store
-                shouldn&apos;t require a developer or a fortune. Each product
-                since follows the same recipe: pick one industry, learn it
-                deeply, and build the tool we&apos;d want if it were our
-                business.
-              </p>
-            </div>
-            <div className="lg:col-span-6 lg:col-start-7">
-              <dl>
-                {focus.map((item) => (
-                  <div
-                    key={item.area}
-                    className="flex items-baseline justify-between gap-4 border-t py-4"
-                  >
-                    <dt className="flex items-baseline gap-3">
-                      <span className="font-mono text-xs uppercase tracking-[0.15em] text-muted-foreground">
-                        {item.area}
-                      </span>
-                      <span className="font-semibold text-foreground">
-                        {item.product}
-                      </span>
-                    </dt>
-                    <dd className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          item.status === "Live"
-                            ? "bg-success"
-                            : "bg-muted-foreground/50"
-                        }`}
-                        aria-hidden="true"
-                      />
-                      {item.status}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          </div>
         </div>
       </section>
 
-      {/* How we work */}
+      {/* How we work — reused principles */}
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
@@ -143,28 +99,70 @@ export function AboutContent() {
         </div>
       </section>
 
-      {/* CTA */}
+      {/* What we look for */}
+      <section className="border-t py-16 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              03 — What we look for
+            </p>
+            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
+              If a role opens, this is who we&apos;d want.
+            </h2>
+          </AnimateOnScroll>
+
+          <div className="mt-14 max-w-3xl">
+            <dl>
+              {lookingFor.map((item, index) => (
+                <div
+                  key={item}
+                  className="flex items-baseline gap-4 border-t py-4 first:border-t-0"
+                >
+                  <dt
+                    aria-hidden="true"
+                    className="font-mono text-xs text-muted-foreground"
+                  >
+                    {String(index + 1).padStart(2, "0")}
+                  </dt>
+                  <dd className="leading-relaxed text-muted-foreground">
+                    {item}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      {/* Write-in CTA */}
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up">
             <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
               <div>
                 <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  03 — Next
+                  04 — Get in touch
                 </p>
                 <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                  See what we&apos;re building.
+                  Nothing open — write to us anyway.
                 </h2>
+                <p className="mt-4 max-w-xl leading-relaxed text-muted-foreground">
+                  If you think you&apos;d be a good fit for how we build,
+                  tell us why. No form to fill out — just an email.
+                </p>
               </div>
               <div className="flex flex-wrap gap-4">
                 <Button size="lg" asChild>
-                  <Link href="/products">
-                    Explore the products
-                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
+                  <a href="mailto:sales@tesserix.app">
+                    <Mail className="mr-2 h-4 w-4" aria-hidden="true" />
+                    sales@tesserix.app
+                  </a>
                 </Button>
                 <Button size="lg" variant="ghost" asChild>
-                  <Link href="/contact">Get in touch</Link>
+                  <Link href="/about">
+                    About Tesserix
+                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                  </Link>
                 </Button>
               </div>
             </div>
