@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Terms of Service",
   description:
     "The terms that govern your use of Tesserix's products, including Mark8ly and Fe3dr.",
+  alternates: {
+    canonical: "/terms",
+  },
 };
 
 export default function TermsPage() {

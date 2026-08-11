@@ -5,6 +5,9 @@ export const metadata: Metadata = {
   title: "Careers",
   description:
     "Tesserix is a two-person studio with no open roles right now. Here's how we work, what we look for, and how to reach us.",
+  alternates: {
+    canonical: "/careers",
+  },
 };
 
 export default function CareersPage() {

@@ -4,6 +4,9 @@ import { LAST_UPDATED, LegalPage, LegalSection } from "../legal/legal-page";
 export const metadata: Metadata = {
   title: "Cookie Policy",
   description: "How Tesserix uses cookies and similar technologies.",
+  alternates: {
+    canonical: "/cookies",
+  },
 };
 
 export default function CookiesPage() {
