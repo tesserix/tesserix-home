@@ -16,6 +16,14 @@ import {
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { products } from "./products-data";
 
+// Pricing lives on each product's own site — the only place it can stay
+// accurate (Mark8ly's is location-based, so no static figure here would be
+// correct for every visitor). Only products with a public pricing page get
+// a link out; the rest render nothing in that slot.
+const PRICING_LINKS: Record<string, string> = {
+  mark8ly: "https://mark8ly.com/#pricing",
+};
+
 export function ProductContent({ slug }: { slug: string }) {
   const product = products[slug];
 
@@ -24,6 +32,7 @@ export function ProductContent({ slug }: { slug: string }) {
   }
 
   const isComingSoon = product.status === "coming-soon";
+  const pricingLink = PRICING_LINKS[slug];
 
   return (
     <div>
@@ -174,52 +183,7 @@ export function ProductContent({ slug }: { slug: string }) {
               delay={0.1}
               className="lg:col-span-5 lg:col-start-8"
             >
-              {product.pricing ? (
-              <div className="rounded-2xl border bg-card p-8">
-                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  Pricing
-                </p>
-                <div className="mt-6">
-                  {[
-                    {
-                      name: "Starter",
-                      note: "For individuals & small teams",
-                      price: product.pricing.starter,
-                    },
-                    {
-                      name: "Professional",
-                      note: "For growing businesses",
-                      price: product.pricing.professional,
-                    },
-                    {
-                      name: "Enterprise",
-                      note: "For large organizations",
-                      price: product.pricing.enterprise,
-                    },
-                  ].map((plan) => (
-                    <div
-                      key={plan.name}
-                      className="flex items-center justify-between border-t py-4 first:border-t-0"
-                    >
-                      <div>
-                        <p className="font-medium text-foreground">
-                          {plan.name}
-                        </p>
-                        <p className="text-sm text-muted-foreground">
-                          {plan.note}
-                        </p>
-                      </div>
-                      <p className="font-mono text-base font-medium text-foreground">
-                        {plan.price}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                <Button className="mt-8 w-full" asChild>
-                  <Link href="/contact">Get started today</Link>
-                </Button>
-              </div>
-              ) : (
+              {isComingSoon ? (
                 /* No prices to quote yet, so the slot states where the product
                    actually stands instead of leaving a hole in the layout. The
                    signup form lives once, in the header — repeating it here
@@ -261,7 +225,31 @@ export function ProductContent({ slug }: { slug: string }) {
                     you the day it launches — once, and nothing else.
                   </p>
                 </div>
-              )}
+              ) : pricingLink ? (
+                /* Pricing lives on the product's own site — it's the only
+                   place a figure can stay accurate. See PRICING_LINKS above. */
+                <div className="rounded-2xl border bg-card p-8">
+                  <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    Pricing
+                  </p>
+                  <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
+                    See current {product.title} pricing on its own site.
+                  </p>
+                  <Button className="mt-8 w-full" asChild>
+                    <a
+                      href={pricingLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View {product.title} pricing
+                      <ArrowUpRight
+                        className="ml-1.5 h-4 w-4"
+                        aria-hidden="true"
+                      />
+                    </a>
+                  </Button>
+                </div>
+              ) : null}
             </AnimateOnScroll>
           </div>
         </div>
