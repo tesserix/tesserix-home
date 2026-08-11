@@ -96,14 +96,19 @@ export function ProductContent({ slug }: { slug: string }) {
             <div className="mt-10 flex flex-wrap items-center gap-4">
               {isComingSoon ? (
                 <WaitlistForm slug={slug} title={product.title} />
-              ) : (
+              ) : product.website && product.ctaLabel ? (
+                // The primary CTA links to the product's own site — where the
+                // real signup/ordering flow lives — rather than /contact, and
+                // its label is authored per product in products-data.ts so it
+                // never promises an offer (e.g. a trial) the product doesn't
+                // actually have.
                 <Button size="lg" asChild>
-                  <Link href="/contact">
-                    Start free trial
+                  <a href={product.website} target="_blank" rel="noopener noreferrer">
+                    {product.ctaLabel}
                     <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
+                  </a>
                 </Button>
-              )}
+              ) : null}
               {/* An unreleased product has nowhere to send people yet. */}
               {!isComingSoon && product.website && (
                 <a
@@ -117,10 +122,12 @@ export function ProductContent({ slug }: { slug: string }) {
                 </a>
               )}
             </div>
-            {/* The signup form carries its own microcopy, so this would repeat it. */}
-            {!isComingSoon && (
+            {/* Only rendered when the product actually has a trial to state
+                (products-data.ts `trialLine`) — e.g. Fe3dr has none, since it's
+                a marketplace you buy meals on, not a subscription. */}
+            {!isComingSoon && product.trialLine && (
               <p className="mt-4 text-sm text-muted-foreground">
-                No credit card required · 14-day free trial
+                {product.trialLine}
               </p>
             )}
 
@@ -370,19 +377,33 @@ export function ProductContent({ slug }: { slug: string }) {
                   </h2>
                   {/* Deliberately not a second "we'll tell you when it ships" —
                       the waitlist above already owns that. This is the other
-                      reason someone reads this page: they want to talk to us. */}
+                      reason someone reads this page: they want to talk to us.
+                      For live products, the subtext is the product's own
+                      honest offer (products-data.ts `ctaSubtext`) rather than
+                      a generic trial claim that isn't true for every product. */}
                   <p className="mt-4 max-w-md text-base leading-relaxed text-primary-foreground/70">
                     {isComingSoon
                       ? "Tell us how you'd use it. Early conversations shape what we build first."
-                      : "Get started with a free trial — no credit card required."}
+                      : product.ctaSubtext}
                   </p>
                 </div>
-                <Button size="lg" variant="secondary" asChild>
-                  <Link href="/contact">
-                    {isComingSoon ? "Talk to us" : "Start your free trial"}
-                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </Button>
+                {isComingSoon ? (
+                  <Button size="lg" variant="secondary" asChild>
+                    <Link href="/contact">
+                      Talk to us
+                      <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                    </Link>
+                  </Button>
+                ) : product.website && product.ctaLabel ? (
+                  // Same reasoning as the header CTA: link to the product's
+                  // own site, not /contact, and use its real, honest label.
+                  <Button size="lg" variant="secondary" asChild>
+                    <a href={product.website} target="_blank" rel="noopener noreferrer">
+                      {product.ctaLabel}
+                      <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                    </a>
+                  </Button>
+                ) : null}
               </div>
             </div>
           </AnimateOnScroll>
