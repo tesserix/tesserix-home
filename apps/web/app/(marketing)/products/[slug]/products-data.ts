@@ -27,6 +27,14 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+interface ProductMediaImage {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  orientation: "landscape" | "portrait";
+}
+
 export const products: Record<
   string,
   {
@@ -59,6 +67,19 @@ export const products: Record<
      * as a separate optional field rather than widening the platform union.
      */
     vendorListing?: { url: string; artworkSrc: string };
+    /**
+     * Real product imagery for the detail page. Only populated for products
+     * that have actually shipped (`status: "available"`) — a mockup for
+     * unreleased software erodes trust on a due-diligence read, so
+     * coming-soon products must leave this undefined rather than get a
+     * placeholder.
+     */
+    media?: {
+      /** A capture of the live marketing site or storefront, landscape. */
+      site?: ProductMediaImage;
+      /** Portrait phone screenshots, shown as a row of two or three. */
+      screenshots?: ProductMediaImage[];
+    };
   }
 > = {
   mark8ly: {
@@ -124,6 +145,15 @@ export const products: Record<
         artworkSrc: "/badges/google-play-badge.png",
       },
     },
+    media: {
+      site: {
+        src: "/screens/mark8ly-storefront.jpg",
+        alt: "The Mark8ly marketing homepage, headlined “A storefront worth opening,” with a live demo of a working store and checkout below the fold",
+        width: 1568,
+        height: 682,
+        orientation: "landscape",
+      },
+    },
   },
   fe3dr: {
     title: "Fe3dr",
@@ -177,6 +207,38 @@ export const products: Record<
     vendorListing: {
       url: "https://play.google.com/store/apps/details?id=com.tesserix.homechef.vendor",
       artworkSrc: "/badges/google-play-badge.png",
+    },
+    media: {
+      site: {
+        src: "/screens/fe3dr-web.jpg",
+        alt: "The Fe3dr homepage, headlined “Ghar ka khana, delivered,” showing home-cooked dishes on offer and a live delivery tracker",
+        width: 1568,
+        height: 682,
+        orientation: "landscape",
+      },
+      screenshots: [
+        {
+          src: "/screens/fe3dr-app-browse.png",
+          alt: "The Fe3dr app home screen, showing nearby home kitchens by cuisine with an active order tracked at the bottom",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/fe3dr-app-chef-menu.png",
+          alt: "A home kitchen's menu inside the Fe3dr app, showing dish photos, dietary tags and prices",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+        {
+          src: "/screens/fe3dr-app-orders.png",
+          alt: "The Fe3dr app order history screen, listing past and pending orders with their status and price",
+          width: 1080,
+          height: 1920,
+          orientation: "portrait",
+        },
+      ],
     },
   },
   dwellm8: {

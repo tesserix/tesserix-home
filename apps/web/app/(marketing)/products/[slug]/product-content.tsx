@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { ArrowRight, ArrowUpRight, Check } from "lucide-react";
 import {
@@ -142,6 +143,64 @@ export function ProductContent({ slug }: { slug: string }) {
           </AnimateOnScroll>
         </div>
       </section>
+
+      {/* Product imagery — only products that have actually shipped get a
+          gallery here. See `media` on products-data.ts. */}
+      {product.media && (
+        <section className="border-b py-16 sm:py-24">
+          <div className="mx-auto max-w-7xl px-6 lg:px-8">
+            <AnimateOnScroll variant="fade-up" className="max-w-2xl">
+              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                See it live
+              </p>
+              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                {product.title}, in the wild.
+              </h2>
+            </AnimateOnScroll>
+
+            {product.media.site && (
+              <AnimateOnScroll variant="fade-up" delay={0.05} className="mt-10">
+                <div className="overflow-hidden rounded-2xl border">
+                  <Image
+                    src={product.media.site.src}
+                    alt={product.media.site.alt}
+                    width={product.media.site.width}
+                    height={product.media.site.height}
+                    loading="lazy"
+                    className="h-auto w-full"
+                    sizes="(min-width: 1280px) 1152px, 100vw"
+                  />
+                </div>
+              </AnimateOnScroll>
+            )}
+
+            {product.media.screenshots && (
+              <div className="mt-8 grid grid-cols-2 gap-6 sm:grid-cols-3">
+                {product.media.screenshots.map((shot, index) => (
+                  <AnimateOnScroll
+                    key={shot.src}
+                    variant="fade-up"
+                    delay={0.1 + index * 0.05}
+                    className={index === 0 ? "col-span-2 sm:col-span-1" : ""}
+                  >
+                    <div className="overflow-hidden rounded-2xl border">
+                      <Image
+                        src={shot.src}
+                        alt={shot.alt}
+                        width={shot.width}
+                        height={shot.height}
+                        loading="lazy"
+                        className="h-auto w-full"
+                        sizes="(min-width: 640px) 33vw, 50vw"
+                      />
+                    </div>
+                  </AnimateOnScroll>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Features */}
       <section className="py-16 sm:py-24">
