@@ -53,8 +53,8 @@ export function ContactCTA() {
                 src="/tesseract-render.jpg"
                 alt=""
                 aria-hidden="true"
-                width={1200}
-                height={669}
+                width={900}
+                height={900}
                 className="relative z-10 order-last w-full rounded-[14px] opacity-95 xl:order-none"
                 style={{
                   maskImage:
