@@ -7,9 +7,9 @@ import { principles } from "./principles";
 
 const focus = [
   { area: "Commerce", product: "Mark8ly", status: "Live" },
-  { area: "Sports", product: "FanZone Battle Ground", status: "Live" },
+  { area: "Rental management", product: "Dwellm8", status: "Live" },
+  { area: "Food", product: "Fe3dr", status: "Live" },
   { area: "Healthcare", product: "MediCare", status: "In development" },
-  { area: "Food", product: "HomeChef", status: "In development" },
 ];
 
 export function AboutContent() {

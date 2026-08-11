@@ -17,9 +17,9 @@ const STATEMENT =
 
 const roadmap = [
   { name: "Mark8ly", note: "Editorial commerce", status: "Live" },
-  { name: "FanZone", note: "Cricket communities", status: "Live" },
+  { name: "Fe3dr", note: "Home-cooked delivery", status: "Live" },
+  { name: "Dwellm8", note: "Rental management", status: "Live" },
   { name: "MediCare", note: "Clinic operations", status: "In development" },
-  { name: "HomeChef", note: "Home-cooked delivery", status: "In development" },
 ];
 
 interface WordProps {
