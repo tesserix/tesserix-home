@@ -1,24 +1,10 @@
 import type { Metadata } from "next";
-import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
 import { team } from "./(marketing)/about/team";
 import { buildOrganizationSchema, buildWebSiteSchema } from "./seo/structured-data";
 import "./globals.css";
 
 const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain()}.`;
-
-
-const sans = Inter_Tight({
-  subsets: ["latin"],
-  variable: "--font-app-sans",
-  display: "swap",
-});
-
-const mono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-app-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: {
@@ -103,7 +89,7 @@ export default function RootLayout({
   // Prefill the support widget with the logged-in admin's identity (skips
   // OTP); anonymous visitors get the email-verification flow.
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    <html lang="en">
       <head>
         <script
           type="application/ld+json"
