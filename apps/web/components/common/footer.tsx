@@ -32,13 +32,49 @@ const footerNavigation = {
   ],
 };
 
+/** The mono uppercase eyebrow used for every label on the marketing site. */
+const EYEBROW_CLASS =
+  "font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground";
+
+interface FooterColumnProps {
+  title: string;
+  items: ReadonlyArray<{ name: string; href: string }>;
+}
+
+function FooterColumn({ title, items }: FooterColumnProps) {
+  return (
+    <div>
+      <h3 className={EYEBROW_CLASS}>{title}</h3>
+      <ul role="list" className="mt-5 space-y-3">
+        {items.map((item) => (
+          <li key={item.name}>
+            <Link
+              href={item.href}
+              className="text-sm text-foreground/80 transition-colors hover:text-foreground"
+            >
+              {item.name}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function Footer() {
+  // Only launched products with a real app store presence get a badge here.
+  // Fe3dr's vendor (home-cook) app is a second audience surfaced on the Fe3dr
+  // product page, not the footer.
+  const listedProducts = Object.entries(products).filter(
+    ([, product]) => product.listings,
+  );
+
   return (
     <footer className="border-t bg-muted/30" role="contentinfo">
-      <div className="mx-auto max-w-7xl px-6 py-12 lg:px-8">
-        <div className="xl:grid xl:grid-cols-3 xl:gap-8">
+      <div className="mx-auto max-w-7xl px-6 py-16 lg:px-8">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-14 lg:grid-cols-12">
           {/* Brand */}
-          <div className="space-y-4">
+          <div className="lg:col-span-4">
             <Image
               src="/logo.png"
               alt="Tesserix"
@@ -46,132 +82,75 @@ export function Footer() {
               height={28}
               sizes="116px"
             />
-            <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
-              A product studio building specialized software — one industry at a time. {industryListPlain()}.
+            <p className="mt-5 max-w-xs text-sm leading-relaxed text-muted-foreground">
+              A product studio building specialized software — one industry at
+              a time. {industryListPlain()}.
             </p>
             {/* Newsletter signup */}
-            <div className="pt-4">
-              <p className="text-sm font-medium text-foreground mb-2">Stay updated</p>
-              <form className="flex gap-2 max-w-xs">
+            <div className="mt-8">
+              <p className={EYEBROW_CLASS}>Stay updated</p>
+              <form className="mt-4 flex max-w-xs gap-2">
                 <Input
                   type="email"
                   placeholder="Enter your email"
                   className="flex-1"
                   aria-label="Email for newsletter"
                 />
-                <Button
-                  type="submit"
-                  size="sm"
-                >
+                <Button type="submit" size="sm">
                   Subscribe
                 </Button>
               </form>
             </div>
-            {/* Only launched products with a real app store presence get a
-                badge row here. Fe3dr's vendor (home-cook) app is a second
-                audience surfaced on the Fe3dr product page, not the footer. */}
-            <div className="space-y-4 pt-4">
-              {Object.entries(products)
-                .filter(([, product]) => product.listings)
-                .map(([slug, product]) => (
-                  <div key={slug}>
-                    <p className="mb-2 text-sm font-medium text-foreground">
-                      Get {product.title}
-                    </p>
-                    <AppStoreBadges
-                      appName={product.title}
-                      listings={product.listings!}
-                      placeholder="coming-soon"
-                      compact
-                    />
-                  </div>
-                ))}
-            </div>
           </div>
 
           {/* Navigation */}
-          <div className="mt-16 grid grid-cols-2 gap-8 xl:col-span-2 xl:mt-0 sm:grid-cols-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Products</h3>
-              <ul role="list" className="mt-4 space-y-3">
-                {footerNavigation.products.map((item) => (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {item.name}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Company</h3>
-              <ul role="list" className="mt-4 space-y-3">
-                {footerNavigation.company.map((item) => (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {item.name}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Resources</h3>
-              <ul role="list" className="mt-4 space-y-3">
-                {footerNavigation.resources.map((item) => (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {item.name}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Legal</h3>
-              <ul role="list" className="mt-4 space-y-3">
-                {footerNavigation.legal.map((item) => (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {item.name}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-12 sm:grid-cols-4 lg:col-span-7 lg:col-start-6">
+            <FooterColumn title="Products" items={footerNavigation.products} />
+            <FooterColumn title="Company" items={footerNavigation.company} />
+            <FooterColumn
+              title="Resources"
+              items={footerNavigation.resources}
+            />
+            <FooterColumn title="Legal" items={footerNavigation.legal} />
           </div>
         </div>
 
-        {/* Legal entity */}
-        <div className="mt-12 border-t pt-8">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Tesserix Pty Ltd &middot; ACN 694 070 865 &middot; ABN 59 694 070
-            865 &middot; 5 Tagu Place, Kings Park NSW 2148, Australia
-          </p>
-        </div>
+        {/* App store badges — a full-width band rather than a tall stack in the
+            brand column, which left the rest of the footer visually empty. */}
+        {listedProducts.length > 0 && (
+          <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-8 border-t pt-10 sm:grid-cols-2 lg:grid-cols-3">
+            {listedProducts.map(([slug, product]) => (
+              <div key={slug}>
+                <p className={EYEBROW_CLASS}>Get {product.title}</p>
+                <AppStoreBadges
+                  className="mt-4"
+                  appName={product.title}
+                  listings={product.listings!}
+                  placeholder="coming-soon"
+                  compact
+                />
+              </div>
+            ))}
+          </div>
+        )}
 
-        {/* Copyright */}
-        <div className="mt-6 border-t pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <p className="text-sm text-muted-foreground">
-            &copy; {new Date().getFullYear()} Tesserix. All rights reserved.
-          </p>
-          <div className="flex gap-6">
+        {/* Legal entity, copyright and socials share one hairline so the
+            footer ends on a single rule instead of three stacked ones. */}
+        <div className="mt-12 flex flex-col gap-6 border-t pt-8 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+              Tesserix Pty Ltd &middot; ACN 694 070 865 &middot; ABN 59 694 070
+              865 &middot; 5 Tagu Place, Kings Park NSW 2148, Australia
+            </p>
+            <p className="text-xs text-muted-foreground">
+              &copy; {new Date().getFullYear()} Tesserix. All rights reserved.
+            </p>
+          </div>
+          <div className="flex shrink-0 gap-6">
             <a
               href="https://x.com/tesserix_app"
               className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Twitter"
+              aria-label="Tesserix on X"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -182,7 +161,7 @@ export function Footer() {
             <a
               href="https://github.com/tesserix"
               className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="GitHub"
+              aria-label="Tesserix on GitHub"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -193,7 +172,7 @@ export function Footer() {
             <a
               href="https://au.linkedin.com/company/tesserix-pty-ltd"
               className="text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="LinkedIn"
+              aria-label="Tesserix on LinkedIn"
               target="_blank"
               rel="noopener noreferrer"
             >
