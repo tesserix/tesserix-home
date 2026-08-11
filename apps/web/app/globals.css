@@ -177,7 +177,7 @@
   --chart-2: #4ade80;
   --chart-3: #fbbf24;
   --chart-4: #6aa5ff;
-  --chart-5: #a5b4fc;
+  --chart-5: #58d6e8;
 
   --sidebar: #0b0e14;
   --sidebar-foreground: #cfd4de;
@@ -211,20 +211,6 @@
     letter-spacing: -0.011em;
     @apply bg-background text-foreground antialiased;
   }
-}
-
-/* Marketing page motion */
-@keyframes marquee-scroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
-}
-
-.animate-marquee {
-  animation: marquee-scroll 32s linear infinite;
 }
 
 /* Sidebar scrollbar */
