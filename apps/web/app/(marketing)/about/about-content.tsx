@@ -37,10 +37,6 @@ export function AboutContent() {
     <div>
       {/* Header */}
       <section className="relative overflow-hidden border-b">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
-        />
         <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-3xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -66,8 +62,9 @@ export function AboutContent() {
       <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              01 — Why we exist
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              Why we exist
             </p>
             <p className="mt-8 max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
               Too many businesses choose between expensive enterprise suites
@@ -128,8 +125,9 @@ export function AboutContent() {
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              02 — Who we are
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              Who we are
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               The two people behind Tesserix.
@@ -156,8 +154,9 @@ export function AboutContent() {
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              03 — How we work
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              How we work
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               The rules we run on.
@@ -197,8 +196,9 @@ export function AboutContent() {
           <AnimateOnScroll variant="fade-up">
             <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
               <div>
-                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  04 — Next
+                <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+                  Next
                 </p>
                 <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                   See what we&apos;re building.

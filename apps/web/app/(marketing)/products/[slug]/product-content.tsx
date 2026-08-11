@@ -36,24 +36,10 @@ export function ProductContent({ slug }: { slug: string }) {
   const isComingSoon = product.status === "coming-soon";
   const pricingLink = PRICING_LINKS[slug];
 
-  // Section eyebrows are numbered positionally, as they are on /about and
-  // /careers. Only shipped products have a gallery, so the numbering has to be
-  // computed rather than hard-coded — otherwise the gallery sits unnumbered
-  // above "01 — Features" and breaks the sequence on exactly those pages.
-  const sectionNumbers = {
-    gallery: product.media ? "01" : null,
-    features: product.media ? "02" : "01",
-    why: product.media ? "03" : "02",
-  };
-
   return (
     <div>
       {/* Header */}
       <section className="relative overflow-hidden border-b">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
-        />
         <div className="relative mx-auto max-w-7xl px-6 py-12 sm:py-16 lg:px-8">
           <Breadcrumb className="mb-10">
             <BreadcrumbList>
@@ -167,8 +153,9 @@ export function ProductContent({ slug }: { slug: string }) {
         <section className="border-b py-16 sm:py-24">
           <div className="mx-auto max-w-7xl px-6 lg:px-8">
             <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                {sectionNumbers.gallery} — See it live
+              <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+                See it live
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 {product.title}, in the wild.
@@ -223,8 +210,9 @@ export function ProductContent({ slug }: { slug: string }) {
       <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              {sectionNumbers.features} — Features
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              Features
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
               What&apos;s in the box.
@@ -261,8 +249,9 @@ export function ProductContent({ slug }: { slug: string }) {
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="grid grid-cols-1 gap-x-8 gap-y-12 lg:grid-cols-12 lg:items-start">
             <AnimateOnScroll variant="fade-up" className="lg:col-span-6">
-              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                {sectionNumbers.why} — Why {product.title}
+              <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+                Why {product.title}
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 Built for the job,
