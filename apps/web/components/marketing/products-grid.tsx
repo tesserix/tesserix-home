@@ -9,7 +9,6 @@ import {
   ChefHat,
   Hospital,
   ShoppingBag,
-  Trophy,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -50,7 +49,6 @@ const products: Product[] = (
       icon: ShoppingBag,
       website: "mark8ly.com",
       highlights: [
-        "90 days free, then from $19/mo",
         "0% transaction fees",
         "Custom domains",
         "Quiet, considered theme system",
@@ -58,18 +56,18 @@ const products: Product[] = (
       iconClass: "text-chart-5",
     },
     {
-      slug: "homechef",
-      title: "HomeChef",
-      tagline: "Home cooks, real customers",
+      slug: "fe3dr",
+      title: "Fe3dr",
+      tagline: "Ghar ka khana, delivered.",
       description:
-        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
+        "Real home-cooked food from verified kitchens near you. Cooked to order, collect it or have it delivered.",
       icon: ChefHat,
       website: "fe3dr.com",
       highlights: [
-        "Chef onboarding & verification",
-        "Menu management",
-        "Real-time order tracking",
-        "Delivery coordination",
+        "Verified home cooks",
+        "Cooked to order",
+        "Collection or delivery",
+        "Live in Pune",
       ],
       iconClass: "text-warning",
     },
@@ -103,21 +101,6 @@ const products: Product[] = (
         "HIPAA-aligned",
       ],
       iconClass: "text-info",
-    },
-    {
-      slug: "fanzone",
-      title: "FanZone Battle Ground",
-      tagline: "Your cricket opinions finally matter",
-      description:
-        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-      icon: Trophy,
-      highlights: [
-        "Live battle rooms",
-        "Match-by-match prediction markets",
-        "Ranked leaderboards",
-        "Hot takes & fan connect",
-      ],
-      iconClass: "text-success",
     },
   ] satisfies ReadonlyArray<Omit<Product, "status" | "href">>
 ).map((p) => ({
@@ -274,7 +257,7 @@ export function ProductsGrid() {
                 01 — Products
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
-                Five products.
+                Four products.
                 <br />
                 Each one focused.
               </h2>

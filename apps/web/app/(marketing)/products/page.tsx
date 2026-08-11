@@ -15,7 +15,6 @@ interface ProductEntry {
   status: Status;
   href: string;
   website?: string;
-  pricing?: string;
   features: string[];
 }
 
@@ -32,7 +31,6 @@ const products: ProductEntry[] = (
       description:
         "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
       website: "mark8ly.com",
-      pricing: "90 days free, then from $19/mo",
       features: [
         "Custom domains",
         "0% transaction fees",
@@ -43,19 +41,17 @@ const products: ProductEntry[] = (
       ],
     },
     {
-      slug: "homechef",
-      title: "HomeChef",
-      tagline: "Home cooks, real customers",
+      slug: "fe3dr",
+      title: "Fe3dr",
+      tagline: "Ghar ka khana, delivered.",
       description:
-        "A delivery platform that connects home chefs with food lovers in their community. Chef onboarding, menu management, and delivery coordination in one place.",
+        "Real home-cooked food from verified kitchens near you. Cooked to order, collect it or have it delivered. Currently live in Pune.",
       website: "fe3dr.com",
       features: [
-        "Chef onboarding & verification",
-        "Menu management",
-        "Real-time order tracking",
-        "Delivery coordination",
-        "Customer reviews & ratings",
-        "Payment processing",
+        "Verified home cooks",
+        "Cooked to order",
+        "Collection or delivery",
+        "Live in Pune",
       ],
     },
     {
@@ -65,7 +61,6 @@ const products: ProductEntry[] = (
       description:
         "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, and the whole tenancy from listing to move-out.",
       website: "dwellm8.com",
-      pricing: "Free for owners, 2.99% on payouts",
       features: [
         "Tenancy agreements & rent schedules",
         "UPI rent collection, instant receipts",
@@ -88,21 +83,6 @@ const products: ProductEntry[] = (
         "Pharmacy & inventory",
         "Staff management",
         "Lab & diagnostics",
-      ],
-    },
-    {
-      slug: "fanzone",
-      title: "FanZone Battle Ground",
-      tagline: "Your cricket opinions finally matter",
-      description:
-        "Live predictions, trash-talk battle rooms, and ranked fan leaderboards. Built for IPL die-hards, fantasy players, and anyone who watches with strong opinions.",
-      features: [
-        "Live battle rooms",
-        "Match prediction markets",
-        "Ranked leaderboards",
-        "Hot takes & fan connect",
-        "Live match scores",
-        "Match alerts",
       ],
     },
   ] satisfies ReadonlyArray<Omit<ProductEntry, "status" | "href">>
@@ -157,13 +137,9 @@ function ProductRow({
           <p className="mt-2 text-sm text-muted-foreground">
             {product.tagline}
           </p>
-          {/* Prices and destinations are only real for products you can use
-              today — an unreleased one advertises neither. */}
-          {product.status === "live" && product.pricing ? (
-            <p className="mt-4 font-mono text-xs text-foreground">
-              {product.pricing}
-            </p>
-          ) : null}
+          {/* Destinations are only real for products you can use today — an
+              unreleased one has nowhere to send anyone yet. Pricing lives on
+              each product's own site, not here. */}
           {product.status === "live" && product.website ? (
             <a
               href={`https://${product.website}`}
@@ -226,7 +202,7 @@ export default function ProductsPage() {
               The portfolio.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Five products, five industries. Each one focused on doing a
+              Four products, four industries. Each one focused on doing a
               specific job well — and nothing else.
             </p>
           </AnimateOnScroll>
