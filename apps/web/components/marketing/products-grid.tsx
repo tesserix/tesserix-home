@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
@@ -72,13 +73,10 @@ const FRAME_CLASSES =
 
 interface BrowserFrameProps {
   website: string;
-  src: string;
-  alt: string;
-  width: number;
-  height: number;
+  children: ReactNode;
 }
 
-function BrowserFrame({ website, src, alt, width, height }: BrowserFrameProps) {
+function BrowserFrame({ website, children }: BrowserFrameProps) {
   return (
     <div className={FRAME_CLASSES}>
       <div className="flex items-center gap-1.5 border-b bg-muted/40 px-3.5 py-2">
@@ -98,15 +96,22 @@ function BrowserFrame({ website, src, alt, width, height }: BrowserFrameProps) {
           {website}
         </span>
       </div>
-      <Image
-        src={src}
-        alt={alt}
-        width={width}
-        height={height}
-        loading="lazy"
-        sizes="(min-width: 1024px) 45vw, 100vw"
-        className="h-auto w-full"
-      />
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Rendered inside a browser frame when a launched product has no screenshot
+ * asset wired up (see `SHOT_TREATMENTS`) — no image request is made, so
+ * there's no broken-image icon while a real screenshot is pending.
+ */
+function ScreenshotPlaceholder({ title }: { title: string }) {
+  return (
+    <div className="flex aspect-[1568/682] items-center justify-center bg-secondary">
+      <span className="font-mono text-sm uppercase tracking-[0.14em] text-muted-foreground">
+        {title}
+      </span>
     </div>
   );
 }
@@ -158,8 +163,16 @@ function DuoPhoneFrame({
   );
 }
 
-function ProductShot({ slug, website }: { slug: string; website?: string }) {
-  const treatment = SHOT_TREATMENTS[slug] ?? "browser";
+function ProductShot({
+  slug,
+  website,
+  title,
+}: {
+  slug: string;
+  website?: string;
+  title: string;
+}) {
+  const treatment = SHOT_TREATMENTS[slug];
 
   if (treatment === "duo-phone") {
     // Only Fe3dr uses the duo-phone treatment today, so its two screenshots
@@ -174,17 +187,29 @@ function ProductShot({ slug, website }: { slug: string; website?: string }) {
     );
   }
 
-  const isMark8ly = slug === "mark8ly";
+  if (treatment === "browser" && slug === "mark8ly") {
+    return (
+      <BrowserFrame website={website ?? slug}>
+        <Image
+          src="/screens/mark8ly-storefront.jpg"
+          alt="Mark8ly storefront"
+          width={1568}
+          height={682}
+          loading="lazy"
+          sizes="(min-width: 1024px) 45vw, 100vw"
+          className="h-auto w-full"
+        />
+      </BrowserFrame>
+    );
+  }
+
+  // New live products must register a SHOT_TREATMENTS entry (and a matching
+  // screenshot asset) before shipping — until then this renders a clean
+  // placeholder instead of guessing at an image path that may not exist.
   return (
-    <BrowserFrame
-      website={website ?? slug}
-      src={
-        isMark8ly ? "/screens/mark8ly-storefront.jpg" : `/screens/${slug}-web.jpg`
-      }
-      alt={isMark8ly ? "Mark8ly storefront" : `${website ?? slug} website`}
-      width={1568}
-      height={682}
-    />
+    <BrowserFrame website={website ?? slug}>
+      <ScreenshotPlaceholder title={title} />
+    </BrowserFrame>
   );
 }
 
@@ -239,7 +264,11 @@ function ProductRow({ product }: { product: LiveProduct }) {
           ) : null}
         </div>
 
-        <ProductShot slug={product.slug} website={product.website} />
+        <ProductShot
+          slug={product.slug}
+          website={product.website}
+          title={product.title}
+        />
       </article>
     </AnimateOnScroll>
   );
