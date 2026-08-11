@@ -66,9 +66,6 @@ next-env.d.ts
 **.png
 # Allow public assets (web app moved to apps/web/ in the monorepo restructure)
 !apps/web/public/**/*.png
-# Allow App Router icon file-convention assets (app/icon.png, app/apple-icon.png)
-!apps/web/app/icon.png
-!apps/web/app/apple-icon.png
 # Allow mobile app assets (icon/splash are EAS build inputs — must be committed)
 !apps/mobile/assets/**/*.png
 
