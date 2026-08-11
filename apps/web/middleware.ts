@@ -35,6 +35,14 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   // Facebook/LinkedIn link-preview crawlers.
   "/launch",
   "/login",
+  // Next.js metadata file routes (root-level opengraph image, robots.txt,
+  // sitemap.xml) — fetched by social-media link-preview crawlers and search
+  // engine bots, neither of which carry a tesserix-home session. Nested
+  // metadata routes (e.g. /products/[slug]/opengraph-image) already inherit
+  // public access from their parent path above.
+  "/opengraph-image",
+  "/robots.txt",
+  "/sitemap.xml",
   "/api/health",
   "/api/contact",
   // "Notify me when this launches" on a coming-soon product page, plus the
