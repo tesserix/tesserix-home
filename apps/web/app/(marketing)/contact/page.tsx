@@ -203,7 +203,7 @@ export default function ContactPage() {
                       <SelectTrigger id="interest">
                         <SelectValue placeholder="Select a product" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="border border-line-strong rounded-[10px] shadow-xl bg-popover">
                         <SelectItem value="mark8ly">Mark8ly</SelectItem>
                         <SelectItem value="fe3dr">Fe3dr</SelectItem>
                         <SelectItem value="dwellm8">Dwellm8</SelectItem>

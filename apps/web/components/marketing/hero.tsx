@@ -17,7 +17,6 @@ function riseDelay(seconds: number): CSSProperties {
 export function Hero() {
   const launched = launchedProductSlugs();
   const comingSoonCount = productSlugs.length - launched.length;
-  const productCount = productSlugs.length;
 
   return (
     <section className="relative min-h-[100svh] flex items-center overflow-hidden bg-background">
@@ -33,8 +32,7 @@ export function Hero() {
           style={riseDelay(0.05)}
         >
           <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
-          A product studio · {productCount} industries, {productCount}{" "}
-          products
+          A product studio
         </p>
 
         <h1
