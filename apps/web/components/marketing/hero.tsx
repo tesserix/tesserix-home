@@ -10,6 +10,11 @@ import {
   useTransform,
 } from "framer-motion";
 import { Button } from "@tesserix/web";
+import {
+  productSlugs,
+  launchedProductSlugs,
+  productTitle,
+} from "@/app/(marketing)/products/[slug]/products-data";
 
 const containerVariants = {
   hidden: {},
@@ -30,19 +35,28 @@ const itemVariants = {
   },
 };
 
+// Counts are derived from products-data.ts, the single source of launch
+// truth, so this can't drift from the actual portfolio again.
+const totalProductCount = productSlugs.length;
+const liveProductCount = launchedProductSlugs().length;
+
 const stats = [
-  { value: "04", label: "Products in the portfolio" },
-  { value: "02", label: "Live in production" },
-  { value: "04", label: "Industries, one each" },
+  {
+    value: String(totalProductCount).padStart(2, "0"),
+    label: "Products in the portfolio",
+  },
+  {
+    value: String(liveProductCount).padStart(2, "0"),
+    label: "Live in production",
+  },
+  {
+    value: String(totalProductCount).padStart(2, "0"),
+    label: "Industries, one each",
+  },
   { value: "0%", label: "Transaction fees, ever" },
 ];
 
-const marqueeItems = [
-  "Mark8ly",
-  "FanZone Battle Ground",
-  "MediCare",
-  "HomeChef",
-];
+const marqueeItems = productSlugs.map((slug) => productTitle(slug));
 
 function Marquee() {
   const row = [...marqueeItems, ...marqueeItems, ...marqueeItems];
