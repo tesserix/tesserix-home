@@ -199,7 +199,10 @@ export default function ContactPage() {
                       <SelectTrigger id="interest">
                         <SelectValue placeholder="Select a product" />
                       </SelectTrigger>
-                      <SelectContent className="border border-line-strong rounded-[10px] shadow-xl bg-popover">
+                      <SelectContent
+                        position="popper"
+                        className="w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)] !bg-popover text-popover-foreground border border-line-strong rounded-[10px] shadow-xl overflow-hidden"
+                      >
                         <SelectItem value="mark8ly">Mark8ly</SelectItem>
                         <SelectItem value="fe3dr">Fe3dr</SelectItem>
                         <SelectItem value="dwellm8">Dwellm8</SelectItem>
