@@ -57,7 +57,7 @@ export function OpenSourceStrip() {
                   {repo.name}
                   <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
                 </a>
-                <p className="mt-1.5 truncate text-[0.9rem] text-muted-foreground">
+                <p className="mt-1.5 text-[0.9rem] leading-relaxed text-muted-foreground">
                   {repo.description}
                 </p>
               </div>
