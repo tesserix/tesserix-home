@@ -53,6 +53,14 @@ export const products: Record<
     icon: React.ComponentType<{ className?: string }>;
     status: "available" | "coming-soon";
     industry: Industry;
+    /**
+     * Short bullet points used everywhere a product is summarized rather
+     * than detailed: the /products index rows and the homepage card stack
+     * (`products-grid.tsx`). Both used to keep their own copies of this list
+     * and drifted (that's how Mark8ly ended up with three descriptions) —
+     * they now read this field instead of restating it.
+     */
+    highlights: string[];
     features: Array<{
       icon: React.ComponentType<{ className?: string }>;
       title: string;
@@ -61,6 +69,29 @@ export const products: Record<
     benefits: string[];
     // Pricing lives on each product's own site, not here — see product-content.tsx.
     website?: string;
+    /**
+     * The detail page's primary CTA for `available` products only — the
+     * label must match where the link actually goes, so it's authored per
+     * product rather than a single generic "Start free trial" that isn't
+     * true for every product (e.g. Fe3dr has no trial). Links to the
+     * product's own site (`website`), not `/contact`.
+     */
+    ctaLabel?: string;
+    /** Honest one-line subtext for the bottom CTA band; omit if there's nothing true to add. */
+    ctaSubtext?: string;
+    /**
+     * The real trial/pricing offer, stated exactly as the product's own
+     * site states it. Omit entirely for products with no trial (e.g. Fe3dr)
+     * rather than falling back to generic trial language.
+     */
+    trialLine?: string;
+    /**
+     * JSON-LD `operatingSystem` for the SoftwareApplication schema. Defaults
+     * to "Web" when omitted — set explicitly for products that are actually
+     * mobile-only (Kora, Fe3dr's app), since asserting "Web" for those is a
+     * verifiable-false claim to a crawler.
+     */
+    operatingSystem?: string;
     /**
      * App store presence, keyed by platform. A listing with `url: ""` is a
      * real platform we're on that has no live link yet (e.g. iOS apps under
@@ -102,6 +133,17 @@ export const products: Record<
     icon: ShoppingBag,
     status: "available",
     industry: "commerce",
+    ctaLabel: "Start free trial",
+    ctaSubtext: "Free for ninety days. No card required.",
+    trialLine: "Free for ninety days. No card required.",
+    highlights: [
+      "0% transaction fees, ever",
+      "Custom domains from day one",
+      "Considered theme system",
+      "Unlimited products & orders",
+      "Cards, UPI, and wallets",
+      "Real human support",
+    ],
     features: [
       {
         icon: Palette,
@@ -117,9 +159,9 @@ export const products: Record<
       },
       {
         icon: Package,
-        title: "Up to 100 products on Starter",
+        title: "Unlimited products and orders",
         description:
-          "Studio and Pro are unlimited. Add as many products, photos, and variants as you like as you grow.",
+          "Every plan includes unlimited products and orders. Plans differ by number of stores and images per product, not a product cap.",
       },
       {
         icon: BarChart,
@@ -145,7 +187,7 @@ export const products: Record<
       "0% transaction fees from Mark8ly, ever",
       "Use your own domain from day one",
       "Export your data and leave anytime",
-      "Optional white-label mobile app on Pro",
+      "White-label mobile app available as a paid add-on",
       "Three plans, one price page — no bait and switch",
     ],
     listings: {
@@ -176,6 +218,17 @@ export const products: Record<
     icon: ChefHat,
     status: "available",
     industry: "food",
+    operatingSystem: "iOS, Android",
+    // No trialLine: Fe3dr is a marketplace where customers buy meals, not a
+    // subscription product — there is no trial to offer.
+    ctaLabel: "Order on Fe3dr",
+    ctaSubtext: "Browse home-cooked meals from verified kitchens near you.",
+    highlights: [
+      "Verified home cooks",
+      "Cooked to order",
+      "Collection or delivery",
+      "Live in Pune",
+    ],
     features: [
       {
         icon: UserCheck,
@@ -257,12 +310,23 @@ export const products: Record<
     tagline: "Rent, managed like a record",
     description:
       "India-first rental management — owners, managers and tenants on one record, from listing to move-out.",
-    website: "https://dwellm8.com",
+    // No `website`: dwellm8.com does not resolve. Dwellm8 is coming-soon, so
+    // every surface that renders a product website link already gates on
+    // `website` being present / status being "available" and simply omits
+    // the link here.
     longDescription:
       "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
     icon: Building2,
     status: "coming-soon",
     industry: "rentals",
+    highlights: [
+      "Tenancy agreements & rent schedules",
+      "UPI rent, instant receipts, zero platform fees",
+      "Maintenance & cost-sharing engine",
+      "Delegated portfolio management",
+      "Listings, enquiries & applications",
+      "Six mobile apps, one platform",
+    ],
     features: [
       {
         icon: KeyRound,
@@ -312,58 +376,65 @@ export const products: Record<
   },
   medicare: {
     title: "MediCare",
-    tagline: "Complete Hospital Management System",
+    tagline: "Hospital management without the bloat",
     description:
-      "End-to-end hospital management solution for clinics and hospitals of all sizes.",
+      "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab, without enterprise software's bloat.",
     longDescription:
-      "MediCare is a comprehensive hospital management system designed to streamline healthcare operations. From patient registration and electronic health records to appointment scheduling, billing, and inventory management, MediCare digitizes every aspect of hospital administration.",
+      "MediCare handles hospital operations end to end: patient registration and electronic health records, appointment scheduling, billing, and pharmacy inventory. It's built for clinics and hospitals that outgrew spreadsheets but never wanted enterprise software's bloat.",
     icon: Hospital,
     status: "coming-soon",
     industry: "healthcare",
+    highlights: [
+      "Electronic health records",
+      "Appointment scheduling",
+      "Billing & invoicing",
+      "Pharmacy & inventory",
+      "Staff management",
+      "HIPAA-aligned",
+    ],
     features: [
       {
         icon: FileText,
-        title: "Electronic Health Records",
+        title: "Electronic health records",
         description:
           "Secure, centralized patient records with medical history, prescriptions, lab results, and imaging.",
       },
       {
         icon: Calendar,
-        title: "Appointment Scheduling",
+        title: "Appointment scheduling",
         description:
           "Smart scheduling system with doctor availability, patient reminders, and waitlist management.",
       },
       {
         icon: CreditCard,
-        title: "Billing & Insurance",
+        title: "Billing & invoicing",
         description:
           "Automated billing, insurance claim processing, and payment tracking with detailed financial reports.",
       },
       {
         icon: Pill,
-        title: "Pharmacy & Inventory",
+        title: "Pharmacy & inventory",
         description:
           "Complete pharmacy management with drug inventory, expiry tracking, and prescription fulfillment.",
       },
       {
         icon: Users,
-        title: "Staff Management",
+        title: "Staff management",
         description:
           "Employee scheduling, attendance tracking, payroll integration, and performance management.",
       },
       {
         icon: Stethoscope,
-        title: "Lab & Diagnostics",
+        title: "Lab & diagnostics",
         description:
           "Lab test ordering, result tracking, and integration with diagnostic equipment for seamless workflows.",
       },
     ],
     benefits: [
-      "Reduce administrative overhead by 60%",
-      "HIPAA compliant data security",
       "Improve patient care coordination",
       "Real-time bed and resource management",
       "Multi-location support",
+      "HIPAA-aligned data security",
       "Integration with medical devices",
     ],
   },
@@ -377,6 +448,14 @@ export const products: Record<
     icon: Salad,
     status: "coming-soon",
     industry: "nutrition",
+    operatingSystem: "iOS, Android",
+    highlights: [
+      "Photo, chat, voice & barcode logging",
+      "Manual editing",
+      "USDA, OpenFoodFacts & AU databases",
+      "Built to never hallucinate a value",
+      "iOS and Android",
+    ],
     features: [
       {
         icon: Camera,
@@ -412,7 +491,7 @@ export const products: Record<
         icon: ShieldCheck,
         title: "Verified nutrition data",
         description:
-          "Nutrition figures are sourced from the USDA, OpenFoodFacts, and Australian food databases — never hallucinated.",
+          "Nutrition figures are sourced from the USDA, OpenFoodFacts, and Australian food databases — built to never hallucinate a value.",
       },
     ],
     benefits: [

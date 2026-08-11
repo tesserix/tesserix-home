@@ -43,95 +43,47 @@ interface Product {
   >;
 }
 
-// Launch state is read from products-data.ts rather than repeated here; the
-// cards scroll-stack in order, so shipped products lead.
-const products: Product[] = (
-  [
-    {
-      slug: "mark8ly",
-      title: "Mark8ly",
-      tagline: "Quiet commerce for people who make things",
-      description:
-        "An editorial commerce platform for independent merchants. Launch your storefront in an afternoon, keep every sale, and look considered from day one.",
-      icon: ShoppingBag,
-      website: "mark8ly.com",
-      highlights: [
-        "0% transaction fees",
-        "Custom domains",
-        "Quiet, considered theme system",
-      ],
-      iconClass: "text-chart-5",
-    },
-    {
-      slug: "fe3dr",
-      title: "Fe3dr",
-      tagline: "Ghar ka khana, delivered.",
-      description:
-        "Real home-cooked food from verified kitchens near you. Cooked to order, collect it or have it delivered.",
-      icon: ChefHat,
-      website: "fe3dr.com",
-      highlights: [
-        "Verified home cooks",
-        "Cooked to order",
-        "Collection or delivery",
-        "Live in Pune",
-      ],
-      iconClass: "text-warning",
-    },
-    {
-      slug: "dwellm8",
-      title: "Dwellm8",
-      tagline: "Rent, managed like a record",
-      description:
-        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, the whole tenancy from listing to move-out.",
-      icon: Building2,
-      website: "dwellm8.com",
-      highlights: [
-        "UPI rent, instant receipts",
-        "Maintenance & cost-sharing engine",
-        "Delegated portfolio management",
-        "Six mobile apps, one platform",
-      ],
-      iconClass: "text-primary",
-    },
-    {
-      slug: "medicare",
-      title: "MediCare",
-      tagline: "Hospital management without the bloat",
-      description:
-        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-      icon: Hospital,
-      highlights: [
-        "Electronic health records",
-        "Appointment scheduling",
-        "Pharmacy & inventory",
-        "HIPAA-aligned",
-      ],
-      iconClass: "text-info",
-    },
-    {
-      slug: "kora",
-      title: "Kora",
-      tagline: "The easiest nutrition tracking experience, built with AI",
-      description:
-        "AI-powered nutrition tracking for iOS and Android. Log meals by photo, chat, or voice instead of manual data entry — nutrition data comes from USDA, OpenFoodFacts, and Australian food databases.",
-      icon: Salad,
-      highlights: [
-        "Photo, chat, voice & barcode logging",
-        "Never hallucinates nutrition",
-        "iOS and Android",
-      ],
-      iconClass: "text-success",
-    },
-  ] satisfies ReadonlyArray<Omit<Product, "status" | "href">>
-).map((p) => ({
-  ...p,
-  href: `/products/${p.slug}`,
-  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
-  // Only the customer-facing app belongs here — Fe3dr's vendor app is a
-  // second audience shown on the product detail page, not the homepage card.
-  listings: productsData[p.slug]?.listings,
-}));
+// Card accent colors are purely presentational and have no equivalent in
+// products-data.ts, so they stay here keyed by slug.
+const ICON_CLASSES: Record<string, string> = {
+  mark8ly: "text-chart-5",
+  fe3dr: "text-warning",
+  dwellm8: "text-primary",
+  medicare: "text-info",
+  kora: "text-success",
+};
+
+const ICONS: Record<string, LucideIcon> = {
+  mark8ly: ShoppingBag,
+  fe3dr: ChefHat,
+  dwellm8: Building2,
+  medicare: Hospital,
+  kora: Salad,
+};
+
+// Title, tagline, description, highlights and launch state all come from
+// products-data.ts — the single source of truth for product copy — rather
+// than being restated here, where they had drifted (Mark8ly alone had three
+// different descriptions across this file, products/page.tsx and
+// products-data.ts). Cards scroll-stack in the order products-data lists
+// them, which already leads with shipped products.
+const products: Product[] = Object.entries(productsData).map(
+  ([slug, product]) => ({
+    slug,
+    title: product.title,
+    tagline: product.tagline,
+    description: product.description,
+    icon: ICONS[slug] ?? ShoppingBag,
+    website: product.website?.replace(/^https?:\/\//, ""),
+    href: `/products/${slug}`,
+    highlights: product.highlights,
+    iconClass: ICON_CLASSES[slug] ?? "text-foreground",
+    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
+    // Only the customer-facing app belongs here — Fe3dr's vendor app is a
+    // second audience shown on the product detail page, not the homepage card.
+    listings: product.listings,
+  }),
+);
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {

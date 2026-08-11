@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { AnimateOnScroll, Button } from "@tesserix/web";
-import { isComingSoon } from "./[slug]/products-data";
+import { isComingSoon, products as productsData } from "./[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -18,94 +18,24 @@ interface ProductEntry {
   features: string[];
 }
 
-// Status comes from products-data.ts, the one place launch state is recorded,
-// rather than being restated here where it had drifted out of date.
-// Shipped products lead; the numbering down the left is positional, so ordering
-// them this way keeps it meaningful rather than arbitrary.
-const products: ProductEntry[] = (
-  [
-    {
-      slug: "mark8ly",
-      title: "Mark8ly",
-      tagline: "Quiet commerce for people who make things",
-      description:
-        "An editorial commerce platform for independent merchants. Set up in an afternoon, keep your margins, and sell on a storefront that doesn't look like everyone else's.",
-      website: "mark8ly.com",
-      features: [
-        "Custom domains",
-        "0% transaction fees",
-        "Considered theme system",
-        "Up to 100 products on Starter",
-        "Cards, UPI, and wallets",
-        "Real human support",
-      ],
-    },
-    {
-      slug: "fe3dr",
-      title: "Fe3dr",
-      tagline: "Ghar ka khana, delivered.",
-      description:
-        "Real home-cooked food from verified kitchens near you. Cooked to order, collect it or have it delivered. Currently live in Pune.",
-      website: "fe3dr.com",
-      features: [
-        "Verified home cooks",
-        "Cooked to order",
-        "Collection or delivery",
-        "Live in Pune",
-      ],
-    },
-    {
-      slug: "dwellm8",
-      title: "Dwellm8",
-      tagline: "Rent, managed like a record",
-      description:
-        "India-first rental management — owners, managing firms and tenants on one record. Rent by UPI on an append-only ledger, maintenance with a liability answer, and the whole tenancy from listing to move-out.",
-      website: "dwellm8.com",
-      features: [
-        "Tenancy agreements & rent schedules",
-        "UPI rent collection, instant receipts",
-        "Maintenance & cost-sharing engine",
-        "Delegated portfolio management",
-        "Listings, enquiries & applications",
-        "Six mobile apps, one platform",
-      ],
-    },
-    {
-      slug: "medicare",
-      title: "MediCare",
-      tagline: "Hospital management without the bloat",
-      description:
-        "End-to-end clinic and hospital operations — patient records, scheduling, billing, pharmacy, and lab. Designed for clinics that outgrew spreadsheets but never wanted enterprise software.",
-      features: [
-        "Electronic health records",
-        "Appointment scheduling",
-        "Billing & invoicing",
-        "Pharmacy & inventory",
-        "Staff management",
-        "Lab & diagnostics",
-      ],
-    },
-    {
-      slug: "kora",
-      title: "Kora",
-      tagline: "The easiest nutrition tracking experience, built with AI",
-      description:
-        "AI-powered nutrition tracking for iOS and Android. Log meals by photo, chat, or voice instead of manual data entry — nutrition data comes from USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a value.",
-      features: [
-        "AI photo logging",
-        "Chat & voice logging",
-        "Barcode scanning",
-        "Manual editing",
-        "Verified nutrition data",
-        "iOS and Android",
-      ],
-    },
-  ] satisfies ReadonlyArray<Omit<ProductEntry, "status" | "href">>
-).map((p) => ({
-  ...p,
-  href: `/products/${p.slug}`,
-  status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
-}));
+// Title, tagline, description, highlights and launch state all come from
+// products-data.ts — the single source of truth for product copy — rather
+// than being restated here, where they had drifted (Mark8ly alone had three
+// different descriptions across this file, products-grid.tsx and
+// products-data.ts). Shipped products lead in products-data.ts; the
+// numbering down the left is positional, so that ordering stays meaningful.
+const products: ProductEntry[] = Object.entries(productsData).map(
+  ([slug, product]) => ({
+    slug,
+    title: product.title,
+    tagline: product.tagline,
+    description: product.description,
+    website: product.website?.replace(/^https?:\/\//, ""),
+    features: product.highlights,
+    href: `/products/${slug}`,
+    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
+  }),
+);
 
 function StatusPill({ status }: { status: Status }) {
   if (status === "live") {
