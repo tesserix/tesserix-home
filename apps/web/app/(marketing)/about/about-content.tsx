@@ -7,7 +7,7 @@ import { principles } from "./principles";
 
 const focus = [
   { area: "Commerce", product: "Mark8ly", status: "Live" },
-  { area: "Rental management", product: "Dwellm8", status: "Live" },
+  { area: "Rental management", product: "Dwellm8", status: "In development" },
   { area: "Food", product: "Fe3dr", status: "Live" },
   { area: "Healthcare", product: "MediCare", status: "In development" },
 ];

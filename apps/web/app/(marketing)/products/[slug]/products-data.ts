@@ -19,6 +19,12 @@ import {
   FileText,
   Pill,
   UserCheck,
+  Salad,
+  Camera,
+  Mic,
+  ScanLine,
+  Pencil,
+  ShieldCheck,
 } from "lucide-react";
 
 export const products: Record<
@@ -149,7 +155,7 @@ export const products: Record<
     longDescription:
       "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
     icon: Building2,
-    status: "available",
+    status: "coming-soon",
     features: [
       {
         icon: KeyRound,
@@ -251,6 +257,61 @@ export const products: Record<
       "Real-time bed and resource management",
       "Multi-location support",
       "Integration with medical devices",
+    ],
+  },
+  kora: {
+    title: "Kora",
+    tagline: "The easiest nutrition tracking experience, built with AI",
+    description:
+      "AI-powered nutrition tracking for iOS and Android — log meals by photo, chat, or voice instead of manual data entry.",
+    longDescription:
+      "Kora is an AI-powered nutrition tracking app for iOS and Android. It isn't meant to be another calorie counter — the goal is the easiest nutrition tracking experience ever built, one that feels conversational rather than like data entry. Log a meal with a food photo, a natural-language message, or your voice. Nutrition data is sourced from the USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a nutrition value.",
+    icon: Salad,
+    status: "coming-soon",
+    features: [
+      {
+        icon: Camera,
+        title: "AI photo logging",
+        description:
+          "Photograph a meal and Kora identifies the foods, ingredients, and portion sizes.",
+      },
+      {
+        icon: MessageSquare,
+        title: "Chat logging",
+        description:
+          "Describe what you ate in plain language and Kora understands and logs it.",
+      },
+      {
+        icon: Mic,
+        title: "Voice logging",
+        description:
+          "Speak a meal out loud and it converts straight to a food log.",
+      },
+      {
+        icon: ScanLine,
+        title: "Barcode scanning",
+        description:
+          "Scan a barcode for an instant nutrition lookup on packaged food.",
+      },
+      {
+        icon: Pencil,
+        title: "Manual editing",
+        description:
+          "Adjust any logged meal by hand whenever you want to fine-tune the details yourself.",
+      },
+      {
+        icon: ShieldCheck,
+        title: "Verified nutrition data",
+        description:
+          "Nutrition figures are sourced from the USDA, OpenFoodFacts, and Australian food databases — never hallucinated.",
+      },
+    ],
+    benefits: [
+      "Log meals by photo, chat, voice, or barcode",
+      "Nutrition data sourced from USDA, OpenFoodFacts, and Australian databases",
+      "Built to never hallucinate a nutrition value",
+      "Conversational logging, not data entry",
+      "iOS and Android",
     ],
   },
 };
