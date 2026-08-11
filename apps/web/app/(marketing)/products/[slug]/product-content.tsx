@@ -36,6 +36,16 @@ export function ProductContent({ slug }: { slug: string }) {
   const isComingSoon = product.status === "coming-soon";
   const pricingLink = PRICING_LINKS[slug];
 
+  // Section eyebrows are numbered positionally, as they are on /about and
+  // /careers. Only shipped products have a gallery, so the numbering has to be
+  // computed rather than hard-coded — otherwise the gallery sits unnumbered
+  // above "01 — Features" and breaks the sequence on exactly those pages.
+  const sectionNumbers = {
+    gallery: product.media ? "01" : null,
+    features: product.media ? "02" : "01",
+    why: product.media ? "03" : "02",
+  };
+
   return (
     <div>
       {/* Header */}
@@ -151,7 +161,7 @@ export function ProductContent({ slug }: { slug: string }) {
           <div className="mx-auto max-w-7xl px-6 lg:px-8">
             <AnimateOnScroll variant="fade-up" className="max-w-2xl">
               <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                See it live
+                {sectionNumbers.gallery} — See it live
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 {product.title}, in the wild.
@@ -207,7 +217,7 @@ export function ProductContent({ slug }: { slug: string }) {
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              01 — Features
+              {sectionNumbers.features} — Features
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
               What&apos;s in the box.
@@ -245,7 +255,7 @@ export function ProductContent({ slug }: { slug: string }) {
           <div className="grid grid-cols-1 gap-x-8 gap-y-12 lg:grid-cols-12 lg:items-start">
             <AnimateOnScroll variant="fade-up" className="lg:col-span-6">
               <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                02 — Why {product.title}
+                {sectionNumbers.why} — Why {product.title}
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                 Built for the job,
