@@ -53,7 +53,7 @@ export default async function ProductOpenGraphImage({
       >
         {/* Kicker */}
         <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-          <div style={{ width: "36px", height: "2px", background: "#2e5cff" }} />
+          <div style={{ width: "36px", height: "2px", background: "#c2410c" }} />
           <div
             style={{
               display: "flex",

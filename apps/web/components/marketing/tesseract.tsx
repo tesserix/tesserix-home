@@ -129,7 +129,7 @@ export function Tesseract({ className }: TesseractProps) {
 
         if (tt > 0.72) {
           const ct = (tt - 0.72) / 0.28;
-          ctx.strokeStyle = `rgba(31, 63, 212, ${(0.45 + ct * 0.4).toFixed(3)})`;
+          ctx.strokeStyle = `rgba(232, 89, 12, ${(0.45 + ct * 0.4).toFixed(3)})`;
           ctx.lineWidth = 1.6 + ct * 1.2;
         } else {
           ctx.strokeStyle = `rgba(11, 14, 20, ${(0.18 + tt * 0.5).toFixed(3)})`;
@@ -147,7 +147,7 @@ export function Tesseract({ className }: TesseractProps) {
         const pv = proj[v2];
         const vt = Math.max(0.25, Math.min(1, (pv.d - 0.78) / 0.67));
         ctx.globalAlpha = Math.min(1, vt + 0.1);
-        ctx.fillStyle = vt > 0.72 ? "#1f3fd4" : "#0b0e14";
+        ctx.fillStyle = vt > 0.72 ? "#c2410c" : "#0b0e14";
         ctx.beginPath();
         ctx.arc(pv.x, pv.y, 1.2 + 2.2 * vt, 0, 6.2832);
         ctx.fill();

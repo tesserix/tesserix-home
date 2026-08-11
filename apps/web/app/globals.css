@@ -91,15 +91,15 @@
   --muted: #eef1f6;
   --muted-foreground: #5f6675;
 
-  --accent: rgba(46, 92, 255, 0.08);
-  --accent-foreground: #1f3fd4;
+  --accent: rgba(194, 65, 12, 0.08);
+  --accent-foreground: #9a3412;
 
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
 
   --border: rgba(11, 14, 20, 0.10);
   --input: rgba(11, 14, 20, 0.14);
-  --ring: #2e5cff;
+  --ring: #c2410c;
 
   --success: #12a374;
   --success-foreground: #ffffff;
@@ -125,8 +125,10 @@
   --sidebar-border: #1a1f29;
   --sidebar-ring: #ffffff;
 
-  --cobalt: #2e5cff;
-  --cobalt-deep: #1f3fd4;
+  /* NOTE: --cobalt / --cobalt-deep now hold the burnt-orange accent
+     (2026-08-11 accent swap). Names kept as-is to avoid churn. */
+  --cobalt: #c2410c;
+  --cobalt-deep: #9a3412;
   --line-strong: rgba(11, 14, 20, 0.20);
 
   --shadow-xs: 0 1px 2px 0 rgb(11 14 20 / 0.04);
@@ -162,7 +164,7 @@
 
   --border: rgba(255, 255, 255, 0.10);
   --input: rgba(255, 255, 255, 0.10);
-  --ring: #6aa5ff;
+  --ring: #e8590c;
 
   --success: #4ade80;
   --success-foreground: #0b0e14;

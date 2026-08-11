@@ -17,7 +17,7 @@ export function ContactCTA() {
             className="dark relative overflow-hidden rounded-[22px] bg-background px-6 py-20 text-foreground sm:px-16 sm:py-24"
             style={{
               backgroundImage:
-                "radial-gradient(50rem 26rem at 82% -30%, rgba(106,165,255,0.14), transparent 60%)",
+                "radial-gradient(50rem 26rem at 82% -30%, rgba(232,89,12,0.12), transparent 60%)",
             }}
           >
             <div className="relative z-10 grid grid-cols-1 items-center gap-x-[2.5rem] gap-y-10 xl:grid-cols-[1.5fr_1fr_minmax(14rem,17rem)]">

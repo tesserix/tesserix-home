@@ -40,7 +40,7 @@ export function Hero() {
           style={riseDelay(0.13)}
         >
           Specialized software, built for the{" "}
-          <em className="not-italic text-cobalt">people</em> who use it.
+          <em className="not-italic text-[#e8590c]">people</em> who use it.
         </h1>
 
         <p

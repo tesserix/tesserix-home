@@ -50,7 +50,7 @@ export default async function OpenGraphImage() {
         >
           {/* Kicker */}
           <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-            <div style={{ width: "36px", height: "2px", background: "#2e5cff" }} />
+            <div style={{ width: "36px", height: "2px", background: "#c2410c" }} />
             <div
               style={{
                 display: "flex",
@@ -93,7 +93,7 @@ export default async function OpenGraphImage() {
                 key={word}
                 style={{
                   marginRight: "14px",
-                  color: word === "people" ? "#2e5cff" : "#0b0e14",
+                  color: word === "people" ? "#c2410c" : "#0b0e14",
                 }}
               >
                 {word}
@@ -149,7 +149,7 @@ export default async function OpenGraphImage() {
               width="180"
               height="180"
               fill="none"
-              stroke="#1f3fd4"
+              stroke="#9a3412"
               strokeWidth="2"
             />
             {/* Connecting corner lines */}
