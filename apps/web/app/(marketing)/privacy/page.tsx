@@ -26,11 +26,11 @@ export default function PrivacyPage() {
         </p>
         <p>
           Our Fe3dr product is operated in India by Zivana Innovations LLP,
-          part of Tesserix Pty Ltd, at Flat No-103, Block-C, Northern Heights
-          Apartment, Kalarahanga Road, Kalarahanga, Bhubaneswar, Odisha
-          751024, India. References to &quot;Tesserix&quot;, &quot;we&quot;,
-          &quot;us&quot; or &quot;our&quot; in this policy cover both
-          entities as applicable to the product you use.
+          at Flat No-103, Block-C, Northern Heights Apartment, Kalarahanga
+          Road, Kalarahanga, Bhubaneswar, Odisha 751024, India. References to
+          &quot;Tesserix&quot;, &quot;we&quot;, &quot;us&quot; or
+          &quot;our&quot; in this policy cover both entities as applicable to
+          the product you use.
         </p>
       </LegalSection>
 

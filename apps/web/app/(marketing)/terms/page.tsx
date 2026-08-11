@@ -24,8 +24,7 @@ export default function TermsPage() {
           ABN 59 694 070 865), a company registered in New South Wales,
           Australia, with its registered address at 5 Tagu Place, Kings Park
           NSW 2148, Australia. Where the product you use is Fe3dr, it is
-          operated in India by Zivana Innovations LLP, part of Tesserix Pty
-          Ltd.
+          operated in India by Zivana Innovations LLP.
         </p>
       </LegalSection>
 
@@ -66,9 +65,9 @@ export default function TermsPage() {
       <LegalSection number="06" title="Fees, billing, refunds and taxes">
         <p>
           Paid plans are billed as described at checkout for the relevant
-          product. Prices for Australian customers are shown in AUD and are
-          subject to an additional 10% GST. Refunds are considered on a
-          case-by-case basis in line with the applicable consumer law.
+          product. Prices for Australian customers are shown in AUD, plus GST
+          where applicable. Refunds are considered on a case-by-case basis in
+          line with the applicable consumer law.
         </p>
       </LegalSection>
 
