@@ -13,13 +13,13 @@ import type { MotionValue } from "framer-motion";
 import { Reveal } from "@/components/marketing/reveal";
 import { MarketingButton } from "@/components/marketing/marketing-button";
 import {
-  industryListExcluding,
   isComingSoon,
   productSlugs,
   products,
+  upcomingIndustryList,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for ${industryListExcluding("commerce")} — each product designed to solve one problem well, not to check a feature list.`;
+const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList()} next — each product designed to solve one problem well, not to check a feature list.`;
 
 /** Short editorial gloss per product; names and launch state come from data. */
 const roadmapNotes: Record<string, string> = {
