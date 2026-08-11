@@ -19,7 +19,7 @@ export function Hero() {
   const comingSoonCount = productSlugs.length - launched.length;
 
   return (
-    <section className="relative min-h-[100svh] flex items-center overflow-hidden bg-background">
+    <section className="relative min-h-[100svh] flex items-center overflow-hidden">
       <div
         className="absolute z-0 right-[clamp(-10rem,-2vw,0rem)] top-1/2 h-[clamp(26rem,46vw,46rem)] w-[clamp(26rem,46vw,46rem)] -translate-y-1/2 max-[860px]:opacity-[0.22] max-[860px]:right-[-35%]"
       >

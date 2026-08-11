@@ -20,23 +20,8 @@ export function ContactCTA() {
                 "radial-gradient(50rem 26rem at 82% -30%, rgba(106,165,255,0.14), transparent 60%)",
             }}
           >
-            <Image
-              src="/tesseract-render.jpg"
-              alt=""
-              aria-hidden="true"
-              width={1200}
-              height={669}
-              className="pointer-events-none absolute right-[-4%] top-1/2 z-0 hidden w-[clamp(18rem,30%,26rem)] -translate-y-1/2 opacity-95 xl:block"
-              style={{
-                maskImage:
-                  "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
-                WebkitMaskImage:
-                  "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
-              }}
-            />
-
-            <div className="relative z-10 grid grid-cols-12 gap-x-12 gap-y-10 max-[860px]:grid-cols-1">
-              <div className="relative z-10 col-span-7 max-[860px]:col-span-1">
+            <div className="relative z-10 grid grid-cols-1 items-center gap-x-[2.5rem] gap-y-10 xl:grid-cols-[1.2fr_1fr_minmax(16rem,20rem)]">
+              <div className="relative z-10">
                 <h2 className="text-[clamp(2rem,4.6vw,3.4rem)] font-[650] leading-[1.04] tracking-[-0.04em] text-balance">
                   Have a question?
                   <br />
@@ -44,7 +29,7 @@ export function ContactCTA() {
                 </h2>
               </div>
 
-              <div className="relative z-10 col-span-4 col-start-9 flex flex-col justify-end gap-4 max-[860px]:col-span-1 max-[860px]:col-start-1">
+              <div className="relative z-10 flex flex-col justify-end gap-4">
                 <p className="max-w-md text-base leading-relaxed text-muted-foreground">
                   No sales pitch, no chatbot queue — just a conversation with
                   the people who build the products.
@@ -63,17 +48,14 @@ export function ContactCTA() {
                   </a>
                 </div>
               </div>
-            </div>
 
-            {/* Full-width render below content below xl, where the absolute render is hidden */}
-            <div className="relative z-10 mt-10 block xl:hidden">
               <Image
                 src="/tesseract-render.jpg"
                 alt=""
                 aria-hidden="true"
                 width={1200}
                 height={669}
-                className="w-full opacity-95"
+                className="relative z-10 order-last w-full rounded-[14px] opacity-95 xl:order-none"
                 style={{
                   maskImage:
                     "radial-gradient(70% 70% at 50% 50%, black 55%, transparent 100%)",
