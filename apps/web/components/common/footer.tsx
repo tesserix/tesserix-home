@@ -7,9 +7,9 @@ import { Input, Button } from "@tesserix/web";
 const footerNavigation = {
   products: [
     { name: "Mark8ly", href: "/products/mark8ly" },
-    { name: "HomeChef", href: "/products/homechef" },
+    { name: "Fe3dr", href: "/products/fe3dr" },
+    { name: "Dwellm8", href: "/products/dwellm8" },
     { name: "MediCare", href: "/products/medicare" },
-    { name: "FanZone", href: "/products/fanzone" },
   ],
   company: [
     { name: "About", href: "/about" },

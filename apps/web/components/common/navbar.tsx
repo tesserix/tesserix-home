@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Hospital, Trophy } from "lucide-react";
+import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Building2, Hospital } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
 import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
@@ -18,22 +18,22 @@ const products = [
     icon: ShoppingBag,
   },
   {
-    slug: "homechef",
-    name: "HomeChef",
-    description: "Home cooked food delivery",
+    slug: "fe3dr",
+    name: "Fe3dr",
+    description: "Real home-cooked food, delivered",
     icon: ChefHat,
+  },
+  {
+    slug: "dwellm8",
+    name: "Dwellm8",
+    description: "Rental management, one record",
+    icon: Building2,
   },
   {
     slug: "medicare",
     name: "MediCare",
     description: "Hospital management system",
     icon: Hospital,
-  },
-  {
-    slug: "fanzone",
-    name: "FanZone",
-    description: "Cricket live scores & banter",
-    icon: Trophy,
   },
 ].map((p) => ({
   ...p,
