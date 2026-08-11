@@ -32,8 +32,12 @@ export const COMPANY = {
     postalCode: "2148",
     addressCountry: "AU",
   },
-  /** Real product domains with a live site — omit anything unshipped. */
-  productDomains: ["https://mark8ly.com", "https://fe3dr.com", "https://dwellm8.com"],
+  /**
+   * Real product domains with a live site — omit anything unshipped.
+   * dwellm8.com does not resolve (connection fails outright), so it's
+   * excluded rather than asserted here on every page.
+   */
+  productDomains: ["https://mark8ly.com", "https://fe3dr.com"],
   socialProfiles: [
     "https://x.com/tesserix_app",
     "https://au.linkedin.com/company/tesserix-pty-ltd",
@@ -132,6 +136,8 @@ export interface ProductSchemaInput {
   title: string;
   description: string;
   status: "available" | "coming-soon";
+  /** Defaults to "Web" when omitted — see `operatingSystem` in products-data.ts. */
+  operatingSystem?: string;
 }
 
 interface SoftwareApplicationSchema {
@@ -161,7 +167,7 @@ export function buildProductSchema(
     description: product.description,
     url: `${SITE_URL}/products/${slug}`,
     applicationCategory: "BusinessApplication",
-    operatingSystem: "Web",
+    operatingSystem: product.operatingSystem ?? "Web",
     releaseStatus:
       product.status === "available"
         ? "https://schema.org/OnlineOnly"
