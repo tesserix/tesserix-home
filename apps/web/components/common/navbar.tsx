@@ -240,8 +240,18 @@ export function Navbar() {
         id="mobile-menu"
         ref={mobileMenuRef}
         className={cn(
-          "fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-background shadow-xl lg:hidden transition-transform duration-300 ease-in-out",
-          mobileMenuOpen ? "translate-x-0" : "translate-x-full"
+          // Closed, the panel is only translated off-screen, so its links stay
+          // in the tab order and its role="dialog" stays in the accessibility
+          // tree — keyboard and screen-reader users could reach a menu nobody
+          // can see. `invisible` takes it out of both. `visibility` is
+          // transitioned alongside the transform (it interpolates as a step at
+          // the end) so the panel still slides out rather than vanishing.
+          // Note: this does not stop the off-screen panel widening the
+          // document — that needs `overflow-x: clip` on the root layout.
+          "fixed top-0 right-0 z-50 h-full w-full max-w-sm bg-background shadow-xl lg:hidden transition-[transform,visibility] duration-300 ease-in-out",
+          mobileMenuOpen
+            ? "visible translate-x-0"
+            : "invisible translate-x-full"
         )}
         role="dialog"
         aria-modal="true"
