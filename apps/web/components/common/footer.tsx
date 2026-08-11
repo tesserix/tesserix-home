@@ -21,10 +21,10 @@ const footerNavigation = {
     { name: "Contact", href: "/contact" },
     { name: "Careers", href: "/careers" },
   ],
-  resources: [
-    { name: "Documentation", href: "https://docs.tesserix.app" },
-    { name: "Design System", href: "https://ui.tesserix.app" },
-  ],
+  // docs.tesserix.app and ui.tesserix.app both currently 503 — dropped
+  // rather than shipping a column where every link errors. blog.tesserix.app
+  // is live and takes their place.
+  resources: [{ name: "Blog", href: "https://blog.tesserix.app" }],
   legal: [
     { name: "Privacy Policy", href: "/privacy" },
     { name: "Terms of Service", href: "/terms" },
@@ -131,6 +131,23 @@ export function Footer() {
                 />
               </div>
             ))}
+            {/* Fe3dr's vendor (home-cook) app is a second, real Android app —
+                previously only surfaced on /products/fe3dr. Three live apps
+                is a real credibility signal, so it belongs in the footer too. */}
+            {Object.entries(products)
+              .filter(([, product]) => product.vendorListing)
+              .map(([slug, product]) => (
+                <div key={`${slug}-vendor`}>
+                  <p className={EYEBROW_CLASS}>Get {product.title} for home cooks</p>
+                  <AppStoreBadges
+                    className="mt-4"
+                    appName={`${product.title} for home cooks`}
+                    listings={{ android: product.vendorListing! }}
+                    placeholder="coming-soon"
+                    compact
+                  />
+                </div>
+              ))}
           </div>
         )}
 
