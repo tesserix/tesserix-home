@@ -10,7 +10,8 @@ import {
   useTransform,
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll } from "@tesserix/web";
+import { Reveal } from "@/components/marketing/reveal";
+import { MarketingButton } from "@/components/marketing/marketing-button";
 import {
   industryListExcluding,
   isComingSoon,
@@ -95,12 +96,12 @@ export function AboutTeaser() {
   return (
     <section className="border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <AnimateOnScroll variant="fade-up">
+        <Reveal>
           <p className="inline-flex items-center gap-[0.7rem] font-mono text-[0.7rem] uppercase tracking-[0.14em] text-cobalt">
             <span className="h-px w-[2.2rem] bg-cobalt" aria-hidden="true" />
             The studio
           </p>
-        </AnimateOnScroll>
+        </Reveal>
 
         <div className="mt-8">
           <ScrollRevealStatement />
@@ -117,24 +118,17 @@ export function AboutTeaser() {
               genuinely good.
             </p>
             <div className="mt-8">
-              <Link
-                href="/about"
-                className="inline-flex items-center rounded-[10px] border bg-card px-6 py-3.5 text-[0.98rem] font-medium text-foreground transition-colors hover:border-cobalt"
-              >
+              <MarketingButton as={Link} href="/about" variant="outline">
                 More about us
                 <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-              </Link>
+              </MarketingButton>
             </div>
           </div>
 
           <div className="lg:col-span-6 lg:col-start-7">
             <dl>
               {roadmap.map((item, index) => (
-                <AnimateOnScroll
-                  key={item.name}
-                  variant="fade-up"
-                  delay={index * 0.06}
-                >
+                <Reveal key={item.name} delay={index * 0.06}>
                   <div className="flex items-baseline justify-between gap-4 border-t py-4">
                     <dt className="flex items-baseline gap-3">
                       <span className="font-semibold text-foreground">
@@ -156,7 +150,7 @@ export function AboutTeaser() {
                       {item.status}
                     </dd>
                   </div>
-                </AnimateOnScroll>
+                </Reveal>
               ))}
             </dl>
           </div>

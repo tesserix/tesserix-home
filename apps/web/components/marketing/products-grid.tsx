@@ -1,26 +1,36 @@
 "use client";
+// Kept client (unlike beliefs-section.tsx / contact-cta.tsx, which dropped
+// this after the Reveal swap): this file still renders `AppStoreBadges`
+// from `@tesserix/web`, a client component. Rendering it from a Server
+// Component crashes at runtime here ("Element type is invalid") — the
+// package isn't set up to be composed into an RSC tree, so this stays
+// client-only.
 
 import type { ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { ArrowRight, ArrowUpRight } from "lucide-react";
-import { AnimateOnScroll, AppStoreBadges } from "@tesserix/web";
+import { AppStoreBadges } from "@tesserix/web";
+import { Reveal } from "@/components/marketing/reveal";
 import {
   isComingSoon,
   products as productsData,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-type ShotTreatment = "browser" | "duo-phone";
-
 /**
  * Visual treatment for each live product's screenshot frame. This is a
  * homepage-only presentational choice (not derived from products-data), so
  * it's a simple lookup keyed by slug. A launched product with no entry here
- * falls back to the browser frame using /screens/{slug}-web.jpg.
+ * (or a "browser" entry with no `imageSrc`) falls back to a clean
+ * placeholder frame rather than guessing at an image path that may not
+ * exist.
  */
-const SHOT_TREATMENTS: Record<string, ShotTreatment> = {
-  mark8ly: "browser",
-  fe3dr: "duo-phone",
+const SHOT_TREATMENTS: Record<
+  string,
+  { kind: "browser"; imageSrc: string } | { kind: "duo-phone" }
+> = {
+  mark8ly: { kind: "browser", imageSrc: "/screens/mark8ly-storefront.jpg" },
+  fe3dr: { kind: "duo-phone" },
 };
 
 interface LiveProduct {
@@ -38,6 +48,7 @@ interface SoonProduct {
   slug: string;
   title: string;
   description: string;
+  eta?: string;
   href: string;
 }
 
@@ -45,28 +56,28 @@ interface SoonProduct {
 // products-data.ts — the single source of truth for product copy — rather
 // than being restated here. Live products render as ledger rows in
 // products-data order; coming-soon products render as cards, also in order.
-const liveProducts: LiveProduct[] = [];
-const soonProducts: SoonProduct[] = [];
+const productEntries = Object.entries(productsData);
 
-for (const [slug, product] of Object.entries(productsData)) {
-  if (isComingSoon(slug)) {
-    soonProducts.push({
-      slug,
-      title: product.title,
-      description: product.description,
-      href: `/products/${slug}`,
-    });
-  } else {
-    liveProducts.push({
-      slug,
-      title: product.title,
-      tagline: product.tagline,
-      website: product.website?.replace(/^https?:\/\//, ""),
-      href: `/products/${slug}`,
-      listings: product.listings,
-    });
-  }
-}
+const liveProducts: LiveProduct[] = productEntries
+  .filter(([slug]) => !isComingSoon(slug))
+  .map(([slug, product]) => ({
+    slug,
+    title: product.title,
+    tagline: product.tagline,
+    website: product.website?.replace(/^https?:\/\//, ""),
+    href: `/products/${slug}`,
+    listings: product.listings,
+  }));
+
+const soonProducts: SoonProduct[] = productEntries
+  .filter(([slug]) => isComingSoon(slug))
+  .map(([slug, product]) => ({
+    slug,
+    title: product.title,
+    description: product.description,
+    eta: product.eta,
+    href: `/products/${slug}`,
+  }));
 
 const FRAME_CLASSES =
   "overflow-hidden rounded-[14px] border bg-card shadow-[0_24px_60px_-28px_rgba(11,14,20,0.25)] transition-[transform,box-shadow] duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-1 group-hover:shadow-[0_32px_70px_-28px_rgba(11,14,20,0.32)]";
@@ -174,7 +185,7 @@ function ProductShot({
 }) {
   const treatment = SHOT_TREATMENTS[slug];
 
-  if (treatment === "duo-phone") {
+  if (treatment?.kind === "duo-phone") {
     // Only Fe3dr uses the duo-phone treatment today, so its two screenshots
     // are wired directly rather than through a generic per-slug lookup.
     return (
@@ -187,12 +198,12 @@ function ProductShot({
     );
   }
 
-  if (treatment === "browser" && slug === "mark8ly") {
+  if (treatment?.kind === "browser") {
     return (
       <BrowserFrame website={website ?? slug}>
         <Image
-          src="/screens/mark8ly-storefront.jpg"
-          alt="Mark8ly storefront"
+          src={treatment.imageSrc}
+          alt={`${title} storefront`}
           width={1568}
           height={682}
           loading="lazy"
@@ -203,9 +214,10 @@ function ProductShot({
     );
   }
 
-  // New live products must register a SHOT_TREATMENTS entry (and a matching
-  // screenshot asset) before shipping — until then this renders a clean
-  // placeholder instead of guessing at an image path that may not exist.
+  // Any registered browser-treatment product renders its image above; a
+  // launched product with no SHOT_TREATMENTS entry (or a screenshot asset
+  // not yet wired up) renders a clean placeholder instead of guessing at an
+  // image path that may not exist.
   return (
     <BrowserFrame website={website ?? slug}>
       <ScreenshotPlaceholder title={title} />
@@ -215,14 +227,14 @@ function ProductShot({
 
 function ProductRow({ product }: { product: LiveProduct }) {
   return (
-    <AnimateOnScroll variant="fade-up">
+    <Reveal>
       <article className="group grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)] items-center gap-[clamp(1.5rem,4vw,4rem)] border-b py-[clamp(2.2rem,5vh,3.4rem)] max-[860px]:grid-cols-1">
         <div>
           <div className="flex flex-wrap items-baseline gap-3">
             <h3 className="text-[clamp(1.7rem,3.2vw,2.4rem)] font-semibold tracking-[-0.03em] text-foreground">
               {product.title}
             </h3>
-            <span className="inline-flex items-center gap-[0.45rem] rounded-full border border-[rgba(18,163,116,0.35)] bg-[rgba(18,163,116,0.07)] px-[0.7rem] py-[0.3rem] font-mono text-[0.66rem] uppercase tracking-[0.1em] text-success">
+            <span className="inline-flex items-center gap-[0.45rem] rounded-full border border-[rgba(18,163,116,0.35)] bg-[rgba(18,163,116,0.07)] px-[0.7rem] py-[0.3rem] font-mono text-xs uppercase tracking-[0.1em] text-success">
               <span
                 className="h-[5px] w-[5px] rounded-full bg-success"
                 aria-hidden="true"
@@ -270,27 +282,27 @@ function ProductRow({ product }: { product: LiveProduct }) {
           title={product.title}
         />
       </article>
-    </AnimateOnScroll>
+    </Reveal>
   );
 }
 
 function SoonCard({ product }: { product: SoonProduct }) {
   return (
-    <AnimateOnScroll variant="fade-up">
+    <Reveal>
       <article className="rounded-[14px] border bg-card p-[1.6rem] transition-[border-color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-cobalt">
         <div className="flex flex-wrap items-baseline gap-[0.8rem]">
           <h3 className="text-[1.2rem] font-semibold tracking-[-0.015em] text-foreground">
             {product.title}
           </h3>
-          <span className="inline-flex items-center rounded-full border px-[0.7rem] py-[0.3rem] font-mono text-[0.66rem] uppercase tracking-[0.1em] text-muted-foreground">
+          <span className="inline-flex items-center rounded-full border px-[0.7rem] py-[0.3rem] font-mono text-xs uppercase tracking-[0.1em] text-muted-foreground">
             Soon
           </span>
         </div>
         <p className="mt-[0.7rem] text-[0.92rem] text-muted-foreground">
           {product.description}
         </p>
-        <p className="mt-[1.1rem] font-mono text-[0.64rem] uppercase tracking-[0.1em] text-muted-foreground">
-          In development · 2026
+        <p className="mt-[1.1rem] font-mono text-xs uppercase tracking-[0.1em] text-muted-foreground">
+          In development{product.eta ? ` · ${product.eta}` : ""}
         </p>
         <Link
           href={product.href}
@@ -300,7 +312,7 @@ function SoonCard({ product }: { product: SoonProduct }) {
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </article>
-    </AnimateOnScroll>
+    </Reveal>
   );
 }
 
@@ -308,7 +320,7 @@ export function ProductsGrid() {
   return (
     <section id="products" className="relative py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <AnimateOnScroll variant="fade-up">
+        <Reveal>
           <p className="inline-flex items-center gap-[0.7rem] font-mono text-[0.7rem] uppercase tracking-[0.14em] text-cobalt">
             <span className="h-px w-[2.2rem] bg-cobalt" aria-hidden="true" />
             The portfolio
@@ -320,7 +332,7 @@ export function ProductsGrid() {
             We&apos;d rather make five products that do specific things well
             than one platform that does everything badly.
           </p>
-        </AnimateOnScroll>
+        </Reveal>
 
         <div className="mt-12 border-t border-line-strong">
           {liveProducts.map((product) => (

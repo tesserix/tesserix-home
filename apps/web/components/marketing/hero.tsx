@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { Tesseract } from "@/components/marketing/tesseract";
+import { MarketingButton } from "@/components/marketing/marketing-button";
 import {
   launchedProductSlugs,
   productSlugs,
@@ -16,6 +17,7 @@ function riseDelay(seconds: number): CSSProperties {
 export function Hero() {
   const launched = launchedProductSlugs();
   const comingSoonCount = productSlugs.length - launched.length;
+  const productCount = productSlugs.length;
 
   return (
     <section className="relative min-h-[100svh] flex items-center overflow-hidden bg-background">
@@ -27,11 +29,12 @@ export function Hero() {
 
       <div className="relative z-[2] mx-auto w-full max-w-7xl px-6 pt-28 pb-16 lg:px-8">
         <p
-          className="hero-rise inline-flex items-center gap-2.5 font-mono text-[0.7rem] uppercase tracking-[0.12em] text-muted-foreground"
+          className="hero-rise inline-flex items-center gap-2.5 font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground"
           style={riseDelay(0.05)}
         >
           <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
-          A product studio · five industries, five products
+          A product studio · {productCount} industries, {productCount}{" "}
+          products
         </p>
 
         <h1
@@ -55,22 +58,16 @@ export function Hero() {
           className="hero-rise mt-9 flex flex-wrap items-center gap-4"
           style={riseDelay(0.34)}
         >
-          <Link
-            href="#products"
-            className="rounded-[10px] bg-primary px-7 py-3.5 text-[0.98rem] font-semibold text-primary-foreground transition-all duration-200 hover:-translate-y-0.5 hover:bg-cobalt hover:shadow-[0_12px_28px_-12px_rgba(46,92,255,0.55)]"
-          >
+          <MarketingButton as={Link} href="#products" variant="ink">
             Explore the products
-          </Link>
-          <Link
-            href="/about"
-            className="rounded-[10px] border bg-card px-6 py-3.5 text-[0.98rem] font-medium text-foreground transition-colors hover:border-cobalt"
-          >
+          </MarketingButton>
+          <MarketingButton as={Link} href="/about" variant="outline">
             About Tesserix
-          </Link>
+          </MarketingButton>
         </div>
 
         <p
-          className="hero-rise mt-14 flex flex-wrap gap-0 border-t pt-0 font-mono text-[0.72rem] tracking-[0.06em] text-muted-foreground"
+          className="hero-rise mt-14 flex flex-wrap gap-0 border-t pt-0 font-mono text-xs tracking-[0.06em] text-muted-foreground"
           style={riseDelay(0.46)}
         >
           {launched.map((slug) => (
