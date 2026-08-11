@@ -20,7 +20,7 @@ export function ContactCTA() {
                 "radial-gradient(50rem 26rem at 82% -30%, rgba(106,165,255,0.14), transparent 60%)",
             }}
           >
-            <div className="relative z-10 grid grid-cols-1 items-center gap-x-[2.5rem] gap-y-10 xl:grid-cols-[1.2fr_1fr_minmax(16rem,20rem)]">
+            <div className="relative z-10 grid grid-cols-1 items-center gap-x-[2.5rem] gap-y-10 xl:grid-cols-[1.5fr_1fr_minmax(14rem,17rem)]">
               <div className="relative z-10">
                 <h2 className="text-[clamp(2rem,4.6vw,3.4rem)] font-[650] leading-[1.04] tracking-[-0.04em] text-balance">
                   Have a question?
