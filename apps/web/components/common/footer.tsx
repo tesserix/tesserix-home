@@ -39,7 +39,13 @@ export function Footer() {
         <div className="xl:grid xl:grid-cols-3 xl:gap-8">
           {/* Brand */}
           <div className="space-y-4">
-            <Image src="/logo.png" alt="Tesserix" width={94} height={28} />
+            <Image
+              src="/logo.png"
+              alt="Tesserix"
+              width={116}
+              height={28}
+              sizes="116px"
+            />
             <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
               A product studio building specialized software — one industry at a time. {industryListPlain()}.
             </p>

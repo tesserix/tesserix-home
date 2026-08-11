@@ -106,7 +106,14 @@ export function Navbar() {
         {/* Logo */}
         <div className="flex lg:flex-1">
           <Link href="/" className="-m-1.5 p-1.5">
-            <Image src="/logo.png" alt="Tesserix" width={108} height={32} priority />
+            <Image
+              src="/logo.png"
+              alt="Tesserix"
+              width={132}
+              height={32}
+              sizes="132px"
+              priority
+            />
           </Link>
         </div>
 
@@ -241,7 +248,13 @@ export function Navbar() {
         aria-label="Mobile navigation"
       >
         <div className="flex items-center justify-between px-6 py-4 border-b">
-          <Image src="/logo.png" alt="Tesserix" width={108} height={32} />
+          <Image
+            src="/logo.png"
+            alt="Tesserix"
+            width={132}
+            height={32}
+            sizes="132px"
+          />
           <Button
             type="button"
             variant="ghost"
