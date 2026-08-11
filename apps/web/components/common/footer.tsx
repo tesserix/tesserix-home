@@ -10,6 +10,7 @@ const footerNavigation = {
     { name: "Fe3dr", href: "/products/fe3dr" },
     { name: "Dwellm8", href: "/products/dwellm8" },
     { name: "MediCare", href: "/products/medicare" },
+    { name: "Kora", href: "/products/kora" },
   ],
   company: [
     { name: "About", href: "/about" },

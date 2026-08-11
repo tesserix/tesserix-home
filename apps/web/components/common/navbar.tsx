@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Building2, Hospital } from "lucide-react";
+import { Menu, X, ChevronDown, ShoppingBag, ChefHat, Building2, Hospital, Salad } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@tesserix/web";
 import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
@@ -34,6 +34,12 @@ const products = [
     name: "MediCare",
     description: "Hospital management system",
     icon: Hospital,
+  },
+  {
+    slug: "kora",
+    name: "Kora",
+    description: "AI-powered nutrition tracking",
+    icon: Salad,
   },
 ].map((p) => ({
   ...p,

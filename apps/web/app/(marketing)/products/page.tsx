@@ -85,6 +85,21 @@ const products: ProductEntry[] = (
         "Lab & diagnostics",
       ],
     },
+    {
+      slug: "kora",
+      title: "Kora",
+      tagline: "The easiest nutrition tracking experience, built with AI",
+      description:
+        "AI-powered nutrition tracking for iOS and Android. Log meals by photo, chat, or voice instead of manual data entry — nutrition data comes from USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a value.",
+      features: [
+        "AI photo logging",
+        "Chat & voice logging",
+        "Barcode scanning",
+        "Manual editing",
+        "Verified nutrition data",
+        "iOS and Android",
+      ],
+    },
   ] satisfies ReadonlyArray<Omit<ProductEntry, "status" | "href">>
 ).map((p) => ({
   ...p,
@@ -202,7 +217,7 @@ export default function ProductsPage() {
               The portfolio.
             </h1>
             <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
-              Four products, four industries. Each one focused on doing a
+              Five products, five industries. Each one focused on doing a
               specific job well — and nothing else.
             </p>
           </AnimateOnScroll>

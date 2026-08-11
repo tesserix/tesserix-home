@@ -8,6 +8,7 @@ import {
   Building2,
   ChefHat,
   Hospital,
+  Salad,
   ShoppingBag,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -101,6 +102,20 @@ const products: Product[] = (
         "HIPAA-aligned",
       ],
       iconClass: "text-info",
+    },
+    {
+      slug: "kora",
+      title: "Kora",
+      tagline: "The easiest nutrition tracking experience, built with AI",
+      description:
+        "AI-powered nutrition tracking for iOS and Android. Log meals by photo, chat, or voice instead of manual data entry — nutrition data comes from USDA, OpenFoodFacts, and Australian food databases.",
+      icon: Salad,
+      highlights: [
+        "Photo, chat, voice & barcode logging",
+        "Never hallucinates nutrition",
+        "iOS and Android",
+      ],
+      iconClass: "text-success",
     },
   ] satisfies ReadonlyArray<Omit<Product, "status" | "href">>
 ).map((p) => ({
@@ -257,14 +272,14 @@ export function ProductsGrid() {
                 01 — Products
               </p>
               <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
-                Four products.
+                Five products.
                 <br />
                 Each one focused.
               </h2>
             </div>
             <div className="lg:col-span-5 lg:col-start-8 lg:self-end">
               <p className="text-lg leading-relaxed text-muted-foreground">
-                We&apos;d rather make four products that do specific things
+                We&apos;d rather make five products that do specific things
                 well than one platform that does everything badly.
               </p>
             </div>
