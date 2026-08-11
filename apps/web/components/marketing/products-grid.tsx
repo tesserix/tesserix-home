@@ -1,273 +1,352 @@
 "use client";
+// Kept client (unlike beliefs-section.tsx / contact-cta.tsx, which dropped
+// this after the Reveal swap): this file still renders `AppStoreBadges`
+// from `@tesserix/web`, a client component. Rendering it from a Server
+// Component crashes at runtime here ("Element type is invalid") — the
+// package isn't set up to be composed into an RSC tree, so this stays
+// client-only.
 
-import { useRef } from "react";
+import type { ReactNode } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  Building2,
-  ChefHat,
-  Hospital,
-  Salad,
-  ShoppingBag,
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
-import {
-  motion,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "framer-motion";
-import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll, AppStoreBadges, Button } from "@tesserix/web";
+import Image from "next/image";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { AppStoreBadges } from "@tesserix/web";
+import { Reveal } from "@/components/marketing/reveal";
 import {
   isComingSoon,
   products as productsData,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-type Status = "live" | "soon";
+/**
+ * Visual treatment for each live product's screenshot frame. This is a
+ * homepage-only presentational choice (not derived from products-data), so
+ * it's a simple lookup keyed by slug. A launched product with no entry here
+ * (or a "browser" entry with no `imageSrc`) falls back to a clean
+ * placeholder frame rather than guessing at an image path that may not
+ * exist.
+ */
+const SHOT_TREATMENTS: Record<
+  string,
+  { kind: "browser"; imageSrc: string } | { kind: "duo-phone" }
+> = {
+  mark8ly: { kind: "browser", imageSrc: "/screens/mark8ly-storefront.jpg" },
+  fe3dr: { kind: "duo-phone" },
+};
 
-interface Product {
+interface LiveProduct {
   slug: string;
   title: string;
   tagline: string;
-  description: string;
-  status: Status;
-  icon: LucideIcon;
   website?: string;
   href: string;
-  highlights: string[];
-  iconClass: string;
   listings?: Partial<
     Record<"ios" | "android", { url: string; artworkSrc: string }>
   >;
 }
 
-// Card accent colors are purely presentational and have no equivalent in
-// products-data.ts, so they stay here keyed by slug.
-const ICON_CLASSES: Record<string, string> = {
-  mark8ly: "text-chart-5",
-  fe3dr: "text-warning",
-  dwellm8: "text-primary",
-  medicare: "text-info",
-  kora: "text-success",
-};
+interface SoonProduct {
+  slug: string;
+  title: string;
+  description: string;
+  eta?: string;
+  href: string;
+}
 
-const ICONS: Record<string, LucideIcon> = {
-  mark8ly: ShoppingBag,
-  fe3dr: ChefHat,
-  dwellm8: Building2,
-  medicare: Hospital,
-  kora: Salad,
-};
-
-// Title, tagline, description, highlights and launch state all come from
+// Title, tagline, description and launch state all come from
 // products-data.ts — the single source of truth for product copy — rather
-// than being restated here, where they had drifted (Mark8ly alone had three
-// different descriptions across this file, products/page.tsx and
-// products-data.ts). Cards scroll-stack in the order products-data lists
-// them, which already leads with shipped products.
-const products: Product[] = Object.entries(productsData).map(
-  ([slug, product]) => ({
+// than being restated here. Live products render as ledger rows in
+// products-data order; coming-soon products render as cards, also in order.
+const productEntries = Object.entries(productsData);
+
+const liveProducts: LiveProduct[] = productEntries
+  .filter(([slug]) => !isComingSoon(slug))
+  .map(([slug, product]) => ({
     slug,
     title: product.title,
     tagline: product.tagline,
-    description: product.description,
-    icon: ICONS[slug] ?? ShoppingBag,
     website: product.website?.replace(/^https?:\/\//, ""),
     href: `/products/${slug}`,
-    highlights: product.highlights,
-    iconClass: ICON_CLASSES[slug] ?? "text-foreground",
-    status: isComingSoon(slug) ? ("soon" as const) : ("live" as const),
-    // Only the customer-facing app belongs here — Fe3dr's vendor app is a
-    // second audience shown on the product detail page, not the homepage card.
     listings: product.listings,
-  }),
-);
+  }));
 
-function StatusPill({ status }: { status: Status }) {
-  if (status === "live") {
-    return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-success/30 bg-success/10 px-2.5 py-0.5 font-mono text-xs font-medium text-success">
+const soonProducts: SoonProduct[] = productEntries
+  .filter(([slug]) => isComingSoon(slug))
+  .map(([slug, product]) => ({
+    slug,
+    title: product.title,
+    description: product.description,
+    eta: product.eta,
+    href: `/products/${slug}`,
+  }));
+
+const FRAME_CLASSES =
+  "overflow-hidden rounded-[14px] border bg-card shadow-[0_24px_60px_-28px_rgba(11,14,20,0.25)] transition-[transform,box-shadow] duration-[400ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:-translate-y-1 group-hover:shadow-[0_32px_70px_-28px_rgba(11,14,20,0.32)]";
+
+interface BrowserFrameProps {
+  website: string;
+  children: ReactNode;
+}
+
+function BrowserFrame({ website, children }: BrowserFrameProps) {
+  return (
+    <div className={FRAME_CLASSES}>
+      <div className="flex items-center gap-1.5 border-b bg-muted/40 px-3.5 py-2">
         <span
-          className="h-1.5 w-1.5 rounded-full bg-success"
+          className="h-2 w-2 rounded-full bg-muted-foreground/30"
           aria-hidden="true"
         />
-        Live
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center rounded-full border bg-muted/50 px-2.5 py-0.5 font-mono text-xs font-medium text-muted-foreground">
-      Coming soon
-    </span>
-  );
-}
-
-interface StackCardProps {
-  product: Product;
-  index: number;
-  total: number;
-  progress: MotionValue<number>;
-  reducedMotion: boolean;
-}
-
-function StackCard({
-  product,
-  index,
-  total,
-  progress,
-  reducedMotion,
-}: StackCardProps) {
-  const Icon = product.icon;
-
-  // As the next card scrolls over, this one settles back and dims — Apple deck style
-  const targetScale = 1 - (total - 1 - index) * 0.045;
-  const scale = useTransform(progress, [index / total, 1], [1, targetScale]);
-
-  return (
-    <div
-      className="sticky"
-      style={{ top: `calc(7rem + ${index * 1.75}rem)` }}
-    >
-      <motion.article
-        style={reducedMotion ? undefined : { scale }}
-        className="group relative mb-10 origin-top overflow-hidden rounded-3xl border bg-card shadow-xl"
-      >
-        <Icon
+        <span
+          className="h-2 w-2 rounded-full bg-muted-foreground/30"
           aria-hidden="true"
-          className="pointer-events-none absolute -bottom-10 -right-10 h-56 w-56 text-foreground/[0.03] sm:h-72 sm:w-72"
         />
-
-        <div className="relative grid grid-cols-1 gap-x-12 gap-y-8 p-8 sm:p-12 lg:grid-cols-2">
-          <div>
-            <div className="flex items-center gap-4">
-              <span className="font-mono text-sm text-muted-foreground">
-                {String(index + 1).padStart(2, "0")} /{" "}
-                {String(total).padStart(2, "0")}
-              </span>
-              <StatusPill status={product.status} />
-            </div>
-
-            <div className="mt-6 flex items-center gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border bg-muted/50">
-                <Icon
-                  className={`h-6 w-6 ${product.iconClass}`}
-                  aria-hidden="true"
-                />
-              </div>
-              <h3 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                {product.title}
-              </h3>
-            </div>
-            <p className="mt-3 text-base text-muted-foreground">
-              {product.tagline}
-            </p>
-
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              {product.status === "live" && product.website ? (
-                <Button asChild size="default">
-                  <a
-                    href={`https://${product.website}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Visit {product.website}
-                    <ArrowUpRight
-                      className="ml-1.5 h-4 w-4"
-                      aria-hidden="true"
-                    />
-                  </a>
-                </Button>
-              ) : null}
-              <Button asChild variant="outline" size="default">
-                <Link href={product.href}>
-                  {product.status === "live" ? "Learn more" : "Get notified"}
-                  <ArrowRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
-            </div>
-
-            {product.listings && (
-              <AppStoreBadges
-                className="mt-6"
-                appName={product.title}
-                listings={product.listings}
-                placeholder="coming-soon"
-              />
-            )}
-          </div>
-
-          <div className="lg:border-l lg:pl-12">
-            <p className="text-base leading-relaxed text-muted-foreground">
-              {product.description}
-            </p>
-            <ul className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {product.highlights.map((highlight) => (
-                <li
-                  key={highlight}
-                  className="flex items-start gap-2.5 text-sm text-muted-foreground"
-                >
-                  <span
-                    className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-muted-foreground/60"
-                    aria-hidden="true"
-                  />
-                  {highlight}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </motion.article>
+        <span
+          className="h-2 w-2 rounded-full bg-muted-foreground/30"
+          aria-hidden="true"
+        />
+        <span className="ml-2 rounded-md border bg-background px-2.5 py-0.5 font-mono text-[0.58rem] text-muted-foreground">
+          {website}
+        </span>
+      </div>
+      {children}
     </div>
   );
 }
 
-export function ProductsGrid() {
-  const prefersReducedMotion = useReducedMotion();
-  const stackRef = useRef<HTMLDivElement>(null);
-
-  const { scrollYProgress } = useScroll({
-    target: stackRef,
-    offset: ["start start", "end end"],
-  });
-
+/**
+ * Rendered inside a browser frame when a launched product has no screenshot
+ * asset wired up (see `SHOT_TREATMENTS`) — no image request is made, so
+ * there's no broken-image icon while a real screenshot is pending.
+ */
+function ScreenshotPlaceholder({ title }: { title: string }) {
   return (
-    <section id="products" className="relative border-t py-20 sm:py-28">
-      <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <AnimateOnScroll variant="fade-up">
-          <div className="grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-12">
-            <div className="lg:col-span-6">
-              <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                01 — Products
-              </p>
-              <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
-                Five products.
-                <br />
-                Each one focused.
-              </h2>
-            </div>
-            <div className="lg:col-span-5 lg:col-start-8 lg:self-end">
-              <p className="text-lg leading-relaxed text-muted-foreground">
-                We&apos;d rather make five products that do specific things
-                well than one platform that does everything badly.
-              </p>
-            </div>
-          </div>
-        </AnimateOnScroll>
+    <div className="flex aspect-[1568/682] items-center justify-center bg-secondary">
+      <span className="font-mono text-sm uppercase tracking-[0.14em] text-muted-foreground">
+        {title}
+      </span>
+    </div>
+  );
+}
 
-        <div ref={stackRef} className="relative mt-16">
-          {products.map((product, index) => (
-            <StackCard
-              key={product.slug}
-              product={product}
-              index={index}
-              total={products.length}
-              progress={scrollYProgress}
-              reducedMotion={Boolean(prefersReducedMotion)}
+interface DuoPhoneFrameProps {
+  leftSrc: string;
+  leftAlt: string;
+  rightSrc: string;
+  rightAlt: string;
+}
+
+function DuoPhoneFrame({
+  leftSrc,
+  leftAlt,
+  rightSrc,
+  rightAlt,
+}: DuoPhoneFrameProps) {
+  return (
+    <div className={FRAME_CLASSES}>
+      <div className="flex items-start justify-center gap-[4%] bg-[linear-gradient(150deg,#10141c,#1a212e)] px-[6%] py-[5%]">
+        <div className="w-[38%] rounded-[18px] border border-white/10 bg-[#0d1017] p-[5px]">
+          <div className="overflow-hidden rounded-[14px]">
+            <Image
+              src={leftSrc}
+              alt={leftAlt}
+              width={1080}
+              height={1920}
+              loading="lazy"
+              sizes="(min-width: 1024px) 18vw, 38vw"
+              className="h-auto w-full"
             />
+          </div>
+        </div>
+        <div className="w-[38%] translate-y-[8%] rounded-[18px] border border-white/10 bg-[#0d1017] p-[5px]">
+          <div className="overflow-hidden rounded-[14px]">
+            <Image
+              src={rightSrc}
+              alt={rightAlt}
+              width={1080}
+              height={1920}
+              loading="lazy"
+              sizes="(min-width: 1024px) 18vw, 38vw"
+              className="h-auto w-full"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProductShot({
+  slug,
+  website,
+  title,
+}: {
+  slug: string;
+  website?: string;
+  title: string;
+}) {
+  const treatment = SHOT_TREATMENTS[slug];
+
+  if (treatment?.kind === "duo-phone") {
+    // Only Fe3dr uses the duo-phone treatment today, so its two screenshots
+    // are wired directly rather than through a generic per-slug lookup.
+    return (
+      <DuoPhoneFrame
+        leftSrc="/screens/fe3dr-app-browse.png"
+        leftAlt="Fe3dr customer app"
+        rightSrc="/screens/fe3dr-app-orders.png"
+        rightAlt="Fe3dr cook orders queue"
+      />
+    );
+  }
+
+  if (treatment?.kind === "browser") {
+    return (
+      <BrowserFrame website={website ?? slug}>
+        <Image
+          src={treatment.imageSrc}
+          alt={`${title} storefront`}
+          width={1568}
+          height={682}
+          loading="lazy"
+          sizes="(min-width: 1024px) 45vw, 100vw"
+          className="h-auto w-full"
+        />
+      </BrowserFrame>
+    );
+  }
+
+  // Any registered browser-treatment product renders its image above; a
+  // launched product with no SHOT_TREATMENTS entry (or a screenshot asset
+  // not yet wired up) renders a clean placeholder instead of guessing at an
+  // image path that may not exist.
+  return (
+    <BrowserFrame website={website ?? slug}>
+      <ScreenshotPlaceholder title={title} />
+    </BrowserFrame>
+  );
+}
+
+function ProductRow({ product }: { product: LiveProduct }) {
+  return (
+    <Reveal>
+      <article className="group grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)] items-center gap-[clamp(1.5rem,4vw,4rem)] border-b py-[clamp(2.2rem,5vh,3.4rem)] max-[860px]:grid-cols-1">
+        <div>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <h3 className="text-[clamp(1.7rem,3.2vw,2.4rem)] font-semibold tracking-[-0.03em] text-foreground">
+              {product.title}
+            </h3>
+            <span className="inline-flex items-center gap-[0.45rem] rounded-full border border-[rgba(18,163,116,0.35)] bg-[rgba(18,163,116,0.07)] px-[0.7rem] py-[0.3rem] font-mono text-xs uppercase tracking-[0.1em] text-success">
+              <span
+                className="h-[5px] w-[5px] rounded-full bg-success"
+                aria-hidden="true"
+              />
+              Live
+            </span>
+          </div>
+          <p className="mt-3 max-w-[26rem] text-muted-foreground">
+            {product.tagline}
+          </p>
+          <div className="mt-6 flex flex-wrap items-center gap-6">
+            {product.website ? (
+              <a
+                href={`https://${product.website}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[0.94rem] font-semibold text-cobalt hover:underline"
+              >
+                Visit {product.website}
+                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            <Link
+              href={product.href}
+              className="inline-flex items-center gap-1 text-[0.94rem] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Learn more
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+
+          {product.listings ? (
+            <AppStoreBadges
+              className="mt-4"
+              appName={product.title}
+              listings={product.listings}
+              placeholder="coming-soon"
+            />
+          ) : null}
+        </div>
+
+        <ProductShot
+          slug={product.slug}
+          website={product.website}
+          title={product.title}
+        />
+      </article>
+    </Reveal>
+  );
+}
+
+function SoonCard({ product }: { product: SoonProduct }) {
+  return (
+    <Reveal>
+      <article className="rounded-[14px] border bg-card p-[1.6rem] transition-[border-color,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 hover:border-cobalt">
+        <div className="flex flex-wrap items-baseline gap-[0.8rem]">
+          <h3 className="text-[1.2rem] font-semibold tracking-[-0.015em] text-foreground">
+            {product.title}
+          </h3>
+          <span className="inline-flex items-center rounded-full border px-[0.7rem] py-[0.3rem] font-mono text-xs uppercase tracking-[0.1em] text-muted-foreground">
+            Soon
+          </span>
+        </div>
+        <p className="mt-[0.7rem] text-[0.92rem] text-muted-foreground">
+          {product.description}
+        </p>
+        <p className="mt-[1.1rem] font-mono text-xs uppercase tracking-[0.1em] text-muted-foreground">
+          In development{product.eta ? ` · ${product.eta}` : ""}
+        </p>
+        <Link
+          href={product.href}
+          className="mt-4 inline-flex items-center gap-1 text-[0.94rem] text-muted-foreground transition-colors hover:text-foreground"
+        >
+          Get notified
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </article>
+    </Reveal>
+  );
+}
+
+export function ProductsGrid() {
+  return (
+    <section id="products" className="relative py-20 sm:py-28">
+      <div className="mx-auto max-w-7xl px-6 lg:px-8">
+        <Reveal>
+          <p className="inline-flex items-center gap-[0.7rem] font-mono text-[0.7rem] uppercase tracking-[0.14em] text-cobalt">
+            <span className="h-px w-[2.2rem] bg-cobalt" aria-hidden="true" />
+            The portfolio
+          </p>
+          <h2 className="mt-4 max-w-2xl text-balance text-[clamp(2rem,4.6vw,3.4rem)] font-semibold leading-[1.04] tracking-[-0.04em] text-foreground">
+            Five products. Each one focused.
+          </h2>
+          <p className="mt-4 max-w-[34rem] text-muted-foreground">
+            We&apos;d rather make five products that do specific things well
+            than one platform that does everything badly.
+          </p>
+        </Reveal>
+
+        <div className="mt-12 border-t border-line-strong">
+          {liveProducts.map((product) => (
+            <ProductRow key={product.slug} product={product} />
           ))}
         </div>
+
+        {soonProducts.length > 0 ? (
+          <div className="mt-8 grid grid-cols-3 gap-4 max-[860px]:grid-cols-1">
+            {soonProducts.map((product) => (
+              <SoonCard key={product.slug} product={product} />
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );

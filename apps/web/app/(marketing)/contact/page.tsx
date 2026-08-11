@@ -99,10 +99,6 @@ export default function ContactPage() {
     <div>
       {/* Header */}
       <section className="relative overflow-hidden border-b">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
-        />
         <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -203,7 +199,10 @@ export default function ContactPage() {
                       <SelectTrigger id="interest">
                         <SelectValue placeholder="Select a product" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent
+                        position="popper"
+                        className="w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)] !bg-popover text-popover-foreground border border-line-strong rounded-[10px] shadow-xl overflow-hidden"
+                      >
                         <SelectItem value="mark8ly">Mark8ly</SelectItem>
                         <SelectItem value="fe3dr">Fe3dr</SelectItem>
                         <SelectItem value="dwellm8">Dwellm8</SelectItem>

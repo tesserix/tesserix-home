@@ -17,10 +17,6 @@ export function CareersContent() {
     <div>
       {/* Header */}
       <section className="relative overflow-hidden border-b">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_70%_80%_at_50%_-10%,black,transparent)]"
-        />
         <div className="relative mx-auto max-w-7xl px-6 py-16 sm:py-24 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-3xl">
             <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -44,8 +40,9 @@ export function CareersContent() {
       <section className="py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              01 — What we are
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              What we are
             </p>
             <p className="mt-8 max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
               Two people, building specialized SaaS products one industry at
@@ -64,8 +61,9 @@ export function CareersContent() {
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              02 — How we work
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              How we work
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               The rules we run on.
@@ -103,8 +101,9 @@ export function CareersContent() {
       <section className="border-t py-16 sm:py-24">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <AnimateOnScroll variant="fade-up" className="max-w-2xl">
-            <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-              03 — What we look for
+            <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+              <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+              What we look for
             </p>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-foreground sm:text-5xl">
               If a role opens, this is who we&apos;d want.
@@ -140,8 +139,9 @@ export function CareersContent() {
           <AnimateOnScroll variant="fade-up">
             <div className="flex flex-col items-start justify-between gap-8 sm:flex-row sm:items-end">
               <div>
-                <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-                  04 — Get in touch
+                <p className="inline-flex items-center gap-2.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                  <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+                  Get in touch
                 </p>
                 <h2 className="mt-4 max-w-xl text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
                   Nothing open — write to us anyway.

@@ -10,15 +10,16 @@ import {
   useTransform,
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll, Button } from "@tesserix/web";
+import { Reveal } from "@/components/marketing/reveal";
+import { MarketingButton } from "@/components/marketing/marketing-button";
 import {
-  industryListExcluding,
   isComingSoon,
   productSlugs,
   products,
+  upcomingIndustryList,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for ${industryListExcluding("commerce")} — each product designed to solve one problem well, not to check a feature list.`;
+const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune, then built Fe3dr because good home cooking shouldn't be hard to find. We're building for ${upcomingIndustryList()} next — each product designed to solve one problem well, not to check a feature list.`;
 
 /** Short editorial gloss per product; names and launch state come from data. */
 const roadmapNotes: Record<string, string> = {
@@ -67,7 +68,7 @@ function ScrollRevealStatement() {
 
   if (prefersReducedMotion) {
     return (
-      <p className="max-w-4xl text-2xl font-medium leading-snug tracking-tight text-foreground sm:text-3xl lg:text-4xl">
+      <p className="max-w-[44rem] text-balance text-[clamp(1.5rem,3.4vw,2.5rem)] font-semibold leading-[1.24] tracking-[-0.035em] text-foreground">
         {STATEMENT}
       </p>
     );
@@ -76,7 +77,7 @@ function ScrollRevealStatement() {
   return (
     <p
       ref={ref}
-      className="relative max-w-4xl text-2xl font-medium leading-snug tracking-tight sm:text-3xl lg:text-4xl"
+      className="relative max-w-[44rem] text-balance text-[clamp(1.5rem,3.4vw,2.5rem)] font-semibold leading-[1.24] tracking-[-0.035em]"
     >
       {words.map((word, index) => (
         <Word
@@ -95,14 +96,18 @@ export function AboutTeaser() {
   return (
     <section className="border-t py-20 sm:py-28">
       <div className="mx-auto max-w-7xl px-6 lg:px-8">
-        <AnimateOnScroll variant="fade-up">
-          <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-            03 — The studio
+        <Reveal>
+          <p className="inline-flex items-center gap-[0.7rem] font-mono text-[0.7rem] uppercase tracking-[0.14em] text-cobalt">
+            <span className="h-px w-[2.2rem] bg-cobalt" aria-hidden="true" />
+            The studio
           </p>
-        </AnimateOnScroll>
+        </Reveal>
 
         <div className="mt-8">
           <ScrollRevealStatement />
+          <p className="mt-[1.8rem] font-mono text-[0.72rem] uppercase tracking-[0.1em] text-muted-foreground">
+            The studio &middot; Sydney &amp; remote
+          </p>
         </div>
 
         <div className="mt-16 grid grid-cols-1 gap-x-8 gap-y-12 lg:grid-cols-12">
@@ -113,23 +118,17 @@ export function AboutTeaser() {
               genuinely good.
             </p>
             <div className="mt-8">
-              <Button variant="outline" asChild>
-                <Link href="/about">
-                  More about us
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-                </Link>
-              </Button>
+              <MarketingButton as={Link} href="/about" variant="outline">
+                More about us
+                <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+              </MarketingButton>
             </div>
           </div>
 
           <div className="lg:col-span-6 lg:col-start-7">
             <dl>
               {roadmap.map((item, index) => (
-                <AnimateOnScroll
-                  key={item.name}
-                  variant="fade-up"
-                  delay={index * 0.06}
-                >
+                <Reveal key={item.name} delay={index * 0.06}>
                   <div className="flex items-baseline justify-between gap-4 border-t py-4">
                     <dt className="flex items-baseline gap-3">
                       <span className="font-semibold text-foreground">
@@ -151,7 +150,7 @@ export function AboutTeaser() {
                       {item.status}
                     </dd>
                   </div>
-                </AnimateOnScroll>
+                </Reveal>
               ))}
             </dl>
           </div>

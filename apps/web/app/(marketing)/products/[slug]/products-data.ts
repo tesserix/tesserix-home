@@ -61,6 +61,12 @@ export const products: Record<
      * they now read this field instead of restating it.
      */
     highlights: string[];
+    /**
+     * Honest target for a coming-soon product's launch, shown on the
+     * homepage's "In development" card (`products-grid.tsx`). Omit rather
+     * than guess a date for a product with no committed timeline.
+     */
+    eta?: string;
     features: Array<{
       icon: React.ComponentType<{ className?: string }>;
       title: string;
@@ -319,6 +325,7 @@ export const products: Record<
     icon: Building2,
     status: "coming-soon",
     industry: "rentals",
+    eta: "2026",
     highlights: [
       "Tenancy agreements & rent schedules",
       "UPI rent, instant receipts, zero platform fees",
@@ -384,6 +391,7 @@ export const products: Record<
     icon: Hospital,
     status: "coming-soon",
     industry: "healthcare",
+    eta: "2026",
     highlights: [
       "Electronic health records",
       "Appointment scheduling",
@@ -449,6 +457,7 @@ export const products: Record<
     status: "coming-soon",
     industry: "nutrition",
     operatingSystem: "iOS, Android",
+    eta: "2026",
     highlights: [
       "Photo, chat, voice & barcode logging",
       "Manual editing",
@@ -565,6 +574,18 @@ export function industryListPlain(): string {
 }
 
 /**
+ * Joins names with an Oxford "and" before the last item, e.g.
+ * "food, rentals, healthcare, and nutrition". Shared by every industry-list
+ * helper below so the join rules (1 -> "x", 2 -> "x and y", 3+ -> "x, y, and
+ * z") exist in exactly one place.
+ */
+function oxfordJoin(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/**
  * Industry list with one name excluded and an Oxford "and" before the last
  * item, e.g. industryListExcluding("commerce") => "food, rentals, healthcare,
  * and nutrition" — used for mid-sentence copy that already names the
@@ -572,8 +593,19 @@ export function industryListPlain(): string {
  * which names Mark8ly/commerce in the sentence before this list).
  */
 export function industryListExcluding(exclude: Industry): string {
-  const names = industryNames.filter((name) => name !== exclude);
-  if (names.length <= 1) return names.join("");
-  if (names.length === 2) return `${names[0]} and ${names[1]}`;
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+  return oxfordJoin(industryNames.filter((name) => name !== exclude));
+}
+
+/**
+ * Industries of products that haven't launched yet, with an Oxford "and", e.g.
+ * "rentals, healthcare, and nutrition". Copy that names the shipped products
+ * individually and then points at what's still in build reads this, so the
+ * sentence re-balances itself the moment a product's status flips.
+ */
+export function upcomingIndustryList(): string {
+  return oxfordJoin(
+    Object.values(products)
+      .filter((product) => product.status !== "available")
+      .map((product) => product.industry),
+  );
 }
