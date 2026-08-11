@@ -19,8 +19,11 @@ import {
   useTransform,
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
-import { AnimateOnScroll, Button } from "@tesserix/web";
-import { isComingSoon } from "@/app/(marketing)/products/[slug]/products-data";
+import { AnimateOnScroll, AppStoreBadges, Button } from "@tesserix/web";
+import {
+  isComingSoon,
+  products as productsData,
+} from "@/app/(marketing)/products/[slug]/products-data";
 
 type Status = "live" | "soon";
 
@@ -35,6 +38,9 @@ interface Product {
   href: string;
   highlights: string[];
   iconClass: string;
+  listings?: Partial<
+    Record<"ios" | "android", { url: string; artworkSrc: string }>
+  >;
 }
 
 // Launch state is read from products-data.ts rather than repeated here; the
@@ -122,6 +128,9 @@ const products: Product[] = (
   ...p,
   href: `/products/${p.slug}`,
   status: isComingSoon(p.slug) ? ("soon" as const) : ("live" as const),
+  // Only the customer-facing app belongs here — Fe3dr's vendor app is a
+  // second audience shown on the product detail page, not the homepage card.
+  listings: productsData[p.slug]?.listings,
 }));
 
 function StatusPill({ status }: { status: Status }) {
@@ -226,6 +235,15 @@ function StackCard({
                 </Link>
               </Button>
             </div>
+
+            {product.listings && (
+              <AppStoreBadges
+                className="mt-6"
+                appName={product.title}
+                listings={product.listings}
+                placeholder="coming-soon"
+              />
+            )}
           </div>
 
           <div className="lg:border-l lg:pl-12">

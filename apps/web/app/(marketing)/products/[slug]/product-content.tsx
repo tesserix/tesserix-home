@@ -12,6 +12,7 @@ import {
   BreadcrumbSeparator,
   BreadcrumbPage,
   AnimateOnScroll,
+  AppStoreBadges,
 } from "@tesserix/web";
 import { WaitlistForm } from "@/components/marketing/waitlist-form";
 import { products } from "./products-data";
@@ -110,6 +111,33 @@ export function ProductContent({ slug }: { slug: string }) {
               <p className="mt-4 text-sm text-muted-foreground">
                 No credit card required · 14-day free trial
               </p>
+            )}
+
+            {product.listings && (
+              <div className="mt-8 space-y-4">
+                {product.vendorListing && (
+                  <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                    For diners
+                  </p>
+                )}
+                <AppStoreBadges
+                  appName={product.title}
+                  listings={product.listings}
+                  placeholder="coming-soon"
+                />
+                {product.vendorListing && (
+                  <>
+                    <p className="pt-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+                      For home cooks
+                    </p>
+                    <AppStoreBadges
+                      appName={`${product.title} for home cooks`}
+                      listings={{ android: product.vendorListing }}
+                      placeholder="coming-soon"
+                    />
+                  </>
+                )}
+              </div>
             )}
           </AnimateOnScroll>
         </div>

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { Input, Button } from "@tesserix/web";
+import { Input, Button, AppStoreBadges } from "@tesserix/web";
+import { products } from "@/app/(marketing)/products/[slug]/products-data";
 
 const footerNavigation = {
   products: [
@@ -56,6 +57,26 @@ export function Footer() {
                   Subscribe
                 </Button>
               </form>
+            </div>
+            {/* Only launched products with a real app store presence get a
+                badge row here. Fe3dr's vendor (home-cook) app is a second
+                audience surfaced on the Fe3dr product page, not the footer. */}
+            <div className="space-y-4 pt-4">
+              {Object.entries(products)
+                .filter(([, product]) => product.listings)
+                .map(([slug, product]) => (
+                  <div key={slug}>
+                    <p className="mb-2 text-sm font-medium text-foreground">
+                      Get {product.title}
+                    </p>
+                    <AppStoreBadges
+                      appName={product.title}
+                      listings={product.listings!}
+                      placeholder="coming-soon"
+                      compact
+                    />
+                  </div>
+                ))}
             </div>
           </div>
 

@@ -44,6 +44,21 @@ export const products: Record<
     benefits: string[];
     // Pricing lives on each product's own site, not here — see product-content.tsx.
     website?: string;
+    /**
+     * App store presence, keyed by platform. A listing with `url: ""` is a
+     * real platform we're on that has no live link yet (e.g. iOS apps under
+     * App Store review) — `AppStoreBadges` renders it as a coming-soon plate
+     * rather than a dead link. Omit a platform entirely if there is no app.
+     */
+    listings?: Partial<
+      Record<"ios" | "android", { url: string; artworkSrc: string }>
+    >;
+    /**
+     * The Fe3dr vendor (home-cook) Android app is a second audience beyond
+     * the customer app in `listings`. Only Fe3dr has one today, so it's kept
+     * as a separate optional field rather than widening the platform union.
+     */
+    vendorListing?: { url: string; artworkSrc: string };
   }
 > = {
   mark8ly: {
@@ -102,6 +117,13 @@ export const products: Record<
       "Optional white-label mobile app on Pro",
       "Three plans, one price page — no bait and switch",
     ],
+    listings: {
+      ios: { url: "", artworkSrc: "/badges/app-store-badge.svg" },
+      android: {
+        url: "https://play.google.com/store/apps/details?id=com.mark8ly.admin",
+        artworkSrc: "/badges/google-play-badge.png",
+      },
+    },
   },
   fe3dr: {
     title: "Fe3dr",
@@ -145,6 +167,17 @@ export const products: Record<
       "Collect it yourself or have it delivered",
       "Currently live in Pune",
     ],
+    listings: {
+      ios: { url: "", artworkSrc: "/badges/app-store-badge.svg" },
+      android: {
+        url: "https://play.google.com/store/apps/details?id=com.tesserix.homechef.customer",
+        artworkSrc: "/badges/google-play-badge.png",
+      },
+    },
+    vendorListing: {
+      url: "https://play.google.com/store/apps/details?id=com.tesserix.homechef.vendor",
+      artworkSrc: "/badges/google-play-badge.png",
+    },
   },
   dwellm8: {
     title: "Dwellm8",
