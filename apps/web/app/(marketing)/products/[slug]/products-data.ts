@@ -35,6 +35,14 @@ interface ProductMediaImage {
   orientation: "landscape" | "portrait";
 }
 
+/**
+ * The five industries the current portfolio covers, one per product. This is
+ * the single source of truth for the "one industry at a time" marketing
+ * copy repeated on the hero, footer and /about — those sites derive their
+ * industry list from `industryNames` below instead of holding their own copy.
+ */
+export type Industry = "commerce" | "food" | "rentals" | "healthcare" | "nutrition";
+
 export const products: Record<
   string,
   {
@@ -44,6 +52,7 @@ export const products: Record<
     longDescription: string;
     icon: React.ComponentType<{ className?: string }>;
     status: "available" | "coming-soon";
+    industry: Industry;
     features: Array<{
       icon: React.ComponentType<{ className?: string }>;
       title: string;
@@ -92,6 +101,7 @@ export const products: Record<
       "Mark8ly is a quiet, considered commerce platform for people who actually make things. Set up your store in an afternoon, keep every sale, and sell on a storefront that doesn't look like everyone else's. Real merchants worked on the design. Real engineers built the infrastructure. The result is a tool that does fewer things, but does them properly.",
     icon: ShoppingBag,
     status: "available",
+    industry: "commerce",
     features: [
       {
         icon: Palette,
@@ -165,6 +175,7 @@ export const products: Record<
       "Fe3dr connects verified home cooks with people who want a real home-cooked meal. Every meal is cooked to order — nothing sits pre-made or reheated — and you choose to collect it yourself or have it delivered. Fe3dr is currently live in Pune.",
     icon: ChefHat,
     status: "available",
+    industry: "food",
     features: [
       {
         icon: UserCheck,
@@ -251,6 +262,7 @@ export const products: Record<
       "Dwellm8 runs the whole tenancy on one record: listings and enquiries, agreements and rent, maintenance and the gate. Owners see what their property earns, managing firms run delegated portfolios against a ledger rather than a spreadsheet, and tenants get an app where the rent, the receipts and the repair requests are all on the record. Money is integer paise on an append-only ledger — nothing is a stored balance, and nothing is quietly deleted.",
     icon: Building2,
     status: "coming-soon",
+    industry: "rentals",
     features: [
       {
         icon: KeyRound,
@@ -307,6 +319,7 @@ export const products: Record<
       "MediCare is a comprehensive hospital management system designed to streamline healthcare operations. From patient registration and electronic health records to appointment scheduling, billing, and inventory management, MediCare digitizes every aspect of hospital administration.",
     icon: Hospital,
     status: "coming-soon",
+    industry: "healthcare",
     features: [
       {
         icon: FileText,
@@ -363,6 +376,7 @@ export const products: Record<
       "Kora is an AI-powered nutrition tracking app for iOS and Android. It isn't meant to be another calorie counter — the goal is the easiest nutrition tracking experience ever built, one that feels conversational rather than like data entry. Log a meal with a food photo, a natural-language message, or your voice. Nutrition data is sourced from the USDA, OpenFoodFacts, and Australian food databases, and Kora is built to never hallucinate a nutrition value.",
     icon: Salad,
     status: "coming-soon",
+    industry: "nutrition",
     features: [
       {
         icon: Camera,
@@ -448,4 +462,39 @@ export function productTitle(slug: string): string {
  */
 export function isComingSoon(slug: string): boolean {
   return products[slug]?.status !== "available";
+}
+
+/**
+ * The industries covered by the current lineup, in portfolio order
+ * (commerce, food, rentals, healthcare, nutrition). Derived from `products`
+ * so the marketing copy that quotes this list can't drift from the actual
+ * products again.
+ */
+export const industryNames: Industry[] = Object.values(products).map(
+  (product) => product.industry,
+);
+
+/**
+ * Full industry list as a sentence-start phrase, e.g.
+ * "Commerce, food, rentals, healthcare, nutrition" — used where the original
+ * copy read as a standalone list (hero, footer, /about metadata).
+ */
+export function industryListPlain(): string {
+  return industryNames
+    .map((name, index) => (index === 0 ? `${name[0].toUpperCase()}${name.slice(1)}` : name))
+    .join(", ");
+}
+
+/**
+ * Industry list with one name excluded and an Oxford "and" before the last
+ * item, e.g. industryListExcluding("commerce") => "food, rentals, healthcare,
+ * and nutrition" — used for mid-sentence copy that already names the
+ * excluded industry's product separately (e.g. the about-teaser statement,
+ * which names Mark8ly/commerce in the sentence before this list).
+ */
+export function industryListExcluding(exclude: Industry): string {
+  const names = industryNames.filter((name) => name !== exclude);
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }

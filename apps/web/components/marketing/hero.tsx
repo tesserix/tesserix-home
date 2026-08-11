@@ -14,6 +14,7 @@ import {
   productSlugs,
   launchedProductSlugs,
   productTitle,
+  industryListPlain,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
 const containerVariants = {
@@ -137,8 +138,8 @@ export function Hero() {
             className="mt-8 max-w-xl text-lg leading-relaxed text-muted-foreground"
             variants={prefersReducedMotion ? undefined : itemVariants}
           >
-            We build focused SaaS products — one industry at a time. Commerce,
-            sports, healthcare, food. Each product does one thing well and
+            We build focused SaaS products — one industry at a time.{" "}
+            {industryListPlain()}. Each product does one thing well and
             refuses to do everything else.
           </motion.p>
 

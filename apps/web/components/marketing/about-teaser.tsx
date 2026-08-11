@@ -11,9 +11,9 @@ import {
 } from "framer-motion";
 import type { MotionValue } from "framer-motion";
 import { AnimateOnScroll, Button } from "@tesserix/web";
+import { industryListExcluding } from "@/app/(marketing)/products/[slug]/products-data";
 
-const STATEMENT =
-  "Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for healthcare, food, and sport — each product designed to solve one problem well, not to check a feature list.";
+const STATEMENT = `Tesserix is a small team shipping real software for real businesses. We started with Mark8ly because launching an online store shouldn't cost a fortune. Now we're building for ${industryListExcluding("commerce")} — each product designed to solve one problem well, not to check a feature list.`;
 
 const roadmap = [
   { name: "Mark8ly", note: "Editorial commerce", status: "Live" },

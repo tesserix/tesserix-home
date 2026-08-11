@@ -3,7 +3,10 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Input, Button, AppStoreBadges } from "@tesserix/web";
-import { products } from "@/app/(marketing)/products/[slug]/products-data";
+import {
+  products,
+  industryListPlain,
+} from "@/app/(marketing)/products/[slug]/products-data";
 
 const footerNavigation = {
   products: [
@@ -38,7 +41,7 @@ export function Footer() {
           <div className="space-y-4">
             <Image src="/logo.png" alt="Tesserix" width={94} height={28} />
             <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
-              A product studio building specialized software — one industry at a time. Commerce, sports, healthcare, food.
+              A product studio building specialized software — one industry at a time. {industryListPlain()}.
             </p>
             {/* Newsletter signup */}
             <div className="pt-4">
