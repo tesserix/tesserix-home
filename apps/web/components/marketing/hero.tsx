@@ -1,185 +1,100 @@
-"use client";
-
-import { useRef } from "react";
+import type { CSSProperties } from "react";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { Tesseract } from "@/components/marketing/tesseract";
 import {
-  motion,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from "framer-motion";
-import { Button } from "@tesserix/web";
-import {
-  productSlugs,
   launchedProductSlugs,
+  productSlugs,
   productTitle,
   industryListPlain,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-const containerVariants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.09,
-      delayChildren: 0.1,
-    },
-  },
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, y: 24 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.6, ease: [0.22, 1, 0.36, 1] as const },
-  },
-};
-
-// Counts are derived from products-data.ts, the single source of launch
-// truth, so this can't drift from the actual portfolio again.
-const totalProductCount = productSlugs.length;
-const liveProductCount = launchedProductSlugs().length;
-
-const stats = [
-  {
-    value: String(totalProductCount).padStart(2, "0"),
-    label: "Products in the portfolio",
-  },
-  {
-    value: String(liveProductCount).padStart(2, "0"),
-    label: "Live in production",
-  },
-  {
-    value: String(totalProductCount).padStart(2, "0"),
-    label: "Industries, one each",
-  },
-  // Scoped to Mark8ly by name — Fe3dr, the other live product, does charge
-  // fees (platform fee + chef commission), so "0% transaction fees" isn't
-  // true portfolio-wide.
-  { value: "0%", label: "Mark8ly transaction fees, ever" },
-];
-
-const marqueeItems = productSlugs.map((slug) => productTitle(slug));
-
-function Marquee() {
-  const row = [...marqueeItems, ...marqueeItems, ...marqueeItems];
-  return (
-    <div
-      aria-hidden="true"
-      className="overflow-hidden border-t [mask-image:linear-gradient(to_right,transparent,black_15%,black_85%,transparent)]"
-    >
-      <div className="animate-marquee flex w-max items-center gap-6 whitespace-nowrap py-5">
-        {[...row, ...row].map((item, i) => (
-          <span
-            key={`${item}-${i}`}
-            className="flex items-center gap-6 font-mono text-xs uppercase tracking-[0.25em] text-muted-foreground"
-          >
-            {item}
-            <span className="h-1 w-1 rounded-full bg-muted-foreground/40" />
-          </span>
-        ))}
-      </div>
-    </div>
-  );
+/** Inline custom property carrying the CSS-only stagger delay for `.hero-rise`. */
+function riseDelay(seconds: number): CSSProperties {
+  return { "--d": `${seconds}s` } as CSSProperties;
 }
 
 export function Hero() {
-  const prefersReducedMotion = useReducedMotion();
-  const sectionRef = useRef<HTMLElement>(null);
-
-  // Apple-style scroll-out: hero content drifts up and fades as you scroll past
-  const { scrollYProgress } = useScroll({
-    target: sectionRef,
-    offset: ["start start", "end start"],
-  });
-  const contentY = useTransform(scrollYProgress, [0, 1], [0, 120]);
-  const contentOpacity = useTransform(scrollYProgress, [0, 0.65], [1, 0]);
+  const launched = launchedProductSlugs();
+  const comingSoonCount = productSlugs.length - launched.length;
 
   return (
-    <section ref={sectionRef} className="relative overflow-hidden bg-background">
-      {/* Quiet dot-grid texture drawn from the border token, fading toward the fold */}
+    <section className="relative min-h-[100svh] flex items-center overflow-hidden bg-background">
       <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(var(--border)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:radial-gradient(ellipse_75%_75%_at_50%_-10%,black,transparent)]"
-      />
-
-      <div className="relative mx-auto max-w-7xl px-6 pt-24 pb-16 sm:pt-32 lg:px-8 lg:pt-36">
-        <motion.div
-          initial={prefersReducedMotion ? false : "hidden"}
-          animate="visible"
-          variants={containerVariants}
-          style={
-            prefersReducedMotion
-              ? undefined
-              : { y: contentY, opacity: contentOpacity }
-          }
-        >
-          <motion.p
-            className="inline-flex items-center gap-2.5 rounded-full border bg-card/60 px-4 py-1.5 font-mono text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground backdrop-blur"
-            variants={prefersReducedMotion ? undefined : itemVariants}
-          >
-            <span className="relative flex h-2 w-2" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-            </span>
-            Tesserix — a product studio
-          </motion.p>
-
-          <motion.h1
-            className="mt-8 max-w-5xl text-4xl font-semibold tracking-tight text-foreground sm:text-6xl lg:text-7xl"
-            variants={prefersReducedMotion ? undefined : itemVariants}
-          >
-            Specialized software,
-            <br />
-            <span className="text-muted-foreground">
-              built for the people who use it.
-            </span>
-          </motion.h1>
-
-          <motion.p
-            className="mt-8 max-w-xl text-lg leading-relaxed text-muted-foreground"
-            variants={prefersReducedMotion ? undefined : itemVariants}
-          >
-            We build focused SaaS products — one industry at a time.{" "}
-            {industryListPlain()}. Each product does one thing well and
-            refuses to do everything else.
-          </motion.p>
-
-          <motion.div
-            className="mt-10 flex flex-wrap items-center gap-4"
-            variants={prefersReducedMotion ? undefined : itemVariants}
-          >
-            <Button size="lg" asChild>
-              <Link href="#products">
-                Explore the products
-                <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
-              </Link>
-            </Button>
-            <Button size="lg" variant="ghost" asChild>
-              <Link href="/about">About Tesserix</Link>
-            </Button>
-          </motion.div>
-
-          <motion.dl
-            className="mt-20 grid grid-cols-2 gap-x-8 gap-y-10 border-t pt-10 lg:grid-cols-4"
-            variants={prefersReducedMotion ? undefined : itemVariants}
-          >
-            {stats.map((stat) => (
-              <div key={stat.label}>
-                <dd className="font-mono text-3xl font-medium tracking-tight text-foreground sm:text-4xl">
-                  {stat.value}
-                </dd>
-                <dt className="mt-2 text-sm text-muted-foreground">
-                  {stat.label}
-                </dt>
-              </div>
-            ))}
-          </motion.dl>
-        </motion.div>
+        className="absolute z-0 right-[clamp(-10rem,-2vw,0rem)] top-1/2 h-[clamp(26rem,46vw,46rem)] w-[clamp(26rem,46vw,46rem)] -translate-y-1/2 max-[860px]:opacity-[0.22] max-[860px]:right-[-35%]"
+      >
+        <Tesseract className="h-full w-full" />
       </div>
 
-      <Marquee />
+      <div className="relative z-[2] mx-auto w-full max-w-7xl px-6 pt-28 pb-16 lg:px-8">
+        <p
+          className="hero-rise inline-flex items-center gap-2.5 font-mono text-[0.7rem] uppercase tracking-[0.12em] text-muted-foreground"
+          style={riseDelay(0.05)}
+        >
+          <span className="h-px w-9 bg-cobalt" aria-hidden="true" />
+          A product studio · five industries, five products
+        </p>
+
+        <h1
+          className="hero-rise mt-6 max-w-[14ch] text-balance text-[clamp(2.8rem,7vw,5.8rem)] font-semibold leading-[0.99] tracking-[-0.048em] text-foreground"
+          style={riseDelay(0.13)}
+        >
+          Specialized software, built for the{" "}
+          <em className="not-italic text-cobalt">people</em> who use it.
+        </h1>
+
+        <p
+          className="hero-rise mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground"
+          style={riseDelay(0.24)}
+        >
+          We build focused SaaS products — one industry at a time.{" "}
+          {industryListPlain()}. Each product does one thing well and refuses
+          to do everything else.
+        </p>
+
+        <div
+          className="hero-rise mt-9 flex flex-wrap items-center gap-4"
+          style={riseDelay(0.34)}
+        >
+          <Link
+            href="#products"
+            className="rounded-[10px] bg-primary px-7 py-3.5 text-[0.98rem] font-semibold text-primary-foreground transition-all duration-200 hover:-translate-y-0.5 hover:bg-cobalt hover:shadow-[0_12px_28px_-12px_rgba(46,92,255,0.55)]"
+          >
+            Explore the products
+          </Link>
+          <Link
+            href="/about"
+            className="rounded-[10px] border bg-card px-6 py-3.5 text-[0.98rem] font-medium text-foreground transition-colors hover:border-cobalt"
+          >
+            About Tesserix
+          </Link>
+        </div>
+
+        <p
+          className="hero-rise mt-14 flex flex-wrap gap-0 border-t pt-0 font-mono text-[0.72rem] tracking-[0.06em] text-muted-foreground"
+          style={riseDelay(0.46)}
+        >
+          {launched.map((slug) => (
+            <span
+              key={slug}
+              className="inline-flex items-center gap-2 py-3.5 pr-6"
+            >
+              <span
+                className="inline-block h-1.5 w-1.5 rounded-full bg-success"
+                aria-hidden="true"
+              />
+              <b className="font-semibold text-foreground">
+                {productTitle(slug)}
+              </b>
+              &nbsp;live
+            </span>
+          ))}
+          {comingSoonCount > 0 && (
+            <span className="inline-flex items-center py-3.5 pr-6">
+              {comingSoonCount} more in development
+            </span>
+          )}
+        </p>
+      </div>
     </section>
   );
 }
