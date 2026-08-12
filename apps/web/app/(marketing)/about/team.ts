@@ -31,7 +31,7 @@ export const team: TeamMember[] = [
     slug: "samyak-r",
     name: "Samyak Rout",
     title: "Co-founder",
-    bio: "Full-stack and DevOps engineer building cloud-native products end to end — Go services, Next.js apps and the delivery pipelines behind them.",
+    bio: "Full-stack and AI Platform engineer building cloud-native products end to end — Go services, Next.js apps and the delivery pipelines behind them.",
     linkedIn: "https://www.linkedin.com/in/samyak-r-96551a21/",
     github: "https://github.com/sam123ben",
   },

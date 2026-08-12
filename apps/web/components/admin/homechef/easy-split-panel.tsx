@@ -194,12 +194,16 @@ export function EasySplitPanel() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h3 className="font-semibold">Easy Split</h3>
+          {/* Not knowing yet is not the same as off — until the roster lands,
+              say so rather than asserting the rail is disabled. */}
           <StatusBadge
             tone={roster.data?.globalEnabled ? "success" : "neutral"}
             label={
-              roster.data?.globalEnabled
-                ? "Platform flag on"
-                : "Platform flag off"
+              !roster.data
+                ? "Platform flag…"
+                : roster.data.globalEnabled
+                  ? "Platform flag on"
+                  : "Platform flag off"
             }
           />
           {roster.data && !roster.data.windowFits ? (
