@@ -1,6 +1,83 @@
 # Admin Console Redesign — Design
 
-> **Status**: Approved (design) | **Date**: 2026-08-14 | **Scope**: `tesserix-home` monorepo
+> **Status**: ⚠️ **NOT EXECUTABLE AS WRITTEN** — adversarial review 2026-08-14 returned
+> "do not proceed as written". Direction retained; plan requires re-sequencing.
+> | **Date**: 2026-08-14 | **Scope**: `tesserix-home` monorepo
+
+## Review outcome — read before using any number in this document
+
+An adversarial review verified this spec's claims against the codebase. **Several are
+wrong**, and no figure here should be planned against without re-derivation:
+
+| Claim | Actual |
+|---|---|
+| "@tesserix/web used by **255 files**" | **65** — ~4x overstated |
+| "`LoadingState` — ship-ready, reuse as-is" | **No `LoadingState` component exists.** Only `skeleton/` and `table-skeleton/` dirs |
+| "~21.5k LOC of page code" | **19,092** |
+| Kora "5 surfaces" / "7 pages" / "~1,854 LOC" | **8 pages, 1,038 LOC** — and internally inconsistent |
+| "Shared layouts exist, adoption was never finished" | **3 of 4 have exactly one caller.** They were never shared components pages opted out of — they are single-page extractions. **The causal story, and the lint-rule remedy that follows from it, are unfounded** |
+| "Marketing drags TipTap and Recharts into its bundle" | **TipTap has zero importers anywhere.** Recharts is route-split away from marketing by the App Router. **The app-split justification is false** |
+| "Four workloads with a Kargo annotation but no Stage" | **~40 apps** across 6 nonexistent Kargo projects |
+| "revival starts from an empty store" | True only for the ClickHouse/OTel tier. **Prometheus TSDB is retained (32 GiB); unparking is a `replicaCount` edit in one file** |
+| "kora-postgres on a Spot node pool" | Not configured. (No backup, `instances: 1`, 20Gi all confirmed) |
+| Kora mirror "~30 min stale" | **Unsourced** — appears nowhere in the repo |
+
+### Unreconciled conflicts with existing approved documents
+
+- **`MIGRATION-MATRIX.md`** is a live plan to replace the exact API layer this spec's
+  non-goals declare "extracted and reused as-is" — 60 features, 26 gaps, HIGH-risk rows
+  including cross-tenant audit aggregation ("cannot be replicated as-is"). **Never cited
+  here.**
+- **`ADR-001-DEPLOY-SYSTEM.md` (Accepted)** explicitly *rejected* "Extend ArgoCD + Argo
+  Rollouts" — which is what this spec's J1 section proposes. Filed as a risk row rather
+  than resolved. (ADR-001's own premise is stale: zero Cloud Run, zero Knative deployed.
+  J1 is probably right on the merits — but that needs ADR-002, not silence.)
+- **`2026-07-24-monorepo-restructure-design.md`** has a **Decisions (locked)** entry:
+  *"Marketing + admin stay as one Next app. No split now."* This spec reverses it without
+  citing it.
+- **`packages/homechef-shared` already proves the anti-drift mechanism** — 1,118 lines of
+  shared contracts, imported at 68 sites in mobile and 30 in web, with mobile's duplicate
+  formatters already deleted. This spec presents `console-core` as novel and never
+  mentions it. This is the **third** pass at the same problem.
+
+### Self-contradictions
+
+- **Observability appears three times with three positions**: keep as a deliberate
+  exception, demote to a link-out, and unresolved in Open Questions.
+- **Otto is ranked #1 "already wired, lowest cost"** while another section states its
+  proxy prefix "exists in neither checked-out codebase" and two live surfaces depend on
+  it. Both cannot be true — either the audit is wrong, or `support/live-chat` and
+  `analytics/support` are broken in production right now. (Also: its backing
+  `support-platform-slm-router` has had **zero Service endpoints since 2026-07-29**.)
+- **The vendored-tools rule is applied selectively** — it kills GrowthBook (H1) and spares
+  ArgoCD/Kargo (J1) on structurally identical reasoning.
+- **"No Go service changes" is breached repeatedly** in the shared-services table
+  ("needs 2 new endpoints", "expose `ReconciliationResult` over HTTP").
+
+### Missing entirely
+
+Rollback · testing strategy (**20 test files repo-wide; 6 under `app/admin`, all Kora;
+zero on the ~55 surfaces M2 migrates**) · bundle/performance budgets · **accessibility
+(zero mentions, against a project standard of WCAG 2.1 AA on every surface)** · where
+saved views and Inbox state persist (no per-user model exists) · Inbox badge cost (N
+federated queries per navigation) · in-flight sessions at cutover · connection-pool
+doubling while two consoles run · **how `apps/console` itself gets deployed** · **mobile
+breaks between M2 and M5** — it consumes `apps/web`'s 51 `/api/admin/*` routes and cannot
+be force-upgraded.
+
+### Scope is understated ~2x
+
+72 pages / 19,092 LOC is the *page* surface. Add `components/admin` (7,297), `lib`
+(11,200), and 51 API routes → **~38k LOC**. M2 carries all of it with no estimate and no
+exit criteria beyond "delete `apps/web/app/admin`".
+
+**Recommended restructure: three independent tracks** — see the review's Track A (ship
+now, days: shared-package extension, dead-dep removal, P0 fixes, ClickHouse repoint,
+dwellm8 KPI branch), Track B (decisions before code: reconcile MIGRATION-MATRIX, supersede
+ADR-001, resolve Observability, get the park decision, verify Otto, sign the
+delete-vs-port list), Track C (the redesign, re-sequenced: minimal M0, pilot on
+`homechef/support` rather than Kora, migration as a continuous ratchet, mobile's API
+contract frozen first).
 
 ## Problem
 
