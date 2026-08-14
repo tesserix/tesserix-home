@@ -14,7 +14,7 @@ const { TEST_KEY_B64 } = vi.hoisted(() => {
 });
 
 const getCurrentSession = vi.fn();
-vi.mock("@/lib/auth/session-jwt", () => ({ getCurrentSession: () => getCurrentSession() }));
+vi.mock("@tesserix/platform-auth", () => ({ getCurrentSession: () => getCurrentSession() }));
 
 const warn = vi.fn();
 const error = vi.fn();

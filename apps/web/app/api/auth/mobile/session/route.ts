@@ -2,7 +2,7 @@
 // boot. Validates the encrypted session carried in Authorization: Bearer.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { verifySession } from "@/lib/auth/session-jwt";
+import { verifySession } from "@tesserix/platform-auth";
 
 export const runtime = "nodejs";
 

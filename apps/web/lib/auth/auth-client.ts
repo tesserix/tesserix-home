@@ -2,7 +2,7 @@
  * Auth Client for BFF Communication
  */
 
-import { authConfig } from './config';
+import { authConfig } from '@tesserix/platform-auth';
 import { logger } from '../logger';
 
 /**

@@ -1,4 +1,4 @@
-import { bearerToken } from "@/lib/auth/bearer";
+import { bearerToken } from "./bearer";
 
 export interface CsrfDecision {
   blocked: boolean;

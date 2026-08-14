@@ -3,7 +3,7 @@
 // validated as hex (TraceId is hex) so it can't inject SQL.
 import { NextResponse } from "next/server";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { chQuery } from "@/lib/db/clickhouse";
 
 const HEX = /^[0-9a-f]{1,64}$/i;

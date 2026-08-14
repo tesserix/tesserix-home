@@ -15,7 +15,7 @@ import {
   type SessionUser,
   type SessionResponse,
 } from './auth-client';
-import { authConfig } from './config';
+import { authConfig } from '@tesserix/platform-auth';
 import { logger } from '../logger';
 
 // Dev auth bypass

@@ -8,7 +8,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { isEmailAllowed } from "@/lib/auth/oauth";
-import { signSession } from "@/lib/auth/session-jwt";
+import { signSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";

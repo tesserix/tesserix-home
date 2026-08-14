@@ -78,3 +78,6 @@ apps/*/.expo
 packages/*/dist
 .turbo
 **/*.tsbuildinfo
+
+# Superpowers SDD scratch
+.superpowers/

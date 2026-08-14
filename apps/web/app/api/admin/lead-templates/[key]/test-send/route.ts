@@ -9,7 +9,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getLeadTemplate } from "@/lib/db/lead-templates";
 import { render } from "@/lib/templates/render";
 import { sendViaSendGrid } from "@/lib/sendgrid/send";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const FROM = process.env.LEAD_EMAIL_FROM ?? process.env.EMAIL_FROM ?? "noreply@tesserix.app";

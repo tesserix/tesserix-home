@@ -2,7 +2,7 @@ import Link from "next/link";
 import { MessageSquare, Ticket } from "lucide-react";
 
 import { AdminHeader } from "@/components/admin/header";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { PlatformLiveChatInbox } from "@/components/admin/support/PlatformLiveChatInbox";
 
 // Platform support inbox — Tesserix staff answer customer chats from EVERY

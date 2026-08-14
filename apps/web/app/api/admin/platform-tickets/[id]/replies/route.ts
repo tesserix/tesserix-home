@@ -6,7 +6,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createPlatformTicketReply } from "@/lib/db/platform-tickets";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const replySchema = z.object({

@@ -6,7 +6,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   sessionCookieName,
   sessionCookieOptions,
-} from "@/lib/auth/session-jwt";
+} from "@tesserix/platform-auth";
 
 function clearSession(req: NextRequest): Response {
   const cookieOpts = sessionCookieOptions();

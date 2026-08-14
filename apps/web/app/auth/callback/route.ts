@@ -18,7 +18,7 @@ import {
   sessionCookieName,
   sessionCookieOptions,
   signSession,
-} from "@/lib/auth/session-jwt";
+} from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const STATE_COOKIE_NAME = "tx_oauth_state";

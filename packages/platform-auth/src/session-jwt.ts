@@ -13,6 +13,7 @@
 //   iss / aud: "tesserix-home" (so the cookie isn't valid against any
 //                                other surface that re-uses the key)
 
+import { createHash } from "node:crypto";
 import { EncryptJWT, jwtDecrypt } from "jose";
 import { bearerToken } from "./bearer";
 
@@ -42,10 +43,10 @@ function getSecretKey(): Uint8Array {
   const enc = new TextEncoder().encode(raw);
   if (enc.length === 32) return enc;
   // Best-effort: derive 32 bytes via SHA-256 when length differs.
-  // This is dynamic-import-safe (Edge runtime would need crypto.subtle,
-  // but middleware now runs on Node so plain Node crypto is available).
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createHash } = require("node:crypto") as typeof import("node:crypto");
+  // `createHash` is imported statically at the top of the module: this package
+  // is pre-bundled by tsup, and esbuild's ESM output rewrites a dynamic
+  // `require()` into a shim that throws at runtime. Both consumers' middleware
+  // declares `runtime: "nodejs"`, so a static node:crypto import is safe.
   return new Uint8Array(createHash("sha256").update(enc).digest());
 }
 
