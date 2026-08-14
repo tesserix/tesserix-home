@@ -38,8 +38,9 @@ interface StaffInvitation {
 }
 
 export default function HomechefStaffPage() {
+  const [page, setPage] = useState(1);
   const { data, isLoading, mutate } = useSWR<Paginated<StaffMember>>(
-    ["/staff", { page: 1, limit: 50 }],
+    ["/staff", { page, limit: 50 }],
     swrFetcher,
   );
   const {
@@ -286,6 +287,30 @@ export default function HomechefStaffPage() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">
+          {data ? `${data.pagination.total} team members · page ${page} of ${data.pagination.totalPages}` : ""}
+        </span>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page <= 1}
+            className="rounded-md border px-3 py-1 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!data || page * 50 >= data.pagination.total}
+            className="rounded-md border px-3 py-1 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       </div>
     </div>
   );
