@@ -305,7 +305,7 @@ export default function HomechefStaffPage() {
           <button
             type="button"
             onClick={() => setPage((p) => p + 1)}
-            disabled={!data || page * 50 >= data.pagination.total}
+            disabled={!data || !data.pagination.hasNext}
             className="rounded-md border px-3 py-1 disabled:opacity-50"
           >
             Next
