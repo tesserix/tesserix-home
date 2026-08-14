@@ -38,6 +38,10 @@ describe("dashboardState", () => {
   it("reports ready when data arrived", () => {
     expect(dashboardState(null)).toEqual({ kind: "ready" });
   });
+
+  it("maps a non-Error rejection to an error without an undefined message", () => {
+    expect(dashboardState("boom")).toEqual({ kind: "error", message: "boom" });
+  });
 });
 
 describe("DashboardView", () => {
@@ -61,5 +65,14 @@ describe("DashboardView", () => {
     // Every tile independently renders the parked message, so more than one
     // node matches — assert presence, not a single unique match.
     expect(screen.getAllByText(/not measured/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders the error message instead of the parked message on a real failure", () => {
+    render(
+      <DashboardView data={null} state={{ kind: "error", message: "boom" }} />,
+    );
+    // Same multi-tile fan-out as above: every tile renders the error message.
+    expect(screen.getAllByText("boom").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/not measured/i)).toBeNull();
   });
 });

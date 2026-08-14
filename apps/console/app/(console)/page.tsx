@@ -15,7 +15,10 @@ export function dashboardState(error: unknown): SurfaceState {
   if (error instanceof PlatformApiError && error.status === NOT_IMPLEMENTED) {
     return { kind: "instrumentation-unavailable" };
   }
-  return { kind: "error", message: (error as Error).message };
+  return {
+    kind: "error",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 export function DashboardView({
