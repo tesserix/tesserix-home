@@ -5,6 +5,7 @@
 // config + "test connection" live in homechef-api's provider CRUD, not here.
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 
 import { AdminHeader } from "@/components/admin/header";
@@ -106,6 +107,13 @@ export default function HomechefDeliveryPage() {
           <button onClick={() => void load()} className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-accent">
             <RefreshCw className={"h-3 w-3 " + (loading ? "animate-spin" : "")} /> Refresh
           </button>
+          <Link
+            href="/admin/apps/homechef/delivery-intelligence"
+            title="Self-delivery pricing engine costs — a separate system from these 3PL couriers"
+            className="text-sm text-primary underline-offset-4 hover:underline"
+          >
+            Delivery intelligence →
+          </Link>
           <p className="text-xs text-muted-foreground">
             Provider keys + connection test are managed in the Fe3dr API admin (not here).
           </p>
