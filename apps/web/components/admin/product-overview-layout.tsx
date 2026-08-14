@@ -146,14 +146,16 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
                 );
               })
             )}
-            <KpiTile
-              label="Critical events (24h)"
-              value={critical.data ? formatNumber(critical.data.summary.criticalLast24h) : "—"}
-              hint="audit log severity=critical"
-              href={`/admin/apps/${config.id}/audit-logs?severity=critical`}
-              icon={ShieldAlert}
-              loading={critical.isLoading}
-            />
+            {critical.error?.status === 404 ? null : (
+              <KpiTile
+                label="Critical events (24h)"
+                value={critical.data ? formatNumber(critical.data.summary.criticalLast24h) : "—"}
+                hint="audit log severity=critical"
+                href={`/admin/apps/${config.id}/audit-logs?severity=critical`}
+                icon={ShieldAlert}
+                loading={critical.isLoading}
+              />
+            )}
           </div>
         </MetricsSection>
 

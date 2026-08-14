@@ -3,11 +3,22 @@
 import useSWR from "swr";
 import type { AuditEvent } from "@/components/admin/audit/audit-row";
 
+// Mirrors lib/admin/use-metrics.ts's FetchError — callers (e.g.
+// useCriticalEventCount below) need to distinguish a permanent 404
+// (product has no audit source) from a transient failure.
+export interface FetchError extends Error {
+  status?: number;
+  code?: string;
+}
+
 const fetcher = async (url: string): Promise<unknown> => {
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const err = new Error(body.error ?? `HTTP ${res.status}`) as FetchError;
+    err.status = res.status;
+    err.code = body.error;
+    throw err;
   }
   return res.json();
 };
@@ -50,9 +61,9 @@ export function useAuditLogs(productId: string, filters: AuditFilters) {
 }
 
 export function useCriticalEventCount(productId: string) {
-  return useSWR<{ summary: { criticalLast24h: number } }>(
+  return useSWR<{ summary: { criticalLast24h: number } }, FetchError>(
     `/api/admin/apps/${productId}/audit-logs?severity=critical&since_hours=24`,
     fetcher as (u: string) => Promise<{ summary: { criticalLast24h: number } }>,
-    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+    { revalidateOnFocus: false, dedupingInterval: 60_000, shouldRetryOnError: false },
   );
 }

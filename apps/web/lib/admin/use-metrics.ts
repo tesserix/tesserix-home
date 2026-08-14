@@ -42,7 +42,7 @@ export function useProductKpis(productId: string) {
   return useSWR<ProductKpis, FetchError>(
     productId ? `/api/admin/apps/${productId}/kpis` : null,
     fetcher as (u: string) => Promise<ProductKpis>,
-    { revalidateOnFocus: false, dedupingInterval: 30_000 },
+    { revalidateOnFocus: false, dedupingInterval: 30_000, shouldRetryOnError: false },
   );
 }
 
