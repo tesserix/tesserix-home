@@ -802,7 +802,7 @@ function DeliveryFailuresTab() {
                                 it.issueId,
                                 `/order-issues/${it.issueId}/resolve-delivery-failure`,
                                 f,
-                                `order ${it.orderNumber || it.orderId.slice(0, 8)}`,
+                                `order ${it.orderNumber || it.orderId.slice(0, 8)} (${formatINR(it.total)})`,
                               )
                             }
                             title={FAULT_OUTCOME[f]}
@@ -842,7 +842,7 @@ function DeliveryFailuresTab() {
               <tbody>
                 {mealPlanDays.map((d) => (
                   <tr key={d.dayId} className="border-t border-border">
-                    <td className="px-4 py-2">{d.mealPlanNumber}</td>
+                    <td className="px-4 py-2">{d.mealPlanNumber || d.mealPlanId.slice(0, 8)}</td>
                     <td className="px-4 py-2">{d.date}</td>
                     <td className="px-4 py-2">{formatINR(d.price)}</td>
                     <td className="px-4 py-2">
@@ -854,7 +854,7 @@ function DeliveryFailuresTab() {
                           <Button
                             key={f}
                             size="sm"
-                            variant="outline"
+                            variant={f === "customer" ? "outline" : "destructive"}
                             disabled={busyId === d.dayId}
                             title={FAULT_OUTCOME[f]}
                             onClick={() =>
@@ -862,11 +862,11 @@ function DeliveryFailuresTab() {
                                 d.dayId,
                                 `/meal-plan-days/${d.dayId}/resolve-delivery-failure`,
                                 f,
-                                `plan ${d.mealPlanNumber}`,
+                                `plan ${d.mealPlanNumber || d.mealPlanId.slice(0, 8)} (${formatINR(d.price)})`,
                               )
                             }
                           >
-                            {f}
+                            {titleCase(f)}
                           </Button>
                         ))}
                       </div>
@@ -908,7 +908,7 @@ function DeliveryFailuresTab() {
                           <Button
                             key={f}
                             size="sm"
-                            variant="outline"
+                            variant={f === "customer" ? "outline" : "destructive"}
                             disabled={busyId === g.groupId}
                             title={FAULT_OUTCOME[f]}
                             onClick={() =>
@@ -916,11 +916,11 @@ function DeliveryFailuresTab() {
                                 g.groupId,
                                 `/group-orders/${g.groupId}/resolve-delivery-failure`,
                                 f,
-                                `group ${g.groupId.slice(0, 8)}`,
+                                `group ${g.groupId.slice(0, 8)} (${formatINR(g.subtotal)})`,
                               )
                             }
                           >
-                            {f}
+                            {titleCase(f)}
                           </Button>
                         ))}
                       </div>
