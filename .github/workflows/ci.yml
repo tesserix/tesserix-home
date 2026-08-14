@@ -5,6 +5,7 @@ on:
     branches: [main, 'feat/**', 'feature/**', 'bugfix/**', 'hotfix/**']
     paths:
       - 'apps/web/**'
+      - 'apps/console/**'
       - 'packages/**'
       - 'pnpm-workspace.yaml'
       - 'pnpm-lock.yaml'
@@ -60,11 +61,26 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
-      - name: Lint
+      # apps/web and apps/console import @tesserix/platform-auth and
+      # @tesserix/console-core, whose package.json entries point at dist/. A fresh
+      # CI clone has no dist/, so Vitest fails with "Failed to resolve entry for
+      # package". turbo.json already declares test:unit/typecheck dependsOn ^build,
+      # but the steps below invoke pnpm directly and bypass turbo — so build the
+      # workspace packages explicitly, as mobile-typecheck.yml does.
+      - name: Build workspace packages
+        run: pnpm --filter './packages/*' build
+
+      - name: Lint (web)
         run: pnpm --filter web lint
 
-      - name: Unit tests
+      - name: Unit tests (web)
         run: pnpm --filter web test:unit
+
+      - name: Lint (console)
+        run: pnpm --filter console lint
+
+      - name: Unit tests (console)
+        run: pnpm --filter console test:unit
 
       - name: Log in to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
