@@ -357,10 +357,26 @@ closes the Kora gap, and deletes the second theme file.
 | **Business** | `homechef/analytics` | Business | — |
 | **Launchpad** | `homechef/page.tsx` | tile | — |
 
-`refund-payouts` stays **out** of the payments hub: opposite money direction
-(platform→customer), different gateway (Razorpay), different entity (meal-plan-days).
+`refund-payouts` stays **out** of the payments hub and joins the **cancellations/refunds**
+surface instead: opposite money direction (platform→customer), different gateway
+(Razorpay), different entity (meal-plan-days). Nothing in it touches chef settlement.
 
 `campaigns` and `promos` stay separate — their models share zero fields.
+
+Three constraints for the people doing these merges:
+
+- **Fe3dr's audit surface must keep using the gateway's `/audit-logs`**, which returns a
+  flat `{logs, total, page, limit}` envelope rather than `Paginated<T>`. Do **not** point
+  it at `/api/admin/apps/[product]/audit-logs` — that route returns mark8ly rows for any
+  product (see Defects). The unified Audit surface needs one adapter per source, not one
+  shared route.
+- **`payment-gateway`'s three credential cards and `PayoutRailPanel`'s card are ~70%
+  identical**, down to a verbatim shared comment. One `<CredentialSlotCard>` absorbs
+  ~350 lines across the two files.
+- **`support`'s Tickets tab duplicates `/admin/platform-tickets` in shape only** — same
+  status vocabulary, same tone maps, same table skeleton, but different data and a
+  different audience (Fe3dr end-customers vs merchant→Tesserix). Extract a shared
+  `TicketTable` and tone maps; do **not** merge the surfaces. See Open Questions.
 
 ### The two "orphans" are not dead weight
 
@@ -512,7 +528,12 @@ These cannot be answered from source and are cheap to settle:
    the table is empty pending an ops step, not a code change.
 4. **Is Stripe key management deliberately excluded from mobile?** Probably a correct
    security boundary; worth confirming rather than assuming.
-5. **Is the Observability dashboard still worth owning in-console?** The vendored-tools
+5. **Should Fe3dr support tickets and platform tickets eventually share a backend?**
+   A product question, not a code one. Today they are genuinely different data (Fe3dr
+   end-customers vs merchant→Tesserix), and `platform-tickets` is empty pending its
+   filing UI in mark8ly admin (Phase 5.5). Recommendation until that lands: share the
+   component, not the surface.
+6. **Is the Observability dashboard still worth owning in-console?** The vendored-tools
    rule says link out; the current exception assumes Grafana is not configured for
    per-app/per-tenant rollup. Re-test in M2.
 
