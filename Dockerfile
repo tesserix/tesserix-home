@@ -11,6 +11,10 @@ COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 COPY packages/homechef-shared/package.json packages/homechef-shared/package.json
+# apps/web imports @tesserix/platform-auth (session + CSRF) in ~60 files. Its
+# package.json entries point at dist/, so it must be part of the workspace here
+# AND built below, or `next build` fails with module-not-found.
+COPY packages/platform-auth/package.json packages/platform-auth/package.json
 
 # Install only what the web app needs (skips the React Native toolchain).
 # @tesserix/* deps live on GitHub Packages which always requires auth. The
@@ -23,7 +27,9 @@ RUN --mount=type=secret,id=NODE_AUTH_TOKEN \
 # Copy sources and build the web app
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm --filter @tesserix/homechef-shared build && pnpm --filter web build
+RUN pnpm --filter @tesserix/homechef-shared build \
+    && pnpm --filter @tesserix/platform-auth build \
+    && pnpm --filter web build
 
 # Production stage
 FROM node:22-alpine AS runner
