@@ -4,7 +4,20 @@ import { Fragment, useState } from "react";
 import useSWR from "swr";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
-import { formatDateTime, formatINR, titleCase, type OrderIssue, type OrderIssueConfig, type Paginated, type SupportTicket } from "@tesserix/homechef-shared";
+import {
+  formatDateTime,
+  formatINR,
+  titleCase,
+  type OrderIssue,
+  type OrderIssueConfig,
+  type Paginated,
+  type SupportTicket,
+  type DeliveryFailuresResponse,
+  type OrderDeliveryFailure,
+  type DayDeliveryFailure,
+  type GroupDeliveryFailure,
+} from "@tesserix/homechef-shared";
+import { Button } from "@tesserix/web";
 import { StatusBadge, type Tone } from "@/components/admin/homechef/status-badge";
 import { useConfirm } from "@/components/admin/confirm-dialog";
 
@@ -663,19 +676,6 @@ function IssuesTab() {
   );
 }
 
-interface DeliveryFailureRow {
-  issueId: string;
-  orderId: string;
-  orderNumber: string;
-  chefId: string;
-  total: number;
-  holdStatus: string;
-  reason: string;
-  suggestedFault: string;
-  reportedBy: string;
-  createdAt: string;
-}
-
 type FaultClass = "customer" | "platform" | "chef";
 
 // The money outcome of each fault class (#393 RTO policy), shown before the admin
@@ -692,6 +692,15 @@ function faultTone(f: string): Tone {
   return "warning";
 }
 
+// Payout-hold status → badge tone, mirroring apps/mobile/app/homechef/delivery-failures.tsx.
+function holdTone(s: string): Tone {
+  if (s === "release_eligible") return "success";
+  if (s === "released") return "info";
+  if (s === "awaiting_customer_confirmation" || s === "withheld") return "warning";
+  if (s === "reversed" || s === "disputed") return "danger";
+  return "neutral";
+}
+
 // Delivery-failure resolution queue (#393): a chef/courier reported a failed
 // delivery; the admin confirms fault and the fault-based money policy executes.
 // Kept separate from the generic refund flow (those are excluded server-side).
@@ -699,24 +708,29 @@ function DeliveryFailuresTab() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { confirm } = useConfirm();
-  const { data, isLoading, mutate } = useSWR<{ orderIssues: DeliveryFailureRow[]; count: number }>(
+  const { data, isLoading, mutate } = useSWR<DeliveryFailuresResponse>(
     ["/delivery-failures", {}],
     swrFetcher,
     { refreshInterval: 30_000 },
   );
 
-  async function resolveFault(it: DeliveryFailureRow, fault: FaultClass) {
+  async function resolveFault(
+    busyKey: string,
+    path: string,
+    fault: FaultClass,
+    context: string,
+  ) {
     const ok = await confirm({
       title: `Confirm ${fault} fault`,
-      message: `${FAULT_OUTCOME[fault]} This cannot be undone.`,
+      message: `${FAULT_OUTCOME[fault]} This cannot be undone. (${context})`,
       confirmLabel: `Confirm ${fault} fault`,
       tone: fault === "customer" ? "default" : "destructive",
     });
     if (!ok) return;
     setError(null);
-    setBusyId(it.issueId);
+    setBusyId(busyKey);
     try {
-      await hcAdmin.post(`/order-issues/${it.issueId}/resolve-delivery-failure`, { fault });
+      await hcAdmin.post(path, { fault });
       await mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Resolve failed");
@@ -725,7 +739,10 @@ function DeliveryFailuresTab() {
     }
   }
 
-  const rows = data?.orderIssues ?? [];
+  const orderIssues: OrderDeliveryFailure[] = data?.orderIssues ?? [];
+  const mealPlanDays: DayDeliveryFailure[] = data?.mealPlanDays ?? [];
+  const groupOrders: GroupDeliveryFailure[] = data?.groupOrders ?? [];
+  const totalCount = orderIssues.length + mealPlanDays.length + groupOrders.length;
 
   return (
     <div className="space-y-4">
@@ -755,10 +772,12 @@ function DeliveryFailuresTab() {
           <tbody className="divide-y divide-border">
             {isLoading ? (
               <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">Loading…</td></tr>
-            ) : rows.length === 0 ? (
+            ) : totalCount === 0 ? (
               <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No delivery failures to resolve.</td></tr>
+            ) : orderIssues.length === 0 ? (
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No order delivery failures.</td></tr>
             ) : (
-              rows.map((it) => (
+              orderIssues.map((it) => (
                 <tr key={it.issueId} className="hover:bg-muted/30">
                   <td className="px-4 py-3 font-mono text-xs">{it.orderNumber || it.orderId.slice(0, 8)}</td>
                   <td className="px-4 py-3">{titleCase(it.reason.replace(/_/g, " "))}</td>
@@ -778,7 +797,14 @@ function DeliveryFailuresTab() {
                             key={f}
                             type="button"
                             disabled={busyId === it.issueId}
-                            onClick={() => resolveFault(it, f)}
+                            onClick={() =>
+                              resolveFault(
+                                it.issueId,
+                                `/order-issues/${it.issueId}/resolve-delivery-failure`,
+                                f,
+                                `order ${it.orderNumber || it.orderId.slice(0, 8)}`,
+                              )
+                            }
                             title={FAULT_OUTCOME[f]}
                             className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-50 ${
                               refunds
@@ -798,6 +824,114 @@ function DeliveryFailuresTab() {
           </tbody>
         </table>
       </div>
+
+      {mealPlanDays.length > 0 ? (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground">Meal-plan days</h3>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2">Plan</th>
+                  <th className="px-4 py-2">Date</th>
+                  <th className="px-4 py-2">Price</th>
+                  <th className="px-4 py-2">Hold</th>
+                  <th className="px-4 py-2">Fault</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mealPlanDays.map((d) => (
+                  <tr key={d.dayId} className="border-t border-border">
+                    <td className="px-4 py-2">{d.mealPlanNumber}</td>
+                    <td className="px-4 py-2">{d.date}</td>
+                    <td className="px-4 py-2">{formatINR(d.price)}</td>
+                    <td className="px-4 py-2">
+                      <StatusBadge label={titleCase(d.holdStatus)} tone={holdTone(d.holdStatus)} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex gap-1">
+                        {(["customer", "platform", "chef"] as FaultClass[]).map((f) => (
+                          <Button
+                            key={f}
+                            size="sm"
+                            variant="outline"
+                            disabled={busyId === d.dayId}
+                            title={FAULT_OUTCOME[f]}
+                            onClick={() =>
+                              resolveFault(
+                                d.dayId,
+                                `/meal-plan-days/${d.dayId}/resolve-delivery-failure`,
+                                f,
+                                `plan ${d.mealPlanNumber}`,
+                              )
+                            }
+                          >
+                            {f}
+                          </Button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {groupOrders.length > 0 ? (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground">Group orders</h3>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-muted/50 text-left text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-2">Group</th>
+                  <th className="px-4 py-2">Subtotal</th>
+                  <th className="px-4 py-2">Tax</th>
+                  <th className="px-4 py-2">Hold</th>
+                  <th className="px-4 py-2">Fault</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupOrders.map((g) => (
+                  <tr key={g.groupId} className="border-t border-border">
+                    <td className="px-4 py-2 font-mono text-xs">{g.groupId.slice(0, 8)}</td>
+                    <td className="px-4 py-2">{formatINR(g.subtotal)}</td>
+                    <td className="px-4 py-2">{formatINR(g.tax)}</td>
+                    <td className="px-4 py-2">
+                      <StatusBadge label={titleCase(g.holdStatus)} tone={holdTone(g.holdStatus)} />
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex gap-1">
+                        {(["customer", "platform", "chef"] as FaultClass[]).map((f) => (
+                          <Button
+                            key={f}
+                            size="sm"
+                            variant="outline"
+                            disabled={busyId === g.groupId}
+                            title={FAULT_OUTCOME[f]}
+                            onClick={() =>
+                              resolveFault(
+                                g.groupId,
+                                `/group-orders/${g.groupId}/resolve-delivery-failure`,
+                                f,
+                                `group ${g.groupId.slice(0, 8)}`,
+                              )
+                            }
+                          >
+                            {f}
+                          </Button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
