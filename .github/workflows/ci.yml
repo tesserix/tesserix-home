@@ -118,21 +118,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
 
-      # Console image build/push, mirroring the web build above exactly (same
-      # tags, same --platform, same main-only condition). No --secret mount:
-      # per .npmrc, @tesserix/* packages are on the public npm registry now,
-      # so Dockerfile.console has nothing to authenticate.
-      - name: Build and push (console)
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker build \
-            --platform linux/amd64 \
-            -f Dockerfile.console \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:latest \
-            .
-          docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}
-
       # No GKE deploy step here. Cluster rollout is owned by Kargo:
       # the kargo-tesserix-home Project's prod Stage discovers the new
       # main-<sha> image (via the GAR ghcr-remote mirror), auto-promotes
@@ -163,6 +148,26 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
           category: web
+
+      # Console image build/push, mirroring the web build above exactly (same
+      # tags, same --platform, same main-only condition). No --secret mount:
+      # per .npmrc, @tesserix/* packages are on the public npm registry now,
+      # so Dockerfile.console has nothing to authenticate.
+      #
+      # Deliberately ordered AFTER the web scan and its SARIF upload: steps in a
+      # job are sequential and fail-fast, so a console build failure here must
+      # not abort the job between the web image being pushed and the web image
+      # being scanned. Web ships scanned regardless of the console build.
+      - name: Build and push (console)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.console \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:latest \
+            .
+          docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}
 
       # Console image gets the same scan treatment as web — it carries an
       # authenticated admin surface, so it should not ship unscanned while
