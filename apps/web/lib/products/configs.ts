@@ -113,8 +113,9 @@ const devai: ProductConfig = {
 // cluster `dwellm8-postgres`, one database (dwellm8). No subscriptions —
 // revenue is a payout fee — so pricing is omitted and the billing UI hides.
 // KPI tiles are declared ahead of the product-scoped route; the shared
-// /api/admin/apps/[product]/kpis returns {} for unknown products, so tiles
-// render "—" until the dwellm8 branch lands there.
+// /api/admin/apps/[product]/kpis has no dwellm8 branch yet, so it returns
+// 501 and the overview renders an explicit "not instrumented yet" message
+// instead of these tiles.
 const dwellm8: ProductConfig = {
   id: "dwellm8",
   name: "Dwellm8",

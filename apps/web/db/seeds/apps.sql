@@ -151,3 +151,40 @@ ON CONFLICT (slug) DO UPDATE SET
   db_databases          = EXCLUDED.db_databases,
   primary_domain        = EXCLUDED.primary_domain,
   admin_url             = EXCLUDED.admin_url;
+
+-- Dwellm8 — property management for India (leases, statutory TDS reporting,
+-- paise-denominated append-only ledger). Namespace `dwellm8`, CNPG
+-- `dwellm8-postgres`, two databases (dwellm8, openfga). db_admin_secret_name
+-- is NULL: no cross-DB oversight role has been provisioned for either
+-- dwellm8_api or dwellm8_platform. Same "mobile app + single API, no admin
+-- UI" shape as Kora, so primary_domain/admin_url point at api.dwellm8.com.
+-- Mirrors db/migrations/0016_seed_dwellm8_app.sql.
+INSERT INTO apps (
+  slug, name, description, status,
+  db_namespace, db_host, db_port, db_admin_secret_name, db_databases,
+  primary_domain, admin_url
+) VALUES
+(
+  'dwellm8',
+  'Dwellm8',
+  'Property management for India — leases, statutory (TDS) reporting, and a paise-denominated append-only ledger.',
+  'active',
+  'dwellm8',
+  'dwellm8-postgres-rw.dwellm8.svc.cluster.local',
+  5432,
+  NULL,
+  '["dwellm8", "openfga"]'::jsonb,
+  'api.dwellm8.com',
+  'https://api.dwellm8.com'
+)
+ON CONFLICT (slug) DO UPDATE SET
+  name                  = EXCLUDED.name,
+  description           = EXCLUDED.description,
+  status                = EXCLUDED.status,
+  db_namespace          = EXCLUDED.db_namespace,
+  db_host               = EXCLUDED.db_host,
+  db_port               = EXCLUDED.db_port,
+  db_admin_secret_name  = EXCLUDED.db_admin_secret_name,
+  db_databases          = EXCLUDED.db_databases,
+  primary_domain        = EXCLUDED.primary_domain,
+  admin_url             = EXCLUDED.admin_url;

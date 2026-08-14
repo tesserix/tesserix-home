@@ -144,7 +144,7 @@ describe("kora kpis", () => {
   });
 
   it("does not query prometheus or secret manager for other products", async () => {
-    const body = await (await req("fanzone")).json();
+    const res = await req("fanzone");
     expect(queryInstant).not.toHaveBeenCalled();
     // Twin of the assertion above: readKeyHealth is gated behind the same
     // `product === "kora"` guard. Without this, hoisting the readKeyHealth
@@ -152,7 +152,9 @@ describe("kora kpis", () => {
     // mark8ly/homechef/devai KPI request silently started making two GCP
     // Secret Manager API calls.
     expect(readKeyHealth).not.toHaveBeenCalled();
-    expect(body).toEqual({});
+    // fanzone has no KPI branch, so it falls into the unknown-product path
+    // below — 501, not a silent {}. See the "unknown product" describe block.
+    expect(res.status).toBe(501);
   });
 
   // The two blocks are independent data sources (Prometheus vs Secret
@@ -237,5 +239,25 @@ describe("kora kpis", () => {
     // Let the request settle before the test ends.
     releasePrometheus.forEach((release) => release());
     await pending;
+  });
+});
+
+// dwellm8 is a real, deployed product (registered in the apps directory) but
+// has no KPI branch here yet. It must not be indistinguishable from a
+// product with genuinely zero activity — {} rendered four "—" tiles for it
+// for months and nobody noticed it was unimplemented rather than idle.
+describe("unknown product kpis", () => {
+  it("returns 501 not_instrumented for dwellm8", async () => {
+    const res = await req("dwellm8");
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body).toEqual({ error: "not_instrumented" });
+  });
+
+  it("returns 501 not_instrumented for any other unwired product", async () => {
+    const res = await req("some-future-product");
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body).toEqual({ error: "not_instrumented" });
   });
 });

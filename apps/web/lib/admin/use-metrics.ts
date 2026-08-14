@@ -5,11 +5,23 @@ import type { ProductMetrics } from "@/lib/metrics/product-metrics";
 import type { TenantMetrics } from "@/lib/metrics/tenant-metrics";
 import type { Window } from "@/lib/metrics/window";
 
+// Attached to the thrown Error so callers can distinguish *why* a request
+// failed — a 501 "not_instrumented" (product has no KPI branch) reads very
+// differently from a timeout or a 404, but a bare Error message collapses
+// them all into the same catch. See useProductKpis below.
+export interface FetchError extends Error {
+  status?: number;
+  code?: string;
+}
+
 const fetcher = async (url: string): Promise<unknown> => {
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const err = new Error(body.error ?? `HTTP ${res.status}`) as FetchError;
+    err.status = res.status;
+    err.code = body.error;
+    throw err;
   }
   return res.json();
 };
@@ -27,7 +39,7 @@ export function useProductMetrics(productId: string, window: Window) {
 export type ProductKpis = Record<string, number>;
 
 export function useProductKpis(productId: string) {
-  return useSWR<ProductKpis>(
+  return useSWR<ProductKpis, FetchError>(
     productId ? `/api/admin/apps/${productId}/kpis` : null,
     fetcher as (u: string) => Promise<ProductKpis>,
     { revalidateOnFocus: false, dedupingInterval: 30_000 },

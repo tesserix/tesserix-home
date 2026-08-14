@@ -16,7 +16,13 @@ import {
   formatCurrency,
   formatNumber,
 } from "@/components/admin/metrics/format";
-import { useDashboardCounts, useProductMetrics, useProductKpis, type DashboardCounts, type ProductKpis } from "@/lib/admin/use-metrics";
+import {
+  useDashboardCounts,
+  useProductMetrics,
+  useProductKpis,
+  type DashboardCounts,
+  type ProductKpis,
+} from "@/lib/admin/use-metrics";
 import { useProductRevenue } from "@/lib/admin/use-billing";
 import { useCriticalEventCount } from "@/lib/admin/use-audit";
 import { RevenueSection } from "@/components/admin/billing/revenue-section";
@@ -60,6 +66,14 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
   const { data, error, isLoading, mutate, isValidating } = useProductMetrics(config.id, timeWindow);
   const dashboard = useDashboardCounts();
   const productKpis = useProductKpis(config.id);
+  // A 501 with code "not_instrumented" means this product has no KPI branch
+  // in /api/admin/apps/[product]/kpis yet — distinct from a transient
+  // failure (timeout, network error, unreachable upstream), which should
+  // still surface as "Could not load product KPIs." A dwellm8-shaped
+  // product must not render the same four "—" tiles a real zero-activity
+  // product would.
+  const kpisNotInstrumented =
+    productKpis.error?.status === 501 && productKpis.error?.code === "not_instrumented";
   const hasBilling = Boolean(config.pricingByPlan);
   const revenue = useProductRevenue(hasBilling ? config.id : "", 30);
   const critical = useCriticalEventCount(config.id);
@@ -102,28 +116,36 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
           id="section-business"
           title="Overview"
           error={
-            productKpis.error
-              ? "Could not load product KPIs."
-              : dashboard.error
-                ? "Could not load tenant/store/lead counts."
-                : undefined
+            kpisNotInstrumented
+              ? undefined
+              : productKpis.error
+                ? "Could not load product KPIs."
+                : dashboard.error
+                  ? "Could not load tenant/store/lead counts."
+                  : undefined
           }
         >
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            {config.businessKpiTiles.map((tile) => {
-              const { value, hint } = resolveKpiValue(tile, dashboard.data, productKpis.data);
-              const usesProductKpis = Boolean(productKpis.data && tile.key in productKpis.data);
-              return (
-                <KpiTile
-                  key={tile.key}
-                  label={tile.label}
-                  value={value}
-                  hint={hint}
-                  href={tile.href}
-                  loading={usesProductKpis ? productKpis.isLoading : dashboard.isLoading}
-                />
-              );
-            })}
+            {kpisNotInstrumented ? (
+              <p className="col-span-full text-sm text-muted-foreground">
+                Business KPIs are not instrumented yet for this product.
+              </p>
+            ) : (
+              config.businessKpiTiles.map((tile) => {
+                const { value, hint } = resolveKpiValue(tile, dashboard.data, productKpis.data);
+                const usesProductKpis = Boolean(productKpis.data && tile.key in productKpis.data);
+                return (
+                  <KpiTile
+                    key={tile.key}
+                    label={tile.label}
+                    value={value}
+                    hint={hint}
+                    href={tile.href}
+                    loading={usesProductKpis ? productKpis.isLoading : dashboard.isLoading}
+                  />
+                );
+              })
+            )}
             <KpiTile
               label="Critical events (24h)"
               value={critical.data ? formatNumber(critical.data.summary.criticalLast24h) : "—"}
