@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { isNavGroup, koraNav, type NavEntry } from "./nav";
 import { webPath } from "./routes";
 
-function collectItems(entries: NavEntry[]): { name: string; route: Parameters<typeof webPath>[0] }[] {
+function collectItems(
+  entries: readonly NavEntry[],
+): { name: string; route: Parameters<typeof webPath>[0] }[] {
   return entries.flatMap((entry) => (isNavGroup(entry) ? collectItems(entry.items) : [entry]));
 }
 
