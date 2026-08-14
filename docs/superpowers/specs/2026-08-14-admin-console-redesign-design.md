@@ -851,6 +851,44 @@ the console already reads directly.
 the Go service is orphaned and bills a different thing — Tesserix tenants on SaaS tiers,
 not stores).
 
+## Deferred: mobile release management (Track C-late)
+
+**9 Expo/EAS apps across 4 products** — Fe3dr (`mobile-customer`, `mobile-delivery`,
+`mobile-vendor`, `mobile-admin`), mark8ly (`mobile-admin`, `storefront-mobile`,
+`mobile-storefront`), kora (`mobile`), tesserix-home (`mobile`). EAS build workflows
+exist in CI for Fe3dr, mark8ly's admin app, and tesserix-home.
+
+The Delivery surface (Kargo/ArgoCD/GitHub) is server-only. Mobile is invisible.
+
+**Prerequisite — the release pipeline does not currently reach the stores:**
+
+- Only kora has store submit config (`ascAppId`, `appleTeamId`), **iOS only**.
+- **Zero apps have Play Store submit config** — no service account key, no track.
+- **Most Android builds are `buildType: "apk"`.** Play requires AAB; only
+  `mark8ly/mobile-storefront` uses `app-bundle`. The rest cannot be submitted to Play
+  at all.
+
+A console surface built today would render "not configured" for 8 of 9 apps. **Fix the
+pipeline first; there is nothing to display until then.**
+
+**When built, it belongs in Delivery**, not its own section. Per the vendored-tools rule,
+App Store Connect and Play Console keep their own UIs. What neither can produce:
+
+- The cross-product, cross-platform row — all 9 apps, both stores: live version, in
+  review, rejected, rollout %.
+- **Whether the shipped build matches the server API contract it expects.** Mobile cannot
+  be force-upgraded; a view showing "60% of Fe3dr customers are on a build older than the
+  API contract" is uniquely a console concern, and directly relevant to the M2→M5 mobile
+  breakage risk.
+- Review-latency queue items — "kora 1.4.0 rejected", "Fe3dr customer app in review, 4
+  days" — real Inbox items with real `waiting_since`.
+
+Cost: ASC needs ES256-signed JWTs from a `.p8` key with 20-minute expiry plus rotation;
+Play needs a service account; EAS is a third API.
+
+Unrelated but noticed: mark8ly has both `storefront-mobile` and `mobile-storefront` —
+likely a rename that left a duplicate.
+
 ## Security issues found incidentally
 
 These are outside the redesign's scope and should be tracked separately. They are
