@@ -402,6 +402,56 @@ more. **Every Fe3dr page over 400 lines except `tax-rates` and `approvals/[id]` 
 from copy-paste, not complexity.** `DataTable` + `FilterBar` is worth ~1,200–1,500 lines
 in this batch alone.
 
+## Product coverage
+
+The console has rails for five products. The estate is larger, and the gap is not
+where the rails suggest.
+
+| Product | Reality | Console today | Should be |
+|---|---|---|---|
+| **mark8ly** | Active, 2162 commits | Full rail | Full presence — the IA's reference case |
+| **Fe3dr** (repo `Home-Chef-App`) | Active, 1974 commits | Full rail, 32 surfaces | Full presence, consolidated per the Fe3dr batch |
+| **kora** | Active, 937 commits | 5 surfaces, best-engineered area | Full presence. Correctly the M0 pilot |
+| **devai** | Active. Has `approval_gates` (pending, **1h `expires_at`**) and `sre_incidents` — both indexed, both federated-read-only | Rail is a shell: Overview + 3 links *out* | **Inbox first.** These are the cleanest `InboxItem` sources in the estate |
+| **dwellm8** | **Real and deployed.** 9 ArgoCD apps (API, CNPG, Temporal, NATS, OpenFGA), **60+ schema files** — paise append-only ledger, TDS obligations, s.197 certificates, identity verification, listing moderation, maintenance tickets. Source repo simply isn't cloned here | Rail renders **nothing**. No registry row. No KPI branch | **Largest gap in the estate.** Inbox first (five distinct human queues), Governance/Audit fast-follow — the ledger is money under statutory reporting with no oversight surface |
+| **hms** / MediCare | Most active repo after kora, but **no Dockerfile, no chart**, app-of-apps commented out | Marketing page only | Launchpad tile until it ships a chart. Its clinical queues are tenant-staff queues, not super-admin ones — they may never belong in this Inbox |
+| **tesserix-social** | Deployed at `social.tesserix.app` but stalled; no tenancy, no admin API, no queue | None | Launchpad tile — that is the whole story |
+| **australis**, `otto/` docs mirror, **pixelight**, **sandboxctl** | Design-only PRD / external docs mirror / a personal consultancy site / a developer CLI | None | **Nothing.** Not Tesserix products, or not products at all |
+| `hc-wt-947`, `hc-wt-funding` | **Git worktrees of Home-Chef-App** | None | **Explicitly exclude.** They will masquerade as products in any repo-scanning registry |
+| `notification-hub` | Parked since 2026-03-30; duplicates `notification-service` | None | Needs a **decision, not a surface**. One of the two is a dead schema in the Databases page |
+
+Naming: Fe3dr is one product with three names — repo `Home-Chef-App`, slug/namespace/DB
+`homechef`, brand `fe3dr.com`. `console-core` must hold **display name and route identity
+as separate fields** so nobody needs to know both.
+
+### The Launchpad must not be hand-seeded
+
+The `apps` registry has **four rows**. `tesserix-k8s/argocd/prod/apps/` has ~16 namespaces,
+including several never surveyed: `fanzone`, `gameverse`, `guardix`, `horoscope`,
+`stockpilot`, `blog`, `scrapper`, `postiz`, `agentic-registry`, `support-platform`.
+
+A registry seeded by SQL migrations has **already drifted** — that is exactly why dwellm8
+and Otto are invisible. The Launchpad should derive from ArgoCD, with the registry table
+holding only the metadata ArgoCD cannot supply (repo, runbook, owner, observability
+links). Hand-seeding reproduces the bug it is meant to fix.
+
+### ⚠️ Otto must be identified before M1
+
+There are **three** distinct things called Otto: the `otto/` docs mirror (an *external*
+SRE assistant, not ours), `mark8ly/services/otto` (a Go support-chat service), and the
+deployed `support-platform-otto` in the `ai-apps` namespace with its own Postgres, Mongo,
+embedder, reranker and SLM router.
+
+**The console's `/api/admin/otto/[...path]` proxy targets `${OTTO_URL}/api/v1/platform/otto/`
+— a prefix that exists in neither checked-out Otto codebase.** `mark8ly/services/otto`
+registers only `storefront`, `admin` and `internal` groups. Two live console surfaces
+(`support/live-chat`, `analytics/support`) depend on that prefix, and M1's Inbox is
+planned to take a dependency on it too.
+
+**Verify this against the running `slm-support-platform` image before M1 starts.** Otto is
+also a substantial deployed product with no registry row, no tile and no rail, despite
+consuming real console code.
+
 ## Defects found during audit
 
 These are pre-existing and must be fixed **before or during** the port, not after. Two
@@ -414,7 +464,7 @@ were found independently by two auditors.
 | **P1** | **`/api/admin/apps/[product]/audit-logs` ignores its `:product` param.** It validates the product, then unconditionally queries `lib/db/mark8ly-audit`. | "Critical events (24h)" on the HomeChef, DevAI, Dwellm8 and Kora overviews all show **mark8ly's** count. The unified Audit surface must not naively adopt this route as its backend. |
 | **P2** | **Dead deep links.** `chefs`, `users`, and `reviews` are linked to with query params (`?chefId=`, `?search=`) but none call `useSearchParams`. | `chefs → reviews?chefId=`, `orders/[id] → users?search=` and others silently land unfiltered. The URL-serialised `FilterBar` fixes this by construction — verify that it does. |
 | **P1** | **Mobile drops `mode` when approving.** Web sends `{notes, mode}` to `/approvals/:id/approve`; mobile sends `{notes}` only. | A chef approved from the phone may land in the wrong test/live mode. Compounds the missing-docs guard above — the mobile approval path needs a full review, not a patch. |
-| **P1** | **Web's "block message" is not confirm-gated.** `messaging/page.tsx` gates *relay* behind a confirm only when `piiDetected`, and gates *block* not at all. Mobile confirm-gates both. | A one-click, irreversible, silent drop — the sender is never told. |
+| ~~P1~~ | ~~Web's "block message" is not confirm-gated.~~ **Retracted.** An audit reported this; reading `messaging/page.tsx` directly shows `block()` *does* open a destructive confirm ("It is never delivered. The sender is not told it was blocked."). Only *relay* is conditionally gated, on `piiDetected` — which is correct, since relaying a clean message is routine. | No defect. Treat unverified audit claims about guard rails as unconfirmed until read. |
 | **P1** | **`wallets` adjusts a customer's balance with no confirmation dialog at all.** Validation is only `amount > 0` and a non-empty reason. Far less consequential settings edits are gated behind a destructive confirm. | Unguarded money movement. |
 | **P1** | **Four separate implementations of the per-chef payout-automation tri-state**, three of them reachable from the same screen: `/chefs/{id}/payout-automation` (payout-setup), `/chefs/{id}/disburse-automation` (chef-payout-profile), `/chefs/{id}/easy-split-mode` (easy-split-panel), plus the platform-wide toggle in payout-automation-panel. Same three values, different order, different endpoints. | An operator has no way to know which control applies. Consolidating the payments hub must resolve this, not just co-locate them. |
 | **P2** | **`staff` hardcodes `limit: 50` with no pagination UI**, despite rendering `pagination.total` in its own subtitle. | A 51st staff member is silently invisible. |
@@ -423,7 +473,7 @@ were found independently by two auditors.
 | **P2** | **Money units are inconsistent across pages.** `cancellations` works in paise (`formatINR(paise / 100)`); `support` and `promos` pass rupees straight to `formatINR`. | A live footgun. `console-core` must own a single money helper with the unit in the type. |
 | **P2** | **Naming drift breaks deep-linking.** Web's sidebar says "Mediation" while the route is `/messaging`; mobile's route is `/mediation`. Web is `audit-logs`, mobile is `audit-log`. | `console-core` owns route identity precisely to prevent this; normalise during the port. |
 | **P3** | `delivery-intelligence` has no inbound link on web. **Mobile added one** (`delivery.tsx` → `/homechef/delivery-intelligence`) per a documented decision; web never got the equivalent. | One-line fix, independent of the redesign. |
-| **P3** | `dwellm8` KPIs: `[product]/kpis` has branches for devai/kora/homechef and no dwellm8 case, falling through to `{}`. | Four tiles have rendered `—` since launch. Wire the branch or drop the tiles. |
+| **P1** | `dwellm8` KPIs: `[product]/kpis` has branches for devai/kora/homechef and no dwellm8 case, falling through to `{}`. **An earlier draft said "wire the branch or drop the tiles" — dropping is wrong.** dwellm8 is a real, deployed, compliance-heavy product (see Product coverage). It also has **no `apps` registry row** — migrations 0012/0013/0015 seed only mark8ly, homechef, devai, kora. | Four tiles have rendered `—` since launch on a product running a statutory money ledger. Wire the branch and seed the row. |
 
 ## Capability ceiling already paid for
 
