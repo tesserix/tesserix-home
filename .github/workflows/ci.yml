@@ -27,6 +27,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   REGISTRY: ghcr.io
   IMAGE_NAME: tesserix-home
+  CONSOLE_IMAGE_NAME: tesserix-console
 
 permissions:
   contents: read
@@ -115,6 +116,21 @@ jobs:
           docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
+
+      # Console image build/push, mirroring the web build above exactly (same
+      # tags, same --platform, same main-only condition). No --secret mount:
+      # per .npmrc, @tesserix/* packages are on the public npm registry now,
+      # so Dockerfile.console has nothing to authenticate.
+      - name: Build and push (console)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.console \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:latest \
+            .
+          docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}
 
       # No GKE deploy step here. Cluster rollout is owned by Kargo:
       # the kargo-tesserix-home Project's prod Stage discovers the new
