@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
 import {
+  Button,
   Callout,
   CalloutDescription,
   CalloutTitle,
   DataTableSkeleton,
   EmptyState,
+  EmptyStateActions,
   EmptyStateDescription,
   EmptyStateIcon,
   EmptyStateTitle,
@@ -111,6 +113,13 @@ export function SurfaceStateView({
               ? "No rows match the current filters. Clear them to see everything."
               : "No rows match the current filters."}
           </EmptyStateDescription>
+          {onClearFilters ? (
+            <EmptyStateActions>
+              <Button type="button" variant="outline" onClick={onClearFilters}>
+                Clear filters
+              </Button>
+            </EmptyStateActions>
+          ) : null}
         </EmptyState>
       );
 
@@ -135,5 +144,12 @@ export function SurfaceStateView({
           <CalloutDescription>{INSTRUMENTATION_UNAVAILABLE_MESSAGE}</CalloutDescription>
         </Callout>
       );
+
+    default: {
+      // Adding a member to SurfaceState without a case here fails the build
+      // rather than silently rendering nothing.
+      const unhandled = state satisfies never;
+      return unhandled;
+    }
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Button,
@@ -102,6 +102,79 @@ export function useUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
 // "no filter" in the widget and is translated back to "" at the boundary.
 const ANY = "__any__";
 
+/** How long typing must pause before the URL (and therefore the query) moves. */
+export const SEARCH_DEBOUNCE_MS = 300;
+
+interface SearchFilterInputProps {
+  label: string;
+  /** The committed value, as read back out of the URL. */
+  value: string;
+  onCommit(next: string): void;
+}
+
+/**
+ * A search box whose keystrokes do not each become a navigation.
+ *
+ * The input is driven by local state, not by the URL: a controlled input fed
+ * by async router state drops characters under fast typing, and every
+ * keystroke would otherwise trigger a `router.replace` and a refetch on a
+ * server-driven surface. The URL is updated once typing pauses, and
+ * immediately on blur or Enter so the user can force it. An external change
+ * to the value (back button, "clear filters") still wins over the draft.
+ */
+function SearchFilterInput({ label, value, onCommit }: SearchFilterInputProps) {
+  const [draft, setDraft] = useState(value);
+  const committedRef = useRef(value);
+  const onCommitRef = useRef(onCommit);
+
+  useEffect(() => {
+    onCommitRef.current = onCommit;
+  });
+
+  useEffect(() => {
+    if (value !== committedRef.current) {
+      committedRef.current = value;
+      setDraft(value);
+    }
+  }, [value]);
+
+  useEffect(() => {
+    if (draft === committedRef.current) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      committedRef.current = draft;
+      onCommitRef.current(draft);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [draft]);
+
+  function flush() {
+    if (draft !== committedRef.current) {
+      committedRef.current = draft;
+      onCommitRef.current(draft);
+    }
+  }
+
+  return (
+    <Input
+      type="search"
+      className="h-9 w-56"
+      aria-label={label}
+      placeholder={label}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={flush}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          flush();
+        }
+      }}
+    />
+  );
+}
+
 export interface FilterBarProps {
   descriptors: FilterDescriptor[];
   values: FilterValues;
@@ -116,14 +189,11 @@ export function FilterBar({ descriptors, values, onChange, onClear }: FilterBarP
     <div className="flex flex-wrap items-center gap-2" role="search">
       {descriptors.map((descriptor) =>
         descriptor.type === "search" ? (
-          <Input
+          <SearchFilterInput
             key={descriptor.key}
-            type="search"
-            className="h-9 w-56"
-            aria-label={descriptor.label}
-            placeholder={descriptor.label}
+            label={descriptor.label}
             value={values[descriptor.key] ?? ""}
-            onChange={(event) => onChange(descriptor.key, event.target.value)}
+            onCommit={(next) => onChange(descriptor.key, next)}
           />
         ) : (
           <Select

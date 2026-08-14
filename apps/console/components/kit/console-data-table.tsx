@@ -38,6 +38,35 @@ export interface BulkAction {
   run(ids: string[]): Promise<void>;
 }
 
+export type BulkActionOutcome =
+  | { ok: true }
+  | { ok: false; message: string };
+
+const BULK_ACTION_FALLBACK_MESSAGE = "The action failed. Nothing was changed for certain — re-check the selected rows.";
+
+/**
+ * Runs a bulk action and converts a rejection into a value.
+ *
+ * A bulk action that rejects must never become an unhandled promise
+ * rejection: the operator would see the bar re-enable with the selection
+ * intact and no indication of whether the work happened. On a destructive
+ * action that ambiguity is dangerous, so the failure is captured here and
+ * reported to the caller instead of escaping.
+ */
+export async function runBulkAction(
+  action: Pick<BulkAction, "run">,
+  ids: string[],
+): Promise<BulkActionOutcome> {
+  try {
+    await action.run(ids);
+    return { ok: true };
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error && error.message ? error.message : BULK_ACTION_FALLBACK_MESSAGE;
+    return { ok: false, message };
+  }
+}
+
 export interface ConsoleDataTableProps<T> {
   columns: Column<T>[];
   rows: T[];
@@ -50,11 +79,18 @@ export interface ConsoleDataTableProps<T> {
   onSortChange?(s: SortSpec): void;
   state: SurfaceState;
   emptyMessage: string;
+  /** Accessible name for the grid. Defaults to "Results". */
+  label?: string;
   selection?: { selected: Set<string>; onChange(s: Set<string>): void };
   bulkActions?: BulkAction[];
+  /** Notified when a bulk action fails, in addition to the inline message. */
+  onActionError?(actionId: string, message: string): void;
   onRetry?: () => void;
   onClearFilters?: () => void;
 }
+
+/** Accessible name for the grid, so a screen-reader user knows what they landed in. */
+const DEFAULT_TABLE_LABEL = "Results";
 
 function nextSort(current: SortSpec | undefined, key: string): SortSpec {
   if (current?.key === key) {
@@ -95,12 +131,15 @@ export function ConsoleDataTable<T>({
   onSortChange,
   state,
   emptyMessage,
+  label,
   selection,
   bulkActions,
+  onActionError,
   onRetry,
   onClearFilters,
 }: ConsoleDataTableProps<T>) {
   const [runningAction, setRunningAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (state.kind !== "ready") {
     return (
@@ -142,16 +181,23 @@ export function ConsoleDataTable<T>({
     selection.onChange(next);
   }
 
-  async function runBulkAction(actionId: string) {
+  async function dispatchBulkAction(actionId: string) {
     const action = bulkActions?.find((candidate) => candidate.id === actionId);
     if (!action || !selection) return;
+
     setRunningAction(actionId);
-    try {
-      await action.run([...selection.selected]);
+    setActionError(null);
+    const outcome = await runBulkAction(action, [...selection.selected]);
+    setRunningAction(null);
+
+    if (outcome.ok) {
       selection.onChange(new Set());
-    } finally {
-      setRunningAction(null);
+      return;
     }
+    // Keep the selection intact on failure: the operator needs the same rows
+    // still selected to retry, and clearing them would imply the work landed.
+    setActionError(outcome.message);
+    onActionError?.(actionId, outcome.message);
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -162,20 +208,33 @@ export function ConsoleDataTable<T>({
   return (
     <div className="space-y-3">
       {showBulkBar ? (
-        <BulkActionsBar
-          selectedCount={selected.size}
-          actions={(bulkActions ?? []).map((action) => ({
-            id: action.id,
-            label: action.label,
-            dangerous: action.destructive,
-            disabled: runningAction !== null,
-          }))}
-          onAction={(actionId) => void runBulkAction(actionId)}
-          onClearSelection={() => selection?.onChange(new Set())}
-        />
+        <div className="space-y-2">
+          <BulkActionsBar
+            selectedCount={selected.size}
+            actions={(bulkActions ?? []).map((action) => ({
+              id: action.id,
+              label: action.label,
+              dangerous: action.destructive,
+              disabled: runningAction !== null,
+            }))}
+            onAction={(actionId) => void dispatchBulkAction(actionId)}
+            onClearSelection={() => {
+              setActionError(null);
+              selection?.onChange(new Set());
+            }}
+          />
+          {actionError ? (
+            <p
+              role="alert"
+              className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {actionError}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
-      <Table>
+      <Table aria-label={label ?? DEFAULT_TABLE_LABEL}>
         <TableHeader>
           <TableRow>
             {selection ? (
@@ -195,8 +254,17 @@ export function ConsoleDataTable<T>({
               return (
                 <TableHead
                   key={column.key}
+                  // "none" on an inactive sortable column is what tells
+                  // assistive tech the column *can* be sorted; omitting the
+                  // attribute makes it indistinguishable from a static one.
                   aria-sort={
-                    sorted ? (sort?.dir === "asc" ? "ascending" : "descending") : undefined
+                    sorted
+                      ? sort?.dir === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : canSort
+                        ? "none"
+                        : undefined
                   }
                 >
                   {canSort ? (
