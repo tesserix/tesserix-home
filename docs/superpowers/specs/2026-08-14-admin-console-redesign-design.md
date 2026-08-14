@@ -478,6 +478,145 @@ planned to take a dependency on it too.
 also a substantial deployed product with no registry row, no tile and no rail, despite
 consuming real console code.
 
+## ⚠️ The Operate section is reporting on corpses
+
+**The entire observability estate has been parked at 0 pods since 2026-08-01** to cut GCP
+spend (`tesserix-k8s/docs/observability-park.md`). Parked: Prometheus, Alertmanager,
+kube-state-metrics, node-exporter, Grafana, Kiali, ClickHouse, Redpanda, all four OTel
+collectors, obs-api, obs-ui. The observability node pool was deleted and **390 GiB of
+telemetry PVCs were deleted** — revival starts from an empty store.
+
+Compounding it, the cluster itself has `enable_logging = false`,
+`enable_monitoring = false`, `enable_managed_prometheus = false`. **There is no telemetry
+backstop of any kind in production — not in-cluster, not GCP-native.**
+
+Consequences for this design:
+
+| Console surface | Backend | State |
+|---|---|---|
+| `uptime` | Own Postgres + own CronJob (every 5 min) | ✅ **The only working operational surface** |
+| `outbox`, `custom-domains`, `apps` | Product Postgres | ✅ Working |
+| `health` | Prometheus `kube_pod_*` | ❌ Prometheus at 0 |
+| `databases` | Prometheus `cnpg_collector_*` | ❌ Prometheus at 0 |
+| `observability` | ClickHouse `otel.otel_traces` | ❌ **Doubly broken** — ClickHouse at 0, *and* the host `clickhouse-otel.observability` was decommissioned 2026-07-26, pinned wrong in both `lib/db/clickhouse.ts:11` and the chart values |
+
+`lib/metrics/*` is a genuinely good layer — exact PromQL for kube-state-metrics, the CNPG
+collector, Istio RED, OpenCost allocation, per-tenant cost attribution. It is pointed at
+corpses.
+
+**A console that renders "0 workloads" where an operator reads "healthy" is worse than no
+page at all.** So, before any M2 Operate work:
+
+1. Repoint `CLICKHOUSE_OTEL_URL` to `clickhouse.observability`.
+2. Add a **fifth first-class state** to the kit, distinct from empty, error, and loading:
+   **instrumentation unavailable** — "data plane parked, see `observability-park.md`".
+   Every Prometheus- or ClickHouse-backed surface renders it while the park holds.
+3. **Decide the park question with the operator.** Every Operate recommendation that
+   depends on Prometheus is blocked on it.
+
+### Observability: open question 6, answered
+
+The console's Observability page does **not** compete with Grafana — Grafana has no
+ClickHouse datasource by explicit design. It duplicates **`obs-ui`**
+(`observability.tesserix.app`), an in-house ClickHouse-backed OTel platform that reads
+the same `otel.otel_traces`. Under this spec's own vendored-tools rule, obs-ui is the
+tool and the console page is the third-hand view.
+
+**Demote to a Launchpad link-out**, retaining only the per-tenant/per-app rollup obs-ui
+cannot produce. Spend no M2 effort on it while the data plane is at zero.
+
+## Deployments (J1): no new service needed
+
+The spec deferred J1 to M6+ assuming it required building `deploy-service` per
+`docs/DEPLOY_SYSTEM.md`. **That assumption was wrong.**
+
+**Kargo already is the deployments timeline.** Seven Kargo projects exist; Freight,
+Promotion and Stage objects carry per-product image tags, timestamps, actor and outcome,
+served from `kargo.tesserix.app`. ArgoCD supplies live sync/health per Application.
+
+**And the console is already provisioned for it**: `charts/apps/company/values.yaml` sets
+`ARGOCD_API_URL`, the ExternalSecret syncs `ARGOCD_AUTH_TOKEN` from GCP SM, and the
+NetworkPolicy already opens egress to the `argocd` namespace. **Zero lines of code in
+`apps/web` reference ArgoCD or Kargo.** The token, URL and network path are sitting unused.
+
+What the console owns that neither tool can produce:
+
+- **One cross-product fleet row** — product → app → live image tag → Kargo Stage → ArgoCD
+  sync/health → last promotion. ArgoCD is app-centric, Kargo is project-centric; nobody
+  has the fleet view.
+- **Workloads with a Kargo annotation but no Stage.** Four exist today: `kora-api`,
+  `dwellm8-api`, `openbao`, `obs-api`/`obs-ui`. Kargo *cannot* report a Stage that does
+  not exist, so this is invisible in both tools by construction — a computed,
+  console-only fact.
+- **Registered-vs-present drift** — 51 Application manifests in git that Kustomize never
+  builds.
+
+Add `argocd_app`, `kargo_project`, `kargo_stage`, `image_repo` to the registry columns M0
+already needs. J1 moves from M6+ into scope as a **read-only** surface; `DEPLOY_SYSTEM.md`'s
+larger scope (approvals, env locks, canary) stays a separate product decision.
+
+## Secrets (M4): the premise has changed
+
+Two facts invert the plan:
+
+- **OpenBao is fully deployed and hardened** — v2.6.1, 3-node raft, Cloud KMS auto-unseal,
+  root token revoked, daily raft snapshots — **and it already has its own admin console**
+  at `secret-service.tesserix.app` (Google SSO, deliberately write-only policy). Under the
+  vendored-tools rule, **the console must not rebuild that UI.**
+- **Adoption is ~0%.** All ~145 prod ExternalSecrets reference `gcp-secret-store`; **zero**
+  reference `openbao-secret-store`. GCP Secret Manager is still the live store for
+  essentially every workload.
+
+So shipping inventory against GCP SM is not a fallback — it is the accurate answer. And
+the cross-cutting view neither tool can produce is **migration status**: per secret and
+per workload, which store backs it, and which of the ~244 ExternalSecrets still point at
+`gcp-secret-store`.
+
+**Rotation-as-tracked-job survives unchanged, and is more correct than argued**: ESO
+refreshes hourly on 250 of 255 ExternalSecrets, and Reloader is deployed specifically
+because in-place rotation needs a pod restart. Three steps, ~1h worst case.
+
+## Backup health (O2): change the data source
+
+Ship it in M2 as planned, but **not from Prometheus**. `cnpg-health.ts`'s rollup is well
+built and structurally blind to the actual risk: Prometheus can report a backup is
+*stale*, and can never report that a cluster has **no backup configured at all** — a
+cluster with no `ScheduledBackup` emits no metric, and a missing series is
+indistinguishable from a scrape failure.
+
+Source it from **chart config joined against GCS object freshness** in
+`gs://tesseract-prod-backups-in/<cluster>`. That produces the sentence that matters —
+*"kora-postgres: no backup configured, single instance, Spot node pool"* — and it keeps
+working while Prometheus is parked.
+
+## Infrastructure risks (outside this project's scope)
+
+Recorded so they are not lost. These need their own track.
+
+| | Risk |
+|---|---|
+| **1** | **No telemetry and no alerting in production.** In-cluster Prometheus/Alertmanager at 0 *and* GKE logging/monitoring/managed-Prometheus disabled in Terraform. The park doc states a repeat of the 2026-06-17 Postgres disk-full incident would arrive with no warning. |
+| **2** | **Three live Redis instances have `password: "password"`** hardcoded in their ArgoCD Applications — `redis-global`, `redis-marketplace`, `redis-homechef`. **`redis-homechef` is HomeChef's session store**, and all `redis-*` namespaces run mTLS DISABLE. `redis-devai` and `redis-stockpilot` do it correctly via ExternalSecrets, so this is inconsistency, not policy. |
+| **3** | **`kora-postgres` has no backup configuration of any kind** — single instance, 20Gi, Spot-only node pool. Five more live clusters have backups explicitly disabled (`support-platform`, `dwellm8`, `dwellm8-temporal`, `postiz`, `agentregistry`). |
+| **4** | **No backup-freshness alerting anywhere.** The metric is exported; no PrometheusRule consumes it. Replication-lag alerts hardcode `cluster="mark8ly-postgres"`. |
+| **5** | **Every product promotes straight to prod with zero gates.** No `spec.verification` and no AnalysisTemplate anywhere in the repo. mark8ly's Playwright smoke suite exists, works, and was **deliberately delinked** from prod. |
+| **6** | **No certificate expiry monitoring at any layer.** cert-manager's ServiceMonitor is disabled; zero alert rules. Expiry would be discovered as an outage. |
+| **7** | **ESO 0.9.13 with `v1beta1` across 257 manifests** — removed in ESO ≥0.17. A hard, repo-wide upgrade wall. |
+
+### Documentation that describes a system which does not exist
+
+Three documents will mislead anyone planning against them, **including this repo's own
+`CLAUDE.md`**:
+
+- The workspace root `CLAUDE.md` describes Knative scale-to-zero, Cloud SQL `db-f1-micro`,
+  and ~30 `mp-*` Go microservices with per-service databases. Reality: **zero Knative
+  Services deployed, zero Cloud Run, no Cloud SQL anywhere** (CloudNativePG on GKE
+  Standard — not Autopilot), and the `mp-*` services were consolidated into three APIs.
+- `services.yaml` is a **design registry, not a deployment inventory** — none of its 46
+  services has a chart.
+- `docs/DOMAIN_MANAGEMENT_ARCHITECTURE.md` documents a Cloud-DNS NS-delegation issuer that
+  does not exist; reality is Cloudflare CNAME-delegation to `acme.mark8ly.com`.
+
 ## Defects found during audit
 
 These are pre-existing and must be fixed **before or during** the port, not after. Two
@@ -588,6 +727,7 @@ gated on backend work.
 |---|---|---|
 | M4 | Gated on the OpenBao migration actually happening | Ship inventory against GCP Secret Manager first; swap the backend later |
 | M2 | Fe3dr prune requires operator judgement, not inference | Produce a keep/cut/merge inventory table and decide together before any porting |
+| **M0** | **Kora's own delivery pipeline is broken, and Kora is the M0 pilot.** `kora-api` is pinned to `:latest` through a pull-through cache the repo documents as ~30 min stale, and a `TODO(ci)` in its own values file states Kora's CI pushes to a **different GCP project** so the image path **"will 404 on pull until CI is repointed."** It also carries a `kargo-kora:prod` annotation for a Stage that does not exist, so it deploys only by hand-editing git. And `kora-postgres` has no backups. | Fix Kora's image pipeline before M0 starts, or pick a different pilot. Discovering the pilot cannot deploy is the worst possible time to learn it. |
 | M0 | A wrong `console-core` boundary lets mobile drift again | `console-core` must contain zero renderer-specific code; icons as string keys, routes renderer-prefixed; contracts move to `platform-data` |
 | M2 | **Dissolving a page into a tab can silently drop capability.** This already happened once: the P0 delivery-failure defect was caused by folding a standalone page into a Support tab and narrowing the response type while doing it. | Every consolidation must enumerate the source page's endpoints and assert each still has a caller. This is a checklist item per merge, not a review comment. |
 | M5 | Mobile tokens are not merely drifted — they describe a different brand. `theme.ts` claims to carry "the exact hex values" from web; web was repainted 2026-08-11 and mobile never received it. Focus ring changed hue entirely, borders use a different mechanism, the cobalt accent has no mobile equivalent, and fonts differ. | M5 is a **resync**, not a dedup. Budget accordingly. |
