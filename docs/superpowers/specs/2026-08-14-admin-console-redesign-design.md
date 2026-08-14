@@ -812,7 +812,41 @@ gated on backend work.
 | M2 | Redirect coverage gaps break alert deep links and the mobile app | Every removed route gets an explicit redirect; verified by a route-parity test |
 | M0–M2 | Long migration means two consoles coexist | New console is independently useful from M1; old console stays untouched until its surfaces move |
 
-## Shared platform services
+## Shared platform services — ⚠️ SECTION RETRACTED
+
+**Everything below is wrong. The services it describes no longer exist and are not
+deployed.** Retracted 2026-08-14; see issue #109.
+
+Verified: `audit-service`, `subscription-service`, `settings-service`, `location-service`,
+`analytics-service`, `notification-service`, `tickets-service`, `tenant-service`,
+`verification-service`, `qr-service`, `document-service` and `feature-flags-service` are
+all **gone from GitHub**, every local clone is frozen at **2026-04-04**, and none appears
+in `tesserix-k8s` `argocd/prod` or `charts/apps`. Only `auth-bff` survives, consolidated
+as `mark8ly-auth-bff`. The platform tier now runs as `mark8ly-platform-api` and
+`mark8ly-marketplace-api-{admin,storefront}`.
+
+The survey that produced this section read local clones without checking whether they were
+live. Its ranked build list — which called a location-service admin console the best
+effort-to-value ratio in the estate — is therefore worthless.
+
+**What survives, because it is independent of those repos:**
+
+- The structural authorization finding: `IsPlatformOwner` bypasses all OpenFGA checks and
+  is derived from a Firebase tenant-name prefix match on `"platform"`. Platform-admin is
+  binary; only store-scoped `can_*` relations are modellable. Console-side, admin identity
+  is a flat `ALLOWED_ADMIN_EMAILS` allowlist. **BACKLOG H3 (roles) stays out**, and the
+  integration contract can govern shape but not permission.
+- `sea_manual_review_queue` in mark8ly's marketplace_api — an SLA-bound human queue
+  (5 business days, pausing a subscription clock) in a database the console already reads.
+  Still a valid Inbox source.
+- Otto remains the one live dependency, subject to the prefix risk recorded above.
+
+Also corrected: **`dwellm8` IS a public repo in the `tesserix` org** (pushed 2026-08-10),
+merely not cloned into this workspace. Earlier text calling its source "absent" was wrong.
+And **`Tesseract-Nexus` is a retired org** — any routing note naming it is stale.
+
+<details>
+<summary>Original section, retained for provenance only — do not act on it</summary>
 
 **The console consumes zero shared platform services today.** `lib/api/admin-fetch.ts`
 defines an 8-service registry with session-exchange auth — and **`adminFetch` has no
@@ -888,6 +922,8 @@ Play needs a service account; EAS is a third API.
 
 Unrelated but noticed: mark8ly has both `storefront-mobile` and `mobile-storefront` —
 likely a rename that left a duplicate.
+
+</details>
 
 ## Security issues found incidentally
 
