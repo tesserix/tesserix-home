@@ -73,4 +73,32 @@ describe("fetchDashboard", () => {
     expect(err).toBeInstanceOf(PlatformApiError);
     expect(err.status).toBeUndefined();
   });
+
+  it("formats a non-Error rejection without an undefined message, keeping the cause", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue("ECONNRESET"));
+
+    const err = await fetchDashboard("c=1").catch((e) => e);
+    expect(err).toBeInstanceOf(PlatformApiError);
+    expect(err.message).toBe("dashboard: request failed (ECONNRESET)");
+    expect(err.message).not.toContain("undefined");
+    expect(err.cause).toBe("ECONNRESET");
+  });
+
+  it("surfaces a 200 carrying a non-JSON body as a PlatformApiError", async () => {
+    // A proxy or ingress error page arrives as HTML with a 200; the typed
+    // boundary must hold rather than leaking a raw SyntaxError.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html>502 Bad Gateway</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+
+    const err = await fetchDashboard("c=1").catch((e) => e);
+    expect(err).toBeInstanceOf(PlatformApiError);
+    expect(err.message).toContain("not JSON");
+  });
 });

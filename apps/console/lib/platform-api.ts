@@ -22,11 +22,17 @@ export interface PlatformDashboard {
 export class PlatformApiError extends Error {
   readonly status?: number;
 
-  constructor(message: string, status?: number) {
-    super(message);
+  constructor(message: string, status?: number, options?: ErrorOptions) {
+    super(message, options);
     this.name = "PlatformApiError";
     this.status = status;
   }
+}
+
+/** A rejection is not guaranteed to be an `Error` — an undefined `.message`
+ *  would read as a mystery failure. Narrow before formatting. */
+function describe(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function num(value: unknown, path: string): number {
@@ -87,7 +93,9 @@ export async function fetchDashboard(
     });
   } catch (cause) {
     throw new PlatformApiError(
-      `dashboard: request failed (${(cause as Error).message})`,
+      `dashboard: request failed (${describe(cause)})`,
+      undefined,
+      { cause },
     );
   }
 
@@ -98,5 +106,20 @@ export async function fetchDashboard(
     );
   }
 
-  return parseDashboard(await response.json());
+  // Inside the boundary too: an ok response carrying HTML (a proxy or ingress
+  // error page) must surface as a PlatformApiError like every other failure
+  // here, not as a raw SyntaxError. parseDashboard already throws
+  // PlatformApiError itself, so it stays outside and keeps its own messages.
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    throw new PlatformApiError(
+      `dashboard: response was not JSON (${describe(cause)})`,
+      response.status,
+      { cause },
+    );
+  }
+
+  return parseDashboard(body);
 }
