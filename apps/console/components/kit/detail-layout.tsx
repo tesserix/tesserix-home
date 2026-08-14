@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@tesserix/web";
 import { SurfaceStateView, type SurfaceState } from "./states";
 import { ConsolePageHeader, type Breadcrumbable } from "./page-header";
@@ -49,6 +49,18 @@ export function DetailLayout({
   onRetry,
 }: DetailLayoutProps) {
   const [active, setActive] = useState(defaultTab ?? tabs[0]?.id ?? "");
+
+  // Tabs commonly arrive after an async load, so the initial state can be "" —
+  // or point at a tab a later render dropped. Either way no TabsContent would
+  // ever render. Re-sync onto a real tab whenever the current one isn't one.
+  const hasActiveTab = tabs.some((tab) => tab.id === active);
+  useEffect(() => {
+    if (hasActiveTab) return;
+    const fallback = tabs.find((tab) => tab.id === defaultTab) ?? tabs[0];
+    if (fallback) {
+      setActive(fallback.id);
+    }
+  }, [hasActiveTab, tabs, defaultTab]);
 
   return (
     <div className="flex h-full flex-col">

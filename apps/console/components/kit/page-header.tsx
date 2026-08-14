@@ -48,10 +48,16 @@ export function ConsolePageHeader({
                 return (
                   <Fragment key={`${crumb.label}-${index}`}>
                     <BreadcrumbItem>
-                      {crumb.href && !isLast ? (
+                      {isLast ? (
+                        // BreadcrumbPage carries aria-current="page", so only
+                        // the trail's last crumb may ever render as one.
+                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                      ) : crumb.href ? (
                         <BreadcrumbLink href={crumb.href}>{crumb.label}</BreadcrumbLink>
                       ) : (
-                        <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                        // An hrefless intermediate crumb is a label, not a
+                        // destination and not the current page.
+                        <span>{crumb.label}</span>
                       )}
                     </BreadcrumbItem>
                     {isLast ? null : <BreadcrumbSeparator />}

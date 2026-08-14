@@ -29,12 +29,12 @@ const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true";
 // That is the point of splitting it from the marketing/admin app.
 const PUBLIC_PATHS: ReadonlyArray<string> = [];
 
+// `/_next` is handled by the caller, before this is ever reached — it is not a
+// public path, it is not a page at all. Keeping it out of here means the check
+// stays true even while PUBLIC_PATHS is empty.
 function isPublicPath(pathname: string): boolean {
-  if (PUBLIC_PATHS.includes(pathname)) {
-    return true;
-  }
   return PUBLIC_PATHS.some(
-    (p) => pathname.startsWith(p + "/") || pathname.startsWith("/_next"),
+    (p) => pathname === p || pathname.startsWith(p + "/"),
   );
 }
 
