@@ -1,6 +1,6 @@
 # ADR-002: Delivery visibility on ArgoCD + Kargo (supersedes ADR-001)
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-08-14
 **Supersedes**: [ADR-001: Centralized Deployment & Release Management System](./ADR-001-DEPLOY-SYSTEM.md)
 
