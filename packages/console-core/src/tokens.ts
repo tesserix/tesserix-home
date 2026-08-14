@@ -45,6 +45,11 @@ export const colors = {
 
   sidebar: "#0b0e14",
   sidebarForeground: "#cfd4de",
+  sidebarPrimary: "#ffffff",
+  sidebarPrimaryForeground: "#0b0e14",
+  sidebarAccent: "#1a1f29",
+  sidebarAccentForeground: "#eef1f6",
+  sidebarBorder: "#1a1f29",
 } as const;
 
 // Numeric spacing scale, in px.
