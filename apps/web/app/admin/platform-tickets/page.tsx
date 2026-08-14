@@ -2,6 +2,12 @@
 
 import useSWR from "swr";
 import Link from "next/link";
+import {
+  EmptyState,
+  EmptyStateIcon,
+  EmptyStateTitle,
+  EmptyStateDescription,
+} from "@tesserix/web";
 import { AdminHeader } from "@/components/admin/header";
 import { KpiTile } from "@/components/admin/metrics/kpi-tile";
 import { formatNumber } from "@/components/admin/metrics/format";
@@ -45,6 +51,7 @@ const PRIORITY_TONE: Record<string, string> = {
 
 export default function PlatformTicketsPage() {
   const { data, error, isLoading } = useSWR<ListResponse>("/api/admin/platform-tickets", fetcher, { revalidateOnFocus: false });
+  const isEmpty = !isLoading && !error && (data?.rows ?? []).length === 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -54,14 +61,40 @@ export default function PlatformTicketsPage() {
           Merchant → Tesserix support tickets. Filing UI ships in mark8ly admin (Phase 5.5); this list will populate once that lands.
         </p>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <KpiTile label="Open" value={data ? formatNumber(data.summary.open) : "—"} loading={isLoading} />
-          <KpiTile label="In progress" value={data ? formatNumber(data.summary.inProgress) : "—"} loading={isLoading} />
-          <KpiTile label="Urgent (open)" value={data ? formatNumber(data.summary.urgentOpen) : "—"} loading={isLoading} />
-          <KpiTile label="Resolved (7d)" value={data ? formatNumber(data.summary.resolvedThisWeek) : "—"} loading={isLoading} />
+          <KpiTile label="Open" value={data ? formatNumber(data.summary.open) : "—"} hint={isEmpty ? "no data yet" : undefined} loading={isLoading} />
+          <KpiTile label="In progress" value={data ? formatNumber(data.summary.inProgress) : "—"} hint={isEmpty ? "no data yet" : undefined} loading={isLoading} />
+          <KpiTile label="Urgent (open)" value={data ? formatNumber(data.summary.urgentOpen) : "—"} hint={isEmpty ? "no data yet" : undefined} loading={isLoading} />
+          <KpiTile label="Resolved (7d)" value={data ? formatNumber(data.summary.resolvedThisWeek) : "—"} hint={isEmpty ? "no data yet" : undefined} loading={isLoading} />
         </div>
         {error ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">Could not load tickets.</div>
         ) : null}
+        {isEmpty ? (
+          <EmptyState>
+            <EmptyStateIcon>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                className="h-6 w-6"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l4.414 4.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z"
+                />
+              </svg>
+            </EmptyStateIcon>
+            <EmptyStateTitle>No platform tickets yet</EmptyStateTitle>
+            <EmptyStateDescription>
+              Merchant ticket filing ships with mark8ly admin (Phase 5.5). This list populates once that&apos;s live —
+              there&apos;s nothing wrong today, there&apos;s just nothing to show yet.
+            </EmptyStateDescription>
+          </EmptyState>
+        ) : (
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <table className="w-full text-sm">
             <thead>
@@ -76,14 +109,7 @@ export default function PlatformTicketsPage() {
               </tr>
             </thead>
             <tbody>
-              {(data?.rows ?? []).length === 0 && !isLoading ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                    No platform tickets yet.
-                  </td>
-                </tr>
-              ) : (
-                data?.rows.map((r) => (
+              {data?.rows.map((r) => (
                   <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/30">
                     <td className="px-4 py-3 font-mono text-xs">
                       <Link href={`/admin/platform-tickets/${r.id}`} className="hover:underline">
@@ -103,11 +129,11 @@ export default function PlatformTicketsPage() {
                     <td className="px-4 py-3 font-mono text-xs">{r.submitted_by_email}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(r.updated_at).toLocaleString()}</td>
                   </tr>
-                ))
-              )}
+              ))}
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   );

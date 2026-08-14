@@ -9,7 +9,6 @@ import {
   listAuditLogs,
   type AuditLogRow,
 } from "@/lib/db/mark8ly-audit";
-import { getProductConfig } from "@/lib/products/configs";
 import { logger } from "@/lib/logger";
 
 export async function GET(
@@ -17,10 +16,12 @@ export async function GET(
   { params }: { params: Promise<{ product: string }> },
 ) {
   const { product } = await params;
-  try {
-    getProductConfig(product);
-  } catch {
-    return NextResponse.json({ error: "unknown_product" }, { status: 404 });
+  // This route reads mark8ly's platform_api audit_logs. It is NOT generic:
+  // serving it for another product returned mark8ly's rows under that
+  // product's URL, so every product overview showed mark8ly's critical-event
+  // count. Gate hard, the same way onboarding/route.ts does.
+  if (product !== "mark8ly") {
+    return NextResponse.json({ error: "unsupported_product" }, { status: 404 });
   }
 
   const url = new URL(req.url);

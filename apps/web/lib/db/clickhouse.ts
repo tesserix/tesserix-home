@@ -1,5 +1,5 @@
 // Read-only HTTP client for the dedicated OpenTelemetry ClickHouse
-// (clickhouse-otel.observability). Powers the platform Observability page:
+// (clickhouse.observability). Powers the platform Observability page:
 // service health, throughput, latency and traces from the otel_* tables the
 // collector writes. Credentials come from env (provisioned via ExternalSecret
 // in the tesserix ns); auth goes in headers, never the URL.
@@ -8,7 +8,7 @@
 
 const CH_URL = (
   process.env.CLICKHOUSE_OTEL_URL ??
-  "http://clickhouse-otel.observability.svc.cluster.local:8123"
+  "http://clickhouse.observability.svc.cluster.local:8123"
 ).replace(/\/+$/, "");
 const CH_USER = process.env.CLICKHOUSE_OTEL_USER ?? "default";
 const CH_PASSWORD = process.env.CLICKHOUSE_OTEL_PASSWORD ?? "";

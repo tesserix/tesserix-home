@@ -2,8 +2,14 @@
 // Product-scoped business KPIs for the overview's KPI tiles, returned as a
 // { [tileKey]: number } map. For homechef these now come from the Go /admin/stats
 // API (signed gateway) instead of a direct homechef_db read — single source of
-// truth, side-effects preserved. Unknown products return {} so the overview
-// falls back to the platform dashboard (mark8ly path unaffected).
+// truth, side-effects preserved. A product with no KPI branch below (e.g.
+// dwellm8, which is registered in the apps directory but not yet instrumented
+// here) returns 501 rather than {} — an empty object rendered as four "—"
+// tiles that read as zero activity, not as "not implemented". mark8ly is the
+// deliberate exception: its overview tiles (tenants_active, stores_total,
+// leads_total) are resolved by the frontend's platform-dashboard fallback,
+// not by this route, so mark8ly returns {} so the overview falls back to
+// the platform dashboard (mark8ly path unaffected).
 //
 // Auth: gated by middleware.ts (default-deny /api/* without an admin session).
 import { NextResponse } from "next/server";
@@ -148,8 +154,15 @@ export async function GET(
     return NextResponse.json(out);
   }
 
+  // mark8ly's overview tiles (tenants/stores/leads) come from the platform
+  // dashboard, not from here — {} is what lets resolveKpiValue fall back.
+  if (product === "mark8ly") return NextResponse.json({});
+
   if (product !== "homechef") {
-    return NextResponse.json({});
+    // An unknown product must not look like a product with zero activity.
+    // Returning {} rendered four "—" tiles for dwellm8 for months and nobody
+    // noticed it was unimplemented rather than idle.
+    return NextResponse.json({ error: "not_instrumented" }, { status: 501 });
   }
   try {
     const { data } = await homechefAdmin<AdminStats>("GET", "/stats");
