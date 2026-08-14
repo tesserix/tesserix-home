@@ -45,15 +45,11 @@ describe("dashboardState", () => {
 });
 
 describe("DashboardView", () => {
-  // NOTE: assertions use plain truthiness rather than jest-dom matchers
-  // (`toBeInTheDocument`), because the console's vitest setup may not register
-  // jest-dom. If it does, tightening these is fine; do not add the dependency
-  // just to satisfy this test.
   it("renders the platform counts", () => {
     render(<DashboardView data={DATA} state={{ kind: "ready" }} />);
-    expect(screen.getByText("12")).toBeTruthy();
-    expect(screen.getByText("4")).toBeTruthy();
-    expect(screen.getByText("6")).toBeTruthy();
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("6")).toBeInTheDocument();
   });
 
   it("shows the parked message instead of zeroes when uninstrumented", () => {
@@ -61,10 +57,12 @@ describe("DashboardView", () => {
       <DashboardView data={null} state={{ kind: "instrumentation-unavailable" }} />,
     );
     // The whole point: a parked plane must never render a confident 0.
-    expect(screen.queryByText("0")).toBeNull();
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
     // Every tile independently renders the parked message, so more than one
     // node matches — assert presence, not a single unique match.
-    expect(screen.getAllByText(/not measured/i).length).toBeGreaterThan(0);
+    const parked = screen.getAllByText(/not measured/i);
+    expect(parked.length).toBeGreaterThan(0);
+    expect(parked[0]).toBeInTheDocument();
   });
 
   it("renders the error message instead of the parked message on a real failure", () => {
@@ -72,7 +70,9 @@ describe("DashboardView", () => {
       <DashboardView data={null} state={{ kind: "error", message: "boom" }} />,
     );
     // Same multi-tile fan-out as above: every tile renders the error message.
-    expect(screen.getAllByText("boom").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/not measured/i)).toBeNull();
+    const failures = screen.getAllByText("boom");
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures[0]).toBeInTheDocument();
+    expect(screen.queryByText(/not measured/i)).not.toBeInTheDocument();
   });
 });

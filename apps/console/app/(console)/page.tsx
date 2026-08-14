@@ -1,14 +1,12 @@
 import { cookies } from "next/headers";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 import { StatTile } from "@/components/kit/stat-tile";
-import type { SurfaceState } from "@/components/kit/states";
+import { NOT_IMPLEMENTED, type SurfaceState } from "@/components/kit/states";
 import {
   PlatformApiError,
   fetchDashboard,
   type PlatformDashboard,
 } from "@/lib/platform-api";
-
-const NOT_IMPLEMENTED = 501;
 
 export function dashboardState(error: unknown): SurfaceState {
   if (error === null || error === undefined) return { kind: "ready" };

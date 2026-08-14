@@ -40,9 +40,13 @@ export interface ResolveStateInput {
   filtered: boolean;
 }
 
-// 501 Not Implemented is the agreed signal from a service whose observability
-// data plane is parked. Any other failure is a real error.
-const NOT_IMPLEMENTED = 501;
+/**
+ * 501 Not Implemented is the agreed signal from a service whose observability
+ * data plane is parked. Any other failure is a real error. Exported so every
+ * surface tests the same number — two private copies is exactly how this
+ * invariant drifts apart.
+ */
+export const NOT_IMPLEMENTED = 501;
 
 const FALLBACK_ERROR_MESSAGE = "Something went wrong loading this surface.";
 
