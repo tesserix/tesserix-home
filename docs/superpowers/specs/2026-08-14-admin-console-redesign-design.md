@@ -217,7 +217,33 @@ both driven by tokens and types from `console-core`.
 | `QueueList` | Inbox rows: what, which product, how long waiting, primary action |
 | `EmptyState` / `ErrorState` / `LoadingState` | The three non-happy paths, one implementation each |
 
-**Every list surface must use `DataTable`.** The current failure mode is that a shared
+### What already exists in `@tesserix/web`
+
+The design system is v1.8.1 with **131 exported components**, already used by 255 files
+in `apps/web`. Five of the nine primitives above should **not** be built:
+
+| Primitive | Status | Action |
+|---|---|---|
+| `EmptyState` | Ship-ready compound component | **Reuse as-is** |
+| `ErrorState` | Ship-ready — `detectErrorType`, `type`/`code`/`details`/`suggestions`/`onRetry`/`compact` | **Reuse as-is** |
+| `LoadingState` | Ship-ready — `Skeleton`, `DataTableSkeleton`, `PanelSkeleton`, `FormSkeleton`, `Spinner`, and more | **Reuse as-is** |
+| `PageHeader` | Exists as compound parts, no props API | **Wrap** with a `title`/`description`/`breadcrumbs`/`actions` façade |
+| `StatTile` | `DashboardCard*` is close; `Stat*` also exists | **Wrap** with `value`/`delta`/`trend`/`loading`/`href` |
+| `DataTable` | Exists but is **100% client-side** — search/sort/paginate in local `useState` over the full array, with no `totalCount`, `onPageChange`, `onSortChange`, or `loading` | **Build `ConsoleDataTable`** on `Table*` + `Pagination` + `DataTableSkeleton`. Do **not** extend the existing one |
+| `FilterBar` | Parts only — `SearchBar`, `MultiSelect`, `DateRangePicker`, `Tabs`. `FilterPanel` is a *sidebar*; `FilterBuilder` is rule-rows | **Build** — nothing horizontal exists |
+| `DetailLayout` | Ingredients only (`Resizable`, `PropertyPanel`, `Sheet`, `Timeline`) plus a stories-only, unexported `AdminListDetailRecipe` | **Build** — promote the recipe |
+| `QueueList` | Nothing | **Build.** Closest prior art is `@tesserix/otto-widget`'s `OttoInbox.tsx` |
+
+Also already present and directly useful: `audit-log-viewer`, `timeline`,
+`command-palette` (hand-rolled, full keyboard nav — the ⌘K base), `status-badge` with
+extensible `statusMappings`, `tenant-switcher`, `virtual-list`, `charts`.
+
+**Net: four primitives to build, not nine.** The console kit is a thin layer over
+`@tesserix/web`, not a parallel design system — and the console's own duplication (six
+hand-rolled status pills, three local `KpiTile`s) exists because pages reached past a
+library that already had these.
+
+**Every list surface must use `ConsoleDataTable`.** The current failure mode is that a shared
 layout existed and pages opted out of it. Adoption is enforced by lint rule: no raw
 `<table>` in `apps/console/app/**`.
 
@@ -503,7 +529,7 @@ finished.
 |---|---|---|
 | **M0** | **Foundation** | `packages/platform-data` + `packages/console-core` extraction · `apps/console` scaffold · console kit · Launchpad (+ registry schema additions) · **Kora ported AND refactored onto the primitives** · one `QueueList` surface · P1/P2 defect fixes |
 | **M1** | **Front doors** | Inbox · Business dashboard · ⌘K entity search |
-| **M2** | **Migration** | Consolidation pass per product (Fe3dr first) → port survivors · unified Templates · unified Audit · unified Directory · saved views · redirects · **DB backup health (O2)** · **tenant kill-switch with reason codes (H2)** · **read-only per-tenant flag strip** · delete `apps/web/app/admin` |
+| **M2** | **Migration** | Consolidation pass per product (Fe3dr first) → port survivors · unified Templates · unified Audit · unified Directory · saved views · redirects · **DB backup health (O2)** · **tenant kill-switch with reason codes (H2)** · **location-service admin** · delete `apps/web/app/admin` |
 | **M3** | **Growth** | Pipeline, funnels, cohorts, sequences |
 | **M4** | **Secrets** | OpenBao inventory · rotation as tracked verified jobs. **Not F5** — see below |
 | **M5** | **Mobile** | Rebuild `apps/mobile` on `console-core`; close the Kora gap; resync tokens; delete the second theme |
@@ -569,18 +595,89 @@ gated on backend work.
 | M2 | Redirect coverage gaps break alert deep links and the mobile app | Every removed route gets an explicit redirect; verified by a route-parity test |
 | M0–M2 | Long migration means two consoles coexist | New console is independently useful from M1; old console stays untouched until its surfaces move |
 
+## Shared platform services
+
+**The console consumes zero shared platform services today.** `lib/api/admin-fetch.ts`
+defines an 8-service registry with session-exchange auth — and **`adminFetch` has no
+callers anywhere in `apps/web`**. The only occurrence of the identifier is its own
+definition. Its env vars are not in `.env.example`. An earlier draft of this spec cited
+this as existing plumbing; it is scaffolding that was never wired up.
+
+Everything the console renders comes from direct Postgres pools, ClickHouse, Prometheus,
+or three bespoke HTTP proxies (Otto, HomeChef, Kora). This makes the no-Go-changes
+constraint better-founded than stated — but it also means the shared-services tier is a
+parallel universe, and several services are not merely unconsumed but **duplicated** by
+the console's own tables.
+
+**Need nothing at all:** `qr-service`, `document-service`, `auth-bff` (owns no tables,
+exposes no admin capability — it cannot revoke a session, reset MFA, or enumerate users),
+and effectively `analytics-service`.
+
+**Worth building, in order:**
+
+| | Service | Why | Cost |
+|---|---|---|---|
+| 1 | **Otto `pending` → Inbox** | The only shared service already wired. Real FIFO queue with `accept-next` atomic claim, `QueueSnapshot`, audit trail | Lowest — but see the Otto identity risk above |
+| 2 | **Empty state on `platform-tickets`** | The page renders zeroed tiles over an empty table with no explanation | One component |
+| 3 | **location-service admin** | **14 FGA-guarded admin endpoints, fully built, with zero UI consuming them.** Geo dataset CRUD plus `CacheStats.EstimatedSavings` — a direct read on avoided Google Maps spend | Best effort-to-value ratio found |
+| 4 | **verification-service OTP view** | "User can't get their OTP" and OTP brute-force are both invisible today; the only remedy is manual SQL or a 60-minute wait | Needs 2 new endpoints |
+| 5 | **Stuck-tenant queue** | Reconciliation already finds them every 5 min and only *logs* it | Expose `ReconciliationResult` over HTTP |
+| 6 | **Domain verification queue** | Highest operator value of any queue found | Needs list-by-status, a cross-tenant endpoint, and honest `ssl_status` writes |
+
+**Also missing from the Inbox source list:** `sea_manual_review_queue` in mark8ly's
+marketplace_api — SEA tax-ID manual review with `status`, `reviewer_id`, and an explicit
+**`sla_due_at` on a 5-business-day SLA**, where entering the queue pauses the
+subscription's 14-day validation clock. An SLA-bound, human-blocking queue in a database
+the console already reads directly.
+
+**Do not build:** a subscription-service Business surface (mark8ly is authoritative;
+the Go service is orphaned and bills a different thing — Tesserix tenants on SaaS tiers,
+not stores).
+
+## Security issues found incidentally
+
+These are outside the redesign's scope and should be tracked separately. They are
+recorded here only because the survey surfaced them and they must not be lost.
+
+- **audit-service `POST /internal/events` is unauthenticated** despite a comment claiming
+  GCP IAM protection — audit-log forgery for any tenant. `POST /api/v1/audit-logs`
+  additionally accepts caller-controlled `action`, `user_id`, `id`, and `timestamp`.
+- **subscription-service's entire `/admin` group has authentication but no
+  authorization** — any authenticated principal can read platform MRR, extend trials, and
+  read/write Stripe secret-key config.
+- **settings-service `GET /internal/settings` is unauthenticated and returns settings
+  across all tenants.**
+- **location-service: all 13 `/api/v1/geotag/*` routes are on the public unauthenticated
+  group** — including `DELETE /places/:id` and `POST /bulk/geocode`, which spends money
+  with paid providers.
+- **analytics-service `POST /fdw/reinitialize` is unauthenticated and mutating.**
+- **`IsPlatformOwner` bypasses all OpenFGA checks** and is derived from a Firebase
+  tenant-name prefix match on `"platform"`.
+
+That last one constrains the design directly: **a Roles surface (BACKLOG H3) cannot
+express platform-admin**, because platform-admin is binary and all-or-nothing. Only
+store-scoped `can_*` relations are modellable. H3 stays out until that changes.
+
 ## Open questions
 
-These cannot be answered from source and are cheap to settle:
-
-1. **Does `audit_logs` contain login events?** `getAuditFilterOptions()` already runs
-   `SELECT DISTINCT action`. If login actions appear, O7 (failed-login tracker) is a
-   filter preset on the unified Audit surface — small. If not, it needs audit-service
-   emission and should be cut.
-2. **What is the `feature-flags` service's per-tenant endpoint shape?** The BFF plumbing
-   exists (`adminFetch('feature-flags', …)`) and `settings/page.tsx` has a dead link to
-   `/admin/feature-flags`. GrowthBook itself is unreferenced repo-wide — so build against
-   the service, not against GrowthBook assumptions.
+1. ~~**Does `audit_logs` contain login events?**~~ **Answered: no — cut O7.** The pipeline
+   is broken in four independent places. No Pub/Sub subscription delivers
+   `tesserix-audit-events` to audit-service. auth-bff emits `auth.user.login` /
+   `auth.login.failed`; audit-service's mapper expects `auth.login_success` /
+   `auth.login_failed` — **zero overlap**, so everything falls through to `ActionOther`.
+   Actor fields are snake_case on the wire and read as camelCase. Failed logins would
+   persist as `status='SUCCESS'`. `ActionLoginFailed` is never written by any code path.
+   O7 is backend work, not a filter preset.
+2. ~~**What is the `feature-flags` service's per-tenant endpoint shape?**~~ **Answered:
+   the flag strip is not buildable as designed — cut it from M2.** GrowthBook is confirmed
+   as the backend (so the H1 cut was right), but: there is **no per-tenant flag lookup** —
+   tenancy is injected only as evaluation attributes, never stored or returned; the caller
+   must supply a GrowthBook `client_key` and **no tenant→client_key mapping exists in that
+   service** (it lives on `tenant-service`'s tenant row); and evaluation is a hand-rolled
+   stub supporting only equality and `$in`, ignoring coverage and hash-bucketing — so a
+   flag strip would show **wrong values for any percentage-rollout flag**. If it is built
+   later, build against `tenant-service`'s GrowthBook columns plus the GrowthBook Admin
+   API directly.
 3. **Has the SendGrid webhook been configured?** `notifications/log` queries real data but
    the table is empty pending an ops step, not a code change.
 4. **Is Stripe key management deliberately excluded from mobile?** Probably a correct
