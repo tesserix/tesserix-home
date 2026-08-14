@@ -12,7 +12,7 @@ import {
   getPlatformTicketReplies,
   updatePlatformTicketStatus,
 } from "@/lib/db/platform-tickets";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const patchSchema = z.object({

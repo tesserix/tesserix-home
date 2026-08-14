@@ -15,7 +15,7 @@ import {
 } from "@/lib/db/email-templates";
 import { refreshTemplateCache } from "@/lib/api/mark8ly-internal";
 import { logger } from "@/lib/logger";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import type { Mark8lyDatabase } from "@/lib/db/mark8ly";
 
 const ALLOWED_DBS: ReadonlyArray<Mark8lyDatabase> = ["platform_api", "marketplace_api"];

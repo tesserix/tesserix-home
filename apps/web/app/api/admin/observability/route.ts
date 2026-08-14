@@ -7,7 +7,7 @@
 // recent-traces list. Admin-only; range + app are whitelisted.
 import { NextResponse } from "next/server";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { chQuery } from "@/lib/db/clickhouse";
 
 const RANGES: Record<string, { interval: string; bucket: string }> = {

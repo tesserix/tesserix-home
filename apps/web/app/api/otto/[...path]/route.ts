@@ -11,7 +11,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 
 const OTTO_URL = (process.env.OTTO_URL ?? "http://localhost:8089").replace(/\/+$/, "");
 const OTTO_INTERNAL_AUTH = (process.env.OTTO_INTERNAL_AUTH ?? "").trim();

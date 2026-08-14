@@ -14,7 +14,7 @@
 // humanized. Resolution is best-effort: any DB failure leaves the raw id.
 import { NextResponse } from "next/server";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { mark8lyQuery } from "@/lib/db/mark8ly";
 
 const OTTO_URL = (process.env.OTTO_URL ?? "http://localhost:8089").replace(

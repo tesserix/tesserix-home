@@ -17,7 +17,7 @@
 // KORA_BFF_HMAC_KEY).
 import crypto from "node:crypto";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 // Trailing slash stripped: `KORA_API_URL` + `path` is plain concatenation

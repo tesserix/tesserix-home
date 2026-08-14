@@ -7,7 +7,7 @@ import { z } from "zod";
 import { tesserixQuery } from "@/lib/db/tesserix";
 import type { LeadActivityRow } from "@/lib/db/types";
 import { leadActivityInputSchema } from "@/lib/leads/schema";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const uuidSchema = z.string().uuid();

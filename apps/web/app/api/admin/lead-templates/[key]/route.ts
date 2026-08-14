@@ -7,7 +7,7 @@ import {
   LeadTemplateKeyConflictError,
   type LeadTemplateUpsert,
 } from "@/lib/db/lead-templates";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 interface PutBody {

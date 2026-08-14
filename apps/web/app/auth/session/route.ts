@@ -12,7 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   sessionCookieName,
   verifySession,
-} from "@/lib/auth/session-jwt";
+} from "@tesserix/platform-auth";
 
 export async function GET(req: NextRequest): Promise<Response> {
   const cookie = req.cookies.get(sessionCookieName());

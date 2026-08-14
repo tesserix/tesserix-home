@@ -18,7 +18,7 @@
 // BFF_INTERNAL_HMAC_KEY / GCP prod-homechef-bff-internal-hmac-key).
 import crypto from "node:crypto";
 
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 
 const API_URL = process.env.HOMECHEF_API_URL ?? "";

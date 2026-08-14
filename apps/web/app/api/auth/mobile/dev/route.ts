@@ -3,7 +3,7 @@
 // is explicitly on, so it can never mint a session in production.
 
 import { NextResponse } from "next/server";
-import { signSession } from "@/lib/auth/session-jwt";
+import { signSession } from "@tesserix/platform-auth";
 
 export const runtime = "nodejs";
 

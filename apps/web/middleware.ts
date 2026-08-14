@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { bearerToken } from "@/lib/auth/bearer";
 import {
+  bearerToken,
   sessionCookieName,
   verifySession,
-} from "@/lib/auth/session-jwt";
-import { evaluateCsrf } from "@/lib/security/csrf";
+  evaluateCsrf,
+} from "@tesserix/platform-auth";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
 // (Edge runtime restricts node:crypto and forces wasm fallbacks).

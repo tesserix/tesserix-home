@@ -10,7 +10,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { sendTestEmail } from "@/lib/api/mark8ly-internal";
-import { getCurrentSession } from "@/lib/auth/session-jwt";
+import { getCurrentSession } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
 import type { Mark8lyDatabase } from "@/lib/db/mark8ly";
 
