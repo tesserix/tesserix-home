@@ -51,7 +51,7 @@ const PRIORITY_TONE: Record<string, string> = {
 
 export default function PlatformTicketsPage() {
   const { data, error, isLoading } = useSWR<ListResponse>("/api/admin/platform-tickets", fetcher, { revalidateOnFocus: false });
-  const isEmpty = !isLoading && (data?.rows ?? []).length === 0;
+  const isEmpty = !isLoading && !error && (data?.rows ?? []).length === 0;
 
   return (
     <div className="flex h-full flex-col">
