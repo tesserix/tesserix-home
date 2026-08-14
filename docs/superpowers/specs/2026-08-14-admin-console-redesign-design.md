@@ -440,6 +440,13 @@ backend work — only a surface. The ones that map cleanly onto the new IA:
 Note: `/security/api-keys` is HomeChef-scoped. It does **not** satisfy BACKLOG F5, which
 asks for a cross-product API key inventory (see M4 below).
 
+⚠️ **This list is inferred, not verified.** The HomeChef Go API lives outside this repo;
+the endpoints above were read from its route definitions, not exercised against a running
+service. Confirm each one responds as expected before scheduling a surface on it. The
+gateway's catch-all shape means a wrong path returns the Go API's error, not a build
+failure — so a mistake here surfaces at runtime, in production, on a page that looks
+finished.
+
 ## Milestones
 
 | | Milestone | Lands |
