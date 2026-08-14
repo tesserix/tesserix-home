@@ -54,6 +54,43 @@ export function queryToFilters(
   return values;
 }
 
+/**
+ * The page param a filter mutation resets. A filter change re-shapes the whole
+ * result set, so the page the operator was on no longer means anything.
+ */
+export const PAGE_PARAM = "page";
+
+/**
+ * Apply filter values onto an existing query string, preserving every param a
+ * surface owns that is not a filter — `sort`, a tab id, a deep-linked row.
+ *
+ * `filtersToQuery` deliberately builds a *fresh* query from filter values only
+ * (it is the serialisation half of the round-trip and must stay that way), so
+ * the merge lives here instead: replacing the whole query string with the
+ * filter query is what silently destroys unrelated state.
+ *
+ * `page` is dropped rather than merged: narrowing a filter while on page 5
+ * would otherwise land on an empty page 5, which `resolveState` would report
+ * as `filtered-empty` — a correct-looking state for an incorrect cause.
+ */
+export function mergeFiltersIntoQuery(
+  current: URLSearchParams,
+  descriptors: readonly FilterDescriptor[],
+  values: FilterValues,
+): string {
+  const next = new URLSearchParams(current.toString());
+  next.delete(PAGE_PARAM);
+  for (const descriptor of descriptors) {
+    const value = values[descriptor.key] ?? "";
+    if (value === "") {
+      next.delete(descriptor.key);
+    } else {
+      next.set(descriptor.key, value);
+    }
+  }
+  return next.toString();
+}
+
 export interface UrlFilters {
   values: FilterValues;
   set(key: string, value: string): void;
@@ -69,31 +106,48 @@ export function useUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const searchString = searchParams.toString();
+
   const values = useMemo(
-    () => queryToFilters(new URLSearchParams(searchParams.toString()), descriptors),
-    [searchParams, descriptors],
+    () => queryToFilters(new URLSearchParams(searchString), descriptors),
+    [searchString, descriptors],
   );
 
+  // `router.replace` is asynchronous, so `searchParams` still holds the old
+  // query for the rest of the tick. Two mutations in one round-trip would
+  // therefore both read the pre-change URL and the first would be lost. The
+  // query we last pushed is held here and used as the base until the URL
+  // catches up (or changes underneath us, e.g. the back button).
+  const pendingRef = useRef<string | null>(null);
+  useEffect(() => {
+    pendingRef.current = null;
+  }, [searchString]);
+
   const push = useCallback(
-    (next: FilterValues) => {
-      const query = filtersToQuery(next);
+    (update: (previous: FilterValues) => FilterValues) => {
+      const current = new URLSearchParams(pendingRef.current ?? searchString);
+      const previous = queryToFilters(current, descriptors);
+      const query = mergeFiltersIntoQuery(current, descriptors, update(previous));
+      pendingRef.current = query;
       router.replace(query ? `${pathname}?${query}` : pathname);
     },
-    [router, pathname],
+    [router, pathname, searchString, descriptors],
   );
 
   const set = useCallback(
     (key: string, value: string) => {
-      const next = { ...values, [key]: value };
-      if (value === "") {
-        delete next[key];
-      }
-      push(next);
+      push((previous) => {
+        const next = { ...previous, [key]: value };
+        if (value === "") {
+          delete next[key];
+        }
+        return next;
+      });
     },
-    [values, push],
+    [push],
   );
 
-  const clear = useCallback(() => push({}), [push]);
+  const clear = useCallback(() => push(() => ({})), [push]);
 
   return { values, set, clear };
 }
@@ -105,7 +159,7 @@ const ANY = "__any__";
 /** How long typing must pause before the URL (and therefore the query) moves. */
 export const SEARCH_DEBOUNCE_MS = 300;
 
-interface SearchFilterInputProps {
+export interface SearchFilterInputProps {
   label: string;
   /** The committed value, as read back out of the URL. */
   value: string;
@@ -122,10 +176,11 @@ interface SearchFilterInputProps {
  * immediately on blur or Enter so the user can force it. An external change
  * to the value (back button, "clear filters") still wins over the draft.
  */
-function SearchFilterInput({ label, value, onCommit }: SearchFilterInputProps) {
+export function SearchFilterInput({ label, value, onCommit }: SearchFilterInputProps) {
   const [draft, setDraft] = useState(value);
   const committedRef = useRef(value);
   const onCommitRef = useRef(onCommit);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onCommitRef.current = onCommit;
@@ -143,13 +198,27 @@ function SearchFilterInput({ label, value, onCommit }: SearchFilterInputProps) {
       return;
     }
     const timer = setTimeout(() => {
+      timerRef.current = null;
       committedRef.current = draft;
       onCommitRef.current(draft);
     }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    timerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (timerRef.current === timer) {
+        timerRef.current = null;
+      }
+    };
   }, [draft]);
 
+  // Blur and Enter commit immediately. The in-flight debounce has to be
+  // cancelled too, or it re-fires with the same value a moment later and
+  // costs a redundant `router.replace` (and the refetch behind it).
   function flush() {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
     if (draft !== committedRef.current) {
       committedRef.current = draft;
       onCommitRef.current(draft);
