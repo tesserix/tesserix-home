@@ -885,6 +885,8 @@ the console already reads directly.
 the Go service is orphaned and bills a different thing — Tesserix tenants on SaaS tiers,
 not stores).
 
+</details>
+
 ## Deferred: mobile release management (Track C-late)
 
 **9 Expo/EAS apps across 4 products** — Fe3dr (`mobile-customer`, `mobile-delivery`,
@@ -922,8 +924,6 @@ Play needs a service account; EAS is a third API.
 
 Unrelated but noticed: mark8ly has both `storefront-mobile` and `mobile-storefront` —
 likely a rename that left a duplicate.
-
-</details>
 
 ## Security issues found incidentally
 
