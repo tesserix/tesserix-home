@@ -71,6 +71,13 @@ export interface ConsoleDataTableProps<T> {
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
+  /**
+   * Accessible name for a row's selection checkbox. `rowKey` is an opaque
+   * composite key — `(run_id, gate_name)` — so defaulting to it makes a screen
+   * reader announce "Select row run-1:gate-a" before a destructive bulk
+   * action. Surfaces should pass something a human recognises.
+   */
+  rowLabel?: (row: T) => string;
   total: number;
   page: number;
   pageSize: number;
@@ -123,6 +130,7 @@ export function ConsoleDataTable<T>({
   columns,
   rows,
   rowKey,
+  rowLabel,
   total,
   page,
   pageSize,
@@ -292,7 +300,7 @@ export function ConsoleDataTable<T>({
                 {selection ? (
                   <TableCell className="w-10">
                     <Checkbox
-                      aria-label={`Select row ${key}`}
+                      aria-label={`Select ${rowLabel ? rowLabel(row) : `row ${key}`}`}
                       checked={selected.has(key)}
                       onCheckedChange={(checked) => toggleRow(key, checked === true)}
                     />
