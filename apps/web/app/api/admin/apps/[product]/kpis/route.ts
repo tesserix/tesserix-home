@@ -5,7 +5,11 @@
 // truth, side-effects preserved. A product with no KPI branch below (e.g.
 // dwellm8, which is registered in the apps directory but not yet instrumented
 // here) returns 501 rather than {} — an empty object rendered as four "—"
-// tiles that read as zero activity, not as "not implemented".
+// tiles that read as zero activity, not as "not implemented". mark8ly is the
+// deliberate exception: its overview tiles (tenants_active, stores_total,
+// leads_total) are resolved by the frontend's platform-dashboard fallback,
+// not by this route, so mark8ly returns {} so the overview falls back to
+// the platform dashboard (mark8ly path unaffected).
 //
 // Auth: gated by middleware.ts (default-deny /api/* without an admin session).
 import { NextResponse } from "next/server";
@@ -149,6 +153,10 @@ export async function GET(
 
     return NextResponse.json(out);
   }
+
+  // mark8ly's overview tiles (tenants/stores/leads) come from the platform
+  // dashboard, not from here — {} is what lets resolveKpiValue fall back.
+  if (product === "mark8ly") return NextResponse.json({});
 
   if (product !== "homechef") {
     // An unknown product must not look like a product with zero activity.

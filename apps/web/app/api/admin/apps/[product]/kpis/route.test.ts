@@ -242,6 +242,20 @@ describe("kora kpis", () => {
   });
 });
 
+// mark8ly has no KPI branch here — its overview tiles (tenants_active,
+// stores_total, leads_total) are resolved client-side by the platform
+// dashboard fallback in product-overview-layout.tsx, not by this route. An
+// empty {} (200) is what lets that fallback kick in; a 501 here regressed
+// the mark8ly overview to "not instrumented" even though it never was.
+describe("mark8ly kpis", () => {
+  it("returns 200 with an empty body so the dashboard fallback applies", async () => {
+    const res = await req("mark8ly");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({});
+  });
+});
+
 // dwellm8 is a real, deployed product (registered in the apps directory) but
 // has no KPI branch here yet. It must not be indistinguishable from a
 // product with genuinely zero activity — {} rendered four "—" tiles for it
