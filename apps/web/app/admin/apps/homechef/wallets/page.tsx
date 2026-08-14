@@ -7,12 +7,14 @@ import { Button } from "@tesserix/web";
 
 import { hcAdmin, swrFetcher } from "@/lib/products/homechef/client";
 import { formatDateTime, formatINR, titleCase, type WalletResponse } from "@tesserix/homechef-shared";
+import { useConfirm } from "@/components/admin/confirm-dialog";
 
 function WalletsInner() {
   const initial = useSearchParams().get("userId") ?? "";
   const [input, setInput] = useState(initial);
   const [active, setActive] = useState(initial);
   const [error, setError] = useState<string | null>(null);
+  const { confirm } = useConfirm();
 
   const { data, isLoading, mutate } = useSWR<WalletResponse>(
     active ? [`/wallet/${active}`] : null,
@@ -30,6 +32,15 @@ function WalletsInner() {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) return setError("Enter an amount greater than zero.");
     if (!reason.trim()) return setError("A reason is required.");
+    const ok = await confirm({
+      title: type === "credit" ? "Credit this wallet?" : "Debit this wallet?",
+      message: `${type === "credit" ? "Add" : "Remove"} ${formatINR(amt)} ${
+        type === "credit" ? "to" : "from"
+      } this customer's balance. This writes to the wallet ledger and cannot be undone.`,
+      confirmLabel: type === "credit" ? "Credit wallet" : "Debit wallet",
+      tone: "destructive",
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       await hcAdmin.post(`/wallet/${active}/adjust`, { amount: amt, reason: reason.trim(), type });
