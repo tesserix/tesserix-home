@@ -43,8 +43,24 @@ function unauthorized(request: NextRequest): NextResponse {
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const loginUrl = new URL("/login", request.url);
-  loginUrl.searchParams.set("returnTo", `${pathname}${search}`);
+  // The console has no /login route of its own (PUBLIC_PATHS is empty by
+  // design), so redirecting to a same-origin /login would just re-trigger
+  // this same gate and loop. Send anonymous visitors to web's /login instead.
+  //
+  // KNOWN LIMITATION: web's safeReturnPath (apps/web/lib/auth/oauth.ts) only
+  // accepts same-origin relative paths, as an open-redirect guard — it is
+  // out of scope for M0 to loosen that. So this absolute cross-origin
+  // returnTo is discarded today and the operator lands on web's own
+  // /admin/dashboard rather than back in the console. We send it anyway so
+  // the console -> web login handoff starts working the moment web grows an
+  // origin allowlist for its own returnTo (symmetric with the
+  // NEXT_PUBLIC_CONSOLE_URL Task 6 introduces for the other direction).
+  const webUrl = process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3002";
+  const loginUrl = new URL("/login", webUrl);
+  loginUrl.searchParams.set(
+    "returnTo",
+    `${request.nextUrl.origin}${pathname}${search}`,
+  );
   return NextResponse.redirect(loginUrl);
 }
 
