@@ -666,19 +666,18 @@ Source it from **chart config joined against GCS object freshness** in
 *"kora-postgres: no backup configured, single instance, Spot node pool"* — and it keeps
 working while Prometheus is parked.
 
-## Infrastructure risks (outside this project's scope)
+## Infrastructure risks — MOVED
 
-Recorded so they are not lost. These need their own track.
+Redacted before this repository was made public on 2026-08-14. Tracked privately at
+`tesserix/tesserix-infra` (issue #3).
 
-| | Risk |
-|---|---|
-| **1** | **No telemetry and no alerting in production.** In-cluster Prometheus/Alertmanager at 0 *and* GKE logging/monitoring/managed-Prometheus disabled in Terraform. The park doc states a repeat of the 2026-06-17 Postgres disk-full incident would arrive with no warning. |
-| **2** | **Three live Redis instances have `password: "password"`** hardcoded in their ArgoCD Applications — `redis-global`, `redis-marketplace`, `redis-homechef`. **`redis-homechef` is HomeChef's session store**, and all `redis-*` namespaces run mTLS DISABLE. `redis-devai` and `redis-stockpilot` do it correctly via ExternalSecrets, so this is inconsistency, not policy. |
-| **3** | **`kora-postgres` has no backup configuration of any kind** — single instance, 20Gi, Spot-only node pool. Five more live clusters have backups explicitly disabled (`support-platform`, `dwellm8`, `dwellm8-temporal`, `postiz`, `agentregistry`). |
-| **4** | **No backup-freshness alerting anywhere.** The metric is exported; no PrometheusRule consumes it. Replication-lag alerts hardcode `cluster="mark8ly-postgres"`. |
-| **5** | **Every product promotes straight to prod with zero gates.** No `spec.verification` and no AnalysisTemplate anywhere in the repo. mark8ly's Playwright smoke suite exists, works, and was **deliberately delinked** from prod. |
-| **6** | **No certificate expiry monitoring at any layer.** cert-manager's ServiceMonitor is disabled; zero alert rules. Expiry would be discovered as an outage. |
-| **7** | **ESO 0.9.13 with `v1beta1` across 257 manifests** — removed in ESO ≥0.17. A hard, repo-wide upgrade wall. |
+Two consequences bear on this design and are stated without the detail:
+
+- **Several CloudNativePG clusters have no backups**, which is why backup health (O2) must
+  be sourced from chart config plus GCS object freshness rather than Prometheus — a metric
+  can report a backup *stale*, never *absent*.
+- **There is no production telemetry or alerting**, which is why the kit carries an
+  explicit `instrumentation-unavailable` state rather than rendering zeroes.
 
 ### Documentation that describes a system which does not exist
 
@@ -831,10 +830,9 @@ effort-to-value ratio in the estate — is therefore worthless.
 
 **What survives, because it is independent of those repos:**
 
-- The structural authorization finding: `IsPlatformOwner` bypasses all OpenFGA checks and
-  is derived from a Firebase tenant-name prefix match on `"platform"`. Platform-admin is
-  binary; only store-scoped `can_*` relations are modellable. Console-side, admin identity
-  is a flat `ALLOWED_ADMIN_EMAILS` allowlist. **BACKLOG H3 (roles) stays out**, and the
+- The structural authorization finding: **platform-admin is binary and all-or-nothing.**
+  Detail redacted before this repo was made public; tracked privately at
+  `tesserix/tesserix-infra` (issue #4). **BACKLOG H3 (roles) stays out**, and the
   integration contract can govern shape but not permission.
 - `sea_manual_review_queue` in mark8ly's marketplace_api — an SLA-bound human queue
   (5 business days, pausing a subscription clock) in a database the console already reads.
@@ -925,29 +923,16 @@ Play needs a service account; EAS is a third API.
 Unrelated but noticed: mark8ly has both `storefront-mobile` and `mobile-storefront` —
 likely a rename that left a duplicate.
 
-## Security issues found incidentally
+## Security issues found incidentally — MOVED
 
-These are outside the redesign's scope and should be tracked separately. They are
-recorded here only because the survey surfaced them and they must not be lost.
+Redacted before this repository was made public on 2026-08-14. The findings described
+unfixed weaknesses in shared services and are tracked privately at
+`tesserix/tesserix-infra` (issue #4).
 
-- **audit-service `POST /internal/events` is unauthenticated** despite a comment claiming
-  GCP IAM protection — audit-log forgery for any tenant. `POST /api/v1/audit-logs`
-  additionally accepts caller-controlled `action`, `user_id`, `id`, and `timestamp`.
-- **subscription-service's entire `/admin` group has authentication but no
-  authorization** — any authenticated principal can read platform MRR, extend trials, and
-  read/write Stripe secret-key config.
-- **settings-service `GET /internal/settings` is unauthenticated and returns settings
-  across all tenants.**
-- **location-service: all 13 `/api/v1/geotag/*` routes are on the public unauthenticated
-  group** — including `DELETE /places/:id` and `POST /bulk/geocode`, which spends money
-  with paid providers.
-- **analytics-service `POST /fdw/reinitialize` is unauthenticated and mutating.**
-- **`IsPlatformOwner` bypasses all OpenFGA checks** and is derived from a Firebase
-  tenant-name prefix match on `"platform"`.
-
-That last one constrains the design directly: **a Roles surface (BACKLOG H3) cannot
-express platform-admin**, because platform-admin is binary and all-or-nothing. Only
-store-scoped `can_*` relations are modellable. H3 stays out until that changes.
+One consequence is load-bearing for this design and is stated here without the detail:
+**platform-admin authorization is binary.** A roles/team-management surface (BACKLOG H3)
+cannot be built meaningfully, and the product admin integration contract can govern the
+*shape* of an endpoint but not *who may call it*, until that changes.
 
 ## Open questions
 

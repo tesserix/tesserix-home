@@ -307,27 +307,22 @@ column and a timestamp.
 
 ## 7. Open problem: platform-admin authorization
 
-**The contract cannot currently express who may act.**
+**The contract cannot currently express who may act.** Platform-admin is binary and
+all-or-nothing; only store-scoped `can_*` relations are modellable, and console-side admin
+identity is a flat allowlist.
 
-`IsPlatformOwner` bypasses all OpenFGA checks and is derived from a Firebase tenant-name
-prefix match on `"platform"`. Platform-admin is binary and all-or-nothing; only
-store-scoped `can_*` relations are modellable. Console-side, admin identity is a flat
-`ALLOWED_ADMIN_EMAILS` env allowlist.
+The specifics were redacted before this repository was made public on 2026-08-14 and are
+tracked privately at `tesserix/tesserix-infra` (issue #4).
 
-Consequences:
+Consequences that bind this contract:
 
 - A roles/team-management surface (BACKLOG H3) cannot be built meaningfully.
-- This contract cannot say "only a payments admin may resolve a payout hold", because
-  that distinction does not exist anywhere in the platform.
+- This contract cannot say "only a payments admin may resolve a payout hold", because that
+  distinction does not exist anywhere in the platform.
 - Every conformance-passing endpoint is reachable by every platform admin.
-
-Several shared services compound this by having authentication with **no** authorization
-at all — subscription-service's entire `/admin` group among them.
 
 **This needs its own design.** Until it lands, the contract governs *shape*, not
 *permission*, and that limitation should be explicit rather than discovered.
-
----
 
 ## Changelog
 

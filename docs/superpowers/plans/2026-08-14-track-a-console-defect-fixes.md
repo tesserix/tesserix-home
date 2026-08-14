@@ -572,5 +572,5 @@ Manual checks that automation cannot cover:
 
 - `platform-shared` package extraction (786 LOC of mobile contracts) — own plan.
 - The console redesign — see the spec's review outcome; do not start it from this plan.
-- The seven infrastructure security issues (unauthenticated audit-log forgery, subscription-service `/admin` with no authorization, Redis `password: "password"`, etc.) — these are in other repos and need their own track.
+- The infrastructure security findings — redacted before this repo was made public; tracked privately at `tesserix/tesserix-infra` (issues #3, #4).
 - Unparking Prometheus — an operator decision, not a code change.
