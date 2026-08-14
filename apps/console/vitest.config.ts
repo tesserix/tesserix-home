@@ -36,9 +36,9 @@ export default defineConfig({
         esbuild: { jsx: "automatic", jsxImportSource: "react" },
         // A second physical copy of react means Testing Library's `act()`
         // flushes a queue the rendered component is not on, and every
-        // `render()` silently returns an empty container. The repo-level pnpm
-        // override keeps the tree on one react; this is the belt to its
-        // braces, and fails loudly rather than silently if that ever slips.
+        // `render()` silently returns an empty container. The root
+        // package.json pins react/react-dom to the one version every app
+        // declares; this is the belt to those braces.
         resolve: { dedupe: ["react", "react-dom"] },
         test: {
           ...SHARED,

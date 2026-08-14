@@ -18,8 +18,8 @@
     "clsx": "^2.1.1",
     "lucide-react": "^0.561.0",
     "next": "^16.2.6",
-    "react": "19.2.1",
-    "react-dom": "19.2.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "swr": "^2.4.1"
   },
   "devDependencies": {
