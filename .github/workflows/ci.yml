@@ -12,6 +12,7 @@ on:
       - 'turbo.json'
       - '.npmrc'
       - 'Dockerfile'
+      - 'Dockerfile.console'
       - '.dockerignore'
       - 'package.json'
       - '.github/workflows/ci.yml'
@@ -27,6 +28,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
   REGISTRY: ghcr.io
   IMAGE_NAME: tesserix-home
+  CONSOLE_IMAGE_NAME: tesserix-console
 
 permissions:
   contents: read
@@ -145,3 +147,47 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
+          category: web
+
+      # Console image build/push, mirroring the web build above exactly (same
+      # tags, same --platform, same main-only condition). No --secret mount:
+      # per .npmrc, @tesserix/* packages are on the public npm registry now,
+      # so Dockerfile.console has nothing to authenticate.
+      #
+      # Deliberately ordered AFTER the web scan and its SARIF upload: steps in a
+      # job are sequential and fail-fast, so a console build failure here must
+      # not abort the job between the web image being pushed and the web image
+      # being scanned. Web ships scanned regardless of the console build.
+      - name: Build and push (console)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.console \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:latest \
+            .
+          docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}
+
+      # Console image gets the same scan treatment as web — it carries an
+      # authenticated admin surface, so it should not ship unscanned while
+      # its sibling image is scanned. Distinct output filename and SARIF
+      # category so this upload sits alongside the web scan's results
+      # instead of clobbering them.
+      - name: Security scan (console)
+        if: github.ref == 'refs/heads/main'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.CONSOLE_IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          format: sarif
+          output: trivy-console-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Upload scan results (console)
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-console-results.sarif
+          category: console

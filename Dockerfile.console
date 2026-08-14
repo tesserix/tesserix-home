@@ -1,0 +1,45 @@
+# Build stage
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
+
+# Copy workspace manifests + lockfile first for cached, deterministic installs
+COPY pnpm-workspace.yaml pnpm-lock.yaml .npmrc package.json ./
+COPY apps/console/package.json apps/console/package.json
+COPY packages/console-core/package.json packages/console-core/package.json
+COPY packages/platform-auth/package.json packages/platform-auth/package.json
+COPY packages/tsconfig/package.json packages/tsconfig/package.json
+COPY packages/eslint-config/package.json packages/eslint-config/package.json
+
+# Install only what the console app needs (skips web/mobile toolchains).
+# @tesserix/* deps now resolve from the public npm registry (see .npmrc), so
+# no auth token is required here.
+RUN pnpm install --frozen-lockfile --filter console...
+
+# Copy sources and build the console app
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm --filter @tesserix/console-core build && pnpm --filter @tesserix/platform-auth build && pnpm --filter console build
+
+# Production stage
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Standalone bundle (contains apps/console/server.js + hoisted node_modules)
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/.next/static ./apps/console/.next/static
+
+USER nextjs
+EXPOSE 3000
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+CMD ["node", "apps/console/server.js"]
