@@ -1,6 +1,6 @@
 # ADR-001: Centralized Deployment & Release Management System
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-002](./ADR-002-DELIVERY-VISIBILITY.md) (2026-08-14)
 **Date**: 2026-03-01
 **Decision Makers**: Platform Team
 
