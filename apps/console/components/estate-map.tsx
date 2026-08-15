@@ -26,12 +26,23 @@ function ProductCard({ product }: { product: EstateProduct }) {
       <p className="text-xs text-muted-foreground">{product.summary}</p>
 
       <p className="mt-auto pt-1 text-xs tabular-nums text-muted-foreground">
-        <span className="font-medium text-foreground">{product.entries}</span>{" "}
-        rail {product.entries === 1 ? "entry" : "entries"}
-        {product.migrated ? (
-          <span className="ml-2 font-medium text-success">· in console-core</span>
+        {product.entries === 0 ? (
+          // "0 rail entries · still in apps/web" would be wrong twice over: it
+          // is not in apps/web either. A product with no rail anywhere is a gap,
+          // and should read as one.
+          <span className="font-medium text-foreground">No rail yet</span>
         ) : (
-          <span className="ml-2">· still in apps/web</span>
+          <>
+            <span className="font-medium text-foreground">{product.entries}</span>{" "}
+            rail {product.entries === 1 ? "entry" : "entries"}
+            {product.migrated ? (
+              <span className="ml-2 font-medium text-success">
+                · in console-core
+              </span>
+            ) : (
+              <span className="ml-2">· still in apps/web</span>
+            )}
+          </>
         )}
       </p>
     </li>
@@ -54,7 +65,12 @@ export function EstateMap() {
           The estate
         </h2>
         <p className="text-sm text-muted-foreground">
-          One platform rail and five products.{" "}
+          {/* Derived, not written out. The prose said "five products" and went
+              stale the moment HMS was added — the same way the DevAI and
+              Dwellm8 summaries did. A count that has to be edited by hand is a
+              count that eventually disagrees with the list beneath it. */}
+          One platform rail and{" "}
+          <span className="tabular-nums">{ESTATE.length - 1}</span> products.{" "}
           <span className="tabular-nums">
             {migrated} of {ESTATE.length}
           </span>{" "}
