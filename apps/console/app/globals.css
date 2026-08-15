@@ -89,6 +89,7 @@
 
   --muted: #f4f4f5;
   --muted-foreground: #52525b;
+  --foreground-subtle: #8b8b93;
 
   --accent: #efeff1;
   --accent-foreground: #18181b;
@@ -106,6 +107,9 @@
   --warning-foreground: #ffffff;
   --error: #b0322a;
   --error-foreground: #ffffff;
+  --success-soft: #eef6f0;
+  --warning-soft: #fbf4e4;
+  --error-soft: #fbedec;
   --info: #3b6fd4;
   --info-foreground: #ffffff;
 

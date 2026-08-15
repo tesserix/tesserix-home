@@ -31,6 +31,9 @@ export const colors = {
 
   muted: "#f4f4f5",
   mutedForeground: "#52525b",
+  // Tertiary text — captions, timestamps, the quiet half of a label pair. A
+  // third step is what stops secondary text being overloaded for both roles.
+  foregroundSubtle: "#8b8b93",
   accent: "#efeff1",
   accentForeground: "#18181b",
 
@@ -51,6 +54,11 @@ export const colors = {
   warningForeground: "#ffffff",
   error: "#b0322a",
   errorForeground: "#ffffff",
+  // Soft fills for pills, badges and state tiles. Saturated enough to read as
+  // the state, pale enough that a row of them does not shout.
+  successSoft: "#eef6f0",
+  warningSoft: "#fbf4e4",
+  errorSoft: "#fbedec",
   info: "#3b6fd4",
   infoForeground: "#ffffff",
 
