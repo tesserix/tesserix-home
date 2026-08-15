@@ -82,7 +82,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       {
         issuer: config.issuer,
         clientId: config.clientId,
-        internalOrgId: config.orgId,
+        internalOrgId: config.internalOrgId,
       },
       expectedNonce,
     );
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("invalid_id_token");
   }
 
-  if (!isInternal(identity, { internalOrgId: config.orgId })) {
+  if (!isInternal(identity, { internalOrgId: config.internalOrgId })) {
     // Authenticated, but not an internal operator — no roles on the Platform
     // Console project, or a member of another organization. 403 rather than
     // 401: signing in again would produce the same result.

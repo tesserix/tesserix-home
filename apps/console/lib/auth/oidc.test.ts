@@ -13,17 +13,21 @@ const CONFIG: ConsoleOidcConfig = {
   clientId: "386382971877196703",
   clientSecret: "not-a-real-secret",
   redirectUri: "https://console.tesserix.app/auth/callback",
-  orgId: "386377229942128837",
+  internalOrgId: "386261254651576970",
   projectId: "386377618200461939",
 };
 
 describe("scopes", () => {
-  it("pins the login to the TESSERIX organization", () => {
-    // Without this the login serves the instance's default org, the org-level
-    // Google IdP is not offered, and any user created lands in the wrong org.
-    expect(scopesFor(CONFIG)).toContain(
-      "urn:zitadel:iam:org:id:386377229942128837",
-    );
+  it("does NOT pin login to an organization", () => {
+    // Regression guard. Pinning login to the project's org made Zitadel try to
+    // authenticate operators as members of an org none of them belong to —
+    // every human account lives in a different org from the project — so it
+    // fell through to auto-creation and failed with `409 User already exists`
+    // against the globally-unique username they already held. Auto-linking
+    // could not rescue it: that search is scoped to the org being signed into.
+    //
+    // Role grants are project-scoped, so roles resolve wherever the user lives.
+    expect(scopesFor(CONFIG)).not.toContain("urn:zitadel:iam:org:id:");
   });
 
   it("requests the project audience so roles appear in the token", () => {
