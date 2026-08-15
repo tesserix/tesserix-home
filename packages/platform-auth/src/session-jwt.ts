@@ -24,6 +24,16 @@ export interface SessionClaims {
   sub: string;
   email: string;
   name?: string;
+  /**
+   * Capability keys granted by the identity provider — see `capabilities.ts`.
+   *
+   * Optional, and absent for every session minted by the legacy Google flow.
+   * Absence therefore means "this session predates role-based authorization",
+   * NOT "this operator holds no capabilities": treating it as the latter would
+   * lock every signed-in operator out the moment this field shipped. Consumers
+   * decide how to read absence, gated on `AUTH_PROVIDER`.
+   */
+  roles?: readonly string[];
 }
 
 interface VerifiedSession extends SessionClaims {
@@ -52,12 +62,30 @@ function getSecretKey(): Uint8Array {
 
 const TOKEN_LIFETIME_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
+/**
+ * Read the `roles` claim back off a decrypted session.
+ *
+ * Returns `undefined` — meaning "no roles claim" — for anything that is not an
+ * array of strings, including an array with a non-string element. A partially
+ * valid array is rejected wholesale rather than filtered: silently dropping one
+ * bad entry from an authorization list is how a capability goes missing without
+ * anyone noticing.
+ */
+function readRoles(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((v) => typeof v === "string")) return undefined;
+  return value as string[];
+}
+
 export async function signSession(claims: SessionClaims): Promise<string> {
   const key = getSecretKey();
   return new EncryptJWT({
     sub: claims.sub,
     email: claims.email,
     name: claims.name,
+    // Omitted entirely when undefined, so a legacy session stays byte-identical
+    // to what the Google flow minted before this field existed.
+    ...(claims.roles ? { roles: [...claims.roles] } : {}),
   })
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setIssuedAt()
@@ -88,6 +116,11 @@ export async function verifySession(
       sub: payload.sub,
       email: payload.email,
       name: typeof payload.name === "string" ? payload.name : undefined,
+      // A malformed `roles` is treated as ABSENT, not as empty. Empty would
+      // read as "holds nothing" and deny; absent lets the caller apply its
+      // legacy-session policy. Denial on corruption belongs to the consumer,
+      // which knows whether roles are expected at all.
+      roles: readRoles(payload.roles),
       iat: payload.iat,
       exp: payload.exp,
     };

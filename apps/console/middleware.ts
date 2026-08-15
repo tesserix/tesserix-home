@@ -8,6 +8,7 @@ import {
   evaluateCsrf,
 } from "@tesserix/platform-auth";
 
+import { isInternal } from "@/lib/internal-access";
 import { publicOrigin } from "@/lib/public-origin";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
@@ -66,6 +67,20 @@ function unauthorized(request: NextRequest): NextResponse {
   return NextResponse.redirect(loginUrl);
 }
 
+// Authenticated, but not an internal operator. Deliberately NOT a redirect to
+// login: the session is valid, so logging in again would mint the same session
+// and loop. 403 states the real situation — signed in, not permitted here.
+function forbidden(request: NextRequest): NextResponse {
+  const { pathname } = request.nextUrl;
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  return new NextResponse(
+    "The platform console is restricted to internal operators.",
+    { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } },
+  );
+}
+
 export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
 
@@ -105,6 +120,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const session = await verifySession(sessionToken);
   if (!session) {
     return unauthorized(request);
+  }
+
+  if (!isInternal(session.roles)) {
+    return forbidden(request);
   }
 
   return NextResponse.next();
