@@ -8,7 +8,7 @@ import {
   evaluateCsrf,
 } from "@tesserix/platform-auth";
 
-import { isInternal } from "@/lib/internal-access";
+import { isInternal, requiresCapability } from "@/lib/internal-access";
 import { publicOrigin } from "@/lib/public-origin";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
@@ -28,9 +28,11 @@ if (
 
 const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true";
 
-// The console has no public pages — everything behind it requires a session.
-// That is the point of splitting it from the marketing/admin app.
-const PUBLIC_PATHS: ReadonlyArray<string> = [];
+// The console has no public *pages* — everything behind it requires a session.
+// The one exception is its own OIDC flow: /auth/login starts the redirect to
+// Zitadel and /auth/callback receives the code, and neither can require the
+// session they exist to create.
+const PUBLIC_PATHS: ReadonlyArray<string> = ["/auth"];
 
 // `/_next` is handled by the caller, before this is ever reached — it is not a
 // public path, it is not a page at all. Keeping it out of here means the check
@@ -45,6 +47,15 @@ function unauthorized(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // With Zitadel the console owns its login: same-origin, no dependency on
+  // apps/web being up, and returnTo is a plain relative path rather than the
+  // cross-origin URL web's open-redirect guard discards.
+  if (requiresCapability()) {
+    const own = new URL("/auth/login", publicOrigin(request));
+    own.searchParams.set("returnTo", `${pathname}${search}`);
+    return NextResponse.redirect(own);
   }
   // The console has no /login route of its own (PUBLIC_PATHS is empty by
   // design), so redirecting to a same-origin /login would just re-trigger
