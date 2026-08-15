@@ -1,3 +1,9 @@
+// Required even though this component uses no hooks. @tesserix/web's barrel is
+// itself "use client", and its exports resolve to `undefined` when imported
+// into a server component — React then fails with "Element type is invalid ...
+// got: undefined" at render, which neither typecheck nor build catches.
+"use client";
+
 import { Fragment, type ReactNode } from "react";
 import {
   Breadcrumb,
