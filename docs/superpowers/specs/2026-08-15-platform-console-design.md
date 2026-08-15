@@ -77,6 +77,31 @@ The old admin is being retired. Linking into it makes the console a shell around
 
 **This has a deadline, not just a caveat.** `apps/web` cannot be switched off while the console depends on its API, and `/api/internal/platform-announcements` — which every product calls — lives there too. The internal channel must move before retirement, and that is a cross-product contract change, not a UI task. It is the single most likely thing to bite.
 
+## What separates platform from product
+
+One test: **does it need cross-product context to be useful?** If yes it is platform. If it needs domain knowledge of a single product, it belongs to that product's rail.
+
+Tickets are platform — a support person does not know which product an email concerns until they read it. Kora's food index is Kora's — nothing outside Kora has an opinion about it.
+
+## Features worth building because the console exists
+
+The point of this work is uplift, not transcription. These are capabilities the old admin could not have had, because it was organised as pages per product.
+
+| # | Capability | Why only here | Cost today |
+|---|---|---|---|
+| F1 | **Cross-product identity lookup** — one email resolves to every account that person holds, across products, with their tickets and tenants | A page-per-product admin makes you check products one at a time | Low — `/api/admin/users/search` exists |
+| F2 | **⌘K over the estate** — jump to a tenant, ticket, service or user by typing | Needs one shell over everything; impossible per-product | Medium |
+| F3 | **Health ↔ inbound correlation** — "tickets from Kora tripled while kora-api was degraded" | Both datasets are reachable; nothing else can join them | Medium |
+| F4 | **One audit timeline** — who changed what, in which product, including console writes | Per-product audit logs exist; the join does not | Medium |
+| F5 | **Erasure across products** — one GDPR request covering every product | Currently Mark8ly-only; a person's data does not respect product boundaries | High |
+| F6 | **Deploy/version visibility** — which build each product runs, from Kargo and ArgoCD | Operators currently discover a stalled promotion by noticing the UI is old | Low–medium |
+
+**Deliberately deferred: impersonation / support sessions.** Genuinely useful, but it needs an audit and consent story before it needs a UI, and safeguards are easier to design in than to retrofit.
+
+**Uplift that is nearly free**, because the kit already provides it: URL-serialised filters so any view is linkable, bulk actions, the five honest states so a parked signal never renders as healthy, and keyboard-first navigation.
+
+**Every product rail gets the same four shapes** — tenants → tenant detail (including subscription control) → users → that product's own domain surfaces. The consistency is itself the improvement: today each product's admin section was designed separately.
+
 ## Decomposition
 
 Too large for one plan. Sequenced so each milestone produces something an operator can use:
