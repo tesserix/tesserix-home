@@ -5,14 +5,18 @@ interface RouteEntry {
   mobile: string;
   exact?: boolean;
   /**
-   * The surface is still served by `apps/web`, not the console. A renderer must
-   * link to it on the web origin, or the console routes to a page it does not
-   * have and the operator gets a 404.
+   * The surface is not built in the console yet.
    *
-   * This flag is the migration made explicit: it flips to absent as each
-   * surface moves, and the estate view counts what remains.
+   * A renderer must NOT link it — not in-app (the page does not exist) and not
+   * to `apps/web` either: the old admin is being retired, so linking there
+   * builds a dependency on something scheduled to disappear, and quietly makes
+   * the console a shell around the app it replaces. Show the entry as pending
+   * instead, so the rail describes the intended IA without lying about what
+   * works.
+   *
+   * The flag comes off per-surface as each page lands here.
    */
-  hostedByWeb?: boolean;
+  pending?: boolean;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -21,32 +25,33 @@ interface RouteEntry {
 // `Record<string, RouteEntry>` would widen every key to `string` and collapse
 // `RouteId` to `string`, making the exported type meaningless.
 const ROUTES = {
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true },
-  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods" },
-  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit" },
-  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback" },
-  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users" },
+  // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
+  // `pending` the rail links to in-app routes that are not there — five 404s.
+  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true },
+  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true },
+  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", pending: true },
+  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true },
+  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", pending: true },
 
-  // Platform rail. Every one of these is still rendered by apps/web — the
-  // console owns their identity so the rail can be built from one source, but
-  // `hostedByWeb` keeps the link honest until each surface actually moves.
-  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", hostedByWeb: true },
-  "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, hostedByWeb: true },
-  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets", hostedByWeb: true },
-  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/support-analytics", hostedByWeb: true },
-  "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", hostedByWeb: true },
-  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", hostedByWeb: true },
-  "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", hostedByWeb: true },
-  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", hostedByWeb: true },
-  "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", hostedByWeb: true },
-  "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", hostedByWeb: true },
-  "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", hostedByWeb: true },
-  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", hostedByWeb: true },
-  "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", hostedByWeb: true },
-  "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", hostedByWeb: true },
-  "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", hostedByWeb: true },
-  "platform.breakGlass": { web: "/admin/break-glass", mobile: "/platform/break-glass", hostedByWeb: true },
-  "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", hostedByWeb: true },
+  // Platform rail. The console owns their identity so the rail can be built
+  // from one source; none of the surfaces is built here yet.
+  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", pending: true },
+  "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true },
+  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets", pending: true },
+  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/support-analytics", pending: true },
+  "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true },
+  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true },
+  "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
+  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true },
+  "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true },
+  "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true },
+  "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true },
+  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", pending: true },
+  "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true },
+  "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", pending: true },
+  "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", pending: true },
+  "platform.breakGlass": { web: "/admin/break-glass", mobile: "/platform/break-glass", pending: true },
+  "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true },
 } as const satisfies Record<string, RouteEntry>;
 
 export type RouteId = keyof typeof ROUTES & string;
@@ -69,12 +74,11 @@ export function mobilePath(id: RouteId): string {
 }
 
 /**
- * True while the surface is still served by `apps/web`. A renderer must send
- * the operator to the web origin for these — linking in-app would route to a
- * page the console does not have.
+ * True while the surface has no page in the console. Renderers must show these
+ * as pending rather than linking them anywhere — see `RouteEntry.pending`.
  */
-export function isHostedByWeb(id: RouteId): boolean {
-  return getRoute(id).hostedByWeb === true;
+export function isPending(id: RouteId): boolean {
+  return getRoute(id).pending === true;
 }
 
 export function isRouteActive(currentPath: string, id: RouteId, prefix: "web" | "mobile"): boolean {

@@ -1,11 +1,12 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
-import { ChevronsUpDown, ExternalLink } from "lucide-react";
+import { Check, ChevronsUpDown } from "lucide-react";
 import {
-  isHostedByWeb,
+  isPending,
   isNavGroup,
   isRouteActive,
   koraNav,
@@ -31,7 +32,6 @@ export function railFor(pathname: string): RailKey {
   return pathname.startsWith("/admin/apps/kora") ? "kora" : "platform";
 }
 
-const WEB_ORIGIN = process.env.NEXT_PUBLIC_WEB_URL ?? "http://localhost:3002";
 
 function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
   if (isNavGroup(entry)) {
@@ -50,17 +50,33 @@ function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
   }
 
   const active = isRouteActive(pathname, entry.route, "web");
-  // Surfaces the console does not host yet must open on the web origin.
-  // Linking them in-app would route to a page that does not exist here.
-  const external = isHostedByWeb(entry.route);
-  const href = external ? `${WEB_ORIGIN}${webPath(entry.route)}` : webPath(entry.route);
+
+  // Not built here yet. Deliberately NOT a link to apps/web: the old admin is
+  // being retired, and pointing at it would make the console a shell around
+  // the app it replaces. Shown as pending so the rail still describes the
+  // intended IA without offering navigation that does not work.
+  if (isPending(entry.route)) {
+    return (
+      <span
+        aria-disabled="true"
+        title={`${entry.name} — not built in the console yet`}
+        className="flex cursor-default items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-sidebar-foreground/35"
+      >
+        <NavIcon name={entry.icon} className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{entry.name}</span>
+        <span className="ml-auto shrink-0 text-[9px] font-medium uppercase tracking-wider text-sidebar-foreground/30">
+          soon
+        </span>
+      </span>
+    );
+  }
 
   return (
     <Link
-      href={href}
+      href={webPath(entry.route)}
       aria-current={active ? "page" : undefined}
       className={clsx(
-        "group flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+        "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
         active
           ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
           : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
@@ -68,41 +84,122 @@ function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
     >
       <NavIcon name={entry.icon} className="h-3.5 w-3.5 shrink-0" />
       <span className="truncate">{entry.name}</span>
-      {external ? (
-        <ExternalLink
-          aria-label="opens in apps/web"
-          className="ml-auto h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-50"
-        />
-      ) : null}
     </Link>
+  );
+}
+
+function RailSwitcher({
+  current,
+  onSelect,
+}: {
+  current: RailKey;
+  onSelect: (key: RailKey) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocumentPointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocumentPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocumentPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const rail = RAILS[current];
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <span
+          aria-hidden="true"
+          className="grid h-5 w-5 shrink-0 place-items-center rounded bg-sidebar-primary text-[10px] font-bold text-sidebar-primary-foreground"
+        >
+          {rail.mark}
+        </span>
+        <span className="truncate text-[13px] font-semibold text-sidebar-foreground">
+          {rail.label}
+        </span>
+        <ChevronsUpDown
+          aria-hidden="true"
+          className="ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40"
+        />
+      </button>
+
+      {open ? (
+        <div
+          role="menu"
+          aria-label="Switch context"
+          className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-sidebar-border bg-sidebar shadow-lg"
+        >
+          {(Object.keys(RAILS) as RailKey[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onSelect(key);
+                setOpen(false);
+              }}
+              className={clsx(
+                "flex w-full items-center gap-2 px-2.5 py-2 text-left text-[13px] transition-colors",
+                key === current
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+              )}
+            >
+              <span
+                aria-hidden="true"
+                className="grid h-4 w-4 shrink-0 place-items-center rounded bg-sidebar-primary/90 text-[9px] font-bold text-sidebar-primary-foreground"
+              >
+                {RAILS[key].mark}
+              </span>
+              <span className="truncate">{RAILS[key].label}</span>
+              {key === current ? (
+                <Check aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 export function ConsoleSidebar() {
   const pathname = usePathname();
-  const rail = RAILS[railFor(pathname)];
+  // The switcher changes CONTEXT, not location. Every surface in both rails is
+  // still served by apps/web, so navigating on select would eject the operator
+  // from the console just to look at a rail. Instead the choice is local, and
+  // the route you are actually on always wins when it changes.
+  const [selected, setSelected] = useState<RailKey | null>(null);
+  const fromPath = railFor(pathname);
+
+  useEffect(() => {
+    setSelected(null);
+  }, [pathname]);
+
+  const railKey = selected ?? fromPath;
+  const rail = RAILS[railKey];
 
   return (
     <div className="flex h-full w-56 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="p-3">
-        {/* Shows which rail you are in. Not yet a switcher — there are two
-            rails and only one is reachable in-app, so a menu would offer a
-            choice that does not exist. It becomes one as products migrate. */}
-        <div className="flex items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2">
-          <span
-            aria-hidden="true"
-            className="grid h-5 w-5 shrink-0 place-items-center rounded bg-sidebar-primary text-[10px] font-bold text-sidebar-primary-foreground"
-          >
-            {rail.mark}
-          </span>
-          <span className="truncate text-[13px] font-semibold text-sidebar-foreground">
-            {rail.label}
-          </span>
-          <ChevronsUpDown
-            aria-hidden="true"
-            className="ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40"
-          />
-        </div>
+        <RailSwitcher current={railKey} onSelect={setSelected} />
       </div>
 
       <nav
