@@ -80,7 +80,7 @@ export function parseDashboard(json: unknown): PlatformDashboard {
 
 // Cluster-internal by default so dashboard reads never egress to the public
 // internet. Overridden per environment; the localhost default is dev only.
-export const WEB_ORIGIN = process.env.WEB_INTERNAL_ORIGIN ?? "http://localhost:3002";
+const WEB_ORIGIN = process.env.WEB_INTERNAL_ORIGIN ?? "http://localhost:3002";
 
 export async function fetchDashboard(
   cookieHeader: string,

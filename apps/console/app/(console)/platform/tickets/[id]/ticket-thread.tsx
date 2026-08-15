@@ -51,7 +51,7 @@ export function TicketThread({ detail }: TicketThreadProps) {
   return (
     <div className="flex flex-col gap-3">
       <Message
-        author={ticket.submittedByName || ticket.submittedByEmail}
+        author={ticket.submittedByName || ticket.submittedByEmail || "Customer"}
         meta={ticket.submittedByEmail}
         when={ticket.createdAt}
         operator={false}
@@ -61,7 +61,11 @@ export function TicketThread({ detail }: TicketThreadProps) {
       {replies.map((reply: TicketReply) => (
         <Message
           key={reply.id}
-          author={reply.authorName || reply.authorEmail}
+          author={
+            reply.authorName ||
+            reply.authorEmail ||
+            (reply.authorType === "platform_admin" ? "Operator" : "Customer")
+          }
           meta={reply.authorType === "platform_admin" ? "platform" : undefined}
           when={reply.createdAt}
           operator={reply.authorType === "platform_admin"}

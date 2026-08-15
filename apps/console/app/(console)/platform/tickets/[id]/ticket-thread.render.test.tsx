@@ -51,4 +51,35 @@ describe("TicketThread", () => {
     render(<TicketThread detail={{ ...DETAIL, replies: [] }} />);
     expect(screen.getAllByRole("article")).toHaveLength(1);
   });
+
+  it("falls back to a role-based label when the submitter has no name or email", () => {
+    render(
+      <TicketThread
+        detail={{
+          ...DETAIL,
+          ticket: { ...DETAIL.ticket, submittedByName: "", submittedByEmail: "" },
+          replies: [],
+        }}
+      />,
+    );
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+  });
+
+  it("falls back to Operator for a platform reply with no name or email", () => {
+    render(
+      <TicketThread
+        detail={{
+          ...DETAIL,
+          replies: [
+            {
+              ...DETAIL.replies[0],
+              authorName: "",
+              authorEmail: "",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Operator")).toBeInTheDocument();
+  });
 });

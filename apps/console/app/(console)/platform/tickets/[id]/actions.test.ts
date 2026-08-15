@@ -59,7 +59,10 @@ describe("replyToTicket", () => {
   it("refuses without the respond capability, before any transport call", async () => {
     signIn(["read"]);
     const result = await replyToTicket(TICKET_ID, "On it.");
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to respond to tickets.",
+    });
     expect(postTicketReply).not.toHaveBeenCalled();
   });
 
@@ -70,11 +73,11 @@ describe("replyToTicket", () => {
     expect(postTicketReply).not.toHaveBeenCalled();
   });
 
-  it("maps a transport failure to an inline message", async () => {
+  it("maps a transport failure to a generic message, not the raw error", async () => {
     signIn(["read", "respond"]);
     vi.mocked(postTicketReply).mockRejectedValue(new Error("boom"));
     const result = await replyToTicket(TICKET_ID, "On it.");
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, message: "The reply was not saved." });
   });
 });
 
@@ -104,7 +107,17 @@ describe("changeTicketStatus", () => {
   it("refuses without the respond capability", async () => {
     signIn(["read"]);
     const result = await changeTicketStatus(TICKET_ID, "resolved");
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to respond to tickets.",
+    });
     expect(patchTicketStatus).not.toHaveBeenCalled();
+  });
+
+  it("maps a transport failure to a generic message, not the raw error", async () => {
+    signIn(["read", "respond"]);
+    vi.mocked(patchTicketStatus).mockRejectedValue(new Error("boom"));
+    const result = await changeTicketStatus(TICKET_ID, "resolved");
+    expect(result).toEqual({ ok: false, message: "The status was not changed." });
   });
 });

@@ -64,7 +64,11 @@ export function StatusControl({
           </option>
         ))}
       </select>
-      {error ? <span className="text-sm text-destructive">{error}</span> : null}
+      {error ? (
+        <span role="alert" className="text-sm text-destructive">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -104,7 +108,7 @@ export function ReplyForm({ ticketId }: { ticketId: string }) {
         disabled={pending}
       />
       {error ? (
-        <Callout variant="destructive">
+        <Callout role="alert" variant="destructive">
           <CalloutDescription>{error}</CalloutDescription>
         </Callout>
       ) : null}
