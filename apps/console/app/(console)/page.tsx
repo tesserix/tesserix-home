@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { EstateMap } from "@/components/estate-map";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 import { StatTile } from "@/components/kit/stat-tile";
 import { NOT_IMPLEMENTED, type SurfaceState } from "@/components/kit/states";
@@ -73,6 +74,7 @@ export default async function ConsoleHome() {
         description="Estate health across every product."
       />
       <DashboardView data={data} state={dashboardState(error)} />
+      <EstateMap />
     </div>
   );
 }

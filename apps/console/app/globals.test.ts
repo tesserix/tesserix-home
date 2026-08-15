@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { colors } from "@tesserix/console-core";
+import { colors, colorsDark } from "@tesserix/console-core";
 
 // Guards against the drift the brief explicitly calls out: globals.css's
 // :root block hand-copies console-core's tokens.ts values (CSS has no way to
@@ -51,4 +51,53 @@ describe("globals.css :root tokens match @tesserix/console-core", () => {
       ).toBe(tokenValue);
     },
   );
+});
+
+// The dark palette drifts just as easily as the light one, and more quietly:
+// nobody notices a wrong dark value until they switch themes. This block is
+// the explicit `[data-theme="dark"]` selector rather than the media query —
+// the two carry identical declarations, and the assertion below proves it, so
+// checking one is enough to catch a value going stale in tokens.ts.
+function extractBlock(css: string, selector: string): Record<string, string> {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escaped}\\s*{([\\s\\S]*?)\\n}`));
+  if (!match) {
+    throw new Error(`globals.css: no "${selector}" block found`);
+  }
+  const vars: Record<string, string> = {};
+  for (const line of match[1].split("\n")) {
+    const decl = line.match(/^\s*--([\w-]+):\s*(.+?);\s*$/);
+    if (decl) {
+      vars[decl[1]] = decl[2];
+    }
+  }
+  return vars;
+}
+
+describe("globals.css dark tokens match @tesserix/console-core", () => {
+  const css = readFileSync(CSS_PATH, "utf8");
+  const darkVars = extractBlock(css, ':root[data-theme="dark"]');
+
+  it.each(Object.entries(colorsDark))(
+    "--%s matches console-core's tokens.colorsDark.%s",
+    (tokenKey, tokenValue) => {
+      const cssVarName = toCssVarName(tokenKey);
+      expect(
+        darkVars[cssVarName],
+        `globals.css [data-theme="dark"] is missing --${cssVarName} (expected colorsDark.${tokenKey} = "${tokenValue}")`,
+      ).toBeDefined();
+      expect(
+        darkVars[cssVarName],
+        `globals.css [data-theme="dark"] --${cssVarName} does not match colorsDark.${tokenKey}`,
+      ).toBe(tokenValue);
+    },
+  );
+
+  it("declares the same values under prefers-color-scheme as under data-theme", () => {
+    // A viewer on the default "system" setting gets NO data-theme attribute,
+    // so the media query is the only thing serving them. If the two blocks
+    // diverge, most users see a palette nobody reviewed.
+    const mediaVars = extractBlock(css, ':root:not([data-theme="light"])');
+    expect(mediaVars).toEqual(darkVars);
+  });
 });

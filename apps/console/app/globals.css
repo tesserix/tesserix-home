@@ -36,6 +36,13 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-error: var(--error);
   --color-error-foreground: var(--error-foreground);
+  /* Without these, `bg-success-soft` / `text-foreground-subtle` are not
+     utilities at all — Tailwind emits nothing and the element silently
+     inherits, which looks like a styling bug with no failing build. */
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-error-soft: var(--error-soft);
+  --color-foreground-subtle: var(--foreground-subtle);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
 
@@ -71,54 +78,181 @@
   --font-geist-mono: "SF Mono", ui-monospace, "Cascadia Code", "Menlo", "Consolas", monospace;
   --radius: 0.625rem;
 
-  --background: #f5f7fa;
-  --foreground: #0b0e14;
+  /* Mirrors packages/console-core/src/tokens.ts. globals.test.ts fails if the
+     two diverge — CSS cannot import from a renderer-free package, so the copy
+     is enforced rather than avoided. Change both together. */
+  --background: #fafafa;
+  --foreground: #18181b;
   --card: #ffffff;
-  --card-foreground: #0b0e14;
+  --card-foreground: #18181b;
   --popover: #ffffff;
-  --popover-foreground: #0b0e14;
+  --popover-foreground: #18181b;
 
-  --primary: #0b0e14;
+  --primary: #18181b;
   --primary-foreground: #ffffff;
 
-  --secondary: #eef1f6;
-  --secondary-foreground: #3d434f;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #52525b;
 
-  --muted: #eef1f6;
-  --muted-foreground: #5f6675;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
+  --foreground-subtle: #8b8b93;
 
-  --accent: rgba(194, 65, 12, 0.08);
-  --accent-foreground: #9a3412;
+  --accent: #efeff1;
+  --accent-foreground: #18181b;
 
-  --destructive: #dc2626;
+  --destructive: #b0322a;
   --destructive-foreground: #ffffff;
 
-  --border: rgba(11, 14, 20, 0.10);
-  --input: rgba(11, 14, 20, 0.14);
-  --ring: #c2410c;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #3b6fd4;
 
-  --success: #12a374;
+  --success: #2f7d51;
   --success-foreground: #ffffff;
-  --warning: #925d0e;
+  --warning: #8a6108;
   --warning-foreground: #ffffff;
-  --error: #dc2626;
+  --error: #b0322a;
   --error-foreground: #ffffff;
-  --info: #2e5cff;
+  --success-soft: #eef6f0;
+  --warning-soft: #fbf4e4;
+  --error-soft: #fbedec;
+  --info: #3b6fd4;
   --info-foreground: #ffffff;
 
-  --chart-1: #0b0e14;
-  --chart-2: #12a374;
-  --chart-3: #925d0e;
-  --chart-4: #2e5cff;
-  --chart-5: #1f3fd4;
+  --chart-1: #18181b;
+  --chart-2: #2f7d51;
+  --chart-3: #8a6108;
+  --chart-4: #3b6fd4;
+  --chart-5: #52525b;
 
-  --sidebar: #0b0e14;
-  --sidebar-foreground: #cfd4de;
-  --sidebar-primary: #ffffff;
-  --sidebar-primary-foreground: #0b0e14;
-  --sidebar-accent: #1a1f29;
-  --sidebar-accent-foreground: #eef1f6;
-  --sidebar-border: #1a1f29;
+  --sidebar: #17181b;
+  --sidebar-foreground: #d6d7db;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #17181b;
+  --sidebar-accent: #26272c;
+  --sidebar-accent-foreground: #ececee;
+  --sidebar-border: #26272c;
+}
+
+/* Dark theme. Mirrors packages/console-core/src/tokens.ts `colorsDark`;
+   globals.test.ts asserts both maps against this file.
+
+   Three viewer states, not two: an explicit choice stamps data-theme, and the
+   default "system" setting stamps nothing — so the media query must carry the
+   un-stamped case while :root[data-theme="dark"] carries the explicit one. The
+   media query is guarded against data-theme="light" so an explicit light
+   choice beats a dark OS. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --background: #0c0d0f;
+    --foreground: #ececee;
+    --card: #141518;
+    --card-foreground: #ececee;
+    --popover: #141518;
+    --popover-foreground: #ececee;
+
+    --primary: #ececee;
+    --primary-foreground: #141518;
+
+    --secondary: #1b1d21;
+    --secondary-foreground: #a4a5ad;
+
+    --muted: #1b1d21;
+    --muted-foreground: #a4a5ad;
+    --foreground-subtle: #77787f;
+
+    --accent: #1f2126;
+    --accent-foreground: #ececee;
+
+    --destructive: #e08a83;
+    --destructive-foreground: #141518;
+
+    --border: #26282d;
+    --input: #33353b;
+    --ring: #7ba0e8;
+
+    --success: #63b585;
+    --success-foreground: #141518;
+    --warning: #cfa049;
+    --warning-foreground: #141518;
+    --error: #e08a83;
+    --error-foreground: #141518;
+    --info: #7ba0e8;
+    --info-foreground: #141518;
+    --success-soft: #16241c;
+    --warning-soft: #262013;
+    --error-soft: #291817;
+
+    --chart-1: #ececee;
+    --chart-2: #63b585;
+    --chart-3: #cfa049;
+    --chart-4: #7ba0e8;
+    --chart-5: #a4a5ad;
+
+    --sidebar: #0f1013;
+    --sidebar-foreground: #c9cad0;
+    --sidebar-primary: #ececee;
+    --sidebar-primary-foreground: #0f1013;
+    --sidebar-accent: #232529;
+    --sidebar-accent-foreground: #ececee;
+    --sidebar-border: #232529;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: #0c0d0f;
+  --foreground: #ececee;
+  --card: #141518;
+  --card-foreground: #ececee;
+  --popover: #141518;
+  --popover-foreground: #ececee;
+
+  --primary: #ececee;
+  --primary-foreground: #141518;
+
+  --secondary: #1b1d21;
+  --secondary-foreground: #a4a5ad;
+
+  --muted: #1b1d21;
+  --muted-foreground: #a4a5ad;
+  --foreground-subtle: #77787f;
+
+  --accent: #1f2126;
+  --accent-foreground: #ececee;
+
+  --destructive: #e08a83;
+  --destructive-foreground: #141518;
+
+  --border: #26282d;
+  --input: #33353b;
+  --ring: #7ba0e8;
+
+  --success: #63b585;
+  --success-foreground: #141518;
+  --warning: #cfa049;
+  --warning-foreground: #141518;
+  --error: #e08a83;
+  --error-foreground: #141518;
+  --info: #7ba0e8;
+  --info-foreground: #141518;
+  --success-soft: #16241c;
+  --warning-soft: #262013;
+  --error-soft: #291817;
+
+  --chart-1: #ececee;
+  --chart-2: #63b585;
+  --chart-3: #cfa049;
+  --chart-4: #7ba0e8;
+  --chart-5: #a4a5ad;
+
+  --sidebar: #0f1013;
+  --sidebar-foreground: #c9cad0;
+  --sidebar-primary: #ececee;
+  --sidebar-primary-foreground: #0f1013;
+  --sidebar-accent: #232529;
+  --sidebar-accent-foreground: #ececee;
+  --sidebar-border: #232529;
 }
 
 @layer base {

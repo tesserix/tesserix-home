@@ -44,7 +44,10 @@ export function ConsolePageHeader({
   actions,
 }: ConsolePageHeaderProps) {
   return (
-    <WebPageHeader>
+    // @tesserix/web's PageHeader renders as a bordered card. That suits a
+    // panel inside a page; as the page's own title block it reads as a stray
+    // box floating above the content. Strip the frame, keep the parts.
+    <WebPageHeader className="border-0 bg-transparent p-0 shadow-none">
       {breadcrumbs?.length ? (
         <PageHeaderTop>
           <Breadcrumb>

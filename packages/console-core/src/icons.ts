@@ -10,4 +10,17 @@ export type IconKey =
   | "users"
   | "inbox"
   | "settings"
-  | "activity";
+  | "activity"
+  // Added for the platform rail. Each app's icon registry is typed
+  // `Record<IconKey, ...>`, so adding a key here is a COMPILE error in every
+  // renderer until it maps one — never a blank icon at runtime.
+  | "cloud"
+  | "life-buoy"
+  | "bar-chart"
+  | "megaphone"
+  | "heart-pulse"
+  | "gauge"
+  | "globe"
+  | "mail"
+  | "shield"
+  | "key-round";
