@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PlatformApiError } from "@/lib/platform-api";
-import { DashboardView, dashboardState } from "./page";
+import { DashboardView, dashboardState } from "@/components/mark8ly-stats";
 
 const DATA = {
   tenants: { total: 12, active: 9 },

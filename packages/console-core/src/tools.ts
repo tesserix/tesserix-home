@@ -138,6 +138,13 @@ export const INTERNAL_TOOLS: readonly InternalTool[] = [
     group: "reference",
   },
   {
+    name: "Design system",
+    subdomain: "ui",
+    purpose:
+      "Storybook for @tesserix/web — the components every app is built from.",
+    group: "reference",
+  },
+  {
     name: "Docs",
     subdomain: "docs",
     purpose: "Engineering documentation.",
