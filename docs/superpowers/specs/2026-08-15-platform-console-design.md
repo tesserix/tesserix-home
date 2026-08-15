@@ -49,6 +49,12 @@ Meanwhile Mark8ly's operators work queues that have no UI **anywhere**: `sea_man
 
 **Hence the organising rule: every console surface ships with a verb.** If an operator can only look at it, it belongs in the observability stack, not here.
 
+**And its corollary: every verb asserts a capability.** A surface that can execute an erasure, rotate a credential or release a payout calls `assertCapability` before it acts — in the same change that adds the verb, not in a later sweep.
+
+This is deliberately a standing rule rather than a tracked task. The alternative was a migration issue covering every route at once, and that shape was already tried and abandoned: `apps/web`'s admin has 51 route files with no authorization beyond "a session exists", and retrofitting them is work on code scheduled for deletion. Enforcement that arrives *with* the feature never needs retrofitting.
+
+The seven capabilities are defined in `packages/platform-auth/src/capabilities.ts` and are a contract with Zitadel's project roles — `read`, `respond`, `rotate-credentials`, `adjust-balance`, `execute-refund`, `mass-send`, `hard-delete`. There is no wildcard and no superuser short-circuit, and a test asserts that: an `admin`-shaped role must not satisfy an unrelated capability, or the seven become decoration and the flat model this replaced is back.
+
 ### Authorization is flat, and the console inherits it
 
 `app/auth/callback/route.ts:106` enforces an `ALLOWED_ADMIN_EMAILS` allowlist at login, so access is not open. But past that gate there is no authorization: **zero role guards across all 57 handlers** under `app/api/admin/**` and `app/api/internal/**`, and `middleware.ts` checks only that a session exists. Everyone allowlisted can rotate live payment-gateway keys, adjust wallet balances, execute reversals, hard-delete leads and fire irrevocable mass campaigns. The session cookie is scoped to `.tesserix.app`, so `apps/console` inherits this unchanged. Fixing it is an M0 blocker, because every later milestone adds destructive verbs.
