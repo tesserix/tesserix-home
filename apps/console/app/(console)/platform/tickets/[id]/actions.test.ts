@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 
 vi.mock("next/headers", () => ({
-  cookies: vi.fn(async () => ({ toString: () => "tx_session=abc" })),
+  cookies: vi.fn(async () => ({ toString: (): string => "tx_session=abc" })),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@tesserix/platform-auth", async (importOriginal) => ({

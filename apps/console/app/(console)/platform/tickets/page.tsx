@@ -36,7 +36,8 @@ export function toQueueItems(page: TicketsPage): QueueItem[] {
     // response target, so an SLA badge here would be invented — and a queue
     // that shows a made-up "overdue" trains people to ignore the real ones.
     severity: severityOf(ticket.priority),
-    href: `/platform/tickets/${ticket.ticketNumber}`,
+    // The UUID, not the number: the detail API supports only id lookup.
+    href: `/platform/tickets/${ticket.id}`,
   }));
 }
 
