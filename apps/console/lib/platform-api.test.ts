@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PlatformApiError, fetchDashboard, parseDashboard } from "./platform-api";
+import {
+  PlatformApiError,
+  fetchDashboard,
+  parseDashboard,
+  fetchTicketDetail,
+  postTicketReply,
+  patchTicketStatus,
+} from "./platform-api";
 
 const VALID = {
   tenants: { total: 12, active: 9 },
@@ -100,5 +107,101 @@ describe("fetchDashboard", () => {
     const err = await fetchDashboard("c=1").catch((e) => e);
     expect(err).toBeInstanceOf(PlatformApiError);
     expect(err.message).toContain("not JSON");
+  });
+});
+
+const TICKET_ID = "5f0b2c34-0000-0000-0000-000000000000";
+
+describe("postTicketReply", () => {
+  it("sends the console origin so apps/web's CSRF gate accepts the write", async () => {
+    // evaluateCsrf rejects cookie-bearing mutations with no Origin — which a
+    // server-to-server call never has unless we set one deliberately.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ reply: {} }), { status: 201 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await postTicketReply(TICKET_ID, { content: "On it." }, "tx_session=abc");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain(`/api/admin/platform-tickets/${TICKET_ID}/replies`);
+    expect(init.method).toBe("POST");
+    expect(init.headers.origin).toBe("https://console.tesserix.app");
+    expect(init.headers.cookie).toBe("tx_session=abc");
+    expect(JSON.parse(init.body)).toEqual({ content: "On it." });
+  });
+
+  it("throws a PlatformApiError carrying the status on failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }),
+      ),
+    );
+    await expect(
+      postTicketReply(TICKET_ID, { content: "x" }, ""),
+    ).rejects.toMatchObject({ name: "PlatformApiError", status: 403 });
+  });
+});
+
+describe("patchTicketStatus", () => {
+  it("PATCHes the status with origin and cookie", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ticket: {} }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await patchTicketStatus(TICKET_ID, "resolved", "tx_session=abc");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain(`/api/admin/platform-tickets/${TICKET_ID}`);
+    expect(init.method).toBe("PATCH");
+    expect(init.headers.origin).toBe("https://console.tesserix.app");
+    expect(JSON.parse(init.body)).toEqual({ status: "resolved" });
+  });
+});
+
+describe("fetchTicketDetail", () => {
+  it("forwards the cookie and parses the detail", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ticket: {
+            id: TICKET_ID,
+            product_id: "mark8ly",
+            tenant_id: "",
+            ticket_number: "M8-1042",
+            subject: "Payout missing",
+            description: "Detail",
+            status: "open",
+            priority: "urgent",
+            submitted_by_name: "Asha",
+            submitted_by_email: "asha@example.com",
+            resolved_at: null,
+            created_at: "2026-08-10T04:00:00.000Z",
+            updated_at: "2026-08-11T04:00:00.000Z",
+          },
+          replies: [],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const detail = await fetchTicketDetail(TICKET_ID, "tx_session=abc");
+    expect(detail.ticket.ticketNumber).toBe("M8-1042");
+    expect(fetchMock.mock.calls[0][1].headers.cookie).toBe("tx_session=abc");
+  });
+
+  it("carries a 404 status so the page can render not-found", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "not_found" }), { status: 404 }),
+      ),
+    );
+    await expect(fetchTicketDetail(TICKET_ID, "")).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });
