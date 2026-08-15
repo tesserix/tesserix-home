@@ -1,26 +1,42 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { OpenPanelComponent } from "@openpanel/nextjs";
 
-interface AnalyticsProps {
-  clientId?: string;
-  apiUrl?: string;
-  scriptUrl?: string;
+interface AnalyticsConfig {
+  clientId: string | null;
+  apiUrl: string | null;
+  scriptUrl: string | null;
 }
 
-// Self-hosted OpenPanel at analytics.tesserix.app. Config arrives as props from
-// the server layout: NEXT_PUBLIC_* would be inlined at build time, but the Helm
-// chart supplies these at runtime. No client ID means no-op.
-export function Analytics({ clientId, apiUrl, scriptUrl }: AnalyticsProps) {
-  if (!clientId) {
+// Self-hosted OpenPanel at analytics.tesserix.app. The pages are prerendered at
+// build time, so the config the Helm chart injects into the pod has to be read
+// from the route handler at runtime. No client ID means no-op.
+export function Analytics() {
+  const [config, setConfig] = useState<AnalyticsConfig | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/analytics-config")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((loaded) => {
+        if (!cancelled) setConfig(loaded);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!config?.clientId) {
     return null;
   }
 
   return (
     <OpenPanelComponent
-      clientId={clientId}
-      apiUrl={apiUrl}
-      scriptUrl={scriptUrl}
+      clientId={config.clientId}
+      apiUrl={config.apiUrl ?? undefined}
+      scriptUrl={config.scriptUrl ?? undefined}
       trackScreenViews
       trackOutgoingLinks
       trackAttributes

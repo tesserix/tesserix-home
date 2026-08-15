@@ -45,6 +45,8 @@ const PUBLIC_PATHS: ReadonlyArray<string> = [
   "/sitemap.xml",
   "/llms.txt",
   "/api/health",
+  // Non-secret OpenPanel client id, read by every anonymous marketing visitor.
+  "/api/analytics-config",
   "/api/contact",
   // "Notify me when this launches" on a coming-soon product page, plus the
   // one-click unsubscribe the launch email links to. Both are used by anonymous

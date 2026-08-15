@@ -116,11 +116,7 @@ export default function RootLayout({
         {children}
         {/* Otto support chat is admin-only — mounted in app/admin/layout.tsx.
             Public visitors use the /contact page instead. */}
-        <Analytics
-          clientId={process.env.OPENPANEL_CLIENT_ID}
-          apiUrl={process.env.OPENPANEL_API_URL}
-          scriptUrl={process.env.OPENPANEL_SCRIPT_URL}
-        />
+        <Analytics />
       </body>
     </html>
   );
