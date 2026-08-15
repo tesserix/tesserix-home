@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PlatformApiError } from "./platform-api";
-import { parseTickets, severityOf, ticketKey } from "./tickets";
+import { parseTickets, severityOf, ticketKey, parseTicketDetail, isTicketStatus } from "./tickets";
 
 const PAYLOAD = {
   summary: { open: 23, inProgress: 4, resolvedThisWeek: 11, urgentOpen: 4 },
@@ -101,5 +101,84 @@ describe("ticketKey", () => {
     const a = { productId: "mark8ly", ticketNumber: "1042" } as never;
     const b = { productId: "kora", ticketNumber: "1042" } as never;
     expect(ticketKey(a)).not.toBe(ticketKey(b));
+  });
+});
+
+describe("parseTicketDetail", () => {
+  const VALID_DETAIL = {
+    ticket: {
+      id: "5f0b2c34-0000-0000-0000-000000000000",
+      product_id: "mark8ly",
+      tenant_id: "9a1e0000-0000-0000-0000-000000000000",
+      ticket_number: "M8-1042",
+      subject: "Payout missing",
+      description: "The Friday payout never arrived.",
+      status: "open",
+      priority: "urgent",
+      submitted_by_name: "Asha Pillai",
+      submitted_by_email: "asha@example.com",
+      submitted_by_user_id: null,
+      resolved_at: null,
+      created_at: "2026-08-10T04:00:00.000Z",
+      updated_at: "2026-08-11T04:00:00.000Z",
+    },
+    replies: [
+      {
+        id: "77770000-0000-0000-0000-000000000000",
+        ticket_id: "5f0b2c34-0000-0000-0000-000000000000",
+        author_type: "platform_admin",
+        author_name: "Mahesh",
+        author_email: "mahesh.sangawar@gmail.com",
+        author_user_id: "sub-123",
+        content: "Looking into it now.",
+        created_at: "2026-08-11T04:00:00.000Z",
+      },
+    ],
+  };
+
+  it("parses ticket, description and replies", () => {
+    const detail = parseTicketDetail(VALID_DETAIL);
+    expect(detail.ticket.subject).toBe("Payout missing");
+    expect(detail.ticket.description).toBe("The Friday payout never arrived.");
+    expect(detail.ticket.resolvedAt).toBeNull();
+    expect(detail.replies).toHaveLength(1);
+    expect(detail.replies[0].authorType).toBe("platform_admin");
+    expect(detail.replies[0].content).toBe("Looking into it now.");
+  });
+
+  it("tolerates a null author_email by rendering it as empty", () => {
+    const detail = parseTicketDetail({
+      ...VALID_DETAIL,
+      replies: [{ ...VALID_DETAIL.replies[0], author_email: null }],
+    });
+    expect(detail.replies[0].authorEmail).toBe("");
+  });
+
+  it("rejects an unknown author_type rather than coercing it", () => {
+    // author_type drives who a message is attributed to in the thread; a
+    // wrong guess misattributes a customer's words to an operator.
+    expect(() =>
+      parseTicketDetail({
+        ...VALID_DETAIL,
+        replies: [{ ...VALID_DETAIL.replies[0], author_type: "bot" }],
+      }),
+    ).toThrow(PlatformApiError);
+  });
+
+  it("rejects a payload with no ticket object", () => {
+    expect(() => parseTicketDetail({ replies: [] })).toThrow(PlatformApiError);
+  });
+});
+
+describe("isTicketStatus", () => {
+  it("accepts the four contract statuses", () => {
+    for (const s of ["open", "in_progress", "resolved", "closed"]) {
+      expect(isTicketStatus(s)).toBe(true);
+    }
+  });
+
+  it("rejects anything else", () => {
+    expect(isTicketStatus("reopened")).toBe(false);
+    expect(isTicketStatus("")).toBe(false);
   });
 });
