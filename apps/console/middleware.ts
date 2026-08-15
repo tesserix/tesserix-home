@@ -8,6 +8,8 @@ import {
   evaluateCsrf,
 } from "@tesserix/platform-auth";
 
+import { publicOrigin } from "@/lib/public-origin";
+
 // Use the Node runtime so jose's symmetric-key crypto runs natively
 // (Edge runtime restricts node:crypto and forces wasm fallbacks).
 export const config = {
@@ -59,7 +61,7 @@ function unauthorized(request: NextRequest): NextResponse {
   const loginUrl = new URL("/login", webUrl);
   loginUrl.searchParams.set(
     "returnTo",
-    `${request.nextUrl.origin}${pathname}${search}`,
+    `${publicOrigin(request)}${pathname}${search}`,
   );
   return NextResponse.redirect(loginUrl);
 }
