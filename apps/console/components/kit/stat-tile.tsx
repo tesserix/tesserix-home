@@ -4,6 +4,7 @@
 "use client";
 
 import Link from "next/link";
+import clsx from "clsx";
 import {
   DashboardCard,
   DashboardCardHeader,
@@ -87,7 +88,14 @@ export function StatTile({ label, value, delta, trend, state, loading, href }: S
       // deliberately not the full `Callout` the table uses: a tile has room
       // for one line, and a panel inside a stat grid reads as a broken layout.
       tone={parked ? "warning" : resolved.kind === "error" ? "critical" : undefined}
-      className={href ? "transition-colors hover:border-ring" : undefined}
+      // DashboardCard ships with no padding of its own — measured `0px`, with
+      // children sitting 1px off the border. The kit supplies the inset so
+      // every tile in a grid shares one rhythm instead of each surface
+      // guessing.
+      className={clsx(
+        "flex flex-col gap-1 p-4",
+        href && "transition-colors hover:border-ring",
+      )}
     >
       <DashboardCardHeader>
         <DashboardCardTitle>{label}</DashboardCardTitle>
@@ -122,7 +130,14 @@ export function StatTile({ label, value, delta, trend, state, loading, href }: S
 
       {resolved.kind === "ready" && delta ? (
         <DashboardCardTrend
-          className={`inline-flex items-center gap-1 ${trend ? TREND_TONE[trend] : ""}`}
+          // px-0 is load-bearing: DashboardCardTrend carries its own 8px
+          // horizontal padding, which indented the delta further than the
+          // label and value above it — a visible misalignment inside a tile
+          // whose whole job is a tidy label/number/delta stack.
+          className={clsx(
+            "inline-flex items-center gap-1 px-0",
+            trend && TREND_TONE[trend],
+          )}
         >
           {TrendIcon ? <TrendIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}
           {delta}
