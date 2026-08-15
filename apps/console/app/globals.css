@@ -36,6 +36,13 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-error: var(--error);
   --color-error-foreground: var(--error-foreground);
+  /* Without these, `bg-success-soft` / `text-foreground-subtle` are not
+     utilities at all — Tailwind emits nothing and the element silently
+     inherits, which looks like a styling bug with no failing build. */
+  --color-success-soft: var(--success-soft);
+  --color-warning-soft: var(--warning-soft);
+  --color-error-soft: var(--error-soft);
+  --color-foreground-subtle: var(--foreground-subtle);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
 
