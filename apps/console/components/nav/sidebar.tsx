@@ -60,11 +60,22 @@ export function ConsoleSidebar() {
   const pathname = usePathname();
 
   return (
-    <div className="flex h-full w-56 flex-col bg-sidebar">
-      <div className="flex h-16 items-center px-5">
+    <div className="flex h-full w-56 flex-col border-r border-sidebar-border bg-sidebar">
+      <div className="flex h-16 items-center gap-2.5 px-4">
+        <span
+          aria-hidden="true"
+          className="grid h-6 w-6 place-items-center rounded-md bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground"
+        >
+          K
+        </span>
         <h2 className="text-sm font-semibold text-sidebar-foreground">Kora</h2>
       </div>
-      <nav className="flex-1 space-y-1 px-3 py-4" aria-label="Kora">
+      <nav className="flex-1 space-y-0.5 px-3 pb-4" aria-label="Kora">
+        {/* A section label, even with one section: it names what the list is,
+            and it is where further groups attach as products migrate in. */}
+        <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/50">
+          Product
+        </p>
         {koraNav.map((entry) => (
           <NavLink key={entry.name} entry={entry} pathname={pathname} />
         ))}
