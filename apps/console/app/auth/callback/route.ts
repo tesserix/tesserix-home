@@ -10,6 +10,7 @@ import {
 } from "@tesserix/platform-auth";
 
 import { decodeState, exchangeCode, getOidcConfig } from "@/lib/auth/oidc";
+import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
 
@@ -113,7 +114,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     roles: toCapabilities(identity.roles),
   });
 
-  const res = NextResponse.redirect(new URL(state.returnTo, request.nextUrl.origin));
+  // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's
+  // own bind address, so this redirect shipped the browser to
+  // http://0.0.0.0:3000 — the third time this codebase has made that mistake.
+  const res = NextResponse.redirect(
+    new URL(state.returnTo, publicOrigin(request)),
+  );
   const cookie = sessionCookieOptions();
   res.cookies.set(sessionCookieName(), token, {
     httpOnly: true,
