@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
@@ -20,10 +21,83 @@ import { NavIcon } from "./icon";
 // console's own home page serves — and a product rail takes over inside that
 // product's routes. apps/web calls this the RailContext; the console needs
 // only the two it can actually render today.
+// `logo` wins over `mark` when present, and `onLight` says whether the artwork
+// needs a background painted for it.
+//
+// The two marks differ in kind, not just in image. Tesserix is navy on
+// TRANSPARENT: it needs a light chip in both themes, or it vanishes against a
+// dark sidebar. Kora's app icon is SELF-CONTAINED — its own dark gradient,
+// already a rounded square — so painting anything behind it would show as a
+// halo. Hence the flag rather than one shared wrapper.
 const RAILS = {
-  platform: { label: "Platform", mark: "T", nav: platformNav, section: "Operate" },
-  kora: { label: "Kora", mark: "K", nav: koraNav, section: "Product" },
+  platform: {
+    label: "Platform",
+    mark: "T",
+    logo: "/tesserix-mark.png",
+    onLight: true,
+    nav: platformNav,
+    section: "Operate",
+  },
+  kora: {
+    label: "Kora",
+    mark: "K",
+    logo: "/kora-mark.png",
+    onLight: false,
+    nav: koraNav,
+    section: "Product",
+  },
 } as const;
+
+/** The rail's chip: real logo where we have one, letter mark otherwise. */
+function RailMark({
+  rail,
+  size,
+}: {
+  rail: {
+    readonly mark: string;
+    readonly logo?: string;
+    readonly onLight?: boolean;
+    readonly label: string;
+  };
+  size: "sm" | "md";
+}) {
+  const box = size === "md" ? "h-5 w-5" : "h-4 w-4";
+  if (rail.logo) {
+    return (
+      <span
+        aria-hidden="true"
+        className={clsx(
+          "grid shrink-0 place-items-center overflow-hidden rounded",
+          box,
+          // Only transparent artwork gets a chip painted behind it. A
+          // self-contained icon needs none, and would show the chip as a halo.
+          rail.onLight && "bg-white",
+        )}
+      >
+        <Image
+          src={rail.logo}
+          alt=""
+          width={20}
+          height={20}
+          className={clsx(
+            "h-full w-full object-contain",
+            rail.onLight && "p-[1px]",
+          )}
+        />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={`grid ${box} shrink-0 place-items-center rounded bg-sidebar-primary ${
+        size === "md" ? "text-[10px]" : "text-[9px]"
+      } font-bold text-sidebar-primary-foreground`}
+    >
+      {rail.mark}
+    </span>
+  );
+}
 
 type RailKey = keyof typeof RAILS;
 
@@ -125,12 +199,7 @@ function RailSwitcher({
         aria-expanded={open}
         className="flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
       >
-        <span
-          aria-hidden="true"
-          className="grid h-5 w-5 shrink-0 place-items-center rounded bg-sidebar-primary text-[10px] font-bold text-sidebar-primary-foreground"
-        >
-          {rail.mark}
-        </span>
+        <RailMark rail={rail} size="md" />
         <span className="truncate text-[13px] font-semibold text-sidebar-foreground">
           {rail.label}
         </span>
@@ -162,12 +231,7 @@ function RailSwitcher({
                   : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
               )}
             >
-              <span
-                aria-hidden="true"
-                className="grid h-4 w-4 shrink-0 place-items-center rounded bg-sidebar-primary/90 text-[9px] font-bold text-sidebar-primary-foreground"
-              >
-                {RAILS[key].mark}
-              </span>
+              <RailMark rail={RAILS[key]} size="sm" />
               <span className="truncate">{RAILS[key].label}</span>
               {key === current ? (
                 <Check aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />

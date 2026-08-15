@@ -68,6 +68,12 @@ next-env.d.ts
 !apps/web/public/**/*.png
 # Allow mobile app assets (icon/splash are EAS build inputs — must be committed)
 !apps/mobile/assets/**/*.png
+# Allow console assets. `app/*.png` covers Next's file-based metadata
+# convention (icon.png, apple-icon.png) which must sit beside the routes, not
+# in public/. Without these two lines the blanket **.png rule drops them
+# silently: the build succeeds and production serves a broken logo.
+!apps/console/public/**/*.png
+!apps/console/app/*.png
 
 .claude/
 
