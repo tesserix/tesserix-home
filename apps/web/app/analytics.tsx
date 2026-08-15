@@ -2,11 +2,16 @@
 
 import { OpenPanelComponent } from "@openpanel/nextjs";
 
-// Self-hosted OpenPanel at analytics.tesserix.app. Renders nothing without a
-// client ID so local and preview builds stay out of the production dataset.
-export function Analytics() {
-  const clientId = process.env.NEXT_PUBLIC_OPENPANEL_CLIENT_ID;
+interface AnalyticsProps {
+  clientId?: string;
+  apiUrl?: string;
+  scriptUrl?: string;
+}
 
+// Self-hosted OpenPanel at analytics.tesserix.app. Config arrives as props from
+// the server layout: NEXT_PUBLIC_* would be inlined at build time, but the Helm
+// chart supplies these at runtime. No client ID means no-op.
+export function Analytics({ clientId, apiUrl, scriptUrl }: AnalyticsProps) {
   if (!clientId) {
     return null;
   }
@@ -14,8 +19,8 @@ export function Analytics() {
   return (
     <OpenPanelComponent
       clientId={clientId}
-      apiUrl={process.env.NEXT_PUBLIC_OPENPANEL_API_URL}
-      scriptUrl={process.env.NEXT_PUBLIC_OPENPANEL_SCRIPT_URL}
+      apiUrl={apiUrl}
+      scriptUrl={scriptUrl}
       trackScreenViews
       trackOutgoingLinks
       trackAttributes
