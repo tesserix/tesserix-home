@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { EstateMap } from "@/components/estate-map";
+import { InternalTools } from "@/components/internal-tools";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 import { StatTile } from "@/components/kit/stat-tile";
 import { NOT_IMPLEMENTED, type SurfaceState } from "@/components/kit/states";
@@ -71,10 +72,27 @@ export default async function ConsoleHome() {
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
         title="Platform"
-        description="Estate health across every product."
+        description="The estate at a glance."
       />
-      <DashboardView data={data} state={dashboardState(error)} />
+      {/* These four are MARK8LY'S numbers — tenants, stores and leads all come
+          from its database — and were labelled "estate health across every
+          product", which they are not. Saying whose they are is the honest
+          interim state until #133 replaces this with the cross-product ticket
+          queue: a wrong label is worse than a narrow one, because a reader
+          cannot tell it is wrong. */}
+      <section className="flex flex-col gap-2" aria-labelledby="mark8ly-stats">
+        <h2
+          id="mark8ly-stats"
+          className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+        >
+          Mark8ly
+        </h2>
+        <DashboardView data={data} state={dashboardState(error)} />
+      </section>
       <EstateMap />
+      {/* Base domain is configuration, not a constant: a non-production console
+          must not hand operators links into production tools. */}
+      <InternalTools baseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"} />
     </div>
   );
 }

@@ -36,6 +36,12 @@ RUN adduser --system --uid 1001 nextjs
 # Standalone bundle (contains apps/console/server.js + hoisted node_modules)
 COPY --from=builder --chown=nextjs:nodejs /app/apps/console/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/console/.next/static ./apps/console/.next/static
+# `public/` is NOT part of the standalone output — Next expects it copied
+# alongside, exactly as the web Dockerfile does. Omitting this used to be
+# harmless because apps/console/public was empty; it stopped being harmless the
+# moment the sidebar logos landed there, and the failure is a silent 404 on an
+# image rather than anything that fails a build.
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/public ./apps/console/public
 
 USER nextjs
 EXPOSE 3000
