@@ -113,6 +113,18 @@ Two constraints the shared model must carry, both generalised from HMS:
 
 **Consequence for `tesserix/hms` M8:** the plan and pricing issues (#247–#259 — clinic, hospital, enterprise, government, per-bed, trials, discounts, renewals, invoicing) become *configuration of a shared model* rather than a private implementation, and belong with the console. The genuinely product-specific ones stay: #809 and #810 (demo tenants, synthetic Indian healthcare data) are PHI-shaped and HMS's own. #808 (CRM boundary and system-of-record contract) must be answered **before** any of it moves, because it decides whether the console owns prospects or reflects them.
 
+### 1a. The console takes its roles from Zitadel
+
+Added 2026-08-15, after finding Zitadel deployed in prod.
+
+The console does **not** authenticate against GIP, and never did. `apps/web/app/auth/login/route.ts` runs a server-side Google OAuth flow and mints its own JWE session — *"Tesserix-home owns its own session cookie minting; auth-bff is no longer involved."*
+
+Zitadel runs at `auth.tesserix.app` (v4.15.3, three replicas, CNPG-backed, in the `identity` AppProject), and it already provides organizations, projects and roles. **Taking roles from the IdP is a better answer to the flat-authorization problem than building a capability model in `platform-auth`** — it removes the allowlist-as-authorization pattern at the root instead of layering over it. `AllowDomainDiscovery: true` also means one hostname federates every tenant's SSO, which is the multi-product operator story the console exists for. HMS has already decided on Zitadel (ADR-0006), and GIP bills per monthly active user while Zitadel runs on cluster hardware already paid for.
+
+**Two prerequisites, both blockers.** Zitadel Postgres backups are off pending a Workload Identity binding (`tesserix-k8s#308`) — three replicas guard against Spot node loss, not against logical corruption. And the masterkey is immutable, with no re-key possible, so custody and recovery must be written down (`tesserix-k8s#309`). Making more things depend on Zitadel before both are closed is the wrong order.
+
+**The estate runs four identity paths** — Keycloak, GIP, raw Google OAuth, Firebase — and the documents disagree about which Zitadel replaces: `tesserix-k8s/docs/zitadel.md` says Keycloak, HMS ADR-0006 says GIP. That estate-level decision is tracked separately (#165) and deliberately does not gate the console's own move: one product moving is how the decision gets informed rather than deferred.
+
 ### 2. Status, never charts
 
 Observability is hosted separately. A console that redraws Grafana's charts will always be the worse copy and doubles the maintenance. Health tiles show state — healthy, degraded, not measured — with a count where one is meaningful, and link out to the real tool.
