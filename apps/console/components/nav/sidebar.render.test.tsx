@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const pathname = vi.hoisted(() => ({ current: "/" }));
@@ -41,13 +42,42 @@ describe("ConsoleSidebar", () => {
     expect(screen.getByText("Break-glass")).toBeInTheDocument();
   });
 
-  it("sends web-hosted surfaces to the web origin, not an in-app route", () => {
-    // Every platform surface still lives in apps/web. Linking them relatively
-    // would route to a page the console does not have.
+  it("does not link unbuilt surfaces anywhere — including to the old admin", () => {
+    // apps/web is being retired. Linking there would make the console a shell
+    // around the app it replaces, and linking in-app would 404. Pending
+    // entries are therefore not anchors at all.
     render(<ConsoleSidebar />);
 
-    const dashboard = screen.getByText("Dashboard").closest("a");
-    expect(dashboard?.getAttribute("href")).toMatch(/^https?:\/\/.+\/admin\/dashboard$/);
+    expect(screen.getByText("Dashboard").closest("a")).toBeNull();
+    expect(screen.getByText("Break-glass").closest("a")).toBeNull();
+    expect(document.querySelectorAll('a[href*="localhost:3002"]')).toHaveLength(0);
+    expect(document.querySelectorAll('a[href^="http"]')).toHaveLength(0);
+  });
+
+  it("switches context when the switcher is used, without navigating away", async () => {
+    // The switcher changes which rail is shown, not the location. Every surface
+    // in both rails is still served by apps/web, so navigating on select would
+    // eject the operator from the console just to look at a rail.
+    const user = userEvent.setup();
+    render(<ConsoleSidebar />);
+
+    expect(screen.getByText("Operate")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /platform/i }));
+    await user.click(screen.getByRole("menuitem", { name: /kora/i }));
+
+    expect(screen.getByText("Food index")).toBeInTheDocument();
+    expect(screen.queryByText("Operate")).toBeNull();
+  });
+
+  it("marks Kora's surfaces pending too — its IA is migrated, its pages are not", () => {
+    // Linking these in-app would be five 404s, which the previously-inert
+    // switcher was hiding.
+    pathname.current = "/admin/apps/kora/foods";
+    render(<ConsoleSidebar />);
+
+    expect(screen.getByText("Food index").closest("a")).toBeNull();
+    expect(screen.getAllByText("soon").length).toBeGreaterThan(0);
   });
 
   it("switches to Kora's rail inside Kora routes", () => {
