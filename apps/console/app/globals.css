@@ -71,54 +71,57 @@
   --font-geist-mono: "SF Mono", ui-monospace, "Cascadia Code", "Menlo", "Consolas", monospace;
   --radius: 0.625rem;
 
-  --background: #f5f7fa;
-  --foreground: #0b0e14;
+  /* Mirrors packages/console-core/src/tokens.ts. globals.test.ts fails if the
+     two diverge — CSS cannot import from a renderer-free package, so the copy
+     is enforced rather than avoided. Change both together. */
+  --background: #fafafa;
+  --foreground: #18181b;
   --card: #ffffff;
-  --card-foreground: #0b0e14;
+  --card-foreground: #18181b;
   --popover: #ffffff;
-  --popover-foreground: #0b0e14;
+  --popover-foreground: #18181b;
 
-  --primary: #0b0e14;
+  --primary: #18181b;
   --primary-foreground: #ffffff;
 
-  --secondary: #eef1f6;
-  --secondary-foreground: #3d434f;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #52525b;
 
-  --muted: #eef1f6;
-  --muted-foreground: #5f6675;
+  --muted: #f4f4f5;
+  --muted-foreground: #52525b;
 
-  --accent: rgba(194, 65, 12, 0.08);
-  --accent-foreground: #9a3412;
+  --accent: #efeff1;
+  --accent-foreground: #18181b;
 
-  --destructive: #dc2626;
+  --destructive: #b0322a;
   --destructive-foreground: #ffffff;
 
-  --border: rgba(11, 14, 20, 0.10);
-  --input: rgba(11, 14, 20, 0.14);
-  --ring: #c2410c;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #3b6fd4;
 
-  --success: #12a374;
+  --success: #2f7d51;
   --success-foreground: #ffffff;
-  --warning: #925d0e;
+  --warning: #8a6108;
   --warning-foreground: #ffffff;
-  --error: #dc2626;
+  --error: #b0322a;
   --error-foreground: #ffffff;
-  --info: #2e5cff;
+  --info: #3b6fd4;
   --info-foreground: #ffffff;
 
-  --chart-1: #0b0e14;
-  --chart-2: #12a374;
-  --chart-3: #925d0e;
-  --chart-4: #2e5cff;
-  --chart-5: #1f3fd4;
+  --chart-1: #18181b;
+  --chart-2: #2f7d51;
+  --chart-3: #8a6108;
+  --chart-4: #3b6fd4;
+  --chart-5: #52525b;
 
-  --sidebar: #0b0e14;
-  --sidebar-foreground: #cfd4de;
-  --sidebar-primary: #ffffff;
-  --sidebar-primary-foreground: #0b0e14;
-  --sidebar-accent: #1a1f29;
-  --sidebar-accent-foreground: #eef1f6;
-  --sidebar-border: #1a1f29;
+  --sidebar: #17181b;
+  --sidebar-foreground: #d6d7db;
+  --sidebar-primary: #fafafa;
+  --sidebar-primary-foreground: #17181b;
+  --sidebar-accent: #26272c;
+  --sidebar-accent-foreground: #ececee;
+  --sidebar-border: #26272c;
 }
 
 @layer base {
