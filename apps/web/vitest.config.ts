@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
     environment: "node",
-    include: ["lib/**/*.test.ts", "app/**/*.test.ts"],
+    include: ["lib/**/*.test.ts", "app/**/*.test.ts", "next.config.test.ts"],
     exclude: ["node_modules", ".next", "tests"],
   },
 });
