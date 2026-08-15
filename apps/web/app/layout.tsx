@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Analytics } from "./analytics";
 import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
 import { team } from "./(marketing)/about/team";
 import { buildOrganizationSchema, buildWebSiteSchema } from "./seo/structured-data";
@@ -115,6 +116,7 @@ export default function RootLayout({
         {children}
         {/* Otto support chat is admin-only — mounted in app/admin/layout.tsx.
             Public visitors use the /contact page instead. */}
+        <Analytics />
       </body>
     </html>
   );
