@@ -57,6 +57,49 @@ before writing the JSX.
   the wrong GCP project. **Fixed 2026-07-28** (`8924efc` in `tesserix/kora`); the comment
   outlived it by weeks and made a non-issue look like an M0 blocker.
 
+- `Dockerfile` (this repo) — mounts `NODE_AUTH_TOKEN` as a BuildKit secret so pnpm can
+  authenticate to GitHub Packages. **`.npmrc` records (2026-08-05) that `@tesserix/*` moved to
+  the public npm registry**, tarballs verified byte-identical, and states "Nothing here needs
+  authentication now" — it further notes the old arrangement would make this repo unbuildable
+  once public, which it since became. The mount is inert leftover. `Dockerfile.console`
+  deliberately omits it; the divergence between the two files is the fix, not a mistake.
+
+- `tesserix-k8s/charts/apps/company/templates/externalsecret.yaml` — said the session
+  encryption key was "the same value `tesserix-auth-bff` consumes". `grep -rn
+  "prod-tesserix-session-encrypt-key" charts/` finds only `company` and `console`; auth-bff has
+  no reference to it. Corrected 2026-08-14, but it had been actively misleading anyone planning
+  a rotation — pointing at a workload that would not have been affected, and omitting one that
+  would.
+
+## Configuration whose obvious source of truth is not the real one
+
+Distinct from a stale claim: the file you would naturally edit is not the file that takes
+effect, and nothing reports the difference.
+
+- **`charts/infrastructure/istio-auth-policies/values*.yaml` are overridden.** The prod ArgoCD
+  Application (`argocd/prod/infrastructure/istio-auth-policies.yaml`) sets **both**
+  `helm.valueFiles` **and** an inline `helm.values` block. Inline wins, and for a list like
+  `frontendApps` it *replaces* the file's list wholesale. An entry added to `values-prod.yaml`
+  renders correctly under `helm template`, passes every PR check, and syncs green — and never
+  reaches the cluster. Verified the hard way on 2026-08-14: a host added to `values-prod.yaml`
+  (`tesserix-k8s#258`) left `console.tesserix.app` returning Envoy's `RBAC: access denied`;
+  the same entry in the inline block (`#260`) fixed it. **Add hosts to the Application, not the
+  chart values.**
+
+## Signals that look like verification and are not
+
+Two changes in the 2026-08-14 console deployment appeared to succeed by every available signal
+and had not. Both cost a debugging cycle that a different check would have caught immediately.
+
+| Signal | Why it lied | What to check instead |
+|---|---|---|
+| **Green PR checks** | The image build and security scan are gated `if: github.ref == 'refs/heads/main'`, and the `pull_request` trigger builds nothing. `#114` extracted `@tesserix/platform-auth` without updating the web `Dockerfile`; every PR check passed while `main` was red and **the web image stopped publishing for eight hours**. | The post-merge run on `main` — and `gh api orgs/tesserix/packages/container/<name>/versions` to confirm an image actually appeared. |
+| **ArgoCD `Synced`** | `Synced` reports the last revision it reconciled, not that your change is in the cluster. An app can report `Synced` **at the correct commit** while your edit had no effect (see the inline-values trap above), and can report `Synced` at a *stale* revision because it has not polled — the status word is identical in both cases. | The rendered object: `kubectl -n <ns> get <kind> <name> -o jsonpath=...` and grep for the thing you added. Compare `.status.sync.revision` against `git rev-parse origin/main`. |
+
+The generalisation: **a green signal proves the check ran, not that it covered your change.**
+Before trusting one, ask which observation would differ if the change had done nothing — and
+make that observation instead.
+
 ## The rule
 
 **Trust the docs on shape; verify them on state.**
