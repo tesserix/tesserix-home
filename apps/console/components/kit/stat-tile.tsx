@@ -1,3 +1,8 @@
+// See page-header.tsx: @tesserix/web's barrel is "use client", so its exports
+// are `undefined` inside a server component. This directive is load-bearing
+// even though nothing here uses a hook.
+"use client";
+
 import Link from "next/link";
 import {
   DashboardCard,
