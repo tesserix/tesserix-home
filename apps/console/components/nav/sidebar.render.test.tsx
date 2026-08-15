@@ -25,8 +25,12 @@ describe("railFor", () => {
   });
 
   it("switches to the product rail inside that product's routes", () => {
-    expect(railFor("/admin/apps/kora")).toBe("kora");
-    expect(railFor("/admin/apps/kora/foods")).toBe("kora");
+    // CONSOLE paths, not apps/web's /admin/apps/kora — the console serves its
+    // own path shape (see consolePath in console-core).
+    expect(railFor("/kora")).toBe("kora");
+    expect(railFor("/kora/foods")).toBe("kora");
+    // A bare prefix must not match: /korax is not Kora's rail.
+    expect(railFor("/korax")).toBe("platform");
   });
 });
 
@@ -73,7 +77,7 @@ describe("ConsoleSidebar", () => {
   it("marks Kora's surfaces pending too — its IA is migrated, its pages are not", () => {
     // Linking these in-app would be five 404s, which the previously-inert
     // switcher was hiding.
-    pathname.current = "/admin/apps/kora/foods";
+    pathname.current = "/kora/foods";
     render(<ConsoleSidebar />);
 
     expect(screen.getByText("Food index").closest("a")).toBeNull();
@@ -81,7 +85,7 @@ describe("ConsoleSidebar", () => {
   });
 
   it("switches to Kora's rail inside Kora routes", () => {
-    pathname.current = "/admin/apps/kora/foods";
+    pathname.current = "/kora/foods";
     render(<ConsoleSidebar />);
 
     expect(screen.getByText("Kora")).toBeInTheDocument();

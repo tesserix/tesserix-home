@@ -12,7 +12,7 @@ import {
   isRouteActive,
   koraNav,
   platformNav,
-  webPath,
+  consolePath,
   type NavEntry,
 } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
@@ -101,9 +101,16 @@ function RailMark({
 
 type RailKey = keyof typeof RAILS;
 
-/** Which rail a path belongs to. Kora's routes are the only product ones. */
+/**
+ * Which rail a path belongs to. Kora's routes are the only product ones.
+ *
+ * Matches the CONSOLE path (`/kora/...`), not apps/web's `/admin/apps/kora`.
+ * The console does not serve web's paths — see `consolePath`.
+ */
 export function railFor(pathname: string): RailKey {
-  return pathname.startsWith("/admin/apps/kora") ? "kora" : "platform";
+  return pathname === "/kora" || pathname.startsWith("/kora/")
+    ? "kora"
+    : "platform";
 }
 
 
@@ -123,7 +130,7 @@ function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
     );
   }
 
-  const active = isRouteActive(pathname, entry.route, "web");
+  const active = isRouteActive(pathname, entry.route, "console");
 
   // Not built here yet. Deliberately NOT a link to apps/web: the old admin is
   // being retired, and pointing at it would make the console a shell around
@@ -147,7 +154,7 @@ function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
 
   return (
     <Link
-      href={webPath(entry.route)}
+      href={consolePath(entry.route)}
       aria-current={active ? "page" : undefined}
       className={clsx(
         "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",

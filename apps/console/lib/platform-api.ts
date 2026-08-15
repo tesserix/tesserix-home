@@ -123,3 +123,47 @@ export async function fetchDashboard(
 
   return parseDashboard(body);
 }
+
+/**
+ * The cross-product ticket queue.
+ *
+ * Same shape as `fetchDashboard` deliberately — one failure type, one place
+ * that decides what "the upstream misbehaved" looks like. The parser lives in
+ * `lib/tickets.ts` so this file stays about transport.
+ */
+export async function fetchTickets(
+  cookieHeader: string,
+): Promise<import("./tickets").TicketsPage> {
+  const { parseTickets } = await import("./tickets");
+
+  let response: Response;
+  try {
+    response = await fetch(`${WEB_ORIGIN}/api/admin/platform-tickets`, {
+      headers: { cookie: cookieHeader },
+      cache: "no-store",
+    });
+  } catch (cause) {
+    throw new PlatformApiError(
+      `tickets: request failed (${describe(cause)})`,
+      undefined,
+      { cause },
+    );
+  }
+
+  if (!response.ok) {
+    throw new PlatformApiError(
+      `tickets: responded ${response.status}`,
+      response.status,
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    throw new PlatformApiError(`tickets: response was not JSON`, undefined, {
+      cause,
+    });
+  }
+  return parseTickets(body);
+}

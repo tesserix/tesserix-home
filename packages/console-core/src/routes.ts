@@ -3,6 +3,17 @@
 interface RouteEntry {
   web: string;
   mobile: string;
+  /**
+   * Path in `apps/console`. Optional: when absent the console serves the
+   * `mobile` path, which is already the clean shape (`/platform/tickets`)
+   * rather than `apps/web`'s `/admin/*` legacy.
+   *
+   * A third field rather than reusing `mobile` outright, because a console
+   * rendering from a field called `mobile` is exactly the quiet drift this
+   * package exists to prevent — and the two will diverge the first time a
+   * surface needs a different shape on a phone.
+   */
+  console?: string;
   exact?: boolean;
   /**
    * The surface is not built in the console yet.
@@ -37,7 +48,10 @@ const ROUTES = {
   // from one source; none of the surfaces is built here yet.
   "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", pending: true },
   "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true },
-  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets", pending: true },
+  // First surface built in the console — hence no `pending`. Served at
+  // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
+  // is deleted.
+  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets" },
   "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/support-analytics", pending: true },
   "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true },
   "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true },
@@ -55,6 +69,15 @@ const ROUTES = {
 } as const satisfies Record<string, RouteEntry>;
 
 export type RouteId = keyof typeof ROUTES & string;
+
+/**
+ * Every route id, for exhaustive iteration.
+ *
+ * Derived from ROUTES rather than listed, so a route added without a
+ * corresponding entry here is impossible — the failure mode a hand-maintained
+ * list has is that guards silently stop covering new routes.
+ */
+export const ROUTE_IDS = Object.keys(ROUTES) as readonly RouteId[];
 
 // Indexing ROUTES[id] with the RouteId union yields a union of each entry's
 // exact literal type (some of which lack an `exact` property at all, since
@@ -74,6 +97,18 @@ export function mobilePath(id: RouteId): string {
 }
 
 /**
+ * Path in the console, falling back to the mobile path.
+ *
+ * The console does NOT serve `apps/web`'s `/admin/*` paths. Those belong to an
+ * app being retired, and `/admin/...` on a host that is itself the admin reads
+ * as a leftover — which it would be.
+ */
+export function consolePath(id: RouteId): string {
+  const entry = getRoute(id);
+  return entry.console ?? entry.mobile;
+}
+
+/**
  * True while the surface has no page in the console. Renderers must show these
  * as pending rather than linking them anywhere — see `RouteEntry.pending`.
  */
@@ -81,9 +116,18 @@ export function isPending(id: RouteId): boolean {
   return getRoute(id).pending === true;
 }
 
-export function isRouteActive(currentPath: string, id: RouteId, prefix: "web" | "mobile"): boolean {
+export function isRouteActive(
+  currentPath: string,
+  id: RouteId,
+  prefix: "web" | "mobile" | "console",
+): boolean {
   const entry = getRoute(id);
-  const target = prefix === "web" ? entry.web : entry.mobile;
+  const target =
+    prefix === "web"
+      ? entry.web
+      : prefix === "console"
+        ? (entry.console ?? entry.mobile)
+        : entry.mobile;
   // Product roots are a strict prefix of their own children, so an exact
   // match is required or Overview stays highlighted on every nested route.
   if (entry.exact) return currentPath === target || currentPath === `${target}/`;
