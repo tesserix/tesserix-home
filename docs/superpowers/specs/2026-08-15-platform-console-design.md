@@ -37,6 +37,38 @@ Established by reading the code, not assumed:
 - **Per-product data is broadly reachable:** `/api/admin/apps/[product]/{tenants, subscriptions, kpis, metrics, revenue, payouts, onboarding, audit-logs, delivery}`, plus `/api/admin/tenants/[id]` and `/api/admin/users/{search,[email]}`.
 - **Health sources report unavailability in-band.** `service-health` and `cnpg-health` return HTTP 200 carrying `available: false` when Prometheus is parked — *not* a 501. Any state mapping that keys only off the status code renders a parked plane as healthy.
 
+## What the product research established
+
+Read across Mark8ly, Fe3dr, Kora, DevAI, Dwellm8 and HMS on 2026-08-15. Several findings contradict what this spec assumed before.
+
+### The old admin's failure mode is dashboards with no verbs
+
+This is the precise shape of "right intention, poorly planned". Four platform pages are read-only queues offering no action at all: `erasure-requests` (GDPR — no approve or execute), `break-glass` (no rotate or disable), `outbox` (no requeue), `apps` (a registry; onboarding is a runbook).
+
+Meanwhile Mark8ly's operators work queues that have no UI **anywhere**: `sea_manual_review_queue` on a five-business-day SLA that pauses the subscription clock; `customer_erasure_requests`, whose migration comment records that support reads it through a read-only DB role and dedupes by hand; `subscription_arbitrage_audit` appeals; and `migration_fast_path_reviews`, whose review endpoint is implemented but never mounted (TODO at `internal/handlers/admin/routes.go:779`). Mark8ly's README states billing P1–P14 have no runbooks and manual SQL against production is the norm.
+
+**Hence the organising rule: every console surface ships with a verb.** If an operator can only look at it, it belongs in the observability stack, not here.
+
+### Authorization is flat, and the console inherits it
+
+`app/auth/callback/route.ts:106` enforces an `ALLOWED_ADMIN_EMAILS` allowlist at login, so access is not open. But past that gate there is no authorization: **zero role guards across all 57 handlers** under `app/api/admin/**` and `app/api/internal/**`, and `middleware.ts` checks only that a session exists. Everyone allowlisted can rotate live payment-gateway keys, adjust wallet balances, execute reversals, hard-delete leads and fire irrevocable mass campaigns. The session cookie is scoped to `.tesserix.app`, so `apps/console` inherits this unchanged. Fixing it is an M0 blocker, because every later milestone adds destructive verbs.
+
+### Products already own their operator surfaces
+
+Fe3dr has ~200 `/admin/*` endpoints behind pool and staff-permission checks. Dwellm8 ships `apps/admin` with triage, approvals, reconcile and dispute screens. DevAI has pipeline and SRE dashboards. **The console renders against these; it does not reimplement them.** Reimplementation would repeat the mistake being corrected.
+
+### Two products already meter AI cost
+
+Kora writes a durable per-call ledger — `ai_usage_events` with tokens in and out, estimated cost, latency and outcome, indexed by user — and enforces budget caps. DevAI meters to integer micro-USD with per-user trial budgets and exposes it over HTTP. Neither is visible centrally, and Kora exposes no cost over HTTP at all. Cross-product AI cost is therefore a **surfacing** job, not an instrumentation project.
+
+### Do not build on the dormant services
+
+`subscription-service`, `tickets-service`, `audit-service`, `tenant-service`, `feature-flags-service`, `notification-hub` and `analytics-service` exist as repos and **none is deployed** — none appears in `tesserix-k8s`. They are artefacts of the older marketplace-microservices architecture that the root `CLAUDE.md` still describes. Treating them as existing foundations means reviving seven dead services first.
+
+### Scope: seven rails
+
+Platform, Mark8ly, Fe3dr, DevAI, Dwellm8, Kora and HMS. The prod cluster also runs FanZone, Guardix, Gameverse, Horoscope, Social, Blog and Planning Poker; these are deliberately out of scope. `ESTATE` currently lists six rails, omits HMS, and understates DevAI and Dwellm8 as placeholders — all three are wrong.
+
 ## Three ownership patterns already exist — pick deliberately
 
 The estate has solved "platform authors, product consumes" three different ways. New capabilities should choose one on purpose rather than inherit whichever neighbour they were copied from.
@@ -55,11 +87,29 @@ Subscriptions fail that test in the platform's favour — a product does not nee
 
 ## Decisions
 
-### 1. Platform owns the subscription model; products consume it
+### 1. Platform owns the subscription model — for the SaaS-seat products only
 
 Following the announcement pattern, which already works here rather than one invented for this spec.
 
-One plans/pricing/subscription model in `tesserix-postgres`, authored in the console, targeted per product, consumed by products through an internal API. The alternative — every product keeps private billing and the console aggregates — means each product reimplements trials, renewals, discounts and invoicing. HMS is already partway down that road.
+One plans/entitlement/price-book model in `tesserix-postgres`, authored in the console, targeted per product, consumed by products through an internal API. The alternative — every product keeps private billing and the console aggregates — means each product reimplements trials, renewals, discounts and invoicing. HMS is already partway down that road.
+
+**HMS validates this in writing, unprompted.** Issue #247 places billing metadata in *"the shared global control plane"*, required to contain no PHI — plan, entitlement, counts and money only — precisely so the country data-residency boundary is preserved. #255 and #259 restate it. HMS #247 is also the most fully specified statement of the model anywhere in the estate: plan versions, entitlements, limits and price books, with **immutability** (a subscription signed in March keeps March terms until explicitly migrated, because retro-mutating a live plan corrupts GST e-invoices already filed).
+
+**The original wording overreached, and this narrows it.** The estate does not share one revenue shape:
+
+| Product | Revenue shape | Shared model? |
+|---|---|---|
+| Mark8ly | SaaS subscriptions — Stripe, plan tiers, PPP pricing | yes |
+| HMS | SaaS subscriptions — per-facility/user/bed, India tax | yes |
+| Fe3dr | commission plus payouts and split settlement | **no** |
+| Dwellm8 | fee-on-rent, double-entry ledger, TDS obligations | **no** |
+
+Forcing a marketplace take-rate business into a plans-and-seats model would repeat, one layer down, the mistake of the decorative `[product]` URL segment.
+
+Two constraints the shared model must carry, both generalised from HMS:
+
+- **Module dependencies, not just entitlements.** HMS #254 frames its `requires` / `conflicts_with` graph as *clinical correctness*, not commerce — PharmaConnect without DoctorConnect produces an unfillable queue.
+- **A billing state must never disable a safety-critical function.** HMS #258 requires that dunning never suspend clinical modules; degradation is graduated. That principle belongs in the shared model rather than in one product's copy of it.
 
 **Consequence for `tesserix/hms` M8:** the plan and pricing issues (#247–#259 — clinic, hospital, enterprise, government, per-bed, trials, discounts, renewals, invoicing) become *configuration of a shared model* rather than a private implementation, and belong with the console. The genuinely product-specific ones stay: #809 and #810 (demo tenants, synthetic Indian healthcare data) are PHI-shaped and HMS's own. #808 (CRM boundary and system-of-record contract) must be answered **before** any of it moves, because it decides whether the console owns prospects or reflects them.
 
@@ -89,12 +139,14 @@ The point of this work is uplift, not transcription. These are capabilities the 
 
 | # | Capability | Why only here | Cost today |
 |---|---|---|---|
-| F1 | **Cross-product identity lookup** — one email resolves to every account that person holds, across products, with their tickets and tenants | A page-per-product admin makes you check products one at a time | Low — `/api/admin/users/search` exists |
+| F1 | **Cross-product staff identity lookup** — one email resolves to the accounts that person holds, with their tickets and tenants. **Staff-scoped**, see below | A page-per-product admin makes you check products one at a time | Low — `/api/admin/users/search` exists, though today it is off-rail and unnavigable |
 | F2 | **⌘K over the estate** — jump to a tenant, ticket, service or user by typing | Needs one shell over everything; impossible per-product | Medium |
 | F3 | **Health ↔ inbound correlation** — "tickets from Kora tripled while kora-api was degraded" | Both datasets are reachable; nothing else can join them | Medium |
 | F4 | **One audit timeline** — who changed what, in which product, including console writes | Per-product audit logs exist; the join does not | Medium |
 | F5 | **Erasure across products** — one GDPR request covering every product | Currently Mark8ly-only; a person's data does not respect product boundaries | High |
 | F6 | **Deploy/version visibility** — which build each product runs, from Kargo and ArgoCD | Operators currently discover a stalled promotion by noticing the UI is old | Low–medium |
+
+**F1 must be staff-scoped, and HMS is why.** A patient is not "a user of a product" — they are a Data Principal behind RLS, OpenFGA care-relationship checks, facility and department scoping, ABAC and consent-based sharing. An unscoped "find this person everywhere" would either bypass those checks or require break-glass with its own audit. HMS #808 adds that the CRM boundary is a **lawful-basis** boundary — marketing contacts sit under legitimate interest, clinical data under DPDP health processing — so joining them in one identity graph merges two lawful bases. Therefore: staff, operators and merchant-side users by default; end-user lookup opt-in per product; HMS patients never.
 
 **Deliberately deferred: impersonation / support sessions.** Genuinely useful, but it needs an audit and consent story before it needs a UI, and safeguards are easier to design in than to retrofit.
 
@@ -102,9 +154,25 @@ The point of this work is uplift, not transcription. These are capabilities the 
 
 **Every product rail gets the same four shapes** — tenants → tenant detail (including subscription control) → users → that product's own domain surfaces. The consistency is itself the improvement: today each product's admin section was designed separately.
 
-## Decomposition
+## Milestones
 
-Too large for one plan. Sequenced so each milestone produces something an operator can use:
+Too large for one plan. Sequenced so each milestone produces something an operator can use. Filed in `tesserix/tesserix-home` as issues under these milestones; the earlier P1–P5 sketch is retained below the table because its reasoning still holds.
+
+| Milestone | Platform-level | Product-level |
+|---|---|---|
+| **M0 Foundation** *(in progress)* | Capability model in `platform-auth` **(blocker)**; enforce it across 57 routes; correct `ESTATE` | Kora port and cutover, gated on `kora#161` |
+| **M1 Front doors** | One support surface (merges 6 routes); staff identity lookup; ⌘K; feedback contract | Fe3dr keeps its merchant↔customer tickets |
+| **M2 Migration** | Generic `[product]` routes; route-count ratchet in CI; one audit-log surface | Fe3dr merge targets signed *before* porting |
+| **M7 Operator queues** | Verbs for erasure, break-glass and outbox | Mark8ly SEA tax review, arbitrage appeals, migration fast-path |
+| **M8 Commercial** | Shared PHI-free plan/entitlement/price-book | Mark8ly subscription control; HMS catalogue and invoicing |
+| **M9 Outbound** | Announcements and promos; one template editor; migrate `/api/internal/*` | per-product template sets |
+| **M3 Growth** | Leads CRM moved to the platform rail; CRM boundary contract | — |
+| **M6 Platform ops** | One telemetry surface; deploy/version visibility; cross-product AI cost; one audit timeline | — |
+| **M10 Backend cleanup** | Dormant services; cross-DB grants; token scoping; unmounted endpoints and lossy metering | — |
+
+**M7 is the milestone that justifies the console.** Everything else improves on something that already works; M7 gives a home to work currently done with SQL and a spreadsheet.
+
+### Original sequencing notes
 
 **P1 — Inbound.** The platform home page becomes the cross-product ticket queue: product, tenant, submitter, waiting time, breach state. Health strip beneath it as context. Uses the kit's `QueueList`, whose opaque composite `key` fits `(product_id, ticket_number)` exactly. *Nothing new server-side; the endpoints exist.*
 
