@@ -217,12 +217,13 @@ export function Navbar() {
           ))}
         </div>
 
-        {/* Desktop CTA */}
-        <div className="hidden lg:flex lg:flex-1 lg:justify-end lg:gap-x-4">
-          <Button variant="ghost" asChild>
-            <Link href="/login">Sign in</Link>
-          </Button>
-        </div>
+        {/* Balances the logo's lg:flex-1 so the nav links stay centred.
+            This held the "Sign in" CTA until the marketing/console split: the
+            console is reached at its own URL, so a public marketing site no
+            longer advertises a super-admin login. Removing the element
+            outright rather than emptying it would leave `justify-between` to
+            push the links against the right edge. */}
+        <div className="hidden lg:flex lg:flex-1" aria-hidden="true" />
       </nav>
 
       {/* Mobile menu overlay */}
@@ -322,14 +323,6 @@ export function Navbar() {
             </div>
           </div>
 
-          {/* CTA buttons */}
-          <div className="pt-6 border-t space-y-3">
-            <Button variant="outline" asChild className="w-full">
-              <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
-                Sign in
-              </Link>
-            </Button>
-          </div>
         </div>
       </div>
     </header>
