@@ -104,11 +104,25 @@ export function extractRoles(claim: unknown): string[] {
 export async function verifyIdToken(
   idToken: string,
   config: ZitadelConfig,
+  /**
+   * The nonce generated at /auth/login. When supplied it MUST match the
+   * token's `nonce` claim — this is what makes a stolen or replayed
+   * authorization code useless, since the attacker cannot produce a token
+   * bound to a nonce only this browser holds. Omit only where no nonce was
+   * sent in the authorization request.
+   */
+  expectedNonce?: string,
 ): Promise<ZitadelIdentity> {
   const { payload } = await jwtVerify(idToken, jwks(config.issuer), {
     issuer: config.issuer,
     audience: config.clientId,
   });
+
+  if (expectedNonce !== undefined) {
+    if (payload.nonce !== expectedNonce) {
+      throw new Error("zitadel: id_token nonce mismatch");
+    }
+  }
 
   if (typeof payload.sub !== "string" || payload.sub.length === 0) {
     throw new Error("zitadel: id_token has no subject");
