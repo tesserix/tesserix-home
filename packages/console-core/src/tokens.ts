@@ -77,6 +77,68 @@ export const colors = {
   sidebarBorder: "#26272c",
 } as const;
 
+/**
+ * Dark palette. Same key set as `colors` — every token has a dark counterpart,
+ * enforced by the drift test, so a renderer can swap the whole map without
+ * discovering a hole at runtime.
+ *
+ * Not a naive inversion. The ground darkens further than the surfaces so cards
+ * still read as raised; the accents lighten so they hold contrast against a
+ * dark ground rather than disappearing into it.
+ */
+export const colorsDark: Record<keyof typeof colors, string> = {
+  background: "#0c0d0f",
+  foreground: "#ececee",
+  card: "#141518",
+  cardForeground: "#ececee",
+  popover: "#141518",
+  popoverForeground: "#ececee",
+
+  primary: "#ececee",
+  primaryForeground: "#141518",
+  secondary: "#1b1d21",
+  secondaryForeground: "#a4a5ad",
+
+  muted: "#1b1d21",
+  mutedForeground: "#a4a5ad",
+  foregroundSubtle: "#77787f",
+  accent: "#1f2126",
+  accentForeground: "#ececee",
+
+  destructive: "#e08a83",
+  destructiveForeground: "#141518",
+
+  border: "#26282d",
+  input: "#33353b",
+  ring: "#7ba0e8",
+
+  success: "#63b585",
+  successForeground: "#141518",
+  warning: "#cfa049",
+  warningForeground: "#141518",
+  error: "#e08a83",
+  errorForeground: "#141518",
+  info: "#7ba0e8",
+  infoForeground: "#141518",
+  successSoft: "#16241c",
+  warningSoft: "#262013",
+  errorSoft: "#291817",
+
+  chart1: "#ececee",
+  chart2: "#63b585",
+  chart3: "#cfa049",
+  chart4: "#7ba0e8",
+  chart5: "#a4a5ad",
+
+  sidebar: "#0f1013",
+  sidebarForeground: "#c9cad0",
+  sidebarPrimary: "#ececee",
+  sidebarPrimaryForeground: "#0f1013",
+  sidebarAccent: "#232529",
+  sidebarAccentForeground: "#ececee",
+  sidebarBorder: "#232529",
+};
+
 // Numeric spacing scale, in px.
 export const space = [0, 4, 8, 12, 16, 24, 32, 48, 64] as const;
 
