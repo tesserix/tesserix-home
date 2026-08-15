@@ -16,8 +16,16 @@ export interface ConsoleOidcConfig {
   readonly clientId: string;
   readonly clientSecret: string;
   readonly redirectUri: string;
-  /** TESSERIX org — login is scoped to it, and other orgs are refused. */
-  readonly orgId: string;
+  /**
+   * Organization whose users the console accepts, checked on the token's
+   * `urn:zitadel:iam:org:id` claim. Optional: unset means "any org, provided
+   * the roles are there".
+   *
+   * This is the user's HOME organization, not the org that owns the project.
+   * Those differ here — operators live in one org and `platform-console` is in
+   * another — and conflating them is what broke the first cutover attempt.
+   */
+  readonly internalOrgId?: string;
   /** Platform Console project — its audience scope carries the role claim. */
   readonly projectId: string;
 }
@@ -34,7 +42,7 @@ export function getOidcConfig(): ConsoleOidcConfig {
     clientId: required("ZITADEL_CLIENT_ID"),
     clientSecret: required("ZITADEL_CLIENT_SECRET"),
     redirectUri: required("ZITADEL_REDIRECT_URI"),
-    orgId: required("ZITADEL_INTERNAL_ORG_ID"),
+    internalOrgId: process.env.ZITADEL_INTERNAL_ORG_ID || undefined,
     projectId: required("ZITADEL_PROJECT_ID"),
   };
 }
@@ -42,20 +50,26 @@ export function getOidcConfig(): ConsoleOidcConfig {
 /**
  * Scopes requested at authorization.
  *
- * Beyond the standard three, two Zitadel-specific scopes do real work:
+ * `urn:zitadel:iam:org:project:id:{projectId}:aud` puts the Platform Console
+ * project in the token's audience, which is what guarantees its roles appear in
+ * the role claim. The project and application settings are supposed to ensure
+ * this too, but they are checkboxes in a UI and this is one string in code —
+ * and the failure mode when they are wrong is a perfectly valid token carrying
+ * no roles, which reads as an application bug.
  *
- * - `urn:zitadel:iam:org:id:{orgId}` pins the login to the TESSERIX org. Without
- *   it the login screen serves the instance's default organization, the
- *   org-level Google IdP is not offered, and a user who does sign in is
- *   provisioned into the wrong org — where they authenticate fine and are then
- *   refused by the console, which is a confusing failure to trace backwards.
+ * NO ORG SCOPE. An earlier version pinned login to the organization that owns
+ * the project (`urn:zitadel:iam:org:id:...`), on the assumption that operators
+ * would live there. They do not: the project sits in one org and every human
+ * account in another. Scoping login to the project's org made Zitadel try to
+ * authenticate people as members of an org they do not belong to, find nothing,
+ * fall through to auto-creation, and fail with `409 User already exists`
+ * against the globally-unique username they already hold elsewhere. Auto-linking
+ * cannot rescue that, because it searches within the org being signed into.
  *
- * - `urn:zitadel:iam:org:project:id:{projectId}:aud` puts the Platform Console
- *   project in the token's audience, which is what guarantees its roles appear
- *   in the role claim. The project and application settings are supposed to
- *   ensure this too, but they are three checkboxes in a UI and this is one
- *   string in code — and the failure mode when they are wrong is a perfectly
- *   valid token carrying no roles, which reads as an application bug.
+ * Without the scope, people authenticate in their home organization and the
+ * project's roles resolve regardless — role grants are project-scoped, not
+ * org-scoped. Which org a token came from is then checked separately, against
+ * `internalOrgId`, on the way back.
  */
 export function scopesFor(config: ConsoleOidcConfig): string {
   return [
@@ -63,7 +77,6 @@ export function scopesFor(config: ConsoleOidcConfig): string {
     "profile",
     "email",
     "offline_access",
-    `urn:zitadel:iam:org:id:${config.orgId}`,
     `urn:zitadel:iam:org:project:id:${config.projectId}:aud`,
   ].join(" ");
 }
