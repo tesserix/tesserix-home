@@ -30,6 +30,7 @@ export default async function ConsoleLayout({
           email={session?.email ?? ""}
           capabilities={showCapabilities ? toCapabilities(session?.roles ?? []) : []}
           showCapabilities={showCapabilities}
+          toolsBaseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"}
         />
         {/* Every console surface gets the same measure and gutters here rather
             than each page inventing its own. Without this, content sits flush

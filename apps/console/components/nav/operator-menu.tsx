@@ -3,6 +3,24 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronsUpDown } from "lucide-react";
 
+/**
+ * First letters of the first two whitespace-separated words of `name`,
+ * uppercased. Falls back to the first letter of `email` when there is no
+ * name, and to an empty string when neither yields anything — never an
+ * empty circle with stray characters.
+ */
+export function initialsFor(name: string, email: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length > 0) {
+    return words
+      .slice(0, 2)
+      .map((word) => word[0]!.toUpperCase())
+      .join("");
+  }
+  const trimmedEmail = email.trim();
+  return trimmedEmail ? trimmedEmail[0]!.toUpperCase() : "";
+}
+
 export interface OperatorMenuProps {
   readonly name: string;
   readonly email: string;
@@ -51,6 +69,7 @@ export function OperatorMenu({
   }, [open]);
 
   const displayName = name || email;
+  const initials = initialsFor(name, email);
 
   return (
     <div ref={containerRef} className="relative">
@@ -61,7 +80,15 @@ export function OperatorMenu({
         aria-expanded={open}
         className="flex items-center gap-2.5 rounded-md border border-border bg-background px-2.5 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
       >
-        <span className="truncate text-[13px] font-medium text-foreground">
+        {initials ? (
+          <span
+            aria-hidden="true"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-foreground"
+          >
+            {initials}
+          </span>
+        ) : null}
+        <span className="hidden truncate text-[13px] font-medium text-foreground sm:inline">
           {displayName}
         </span>
         <ChevronsUpDown
