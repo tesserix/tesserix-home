@@ -132,9 +132,13 @@ export const ESTATE: readonly EstateProduct[] = [
   {
     name: "Kora",
     context: "kora",
-    entries: 5,
+    // 4, down from 5: #139 retired Kora's audit trail into the estate-wide
+    // audit log, which is a PLATFORM surface and so is not counted in any
+    // product's rail. The capability did not leave the console — the rail entry
+    // did. Checked against koraNav.length in estate.test.ts.
+    entries: 4,
     migrated: true,
-    summary: "Food index, audit trail, feedback and users.",
+    summary: "Food index, feedback and users; its audit trail is in the estate audit log.",
   },
   {
     name: "HMS",

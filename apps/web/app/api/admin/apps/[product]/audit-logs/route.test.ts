@@ -11,7 +11,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listAuditLogs: vi.fn(),
   getCriticalEventCount: vi.fn(),
-  getAuditFilterOptions: vi.fn(),
   mark8lyQuery: vi.fn(),
   listKoraEvents: vi.fn(),
   homechefAdmin: vi.fn(),
@@ -19,7 +18,6 @@ const mocks = vi.hoisted(() => ({
 const {
   listAuditLogs,
   getCriticalEventCount,
-  getAuditFilterOptions,
   mark8lyQuery,
   listKoraEvents,
   homechefAdmin,
@@ -28,7 +26,6 @@ const {
 vi.mock("@/lib/db/mark8ly-audit", () => ({
   listAuditLogs: mocks.listAuditLogs,
   getCriticalEventCount: mocks.getCriticalEventCount,
-  getAuditFilterOptions: mocks.getAuditFilterOptions,
 }));
 vi.mock("@/lib/db/mark8ly", () => ({ mark8lyQuery: mocks.mark8lyQuery }));
 vi.mock("@/lib/api/kora-admin", () => ({ listKoraEvents: mocks.listKoraEvents }));
@@ -54,7 +51,13 @@ interface WireBody {
   entries: WireEntry[];
   failures: { source: string; message: string }[];
   summary: { criticalLast24h: number | null };
+  /**
+   * Not part of the contract — declared only so the tests below can assert it
+   * is ABSENT. `rows` was the retired mark8ly page's half of this response
+   * (#139); typing it as never-present would make those assertions unwritable.
+   */
   rows?: unknown[];
+  filterOptions?: unknown;
 }
 
 function call(product: string, query = "") {
@@ -118,7 +121,6 @@ function notConfigured(): Error {
 beforeEach(() => {
   vi.clearAllMocks();
   getCriticalEventCount.mockResolvedValue(3);
-  getAuditFilterOptions.mockResolvedValue({ actions: [], resourceTypes: [] });
   mark8lyQuery.mockResolvedValue({ rows: [] });
   listAuditLogs.mockResolvedValue([MARK8LY_ROW]);
   listKoraEvents.mockResolvedValue({ items: [KORA_EVENT], total: 1 });
@@ -415,13 +417,33 @@ describe("[product]/audit-logs — partial results across products", () => {
   });
 });
 
-describe("[product]/audit-logs — legacy mark8ly body", () => {
-  it("still serves the rows/filterOptions the mark8ly page reads", async () => {
+describe("[product]/audit-logs — the retired mark8ly body", () => {
+  // This block used to assert the OPPOSITE: that `rows` and `filterOptions`
+  // were still served, because /admin/apps/mark8ly/audit-logs rendered from
+  // them. That page is a redirect now (#139), so the fields are gone and their
+  // absence is what is worth holding — re-adding them would put a second,
+  // product-shaped response next to `entries` and start the divergence this
+  // endpoint was rewritten to end.
+  it("no longer serves the retired page\'s rows or filterOptions", async () => {
+    const res = await call("mark8ly");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WireBody;
+    expect(body.rows).toBeUndefined();
+    expect(body.filterOptions).toBeUndefined();
+    // Guards the guard: absence must be because the fields went, not because
+    // mark8ly returned nothing at all.
+    expect(body.entries).toHaveLength(1);
+  });
+
+  it("still serves the summary the product overview tile reads", async () => {
+    // The one part of the old body that survived, and NOT an oversight: the
+    // critical-events KPI tile on every product overview reads it, and those
+    // pages are not being retired. A 24-hour aggregate is also not derivable
+    // from the capped `entries` list.
     const res = await call("mark8ly", "?severity=critical&since_hours=168");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as WireBody & { filterOptions?: unknown; sinceHours: number };
-    expect(body.rows).toHaveLength(1);
-    expect(body.filterOptions).toBeDefined();
+    const body = (await res.json()) as WireBody & { sinceHours: number };
+    expect(body.summary.criticalLast24h).toBe(3);
     expect(body.sinceHours).toBe(168);
     expect(listAuditLogs).toHaveBeenCalledWith(
       expect.objectContaining({ severity: "critical", sinceHours: 168 }),

@@ -25,7 +25,7 @@
 // audit row.
 //
 // Response:
-//   200 { product, entries, failures, summary, sinceHours, generatedAt, ... }
+//   200 { product, entries, failures, summary, sinceHours, generatedAt }
 //   404 { error: "unsupported_product" }        product has no audit source
 //   501 { error: "not_configured", failures }   every source is unwired
 //   502 { error: "audit_unavailable", failures } every source failed
@@ -45,7 +45,7 @@ import {
   isNotConfigured,
   type AuditProduct,
   type AuditQuery,
-  type Mark8lyLegacyBody,
+  type Mark8lySeverity,
 } from "@/lib/audit/sources";
 import { logger } from "@/lib/logger";
 
@@ -61,6 +61,15 @@ interface SourceFailure {
   readonly message: string;
 }
 
+/**
+ * The whole response. There is no longer a second, mark8ly-shaped half of it.
+ *
+ * `rows` and `filterOptions` were carried alongside `entries` while
+ * `/admin/apps/mark8ly/audit-logs` still rendered from them; that page is
+ * retired (#139) and both are gone, along with the two DISTINCT scans that
+ * built `filterOptions` on every request. `summary` stays — the product
+ * overviews' critical-events tile reads it and they are not being retired.
+ */
 interface AuditResponseBody {
   readonly product: string;
   /**
@@ -79,10 +88,6 @@ interface AuditResponseBody {
   readonly summary: { readonly criticalLast24h: number | null };
   readonly sinceHours: number;
   readonly generatedAt: string;
-  /** @deprecated mark8ly-only, retired with the page in Task 3. */
-  readonly rows?: Mark8lyLegacyBody["rows"];
-  /** @deprecated mark8ly-only, retired with the page in Task 3. */
-  readonly filterOptions?: Mark8lyLegacyBody["filterOptions"];
 }
 
 const DEFAULT_LIMIT = 200;
@@ -143,7 +148,7 @@ export async function GET(
   const failures: SourceFailure[] = [];
   let everyFailureIsUnconfigured = true;
   let succeeded = 0;
-  let legacy: Mark8lyLegacyBody | undefined;
+  let severity: Mark8lySeverity | undefined;
 
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i];
@@ -151,7 +156,7 @@ export async function GET(
     if (outcome.status === "fulfilled") {
       succeeded++;
       entries.push(...outcome.value.entries);
-      if (outcome.value.legacy) legacy = outcome.value.legacy;
+      if (outcome.value.severity) severity = outcome.value.severity;
       continue;
     }
     const reason: unknown = outcome.reason;
@@ -182,10 +187,9 @@ export async function GET(
     product,
     entries: entries.slice(0, query.limit),
     failures,
-    summary: { criticalLast24h: legacy ? legacy.criticalLast24h : null },
+    summary: { criticalLast24h: severity ? severity.criticalLast24h : null },
     sinceHours: query.sinceHours,
     generatedAt: new Date().toISOString(),
-    ...(legacy ? { rows: legacy.rows, filterOptions: legacy.filterOptions } : {}),
   };
   return NextResponse.json(body);
 }

@@ -25,7 +25,11 @@ export function isNavGroup(e: NavEntry): e is NavGroup {
 export const koraNav: readonly NavEntry[] = [
   { name: "Overview", route: "kora.overview", icon: "layout-dashboard" },
   { name: "Food index", route: "kora.foods", icon: "database" },
-  { name: "Audit trail", route: "kora.audit", icon: "scroll-text" },
+  // No "Audit trail" entry: #139 folded Kora's trail into the estate-wide
+  // `platform.auditLog`, so `kora.audit` is `retired` in routes.ts and a rail
+  // item would be a door onto a redirect. The route id is kept there because
+  // mobile still serves that screen standalone, and it records the web path
+  // this app's redirect points away from. Guarded in nav.test.ts.
   { name: "Feedback", route: "kora.feedback", icon: "message-square" },
   { name: "Users", route: "kora.users", icon: "users" },
 ];

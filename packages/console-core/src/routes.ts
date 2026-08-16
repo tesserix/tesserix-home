@@ -107,7 +107,16 @@ const ROUTES = {
   // `pending` the rail links to in-app routes that are not there — five 404s.
   "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true },
   "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true },
-  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", pending: true },
+  // RETIRED, not pending (#139). Kora's audit trail is one source in the
+  // console's estate-wide `platform.auditLog`, and there is no Kora-scoped audit
+  // page coming to the console — `pending` would promise one. `/admin/apps/kora/audit`
+  // is a redirect to /platform/audit-log?source=kora now; the `web` path stays
+  // recorded because it is the one place that says where the capability used to
+  // live, exactly as `platform.supportAnalytics` does after #133.
+  //
+  // `mobile` also stays: retirement is per-renderer, and expo-router still
+  // serves that screen standalone.
+  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true },
   "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true },
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until

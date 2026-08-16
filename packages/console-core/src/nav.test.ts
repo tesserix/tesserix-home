@@ -23,6 +23,30 @@ describe("koraNav", () => {
       expect(() => webPath(item.route)).not.toThrow();
     }
   });
+
+  it("offers no retired surface", () => {
+    // `RouteEntry.retired` says renderers must leave retired ids out of
+    // navigation entirely, and until #139 only platformNav was checked — which
+    // held because only a platform route had ever been retired. `kora.audit` is
+    // the first product one, so the rule needed enforcing where it now applies.
+    const retired = collectItems(koraNav)
+      .filter((item) => isRetired(item.route))
+      .map((item) => `${item.name} (${item.route})`);
+    expect(
+      retired,
+      `Retired routes must be dropped from the rail, not left in it: ` +
+        `${retired.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("no longer carries the Audit trail", () => {
+    // #139 folded Kora's trail into the estate-wide Audit log. Naming it rather
+    // than relying on the count means re-adding it fails with the reason.
+    const names = collectItems(koraNav).map((item) => item.name);
+    expect(names).not.toContain("Audit trail");
+    // Guards the guard: an empty rail would satisfy the line above.
+    expect(names).toContain("Food index");
+  });
 });
 
 describe("platformNav", () => {

@@ -76,6 +76,41 @@ const nextConfig: NextConfig = {
         destination: `${CONSOLE_ORIGIN}/platform/tickets`,
         permanent: true,
       },
+      // The three product-scoped audit pages, retired into the console's one
+      // estate-wide timeline (#139). Deleted here, so without these a bookmark
+      // — or this app's own nav-config entries, which still point at them —
+      // 404s.
+      //
+      // Each carries `?source=` rather than landing on the unfiltered estate.
+      // These were product-scoped surfaces: dropping the product would widen a
+      // bookmark from "Kora's audit trail" to "everything anyone has ever
+      // done", which looks like it worked. Same argument as the ticket queue's
+      // filters above, and the ids are the console's own `AUDIT_SOURCES`.
+      //
+      // The old pages' own params (`?severity` on mark8ly, `?target_id` and
+      // `?offset` on kora) get re-appended by `appendParamsToQuery` and are
+      // ignored by the console, which offers neither filter. Next has no way to
+      // drop an unconsumed param, and the alternative — no redirect — is worse
+      // than a stale query key. Asserted in next.config.test.ts.
+      {
+        source: "/admin/apps/mark8ly/audit-logs",
+        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=mark8ly`,
+        permanent: true,
+      },
+      {
+        source: "/admin/apps/kora/audit",
+        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=kora`,
+        permanent: true,
+      },
+      // `homechef`, not `fe3dr`: the console's source id is the product's
+      // CONTEXT key, which is what the aggregate endpoint dispatches on. The
+      // display name differs and is resolved from ESTATE at render time.
+      {
+        source: "/admin/apps/homechef/audit-logs",
+        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=homechef`,
+        permanent: true,
+      },
+
       // Deliberately NOT /admin/support/live-chat: #197 owns that surface, it
       // has no console equivalent yet, and it must keep working here.
     ];

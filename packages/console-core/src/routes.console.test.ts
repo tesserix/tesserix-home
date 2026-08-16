@@ -120,12 +120,24 @@ describe("pending reflects what the console actually serves", () => {
     expect(isPending("platform.auditLog")).toBe(false);
   });
 
-  it("keeps kora.audit pending until Task 3 retires it", () => {
-    // Recorded so the sequencing is visible from here. `platform.auditLog`
-    // subsumes Kora's audit page, but flipping `kora.audit` to `retired` goes
-    // with the redirect and the page deletion — not with the surface landing.
-    expect(isRetired("kora.audit")).toBe(false);
-    expect(isPending("kora.audit")).toBe(true);
+  it("reports kora.audit as retired rather than pending", () => {
+    // The other half of the test this replaces, which held `kora.audit` pending
+    // "until Task 3 retires it" so the sequencing was visible from here. Task 3
+    // is this change: the page is deleted, `/admin/apps/kora/audit` redirects to
+    // /platform/audit-log?source=kora, and Kora's trail is one source in the
+    // merged timeline.
+    //
+    // `retired`, not `pending`, for the same reason as `platform.supportAnalytics`:
+    // `pending` would say "a Kora audit page is coming to the console". None is.
+    // The capability is here already, in a surface that spans every product.
+    expect(isRetired("kora.audit")).toBe(true);
+    expect(isPending("kora.audit")).toBe(false);
+  });
+
+  it("still records where Kora's audit page used to live", () => {
+    // Retiring an id must not erase what it retired. `/admin/apps/kora/audit` is
+    // the path next.config.ts redirects, and this is the one place that says so.
+    expect(webPath("kora.audit")).toBe("/admin/apps/kora/audit");
   });
 
   it("still reports the unbuilt surfaces as pending", () => {
@@ -185,7 +197,23 @@ describe("pending reflects what the console actually serves", () => {
 
   it("retires nothing else", () => {
     // Guards the guard: `isRetired` returning true for everything would satisfy
-    // the assertion above while quietly emptying the rail.
-    expect(ROUTE_IDS.filter(isRetired)).toEqual(["platform.supportAnalytics"]);
+    // the assertions above while quietly emptying both rails. Listed rather
+    // than counted so adding a third is a decision someone writes down here.
+    expect(ROUTE_IDS.filter(isRetired)).toEqual([
+      "kora.audit",
+      "platform.supportAnalytics",
+    ]);
+  });
+
+  it("does not retire the other three product audit pages into route ids", () => {
+    // #139 also deleted /admin/apps/mark8ly/audit-logs and
+    // /admin/apps/homechef/audit-logs, and there is deliberately no
+    // `mark8ly.audit` / `homechef.audit` id for them. Inventing ids for pages
+    // that no longer exist, purely to mark them retired, would record IA the
+    // estate never had. `kora.audit` is in the table only because it was
+    // already there — Kora's rail is modelled here, the other products' are not.
+    const ids: readonly string[] = ROUTE_IDS;
+    expect(ids).not.toContain("mark8ly.audit");
+    expect(ids).not.toContain("homechef.audit");
   });
 });
