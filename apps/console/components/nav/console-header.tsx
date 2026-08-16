@@ -22,7 +22,7 @@ export function ConsoleHeader({
   email,
   capabilities,
   showCapabilities,
-}: ConsoleHeaderProps) {
+}: ConsoleHeaderProps): React.JSX.Element {
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-end gap-2 border-b border-border bg-background/95 px-6 backdrop-blur sm:px-8">
       <NotificationBell />

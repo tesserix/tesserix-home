@@ -74,30 +74,30 @@ export function OperatorMenu({
         <div
           role="dialog"
           aria-label="Operator menu"
-          className="absolute bottom-full left-0 right-0 z-20 mb-1 overflow-hidden rounded-md border border-sidebar-border bg-sidebar shadow-lg"
+          className="absolute right-0 top-full z-20 mt-1 w-64 overflow-hidden rounded-md border border-border bg-popover shadow-lg"
         >
-          <div className="border-b border-sidebar-border px-2.5 py-2">
-            <p className="truncate text-[13px] text-sidebar-foreground/75">{email}</p>
+          <div className="border-b border-border px-2.5 py-2">
+            <p className="truncate text-[13px] text-muted-foreground">{email}</p>
           </div>
 
-          <div className="border-b border-sidebar-border px-2.5 py-2">
+          <div className="border-b border-border px-2.5 py-2">
             {showCapabilities ? (
               <ul className="space-y-0.5">
                 {capabilities.map((capability) => (
                   <li
                     key={capability}
-                    className="text-[13px] text-sidebar-foreground/75"
+                    className="text-[13px] text-muted-foreground"
                   >
                     {capability}
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-[13px] text-sidebar-foreground/75">
+              <p className="text-[13px] text-muted-foreground">
                 Capabilities are not recorded on this session.
               </p>
             )}
-            <p className="mt-1 text-[11px] text-sidebar-foreground/50">
+            <p className="mt-1 text-[11px] text-muted-foreground">
               Reflects the session, which can lag Zitadel until the next
               sign-in.
             </p>
@@ -105,7 +105,7 @@ export function OperatorMenu({
 
           <a
             href="/auth/logout"
-            className="block px-2.5 py-2 text-[13px] text-sidebar-foreground/75 transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+            className="block px-2.5 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             Sign out
           </a>

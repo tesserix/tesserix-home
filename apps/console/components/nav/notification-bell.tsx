@@ -95,13 +95,13 @@ function NotificationRow({ item }: { item: NotificationItem }) {
   return (
     <Link
       href={`/platform/tickets/${item.ticketId}`}
-      className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-[13px] transition-colors hover:bg-sidebar-accent/60"
+      className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-[13px] transition-colors hover:bg-accent"
     >
-      <span className="font-medium text-sidebar-foreground">
+      <span className="font-medium text-foreground">
         {leadingPhrase(item)} · {item.ticketNumber}
       </span>
-      <span className="truncate text-sidebar-foreground/75">{item.subject}</span>
-      <span className="text-[11px] text-sidebar-foreground/50">
+      <span className="truncate text-muted-foreground">{item.subject}</span>
+      <span className="text-[11px] text-muted-foreground">
         {formatRelativeTime(item.at)}
       </span>
     </Link>
@@ -200,10 +200,10 @@ export function NotificationBell() {
         <div
           role="dialog"
           aria-label="Notifications"
-          className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-md border border-sidebar-border bg-sidebar shadow-lg"
+          className="absolute right-0 top-full z-20 mt-1 max-h-80 w-80 overflow-y-auto rounded-md border border-border bg-popover shadow-lg"
         >
           {items.length === 0 ? (
-            <p className="px-3 py-4 text-center text-[13px] text-sidebar-foreground/60">
+            <p className="px-3 py-4 text-center text-[13px] text-muted-foreground">
               Nothing waiting.
             </p>
           ) : (
