@@ -6,10 +6,13 @@ import { DetailLayout } from "@/components/kit/detail-layout";
 // `states.tsx` is a `"use client"` module whose exports resolve to client
 // references here. Type-only today, but the import path is the invariant —
 // see components/kit/use-client-boundary.test.ts.
-import { type SurfaceState } from "@/components/kit/surface-state";
+import {
+  resolveState,
+  toSurfaceError,
+  type SurfaceState,
+} from "@/components/kit/surface-state";
 import { fetchTicketDetail, PlatformApiError } from "@/lib/platform-api";
 import { severityOf, type TicketDetail } from "@/lib/tickets";
-import { triageState } from "@/lib/triage";
 import { requiresCapability } from "@/lib/internal-access";
 import { TicketThread } from "./ticket-thread";
 import { ReplyForm, StatusControl } from "./respond-controls";
@@ -24,6 +27,34 @@ import { TenantLink } from "./tenant-link";
  * server actions assert it again regardless, because hiding a button is
  * UX, not authorization.
  */
+/**
+ * Which state the detail surface is in.
+ *
+ * The same defect the queue had, and fixed the same way. This called
+ * `triageState(error, null)`, which returns only
+ * `instrumentation-unavailable | error | ready` — so a null detail with no
+ * error resolved to `ready` and rendered an empty `DetailLayout`: a title
+ * saying "Ticket", an empty summary rail and no tabs, with nothing anywhere
+ * saying the record failed to arrive.
+ *
+ * `notFound()` covers a 404 before this runs, so a null detail here means the
+ * upstream returned something that parsed to nothing — `empty` is the honest
+ * reading, and `DetailLayout` renders its own copy for it.
+ *
+ * Not `filtered`: a record page has no filters to clear.
+ */
+export function detailState(input: {
+  error: unknown;
+  detail: TicketDetail | null;
+}): SurfaceState {
+  return resolveState({
+    isLoading: false,
+    error: toSurfaceError(input.error),
+    rows: input.detail ? [input.detail] : [],
+    filtered: false,
+  });
+}
+
 export default async function TicketDetailPage({
   params,
 }: {
@@ -47,7 +78,7 @@ export default async function TicketDetailPage({
   const canRespond =
     !requiresCapability() || hasCapability(session?.roles, "respond");
 
-  const state: SurfaceState = triageState(error, null);
+  const state: SurfaceState = detailState({ error, detail });
 
   if (!detail) {
     return (
