@@ -114,4 +114,67 @@ describe("ConsoleCommandPalette", () => {
       await screen.findByRole("option", { name: /Platform · Tickets/i }),
     ).toBeInTheDocument();
   });
+
+  it("navigates on selecting the built ticket queue, then closes and clears the query", async () => {
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tickets",
+    );
+    const queue = await screen.findByRole("option", { name: /Platform · Tickets/i });
+    await user.click(queue);
+
+    expect(push).toHaveBeenCalledWith("/platform/tickets");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    // Reopening must not show the previous search — the query was cleared.
+    mockSearch([]);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    expect(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+    ).toHaveValue("");
+  });
+
+  it("opens a tool externally instead of pushing a route", async () => {
+    mockSearch([]);
+    vi.stubGlobal("open", vi.fn());
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "grafana",
+    );
+    const tool = await screen.findByRole("option", { name: /Grafana/i });
+    await user.click(tool);
+
+    expect(window.open).toHaveBeenCalledWith(
+      "https://grafana.tesserix.app",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when a pending route is selected", async () => {
+    mockSearch([]);
+    vi.stubGlobal("open", vi.fn());
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "break",
+    );
+    const pending = await screen.findByRole("option", { name: /Break Glass/i });
+    await user.click(pending);
+
+    expect(push).not.toHaveBeenCalled();
+    expect(window.open).not.toHaveBeenCalled();
+  });
 });
