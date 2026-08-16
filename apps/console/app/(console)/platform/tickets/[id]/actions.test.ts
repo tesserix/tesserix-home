@@ -81,6 +81,64 @@ describe("replyToTicket", () => {
   });
 });
 
+describe("replyToTicket with a transition", () => {
+  it("sends the reply and the status as ONE request", async () => {
+    signIn(["read", "respond"]);
+    vi.mocked(postTicketReply).mockResolvedValue(undefined);
+
+    const result = await replyToTicket(TICKET_ID, "Fixed — refund is on its way.", "resolved");
+
+    expect(result).toEqual({ ok: true });
+    expect(postTicketReply).toHaveBeenCalledTimes(1);
+    expect(postTicketReply).toHaveBeenCalledWith(
+      TICKET_ID,
+      { content: "Fixed — refund is on its way.", newStatus: "resolved" },
+      "tx_session=abc",
+    );
+    // The whole point of the combined call: no second round trip that could
+    // leave the reply sent and the ticket still open.
+    expect(patchTicketStatus).not.toHaveBeenCalled();
+  });
+
+  it("sends no status at all when the operator changes none", async () => {
+    signIn(["read", "respond"]);
+    vi.mocked(postTicketReply).mockResolvedValue(undefined);
+
+    await replyToTicket(TICKET_ID, "On it.");
+
+    const payload = vi.mocked(postTicketReply).mock.calls[0][1];
+    expect(payload).toEqual({ content: "On it." });
+    // `toEqual` ignores an explicitly-undefined key, so assert the key is
+    // absent outright — a payload carrying `newStatus: undefined` is not the
+    // same wire message as one without it.
+    expect(Object.keys(payload)).toEqual(["content"]);
+  });
+
+  it("rejects a transition outside the contract without sending the reply", async () => {
+    signIn(["read", "respond"]);
+    const result = await replyToTicket(TICKET_ID, "On it.", "reopened");
+    expect(result).toEqual({ ok: false, message: `"reopened" is not a ticket status.` });
+    expect(postTicketReply).not.toHaveBeenCalled();
+  });
+
+  it("still re-asserts the respond capability before the combined call", async () => {
+    signIn(["read"]);
+    const result = await replyToTicket(TICKET_ID, "On it.", "resolved");
+    expect(result.ok).toBe(false);
+    expect(postTicketReply).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 10,000-character ceiling when a transition is attached", async () => {
+    signIn(["read", "respond"]);
+    const result = await replyToTicket(TICKET_ID, "x".repeat(10_001), "resolved");
+    expect(result).toEqual({
+      ok: false,
+      message: "Replies are limited to 10,000 characters.",
+    });
+    expect(postTicketReply).not.toHaveBeenCalled();
+  });
+});
+
 describe("changeTicketStatus", () => {
   it("patches a valid status and revalidates", async () => {
     signIn(["read", "respond"]);

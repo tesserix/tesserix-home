@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PlatformApiError } from "./platform-api";
-import { parseTickets, severityOf, ticketKey, parseTicketDetail, isTicketStatus } from "./tickets";
+import {
+  parseTickets,
+  severityOf,
+  ticketKey,
+  parseTicketDetail,
+  isTicketStatus,
+  isTerminalStatus,
+} from "./tickets";
 
 const PAYLOAD = {
   summary: { open: 23, inProgress: 4, resolvedThisWeek: 11, urgentOpen: 4 },
@@ -180,5 +187,23 @@ describe("isTicketStatus", () => {
   it("rejects anything else", () => {
     expect(isTicketStatus("reopened")).toBe(false);
     expect(isTicketStatus("")).toBe(false);
+  });
+});
+
+describe("isTerminalStatus", () => {
+  it("treats resolved and closed as terminal", () => {
+    expect(isTerminalStatus("resolved")).toBe(true);
+    expect(isTerminalStatus("closed")).toBe(true);
+  });
+
+  it("leaves live tickets alone", () => {
+    expect(isTerminalStatus("open")).toBe(false);
+    expect(isTerminalStatus("in_progress")).toBe(false);
+    expect(isTerminalStatus("")).toBe(false);
+  });
+
+  it("ignores casing, as the API carries the status through unnormalised", () => {
+    expect(isTerminalStatus("Resolved")).toBe(true);
+    expect(isTerminalStatus("CLOSED")).toBe(true);
   });
 });

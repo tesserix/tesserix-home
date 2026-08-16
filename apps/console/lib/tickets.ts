@@ -149,6 +149,24 @@ export function isTicketStatus(value: string): value is TicketStatus {
   return (TICKET_STATUSES as readonly string[]).includes(value);
 }
 
+/**
+ * Statuses that end the conversation.
+ *
+ * A terminal ticket gets an explicit Reopen affordance rather than a status
+ * dropdown that happens to contain "open": the operator's intent there is
+ * "reopen this", not "pick a status", and a dropdown makes reopening look
+ * like an edit to a field rather than a decision.
+ *
+ * Matched case-insensitively for the same reason `severityOf` is: the API
+ * carries the status through as a free string, so a differently-cased value
+ * must not silently fall out of the terminal set.
+ */
+const TERMINAL_STATUSES: readonly string[] = ["resolved", "closed"];
+
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.includes(status.toLowerCase());
+}
+
 export interface TicketReply {
   readonly id: string;
   readonly authorType: "merchant" | "platform_admin";

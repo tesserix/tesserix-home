@@ -35,9 +35,19 @@ async function withRespond(
   }
 }
 
+/**
+ * Send a reply, optionally transitioning the ticket in the same request.
+ *
+ * `newStatus` is part of the reply endpoint's contract, so "reply and resolve"
+ * is ONE call. Doing it as a reply followed by a PATCH can half-fail — the
+ * customer gets an answer on a ticket that stays open, or worse the ticket
+ * closes under a reply that never landed — and there is no transaction across
+ * two HTTP calls to put that right.
+ */
 export async function replyToTicket(
   ticketId: string,
   content: string,
+  newStatus?: string,
 ): Promise<TicketActionResult> {
   const trimmed = content.trim();
   if (trimmed.length === 0) {
@@ -46,8 +56,19 @@ export async function replyToTicket(
   if (trimmed.length > MAX_REPLY_LENGTH) {
     return { ok: false, message: "Replies are limited to 10,000 characters." };
   }
+  // Validated here rather than left to the API: because this is one request,
+  // an unrecognised status would reject the reply along with it.
+  if (newStatus !== undefined && !isTicketStatus(newStatus)) {
+    return { ok: false, message: `"${newStatus}" is not a ticket status.` };
+  }
+  // Built as two whole objects rather than by assigning `newStatus: undefined`:
+  // `JSON.stringify` drops an undefined value, but the key would still be
+  // there for anything that inspects the payload, and "no transition" must be
+  // indistinguishable from a plain reply.
+  const payload =
+    newStatus === undefined ? { content: trimmed } : { content: trimmed, newStatus };
   const result = await withRespond(
-    (cookieHeader) => postTicketReply(ticketId, { content: trimmed }, cookieHeader),
+    (cookieHeader) => postTicketReply(ticketId, payload, cookieHeader),
     "The reply was not saved.",
   );
   if (result.ok) {
