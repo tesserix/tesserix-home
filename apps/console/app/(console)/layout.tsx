@@ -3,6 +3,13 @@ import { ConsoleSidebar } from "@/components/nav/sidebar";
 import { ConsoleHeader } from "@/components/nav/console-header";
 import { requiresCapability } from "@/lib/internal-access";
 
+// Every route in this group reads the session cookie to render operator
+// identity in the header, and middleware already refuses unauthenticated
+// requests before they reach here — so there is no valid cached response to
+// serve. Without this, `next build` tries to prerender "/" statically and
+// `cookies()` throws because there is no request to read it from.
+export const dynamic = "force-dynamic";
+
 export default async function ConsoleLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
