@@ -6,7 +6,9 @@ import {
   INTERNAL_TOOLS,
   type InternalTool,
   toolUrl,
+  routeCapability,
 } from "@tesserix/console-core";
+import type { Capability } from "@tesserix/platform-auth";
 
 /**
  * The command palette's search domain.
@@ -28,7 +30,17 @@ export interface SearchEntry {
   readonly external: boolean;
   readonly disabled: boolean;
   readonly keywords: readonly string[];
-  readonly capability: string;
+  /**
+   * The capability an operator must hold to SEE this entry.
+   *
+   * `Capability`, not `string`: when this was a bare `string`, all three
+   * builders could sit on the same hardcoded "read" — the console entry
+   * ticket everyone holds — and `visibleTo` filtered against a constant
+   * without anything complaining. The narrow type does not by itself stop a
+   * constant, but it does stop a typo, and it makes the value's provenance
+   * (the Zitadel role contract) legible at the field.
+   */
+  readonly capability: Capability;
 }
 
 /**
@@ -87,6 +99,12 @@ export function routeLabel(id: RouteId): string {
  * leave the palette looking like the console has one page, and an operator
  * searching for a route that is on the roadmap but not built deserves "not
  * yet" rather than "not found".
+ *
+ * Capability comes from the route table, not from here: which capability a
+ * surface needs is part of its identity, and a second mapping in this file
+ * would drift from the one in `console-core`. Most routes resolve to the
+ * `read` default; the handful that do not are the ones an operator without
+ * them must not see advertised.
  */
 export function routeEntries(): SearchEntry[] {
   return ROUTE_IDS.map((id) => {
@@ -100,7 +118,7 @@ export function routeEntries(): SearchEntry[] {
       external: false,
       disabled: isPending(id),
       keywords: [id, first, second].filter((part): part is string => Boolean(part)),
-      capability: "read",
+      capability: routeCapability(id),
     };
   });
 }
@@ -118,6 +136,12 @@ function toolHint(tool: InternalTool): string {
  *
  * Always external and always enabled: these are plain links to hosts the
  * console does not own, so there is no "pending" state to represent.
+ *
+ * `read` here is deliberate, not the oversight the routes carried. These are
+ * outbound links to Grafana, Zitadel and the like; the console grants nothing
+ * by naming them, and each tool enforces its own authorization on arrival.
+ * Hiding a link the operator may well be able to open would be a worse guess
+ * than showing it.
  */
 export function toolEntries(baseDomain: string): SearchEntry[] {
   return INTERNAL_TOOLS.map((tool) => ({
@@ -129,7 +153,8 @@ export function toolEntries(baseDomain: string): SearchEntry[] {
     external: true,
     disabled: false,
     keywords: toolKeywords(tool),
-    capability: "read",
+    capability: "read", // deliberate — see the doc comment above
+
   }));
 }
 
@@ -138,6 +163,11 @@ export function toolEntries(baseDomain: string): SearchEntry[] {
  *
  * Links by `id` (a stable uuid), never by `ticket_number` — ticket numbers
  * are scoped per product and are not guaranteed unique across the queue.
+ *
+ * `read` is deliberate and matches `platform.tickets`: a ticket is readable by
+ * anyone who can read the queue it came from. Replying to it needs `respond`,
+ * but that is asserted at the action on the detail surface, not at the search
+ * result — an operator who can read a ticket should be able to find it.
  */
 export function ticketEntry(row: TicketSearchRow): SearchEntry {
   return {
@@ -155,7 +185,8 @@ export function ticketEntry(row: TicketSearchRow): SearchEntry {
       row.submitted_by_email,
       row.product_id,
     ],
-    capability: "read",
+    capability: "read", // deliberate — see the doc comment above
+
   };
 }
 

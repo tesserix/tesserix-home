@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ROUTE_IDS } from "@tesserix/console-core";
 import {
   MIN_TICKET_QUERY,
   routeEntries,
@@ -44,6 +45,38 @@ describe("routeEntries", () => {
   it("keeps the raw dotted route id in keywords alongside the split label", () => {
     const breakGlass = routeEntries().find((e) => e.id === "route:platform.breakGlass");
     expect(breakGlass?.keywords).toContain("platform.breakGlass");
+  });
+
+  it("carries each route's declared capability rather than a constant", () => {
+    // The bug this replaced: all three builders hardcoded "read", the entry
+    // ticket every internal operator holds, so `visibleTo` filtered against a
+    // constant and could only hide everything or nothing.
+    const entries = routeEntries();
+    const breakGlass = entries.find((e) => e.id === "route:platform.breakGlass");
+    const dashboard = entries.find((e) => e.id === "route:platform.dashboard");
+    expect(breakGlass?.capability).toBe("rotate-credentials");
+    expect(dashboard?.capability).toBe("read");
+  });
+
+  it("still emits exactly one entry per route id", () => {
+    // The capability field must not add or drop palette entries.
+    const entries = routeEntries();
+    expect(entries.length).toBe(ROUTE_IDS.length);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(ROUTE_IDS.length);
+  });
+});
+
+describe("routeEntries under capability enforcement", () => {
+  it("hides a route whose capability the operator does not hold", () => {
+    const readOnly = visibleTo(routeEntries(), ["read"], true);
+    expect(readOnly.some((e) => e.id === "route:platform.breakGlass")).toBe(false);
+    // and the ordinary routes are still there — this is not "hide everything"
+    expect(readOnly.some((e) => e.id === "route:platform.tickets")).toBe(true);
+  });
+
+  it("shows it to an operator who holds that capability", () => {
+    const rotator = visibleTo(routeEntries(), ["read", "rotate-credentials"], true);
+    expect(rotator.some((e) => e.id === "route:platform.breakGlass")).toBe(true);
   });
 });
 
