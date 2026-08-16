@@ -94,6 +94,16 @@ describe("GET /api/notifications", () => {
     const body = await res.json();
     expect(JSON.stringify(body)).not.toContain("password");
   });
+
+  it("refuses GET when the session is null", async () => {
+    // Middleware already gates /api/*, but a surface leaning on routing for
+    // authorization stops being safe the moment the matcher changes. The handler
+    // must fail closed on its own.
+    vi.mocked(getCurrentSession).mockResolvedValue(null);
+    const res = await GET();
+    expect(res.status).toBe(403);
+    expect(recentTicketRows).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/notifications", () => {
@@ -118,6 +128,16 @@ describe("POST /api/notifications", () => {
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
     const res = await POST();
     expect(res.status).toBe(501);
+    expect(writeLastSeenAt).not.toHaveBeenCalled();
+  });
+
+  it("refuses POST when the session is null", async () => {
+    // Middleware already gates /api/*, but a surface leaning on routing for
+    // authorization stops being safe the moment the matcher changes. The handler
+    // must fail closed on its own.
+    vi.mocked(getCurrentSession).mockResolvedValue(null);
+    const res = await POST();
+    expect(res.status).toBe(403);
     expect(writeLastSeenAt).not.toHaveBeenCalled();
   });
 });
