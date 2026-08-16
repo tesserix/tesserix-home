@@ -67,3 +67,29 @@ describe("OperatorMenu", () => {
     expect(screen.queryByRole("link", { name: /sign out/i })).not.toBeInTheDocument();
   });
 });
+
+describe("OperatorMenu avatar", () => {
+  it("shows initials derived from the name", async () => {
+    render(<OperatorMenu {...PROPS} name="Mahesh Sangawar" />);
+    expect(screen.getByText("MS")).toBeInTheDocument();
+  });
+
+  it("falls back to the email's first letter when there is no name", () => {
+    render(<OperatorMenu {...PROPS} name="" email="asha@example.com" />);
+    expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("hides the initials from screen readers, since the name is already there", () => {
+    // The trigger's accessible name already carries the identity; announcing
+    // "MS" as well would read the operator's identity out twice.
+    render(<OperatorMenu {...PROPS} name="Mahesh Sangawar" />);
+    expect(screen.getByText("MS")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps the name visible beside the avatar", () => {
+    render(<OperatorMenu {...PROPS} name="Mahesh Sangawar" />);
+    expect(
+      screen.getByRole("button", { name: /Mahesh Sangawar/ }),
+    ).toBeInTheDocument();
+  });
+});
