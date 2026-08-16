@@ -198,3 +198,45 @@ jobs:
         with:
           sarif_file: trivy-console-results.sarif
           category: console
+
+  console-e2e:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.17.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
+
+      # Console imports @tesserix/platform-auth and @tesserix/console-core,
+      # whose package.json entries point at dist/. Build them first, as
+      # build-and-push does above.
+      - name: Build workspace packages
+        run: pnpm --filter './packages/*' build
+
+      - name: Install Playwright (Chromium only)
+        run: npx playwright install --with-deps chromium
+
+      - name: Console browser tests
+        run: pnpm --filter console e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-playwright-report
+          path: apps/console/playwright-report/
+          retention-days: 7
