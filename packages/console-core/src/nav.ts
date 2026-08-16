@@ -90,6 +90,20 @@ export const platformNav: readonly NavEntry[] = [
     name: "Governance",
     icon: "shield",
     items: [
+      // First in Governance, and above the queues rather than below them: this
+      // is the group's headline surface. The rest of Governance is work to be
+      // done (an outbox to drain, an erasure queue to clear); the audit log is
+      // the record of work already done, which is what makes the rest
+      // accountable. #139 merged three product-scoped audit pages into it.
+      //
+      // Not in Operate, unlike Identity lookup. That one is reached mid-ticket;
+      // this one is opened to answer "who did this, and when" — the same
+      // question the GDPR queue and break-glass exist to make answerable.
+      //
+      // `scroll-text` matches `kora.audit`'s icon on purpose: the same kind of
+      // surface should look the same in both rails, and Task 3 retires the Kora
+      // entry into this one.
+      { name: "Audit log", route: "platform.auditLog", icon: "scroll-text" },
       { name: "Outbox", route: "platform.outbox", icon: "inbox" },
       { name: "Notification log", route: "platform.notificationLog", icon: "mail" },
       { name: "Lead templates", route: "platform.leadTemplates", icon: "mail" },

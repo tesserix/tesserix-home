@@ -9,7 +9,23 @@ import type { Capability } from "@tesserix/platform-auth";
 // Route identity lives here, not in either app. This is what prevents the
 // mediation/messaging and audit-log/audit-logs drift between web and mobile.
 interface RouteEntry {
-  web: string;
+  /**
+   * Path in `apps/web`. Optional, and the absence is meaningful: it records
+   * that apps/web never served this surface, so there is nothing here being
+   * retired and nothing for a reader to go and look at.
+   *
+   * Optional rather than required-with-a-plausible-value because the first
+   * console-native surface (`platform.auditLog`) has no single predecessor —
+   * apps/web has THREE product-scoped audit pages and no estate-wide one.
+   * Naming any one of them here would record a third of the truth in the field
+   * whose whole job is to say where the capability lives today, and the
+   * console's aggregate is precisely not any one of them.
+   *
+   * `webPath` therefore returns `string | undefined`. Nothing renders from it —
+   * apps/web has its own `lib/products/nav-config.ts` — so this field is a
+   * record, and an honest gap in a record beats a confident wrong entry.
+   */
+  web?: string;
   mobile: string;
   /**
    * Path in `apps/console`. Optional: when absent the console serves the
@@ -188,6 +204,41 @@ const ROUTES = {
   // because the surface is pending, take the default and say so.
   "platform.identityLookup": { web: "/admin/search", mobile: "/platform/identity-lookup", pending: true },
 
+  // The estate's audit timeline (#139): every product's audit trail plus the
+  // console's own operator log, in one surface, newest first.
+  //
+  // NO `web` PATH, and that is the entry's most interesting field. apps/web
+  // never served an estate-wide audit surface — it served three product-scoped
+  // ones (`/admin/apps/mark8ly/audit-logs`, `/admin/apps/kora/audit`,
+  // `/admin/apps/homechef/audit-logs`), which are three different
+  // architectures rather than three copies of one page. Recording any single
+  // one of them here would say "this is where the capability lives today" about
+  // a third of it. `kora.audit` already records its own; the other two have no
+  // route id, and inventing ids for pages Task 3 deletes would be worse. See
+  // `RouteEntry.web`.
+  //
+  // NOT `pending`: the console serves this page. It is the second surface built
+  // here after tickets.
+  //
+  // Governance, not Operate, and the placement is an argument rather than a
+  // filing decision. `platform.identityLookup` went to Operate deliberately —
+  // it is reached mid-ticket, as part of answering someone. An audit log is not
+  // reached mid-anything: it is opened to answer "who did this, and when",
+  // which is the same question the GDPR queue and break-glass exist to make
+  // answerable. It belongs beside them.
+  //
+  // CAPABILITY: left at the `read` default, deliberately, and for the same
+  // reason as the identity lookup. Every capability above `read` names a
+  // mutation (respond, rotate-credentials, adjust-balance, execute-refund,
+  // mass-send, hard-delete) and this surface performs none of them. The
+  // temptation is to reach for one anyway on the grounds that an audit log is
+  // sensitive — but an audit log only the highest-privileged operators can open
+  // is an audit log nobody opens, and an unread accountability record is not
+  // accountability. Reading it is also itself audited (the console's own
+  // `console_audit_log` is one of the sources on this very page), which is the
+  // control that actually applies here; no capability value can express it.
+  "platform.auditLog": { mobile: "/platform/audit-log" },
+
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
   "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true },
@@ -237,7 +288,12 @@ function getRoute(id: RouteId): RouteEntry {
   return ROUTES[id];
 }
 
-export function webPath(id: RouteId): string {
+/**
+ * Path in `apps/web`, or `undefined` for a console-native surface — see
+ * `RouteEntry.web`. Callers must treat the gap as "apps/web never had this",
+ * not as "unknown route": an unknown id throws instead.
+ */
+export function webPath(id: RouteId): string | undefined {
   return getRoute(id).web;
 }
 

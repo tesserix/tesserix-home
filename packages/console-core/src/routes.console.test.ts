@@ -43,8 +43,32 @@ describe("consolePath", () => {
 
   it("keeps web paths distinct from console paths", () => {
     for (const id of ROUTE_IDS) {
-      expect(webPath(id)).not.toBe(consolePath(id));
+      const web = webPath(id);
+      // A console-native surface has no web path at all; `undefined` would
+      // satisfy `not.toBe` vacuously, so skip it here and assert the gap
+      // explicitly in the test below instead.
+      if (web === undefined) continue;
+      expect(web).not.toBe(consolePath(id));
     }
+  });
+});
+
+describe("console-native surfaces record no apps/web path", () => {
+  it("gives the estate audit log no web path", () => {
+    // #139. apps/web served three product-scoped audit pages and no
+    // estate-wide one, so there is no single predecessor to record. Naming one
+    // of the three would say "the capability lives here today" about a third
+    // of it. See RouteEntry.web.
+    expect(webPath("platform.auditLog")).toBeUndefined();
+    expect(consolePath("platform.auditLog")).toBe("/platform/audit-log");
+  });
+
+  it("still records a web path for surfaces that have one", () => {
+    // Guards the guard: making `web` optional must not become a licence to
+    // stop recording it. Every route that apps/web actually serves still says
+    // where, and only a genuinely console-native surface may omit it.
+    const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
+    expect(missing).toEqual(["platform.auditLog"]);
   });
 });
 
@@ -88,6 +112,20 @@ describe("pending reflects what the console actually serves", () => {
     // directory — that surface exists, so the rail must not badge it SOON
     // or block the palette from offering it.
     expect(isPending("platform.dashboard")).toBe(false);
+  });
+
+  it("has the estate audit log built", () => {
+    // #139 built it here. If this flips to pending while the page still
+    // exists, the rail renders a working surface as an inert SOON badge.
+    expect(isPending("platform.auditLog")).toBe(false);
+  });
+
+  it("keeps kora.audit pending until Task 3 retires it", () => {
+    // Recorded so the sequencing is visible from here. `platform.auditLog`
+    // subsumes Kora's audit page, but flipping `kora.audit` to `retired` goes
+    // with the redirect and the page deletion — not with the surface landing.
+    expect(isRetired("kora.audit")).toBe(false);
+    expect(isPending("kora.audit")).toBe(true);
   });
 
   it("still reports the unbuilt surfaces as pending", () => {
