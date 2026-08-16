@@ -128,6 +128,25 @@ describe("ConsoleCommandPalette", () => {
     expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 
+  it("does not claim nothing matches while a full list of routes is showing", async () => {
+    // Regression test for the "Nothing matching..." + full result list bug:
+    // `CommandEmpty` counts only registered *visible* items, and disabled
+    // `CommandItem`s never register — so with an empty query (which matches
+    // everything, including the pending/disabled routes) `CommandEmpty` saw
+    // zero registrations and rendered its message directly above a
+    // screenful of matching rows. The empty state is now computed by hand
+    // from the same entries and the same matcher, so it must stay silent
+    // here.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await screen.findByRole("dialog");
+
+    expect(await screen.findAllByRole("option")).not.toHaveLength(0);
+    expect(screen.queryByText(/nothing matching/i)).not.toBeInTheDocument();
+  });
+
   it("does not fetch tickets for a one-character query", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ items: [] }), {
