@@ -337,6 +337,10 @@ importers:
         version: 3.2.7(@types/node@20.19.43)(jiti@2.7.0)(jsdom@30.0.1)(lightningcss@1.33.0)(terser@5.49.0)(yaml@2.9.0)
 
   packages/console-core:
+    dependencies:
+      '@tesserix/platform-auth':
+        specifier: workspace:*
+        version: link:../platform-auth
     devDependencies:
       '@tesserix/tsconfig':
         specifier: workspace:*

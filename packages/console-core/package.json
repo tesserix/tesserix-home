@@ -20,6 +20,9 @@
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run"
   },
+  "dependencies": {
+    "@tesserix/platform-auth": "workspace:*"
+  },
   "devDependencies": {
     "@tesserix/tsconfig": "workspace:*",
     "tsup": "^8.5.0",
