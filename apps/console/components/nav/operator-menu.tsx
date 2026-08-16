@@ -17,9 +17,13 @@ export interface OperatorMenuProps {
  *
  * Never touches auth itself — the session is read server-side and handed
  * down as props, so this component stays a pure presentational client
- * island. Modeled on `RailSwitcher` in `./sidebar.tsx` for open/close
- * behaviour (outside click + Escape), and on `NotificationBell` for the
- * hand-rolled panel — `@tesserix/web` has no Popover export.
+ * island. Open/close behaviour (outside click + Escape) is modeled on
+ * `RailSwitcher` in `./sidebar.tsx`. The panel itself follows the
+ * disclosure pattern used by `NotificationBell` — `role="dialog"`, not
+ * `role="menu"` — because its content is a link plus static information,
+ * not a set of `role="menuitem"` commands with roving-tabindex/arrow-key
+ * navigation. `@tesserix/web` has no Popover export, hence the hand-rolled
+ * panel.
  */
 export function OperatorMenu({
   name,
@@ -53,7 +57,7 @@ export function OperatorMenu({
       <button
         type="button"
         onClick={() => setOpen((wasOpen) => !wasOpen)}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         className="flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
       >
@@ -68,7 +72,7 @@ export function OperatorMenu({
 
       {open ? (
         <div
-          role="menu"
+          role="dialog"
           aria-label="Operator menu"
           className="absolute bottom-full left-0 right-0 z-20 mb-1 overflow-hidden rounded-md border border-sidebar-border bg-sidebar shadow-lg"
         >
