@@ -3,13 +3,38 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * Browser coverage for the console's command palette and home route.
  *
- * Everything here depends on real layout, real CSS or the real bundle —
- * properties jsdom cannot see. If an assertion here would also pass under
- * jsdom it does not belong in this file; it belongs in the vitest suite.
+ * Governing rule: everything here depends on real layout, real CSS or the
+ * real bundle — properties jsdom cannot see. If an assertion here would also
+ * pass under jsdom it does not belong in this file; it belongs in the vitest
+ * suite.
  *
  * Under `NEXT_PUBLIC_DEV_AUTH_BYPASS=true` there is no session, so
  * `/api/search` and `/api/notifications` both 403. Both are stubbed below so
  * the bell and palette don't sit permanently in their unavailable state.
+ *
+ * What this file does NOT cover, and why:
+ *
+ * - The ticket journey (queue, detail, reply, status transition) is
+ *   server-rendered from apps/web's admin API. Playwright can only intercept
+ *   requests the browser makes, not a server-side fetch, so this data never
+ *   passes through page.route. Covering it needs either apps/web running
+ *   against a seeded database, or a stub upstream selected via
+ *   WEB_INTERNAL_ORIGIN. The stub is the cheaper path and is the obvious
+ *   next increment. The reply flow is the console's only write verb and it
+ *   has no browser coverage today.
+ * - Ticket results in the palette are stubbed empty here (see
+ *   stubClientEndpoints below); the SQL in lib/db/search-repo.ts is
+ *   exercised by no test and no local run.
+ * - The notification bell's real feed is stubbed the same way; only its
+ *   degraded (empty/unavailable) path has ever run outside production.
+ * - Authentication itself is bypassed via NEXT_PUBLIC_DEV_AUTH_BYPASS, so the
+ *   Zitadel round trip, the capability gate and sign-out are all untested
+ *   here.
+ *
+ * On its first run this file found two real defects: a shipped focus-ring
+ * fix that never applied because an unlayered CSS rule beat the Tailwind
+ * utility, and Enter firing against a stale selection in the palette
+ * (upstream as tesserix/design-system#11).
  */
 
 const MOD_KEY = process.platform === "darwin" ? "Meta" : "Control";
