@@ -6,7 +6,6 @@ import { Search } from "lucide-react";
 import {
   Command,
   CommandDialog,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -142,6 +141,21 @@ export function ConsoleCommandPalette({
     [allEntries],
   );
 
+  // `CommandEmpty` (see `command.mjs`) renders whenever `getVisibleItems()`
+  // is empty — and `CommandItem` only calls `registerVisibleItem` when
+  // `matchesQuery && !disabled`, so a disabled entry never registers even
+  // though it is on screen. With an empty query this palette lists a couple
+  // dozen pending (disabled) routes: `CommandEmpty`'s count would be zero
+  // and it would render "Nothing matching..." directly above a screenful of
+  // matching rows. So the empty state is computed here instead, using the
+  // exact same matcher `CommandItem` uses internally (copied from the
+  // compiled source: a case-insensitive substring test of the trimmed query
+  // against `[value, ...keywords].join(" ")`), over disabled entries too.
+  const hasAnyMatch = useMemo(
+    () => allEntries.some((entry) => matchesEntryQuery(entry, query)),
+    [allEntries, query],
+  );
+
   const selectEntry = useCallback(
     (value: string) => {
       const entry = entriesByPaletteValue.get(value);
@@ -180,14 +194,23 @@ export function ConsoleCommandPalette({
             placeholder="Search routes, tools and tickets…"
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
-          <CommandList ref={listRef}>
-            <CommandEmpty>Nothing matching that in routes, tools or tickets.</CommandEmpty>
+          <CommandList ref={listRef} className="space-y-2 p-3">
+            {!loadingTickets && !hasAnyMatch ? (
+              <div className="py-6 text-center text-sm text-muted-foreground">
+                Nothing matching that in routes, tools or tickets.
+              </div>
+            ) : null}
 
             {loadingTickets || tickets.length > 0 ? (
               <CommandGroup>
                 <GroupHeading>Tickets</GroupHeading>
                 {loadingTickets ? (
-                  <CommandItem value={`__loading__:${query}`} keywords={[query]} disabled>
+                  <CommandItem
+                    value={`__loading__:${query}`}
+                    keywords={[query]}
+                    disabled
+                    className="px-3 py-2.5"
+                  >
                     Searching tickets…
                   </CommandItem>
                 ) : (
@@ -317,12 +340,27 @@ function paletteValue(entry: SearchEntry): string {
   return `${KIND_CODE[entry.kind]}:${raw}`;
 }
 
+/**
+ * Replicates `CommandItem`'s own match test (`command.mjs`) — a
+ * case-insensitive substring test of the trimmed query against
+ * `[value, ...keywords].join(" ")` — using the exact same `value` and
+ * `keywords` this entry is rendered with in `PaletteItem`, so this can never
+ * disagree with what the primitive itself decides to show.
+ */
+function matchesEntryQuery(entry: SearchEntry, rawQuery: string): boolean {
+  const haystack = [paletteValue(entry), ...entry.keywords, entry.label]
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(rawQuery.toLowerCase().trim());
+}
+
 function PaletteItem({ entry }: { entry: SearchEntry }) {
   return (
     <CommandItem
       value={paletteValue(entry)}
       keywords={[...entry.keywords, entry.label]}
       disabled={entry.disabled}
+      className="px-3 py-2.5"
     >
       <span className="mr-2 inline-flex w-14 shrink-0 justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {KIND_BADGE[entry.kind]}
