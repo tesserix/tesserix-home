@@ -3,12 +3,20 @@ import { SurfaceStateView, type SurfaceState } from "./states";
 /**
  * A ranked breakdown: label, proportion bar, count, share.
  *
- * This is what the console renders instead of a bar chart. `@tesserix/web`
- * does export a `BarChart`, but it is a column chart whose values live only in
- * a `title` attribute and whose labels sit under bars of equal width — unusable
- * for "by tenant", where the labels are store names and the number is the whole
- * point. Adding a real charting library is its own decision, not a side effect
- * of moving a support page, so the breakdown is rendered as rows.
+ * This is what the console renders instead of a bar chart.
+ *
+ * `@tesserix/web@1.8.1` ships a `BarChart` in `dist/components/charts/`, but it
+ * is NOT reachable: the barrel does not re-export it (`dist/index.d.ts` has no
+ * mention of it) and the package's `exports` map declares only `"."` plus
+ * themes, so there is no subpath to import it from either. Do not go looking —
+ * making it reachable is a design-system change.
+ *
+ * It would not be the right primitive here anyway. It is a column chart whose
+ * values live only in a `title` attribute and whose labels sit under bars of
+ * equal width — unusable for "by tenant", where the labels are store names and
+ * the number is the whole point. Adding a real charting library is its own
+ * decision, not a side effect of moving a support page, so the breakdown is
+ * rendered as rows.
  *
  * Deliberately built from markup and tokens rather than `@tesserix/web`, so it
  * carries no `"use client"` directive and can be rendered by a server
