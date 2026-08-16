@@ -8,11 +8,20 @@ import type { ReplyEventRow, TicketEventRow } from "../notifications";
  * scan small, the limit keeps the panel scannable.
  */
 
+/** pg parses timestamptz into a Date; the row types (and every consumer:
+ *  lexicographic sort, unread comparison, JSON response) want ISO-8601
+ *  strings. Normalise once, here, rather than making every caller guess. */
+function toIso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") return new Date(value).toISOString();
+  throw new Error("notifications: expected a timestamp");
+}
+
 export async function recentTicketRows(
   sinceIso: string,
   limit: number,
 ): Promise<TicketEventRow[]> {
-  return tesserixQuery<TicketEventRow>(
+  const rows = await tesserixQuery<TicketEventRow>(
     `SELECT id::text, product_id, ticket_number, subject,
             submitted_by_name, created_at
        FROM platform_tickets
@@ -21,6 +30,7 @@ export async function recentTicketRows(
       LIMIT $2`,
     [sinceIso, limit],
   );
+  return rows.map((row) => ({ ...row, created_at: toIso(row.created_at) }));
 }
 
 export async function recentMerchantReplyRows(
@@ -30,7 +40,7 @@ export async function recentMerchantReplyRows(
   // Merchant replies only. An operator does not need telling that they
   // themselves replied — and ptr_merchant_recent_idx is partial on exactly
   // this predicate.
-  return tesserixQuery<ReplyEventRow>(
+  const rows = await tesserixQuery<ReplyEventRow>(
     `SELECT r.id::text, r.ticket_id::text, r.author_name, r.created_at,
             t.ticket_number, t.product_id, t.subject
        FROM platform_ticket_replies r
@@ -41,6 +51,7 @@ export async function recentMerchantReplyRows(
       LIMIT $2`,
     [sinceIso, limit],
   );
+  return rows.map((row) => ({ ...row, created_at: toIso(row.created_at) }));
 }
 
 export async function readLastSeenAt(userId: string): Promise<string | null> {
@@ -48,7 +59,8 @@ export async function readLastSeenAt(userId: string): Promise<string | null> {
     `SELECT last_seen_at FROM console_notification_reads WHERE user_id = $1`,
     [userId],
   );
-  return rows[0]?.last_seen_at ?? null;
+  const value = rows[0]?.last_seen_at;
+  return value === undefined ? null : toIso(value);
 }
 
 export async function writeLastSeenAt(

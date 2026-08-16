@@ -56,6 +56,12 @@ describe("toTicketEvent", () => {
     const r = toReplyEvent({ ...REPLY_ROW, id: TICKET_ROW.id });
     expect(t.id).not.toBe(r.id);
   });
+
+  it("falls back to a placeholder name when the sender name is empty", () => {
+    // submitted_by_name is NOT NULL but can still be the empty string.
+    const e = toTicketEvent({ ...TICKET_ROW, submitted_by_name: "" });
+    expect(e.actor).toBe("Unknown sender");
+  });
 });
 
 describe("toReplyEvent", () => {
@@ -64,6 +70,12 @@ describe("toReplyEvent", () => {
     expect(e.ticketId).toBe(REPLY_ROW.ticket_id);
     expect(e.kind).toBe("merchant_reply");
     expect(e.actor).toBe("Asha Pillai");
+  });
+
+  it("falls back to a placeholder name when the author name is empty", () => {
+    // author_name is NOT NULL but can still be the empty string.
+    const e = toReplyEvent({ ...REPLY_ROW, author_name: "" });
+    expect(e.actor).toBe("Merchant");
   });
 });
 
