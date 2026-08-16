@@ -57,14 +57,19 @@ export interface TicketSearchRow {
 export const MIN_TICKET_QUERY = 2;
 
 /**
- * Capitalizes a single route id segment, e.g. "tickets" -> "Tickets".
+ * Splits a camelCase route id segment into words and capitalizes it, e.g.
+ * "breakGlass" -> "Break Glass", "tickets" -> "Tickets".
  *
  * Exported so `lib/trail.ts` can label an ancestor crumb with the same
- * capitalization the palette applies to its own labels — a second copy of
- * this one-liner would only drift from this one.
+ * word-split and capitalization the palette applies to its own labels — a
+ * second copy of this one-liner would only drift from this one. The split
+ * happens here, not at render time, so the displayed label and the value
+ * `CommandItem` filters on are the same string: an operator who reads
+ * "Break Glass" on screen and types "break glass" must find it.
  */
 export function routeSegmentLabel(segment: string): string {
-  return segment.charAt(0).toUpperCase() + segment.slice(1);
+  const spaced = segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 /**

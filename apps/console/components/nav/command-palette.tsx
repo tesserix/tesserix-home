@@ -134,8 +134,8 @@ export function ConsoleCommandPalette({
   );
 
   const selectEntry = useCallback(
-    (label: string) => {
-      const entry = allEntries.find((candidate) => candidate.label === label);
+    (id: string) => {
+      const entry = allEntries.find((candidate) => candidate.id === id);
       if (!entry || entry.disabled) return;
       if (entry.external) {
         window.open(entry.href, "_blank", "noopener,noreferrer");
@@ -252,6 +252,7 @@ function forwardToListbox(
   listNode: HTMLDivElement | null,
 ): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
+  if (event.nativeEvent.isComposing) return;
   if (!listNode) return;
   if (listNode.contains(event.target as Node)) return;
 
@@ -279,24 +280,29 @@ function GroupHeading({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Splits a route id's camelCase segment into words for display — e.g. the
- * label built from `platform.breakGlass` reads "Platform · BreakGlass"
- * before this, "Platform · Break Glass" after. Only the rendered text
- * changes; `CommandItem`'s `value` stays the raw label so filtering and
- * selection lookups are unaffected.
+ * `CommandItem`'s `value` is keyed by `entry.id`, not `entry.label` — labels
+ * collide (two tickets can share `` `${number} — ${subject}` `` when ticket
+ * numbers repeat across products, per `search.ts`'s `ticketEntry` doc), and
+ * a colliding `value` would make selection resolve to the wrong entry. Ids
+ * are unique by construction (`ticket:${uuid}`, `route:${routeId}`,
+ * `tool:${subdomain}`), so `value` participates in the primitive's own
+ * filter haystack (`[value, ...keywords].join(" ")`, read from the compiled
+ * `@tesserix/web` source) without being unique-but-meaningless: the label is
+ * carried alongside in `keywords` so filtering on the *displayed* text is
+ * unaffected by moving `value` off it.
  */
-function humanizeLabel(label: string): string {
-  return label.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-}
-
 function PaletteItem({ entry }: { entry: SearchEntry }) {
   return (
-    <CommandItem value={entry.label} keywords={[...entry.keywords]} disabled={entry.disabled}>
+    <CommandItem
+      value={entry.id}
+      keywords={[...entry.keywords, entry.label]}
+      disabled={entry.disabled}
+    >
       <span className="mr-2 inline-flex w-14 shrink-0 justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {KIND_BADGE[entry.kind]}
       </span>
       <span className="flex-1 truncate text-left">
-        <span className="block truncate text-sm">{humanizeLabel(entry.label)}</span>
+        <span className="block truncate text-sm">{entry.label}</span>
         {entry.hint ? (
           <span className="block truncate text-xs text-muted-foreground">{entry.hint}</span>
         ) : null}

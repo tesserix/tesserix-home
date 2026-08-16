@@ -31,6 +31,20 @@ describe("routeEntries", () => {
     expect(tickets?.label.toLowerCase()).toContain("tickets");
     expect(tickets?.keywords.join(" ")).toContain("platform.tickets");
   });
+
+  it("splits a camelCase segment into the words its label displays", () => {
+    // Regression test: routeSegmentLabel used to capitalize only, leaving
+    // the split to a render-time-only helper in command-palette.tsx. That
+    // meant `value` (built from the unsplit label) never matched what an
+    // operator reads on screen and types back in.
+    const breakGlass = routeEntries().find((e) => e.id === "route:platform.breakGlass");
+    expect(breakGlass?.label).toBe("Platform · Break Glass");
+  });
+
+  it("keeps the raw dotted route id in keywords alongside the split label", () => {
+    const breakGlass = routeEntries().find((e) => e.id === "route:platform.breakGlass");
+    expect(breakGlass?.keywords).toContain("platform.breakGlass");
+  });
 });
 
 describe("toolEntries", () => {

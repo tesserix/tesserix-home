@@ -81,6 +81,23 @@ describe("ConsoleCommandPalette", () => {
     expect(pending).toBeDisabled();
   });
 
+  it("finds a camelCase route by the words its label displays", async () => {
+    // Regression test for the labelling-rule fix: `value` is now built from
+    // the same split-and-capitalize rule the label renders with, so typing
+    // the words an operator reads on screen ("break glass") must find
+    // `platform.breakGlass` even though nothing in the route id itself
+    // contains a space.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "break glass",
+    );
+    expect(await screen.findByRole("option", { name: /Break Glass/i })).toBeInTheDocument();
+  });
+
   it("does not fetch tickets for a one-character query", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ items: [] }), {
