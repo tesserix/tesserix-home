@@ -6,8 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // ConsoleHeader now renders ConsoleCommandPalette, which calls next/navigation's
 // useRouter — a hook that throws (not just returns null) outside a mounted
 // AppRouterContext. Mocked rather than worked around in the component: see
-// command-palette.render.test.tsx for the matching mock.
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+// command-palette.render.test.tsx for the matching mock. It also renders
+// HeaderTrail, which calls usePathname for the same reason.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  usePathname: () => "/platform/tickets",
+}));
 
 import { ConsoleHeader } from "./console-header";
 

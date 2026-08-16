@@ -56,11 +56,23 @@ export interface TicketSearchRow {
  */
 export const MIN_TICKET_QUERY = 2;
 
-function routeLabel(id: RouteId): string {
-  return id
-    .split(".")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" · ");
+/**
+ * Capitalizes a single route id segment, e.g. "tickets" -> "Tickets".
+ *
+ * Exported so `lib/trail.ts` can label an ancestor crumb with the same
+ * capitalization the palette applies to its own labels — a second copy of
+ * this one-liner would only drift from this one.
+ */
+export function routeSegmentLabel(segment: string): string {
+  return segment.charAt(0).toUpperCase() + segment.slice(1);
+}
+
+/**
+ * Turns a dotted route id into a display label, e.g. `platform.tickets` ->
+ * "Platform · Tickets".
+ */
+export function routeLabel(id: RouteId): string {
+  return id.split(".").map(routeSegmentLabel).join(" · ");
 }
 
 /**
