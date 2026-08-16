@@ -146,7 +146,14 @@ export function ProductOverviewLayout({ config }: ProductOverviewLayoutProps) {
                 );
               })
             )}
-            {critical.error?.status === 404 ? null : (
+            {/* Hidden for a product with no audit source (404) AND for one
+                whose audit has no severity concept (`criticalLast24h: null`).
+                Before the audit route became product-generic the second case
+                could not arise — every product's URL returned mark8ly's count.
+                Showing a "Critical events" tile reading "—" for kora or
+                homechef would imply the number exists and is merely missing. */}
+            {critical.error?.status === 404 ||
+            critical.data?.summary.criticalLast24h === null ? null : (
               <KpiTile
                 label="Critical events (24h)"
                 value={critical.data ? formatNumber(critical.data.summary.criticalLast24h) : "—"}

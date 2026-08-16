@@ -13,7 +13,10 @@ export function formatBytes(bytes: number): string {
   return `${v.toFixed(decimals)} ${units[i]}`;
 }
 
-export function formatNumber(n: number): string {
+// Accepts null so a "not measured" reading (e.g. an audit source with no
+// severity concept) can flow straight through to the em dash it already
+// renders, rather than each caller inventing its own placeholder.
+export function formatNumber(n: number | null): string {
   if (n == null || Number.isNaN(n)) return "—";
   if (Math.abs(n) < 1) return n.toFixed(2);
   if (Math.abs(n) < 10) return n.toFixed(1);

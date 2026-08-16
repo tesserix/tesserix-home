@@ -24,7 +24,9 @@ const fetcher = async (url: string): Promise<unknown> => {
 };
 
 export interface AuditLogsResponse {
-  summary: { criticalLast24h: number };
+  // null for a product whose audit has no severity concept (kora, homechef) —
+  // "not measured" is a different claim from "measured zero".
+  summary: { criticalLast24h: number | null };
   filterOptions: { actions: string[]; resourceTypes: string[] };
   rows: AuditEvent[];
   sinceHours: number;
@@ -61,9 +63,9 @@ export function useAuditLogs(productId: string, filters: AuditFilters) {
 }
 
 export function useCriticalEventCount(productId: string) {
-  return useSWR<{ summary: { criticalLast24h: number } }, FetchError>(
+  return useSWR<{ summary: { criticalLast24h: number | null } }, FetchError>(
     `/api/admin/apps/${productId}/audit-logs?severity=critical&since_hours=24`,
-    fetcher as (u: string) => Promise<{ summary: { criticalLast24h: number } }>,
+    fetcher as (u: string) => Promise<{ summary: { criticalLast24h: number | null } }>,
     { revalidateOnFocus: false, dedupingInterval: 60_000, shouldRetryOnError: false },
   );
 }
