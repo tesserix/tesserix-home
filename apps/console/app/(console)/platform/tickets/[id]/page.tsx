@@ -48,7 +48,10 @@ export default async function TicketDetailPage({
     return (
       <DetailLayout
         title="Ticket"
-        breadcrumbs={[{ label: "Tickets", href: "/platform/tickets" }]}
+        breadcrumbs={[
+          { label: "Tickets", href: "/platform/tickets" },
+          { label: "Ticket" },
+        ]}
         summary={[]}
         tabs={[]}
         state={state}
@@ -60,7 +63,10 @@ export default async function TicketDetailPage({
   return (
     <DetailLayout
       title={`${ticket.ticketNumber} — ${ticket.subject}`}
-      breadcrumbs={[{ label: "Tickets", href: "/platform/tickets" }]}
+      breadcrumbs={[
+        { label: "Tickets", href: "/platform/tickets" },
+        { label: ticket.ticketNumber },
+      ]}
       actions={
         canRespond ? (
           <StatusControl ticketId={ticket.id} status={ticket.status} />
