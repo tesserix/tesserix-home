@@ -17,11 +17,14 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "lint": "eslint --max-warnings 0",
     "typecheck": "tsc --noEmit",
     "test:unit": "vitest run"
   },
   "devDependencies": {
+    "@tesserix/eslint-config": "workspace:*",
     "@tesserix/tsconfig": "workspace:*",
+    "eslint": "^9",
     "tsup": "^8.5.0",
     "typescript": "5.9.3",
     "vitest": "^3.2.4"

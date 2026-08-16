@@ -5,6 +5,11 @@
       "dependsOn": ["^build"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
+    // No "dependsOn": ["^build"]. Unlike typecheck, no eslint config in this
+    // repo is type-aware (no projectService / parserOptions.project), so
+    // nothing reads a dependency's dist/. Verified by deleting every
+    // packages/*/dist and running `turbo run lint --force` green. Add the
+    // dependency if a package ever adopts recommendedTypeChecked.
     "lint": {},
     "typecheck": {
       "dependsOn": ["^build"]

@@ -72,6 +72,13 @@ jobs:
       - name: Build workspace packages
         run: pnpm --filter './packages/*' build
 
+      # These steps invoke pnpm directly rather than `turbo run lint`, so a lint
+      # script added to a workspace package is not picked up unless it is named
+      # here. Without this step packages/* stays unlinted in CI even though the
+      # scripts now exist (#202).
+      - name: Lint (workspace packages)
+        run: pnpm --filter './packages/*' lint
+
       - name: Lint (web)
         run: pnpm --filter web lint
 
