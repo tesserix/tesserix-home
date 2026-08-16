@@ -192,6 +192,21 @@ export function ConsoleCommandPalette({
         <Command onValueChange={selectEntry} onKeyDown={(event) => forwardToListbox(event, listRef.current)}>
           <CommandInput
             placeholder="Search routes, tools and tickets…"
+            // The global `:focus-visible` rule (apps/console/app/globals.css)
+            // draws its ring with `outline-offset: 3px`, i.e. outside the
+            // element's box. This input sits flush against the dialog
+            // panel's top edge (`CommandInput`'s wrapper is
+            // `flex items-center border-b px-3` with no vertical padding,
+            // and `CommandDialog` renders `p-0`), and the panel itself
+            // clips with `overflow-hidden` — so the outward ring gets
+            // sliced off at the top. Pulling the offset negative draws the
+            // full 2px ring band *inside* the input's own box instead
+            // (band spans -2px to 0 from the border edge), so nothing is
+            // ever painted past the box the panel clips to. This same trap
+            // — a focusable element sitting flush inside an
+            // `overflow-hidden` container — will bite anywhere else in the
+            // console that has one; it isn't unique to this input.
+            className="focus-visible:outline-offset-[-2px]"
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
           <CommandList ref={listRef} className="space-y-2 p-3">
