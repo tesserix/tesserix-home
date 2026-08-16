@@ -6,6 +6,8 @@ import {
   ticketKey,
   parseTicketDetail,
   isTicketStatus,
+  ticketStatusLabel,
+  ticketStatusTone,
   isTerminalStatus,
 } from "./tickets";
 
@@ -205,5 +207,35 @@ describe("isTerminalStatus", () => {
   it("ignores casing, as the API carries the status through unnormalised", () => {
     expect(isTerminalStatus("Resolved")).toBe(true);
     expect(isTerminalStatus("CLOSED")).toBe(true);
+  });
+});
+
+describe("ticketStatusLabel", () => {
+  it("turns the database's snake_case into something a human reads", () => {
+    expect(ticketStatusLabel("in_progress")).toBe("In progress");
+    expect(ticketStatusLabel("open")).toBe("Open");
+  });
+
+  it("passes an unknown status through rather than hiding it", () => {
+    // The column carries whatever the database holds; a status nobody has
+    // named is still worth showing.
+    expect(ticketStatusLabel("escalated")).toBe("Escalated");
+  });
+});
+
+describe("ticketStatusTone", () => {
+  it("gives each contract status its own reading", () => {
+    expect(ticketStatusTone("open")).toBe("info");
+    expect(ticketStatusTone("in_progress")).toBe("warning");
+    expect(ticketStatusTone("resolved")).toBe("success");
+    expect(ticketStatusTone("closed")).toBe("neutral");
+  });
+
+  it("treats an unknown status as unclassified, not as an alarm", () => {
+    expect(ticketStatusTone("escalated")).toBe("neutral");
+  });
+
+  it("ignores casing, like every other status reader here", () => {
+    expect(ticketStatusTone("In_Progress")).toBe("warning");
   });
 });

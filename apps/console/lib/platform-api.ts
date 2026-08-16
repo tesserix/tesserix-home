@@ -125,23 +125,58 @@ export async function fetchDashboard(
 }
 
 /**
+ * Narrowing applied to the queue. Every key is optional; an omitted key means
+ * "no filter", which is why a blank value is dropped rather than sent — web
+ * reads `?status=` as the empty string and would filter on it.
+ *
+ * The names are apps/web's query params verbatim (`product`, not `productId`),
+ * so there is no translation table to keep in step.
+ */
+export interface TicketFilters {
+  readonly status?: string;
+  readonly priority?: string;
+  readonly product?: string;
+}
+
+export function ticketsQuery(filters: TicketFilters): string {
+  const params = new URLSearchParams();
+  for (const key of ["status", "priority", "product"] as const) {
+    const value = filters[key];
+    if (value) {
+      params.set(key, value);
+    }
+  }
+  return params.toString();
+}
+
+/**
  * The cross-product ticket queue.
  *
  * Same shape as `fetchDashboard` deliberately — one failure type, one place
  * that decides what "the upstream misbehaved" looks like. The parser lives in
  * `lib/tickets.ts` so this file stays about transport.
+ *
+ * Filtering happens upstream, in SQL (`listPlatformTickets`), not here: the
+ * queue is capped at 200 rows, so filtering the fetched page would narrow the
+ * wrong set — the first 200 unfiltered tickets rather than the first 200
+ * matching ones.
  */
 export async function fetchTickets(
   cookieHeader: string,
+  filters: TicketFilters = {},
 ): Promise<import("./tickets").TicketsPage> {
   const { parseTickets } = await import("./tickets");
 
+  const query = ticketsQuery(filters);
   let response: Response;
   try {
-    response = await fetch(`${WEB_ORIGIN}/api/admin/platform-tickets`, {
-      headers: { cookie: cookieHeader },
-      cache: "no-store",
-    });
+    response = await fetch(
+      `${WEB_ORIGIN}/api/admin/platform-tickets${query ? `?${query}` : ""}`,
+      {
+        headers: { cookie: cookieHeader },
+        cache: "no-store",
+      },
+    );
   } catch (cause) {
     throw new PlatformApiError(
       `tickets: request failed (${describe(cause)})`,
@@ -262,4 +297,22 @@ export async function patchTicketStatus(
       body: JSON.stringify({ status }),
     },
   );
+}
+
+/**
+ * Platform-wide support analytics.
+ *
+ * Read through apps/web like everything else on this surface, and for a reason
+ * beyond consistency: that route enriches otto's raw tenant ids with names from
+ * the mark8ly database, which the console cannot reach. Talking to otto
+ * directly would trade a column of store names for a column of UUIDs.
+ */
+export async function fetchSupportAnalytics(
+  cookieHeader: string,
+): Promise<import("./support-analytics").SupportAnalytics> {
+  const { parseSupportAnalytics } = await import("./support-analytics");
+  const response = await request("support analytics", "/api/admin/analytics/support", {
+    headers: { cookie: cookieHeader },
+  });
+  return parseSupportAnalytics(await readBody(response, "support analytics"));
 }
