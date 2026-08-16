@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import {
@@ -56,6 +56,7 @@ export function ConsoleCommandPalette({
   const [query, setQuery] = useState("");
   const [tickets, setTickets] = useState<SearchEntry[]>([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const routes = useMemo(
     () => visibleTo(routeEntries(), capabilities, enforceCapabilities),
@@ -165,12 +166,12 @@ export function ConsoleCommandPalette({
       </button>
 
       <CommandDialog open={open} onOpenChange={handleOpenChange}>
-        <Command onValueChange={selectEntry}>
+        <Command onValueChange={selectEntry} onKeyDown={(event) => forwardToListbox(event, listRef.current)}>
           <CommandInput
             placeholder="Search routes, tools and tickets…"
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
-          <CommandList>
+          <CommandList ref={listRef}>
             <CommandEmpty>Nothing matching that in routes, tools or tickets.</CommandEmpty>
 
             {loadingTickets || tickets.length > 0 ? (
@@ -204,6 +205,57 @@ export function ConsoleCommandPalette({
       </CommandDialog>
     </>
   );
+}
+
+/**
+ * WORKAROUND for tesserix/design-system#7 — delete this whole function (and
+ * the `listRef`/wrapper `onKeyDown` that call it) once that ships. This is
+ * scaffolding, not design.
+ *
+ * The structural problem: `@tesserix/web`'s `Command` primitive wires
+ * ArrowDown/ArrowUp/Enter entirely on `CommandList`'s own `onKeyDown` — a
+ * handler that lives on the `role="listbox"` div. `CommandInput`'s `<input>`
+ * is a *sibling* of that div, not a descendant of it (both are direct
+ * children of `Command`'s wrapper), so a keydown fired while the search box
+ * has focus — the only place focus realistically is while narrowing a
+ * query — never bubbles into the listbox's handler. As shipped, this
+ * palette (and every other consumer of `Command`) has no keyboard
+ * navigation at all: not Enter, not the arrows.
+ *
+ * The workaround: `Command`'s own wrapper div *is* an ancestor of both the
+ * input and the list (`CommandProps` extends
+ * `React.HTMLAttributes<HTMLDivElement>`, so it takes a real `onKeyDown`
+ * that does receive the bubbled event), so this function forwards the three
+ * keys the primitive cares about down to the listbox node by re-dispatching
+ * a synthetic `keydown` there. React's delegated listener on that node picks
+ * it up and runs the *primitive's own* handler — not a reimplementation of
+ * it. That matters because the primitive's `activeValue` (which item is
+ * highlighted) lives in private context this component cannot read; a
+ * second, hand-rolled highlight tracker would have no way to stay in sync
+ * with it and would drift the moment the two disagreed.
+ *
+ * `event.isTrusted` is what makes re-dispatching safe rather than a loop:
+ * a `KeyboardEvent` constructed and dispatched in JS (as this function does)
+ * always has `isTrusted === false`, while every event the browser itself
+ * generates from a real key press has `isTrusted === true`. Since this
+ * handler bails out immediately on an untrusted event, the event it just
+ * dispatched can never re-enter it — that guarantee comes from the DOM spec,
+ * not from a mutable "already forwarding" flag this function would otherwise
+ * need to set and remember to clear.
+ */
+function forwardToListbox(
+  event: React.KeyboardEvent<HTMLDivElement>,
+  listNode: HTMLDivElement | null,
+): void {
+  if (!event.isTrusted) return;
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
+  if (!listNode) return;
+  // Focus (or a click) already inside the listbox means its own onKeyDown
+  // is already the one firing — forwarding here would double-dispatch.
+  if (listNode.contains(event.target as Node)) return;
+
+  event.preventDefault();
+  listNode.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, bubbles: true }));
 }
 
 const TICKET_DEBOUNCE_MS = 250;

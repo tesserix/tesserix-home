@@ -116,6 +116,16 @@ describe("ConsoleCommandPalette", () => {
   });
 
   it("navigates on selecting the built ticket queue, then closes and clears the query", async () => {
+    // Click-driven, not ArrowDown+Enter: the wrapper's keyboard-forwarding
+    // workaround (see forwardToListbox in command-palette.tsx) guards
+    // re-entry with `event.isTrusted`, and every event userEvent/fireEvent
+    // dispatches in jsdom — including the very first ArrowDown, not just a
+    // re-dispatched one — has `isTrusted === false`. jsdom's `isTrusted` is a
+    // non-configurable getter (confirmed: `Object.defineProperty` to force
+    // it throws "Cannot redefine property"), so there is no way to simulate
+    // a trusted keydown from test code. That makes the forwarding path
+    // structurally unexercisable via Testing Library, in this jsdom
+    // environment, without weakening the guard — see the report for detail.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
