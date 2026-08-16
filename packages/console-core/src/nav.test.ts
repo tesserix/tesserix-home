@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isNavGroup, koraNav, platformNav, type NavEntry } from "./nav";
-import { isRetired, webPath } from "./routes";
+import {
+  isNavGroup,
+  koraNav,
+  platformNav,
+  type NavEntry,
+  type NavGroup,
+} from "./nav";
+import { isPending, isRetired, webPath } from "./routes";
 
 function collectItems(
   entries: readonly NavEntry[],
@@ -49,6 +55,32 @@ describe("platformNav", () => {
     expect(collectItems(platformNav).map((item) => item.name)).toContain(
       "Live chat",
     );
+  });
+
+  it("carries the identity lookup in Operate, next to Tickets", () => {
+    // #134's whole complaint is that the lookup exists and is unreachable
+    // from any rail. Asserting the NAME and the GROUP, not just presence:
+    // moving it into Governance would satisfy a presence check while
+    // reproducing the original problem in a tidier location.
+    const operate: NavGroup | undefined = platformNav
+      .filter(isNavGroup)
+      .find((group) => group.name === "Operate");
+    expect(operate).toBeDefined();
+    const names = operate!.items.map((item) => item.name);
+    expect(names).toContain("Identity lookup");
+    expect(names.indexOf("Identity lookup")).toBe(names.indexOf("Tickets") + 1);
+  });
+
+  it("shows the identity lookup as pending rather than linking it", () => {
+    // The rail must describe the intended IA without claiming the page works.
+    // There is no lookup surface in the console and no way to build one yet —
+    // the console cannot enumerate users at all. In the rail, unnavigable; in
+    // the palette, disabled.
+    const lookup = collectItems(platformNav).find(
+      (item) => item.route === "platform.identityLookup",
+    );
+    expect(lookup).toBeDefined();
+    expect(isPending("platform.identityLookup")).toBe(true);
   });
 
   it("resolves every item's route through webPath without throwing", () => {

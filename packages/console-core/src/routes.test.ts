@@ -35,6 +35,16 @@ describe("route capability", () => {
     expect(routeCapability("kora.foods")).toBe("read");
   });
 
+  it("keeps the identity lookup at read, on purpose", () => {
+    // #134. Recorded as a decision so it is not read as an omission, and so a
+    // later "surely a people-search needs more than read" gets the argument
+    // rather than a silent bump: every capability above `read` names a
+    // mutation, and the lookup performs none of them. Its accountability comes
+    // from an audit row per query, which no capability value can express —
+    // this field gates whether the route is OFFERED, not what it logs.
+    expect(routeCapability("platform.identityLookup")).toBe("read");
+  });
+
   it("gives every route a capability, declared or defaulted", () => {
     for (const id of ROUTE_IDS) {
       expect(routeCapability(id)).toBeTypeOf("string");

@@ -55,6 +55,22 @@ export const platformNav: readonly NavEntry[] = [
       // rail item would be a second door onto the same page. The route id is
       // kept in routes.ts marked `retired` — mobile still serves that surface
       // standalone, and the id is what records where.
+      // Placed here, directly after Tickets, because that is the workflow: a
+      // ticket arrives, and the first question is who this person is across
+      // the estate. Governance — beside the GDPR queue and break-glass — was
+      // the other candidate, and it is where the surface's obligations point,
+      // but it is the wrong answer to the issue's actual complaint. #134 is a
+      // DISCOVERABILITY ticket: the lookup already exists and nobody finds it.
+      // Filing it under Governance, which reads as policy and configuration
+      // rather than daily work, would move it from unfindable to
+      // findable-in-the-wrong-place. v1 returns staff and operators only,
+      // which makes it an operational surface on its own terms.
+      //
+      // `users` icon rather than a new "search"/"user-search" key: IconKey is
+      // consumed as `Record<IconKey, ...>` in every renderer, so adding a key
+      // is a compile error in web, mobile and console until each maps one —
+      // three apps changed for an entry that does not render a page yet.
+      { name: "Identity lookup", route: "platform.identityLookup", icon: "users" },
       { name: "Live chat", route: "platform.liveChat", icon: "message-square" },
       { name: "Announcements", route: "platform.announcements", icon: "megaphone" },
     ],

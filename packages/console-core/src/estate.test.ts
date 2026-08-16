@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ESTATE, unmigrated } from "./estate";
+import {
+  ESTATE,
+  allowsEndUserLookup,
+  declaresEndUserLookup,
+  endUserLookupProducts,
+  unmigrated,
+} from "./estate";
 import { koraNav } from "./nav";
 
 describe("estate", () => {
@@ -49,6 +55,62 @@ describe("estate", () => {
     // every time a product is added is a count that gets edited without being
     // read, which is how the DevAI and Dwellm8 summaries went stale.
     expect(unmigrated()).toHaveLength(ESTATE.length - 1);
+  });
+
+  it("defaults end-user lookup to false for every product without exception", () => {
+    // Over the WHOLE list, not a sample. A sample only covers the products
+    // someone thought to name, and the product that gets missed is the one
+    // added last — exactly when nobody is thinking about end-user lookup.
+    for (const product of ESTATE) {
+      expect(
+        allowsEndUserLookup(product.context),
+        `${product.name} declares end-user lookup; it must be reviewed, not defaulted`,
+      ).toBe(false);
+    }
+    // And the list is non-empty, so the loop above cannot pass vacuously.
+    expect(ESTATE.length).toBeGreaterThan(0);
+  });
+
+  it("declares no end-user lookup anywhere in the estate today", () => {
+    // The statement of intent. v1 returns staff and operators only, so the
+    // correct number of products serving end-user rows is zero.
+    //
+    // This is the test that must be EDITED, not just observed to pass, on the
+    // day a product opts in — which is the point. Flipping `endUserLookup` on
+    // one product turns this red, so the change cannot land without someone
+    // coming here and naming the product in the expected list.
+    expect(endUserLookupProducts().map((p) => p.name)).toEqual([]);
+  });
+
+  it("fails closed for a context it has never heard of", () => {
+    // "We do not know this product" and "this product has not opted in" get
+    // the same answer. A permissive fallback here would mean a typo in a rail
+    // context reads as consent.
+    expect(allowsEndUserLookup("fanzone")).toBe(false);
+    expect(allowsEndUserLookup("")).toBe(false);
+  });
+
+  it("returns false for HMS by absence, not by a special case", () => {
+    // Guards the guard, and it is the one assertion that would survive the
+    // field being deleted — so it checks the FIELD, not just the answer.
+    //
+    // Every assertion above still passes if `endUserLookup` is removed from
+    // the interface and `allowsEndUserLookup` is reduced to `return false`:
+    // false is false. These two lines fail on that refactor. The accessor must
+    // be reading a real, optional, declarable field — proven by constructing
+    // an entry that declares `true` and watching the same predicate flip.
+    const hms = ESTATE.find((p) => p.context === "hms");
+    expect(hms).toBeDefined();
+    expect(hms?.endUserLookup).toBeUndefined();
+
+    // Same predicate, same product, one field changed — immutably, so ESTATE
+    // is untouched. It must answer differently, which it can only do by
+    // reading the field.
+    expect(declaresEndUserLookup(hms!)).toBe(false);
+    expect(declaresEndUserLookup({ ...hms!, endUserLookup: true })).toBe(true);
+    // And the real estate is unchanged by having asked.
+    expect(endUserLookupProducts()).toHaveLength(0);
+    expect(allowsEndUserLookup("hms")).toBe(false);
   });
 
   it("separates display name from rail context", () => {
