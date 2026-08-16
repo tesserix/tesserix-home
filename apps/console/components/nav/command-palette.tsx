@@ -234,24 +234,25 @@ export function ConsoleCommandPalette({
  * second, hand-rolled highlight tracker would have no way to stay in sync
  * with it and would drift the moment the two disagreed.
  *
- * `event.isTrusted` is what makes re-dispatching safe rather than a loop:
- * a `KeyboardEvent` constructed and dispatched in JS (as this function does)
- * always has `isTrusted === false`, while every event the browser itself
- * generates from a real key press has `isTrusted === true`. Since this
- * handler bails out immediately on an untrusted event, the event it just
- * dispatched can never re-enter it — that guarantee comes from the DOM spec,
- * not from a mutable "already forwarding" flag this function would otherwise
- * need to set and remember to clear.
+ * The containment check below (`listNode.contains(event.target)`) is doing
+ * double duty — read both readings before touching it:
+ *   1. Skips a keydown that started inside the listbox itself (e.g. focus
+ *      moved there by a click), since the primitive's own `onKeyDown` is
+ *      already the one firing for that event.
+ *   2. Is *also* the re-entry guard: the event this function dispatches on
+ *      `listNode` bubbles back up to this same wrapper handler, but by then
+ *      its `target` is the listbox — which the check catches and returns
+ *      on before a second dispatch happens. This is the only thing standing
+ *      between this function and an infinite forward loop. Do not delete it
+ *      as a "redundant" check without replacing it with something that
+ *      still breaks that cycle.
  */
 function forwardToListbox(
   event: React.KeyboardEvent<HTMLDivElement>,
   listNode: HTMLDivElement | null,
 ): void {
-  if (!event.isTrusted) return;
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
   if (!listNode) return;
-  // Focus (or a click) already inside the listbox means its own onKeyDown
-  // is already the one firing — forwarding here would double-dispatch.
   if (listNode.contains(event.target as Node)) return;
 
   event.preventDefault();

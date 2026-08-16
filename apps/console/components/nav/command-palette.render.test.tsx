@@ -115,17 +115,14 @@ describe("ConsoleCommandPalette", () => {
     ).toBeInTheDocument();
   });
 
-  it("navigates on selecting the built ticket queue, then closes and clears the query", async () => {
-    // Click-driven, not ArrowDown+Enter: the wrapper's keyboard-forwarding
-    // workaround (see forwardToListbox in command-palette.tsx) guards
-    // re-entry with `event.isTrusted`, and every event userEvent/fireEvent
-    // dispatches in jsdom — including the very first ArrowDown, not just a
-    // re-dispatched one — has `isTrusted === false`. jsdom's `isTrusted` is a
-    // non-configurable getter (confirmed: `Object.defineProperty` to force
-    // it throws "Cannot redefine property"), so there is no way to simulate
-    // a trusted keydown from test code. That makes the forwarding path
-    // structurally unexercisable via Testing Library, in this jsdom
-    // environment, without weakening the guard — see the report for detail.
+  it("navigates on ArrowDown + Enter, then closes and clears the query", async () => {
+    // Keyboard-driven on purpose: this is the path that proves
+    // forwardToListbox (command-palette.tsx) actually works, not just that
+    // clicking an option works. ArrowDown here bubbles from the search
+    // input to Command's wrapper and gets re-dispatched onto the listbox
+    // node, which is what lets CommandList's own onKeyDown move its private
+    // `activeValue` — see the workaround's comment for why a click-only
+    // test would not have caught a regression here.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -134,8 +131,9 @@ describe("ConsoleCommandPalette", () => {
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
       "tickets",
     );
-    const queue = await screen.findByRole("option", { name: /Platform · Tickets/i });
-    await user.click(queue);
+    await screen.findByRole("option", { name: /Platform · Tickets/i });
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Enter}");
 
     expect(push).toHaveBeenCalledWith("/platform/tickets");
     await waitFor(() =>
@@ -148,6 +146,34 @@ describe("ConsoleCommandPalette", () => {
     expect(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
     ).toHaveValue("");
+  });
+
+  it("moves the highlight on ArrowDown", async () => {
+    // "cost" matches exactly two tools — Kubecost and Cost estimator — which
+    // is what makes the highlight's movement observable: a single-match
+    // query is already active on its only item before any key is pressed.
+    // `data-active` is the primitive's own attribute for "this is the
+    // highlighted item" (read from the compiled `@tesserix/web` source,
+    // `CommandItem`'s `"data-active": isActive ? "true" : "false"` — not
+    // `aria-selected`, which tracks the *selected* value instead).
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "cost",
+    );
+    const kubecost = await screen.findByRole("option", { name: /Kubecost/i });
+    const estimator = await screen.findByRole("option", { name: /Cost estimator/i });
+
+    expect(kubecost).toHaveAttribute("data-active", "true");
+    expect(estimator).toHaveAttribute("data-active", "false");
+
+    await user.keyboard("{ArrowDown}");
+
+    expect(kubecost).toHaveAttribute("data-active", "false");
+    expect(estimator).toHaveAttribute("data-active", "true");
   });
 
   it("opens a tool externally instead of pushing a route", async () => {
