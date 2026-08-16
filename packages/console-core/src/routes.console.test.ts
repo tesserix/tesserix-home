@@ -23,9 +23,21 @@ describe("consolePath", () => {
   it("falls back to the mobile path when no console path is set", () => {
     // The fallback is what keeps this a 3-line change rather than 22 invented
     // URLs. It only holds while the shapes agree — see the divergence test.
+    // "platform.dashboard" is excluded: it sets an explicit `console: "/"`
+    // because the console root, not `/platform`, is where that surface lives.
     for (const id of ROUTE_IDS) {
+      if (id === "platform.dashboard") continue;
       expect(consolePath(id)).toBe(mobilePath(id));
     }
+  });
+
+  it("serves the console root for the dashboard, not the mobile path", () => {
+    // platform.dashboard is the one entry with a real console/mobile
+    // divergence: the console root ("/") already is the estate map plus the
+    // internal tools directory, which is not the same surface `mobile`
+    // ("/platform") points at.
+    expect(consolePath("platform.dashboard")).toBe("/");
+    expect(consolePath("platform.dashboard")).not.toBe(mobilePath("platform.dashboard"));
   });
 
   it("keeps web paths distinct from console paths", () => {
@@ -70,10 +82,16 @@ describe("pending reflects what the console actually serves", () => {
     expect(isPending("platform.tickets")).toBe(false);
   });
 
+  it("has the dashboard built", () => {
+    // The console root ("/") is the estate map plus the internal tools
+    // directory — that surface exists, so the rail must not badge it SOON
+    // or block the palette from offering it.
+    expect(isPending("platform.dashboard")).toBe(false);
+  });
+
   it("still reports the unbuilt surfaces as pending", () => {
     // Guards against a blanket un-pend: the rail must not offer navigation to
     // pages that do not exist.
-    expect(isPending("platform.dashboard")).toBe(true);
     expect(isPending("kora.foods")).toBe(true);
   });
 });

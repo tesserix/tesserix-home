@@ -46,7 +46,10 @@ const ROUTES = {
 
   // Platform rail. The console owns their identity so the rail can be built
   // from one source; none of the surfaces is built here yet.
-  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", pending: true },
+  // Served at the console root: the estate map plus the internal tools
+  // directory already live there, and it is the only way back to the
+  // console home once a rail link has navigated away from it.
+  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/" },
   "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true },
   // First surface built in the console — hence no `pending`. Served at
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
