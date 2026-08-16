@@ -23,18 +23,74 @@ import { logger } from "@/lib/logger";
 
 const STATE_COOKIE_NAME = "tx_oauth_state";
 
+const DEFAULT_SITE_ORIGIN = "https://tesserix.app";
+
+/**
+ * This site's own origin.
+ *
+ * next.config.ts inlines `NEXT_PUBLIC_SITE_URL` at build time with a
+ * `http://localhost:3002` default, and nothing in the deploy sets it — so in
+ * production the variable can carry a loopback value. Honouring that here
+ * would redirect real users to their own machine, so a loopback value is
+ * treated as "unconfigured" in production.
+ */
+function siteOrigin(): string {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!configured) return DEFAULT_SITE_ORIGIN;
+  try {
+    const host = new URL(configured).host;
+    if (process.env.NODE_ENV === "production" && isLoopback(host)) {
+      return DEFAULT_SITE_ORIGIN;
+    }
+    // Return the configured string, not `URL.origin`, which would rewrite it.
+    return configured;
+  } catch {
+    return DEFAULT_SITE_ORIGIN;
+  }
+}
+
+/** Loopback with or without a port. `[::1]:3002` keeps its brackets. */
+function isLoopback(host: string): boolean {
+  const hostname = host.startsWith("[")
+    ? host.slice(0, host.indexOf("]") + 1)
+    : (host.split(":")[0] ?? "");
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 // Build redirect URLs using the public origin from forwarded headers
 // instead of req.url, which reflects the pod's internal HOSTNAME
 // (0.0.0.0:3000) and would send the browser to a non-existent host.
+//
+// The forwarded headers are proxy headers, but our ingress forwards the
+// client's values rather than overwriting them, so they arrive
+// attacker-controlled — `X-Forwarded-Host: evil.example.com` used to come
+// straight back as the /login and post-login redirect target. The claimed host
+// is therefore checked against this site's own origin, and on a match we
+// return the configured origin string verbatim rather than reassembling
+// `${proto}://${host}`, which drops the X-Forwarded-Proto trust too: a forged
+// `http` can no longer produce a downgraded URL. A host that fails the check is
+// not an error — we fall back to our own origin, because rejecting the request
+// would turn a header no legitimate client sends into a DoS knob.
+//
+// Mirrors apps/console/lib/public-origin.ts, which has the same helper (and
+// had the same hole) against CONSOLE_PUBLIC_ORIGIN.
 function publicOrigin(req: NextRequest): string {
-  const fwdProto = req.headers.get("x-forwarded-proto");
-  const fwdHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  if (fwdHost) {
-    const proto = fwdProto?.split(",")[0]?.trim() ?? "https";
-    return `${proto}://${fwdHost.split(",")[0].trim()}`;
+  const site = siteOrigin();
+  const claimed = (
+    req.headers.get("x-forwarded-host") ?? req.headers.get("host")
+  )
+    ?.split(",")[0] // Only the first value in a proxy chain is client-facing.
+    ?.trim()
+    .toLowerCase();
+
+  if (!claimed) return site;
+  if (claimed === new URL(site).host.toLowerCase()) return site;
+  // Local dev has no proxy but does have a Host header, so a bare allowlist
+  // would send developers to tesserix.app.
+  if (process.env.NODE_ENV !== "production" && isLoopback(claimed)) {
+    return `http://${claimed}`;
   }
-  // Fallback to NEXT_PUBLIC_SITE_URL when behind no proxy.
-  return process.env.NEXT_PUBLIC_SITE_URL ?? "https://tesserix.app";
+  return site;
 }
 
 function loginErrorRedirect(req: NextRequest, code: string): Response {
