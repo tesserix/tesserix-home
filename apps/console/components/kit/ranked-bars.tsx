@@ -5,18 +5,24 @@ import { SurfaceStateView, type SurfaceState } from "./states";
  *
  * This is what the console renders instead of a bar chart.
  *
- * `@tesserix/web@1.8.1` ships a `BarChart` in `dist/components/charts/`, but it
- * is NOT reachable: the barrel does not re-export it (`dist/index.d.ts` has no
- * mention of it) and the package's `exports` map declares only `"."` plus
- * themes, so there is no subpath to import it from either. Do not go looking —
- * making it reachable is a design-system change.
+ * `@tesserix/web@1.8.1` exports `BarChart` and `LineChart` — `dist/index.d.ts`
+ * carries `export * from './components/charts'`. They are reachable; this is a
+ * choice not to use them, not a workaround for their absence.
  *
- * It would not be the right primitive here anyway. It is a column chart whose
- * values live only in a `title` attribute and whose labels sit under bars of
- * equal width — unusable for "by tenant", where the labels are store names and
- * the number is the whole point. Adding a real charting library is its own
- * decision, not a side effect of moving a support page, so the breakdown is
- * rendered as rows.
+ * (An earlier version of this comment claimed the opposite, on the strength of
+ * grepping `index.d.ts` for the symbol name and finding nothing. `export *`
+ * does not list the names it re-exports, so that search could not have found
+ * them whether they were reachable or not. If you need to know what this
+ * package exports, read the `export *` lines and follow them — the same trap
+ * hides `Timeline`, at line 58.)
+ *
+ * They are the wrong primitive here. `BaseChartProps` is `{ data: {label,
+ * value}[]; height? }` and the rendering puts the value in a `title` attribute
+ * with labels under bars of equal width — no visible number, nothing a screen
+ * reader reaches. That is unusable for "by tenant", where the labels are store
+ * names and the number is the whole point. Adding a charting library with real
+ * value rendering is its own decision, not a side effect of moving a support
+ * page, so the breakdown is rendered as rows.
  *
  * Deliberately built from markup and tokens rather than `@tesserix/web`, so it
  * carries no `"use client"` directive and can be rendered by a server
