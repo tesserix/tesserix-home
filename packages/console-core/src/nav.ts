@@ -25,7 +25,11 @@ export function isNavGroup(e: NavEntry): e is NavGroup {
 export const koraNav: readonly NavEntry[] = [
   { name: "Overview", route: "kora.overview", icon: "layout-dashboard" },
   { name: "Food index", route: "kora.foods", icon: "database" },
-  { name: "Audit trail", route: "kora.audit", icon: "scroll-text" },
+  // No "Audit trail" entry: #139 folded Kora's trail into the estate-wide
+  // `platform.auditLog`, so `kora.audit` is `retired` in routes.ts and a rail
+  // item would be a door onto a redirect. The route id is kept there because
+  // mobile still serves that screen standalone, and it records the web path
+  // this app's redirect points away from. Guarded in nav.test.ts.
   { name: "Feedback", route: "kora.feedback", icon: "message-square" },
   { name: "Users", route: "kora.users", icon: "users" },
 ];
@@ -90,6 +94,20 @@ export const platformNav: readonly NavEntry[] = [
     name: "Governance",
     icon: "shield",
     items: [
+      // First in Governance, and above the queues rather than below them: this
+      // is the group's headline surface. The rest of Governance is work to be
+      // done (an outbox to drain, an erasure queue to clear); the audit log is
+      // the record of work already done, which is what makes the rest
+      // accountable. #139 merged three product-scoped audit pages into it.
+      //
+      // Not in Operate, unlike Identity lookup. That one is reached mid-ticket;
+      // this one is opened to answer "who did this, and when" — the same
+      // question the GDPR queue and break-glass exist to make answerable.
+      //
+      // `scroll-text` matches `kora.audit`'s icon on purpose: the same kind of
+      // surface should look the same in both rails, and Task 3 retires the Kora
+      // entry into this one.
+      { name: "Audit log", route: "platform.auditLog", icon: "scroll-text" },
       { name: "Outbox", route: "platform.outbox", icon: "inbox" },
       { name: "Notification log", route: "platform.notificationLog", icon: "mail" },
       { name: "Lead templates", route: "platform.leadTemplates", icon: "mail" },

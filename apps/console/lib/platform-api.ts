@@ -316,3 +316,53 @@ export async function fetchSupportAnalytics(
   });
   return parseSupportAnalytics(await readBody(response, "support analytics"));
 }
+
+/**
+ * How far back the products' audit trails are asked to reach, in hours.
+ *
+ * 720 is the endpoint's own maximum (`MAX_SINCE_HOURS`), taken deliberately so
+ * the LIMIT, not the window, is what truncates the timeline. A short window
+ * would silently hide a quiet product's most recent event behind an arbitrary
+ * cutoff, and a merged timeline missing a source's newest row is the failure
+ * mode this whole surface exists to avoid.
+ *
+ * It is still a cap, and an honest one: the surface says so on the page rather
+ * than implying it shows everything ever recorded.
+ */
+export const AUDIT_SINCE_HOURS = 720;
+
+/** Rows requested from the products' aggregate. Matches the endpoint's own
+ *  default; the console's own log is read with the same limit. */
+export const AUDIT_LIMIT = 200;
+
+/**
+ * Every product's audit trail, aggregated.
+ *
+ * `product` is a product id or `"all"`, which fans out across every source at
+ * once. **One request, not three** — the fan-out lives behind the endpoint,
+ * which is also where the partial-failure semantics live: 200 with a populated
+ * `failures` array when some sources answered, 501 when every source is
+ * unconfigured, 502 when every source genuinely failed.
+ *
+ * `request` throws on any non-2xx, so a 501 arrives here as a
+ * `PlatformApiError` carrying `status: 501` — which `resolveState` maps to
+ * `instrumentation-unavailable` rather than to an error an operator would try
+ * to retry. That mapping is the reason the status is kept rather than
+ * flattened into a message.
+ */
+export async function fetchEstateAuditLog(
+  cookieHeader: string,
+  product: string,
+): Promise<import("./audit").EstateAuditLog> {
+  const { parseEstateAuditLog } = await import("./audit");
+  const query = new URLSearchParams({
+    limit: String(AUDIT_LIMIT),
+    since_hours: String(AUDIT_SINCE_HOURS),
+  });
+  const response = await request(
+    "audit log",
+    `/api/admin/apps/${encodeURIComponent(product)}/audit-logs?${query.toString()}`,
+    { headers: { cookie: cookieHeader } },
+  );
+  return parseEstateAuditLog(await readBody(response, "audit log"));
+}

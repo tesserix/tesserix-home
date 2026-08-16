@@ -33,8 +33,15 @@ const WEB_ROOT = join(__dirname, "..");
 
 /**
  * Counts as of 2026-08-15, when the ratchet was installed. `adminPages` was 72
- * then; it is 69 since #133 moved the ticket queue, the ticket detail and
- * support analytics into apps/console.
+ * then; 69 after #133 moved the ticket queue, the ticket detail and support
+ * analytics into apps/console, and 66 since #139 merged the three
+ * product-scoped audit pages into the console's one estate-wide timeline.
+ *
+ * `adminApiRoutes` is unchanged at 51 and that is deliberate rather than
+ * incidental: #139 deleted PAGES only. `/api/admin/apps/[product]/audit-logs`
+ * is what the console reads server-to-server, so the API layer had to grow a
+ * capability while the page surface shrank — which is exactly the boundary #131
+ * describes.
  *
  * NOTE these are FILE counts, not handler counts. The 51 route files export
  * more handlers than that — several carry GET and PATCH, or GET and PUT — which
@@ -43,7 +50,7 @@ const WEB_ROOT = join(__dirname, "..");
  * straight when comparing the two numbers.
  */
 const BASELINE = {
-  adminPages: 69,
+  adminPages: 66,
   adminApiRoutes: 51,
   internalApiRoutes: 6,
 } as const;
@@ -131,6 +138,40 @@ describe("apps/web's admin surface only shrinks", () => {
           `still rot.`,
       ).toBe(false);
     }
+  });
+
+  it("has given up all three product audit pages, not just one", () => {
+    // Named individually rather than trusted to the count, and the plural in
+    // the title is the point. These three were the SAME capability implemented
+    // three times over three different architectures; deleting two and keeping
+    // one would satisfy `adminPages <= 66` by deleting something else, and
+    // would leave the estate with a console-wide audit log and one product
+    // still answering "who did this" somewhere else.
+    for (const page of [
+      "app/admin/apps/mark8ly/audit-logs/page.tsx",
+      "app/admin/apps/kora/audit/page.tsx",
+      "app/admin/apps/homechef/audit-logs/page.tsx",
+    ]) {
+      expect(
+        existsSync(join(WEB_ROOT, page)),
+        `${page} is back. The console serves /platform/audit-log now (#139), ` +
+          `merging every product's trail plus its own; next.config.ts redirects ` +
+          `this path there with the product preselected.`,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps the audit API route the console reads", () => {
+    // The counterweight to the deletions above. #139 retired the PAGES and
+    // deliberately kept the API layer: apps/console calls
+    // /api/admin/apps/[product]/audit-logs server-to-server, so deleting it as
+    // "more of the same cleanup" would take the replacement surface down with
+    // the surfaces it replaced. This is why adminApiRoutes stays at 51.
+    expect(
+      existsSync(
+        join(WEB_ROOT, "app/api/admin/apps/[product]/audit-logs/route.ts"),
+      ),
+    ).toBe(true);
   });
 
   it("still serves live chat", () => {
