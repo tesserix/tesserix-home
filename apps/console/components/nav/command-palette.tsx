@@ -155,6 +155,21 @@ export function ConsoleCommandPalette({
     (value: string) => {
       const entry = entriesByPaletteValue.get(value);
       if (!entry || entry.disabled) return;
+      // WORKAROUND for a `@tesserix/web` `Command`/`CommandInput` bug:
+      // `CommandInput`'s `onChange` sets the active value from
+      // `getVisibleItems()[0]` synchronously, before the newly-filtered
+      // items have re-registered for the new query. So on the very next
+      // Enter after a keystroke, `activeValue` can still point at an entry
+      // left over from the *previous* query — stale but truthy — and
+      // `CommandList`'s Enter handler only checks truthiness before firing
+      // `onValueChange` against it. That would silently navigate to
+      // whatever was highlighted before the operator's last keystroke, even
+      // though nothing currently on screen matches what they typed. Guard
+      // against it here using the same matcher `hasAnyMatch` uses, so a
+      // phantom selection that no longer matches the live query is ignored
+      // instead of navigated to. Delete this guard if the upstream bug is
+      // fixed.
+      if (!matchesEntryQuery(entry, query)) return;
       if (entry.external) {
         window.open(entry.href, "_blank", "noopener,noreferrer");
       } else {
@@ -163,7 +178,7 @@ export function ConsoleCommandPalette({
       setOpen(false);
       setQuery("");
     },
-    [entriesByPaletteValue, router],
+    [entriesByPaletteValue, router, query],
   );
 
   function handleOpenChange(next: boolean) {

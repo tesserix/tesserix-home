@@ -264,9 +264,9 @@
     letter-spacing: -0.011em;
     @apply bg-background text-foreground antialiased;
   }
-}
 
-:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
 }
