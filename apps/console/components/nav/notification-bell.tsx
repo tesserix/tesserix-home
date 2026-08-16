@@ -182,14 +182,13 @@ export function NotificationBell() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={label}
-        className="relative flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50 disabled:hover:bg-sidebar-accent/60"
+        className="relative flex items-center justify-center rounded-md border border-border bg-background p-2 transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50 disabled:hover:bg-background"
       >
-        <Bell aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/70" />
-        <span className="truncate text-[13px] text-sidebar-foreground/75">Notifications</span>
+        <Bell aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         {unread > 0 ? (
           <span
             aria-hidden="true"
-            className="ml-auto grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-sidebar-primary px-1 text-[10px] font-semibold text-sidebar-primary-foreground"
+            className="absolute -right-1 -top-1 grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground"
           >
             {badgeText}
           </span>

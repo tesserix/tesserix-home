@@ -59,14 +59,14 @@ export function OperatorMenu({
         onClick={() => setOpen((wasOpen) => !wasOpen)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
+        className="flex items-center gap-2.5 rounded-md border border-border bg-background px-2.5 py-2 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
       >
-        <span className="truncate text-[13px] font-medium text-sidebar-foreground">
+        <span className="truncate text-[13px] font-medium text-foreground">
           {displayName}
         </span>
         <ChevronsUpDown
           aria-hidden="true"
-          className="ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40"
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
         />
       </button>
 
