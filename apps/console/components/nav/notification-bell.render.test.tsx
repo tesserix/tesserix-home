@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SWRConfig } from "swr";
@@ -19,6 +19,7 @@ function mockFeed(body: unknown, status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 // SWR keeps a module-level cache keyed on the fetch URL, which leaks between
@@ -99,5 +100,57 @@ describe("NotificationBell", () => {
     );
     renderBell();
     await waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
+  });
+
+  it("marks read on open even when unread is 0 and lastSeenAt is null", async () => {
+    // A fresh operator has no console_notification_reads row, so
+    // lastSeenAt is null and countUnread (lib/notifications.ts) returns 0
+    // regardless of how many items exist. If the POST were gated on
+    // `unread > 0`, it would never fire, lastSeenAt would never get set,
+    // and the badge would be stuck at zero forever. The POST must fire on
+    // every open, unconditionally.
+    mockFeed({ items: [ITEM], unread: 0, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button"));
+
+    await user.click(screen.getByRole("button"));
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    await waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+      expect(postCall).toBeDefined();
+      expect(postCall?.[0]).toBe("/api/notifications");
+    });
+  });
+
+  it("renders unavailable rather than throwing when the body is malformed", async () => {
+    // A 200 with a shape that isn't a NotificationFeed (e.g. `items` isn't
+    // an array) is the one boundary where a wrong payload would otherwise
+    // break the sidebar on every console page.
+    mockFeed({ items: "nope", unread: 1, lastSeenAt: null });
+    renderBell();
+    await waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
+  });
+
+  it("stops polling once the feed is unavailable", async () => {
+    vi.useFakeTimers();
+    mockFeed({ error: "not_configured" }, 501);
+    renderBell();
+
+    await act(async () => {
+      await vi.waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
+    });
+
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Advance well past the 60s refresh interval. A future edit that
+    // reintroduces polling on the unavailable branch should fail this.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(70_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

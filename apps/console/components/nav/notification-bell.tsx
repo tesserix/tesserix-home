@@ -40,12 +40,34 @@ async function fetchFeed(url: string): Promise<FeedResult> {
     return UNAVAILABLE;
   }
 
+  let body: unknown;
   try {
-    const body = (await response.json()) as NotificationFeed;
-    return body;
+    body = await response.json();
   } catch {
     return UNAVAILABLE;
   }
+
+  if (!isNotificationFeedShape(body)) {
+    return UNAVAILABLE;
+  }
+
+  return body;
+}
+
+/**
+ * Proportionate shape check, not full schema validation — this is the one
+ * boundary where a malformed payload becomes a broken sidebar on every
+ * console page, so a wrong-shaped body must fall back to `UNAVAILABLE`
+ * rather than render garbage or throw.
+ */
+function isNotificationFeedShape(value: unknown): value is NotificationFeed {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    Array.isArray(candidate.items) &&
+    typeof candidate.unread === "number" &&
+    Number.isFinite(candidate.unread)
+  );
 }
 
 function isUnavailable(result: FeedResult | undefined): result is typeof UNAVAILABLE {
@@ -128,7 +150,15 @@ export function NotificationBell() {
   function handleOpen() {
     const next = !open;
     setOpen(next);
-    if (next && unread > 0) {
+    if (next) {
+      // POST unconditionally on open, not just when `unread > 0`: a fresh
+      // operator has no `console_notification_reads` row, so `lastSeenAt` is
+      // null and `countUnread` returns 0 no matter how many items exist.
+      // Gating the POST on `unread > 0` would mean it never fires, so
+      // `lastSeenAt` never gets set, so `unread` never leaves zero — a
+      // deadlock. The write is one row per open on a two-operator internal
+      // console, so there is nothing worth optimising here.
+      //
       // Mark-as-read then revalidate so the badge clears. A failed POST
       // leaves the badge alone and surfaces nothing — the operator's
       // attention state failing to save is not worth interrupting them for.
@@ -170,7 +200,7 @@ export function NotificationBell() {
         <div
           role="dialog"
           aria-label="Notifications"
-          className="motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-md border border-sidebar-border bg-sidebar shadow-lg"
+          className="absolute bottom-full left-0 right-0 z-20 mb-1 max-h-80 overflow-y-auto rounded-md border border-sidebar-border bg-sidebar shadow-lg"
         >
           {items.length === 0 ? (
             <p className="px-3 py-4 text-center text-[13px] text-sidebar-foreground/60">
