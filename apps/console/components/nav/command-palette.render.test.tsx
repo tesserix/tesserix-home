@@ -75,21 +75,59 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
-      "break",
+      "custom",
     );
-    const pending = await screen.findByRole("option", { name: /Break Glass/i });
+    // `platform.customDomains` is pending and stays at the `read` capability,
+    // so it is the right fixture for pending-ness alone. This used to use
+    // `platform.breakGlass`, which now declares `rotate-credentials` and is
+    // correctly filtered out for this read-only operator — a different
+    // property, tested below.
+    const pending = await screen.findByRole("option", { name: /Custom Domains/i });
     expect(pending).toBeDisabled();
   });
 
   it("finds a camelCase route by the words its label displays", async () => {
     // Regression test for the labelling-rule fix: `value` is now built from
     // the same split-and-capitalize rule the label renders with, so typing
-    // the words an operator reads on screen ("break glass") must find
-    // `platform.breakGlass` even though nothing in the route id itself
+    // the words an operator reads on screen ("custom domains") must find
+    // `platform.customDomains` even though nothing in the route id itself
     // contains a space.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "custom domains",
+    );
+    expect(await screen.findByRole("option", { name: /Custom Domains/i })).toBeInTheDocument();
+  });
+
+  it("does not offer a route whose capability the operator lacks", async () => {
+    // The gap this closed: every entry used to declare "read", the console
+    // entry ticket every internal operator holds, so an operator with no
+    // rotation rights still saw break-glass in their results and could
+    // navigate there. The surface refuses, but the palette should not have
+    // advertised it.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "break glass",
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("option", { name: /Break Glass/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("offers it to an operator who holds that capability", async () => {
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(
+      <ConsoleCommandPalette {...PROPS} capabilities={["read", "rotate-credentials"]} />,
+    );
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
@@ -271,9 +309,9 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
-      "break",
+      "custom",
     );
-    const pending = await screen.findByRole("option", { name: /Break Glass/i });
+    const pending = await screen.findByRole("option", { name: /Custom Domains/i });
     await user.click(pending);
 
     expect(push).not.toHaveBeenCalled();

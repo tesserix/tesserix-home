@@ -1,3 +1,11 @@
+// Type-only import, deliberately. `Capability` is a contract with Zitadel and
+// must have exactly one definition in the estate, but console-core is a pure
+// data package and importing the platform-auth barrel for a value would drag
+// `jose` and the session/CSRF machinery into every consumer's runtime graph.
+// `import type` is erased at build, so this buys the shared type at zero
+// runtime cost. No cycle: platform-auth does not depend on console-core.
+import type { Capability } from "@tesserix/platform-auth";
+
 // Route identity lives here, not in either app. This is what prevents the
 // mediation/messaging and audit-log/audit-logs drift between web and mobile.
 interface RouteEntry {
@@ -43,6 +51,34 @@ interface RouteEntry {
    * the one place that records which path that is.
    */
   retired?: boolean;
+  /**
+   * The capability an operator must hold to be OFFERED this route.
+   *
+   * This is a discoverability gate, not an access gate. The surface itself
+   * still asserts its own capability (`assertCapability` fails closed); this
+   * field exists so a renderer — the command palette, the rail — does not
+   * advertise a destination the operator cannot use. Before it existed, every
+   * palette entry declared `read`, the console entry ticket every internal
+   * operator holds, so the filter ran against a constant and could only ever
+   * hide everything or nothing.
+   *
+   * Optional, defaulting to `read`. The default is the honest one: a route
+   * with no declaration is readable by anyone who can reach the console at
+   * all, which is true of the great majority of them, and it means adding a
+   * route cannot accidentally hide it from everyone.
+   *
+   * Declare it only where the route's surface is unambiguously a
+   * higher-blast-radius action (break-glass rotation, GDPR erasure). Where a
+   * route's real capability is undecided because the surface is still
+   * `pending`, leave the default and say so rather than guessing — a wrong
+   * declaration hides a page from operators who should see it, and that is a
+   * quieter failure than the one this field fixes.
+   *
+   * Lives here beside `pending`/`retired` because it is a property of route
+   * IDENTITY. A lookup table in one app would drift from this one, which is
+   * the whole reason this package exists.
+   */
+  capability?: Capability;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -57,6 +93,9 @@ const ROUTES = {
   "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true },
   "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", pending: true },
   "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true },
+  // Left at the `read` default deliberately: the list is readable, and whether
+  // the surface also carries user deletion (`hard-delete`) is undecided until
+  // it is built — staff scoping is blocked on #134.
   "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", pending: true },
 
   // Platform rail. The console owns their identity so the rail can be built
@@ -81,18 +120,40 @@ const ROUTES = {
   // Recording the wrong path is the drift this package exists to prevent, and
   // it survived because nothing consumes this id's mobile path yet.
   "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/analytics-support", retired: true },
-  "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true },
-  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true },
+  // A live-chat console is not a reading surface: it is opened to reply, and
+  // `respond` is documented as "reply to tickets and chats". `platform.tickets`
+  // is deliberately NOT `respond` — the queue is genuinely readable, and
+  // replying from it asserts its own capability at the action.
+  "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true, capability: "respond" },
+  // `mass-send` names announcements explicitly, and they are irrevocable once
+  // sent. Offering the composer to someone who cannot send is a dead end.
+  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true, capability: "mass-send" },
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
   "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true },
   "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true },
+  // Left at `read`: none of CAPABILITIES covers DNS mutation, and inventing a
+  // mapping onto one that nearly fits would be worse than the default.
   "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true },
+  // Left at `read`: the outbox is a log. Whether it also offers a re-send
+  // (which would be `mass-send`) is undecided until the surface is built.
   "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", pending: true },
   "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true },
+  // Left at `read`, though `mass-send` names "template test-sends": authoring a
+  // template is not sending one, and the test-send action must assert
+  // `mass-send` itself rather than the whole page being gated on it.
   "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", pending: true },
-  "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", pending: true },
-  "platform.breakGlass": { web: "/admin/break-glass", mobile: "/platform/break-glass", pending: true },
+  // The erasure queue exists to execute irreversible deletions — `hard-delete`
+  // names leads, users and tenant archival.
+  "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", pending: true, capability: "hard-delete" },
+  // The unambiguous one: `rotate-credentials` names break-glass rotation
+  // outright, and this is the highest-blast-radius surface in the estate.
+  "platform.breakGlass": { web: "/admin/break-glass", mobile: "/platform/break-glass", pending: true, capability: "rotate-credentials" },
+  // Left at `read` despite `rotate-credentials` naming "Stripe settings":
+  // platform settings is a container whose contents are not yet decided, and
+  // gating the whole page on credential rotation would hide benign settings
+  // from every operator who cannot rotate keys. Gate the Stripe section, not
+  // the route, once the surface exists.
   "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true },
 } as const satisfies Record<string, RouteEntry>;
 
@@ -150,6 +211,25 @@ export function isPending(id: RouteId): boolean {
  */
 export function isRetired(id: RouteId): boolean {
   return getRoute(id).retired === true;
+}
+
+/**
+ * The capability required to be offered this route — see
+ * `RouteEntry.capability`.
+ *
+ * An accessor rather than exported table access, for the same reason
+ * `isPending` is one: callers get the default applied for them, so a route
+ * without a declaration can never be read as "no capability required" (i.e.
+ * `undefined`, which a `Set.has` check would silently fail on).
+ *
+ * The default is the literal value of `CONSOLE_ENTRY_CAPABILITY` in
+ * platform-auth. It is written out rather than imported because importing it
+ * would make this a runtime dependency — see the type-only import at the top of
+ * this file. `capabilities.ts` treats these strings as immutable, so the
+ * duplication cannot rot.
+ */
+export function routeCapability(id: RouteId): Capability {
+  return getRoute(id).capability ?? "read";
 }
 
 export function isRouteActive(
