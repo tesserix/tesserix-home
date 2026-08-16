@@ -118,6 +118,25 @@ describe("pending reflects what the console actually serves", () => {
     expect(isPending("platform.apps")).toBe(true);
   });
 
+  it("keeps the identity lookup pending because nothing can serve it yet", () => {
+    // #134. This is a statement of intent, not housekeeping. The console holds
+    // an OIDC login client only — it can verify the operator signing in, and
+    // cannot enumerate users at all, because there is no Zitadel Management
+    // API client in this repo. Un-pending this would put a live rail link and
+    // an enabled palette entry onto a page that does not exist.
+    //
+    // Flip it in the change that lands both the credential and the surface.
+    expect(isPending("platform.identityLookup")).toBe(true);
+  });
+
+  it("records the identity lookup's web path without linking it", () => {
+    // `/admin/search` is where the capability lives TODAY. Recording it keeps
+    // the retirement honest — one place says what the console is replacing.
+    // `pending` is what stops any renderer treating it as a destination.
+    expect(webPath("platform.identityLookup")).toBe("/admin/search");
+    expect(consolePath("platform.identityLookup")).not.toMatch(/^\/admin\//);
+  });
+
   it("reports support analytics as retired rather than pending", () => {
     // #133 folded it into platform.tickets as a tab. `pending` would say "a
     // Support analytics page is coming to the console" — it is not; there is

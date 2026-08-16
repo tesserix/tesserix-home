@@ -58,6 +58,35 @@ describe("routeEntries", () => {
     expect(dashboard?.capability).toBe("read");
   });
 
+  it("surfaces the identity lookup but refuses to navigate to it", () => {
+    // #134. Every ROUTE_ID becomes a palette entry automatically, so adding
+    // the route id put this in the command palette without anyone choosing to
+    // — which is right (an operator searching "identity" deserves "not yet"
+    // rather than "not found") but only if it lands DISABLED. There is no
+    // lookup surface in the console, and no way to build one until the console
+    // holds a Zitadel Management API credential.
+    const lookup = routeEntries().find(
+      (e) => e.id === "route:platform.identityLookup",
+    );
+    expect(lookup).toBeDefined();
+    expect(lookup?.disabled).toBe(true);
+    expect(lookup?.external).toBe(false);
+    // Never the /admin path: `pending` or not, the palette must not hand an
+    // operator a link into the app being retired.
+    expect(lookup?.href).not.toMatch(/^\/admin\//);
+  });
+
+  it("labels the identity lookup in words an operator would type", () => {
+    // `routeLabel` splits the camelCase segment, so the id reads as prose.
+    // "Platform · Identity" would have been ambiguous with IdP configuration;
+    // this is why the route id is `identityLookup` and not `identity`.
+    const lookup = routeEntries().find(
+      (e) => e.id === "route:platform.identityLookup",
+    );
+    expect(lookup?.label).toBe("Platform · Identity Lookup");
+    expect(lookup?.keywords).toContain("platform.identityLookup");
+  });
+
   it("still emits exactly one entry per route id", () => {
     // The capability field must not add or drop palette entries.
     const entries = routeEntries();

@@ -128,6 +128,66 @@ const ROUTES = {
   // `mass-send` names announcements explicitly, and they are irrevocable once
   // sent. Offering the composer to someone who cannot send is a dead end.
   "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true, capability: "mass-send" },
+  // Cross-product identity lookup (#134): find one staff member or operator
+  // across the estate, from one box, with an audit row per use.
+  //
+  // The id is new because there was none — seventeen `platform.*` entries and
+  // not one of them named this, while `apps/web` has served `/admin/search`
+  // the whole time with no rail entry anywhere in `nav-config.ts`. That is the
+  // issue's complaint in one line: capability that exists and nobody can find.
+  // Naming it is the fix, whatever renders it later.
+  //
+  // `identityLookup`, not `identity`: "Platform · Identity" reads as identity
+  // PROVIDER configuration — Zitadel orgs, IdP settings — which is a different
+  // surface someone will eventually want. The id says what it does.
+  //
+  // `pending`, and this is not a formality. The console cannot look up staff
+  // at all today: `platform-auth` holds an OIDC *login* client (verifyIdToken,
+  // extractRoles, isInternal), which verifies whoever is signing in; there is
+  // no Zitadel Management API client anywhere in this repo, so nothing can
+  // ENUMERATE users. Verifying the person in front of you and listing people
+  // are different grants and the console holds only the first. The flag comes
+  // off when the credential and the surface exist, not before.
+  //
+  // `web` points at `apps/web`'s existing `/admin/search`, which is where the
+  // capability lives today. That is a record of where the surface currently
+  // is, NOT a link target: `pending` means renderers link nowhere, including
+  // there. `/admin/search` is scheduled for retirement, and its end-user
+  // sources — storefront customers and marketing leads, returned today with no
+  // opt-in and no audit row — are exactly what must not be carried over.
+  //
+  // CAPABILITY: left at the `read` default, deliberately.
+  //
+  // Not because lookup is trivial, but because none of the seven capabilities
+  // describes it, and CAPABILITIES is a closed contract with Zitadel — adding
+  // an eighth is a role change on the `Platform Console` project, not an edit
+  // here. Of the six above `read`, every one names a MUTATION: respond,
+  // rotate-credentials, adjust-balance, execute-refund, mass-send,
+  // hard-delete. Borrowing one to mean "may look people up" would be a lie
+  // twice over — it would hide the lookup from support operators who should
+  // have it, and it would imply the surface can do the thing the capability
+  // actually names.
+  //
+  // The tempting one is `hard-delete`, because it is the other people-shaped
+  // surface (`platform.gdprQueue`). It is wrong: erasure and lookup are not
+  // the same blast radius, and gating the estate's find-a-person box on the
+  // right to delete users would leave the people who need it most unable to
+  // see it.
+  //
+  // On "must be audited on every use": auditing is an OBLIGATION on the
+  // surface, not a capability held by an operator. This field gates
+  // DISCOVERABILITY — whether the palette and the rail offer the destination —
+  // and no capability value would cause an audit row to be written. The audit
+  // write is the surface's own job, tracked in #134 against audit-service, and
+  // deliberately not guessed at here. Read-only, offered to every internal
+  // operator, and accountable for every query is a coherent position; it is
+  // the same one a hospital takes on its own access logs.
+  //
+  // Revisit if the surface ever grows an action beyond reading, per the
+  // `capability` doc above: where a route's real capability is undecided
+  // because the surface is pending, take the default and say so.
+  "platform.identityLookup": { web: "/admin/search", mobile: "/platform/identity-lookup", pending: true },
+
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
   "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true },
