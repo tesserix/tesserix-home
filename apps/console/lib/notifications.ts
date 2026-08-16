@@ -59,7 +59,7 @@ export function toTicketEvent(row: TicketEventRow): NotificationItem {
     ticketNumber: row.ticket_number,
     productId: row.product_id,
     subject: row.subject,
-    actor: row.submitted_by_name,
+    actor: row.submitted_by_name || "Unknown sender",
     at: row.created_at,
   };
 }
@@ -72,7 +72,7 @@ export function toReplyEvent(row: ReplyEventRow): NotificationItem {
     ticketNumber: row.ticket_number,
     productId: row.product_id,
     subject: row.subject,
-    actor: row.author_name,
+    actor: row.author_name || "Merchant",
     at: row.created_at,
   };
 }
