@@ -28,15 +28,20 @@ import { homechefAdmin } from "@/lib/api/homechef-admin";
 import type { AuditLogEntry as HomechefAuditRow } from "@tesserix/homechef-shared";
 
 import {
+  AUDIT_PRODUCTS,
+  attributeTo,
+  isAuditProduct,
   joinTarget,
   stringifyMetadata,
   toIsoTimestamp,
-  type AuditLogEntry,
+  type AuditProduct,
+  type SourcedAuditLogEntry,
 } from "./entry";
 
-/** The products that actually have an audit trail this route can reach. */
-export const AUDIT_PRODUCTS = ["mark8ly", "kora", "homechef"] as const;
-export type AuditProduct = (typeof AUDIT_PRODUCTS)[number];
+// The source vocabulary now lives with the wire shape (`source` is a field on
+// it). Re-exported so this module still reads as the one place that knows which
+// products have an audit trail.
+export { AUDIT_PRODUCTS, isAuditProduct, type AuditProduct };
 
 /**
  * The pseudo-product that fans out across every source at once. This is what
@@ -46,10 +51,6 @@ export type AuditProduct = (typeof AUDIT_PRODUCTS)[number];
  * genuinely unknown ones.
  */
 export const ALL_PRODUCTS = "all";
-
-export function isAuditProduct(value: string): value is AuditProduct {
-  return (AUDIT_PRODUCTS as readonly string[]).includes(value);
-}
 
 /** Filters a caller may pass. Each source applies only what its upstream supports. */
 export interface AuditQuery {
@@ -76,9 +77,16 @@ export interface Mark8lyLegacyBody {
 }
 
 export interface AuditSourceResult {
-  readonly entries: readonly AuditLogEntry[];
+  readonly entries: readonly SourcedAuditLogEntry[];
   readonly legacy?: Mark8lyLegacyBody;
 }
+
+// Each normaliser below attributes its own rows via `attributeTo`, naming its
+// source as a literal. That is deliberate: the source is set BY THE THING THAT
+// PRODUCED THE ROW, not applied afterwards by whoever happens to be merging.
+// A route-level `attributeTo(targets[i], ...)` would read the same today and
+// would be one refactor away from labelling a row with the wrong product —
+// `route.test.ts` asserts each product's rows carry that product, per source.
 
 // ---------------------------------------------------------------------------
 // mark8ly
@@ -140,8 +148,10 @@ async function fetchMark8ly(q: AuditQuery): Promise<AuditSourceResult> {
  * word for a non-human actor ("system", "service"), so a row with no email and
  * no user id still names truthfully who acted.
  */
-export function normaliseMark8ly(row: AuditLogRow & { tenantName: string }): AuditLogEntry {
-  return {
+export function normaliseMark8ly(
+  row: AuditLogRow & { tenantName: string },
+): SourcedAuditLogEntry {
+  return attributeTo("mark8ly", {
     id: row.id,
     actor: row.actor_email ?? row.actor_user_id ?? row.actor_type,
     action: row.action,
@@ -154,7 +164,7 @@ export function normaliseMark8ly(row: AuditLogRow & { tenantName: string }): Aud
       ip: row.ip_address,
       ...row.metadata,
     }),
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -176,8 +186,8 @@ async function fetchKora(q: AuditQuery): Promise<AuditSourceResult> {
   return { entries: page.items.map(normaliseKora) };
 }
 
-export function normaliseKora(event: KoraAdminEvent): AuditLogEntry {
-  return {
+export function normaliseKora(event: KoraAdminEvent): SourcedAuditLogEntry {
+  return attributeTo("kora", {
     id: event.id,
     // actor_email is written by kora from the signed BFF identity, so it is
     // present on every row; actor_id is the fallback, not a fabrication.
@@ -186,7 +196,7 @@ export function normaliseKora(event: KoraAdminEvent): AuditLogEntry {
     target: joinTarget(event.target_type, event.target_id),
     timestamp: toIsoTimestamp(event.created_at),
     metadata: stringifyMetadata({ before: event.before, after: event.after }),
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -238,8 +248,8 @@ async function fetchHomechef(q: AuditQuery): Promise<AuditSourceResult> {
  * across; it is not an invented actor, and it is what the page being retired
  * already displayed.
  */
-export function normaliseHomechef(row: HomechefAuditRow): AuditLogEntry {
-  return {
+export function normaliseHomechef(row: HomechefAuditRow): SourcedAuditLogEntry {
+  return attributeTo("homechef", {
     id: row.id,
     actor: homechefActor(row),
     action: row.action,
@@ -250,7 +260,7 @@ export function normaliseHomechef(row: HomechefAuditRow): AuditLogEntry {
       after: row.newValue,
       ip: row.ipAddress,
     }),
-  };
+  });
 }
 
 function homechefActor(row: HomechefAuditRow): string {

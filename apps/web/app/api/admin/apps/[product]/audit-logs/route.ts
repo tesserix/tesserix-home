@@ -12,8 +12,17 @@
 // keyed by product rather than a chain of ifs.
 //
 // Every source normalises onto ONE wire shape — `@tesserix/web`'s
-// `AuditLogEntry`, which is also exactly what `console_audit_log` stores — at
-// this boundary, once. See lib/audit/entry.ts.
+// `AuditLogEntry`, which is also exactly what `console_audit_log` stores —
+// plus a `source` naming which product produced the row, at this boundary,
+// once. See lib/audit/entry.ts.
+//
+// `source` is the third thing that looks like overkill and is not. Merging
+// three products into one `entries[]` with nothing recording where each row
+// came from means the console cannot show a Source column, and an audit log
+// that says "who did what" without "where" is not a whole answer. It also
+// makes `id` unique across the merge by construction, which matters because
+// the renderer keys its list by `id` and a collision there is a mis-reconciled
+// audit row.
 //
 // Response:
 //   200 { product, entries, failures, summary, sinceHours, generatedAt, ... }
@@ -27,7 +36,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 
-import { byNewestFirst, type AuditLogEntry } from "@/lib/audit/entry";
+import { byNewestFirst, type SourcedAuditLogEntry } from "@/lib/audit/entry";
 import {
   ALL_PRODUCTS,
   AUDIT_PRODUCTS,
@@ -40,15 +49,27 @@ import {
 } from "@/lib/audit/sources";
 import { logger } from "@/lib/logger";
 
-/** Matches /admin/search's `failures: {source, message}[]` exactly. */
+/**
+ * Matches /admin/search's `failures: {source, message}[]` exactly.
+ *
+ * `source` is an `AuditProduct`, the SAME vocabulary every entry's own `source`
+ * uses — a reader can join the two without a mapping table, and "Kora could not
+ * be read" lines up with the rows that would have said `kora`.
+ */
 interface SourceFailure {
-  readonly source: string;
+  readonly source: AuditProduct;
   readonly message: string;
 }
 
 interface AuditResponseBody {
   readonly product: string;
-  readonly entries: readonly AuditLogEntry[];
+  /**
+   * Every entry carries the source that produced it and an id namespaced with
+   * it. Both are set at the normaliser (see lib/audit/entry.ts's `attributeTo`)
+   * because this is where three products become one list, and after the merge
+   * neither fact is recoverable.
+   */
+  readonly entries: readonly SourcedAuditLogEntry[];
   readonly failures: readonly SourceFailure[];
   /**
    * `criticalLast24h` is null for any product whose audit has no severity
@@ -118,7 +139,7 @@ export async function GET(
     targets.map((p) => fetchAuditSource(p, query)),
   );
 
-  const entries: AuditLogEntry[] = [];
+  const entries: SourcedAuditLogEntry[] = [];
   const failures: SourceFailure[] = [];
   let everyFailureIsUnconfigured = true;
   let succeeded = 0;

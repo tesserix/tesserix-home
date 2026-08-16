@@ -38,6 +38,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 import { GET } from "./route";
+import { AUDIT_PRODUCTS } from "@/lib/audit/entry";
 
 interface WireEntry {
   id: string;
@@ -46,6 +47,7 @@ interface WireEntry {
   target?: string;
   timestamp: string;
   metadata?: string;
+  source: string;
 }
 interface WireBody {
   product: string;
@@ -123,10 +125,16 @@ beforeEach(() => {
   homechefAdmin.mockResolvedValue({ status: 200, data: { logs: [HOMECHEF_ROW], total: 1 } });
 });
 
-/** Asserts the six-field wire contract — not just "an object came back". */
+/** Asserts the seven-field wire contract — not just "an object came back". */
 function expectAuditLogEntry(entry: WireEntry) {
   expect(typeof entry.id).toBe("string");
   expect(entry.id).not.toBe("");
+  // `source` is REQUIRED on every row. Without it a merged `all` response is a
+  // timeline no reader can attribute, which is the whole reason it exists.
+  expect(AUDIT_PRODUCTS).toContain(entry.source);
+  // ...and the id is namespaced with that source, so uniqueness across the
+  // merge is a property of the row rather than of the merger.
+  expect(entry.id.startsWith(`${entry.source}:`)).toBe(true);
   expect(typeof entry.actor).toBe("string");
   expect(entry.actor).not.toBe("");
   expect(typeof entry.action).toBe("string");
@@ -160,7 +168,8 @@ describe("[product]/audit-logs — normalisation", () => {
     expect(body.entries).toHaveLength(1);
     expectAuditLogEntry(body.entries[0]);
     expect(body.entries[0]).toMatchObject({
-      id: "m-1",
+      id: "mark8ly:m-1",
+      source: "mark8ly",
       actor: "owner@mark8ly.test",
       action: "store.settings.update",
       target: "store:s-1",
@@ -176,7 +185,8 @@ describe("[product]/audit-logs — normalisation", () => {
     expect(body.entries).toHaveLength(1);
     expectAuditLogEntry(body.entries[0]);
     expect(body.entries[0]).toMatchObject({
-      id: "k-1",
+      id: "kora:k-1",
+      source: "kora",
       actor: "admin@kora.test",
       action: "food.update",
       target: "food:f-1",
@@ -191,7 +201,8 @@ describe("[product]/audit-logs — normalisation", () => {
     expect(body.entries).toHaveLength(1);
     expectAuditLogEntry(body.entries[0]);
     expect(body.entries[0]).toMatchObject({
-      id: "h-1",
+      id: "homechef:h-1",
+      source: "homechef",
       actor: "Ada Lovelace",
       action: "chef.payout.release",
       target: "chef:c-1",
@@ -216,11 +227,94 @@ describe("[product]/audit-logs — normalisation", () => {
   });
 });
 
+describe("[product]/audit-logs — per-entry source attribution", () => {
+  // Asserted PER SOURCE, not in aggregate. "every entry has a source" is
+  // satisfied by labelling all three products `mark8ly`, which is the exact
+  // failure worth catching — a merged timeline whose attribution is confidently
+  // wrong is worse than one with none.
+  it("labels mark8ly's rows mark8ly", async () => {
+    const body = (await (await call("mark8ly")).json()) as WireBody;
+    expect(body.entries.map((e) => e.source)).toEqual(["mark8ly"]);
+  });
+
+  it("labels kora's rows kora", async () => {
+    const body = (await (await call("kora")).json()) as WireBody;
+    expect(body.entries.map((e) => e.source)).toEqual(["kora"]);
+  });
+
+  it("labels homechef's rows homechef", async () => {
+    const body = (await (await call("homechef")).json()) as WireBody;
+    expect(body.entries.map((e) => e.source)).toEqual(["homechef"]);
+  });
+
+  it("gives a merged response three distinct sources, one per product", async () => {
+    // GUARDS THE GUARD for the merge itself: a response where every row carries
+    // the same source satisfies "source is present on every entry" and tells an
+    // operator that one product did everything.
+    const body = (await (await call("all")).json()) as WireBody;
+    expect(new Set(body.entries.map((e) => e.source))).toEqual(
+      new Set(["mark8ly", "kora", "homechef"]),
+    );
+  });
+
+  it("names failed sources in the same vocabulary the entries use", async () => {
+    // `failures[].source` and `entries[].source` must be joinable without a
+    // mapping table — "Kora could not be read" has to line up with the rows
+    // that would have said `kora`.
+    listKoraEvents.mockRejectedValue(new Error("kora-api is down"));
+    const body = (await (await call("all")).json()) as WireBody;
+    for (const failure of body.failures) {
+      expect(AUDIT_PRODUCTS).toContain(failure.source);
+    }
+    expect(body.failures.map((f) => f.source)).toEqual(["kora"]);
+  });
+});
+
+describe("[product]/audit-logs — ids are unique across the merge", () => {
+  it("keeps two products' identical raw ids apart", async () => {
+    // THE BUG. kora's and homechef's ids are not guaranteed to be uuids, so a
+    // shared `42` is real — and the console keys its list by `id`, where a
+    // collision is a mis-reconciled row in an audit timeline. Namespacing at
+    // this boundary is what makes the collision impossible rather than merely
+    // handled downstream.
+    listKoraEvents.mockResolvedValue({ items: [{ ...KORA_EVENT, id: "42" }], total: 1 });
+    homechefAdmin.mockResolvedValue({
+      status: 200,
+      data: { logs: [{ ...HOMECHEF_ROW, id: "42" }], total: 1 },
+    });
+    listAuditLogs.mockResolvedValue([]);
+
+    const body = (await (await call("all")).json()) as WireBody;
+
+    // Both events survive — dropping one to make ids unique would delete an
+    // event from an audit log.
+    expect(body.entries).toHaveLength(2);
+    expect(body.entries.map((e) => e.id).sort()).toEqual(["homechef:42", "kora:42"]);
+    expect(new Set(body.entries.map((e) => e.id)).size).toBe(2);
+    // ...and each is still attributable to the product it came from.
+    expect(body.entries.map((e) => e.source).sort()).toEqual(["homechef", "kora"]);
+  });
+
+  it("keeps a plain sequence id apart from a uuid-shaped one", async () => {
+    // The other half of the same problem: `console_audit_log.id` is a bare
+    // sequence, so an integer id from any product can collide with it. The
+    // console namespaces its own rows with the same `source:id` convention.
+    listAuditLogs.mockResolvedValue([{ ...MARK8LY_ROW, id: "41" }]);
+    listKoraEvents.mockResolvedValue({ items: [{ ...KORA_EVENT, id: "41" }], total: 1 });
+    homechefAdmin.mockResolvedValue({ status: 200, data: { logs: [] } });
+
+    const body = (await (await call("all")).json()) as WireBody;
+    expect(new Set(body.entries.map((e) => e.id)).size).toBe(body.entries.length);
+    expect(body.entries.map((e) => e.id)).not.toContain("41");
+  });
+});
+
 describe("[product]/audit-logs — the original bug", () => {
   it("does not serve mark8ly's rows under another product's URL", async () => {
     for (const product of ["kora", "homechef"]) {
       const body = (await (await call(product)).json()) as WireBody;
-      expect(body.entries.map((e) => e.id)).not.toContain("m-1");
+      expect(body.entries.map((e) => e.source)).not.toContain("mark8ly");
+      expect(body.entries.map((e) => e.id)).not.toContain("mark8ly:m-1");
       expect(body.rows).toBeUndefined();
     }
     // ...and mark8ly's own source was never even consulted.
@@ -280,7 +374,7 @@ describe("[product]/audit-logs — partial results across products", () => {
     // prevent. Assert the surviving rows are actually present and are the
     // ones from the sources that did NOT fail.
     expect(body.entries.length).toBeGreaterThan(0);
-    expect(body.entries.map((e) => e.id).sort()).toEqual(["h-1", "m-1"]);
+    expect(body.entries.map((e) => e.id).sort()).toEqual(["homechef:h-1", "mark8ly:m-1"]);
     for (const entry of body.entries) expectAuditLogEntry(entry);
 
     expect(body.failures).toEqual([{ source: "kora", message: "kora-api is down" }]);
@@ -289,7 +383,11 @@ describe("[product]/audit-logs — partial results across products", () => {
   it("merges every source newest-first when all of them succeed", async () => {
     const body = (await (await call("all")).json()) as WireBody;
     expect(body.failures).toEqual([]);
-    expect(body.entries.map((e) => e.id)).toEqual(["h-1", "k-1", "m-1"]);
+    expect(body.entries.map((e) => e.id)).toEqual([
+      "homechef:h-1",
+      "kora:k-1",
+      "mark8ly:m-1",
+    ]);
   });
 
   it("still fails as a whole when every source fails", async () => {
