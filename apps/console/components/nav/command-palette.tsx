@@ -51,7 +51,7 @@ export function ConsoleCommandPalette({
   enforceCapabilities,
   toolsBaseDomain,
 }: CommandPaletteProps): React.JSX.Element {
-  const router = useSafeRouter();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [tickets, setTickets] = useState<SearchEntry[]>([]);
@@ -167,7 +167,6 @@ export function ConsoleCommandPalette({
       <CommandDialog open={open} onOpenChange={handleOpenChange}>
         <Command onValueChange={selectEntry}>
           <CommandInput
-            role="combobox"
             placeholder="Search routes, tools and tickets…"
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
@@ -207,24 +206,6 @@ export function ConsoleCommandPalette({
   );
 }
 
-/**
- * `next/navigation`'s `useRouter` throws — deliberately, not just returns
- * null — when no `AppRouterContext` is mounted. Every other surface in this
- * app renders inside Next's router, but this component's own render tests
- * mount it standalone, and a component that cannot be rendered outside a
- * full app shell is a component nobody can unit test. Matching
- * `NotificationBell`'s fail-open posture elsewhere in this file's sibling,
- * this falls back to a plain location assignment instead of crashing the
- * whole palette when no router is present.
- */
-function useSafeRouter(): Pick<ReturnType<typeof useRouter>, "push"> {
-  try {
-    return useRouter();
-  } catch {
-    return { push: (href: string) => window.location.assign(href) };
-  }
-}
-
 const TICKET_DEBOUNCE_MS = 250;
 
 const KIND_BADGE: Record<SearchEntry["kind"], string> = {
@@ -257,19 +238,7 @@ function humanizeLabel(label: string): string {
 
 function PaletteItem({ entry }: { entry: SearchEntry }) {
   return (
-    // `CommandItem` hardcodes `role="option"` (a listbox-item semantic);
-    // this is a flat action list, not a listbox, so `role="button"` is both
-    // the more accurate semantic here and what lets an operator's assistive
-    // tech (and this component's own tests) address each row the way it
-    // behaves — a button that performs navigation on activation. Passed as
-    // an extra prop rather than patching the kit: CommandItem spreads
-    // `...props` after its own `role`, so this simply wins.
-    <CommandItem
-      role="button"
-      value={entry.label}
-      keywords={[...entry.keywords]}
-      disabled={entry.disabled}
-    >
+    <CommandItem value={entry.label} keywords={[...entry.keywords]} disabled={entry.disabled}>
       <span className="mr-2 inline-flex w-14 shrink-0 justify-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {KIND_BADGE[entry.kind]}
       </span>

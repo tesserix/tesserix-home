@@ -2,6 +2,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const push = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 import { ConsoleCommandPalette } from "./command-palette";
 
 const PROPS = {
@@ -24,6 +28,7 @@ function mockSearch(items: unknown[], status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  push.mockClear();
 });
 
 describe("ConsoleCommandPalette", () => {
@@ -53,10 +58,13 @@ describe("ConsoleCommandPalette", () => {
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
     await user.click(screen.getByRole("button", { name: /search/i }));
-    await user.type(await screen.findByRole("combobox"), "tickets");
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tickets",
+    );
     // platform.tickets is built; platform.liveChat is pending and must render
     // disabled rather than navigable.
-    const queue = await screen.findByRole("button", { name: /Platform · Tickets/i });
+    const queue = await screen.findByRole("option", { name: /Platform · Tickets/i });
     expect(queue).not.toBeDisabled();
   });
 
@@ -65,8 +73,11 @@ describe("ConsoleCommandPalette", () => {
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
     await user.click(screen.getByRole("button", { name: /search/i }));
-    await user.type(await screen.findByRole("combobox"), "break");
-    const pending = await screen.findByRole("button", { name: /Break Glass/i });
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "break",
+    );
+    const pending = await screen.findByRole("option", { name: /Break Glass/i });
     expect(pending).toBeDisabled();
   });
 
@@ -81,7 +92,10 @@ describe("ConsoleCommandPalette", () => {
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
     await user.click(screen.getByRole("button", { name: /search/i }));
-    await user.type(await screen.findByRole("combobox"), "p");
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "p",
+    );
     await new Promise((r) => setTimeout(r, 350));
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -92,9 +106,12 @@ describe("ConsoleCommandPalette", () => {
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
     await user.click(screen.getByRole("button", { name: /search/i }));
-    await user.type(await screen.findByRole("combobox"), "tickets");
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tickets",
+    );
     expect(
-      await screen.findByRole("button", { name: /Platform · Tickets/i }),
+      await screen.findByRole("option", { name: /Platform · Tickets/i }),
     ).toBeInTheDocument();
   });
 });
