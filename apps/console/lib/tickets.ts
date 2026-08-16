@@ -149,6 +149,67 @@ export function isTicketStatus(value: string): value is TicketStatus {
   return (TICKET_STATUSES as readonly string[]).includes(value);
 }
 
+/**
+ * The priorities the queue can be filtered by, most urgent first — the same
+ * order `listPlatformTickets` sorts by, so the filter reads like the list.
+ */
+export const TICKET_PRIORITIES = ["urgent", "high", "medium", "low"] as const;
+
+/** `in_progress` is a database value, not a label. Nothing else transforms. */
+export function ticketStatusLabel(status: string): string {
+  const normalised = status.toLowerCase();
+  return normalised === "in_progress"
+    ? "In progress"
+    : normalised.charAt(0).toUpperCase() + normalised.slice(1);
+}
+
+/**
+ * Status → badge tone.
+ *
+ * The five names are the kit's `QueueStatusTone`, deliberately duplicated as a
+ * return type rather than imported: `queue-list.tsx` is a `"use client"`
+ * module, and this file is read by server components. A structural match is
+ * all the compiler needs, and it keeps `lib/` from depending on `components/`.
+ *
+ * An unknown status is `neutral`, not an alarm: the column carries whatever
+ * string the database holds, and a status nobody has assigned a colour to is
+ * unclassified, not wrong.
+ */
+export function ticketStatusTone(
+  status: string,
+): "neutral" | "info" | "success" | "warning" | "error" {
+  switch (status.toLowerCase()) {
+    case "open":
+      return "info";
+    case "in_progress":
+      return "warning";
+    case "resolved":
+      return "success";
+    case "closed":
+      return "neutral";
+    default:
+      return "neutral";
+  }
+}
+
+/**
+ * Statuses that end the conversation.
+ *
+ * A terminal ticket gets an explicit Reopen affordance rather than a status
+ * dropdown that happens to contain "open": the operator's intent there is
+ * "reopen this", not "pick a status", and a dropdown makes reopening look
+ * like an edit to a field rather than a decision.
+ *
+ * Matched case-insensitively for the same reason `severityOf` is: the API
+ * carries the status through as a free string, so a differently-cased value
+ * must not silently fall out of the terminal set.
+ */
+const TERMINAL_STATUSES: readonly string[] = ["resolved", "closed"];
+
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.includes(status.toLowerCase());
+}
+
 export interface TicketReply {
   readonly id: string;
   readonly authorType: "merchant" | "platform_admin";

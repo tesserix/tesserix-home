@@ -3,6 +3,7 @@ import {
   ROUTE_IDS,
   consolePath,
   isPending,
+  isRetired,
   isRouteActive,
   mobilePath,
   webPath,
@@ -93,5 +94,41 @@ describe("pending reflects what the console actually serves", () => {
     // Guards against a blanket un-pend: the rail must not offer navigation to
     // pages that do not exist.
     expect(isPending("kora.foods")).toBe(true);
+  });
+
+  it("keeps live chat pending", () => {
+    // #197 owns it. apps/web still serves /admin/support/live-chat — it was
+    // deliberately excluded from #133's redirects and deletions — but the
+    // console has no chat inbox, and `pending` means "not here", not "not
+    // anywhere". Flip this when #197 lands, not before.
+    expect(isPending("platform.liveChat")).toBe(true);
+  });
+
+  it("keeps platform.apps pending, which the ticket detail depends on", () => {
+    // Not housekeeping — this one is load-bearing. The ticket detail's tenant
+    // deep link resolves through `platform.apps` (tenant-link.tsx) and renders
+    // as inert text *only because* this is pending. Un-pending it turns that
+    // into a live link to /platform/apps/{product}/tenants/{id}, a page the
+    // console does not have: a 404 reached from a working surface.
+    //
+    // tenant-link.render.test.tsx mocks `isPending`, so it asserts both
+    // branches render correctly and cannot notice which one is real. This is
+    // the assertion that notices. Un-pend `platform.apps` in the same change
+    // that builds the Apps rail, and delete this test then.
+    expect(isPending("platform.apps")).toBe(true);
+  });
+
+  it("reports support analytics as retired rather than pending", () => {
+    // #133 folded it into platform.tickets as a tab. `pending` would say "a
+    // Support analytics page is coming to the console" — it is not; there is
+    // no page to come. The rail drops it entirely (nav.test.ts).
+    expect(isRetired("platform.supportAnalytics")).toBe(true);
+    expect(isPending("platform.supportAnalytics")).toBe(false);
+  });
+
+  it("retires nothing else", () => {
+    // Guards the guard: `isRetired` returning true for everything would satisfy
+    // the assertion above while quietly emptying the rail.
+    expect(ROUTE_IDS.filter(isRetired)).toEqual(["platform.supportAnalytics"]);
   });
 });

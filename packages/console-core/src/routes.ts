@@ -28,6 +28,21 @@ interface RouteEntry {
    * The flag comes off per-surface as each page lands here.
    */
   pending?: boolean;
+  /**
+   * The surface has no page of its own any more: its capability was folded into
+   * another route.
+   *
+   * Distinct from `pending`, and deliberately not a second spelling of it. A
+   * pending entry is coming and belongs in the IA as a promise; a retired one is
+   * not coming, and putting it in a rail would advertise a page that will never
+   * be built. Renderers must leave retired ids out of navigation entirely —
+   * guarded in nav.test.ts.
+   *
+   * The entry stays in the table rather than being deleted because retirement is
+   * per-renderer: `mobile` may still serve the surface standalone, and this is
+   * the one place that records which path that is.
+   */
+  retired?: boolean;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -55,7 +70,17 @@ const ROUTES = {
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
   // is deleted.
   "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets" },
-  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/support-analytics", pending: true },
+  // Retired on web and in the console (#133): the eight KPIs and the three
+  // breakdowns are a tab on `platform.tickets` now, and `/admin/analytics/support`
+  // is a redirect to it. Not `pending` — nothing is coming.
+  //
+  // `mobile` is corrected here from "/platform/support-analytics", which no
+  // renderer ever served: expo-router puts the screen at
+  // apps/mobile/app/platform/analytics-support.tsx, i.e.
+  // "/platform/analytics-support", and (tabs)/platform.tsx links exactly that.
+  // Recording the wrong path is the drift this package exists to prevent, and
+  // it survived because nothing consumes this id's mobile path yet.
+  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/analytics-support", retired: true },
   "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true },
   "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true },
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
@@ -117,6 +142,14 @@ export function consolePath(id: RouteId): string {
  */
 export function isPending(id: RouteId): boolean {
   return getRoute(id).pending === true;
+}
+
+/**
+ * True once the surface has been folded into another route — see
+ * `RouteEntry.retired`. Renderers must not offer it as a destination.
+ */
+export function isRetired(id: RouteId): boolean {
+  return getRoute(id).retired === true;
 }
 
 export function isRouteActive(

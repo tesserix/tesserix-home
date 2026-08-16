@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -32,7 +32,9 @@ import { describe, expect, it } from "vitest";
 const WEB_ROOT = join(__dirname, "..");
 
 /**
- * Counts as of 2026-08-15, when the ratchet was installed.
+ * Counts as of 2026-08-15, when the ratchet was installed. `adminPages` was 72
+ * then; it is 69 since #133 moved the ticket queue, the ticket detail and
+ * support analytics into apps/console.
  *
  * NOTE these are FILE counts, not handler counts. The 51 route files export
  * more handlers than that — several carry GET and PATCH, or GET and PUT — which
@@ -41,7 +43,7 @@ const WEB_ROOT = join(__dirname, "..");
  * straight when comparing the two numbers.
  */
 const BASELINE = {
-  adminPages: 72,
+  adminPages: 69,
   adminApiRoutes: 51,
   internalApiRoutes: 6,
 } as const;
@@ -111,6 +113,33 @@ describe("apps/web's admin surface only shrinks", () => {
           `Lower it to ${actual} so the ratchet keeps its grip.`,
       ).toBeLessThanOrEqual(SLACK);
     }
+  });
+
+  it("has given up the surfaces the console now serves", () => {
+    // The counts above would also be satisfied by deleting three unrelated
+    // pages, so name the three. Re-adding any of them is caught twice: here,
+    // and by the baseline, which now sits exactly on the actual count.
+    for (const page of [
+      "app/admin/platform-tickets/page.tsx",
+      "app/admin/platform-tickets/[id]/page.tsx",
+      "app/admin/analytics/support/page.tsx",
+    ]) {
+      expect(
+        existsSync(join(WEB_ROOT, page)),
+        `${page} is back. It lives in apps/console now (#133); next.config.ts ` +
+          `redirects this path there, and a page here would shadow nothing but ` +
+          `still rot.`,
+      ).toBe(false);
+    }
+  });
+
+  it("still serves live chat", () => {
+    // #197 owns /admin/support/live-chat and has not landed. It was left out of
+    // the #133 sweep on purpose; deleting it takes a working surface offline
+    // with nowhere to redirect to.
+    expect(existsSync(join(WEB_ROOT, "app/admin/support/live-chat/page.tsx"))).toBe(
+      true,
+    );
   });
 
   it("is actually looking at files, not an empty directory", () => {

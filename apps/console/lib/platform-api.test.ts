@@ -3,9 +3,12 @@ import {
   PlatformApiError,
   fetchDashboard,
   parseDashboard,
+  fetchSupportAnalytics,
   fetchTicketDetail,
+  fetchTickets,
   postTicketReply,
   patchTicketStatus,
+  ticketsQuery,
 } from "./platform-api";
 
 const VALID = {
@@ -158,6 +161,125 @@ describe("patchTicketStatus", () => {
     expect(init.method).toBe("PATCH");
     expect(init.headers.origin).toBe("https://console.tesserix.app");
     expect(JSON.parse(init.body)).toEqual({ status: "resolved" });
+  });
+});
+
+const EMPTY_PAGE = {
+  summary: { open: 0, inProgress: 0, resolvedThisWeek: 0, urgentOpen: 0 },
+  rows: [],
+};
+
+describe("fetchTickets", () => {
+  function stubTickets() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(EMPTY_PAGE), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("sends the filters upstream as query params", async () => {
+    // Filtering is done in SQL by apps/web. The params have been accepted
+    // since the endpoint shipped and no caller had ever sent them.
+    const fetchMock = stubTickets();
+
+    await fetchTickets("tx_session=abc", {
+      status: "open",
+      priority: "urgent",
+      product: "mark8ly",
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/api/admin/platform-tickets");
+    expect(url.searchParams.get("status")).toBe("open");
+    expect(url.searchParams.get("priority")).toBe("urgent");
+    expect(url.searchParams.get("product")).toBe("mark8ly");
+  });
+
+  it("sends no query string at all when nothing is filtered", async () => {
+    // Guards the guard: a request that always carried the params — or one that
+    // dropped them — would still satisfy a test that only checked the path.
+    const fetchMock = stubTickets();
+
+    await fetchTickets("tx_session=abc");
+
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("?");
+  });
+
+  it("omits a blank filter rather than sending an empty value", async () => {
+    // apps/web reads `?status=` as the empty string and would filter on it,
+    // returning nothing.
+    const fetchMock = stubTickets();
+
+    await fetchTickets("c=1", { status: "", product: "mark8ly" });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.has("status")).toBe(false);
+    expect(url.searchParams.get("product")).toBe("mark8ly");
+  });
+
+  it("forwards the caller's session cookie", async () => {
+    const fetchMock = stubTickets();
+
+    await fetchTickets("tx_session=abc123", { status: "open" });
+
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("cookie")).toBe(
+      "tx_session=abc123",
+    );
+  });
+});
+
+describe("ticketsQuery", () => {
+  it("uses apps/web's param names verbatim", () => {
+    expect(ticketsQuery({ product: "homechef" })).toBe("product=homechef");
+  });
+
+  it("is empty for no filters", () => {
+    expect(ticketsQuery({})).toBe("");
+  });
+});
+
+const VALID_ANALYTICS = {
+  total: 10,
+  open: 2,
+  escalated: 3,
+  ai_resolved: 5,
+  avg_resolution_seconds: 60,
+  csat: 4,
+  resolved_rate: 0.5,
+  feedback_count: 2,
+  by_status: { closed: 8 },
+  by_reason: null,
+  by_tenant: { fanzone: 10 },
+  tenant_names: {},
+};
+
+describe("fetchSupportAnalytics", () => {
+  it("reads apps/web's proxy, which is what preserves the tenant names", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(VALID_ANALYTICS), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stats = await fetchSupportAnalytics("tx_session=abc");
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/api/admin/analytics/support",
+    );
+    expect(fetchMock.mock.calls[0][1].headers.cookie).toBe("tx_session=abc");
+    expect(stats.total).toBe(10);
+  });
+
+  it("preserves a 501 so the analytics tab can report instrumentation-unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 501 })),
+    );
+
+    await expect(fetchSupportAnalytics("c=1")).rejects.toMatchObject({
+      name: "PlatformApiError",
+      status: 501,
+    });
   });
 });
 
