@@ -167,3 +167,99 @@ export async function fetchTickets(
   }
   return parseTickets(body);
 }
+
+// The origin apps/web's CSRF gate checks writes against. A server-to-server
+// fetch carries no Origin of its own, and evaluateCsrf treats "cookie-bearing
+// mutation, no Origin" as a forgery — so the console names itself explicitly.
+// Must stay in lockstep with CSRF_ALLOWED_DOMAINS in the company chart.
+const CONSOLE_ORIGIN =
+  process.env.CONSOLE_PUBLIC_ORIGIN ?? "https://console.tesserix.app";
+
+async function readBody(response: Response, label: string): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (cause) {
+    throw new PlatformApiError(
+      `${label}: response was not JSON (${describe(cause)})`,
+      response.status,
+      { cause },
+    );
+  }
+}
+
+async function request(
+  label: string,
+  path: string,
+  init: RequestInit,
+): Promise<Response> {
+  let response: Response;
+  try {
+    response = await fetch(`${WEB_ORIGIN}${path}`, { cache: "no-store", ...init });
+  } catch (cause) {
+    throw new PlatformApiError(
+      `${label}: request failed (${describe(cause)})`,
+      undefined,
+      { cause },
+    );
+  }
+  if (!response.ok) {
+    throw new PlatformApiError(
+      `${label}: responded ${response.status}`,
+      response.status,
+    );
+  }
+  return response;
+}
+
+export async function fetchTicketDetail(
+  id: string,
+  cookieHeader: string,
+): Promise<import("./tickets").TicketDetail> {
+  const { parseTicketDetail } = await import("./tickets");
+  const response = await request(
+    "ticket",
+    `/api/admin/platform-tickets/${encodeURIComponent(id)}`,
+    { headers: { cookie: cookieHeader } },
+  );
+  return parseTicketDetail(await readBody(response, "ticket"));
+}
+
+export async function postTicketReply(
+  id: string,
+  input: { content: string; newStatus?: import("./tickets").TicketStatus },
+  cookieHeader: string,
+): Promise<void> {
+  await request(
+    "ticket reply",
+    `/api/admin/platform-tickets/${encodeURIComponent(id)}/replies`,
+    {
+      method: "POST",
+      headers: {
+        cookie: cookieHeader,
+        origin: CONSOLE_ORIGIN,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function patchTicketStatus(
+  id: string,
+  status: import("./tickets").TicketStatus,
+  cookieHeader: string,
+): Promise<void> {
+  await request(
+    "ticket status",
+    `/api/admin/platform-tickets/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: {
+        cookie: cookieHeader,
+        origin: CONSOLE_ORIGIN,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ status }),
+    },
+  );
+}

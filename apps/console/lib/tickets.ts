@@ -135,3 +135,79 @@ export function severityOf(priority: string): "critical" | "warning" | "normal" 
 export function ticketKey(ticket: Ticket): string {
   return `${ticket.productId}:${ticket.ticketNumber}`;
 }
+
+export const TICKET_STATUSES = [
+  "open",
+  "in_progress",
+  "resolved",
+  "closed",
+] as const;
+
+export type TicketStatus = (typeof TICKET_STATUSES)[number];
+
+export function isTicketStatus(value: string): value is TicketStatus {
+  return (TICKET_STATUSES as readonly string[]).includes(value);
+}
+
+export interface TicketReply {
+  readonly id: string;
+  readonly authorType: "merchant" | "platform_admin";
+  readonly authorName: string;
+  readonly authorEmail: string;
+  readonly content: string;
+  readonly createdAt: string;
+}
+
+export interface TicketDetail {
+  readonly ticket: Ticket & {
+    readonly description: string;
+    readonly resolvedAt: string | null;
+  };
+  readonly replies: readonly TicketReply[];
+}
+
+/**
+ * Parse `GET /api/admin/platform-tickets/[id]` — `{ ticket, replies }`.
+ *
+ * `author_type` is validated against the two known values rather than carried
+ * through as a string: it decides whether a message renders as the customer's
+ * or the operator's, and a misattributed message is worse than an error.
+ */
+export function parseTicketDetail(json: unknown): TicketDetail {
+  const root = obj(json, "response");
+  const t = obj(root.ticket, "ticket");
+  return {
+    ticket: {
+      id: str(t.id, "ticket.id"),
+      productId: str(t.product_id ?? t.productId, "ticket.product_id"),
+      tenantId: String(t.tenant_id ?? t.tenantId ?? ""),
+      ticketNumber: str(t.ticket_number ?? t.ticketNumber, "ticket.ticket_number"),
+      subject: str(t.subject, "ticket.subject"),
+      description: str(t.description, "ticket.description"),
+      status: str(t.status, "ticket.status"),
+      priority: str(t.priority, "ticket.priority"),
+      submittedByName: String(t.submitted_by_name ?? t.submittedByName ?? ""),
+      submittedByEmail: String(t.submitted_by_email ?? t.submittedByEmail ?? ""),
+      resolvedAt: typeof t.resolved_at === "string" ? t.resolved_at : null,
+      createdAt: str(t.created_at ?? t.createdAt, "ticket.created_at"),
+      updatedAt: String(t.updated_at ?? t.updatedAt ?? ""),
+    },
+    replies: asArray(root.replies, "replies").map((raw, i) => {
+      const r = obj(raw, `replies[${i}]`);
+      const authorType = str(r.author_type ?? r.authorType, `replies[${i}].author_type`);
+      if (authorType !== "merchant" && authorType !== "platform_admin") {
+        throw new PlatformApiError(
+          `tickets: replies[${i}].author_type is unknown (${authorType})`,
+        );
+      }
+      return {
+        id: str(r.id, `replies[${i}].id`),
+        authorType,
+        authorName: String(r.author_name ?? r.authorName ?? ""),
+        authorEmail: String(r.author_email ?? r.authorEmail ?? ""),
+        content: str(r.content, `replies[${i}].content`),
+        createdAt: str(r.created_at ?? r.createdAt, `replies[${i}].created_at`),
+      };
+    }),
+  };
+}
