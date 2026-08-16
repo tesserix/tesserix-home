@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@source "../node_modules/@tesserix/web/dist";
+@source "../../../node_modules/@tesserix/web/dist";
 
 @theme inline {
   --color-background: var(--background);

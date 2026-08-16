@@ -10,7 +10,7 @@ import {
 
 describe("routeEntries", () => {
   it("marks pending routes disabled so they render but cannot be opened", () => {
-    // 21 of 22 routes are pending today. Hiding them would leave the palette
+    // 20 of 22 routes are pending today. Hiding them would leave the palette
     // looking empty; offering them would 404.
     const entries = routeEntries();
     const pending = entries.filter((e) => e.disabled);

@@ -21,8 +21,8 @@ export interface ConsoleHeaderProps {
 }
 
 /**
- * The console's global bar: the ⌘K palette on the left, identity and the
- * bell grouped on the right.
+ * The console's global bar: the breadcrumb trail on the left, the ⌘K
+ * palette, bell, and identity grouped on the right.
  *
  * Deliberately carries no page title, and no leaf breadcrumb — every surface
  * renders its own ConsolePageHeader, and duplicating the title here would
@@ -46,14 +46,14 @@ export function ConsoleHeader({
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-border bg-background/95 px-6 backdrop-blur sm:px-8">
       <div className="flex min-w-0 items-center gap-3">
+        <HeaderTrail />
+      </div>
+      <div className="flex items-center gap-2">
         <ConsoleCommandPalette
           capabilities={capabilities}
           enforceCapabilities={showCapabilities}
           toolsBaseDomain={toolsBaseDomain}
         />
-        <HeaderTrail />
-      </div>
-      <div className="flex items-center gap-2">
         <NotificationBell />
         <OperatorMenu
           name={name}

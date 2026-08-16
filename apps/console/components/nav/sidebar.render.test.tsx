@@ -52,10 +52,20 @@ describe("ConsoleSidebar", () => {
     // entries are therefore not anchors at all.
     render(<ConsoleSidebar />);
 
-    expect(screen.getByText("Dashboard").closest("a")).toBeNull();
+    // Dashboard is no longer pending — it is the console root, and is
+    // asserted as a real link below.
     expect(screen.getByText("Break-glass").closest("a")).toBeNull();
     expect(document.querySelectorAll('a[href*="localhost:3002"]')).toHaveLength(0);
     expect(document.querySelectorAll('a[href^="http"]')).toHaveLength(0);
+  });
+
+  it("links Dashboard to the console root — the surface actually lives there", () => {
+    // platform.dashboard is built: the console root ("/") is the estate map
+    // plus the internal tools directory. Un-pending it without linking it
+    // would still leave no way back to the console home.
+    render(<ConsoleSidebar />);
+
+    expect(screen.getByText("Dashboard").closest("a")).toHaveAttribute("href", "/");
   });
 
   it("switches context when the switcher is used, without navigating away", async () => {
