@@ -279,4 +279,20 @@ describe("ConsoleCommandPalette", () => {
     expect(push).not.toHaveBeenCalled();
     expect(window.open).not.toHaveBeenCalled();
   });
+
+  it("keeps the search input's focus ring inside the dialog's clipping box", async () => {
+    // Class-presence proxy only: jsdom does not lay out or paint, so it
+    // cannot confirm the ring itself stays visually inside the dialog panel
+    // (that requires a real browser). This just pins the utility class that
+    // makes it so — a negative outline-offset draws the ring inward instead
+    // of past the input's box edge, where `CommandDialog`'s `overflow-hidden`
+    // would otherwise clip it. See the comment on `CommandInput` in
+    // command-palette.tsx for the full mechanism.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    const input = await screen.findByPlaceholderText(/search routes, tools and tickets/i);
+    expect(input.className).toContain("focus-visible:outline-offset-[-2px]");
+  });
 });
