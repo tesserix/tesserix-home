@@ -5,6 +5,16 @@ import path from "node:path";
  * Security Headers Configuration for Tesserix Homepage & Admin Portal
  */
 
+/**
+ * Where the retired admin surfaces now live.
+ *
+ * Kept in lockstep with `CONSOLE_ORIGIN` in `apps/console/lib/platform-api.ts`:
+ * that one names this app to satisfy its CSRF gate, this one names the console
+ * to send a browser there. Same host, opposite direction.
+ */
+export const CONSOLE_ORIGIN =
+  process.env.CONSOLE_PUBLIC_ORIGIN ?? "https://console.tesserix.app";
+
 const nextConfig: NextConfig = {
   output: 'standalone',
 
@@ -39,6 +49,35 @@ const nextConfig: NextConfig = {
         destination: "/products",
         permanent: true,
       },
+
+      // Retired to apps/console (#133). The pages here are deleted, so without
+      // these a bookmark — or one of this app's own remaining nav links — 404s.
+      //
+      // Next re-appends any query param the destination path did not consume,
+      // which is load-bearing rather than incidental: the console's queue reads
+      // ?status, ?priority and ?product. Asserted in next.config.test.ts against
+      // Next's own matcher, not assumed from the docs.
+      {
+        source: "/admin/platform-tickets",
+        destination: `${CONSOLE_ORIGIN}/platform/tickets`,
+        permanent: true,
+      },
+      {
+        source: "/admin/platform-tickets/:id",
+        destination: `${CONSOLE_ORIGIN}/platform/tickets/:id`,
+        permanent: true,
+      },
+      // Support analytics is a tab on the queue now, not a page of its own.
+      // The active tab is local state, not a query param (see the console's
+      // surface-tabs.tsx, which says why), so this lands on the queue with
+      // Analytics one click away rather than deep-linking the tab.
+      {
+        source: "/admin/analytics/support",
+        destination: `${CONSOLE_ORIGIN}/platform/tickets`,
+        permanent: true,
+      },
+      // Deliberately NOT /admin/support/live-chat: #197 owns that surface, it
+      // has no console equivalent yet, and it must keep working here.
     ];
   },
 

@@ -34,14 +34,14 @@ export const koraNav: readonly NavEntry[] = [
  * The platform rail — the console's default context, and the one its own home
  * page serves.
  *
- * apps/web renders these seventeen as a flat list. Grouped here into Operate /
- * Health / Governance because a flat seventeen is a wall: the groups say what
- * a reader is looking at before they read any label. The grouping is
- * presentational; route identity is unchanged, so nothing downstream depends
- * on it.
+ * apps/web renders these as a flat list. Grouped here into Operate / Health /
+ * Governance because a flat sixteen is a wall: the groups say what a reader is
+ * looking at before they read any label. The grouping is presentational; route
+ * identity is unchanged, so nothing downstream depends on it.
  *
- * Every entry is still served by apps/web (`hostedByWeb` in routes.ts). They
- * are listed here so one source describes the rail, not to imply they moved.
+ * Most entries are still served by apps/web; the ones the console serves itself
+ * are the ones without `pending` in routes.ts. They are listed here so one
+ * source describes the rail, not to imply they all moved.
  */
 export const platformNav: readonly NavEntry[] = [
   {
@@ -51,7 +51,10 @@ export const platformNav: readonly NavEntry[] = [
       { name: "Dashboard", route: "platform.dashboard", icon: "layout-dashboard" },
       { name: "Apps", route: "platform.apps", icon: "cloud" },
       { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
-      { name: "Support analytics", route: "platform.supportAnalytics", icon: "bar-chart" },
+      // No "Support analytics" entry: it is a tab on Tickets now (#133), so a
+      // rail item would be a second door onto the same page. The route id is
+      // kept in routes.ts marked `retired` — mobile still serves that surface
+      // standalone, and the id is what records where.
       { name: "Live chat", route: "platform.liveChat", icon: "message-square" },
       { name: "Announcements", route: "platform.announcements", icon: "megaphone" },
     ],
