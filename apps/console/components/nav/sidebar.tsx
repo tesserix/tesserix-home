@@ -16,7 +16,6 @@ import {
   type NavEntry,
 } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
-import { NotificationBell } from "./notification-bell";
 
 // The console's rails. Platform is the default — it is the context the
 // console's own home page serves — and a product rail takes over inside that
@@ -291,10 +290,6 @@ export function ConsoleSidebar() {
           ))}
         </div>
       </nav>
-
-      <div className="border-t border-sidebar-border p-3">
-        <NotificationBell />
-      </div>
     </div>
   );
 }
