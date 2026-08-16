@@ -19,6 +19,7 @@ import {
   toolEntries,
   visibleTo,
   type SearchEntry,
+  type SearchKind,
 } from "@/lib/search";
 
 export interface CommandPaletteProps {
@@ -133,9 +134,17 @@ export function ConsoleCommandPalette({
     [tickets, routes, tools],
   );
 
+  // Keyed by the same `paletteValue` used on each `CommandItem`, so lookup
+  // and rendering can never drift apart into looking one entry up while
+  // displaying another.
+  const entriesByPaletteValue = useMemo(
+    () => new Map(allEntries.map((entry) => [paletteValue(entry), entry])),
+    [allEntries],
+  );
+
   const selectEntry = useCallback(
-    (id: string) => {
-      const entry = allEntries.find((candidate) => candidate.id === id);
+    (value: string) => {
+      const entry = entriesByPaletteValue.get(value);
       if (!entry || entry.disabled) return;
       if (entry.external) {
         window.open(entry.href, "_blank", "noopener,noreferrer");
@@ -145,7 +154,7 @@ export function ConsoleCommandPalette({
       setOpen(false);
       setQuery("");
     },
-    [allEntries, router],
+    [entriesByPaletteValue, router],
   );
 
   function handleOpenChange(next: boolean) {
@@ -280,21 +289,38 @@ function GroupHeading({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * `CommandItem`'s `value` is keyed by `entry.id`, not `entry.label` — labels
- * collide (two tickets can share `` `${number} — ${subject}` `` when ticket
- * numbers repeat across products, per `search.ts`'s `ticketEntry` doc), and
- * a colliding `value` would make selection resolve to the wrong entry. Ids
- * are unique by construction (`ticket:${uuid}`, `route:${routeId}`,
- * `tool:${subdomain}`), so `value` participates in the primitive's own
- * filter haystack (`[value, ...keywords].join(" ")`, read from the compiled
- * `@tesserix/web` source) without being unique-but-meaningless: the label is
- * carried alongside in `keywords` so filtering on the *displayed* text is
- * unaffected by moving `value` off it.
+ * `CommandItem`'s value must be unique — labels are not (two tickets can
+ * share `` `${number} — ${subject}` `` when ticket numbers repeat across
+ * products, per `search.ts`'s `ticketEntry` doc), and a colliding `value`
+ * would make selection resolve to the wrong entry.
+ *
+ * `entry.id` itself is unique but is the wrong thing to hand to `value`:
+ * `CommandItem` also matches queries against `value` (`[value,
+ * ...keywords].join(" ")`, read from the compiled `@tesserix/web` source),
+ * and `entry.id`'s human-readable `ticket:`/`route:`/`tool:` prefix would
+ * make typing the bare word "ticket" match every ticket entry regardless of
+ * its actual content — the exact whole-word collision this scheme exists to
+ * avoid. A single-letter code carries the same uniqueness without putting
+ * an English word in the haystack for a query to collide with.
  */
+const KIND_CODE: Record<SearchKind, string> = { ticket: "t", route: "r", tool: "x" };
+
+/**
+ * Derives a unique, non-lexical `CommandItem` value from an entry.
+ *
+ * `entry.id` is `${kind}:${raw}` — the raw half is taken by slicing past
+ * `entry.kind.length + 1`, not by splitting on the first colon, so a raw id
+ * that happens to itself contain a colon cannot be mis-split.
+ */
+function paletteValue(entry: SearchEntry): string {
+  const raw = entry.id.slice(entry.kind.length + 1);
+  return `${KIND_CODE[entry.kind]}:${raw}`;
+}
+
 function PaletteItem({ entry }: { entry: SearchEntry }) {
   return (
     <CommandItem
-      value={entry.id}
+      value={paletteValue(entry)}
       keywords={[...entry.keywords, entry.label]}
       disabled={entry.disabled}
     >

@@ -98,6 +98,36 @@ describe("ConsoleCommandPalette", () => {
     expect(await screen.findByRole("option", { name: /Break Glass/i })).toBeInTheDocument();
   });
 
+  it("does not match every tool when the query is the literal word 'tool'", async () => {
+    // Pinning test for a mistake in the previous fix: `CommandItem`'s value
+    // was set to `entry.id` (`tool:${subdomain}`), and the primitive matches
+    // queries against `value`, so typing the bare word "tool" matched every
+    // tool entry regardless of its actual name or purpose. None of the tool
+    // names, subdomains or groups in `tools.ts` contain the substring
+    // "tool", so a correctly-scoped `value` returns zero tool options here.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tool",
+    );
+    // Wait past the debounced ticket search's "Searching tickets…"
+    // placeholder — that row is itself a disabled `option`, and asserting
+    // the option count while it is still showing would count it, not a
+    // false-positive tool match.
+    // The debounced ticket search's "Searching tickets…" placeholder is
+    // itself a disabled `option`, unconditionally rendered while in flight
+    // — wait for it to clear before counting options, or it is what the
+    // count would see, not a false-positive tool match.
+    await waitFor(() =>
+      expect(screen.queryByText(/searching tickets/i)).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText(/nothing matching/i)).toBeInTheDocument();
+    expect(screen.queryAllByRole("option")).toHaveLength(0);
+  });
+
   it("does not fetch tickets for a one-character query", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ items: [] }), {
