@@ -7,6 +7,26 @@ import { SurfaceStateView, type SurfaceState } from "./states";
 
 export type QueueSeverity = "normal" | "warning" | "critical";
 
+/**
+ * The kit's own tone vocabulary rather than a re-export of `@tesserix/web`'s
+ * `StatusType`: callers construct these values in server components, which
+ * cannot import from a client module. Same five names, owned here.
+ */
+export type QueueStatusTone = "neutral" | "info" | "success" | "warning" | "error";
+
+/**
+ * Where a queued item currently sits in its own workflow — open, in progress,
+ * resolved. Distinct from `severity`, which is derived from priority and says
+ * how loudly the item is shouting. A row wants both: an urgent ticket that is
+ * already in progress reads very differently from an urgent one nobody has
+ * touched, and collapsing them into one badge loses exactly that.
+ */
+export interface QueueStatus {
+  label: string;
+  /** Defaults to `neutral` — a status with no agreed colour is not an alarm. */
+  tone?: QueueStatusTone;
+}
+
 export interface QueueItem {
   /**
    * Opaque identity for the row. Real queues are keyed compositely —
@@ -22,6 +42,12 @@ export interface QueueItem {
   /** ISO-8601 SLA deadline, when the queue has one. */
   dueAt?: string;
   severity: QueueSeverity;
+  /**
+   * Optional: queues whose items have no workflow state (an approval gate is
+   * either waiting or gone) simply omit it, and every caller that predates the
+   * slot compiles unchanged.
+   */
+  status?: QueueStatus;
   href: string;
   actions?: ReactNode;
 }
@@ -126,6 +152,11 @@ export function QueueList({
                   {item.title}
                 </Link>
                 <Badge variant="outline">{item.product}</Badge>
+                {item.status ? (
+                  <StatusBadge status={item.status.tone ?? "neutral"} size="sm">
+                    {item.status.label}
+                  </StatusBadge>
+                ) : null}
                 <StatusBadge
                   status={SEVERITY_STATUS[item.severity]}
                   size="sm"

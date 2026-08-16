@@ -18,61 +18,19 @@ import {
   ErrorState,
 } from "@tesserix/web";
 import { Inbox, PlugZap, SearchX } from "lucide-react";
+import { INSTRUMENTATION_UNAVAILABLE_MESSAGE, type SurfaceState } from "./surface-state";
 
 /**
- * Every console surface is in exactly one of these states. There are five
- * non-ready kinds, not four: `instrumentation-unavailable` is deliberately
- * separate from both `empty` and `error` so a parked data plane never reads
- * as healthy, and a network blip never claims the product is uninstrumented.
+ * The state union, the 501 contract and `resolveState` live in
+ * `./surface-state`, which carries no `"use client"` directive so server
+ * components can actually call them — this module's directive would turn them
+ * into client references that throw when invoked on the server. They are
+ * re-exported here so existing client-side imports of this module are
+ * unaffected; server components must import `./surface-state` directly.
  */
-export type SurfaceState =
-  | { kind: "ready" }
-  | { kind: "loading" }
-  | { kind: "empty" }
-  | { kind: "filtered-empty" }
-  | { kind: "error"; message: string }
-  | { kind: "instrumentation-unavailable" };
-
-export interface SurfaceError {
-  status?: number;
-  message?: string;
-}
-
-export interface ResolveStateInput {
-  isLoading: boolean;
-  error?: SurfaceError | null;
-  rows: readonly unknown[];
-  filtered: boolean;
-}
-
-/**
- * 501 Not Implemented is the agreed signal from a service whose observability
- * data plane is parked. Any other failure is a real error. Exported so every
- * surface tests the same number — two private copies is exactly how this
- * invariant drifts apart.
- */
-export const NOT_IMPLEMENTED = 501;
-
-const FALLBACK_ERROR_MESSAGE = "Something went wrong loading this surface.";
-
-export const INSTRUMENTATION_UNAVAILABLE_MESSAGE =
-  "Instrumentation is unavailable — the observability data plane is parked. See docs/observability-park.md.";
-
-export function resolveState(input: ResolveStateInput): SurfaceState {
-  if (input.isLoading) {
-    return { kind: "loading" };
-  }
-  if (input.error) {
-    if (input.error.status === NOT_IMPLEMENTED) {
-      return { kind: "instrumentation-unavailable" };
-    }
-    return { kind: "error", message: input.error.message ?? FALLBACK_ERROR_MESSAGE };
-  }
-  if (input.rows.length === 0) {
-    return { kind: input.filtered ? "filtered-empty" : "empty" };
-  }
-  return { kind: "ready" };
-}
+export { INSTRUMENTATION_UNAVAILABLE_MESSAGE };
+export { NOT_IMPLEMENTED, resolveState, toSurfaceError } from "./surface-state";
+export type { ResolveStateInput, SurfaceError, SurfaceState } from "./surface-state";
 
 export interface SurfaceStateViewProps {
   state: SurfaceState;

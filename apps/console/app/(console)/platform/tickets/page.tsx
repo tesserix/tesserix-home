@@ -2,7 +2,10 @@ import { cookies } from "next/headers";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 import { StatTile } from "@/components/kit/stat-tile";
 import { QueueList, type QueueItem } from "@/components/kit/queue-list";
-import { type SurfaceState } from "@/components/kit/states";
+// Imported from `surface-state` and not from `states`: this is a server
+// component, and `states.tsx` is a "use client" module whose exports become
+// client references that throw when called on the server.
+import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
 import { fetchTickets } from "@/lib/platform-api";
 import {
   severityOf,
@@ -10,7 +13,6 @@ import {
   type Ticket,
   type TicketsPage,
 } from "@/lib/tickets";
-import { triageState } from "@/lib/triage";
 
 /**
  * The cross-product ticket queue — the console's inbound half.
@@ -41,6 +43,39 @@ export function toQueueItems(page: TicketsPage): QueueItem[] {
   }));
 }
 
+/** The `empty` copy, exported so the test asserts on the string the page ships
+ *  rather than on a second copy of it that could drift. */
+export const QUEUE_EMPTY_MESSAGE = "Nothing waiting. Every ticket is answered.";
+
+export interface QueueStateInput {
+  /** Whatever `fetchTickets` rejected with, or null. */
+  error: unknown;
+  rows: readonly QueueItem[];
+  /** True when any filter is narrowing the queue. */
+  filtered: boolean;
+}
+
+/**
+ * Which of the six states the queue is in.
+ *
+ * This used to be `triageState(error, null)`, which can only ever return
+ * `instrumentation-unavailable | error | ready` — so a queue with zero rows
+ * reported `ready` and rendered an empty `<ul>`, and the `emptyMessage` below
+ * was unreachable. `triageState` is right for the dashboard tiles it was
+ * written for, where a 200 can carry `available: false` and there is no row
+ * count to consider; it is the wrong helper for a list.
+ */
+export function queueState(input: QueueStateInput): SurfaceState {
+  return resolveState({
+    // The page awaits its fetch before rendering, so there is no client-side
+    // pending window. Suspense fallbacks, not this state, cover the wait.
+    isLoading: false,
+    error: toSurfaceError(input.error),
+    rows: input.rows,
+    filtered: input.filtered,
+  });
+}
+
 export default async function TicketQueue() {
   const cookieHeader = (await cookies()).toString();
 
@@ -52,7 +87,13 @@ export default async function TicketQueue() {
     error = caught;
   }
 
-  const state: SurfaceState = triageState(error, null);
+  const rows: QueueItem[] = page ? toQueueItems(page) : [];
+  // No filters on this surface yet (#133 task 3 adds status/priority/product).
+  // Passed as a value rather than hard-coded at the call site so landing them
+  // is a matter of computing this one boolean.
+  const filtered = false;
+
+  const state: SurfaceState = queueState({ error, rows, filtered });
 
   return (
     <div className="flex flex-col gap-6">
@@ -84,11 +125,7 @@ export default async function TicketQueue() {
         />
       </div>
 
-      <QueueList
-        items={page ? toQueueItems(page) : []}
-        state={state}
-        emptyMessage="Nothing waiting. Every ticket is answered."
-      />
+      <QueueList items={rows} state={state} emptyMessage={QUEUE_EMPTY_MESSAGE} />
     </div>
   );
 }
