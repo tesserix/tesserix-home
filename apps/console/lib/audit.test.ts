@@ -11,14 +11,30 @@ import {
   parseEstateAuditLog,
   sourceLabel,
   upstreamProductFor,
-  withSourcePrefix,
+  withSource,
   type AuditEntry,
+  type SourcedAuditEntry,
 } from "./audit";
 
-function entry(over: Partial<AuditEntry> & Pick<AuditEntry, "id" | "timestamp">): AuditEntry {
+function entry(
+  over: Partial<SourcedAuditEntry> & Pick<SourcedAuditEntry, "id" | "timestamp">,
+): SourcedAuditEntry {
   return {
     actor: "sunita@tesserix.app",
     action: "identity.lookup",
+    source: "console",
+    ...over,
+  };
+}
+
+/** One entry as it arrives on the wire, with every required field present. */
+function wireEntry(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "e1",
+    source: "mark8ly",
+    actor: "sunita@tesserix.app",
+    action: "tenant.suspend",
+    timestamp: "2026-08-16T09:00:00.000Z",
     ...over,
   };
 }
@@ -28,21 +44,19 @@ describe("parseEstateAuditLog", () => {
     const parsed = parseEstateAuditLog({
       product: "all",
       entries: [
-        {
-          id: "e1",
-          actor: "sunita@tesserix.app",
-          action: "tenant.suspend",
+        wireEntry({
+          id: "mark8ly:9f2",
           target: "tenant:9f2",
-          timestamp: "2026-08-16T09:00:00.000Z",
           metadata: '{"severity":"critical"}',
-        },
+        }),
       ],
       failures: [{ source: "kora", message: "kora: responded 502" }],
     });
 
     expect(parsed.entries).toEqual([
       {
-        id: "e1",
+        id: "mark8ly:9f2",
+        source: "mark8ly",
         actor: "sunita@tesserix.app",
         action: "tenant.suspend",
         target: "tenant:9f2",
@@ -53,20 +67,53 @@ describe("parseEstateAuditLog", () => {
     expect(parsed.failures).toEqual([{ source: "kora", message: "kora: responded 502" }]);
   });
 
+  it("keeps each entry's own source rather than one for the whole body", () => {
+    // GUARDS THE GUARD for parsing: a parser that read a single body-level
+    // source and stamped it on every row would satisfy "every entry has a
+    // source" while telling an operator one product did everything.
+    const parsed = parseEstateAuditLog({
+      product: "all",
+      entries: [
+        wireEntry({ id: "mark8ly:9f2", source: "mark8ly" }),
+        wireEntry({ id: "kora:42", source: "kora" }),
+        wireEntry({ id: "console:41", source: "console" }),
+      ],
+      failures: [],
+    });
+    expect(parsed.entries.map((row) => row.source)).toEqual([
+      "mark8ly",
+      "kora",
+      "console",
+    ]);
+  });
+
+  it("refuses an entry with no source rather than guessing one", () => {
+    // An older apps/web merged its three products unattributed. Defaulting the
+    // source would put a label on rows whose origin this surface does not know,
+    // and a wrong Source column in an audit log is worse than a failed read.
+    const { source: _dropped, ...unattributed } = wireEntry();
+    expect(() =>
+      parseEstateAuditLog({ entries: [unattributed], failures: [] }),
+    ).toThrow(/entries\[0\]\.source/);
+  });
+
+  it("passes an unknown source through instead of rejecting it", () => {
+    // apps/web owns the product list. A fourth product's rows will arrive here
+    // before this build knows the id, and `sourceLabel` renders it verbatim —
+    // shown honestly under its raw id beats a parse failure or a blank column.
+    const parsed = parseEstateAuditLog({
+      entries: [wireEntry({ source: "fanzone" })],
+      failures: [],
+    });
+    expect(parsed.entries[0].source).toBe("fanzone");
+    expect(sourceLabel(parsed.entries[0].source)).toBe("fanzone");
+  });
+
   it("treats an absent optional as undefined, not as a string", () => {
     // `target` and `metadata` are `?` in the shape the viewer reads. A null
     // arriving as the string "null" would render "null" beside every actor.
     const parsed = parseEstateAuditLog({
-      entries: [
-        {
-          id: "e1",
-          actor: "a",
-          action: "b",
-          target: null,
-          timestamp: "2026-08-16T09:00:00.000Z",
-          metadata: null,
-        },
-      ],
+      entries: [wireEntry({ target: null, metadata: null })],
       failures: [],
     });
     expect(parsed.entries[0].target).toBeUndefined();
@@ -77,7 +124,10 @@ describe("parseEstateAuditLog", () => {
     // A renamed field upstream must break loudly. An audit log rendering
     // "undefined did something" is worse than one that says it could not read.
     expect(() =>
-      parseEstateAuditLog({ entries: [{ id: "e1", action: "b", timestamp: "t" }], failures: [] }),
+      parseEstateAuditLog({
+        entries: [{ id: "e1", source: "kora", action: "b", timestamp: "t" }],
+        failures: [],
+      }),
     ).toThrow(PlatformApiError);
   });
 
@@ -158,36 +208,78 @@ describe("merging the timeline", () => {
     expect(byNewestFirst(a, a)).toBe(0);
   });
 
-  it("namespaces ids per source without touching the rest of the row", () => {
-    const [row] = withSourcePrefix(
-      [entry({ id: "12", timestamp: "2026-08-16T09:00:00.000Z", target: "tenant:9f2" })],
-      "console",
-    );
-    expect(row.id).toBe("console:12");
+  it("attributes the console's rows and namespaces their ids", () => {
+    // `console_audit_log` has no source column and does not need one — every
+    // row in it is the same source, derived at read time.
+    const consoleRow: AuditEntry = {
+      id: "41",
+      actor: "sunita@tesserix.app",
+      action: "identity.lookup",
+      target: "tenant:9f2",
+      timestamp: "2026-08-16T09:00:00.000Z",
+    };
+    const [row] = withSource([consoleRow], "console");
+    expect(row.source).toBe("console");
+    expect(row.id).toBe("console:41");
+    // ...and nothing that carries real audit data is touched. Smuggling the
+    // source into `target` would make the row say something the console never
+    // recorded.
     expect(row.target).toBe("tenant:9f2");
+    expect(row.actor).toBe("sunita@tesserix.app");
+    expect(row.action).toBe("identity.lookup");
   });
 
   it("does not mutate the entries it was given", () => {
-    const original = entry({ id: "12", timestamp: "2026-08-16T09:00:00.000Z" });
-    withSourcePrefix([original], "console");
-    expect(original.id).toBe("12");
+    const original: AuditEntry = {
+      id: "41",
+      actor: "sunita@tesserix.app",
+      action: "identity.lookup",
+      timestamp: "2026-08-16T09:00:00.000Z",
+    };
+    withSource([original], "console");
+    expect(original.id).toBe("41");
+    expect("source" in original).toBe(false);
   });
 
-  it("keeps both rows when two sources share an id", () => {
-    // `console_audit_log.id` is a sequence and the products' ids are not
-    // guaranteed to be uuids, so a collision is real. The viewer keys its list
-    // by id, and two rows sharing a key is a mis-reconciled audit entry.
+  it("cannot collide two sources' identical raw ids, because they are namespaced", () => {
+    // THE BUG, from the console's side. `console_audit_log.id` is a sequence
+    // and kora's and homechef's ids are not guaranteed to be uuids, so a shared
+    // `42` is real — and the list is keyed by id, where a collision is a
+    // mis-reconciled audit row.
     //
-    // Both rows survive. Dropping one to keep React happy would delete an
-    // event from an audit timeline, which is the failure this surface exists
-    // to make impossible.
+    // Uniqueness is now a property of each row rather than something the merger
+    // repairs, so both events survive with their own ids AND their own source.
     const merged = mergeTimeline(
-      [entry({ id: "12", timestamp: "2026-08-16T09:00:00.000Z", action: "product.thing" })],
-      [entry({ id: "12", timestamp: "2026-08-16T08:00:00.000Z", action: "console.thing" })],
+      [entry({ id: "kora:42", source: "kora", timestamp: "2026-08-16T09:00:00.000Z", action: "food.update" })],
+      withSource(
+        [
+          {
+            id: "42",
+            actor: "sunita@tesserix.app",
+            action: "identity.lookup",
+            timestamp: "2026-08-16T08:00:00.000Z",
+          },
+        ],
+        "console",
+      ),
     );
     expect(merged).toHaveLength(2);
+    expect(merged.map((row) => row.id)).toEqual(["kora:42", "console:42"]);
+    expect(merged.map((row) => row.source)).toEqual(["kora", "console"]);
+    expect(merged.map((row) => row.action)).toEqual(["food.update", "identity.lookup"]);
+  });
+
+  it("keeps both rows when ONE source repeats its own primary key", () => {
+    // What `dedupeIds` still guards now that cross-source collisions are
+    // impossible: a paginated upstream returning the same row twice. Both rows
+    // survive — dropping one to keep React happy would delete an event from an
+    // audit timeline, which is the failure this surface exists to prevent.
+    const merged = mergeTimeline([
+      entry({ id: "kora:42", source: "kora", timestamp: "2026-08-16T09:00:00.000Z" }),
+      entry({ id: "kora:42", source: "kora", timestamp: "2026-08-16T08:00:00.000Z" }),
+    ]);
+    expect(merged).toHaveLength(2);
     expect(new Set(merged.map((row) => row.id)).size).toBe(2);
-    expect(merged.map((row) => row.action)).toEqual(["product.thing", "console.thing"]);
   });
 
   it("leaves the first occurrence's id untouched", () => {

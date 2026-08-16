@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE } from "@/components/kit/surface-state";
 import { PlatformApiError } from "@/lib/platform-api";
-import type { AuditEntry, AuditSourceFailure } from "@/lib/audit";
-import { mergeTimeline, withSourcePrefix } from "@/lib/audit";
+import type { AuditEntry, AuditSourceFailure, SourcedAuditEntry } from "@/lib/audit";
+import { mergeTimeline, withSource } from "@/lib/audit";
 import {
   ALL_PRODUCTS_LABEL,
   AUDIT_FILTERS,
@@ -26,14 +26,31 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const PRODUCT_ROW: AuditEntry = {
-  id: "9f2",
+/**
+ * A product row as it arrives from the aggregate endpoint: already attributed
+ * and already namespaced, because apps/web's normaliser did both at the only
+ * boundary where the product is known for certain.
+ */
+const PRODUCT_ROW: SourcedAuditEntry = {
+  id: "mark8ly:9f2",
+  source: "mark8ly",
   actor: "ops@mark8ly.com",
   action: "tenant.suspend",
   target: "tenant:acme",
   timestamp: "2026-08-16T09:03:00.000Z",
 };
 
+/** A homechef row, so attribution can be asserted across DIFFERENT sources. */
+const FE3DR_ROW: SourcedAuditEntry = {
+  id: "homechef:c-1",
+  source: "homechef",
+  actor: "ada@fe3dr.test",
+  action: "chef.payout.release",
+  target: "chef:c-1",
+  timestamp: "2026-08-16T09:01:00.000Z",
+};
+
+/** The console's own row, as `console_audit_log` returns it — no source column. */
 const CONSOLE_ROW: AuditEntry = {
   id: "41",
   actor: "sunita@tesserix.app",
@@ -238,8 +255,8 @@ describe("buildSourceNotices", () => {
 describe("the merged timeline renders", () => {
   it("shows entries from both sources, newest first", () => {
     const entries = mergeTimeline(
-      withSourcePrefix([PRODUCT_ROW], "product"),
-      withSourcePrefix([CONSOLE_ROW], "console"),
+      [PRODUCT_ROW],
+      withSource([CONSOLE_ROW], "console"),
     );
     renderTimeline({ entries, state: { kind: "ready" } });
 
@@ -255,7 +272,7 @@ describe("the merged timeline renders", () => {
     // The requirement in one test: a 501 from the products' aggregate renders
     // instrumentation-unavailable, and the console's own rows still render.
     // The local source must not be taken down by the remote one.
-    const entries = withSourcePrefix([CONSOLE_ROW], "console");
+    const entries = withSource([CONSOLE_ROW], "console");
     const notices: SourceNotice[] = [
       {
         source: "all",
@@ -280,6 +297,53 @@ describe("the merged timeline renders", () => {
     expect(screen.getByText("sunita@tesserix.app identity.lookup sunita@example.com")).toBeInTheDocument();
   });
 
+  it("names the source on EVERY row", () => {
+    // The column an operator most needs on a merged timeline. "Who did what"
+    // without "where" is not a whole answer, and the row's other fields are
+    // deliberately product-neutral, so nothing else on screen can supply it.
+    const entries = mergeTimeline(
+      [PRODUCT_ROW, FE3DR_ROW],
+      withSource([CONSOLE_ROW], "console"),
+    );
+    renderTimeline({ entries, state: { kind: "ready" } });
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row).toHaveTextContent(/Source:/);
+    }
+    // Newest first: mark8ly 09:03, console 09:02, homechef 09:01.
+    expect(rows[0]).toHaveTextContent("Mark8ly");
+    expect(rows[1]).toHaveTextContent("Console");
+    expect(rows[2]).toHaveTextContent("Fe3dr");
+  });
+
+  it("gives each row ITS OWN source, not one label repeated", () => {
+    // GUARDS THE GUARD. "every row has a source" passes just as happily when
+    // every row is stamped with the same one — which is the worse defect,
+    // because a confidently wrong Source column is read as fact.
+    const entries = mergeTimeline(
+      [PRODUCT_ROW, FE3DR_ROW],
+      withSource([CONSOLE_ROW], "console"),
+    );
+    renderTimeline({ entries, state: { kind: "ready" } });
+
+    const labels = screen
+      .getAllByRole("listitem")
+      .map((row) => ["Mark8ly", "Fe3dr", "Console"].filter((name) => row.textContent?.includes(name)));
+    expect(labels).toEqual([["Mark8ly"], ["Console"], ["Fe3dr"]]);
+  });
+
+  it("does not smuggle the source into a field that carries audit data", () => {
+    // `target` is what was acted on and `metadata` is the upstream's own
+    // severity/IP/diff. Prefixing either would make the audit record state
+    // something the source never recorded — worse than no attribution at all.
+    renderTimeline({ entries: [PRODUCT_ROW], state: { kind: "ready" } });
+    expect(
+      screen.getByText("ops@mark8ly.com tenant.suspend tenant:acme"),
+    ).toBeInTheDocument();
+  });
+
   it("renders the empty state rather than an empty list", () => {
     renderTimeline({ state: { kind: "empty" } });
     expect(screen.getByText(TIMELINE_EMPTY_MESSAGE)).toBeInTheDocument();
@@ -288,7 +352,7 @@ describe("the merged timeline renders", () => {
   it("states what the timeline does not reach back to", () => {
     // The two sources truncate differently. Not saying so lets an operator
     // read the oldest row on screen as the oldest row that exists.
-    renderTimeline({ entries: withSourcePrefix([CONSOLE_ROW], "console") });
+    renderTimeline({ entries: withSource([CONSOLE_ROW], "console") });
     expect(screen.getByText(TIMELINE_SCOPE_NOTE)).toBeInTheDocument();
   });
 });
@@ -303,7 +367,7 @@ describe("upstream failures are visible, not swallowed", () => {
     // "Kora unavailable": a reader draws conclusions from what is ABSENT from
     // an audit log.
     renderTimeline({
-      entries: withSourcePrefix([PRODUCT_ROW], "product"),
+      entries: [PRODUCT_ROW],
       failures: FAILURES,
     });
 

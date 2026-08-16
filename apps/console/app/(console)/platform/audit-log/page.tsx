@@ -21,10 +21,11 @@ import {
   mergeTimeline,
   sourceLabel,
   upstreamProductFor,
-  withSourcePrefix,
+  withSource,
   type AuditEntry,
   type AuditSource,
   type AuditSourceFailure,
+  type SourcedAuditEntry,
 } from "@/lib/audit";
 import { AUDIT_LIMIT, PlatformApiError, fetchEstateAuditLog } from "@/lib/platform-api";
 import { recentAuditEntries } from "@/lib/db/audit-repo";
@@ -296,7 +297,10 @@ export default async function EstateAuditLog({
   const upstream =
     upstreamResult.status === "fulfilled"
       ? upstreamResult.value
-      : { entries: [] as readonly AuditEntry[], failures: [] as readonly AuditSourceFailure[] };
+      : {
+          entries: [] as readonly SourcedAuditEntry[],
+          failures: [] as readonly AuditSourceFailure[],
+        };
   const upstreamError: unknown =
     upstreamResult.status === "rejected" ? upstreamResult.reason : null;
 
@@ -305,13 +309,15 @@ export default async function EstateAuditLog({
   const consoleError: unknown =
     consoleResult.status === "rejected" ? consoleResult.reason : null;
 
-  // Prefixed before merging: `console_audit_log.id` is a plain sequence and the
-  // products' ids are not guaranteed to be uuids, so without a namespace two
-  // systems' primary keys collide on the viewer's React keys. See
-  // `withSourcePrefix` for the part of this that the wire shape cannot fix.
+  // The products' rows arrive already attributed and already namespaced — the
+  // aggregate endpoint sets `source` and `${source}:${id}` at the normaliser
+  // that produced each one, which is the only place the product is known for
+  // certain. Only the console's own rows need attributing here, and they are
+  // all one source; `console_audit_log.id` is a plain sequence, so the
+  // namespace is what keeps `41` from colliding with a product's `41`.
   const rows = mergeTimeline(
-    withSourcePrefix(upstream.entries, "product"),
-    withSourcePrefix(consoleEntries, CONSOLE_SOURCE),
+    upstream.entries,
+    withSource(consoleEntries, CONSOLE_SOURCE),
   );
 
   const state = timelineState({ upstreamError, consoleError, rows, filtered });

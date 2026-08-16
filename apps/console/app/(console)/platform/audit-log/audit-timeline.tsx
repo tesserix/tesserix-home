@@ -1,6 +1,6 @@
 "use client";
 
-import { AuditLogViewer, Callout, CalloutDescription, CalloutTitle } from "@tesserix/web";
+import { Callout, CalloutDescription, CalloutTitle } from "@tesserix/web";
 import { AlertTriangle } from "lucide-react";
 import {
   FilterBar,
@@ -10,16 +10,17 @@ import {
 } from "@/components/kit/filter-bar";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import type { AuditEntry, AuditSourceFailure } from "@/lib/audit";
+import type { AuditSourceFailure, SourcedAuditEntry } from "@/lib/audit";
 import { sourceLabel } from "@/lib/audit";
+import { SourcedAuditList } from "./sourced-audit-list";
 
 /**
  * The client half of the audit timeline.
  *
- * A client component for one reason: `AuditLogViewer` comes from
- * `@tesserix/web`, whose barrel is `"use client"`, and `FilterBar` takes
- * callbacks a server component cannot supply. The page itself stays a server
- * component so both reads happen on the server — the same split as
+ * A client component for one reason: the design-system components it renders
+ * come from `@tesserix/web`, whose barrel is `"use client"`, and `FilterBar`
+ * takes callbacks a server component cannot supply. The page itself stays a
+ * server component so both reads happen on the server — the same split as
  * `tickets/queue-view.tsx`.
  */
 
@@ -42,7 +43,7 @@ export interface AuditTimelineProps {
   descriptors: FilterDescriptor[];
   /** The filters the server actually applied — see QueueView's `values`. */
   values: FilterValues;
-  entries: AuditEntry[];
+  entries: SourcedAuditEntry[];
   state: SurfaceState;
   emptyMessage: string;
   /** Sources whose read failed outright. */
@@ -130,11 +131,13 @@ export function AuditTimeline({
 
       <IncompleteSources failures={failures} />
 
-      {/* The viewer renders whatever rows the working sources produced. It is
-          shown alongside the notices above, never instead of them: one source
-          being down must not blank out the others' rows. */}
+      {/* The list renders whatever rows the working sources produced, each with
+          the source that produced it. It is shown alongside the notices above,
+          never instead of them: one source being down must not blank out the
+          others' rows. See `sourced-audit-list.tsx` for why this is not
+          `@tesserix/web`'s `AuditLogViewer`. */}
       {state.kind === "ready" ? (
-        <AuditLogViewer entries={entries} emptyMessage={emptyMessage} />
+        <SourcedAuditList entries={entries} emptyMessage={emptyMessage} />
       ) : (
         <SurfaceStateView
           state={state}

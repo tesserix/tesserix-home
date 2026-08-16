@@ -19,6 +19,27 @@ import type { AuditEntry } from "./db/audit-repo";
 export type { AuditEntry };
 
 /**
+ * An entry plus the source that produced it — the shape this surface actually
+ * merges and renders.
+ *
+ * `source` is REQUIRED. Every row on this surface has come from somewhere, and
+ * an audit timeline that cannot attribute a row is missing the column an
+ * operator most needs: "who did what" without "where" is not a whole answer.
+ * The products' rows arrive with it already set by apps/web's normalisers; the
+ * console's own rows get it from `withSource` below.
+ *
+ * Typed `string`, not `AuditSource`, on purpose. apps/web owns the product
+ * list, and when a fourth product gains an audit trail its rows will arrive
+ * here before this build knows the id. `sourceLabel` already renders an
+ * unknown id verbatim rather than inventing a name, so an unrecognised source
+ * degrades to "shown, honestly, under its raw id" — not to an unattributed row
+ * or a parse failure.
+ */
+export interface SourcedAuditEntry extends AuditEntry {
+  readonly source: string;
+}
+
+/**
  * The estate's audit timeline: reading it, and merging the sources honestly.
  *
  * Two sources feed this surface and they are not alike:
@@ -49,7 +70,7 @@ export interface AuditSourceFailure {
 
 /** The aggregate endpoint's body, narrowed to what this surface reads. */
 export interface EstateAuditLog {
-  readonly entries: readonly AuditEntry[];
+  readonly entries: readonly SourcedAuditEntry[];
   readonly failures: readonly AuditSourceFailure[];
 }
 
@@ -149,12 +170,17 @@ function optionalStr(value: unknown, path: string): string | undefined {
   return value;
 }
 
-function parseEntry(value: unknown, path: string): AuditEntry {
+function parseEntry(value: unknown, path: string): SourcedAuditEntry {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail(`${path} is not an object`);
   }
   const row = value as Record<string, unknown>;
   return {
+    // Required, for the same reason `failures` is: a body without it is an
+    // older apps/web that merged its products unattributed, and defaulting the
+    // source to anything at all would put a label on rows whose origin this
+    // surface does not know. A wrong Source column is worse than a failed read.
+    source: str(row.source, `${path}.source`),
     id: str(row.id, `${path}.id`),
     actor: str(row.actor, `${path}.actor`),
     action: str(row.action, `${path}.action`),
@@ -207,26 +233,29 @@ export function parseEstateAuditLog(json: unknown): EstateAuditLog {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Namespace a source's ids so two systems' primary keys cannot collide.
+ * Attribute a source's rows to it: record the source, namespace the id with it.
  *
- * FINDING, recorded here because it is not obvious: the aggregate endpoint does
- * NOT namespace ids across its three products, and the wire shape has no field
- * to say which product a row came from. mark8ly's ids are uuids, but kora's and
- * homechef's are not guaranteed to be, so `12` from one and `12` from the other
- * are indistinguishable — and `console_audit_log.id` is a plain sequence, which
- * collides with any integer id at all. React keys the viewer's list by `id`, so
- * a collision is a mis-reconciled row in an audit log.
+ * This is the console-side half of the convention apps/web's `attributeTo`
+ * applies to the products' rows — same `${source}:${id}` shape, same reason.
+ * `console_audit_log.id` is a plain sequence, so an un-namespaced `41` collides
+ * with any integer id any product might have, and the list is keyed by `id`.
  *
- * The prefix fixes the console-versus-products case exactly. It cannot fix a
- * collision BETWEEN two products, because nothing on the wire says which
- * product a row came from — `dedupeIds` below is the backstop for that, and the
- * real fix is per-entry source attribution at the endpoint. Tracked for #158.
+ * It is applied HERE, at the read, rather than stored: migration 0018's columns
+ * are deliberately `AuditLogEntry`-shaped, and every row in that table has the
+ * same source. A stored column would be a constant repeated a million times.
+ *
+ * Only the console's own rows need this. The products' rows arrive from the
+ * aggregate endpoint already sourced and already namespaced — doing it again
+ * here would produce `product:mark8ly:9f2` and put "product" in the Source
+ * column of rows that can name their actual product.
+ *
+ * Immutable: new rows, the input untouched.
  */
-export function withSourcePrefix(
+export function withSource(
   entries: readonly AuditEntry[],
-  prefix: string,
-): AuditEntry[] {
-  return entries.map((entry) => ({ ...entry, id: `${prefix}:${entry.id}` }));
+  source: string,
+): SourcedAuditEntry[] {
+  return entries.map((entry) => ({ ...entry, source, id: `${source}:${entry.id}` }));
 }
 
 /** Newest first, `id` as the tiebreak so a merged list has a stable order. */
@@ -238,17 +267,29 @@ export function byNewestFirst(a: AuditEntry, b: AuditEntry): number {
 /**
  * Make every id unique, keeping the first occurrence untouched.
  *
- * The backstop for the cross-product collision `withSourcePrefix` cannot reach.
- * Deterministic given a sorted list, and it only ever touches the DUPLICATE —
- * so the id an operator would recognise stays as it is, and the suffix marks
- * the row that needed disambiguating rather than silently dropping it.
+ * KEPT DELIBERATELY, and demoted. It used to be the MECHANISM for cross-source
+ * uniqueness, because nothing on the wire said which product a row came from.
+ * Now that every row is namespaced with its source at the boundary that
+ * produced it, a collision between two sources cannot happen by construction,
+ * and this is a guard rather than a mechanism.
  *
+ * It still earns its place, because one failure mode survives: a single source
+ * repeating its own primary key. That is not hypothetical — kora-api's
+ * `/v1/admin/events` and homechef's `/audit-logs` are both paginated reads over
+ * an append-only table, and a page boundary crossed while rows are being
+ * inserted is the classic way one row is returned twice. The cost is a `Set`;
+ * the failure it catches is React silently reconciling two audit events into
+ * one, which is a row disappearing from an integrity record with no error
+ * anywhere.
+ *
+ * It only ever touches the DUPLICATE, so the id an operator would recognise
+ * stays as it is, and the suffix marks the row that needed disambiguating.
  * Dropping the duplicate was the alternative and it is wrong here: two rows
  * that share an id are two events, and deleting one of them from an audit
  * timeline to keep React happy is the exact failure this surface exists to make
  * impossible.
  */
-export function dedupeIds(entries: readonly AuditEntry[]): AuditEntry[] {
+export function dedupeIds<T extends AuditEntry>(entries: readonly T[]): T[] {
   const seen = new Set<string>();
   return entries.map((entry) => {
     if (!seen.has(entry.id)) {
@@ -272,8 +313,8 @@ export function dedupeIds(entries: readonly AuditEntry[]): AuditEntry[] {
  * source-grouped list does not tell.
  */
 export function mergeTimeline(
-  ...sources: readonly (readonly AuditEntry[])[]
-): AuditEntry[] {
+  ...sources: readonly (readonly SourcedAuditEntry[])[]
+): SourcedAuditEntry[] {
   // `flat()` already returns a fresh array, so sorting in place mutates
   // nothing a caller handed in.
   return dedupeIds(sources.flat().sort(byNewestFirst));
