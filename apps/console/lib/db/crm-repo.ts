@@ -1706,29 +1706,24 @@ export interface OrganisationListRow {
   createdAt: string;
 }
 
+export interface OrganisationPage {
+  rows: OrganisationListRow[];
+  /** Total matching the filter, ignoring pagination. */
+  total: number;
+  /** Opaque cursor for the next page; null when this is the last page. */
+  nextCursor: string | null;
+}
+
 /**
- * Browse and search. The reason this exists (#213): `commitImport` creates
- * every opportunity at stage 'new' with a null `next_action_at` and null
- * `last_contacted_at`, so a freshly imported lead is on neither queue for
- * fourteen days — Due needs a next action, Drifting needs a quiet period.
- * Without a list surface those rows are unreachable in the meantime.
- *
- * Search spans the organisation name AND its contacts' name/email/handle
- * because an imported lead is almost never looked up by business name —
- * the operator has the handle or the address the CSV carried.
- *
- * The contact columns are correlated subqueries rather than a LEFT JOIN:
- * joining contacts fans a multi-contact organisation into one row per
- * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
- * every selected column) costs more than reading the primary contact
- * directly. `is_primary DESC, created_at ASC` picks the flagged contact
- * when there is one and is otherwise stable rather than arbitrary.
+ * Builds the `WHERE` predicate for `filter` — search and import-batch only,
+ * never the pagination cursor, which is position, not a predicate. Called by
+ * both the page query and the count query in `listOrganisations` so the two
+ * can never disagree about what "matching" means: a total computed from a
+ * second, hand-copied predicate is the classic way a pager starts reporting
+ * a number that doesn't match the rows on screen, and Task 2 is about to add
+ * four more filters that would otherwise need updating in two places.
  */
-export async function listOrganisations(
-  filter: OrganisationFilter,
-  limit: number,
-): Promise<OrganisationListRow[]> {
-  const params: unknown[] = [];
+function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]): string[] {
   const clauses: string[] = [];
 
   if (filter.search) {
@@ -1759,20 +1754,139 @@ export async function listOrganisations(
     clauses.push(`g.import_id = $${params.length}`);
   }
 
-  params.push(limit);
+  return clauses;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface OrganisationCursor {
+  createdAt: string;
+  id: string;
+}
+
+/** Opaque cursor = base64 of `<iso-created_at>|<uuid-id>`. Encoded (not a
+ *  raw pair the caller could construct) so the surface isn't tempted to
+ *  build one by hand from URL params it half-trusts. */
+function encodeOrganisationCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`, "utf-8").toString("base64");
+}
+
+/**
+ * Decode and validate a cursor. This arrives off a URL, so a malformed or
+ * unparseable value is rejected outright — never coerced into a query, which
+ * is how a garbage `created_at` would end up bound straight into the keyset
+ * predicate below.
+ */
+function decodeOrganisationCursor(cursor: string): OrganisationCursor {
+  let decoded: string;
+  try {
+    decoded = Buffer.from(cursor, "base64").toString("utf-8");
+  } catch {
+    throw new Error("listOrganisations: malformed cursor");
+  }
+  const separatorIndex = decoded.indexOf("|");
+  if (separatorIndex === -1) {
+    throw new Error("listOrganisations: malformed cursor");
+  }
+  const createdAt = decoded.slice(0, separatorIndex);
+  const id = decoded.slice(separatorIndex + 1);
+  if (Number.isNaN(Date.parse(createdAt)) || !UUID_RE.test(id)) {
+    throw new Error("listOrganisations: malformed cursor");
+  }
+  return { createdAt, id };
+}
+
+interface RawOrganisationListRow {
+  id: string;
+  name: string;
+  location: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  open_opportunities: string | number;
+  products: (string | null)[] | null;
+  created_at: unknown;
+}
+
+function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow {
+  return {
+    id: row.id,
+    name: row.name,
+    location: row.location,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    // count(*) comes back as a string from pg's bigint mapping.
+    openOpportunities: Number(row.open_opportunities),
+    // array_agg returns NULL (not an empty array) when nothing matches.
+    products: (row.products ?? []).filter((p): p is string => p !== null),
+    createdAt: toIsoRequired(row.created_at),
+  };
+}
+
+/**
+ * Browse and search. The reason this exists (#213): `commitImport` creates
+ * every opportunity at stage 'new' with a null `next_action_at` and null
+ * `last_contacted_at`, so a freshly imported lead is on neither queue for
+ * fourteen days — Due needs a next action, Drifting needs a quiet period.
+ * Without a list surface those rows are unreachable in the meantime.
+ *
+ * Search spans the organisation name AND its contacts' name/email/handle
+ * because an imported lead is almost never looked up by business name —
+ * the operator has the handle or the address the CSV carried.
+ *
+ * The contact columns are correlated subqueries rather than a LEFT JOIN:
+ * joining contacts fans a multi-contact organisation into one row per
+ * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
+ * every selected column) costs more than reading the primary contact
+ * directly. `is_primary DESC, created_at ASC` picks the flagged contact
+ * when there is one and is otherwise stable rather than arbitrary.
+ *
+ * Pagination is keyset, not OFFSET: `OFFSET N` makes Postgres walk and
+ * discard N rows every page, and a row inserted while the operator pages
+ * shifts every subsequent page by one, silently skipping whatever crossed
+ * the boundary — on this surface, a lead never contacted. Keyset on
+ * `(created_at, id)` reads straight off the existing `ORDER BY` and is
+ * stable under concurrent inserts; `id` is the tiebreaker because
+ * `created_at` is not unique (the migration wrote 259 rows in one batch).
+ *
+ * `nextCursor` is derived by fetching `limit + 1` rows and dropping the
+ * extra, not by comparing `total` to rows-seen-so-far — this function is
+ * stateless across calls and has no reliable notion of "how many rows the
+ * operator has already seen" to compare against, whereas an extra row is
+ * cheap and self-contained proof that another page exists.
+ */
+export async function listOrganisations(
+  filter: OrganisationFilter,
+  limit: number,
+  cursor?: string,
+): Promise<OrganisationPage> {
+  const countParams: unknown[] = [];
+  const countClauses = organisationFilterClauses(filter, countParams);
+  const countWhere = countClauses.length > 0 ? `WHERE ${countClauses.join("\n        AND ")}` : "";
+  const countRows = await tesserixQuery<{ count: string | number }>(
+    `SELECT count(*) FROM crm_organisations g ${countWhere}`,
+    countParams,
+  );
+  const total = Number(countRows[0]?.count ?? 0);
+
+  const params: unknown[] = [];
+  const clauses = organisationFilterClauses(filter, params);
+
+  if (cursor) {
+    const decoded = decodeOrganisationCursor(cursor);
+    params.push(decoded.createdAt);
+    const createdAtParam = `$${params.length}`;
+    params.push(decoded.id);
+    const idParam = `$${params.length}`;
+    clauses.push(`(g.created_at, g.id) < (${createdAtParam}, ${idParam})`);
+  }
+
+  // limit + 1: see the doc comment above for why this, not a total
+  // comparison, is what decides nextCursor.
+  params.push(limit + 1);
   const limitParam = `$${params.length}`;
   const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
 
-  const rows = await tesserixQuery<{
-    id: string;
-    name: string;
-    location: string | null;
-    contact_name: string | null;
-    contact_email: string | null;
-    open_opportunities: string | number;
-    products: (string | null)[] | null;
-    created_at: unknown;
-  }>(
+  const rawRows = await tesserixQuery<RawOrganisationListRow>(
     `SELECT g.id, g.name, g.location, g.created_at,
             (SELECT c.name FROM crm_contacts c
               WHERE c.organisation_id = g.id
@@ -1790,21 +1904,20 @@ export async function listOrganisations(
                 AND o.product IS NOT NULL) AS products
        FROM crm_organisations g
        ${where}
-      ORDER BY g.created_at DESC
+      ORDER BY g.created_at DESC, g.id DESC
       LIMIT ${limitParam}`,
     params,
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    location: row.location,
-    contactName: row.contact_name,
-    contactEmail: row.contact_email,
-    // count(*) comes back as a string from pg's bigint mapping.
-    openOpportunities: Number(row.open_opportunities),
-    // array_agg returns NULL (not an empty array) when nothing matches.
-    products: (row.products ?? []).filter((p): p is string => p !== null),
-    createdAt: toIsoRequired(row.created_at),
-  }));
+  const hasNextPage = rawRows.length > limit;
+  const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
+  const rows = pageRawRows.map(toOrganisationListRow);
+
+  const lastRow = pageRawRows[pageRawRows.length - 1];
+  const nextCursor =
+    hasNextPage && lastRow
+      ? encodeOrganisationCursor(toIsoRequired(lastRow.created_at), lastRow.id)
+      : null;
+
+  return { rows, total, nextCursor };
 }

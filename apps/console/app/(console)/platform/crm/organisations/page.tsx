@@ -21,16 +21,17 @@ import { OrganisationsView } from "./organisations-view";
  */
 
 /**
- * How many rows this surface renders. Real pagination — offset/cursor, a
- * total, page controls — is the actual fix and is DELIBERATELY DEFERRED: it
- * needs a count query and a paging contract `listOrganisations` does not have
- * (`crm-repo.ts` issues a bare `LIMIT` with no offset and no total).
+ * How many rows this surface renders. `listOrganisations` now returns a
+ * total and a keyset cursor (Task 1), but the pager UI that would let an
+ * operator actually reach page 2 is a later task — DELIBERATELY DEFERRED,
+ * not built here.
  *
  * What is not deferrable is the silence. Until this branch, a 300-row import
  * linked here and showed 100 rows with nothing to say the other 200 existed,
  * and this page is the only way to reach a lead in its first fourteen days.
- * So the page over-fetches by one row and tells the operator when the extra
- * row came back — see `OrganisationsView`'s truncation notice.
+ * So this page still shows only the first page, but now names the true total
+ * via `OrganisationsView`'s truncation notice instead of over-fetching by one
+ * row to detect it.
  */
 const PAGE_SIZE = 100;
 
@@ -92,20 +93,19 @@ export default async function OrganisationsPage({
   // import's result link.
   const filtered = Boolean(filters.search) || Boolean(filters.importId);
 
-  // `PAGE_SIZE + 1`, not `PAGE_SIZE`: the extra row is never rendered, it is
-  // only the evidence that a further row exists. Asking for exactly
-  // `PAGE_SIZE` cannot tell "there are exactly 100" from "there are 300" —
-  // which is how the truncation went unannounced.
-  let fetched: OrganisationListRow[] = [];
+  let rows: readonly OrganisationListRow[] = [];
+  let truncated = false;
   let error: unknown = null;
   try {
-    fetched = await listOrganisations(filters, PAGE_SIZE + 1);
+    const page = await listOrganisations(filters, PAGE_SIZE);
+    rows = page.rows;
+    // The true total, not an over-fetched extra row: this is what makes
+    // "there are exactly 100" distinguishable from "there are 300" without
+    // asking for one row more than will ever be shown.
+    truncated = page.total > PAGE_SIZE;
   } catch (caught) {
     error = caught;
   }
-
-  const truncated = fetched.length > PAGE_SIZE;
-  const rows = truncated ? fetched.slice(0, PAGE_SIZE) : fetched;
 
   const state = organisationsState({ error, rows, filtered });
 

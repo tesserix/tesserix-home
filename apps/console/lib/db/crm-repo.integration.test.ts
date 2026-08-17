@@ -530,38 +530,38 @@ describe("listOrganisations", () => {
   });
 
   it("returns organisations with their primary contact and open count", async () => {
-    const rows = await listOrganisations({ search: "Glebe Flowers" }, 50);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe(searchOrgA);
-    expect(rows[0].contactName).toBe("Priya Raman");
-    expect(rows[0].location).toBe("Sydney");
+    const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0].id).toBe(searchOrgA);
+    expect(page.rows[0].contactName).toBe("Priya Raman");
+    expect(page.rows[0].location).toBe("Sydney");
     // The lost opportunity must not be counted — an operator browsing for
     // work should not see a closed deal inflate the number.
-    expect(rows[0].openOpportunities).toBe(1);
+    expect(page.rows[0].openOpportunities).toBe(1);
     // The lost opportunity still carries a product, so it must appear here
     // even though it's excluded from openOpportunities above.
-    expect(rows[0].products).toEqual(["mark8ly"]);
+    expect(page.rows[0].products).toEqual(["mark8ly"]);
   });
 
   it("returns an empty array, not null, when an organisation has no products", async () => {
     // Pins the `(row.products ?? []).filter(...)` coalesce: array_agg
     // returns raw NULL (not `[null]`) when nothing matches its FILTER, and
     // an unguarded coalesce miss would surface as `null` here instead.
-    const rows = await listOrganisations({ search: "Unrelated Cafe" }, 50);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].products).toEqual([]);
+    const page = await listOrganisations({ search: "Unrelated Cafe" }, 50);
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0].products).toEqual([]);
   });
 
   it("finds an organisation by its contact's email, not just by name", async () => {
     // The whole point of search: an imported lead is found by the handle or
     // address that came in the CSV, which is rarely the business name.
-    const rows = await listOrganisations({ search: "priya@glebeflowers" }, 50);
-    expect(rows.map((r) => r.id)).toEqual([searchOrgA]);
+    const page = await listOrganisations({ search: "priya@glebeflowers" }, 50);
+    expect(page.rows.map((r) => r.id)).toEqual([searchOrgA]);
   });
 
   it("finds an organisation by its contact's instagram handle", async () => {
-    const rows = await listOrganisations({ search: "glebeflowers" }, 50);
-    expect(rows.map((r) => r.id)).toContain(searchOrgA);
+    const page = await listOrganisations({ search: "glebeflowers" }, 50);
+    expect(page.rows.map((r) => r.id)).toContain(searchOrgA);
   });
 
   it("returns one row per organisation even when several contacts match", async () => {
@@ -573,20 +573,20 @@ describe("listOrganisations", () => {
        VALUES ($1, $2, $3)`,
       [searchOrgA, "Sam Ng", "sam@glebeflowers.example"],
     );
-    const rows = await listOrganisations({ search: "glebeflowers" }, 50);
-    expect(rows.filter((r) => r.id === searchOrgA)).toHaveLength(1);
+    const page = await listOrganisations({ search: "glebeflowers" }, 50);
+    expect(page.rows.filter((r) => r.id === searchOrgA)).toHaveLength(1);
   });
 
   it("treats % and _ in search as literal characters", async () => {
     // Bound parameters stop injection but not LIKE wildcards: a bare "%"
     // would otherwise match every organisation.
-    const rows = await listOrganisations({ search: "%" }, 50);
-    expect(rows).toHaveLength(0);
+    const page = await listOrganisations({ search: "%" }, 50);
+    expect(page.rows).toHaveLength(0);
   });
 
   it("returns everything when no filter is given", async () => {
-    const rows = await listOrganisations({}, 50);
-    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining([searchOrgA, searchOrgB]));
+    const page = await listOrganisations({}, 50);
+    expect(page.rows.map((r) => r.id)).toEqual(expect.arrayContaining([searchOrgA, searchOrgB]));
   });
 
   it("filters to only the organisations created by the given import batch", async () => {
@@ -607,7 +607,105 @@ describe("listOrganisations", () => {
     // searchOrgA/searchOrgB (and the org above, without an import_id) must
     // not leak into the result — a wrong predicate here silently shows an
     // import result page every organisation instead of just its own batch.
-    const rows = await listOrganisations({ importId }, 50);
-    expect(rows.map((r) => r.id)).toEqual([attachedId]);
+    const page = await listOrganisations({ importId }, 50);
+    expect(page.rows.map((r) => r.id)).toEqual([attachedId]);
+  });
+
+  // Task 1: total count and keyset pagination (#213 unreachable-past-100).
+  describe("pagination", () => {
+    let pagingOrgIds: string[];
+
+    // Five organisations with distinct, explicit, ordered `created_at`
+    // values, isolated from the other rows in this describe block (and the
+    // top-level seed) by their own name filter — the assertions below need
+    // to know exactly which rows and how many, which an unfiltered count
+    // sharing the suite's other orgs would not give.
+    beforeAll(async () => {
+      const inserted = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, created_at)
+         VALUES
+           ('Pagination Org 1', $1::timestamptz),
+           ('Pagination Org 2', $2::timestamptz),
+           ('Pagination Org 3', $3::timestamptz),
+           ('Pagination Org 4', $4::timestamptz),
+           ('Pagination Org 5', $5::timestamptz)
+         RETURNING id`,
+        [daysAgo(5), daysAgo(4), daysAgo(3), daysAgo(2), daysAgo(1)],
+      );
+      // Oldest to newest, matching the INSERT order above — the query
+      // itself returns newest-first (`ORDER BY created_at DESC`), so tests
+      // below reverse this list where they need "row N by recency".
+      pagingOrgIds = inserted.rows.map((r) => r.id);
+    });
+
+    it("returns a total that ignores the page limit", async () => {
+      const page = await listOrganisations({ search: "Pagination Org" }, 2);
+      expect(page.rows).toHaveLength(2);
+      // The count an operator reads as "2 of 5" — it must reflect the whole
+      // matching set, not the page, or the pager lies about how much is
+      // left.
+      expect(page.total).toBe(5);
+    });
+
+    it("pages forward without repeating or skipping a row", async () => {
+      const first = await listOrganisations({ search: "Pagination Org" }, 2);
+      const second = await listOrganisations(
+        { search: "Pagination Org" },
+        2,
+        first.nextCursor ?? undefined,
+      );
+      const ids = [...first.rows, ...second.rows].map((r) => r.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      // Newest-first: page 1 is orgs 5 and 4, page 2 is orgs 3 and 2.
+      expect(first.rows.map((r) => r.id)).toEqual([pagingOrgIds[4], pagingOrgIds[3]]);
+      expect(second.rows.map((r) => r.id)).toEqual([pagingOrgIds[2], pagingOrgIds[1]]);
+    });
+
+    it("reports nextCursor null on the last page", async () => {
+      const all = await listOrganisations({ search: "Pagination Org" }, 100);
+      expect(all.nextCursor).toBeNull();
+    });
+
+    it("counts the filtered set, not the whole table", async () => {
+      // A total that ignores the filter would tell the operator there are
+      // (at least) 5 matches for a search returning 1.
+      const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
+      expect(page.total).toBe(page.rows.length);
+    });
+
+    // The OFFSET failure keyset pagination exists to avoid: under OFFSET, a
+    // row inserted between two page reads shifts every later page by one,
+    // and the row pushed across the boundary is never seen. A row inserted
+    // with a `created_at` of `now()` sorts newest-first and lands on PAGE
+    // ONE, not between pages — it does not exercise that failure mode, so
+    // this seeds the new row with an explicit `created_at` that falls
+    // between paging-org 4 and paging-org 3, i.e. genuinely between the two
+    // pages read below.
+    it("does not skip a row inserted between pages, with a created_at between the two pages", async () => {
+      const first = await listOrganisations({ search: "Pagination Org" }, 2);
+      expect(first.rows.map((r) => r.id)).toEqual([pagingOrgIds[4], pagingOrgIds[3]]);
+
+      const midCreatedAt = new Date(
+        (new Date(daysAgo(3)).getTime() + new Date(daysAgo(2)).getTime()) / 2,
+      ).toISOString();
+      const insertedMid = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, created_at) VALUES ($1, $2::timestamptz) RETURNING id`,
+        ["Pagination Org Mid", midCreatedAt],
+      );
+      const midId = insertedMid.rows[0].id;
+
+      const second = await listOrganisations(
+        { search: "Pagination Org" },
+        2,
+        first.nextCursor ?? undefined,
+      );
+      expect(second.rows.map((r) => r.id)).toContain(midId);
+    });
+
+    it("rejects a malformed cursor instead of coercing it into a query", async () => {
+      await expect(
+        listOrganisations({ search: "Pagination Org" }, 2, "not-a-real-cursor"),
+      ).rejects.toThrow();
+    });
   });
 });
