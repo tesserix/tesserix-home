@@ -27,6 +27,9 @@ import {
   type AuditSourceFailure,
   type SourcedAuditEntry,
 } from "@/lib/audit";
+// Every read of tesserix-postgres is narrowed through this, never through
+// `toSurfaceError`: `pg`'s message is written for a server log, not a page.
+import { dbReadError } from "@/lib/db-read-error";
 import { AUDIT_LIMIT, PlatformApiError, fetchEstateAuditLog } from "@/lib/platform-api";
 import { recentAuditEntries } from "@/lib/db/audit-repo";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -141,6 +144,33 @@ export function toFilterValues(source: AuditSource | null): FilterValues {
 }
 
 /**
+ * The two sources' rejections are NOT the same kind of value, which is why
+ * they are narrowed by different functions.
+ *
+ * The products' aggregate comes back through `platform-api`, whose messages
+ * are authored for operators — `toSurfaceError` passes them through verbatim,
+ * correctly. `console_audit_log` is read straight off `pg`, and its messages
+ * are authored for whoever is reading the server log: `relation
+ * "console_audit_log" does not exist` rendered into this page is the bug this
+ * pair of helpers exists to close. Every database-backed read goes through
+ * `dbReadError`; see `@/lib/db-read-error` for why the rule is about the data
+ * source and not about which feature owns the page.
+ */
+export const CONSOLE_LOG_SURFACE = "the console's own audit log";
+
+/**
+ * Narrow the console log's rejection ONCE, at the point it is caught, and pass
+ * the narrowed value around from there — `dbReadError` logs the real error
+ * server-side, and calling it again from each consumer would log the same
+ * failure twice for one render. That is also why the two consumers below take
+ * a `SurfaceError`, not an `unknown`: the type says the narrowing has already
+ * happened, so a future consumer cannot forget it.
+ */
+export function consoleReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, CONSOLE_LOG_SURFACE);
+}
+
+/**
  * The state of ONE source's read, used only for its notice.
  *
  * Rows are deliberately empty: this asks "could this source be read", never
@@ -148,9 +178,18 @@ export function toFilterValues(source: AuditSource | null): FilterValues {
  * worth a banner, so `empty` is the kind the caller drops.
  */
 export function sourceState(error: unknown): SurfaceState {
+  return stateForError(toSurfaceError(error));
+}
+
+/** The same question for the database-backed source, already narrowed. */
+export function consoleSourceState(error: SurfaceError | null): SurfaceState {
+  return stateForError(error);
+}
+
+function stateForError(error: SurfaceError | null): SurfaceState {
   return resolveState({
     isLoading: false,
-    error: toSurfaceError(error),
+    error,
     rows: [],
     filtered: false,
   });
@@ -159,8 +198,9 @@ export function sourceState(error: unknown): SurfaceState {
 export interface TimelineStateInput {
   /** Whatever `fetchEstateAuditLog` rejected with, or null. */
   upstreamError: unknown;
-  /** Whatever the `console_audit_log` read rejected with, or null. */
-  consoleError: unknown;
+  /** The `console_audit_log` read's failure, already through
+   *  `consoleReadError`, or null. */
+  consoleError: SurfaceError | null;
   rows: readonly AuditEntry[];
   filtered: boolean;
 }
@@ -190,9 +230,12 @@ export function timelineState(input: TimelineStateInput): SurfaceState {
     });
   }
 
-  const errors: SurfaceError[] = [input.upstreamError, input.consoleError]
-    .map((caught) => (caught === null || caught === undefined ? null : toSurfaceError(caught)))
-    .filter((error): error is SurfaceError => error !== null);
+  const errors: SurfaceError[] = [
+    input.upstreamError === null || input.upstreamError === undefined
+      ? null
+      : toSurfaceError(input.upstreamError),
+    input.consoleError,
+  ].filter((error): error is SurfaceError => error !== null);
 
   const genuine = errors.find((error) => error.status !== NOT_IMPLEMENTED);
 
@@ -206,7 +249,8 @@ export function timelineState(input: TimelineStateInput): SurfaceState {
 
 export interface NoticeInput {
   readonly upstreamError: unknown;
-  readonly consoleError: unknown;
+  /** Already through `consoleReadError` — see `TimelineStateInput`. */
+  readonly consoleError: SurfaceError | null;
   /** Which upstream product was asked, or null when it was not called. */
   readonly upstreamProduct: string | null;
   /** Whether the console's own log was read at all. */
@@ -239,7 +283,7 @@ export function buildSourceNotices(input: NoticeInput): SourceNotice[] {
   }
 
   if (input.consoleQueried) {
-    const state = sourceState(input.consoleError);
+    const state = consoleSourceState(input.consoleError);
     if (state.kind === "error" || state.kind === "instrumentation-unavailable") {
       notices.push({ source: CONSOLE_SOURCE, label: sourceLabel(CONSOLE_SOURCE), state });
     }
@@ -306,8 +350,13 @@ export default async function EstateAuditLog({
 
   const consoleEntries: readonly AuditEntry[] =
     consoleResult.status === "fulfilled" ? consoleResult.value : [];
-  const consoleError: unknown =
-    consoleResult.status === "rejected" ? consoleResult.reason : null;
+  // Narrowed here, where it is caught: `console_audit_log` is read straight
+  // off `pg`, and its rejection message is written for a server log. Before
+  // this, `relation "console_audit_log" does not exist` — the state of every
+  // environment where the migrations have not been run — rendered into the
+  // page as the operator's error copy.
+  const consoleError: SurfaceError | null =
+    consoleResult.status === "rejected" ? consoleReadError(consoleResult.reason) : null;
 
   // The products' rows arrive already attributed and already namespaced — the
   // aggregate endpoint sets `source` and `${source}:${id}` at the normaliser

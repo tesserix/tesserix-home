@@ -11,8 +11,8 @@ import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar
 import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
 // Not `toSurfaceError`: these rejections come straight off `pg`, and its
 // verbatim `.message` would render a Postgres error to an operator. See
-// `read-error.ts`.
-import { crmReadError } from "./read-error";
+// `@/lib/db-read-error`.
+import { dbReadError } from "@/lib/db-read-error";
 import {
   dueOpportunities,
   driftingOpportunities,
@@ -245,7 +245,7 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
     // The page awaits both reads before rendering; there is no client-side
     // pending window here.
     isLoading: false,
-    error: crmReadError(input.error, input.surface),
+    error: dbReadError(input.error, input.surface),
     rows: input.rows,
     filtered: input.filtered,
   });
@@ -508,7 +508,7 @@ async function renderHandoffTab() {
 
   const handoffState = resolveState({
     isLoading: false,
-    error: crmReadError(handoffRowsError, "the handoff queue"),
+    error: dbReadError(handoffRowsError, "the handoff queue"),
     rows: handoffItems,
     filtered: false,
   });

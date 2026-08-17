@@ -107,8 +107,13 @@ export function SurfaceStateView({
       return (
         <Callout variant="warning" role="status">
           <PlugZap className="h-4 w-4" aria-hidden="true" />
-          <CalloutTitle>Instrumentation unavailable</CalloutTitle>
-          <CalloutDescription>{INSTRUMENTATION_UNAVAILABLE_MESSAGE}</CalloutDescription>
+          {/* The state may carry its own copy — an un-migrated database is
+              the same calm "not wired up yet" state as a parked data plane,
+              but its remedy is running migrations, not reading the park doc. */}
+          <CalloutTitle>{state.title ?? "Instrumentation unavailable"}</CalloutTitle>
+          <CalloutDescription>
+            {state.message ?? INSTRUMENTATION_UNAVAILABLE_MESSAGE}
+          </CalloutDescription>
         </Callout>
       );
 

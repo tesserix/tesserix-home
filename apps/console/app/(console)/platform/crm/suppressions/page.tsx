@@ -8,8 +8,8 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // renders it for the organisation detail page rather than this page doing
 // so itself.
 import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
-// Not `toSurfaceError` — see `../read-error.ts`.
-import { crmReadError } from "../read-error";
+// Not `toSurfaceError` — see `@/lib/db-read-error`.
+import { dbReadError } from "@/lib/db-read-error";
 import { listSuppressions, type SuppressionRow } from "@/lib/db/crm-repo";
 import { SuppressionsView } from "./suppressions-view";
 
@@ -29,7 +29,7 @@ export function suppressionsState(input: {
 }): SurfaceState {
   return resolveState({
     isLoading: false,
-    error: crmReadError(input.error, "the do-not-contact list"),
+    error: dbReadError(input.error, "the do-not-contact list"),
     rows: input.rows,
     filtered: false,
   });

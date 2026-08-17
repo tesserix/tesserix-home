@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import clsx from "clsx";
-import { Check, ChevronsUpDown } from "lucide-react";
+import { Check, ChevronRight, ChevronsUpDown } from "lucide-react";
 import {
   isPending,
   isNavGroup,
@@ -14,6 +14,7 @@ import {
   platformNav,
   consolePath,
   type NavEntry,
+  type NavGroup,
 } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
 
@@ -114,20 +115,163 @@ export function railFor(pathname: string): RailKey {
 }
 
 
+/**
+ * Where the collapsed groups are remembered.
+ *
+ * COLLAPSED groups are stored, not expanded ones, so a group added to the rail
+ * later is open the first time an operator sees it — the opposite default
+ * would hide new surfaces from exactly the people the rail exists to tell
+ * about them, and would do it silently.
+ *
+ * localStorage rather than a cookie: this is a per-device display preference
+ * with no server-side reader, and putting it in a cookie would send it on
+ * every request for nothing.
+ */
+const COLLAPSED_GROUPS_KEY = "console.sidebar.collapsed-groups";
+
+/**
+ * Storage is untrusted input — hand-edited, written by an older version, or
+ * unreadable altogether (Safari private mode throws on access rather than
+ * returning null). Anything that is not a list of strings is treated as "no
+ * preference recorded", which fails open: every group visible.
+ */
+function readCollapsedGroups(): readonly string[] {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((name): name is string => typeof name === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCollapsedGroups(names: readonly string[]): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(names));
+  } catch {
+    // A full or disabled store costs the operator a preference, never a rail.
+  }
+}
+
+/**
+ * The collapsed set, persisted, with one rule layered on top: the group
+ * holding the route you are on is opened.
+ *
+ * A rail that hides where you are is worse than a long rail — you lose the one
+ * landmark that tells you which part of the console you are in. So the active
+ * group is dropped from the collapsed set when it becomes active, rather than
+ * being forced open at render time: forcing it at render would make the toggle
+ * button inert on that one group, which is a worse lie than a long list.
+ */
+function useCollapsedGroups(activeGroup: string | null) {
+  const [collapsed, setCollapsed] = useState<readonly string[]>([]);
+  // Read in an effect, not in the initial state: this component is
+  // server-rendered, `window` does not exist there, and seeding state from
+  // storage would hydrate a different tree than the server sent.
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(readCollapsedGroups());
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    // Never write before the first read, or the empty initial state would
+    // erase the stored preference on every mount.
+    if (!loaded) return;
+    writeCollapsedGroups(collapsed);
+  }, [collapsed, loaded]);
+
+  useEffect(() => {
+    if (activeGroup === null) return;
+    setCollapsed((previous) =>
+      previous.includes(activeGroup) ? previous.filter((name) => name !== activeGroup) : previous,
+    );
+  }, [activeGroup]);
+
+  const toggle = useCallback((name: string) => {
+    setCollapsed((previous) =>
+      previous.includes(name)
+        ? previous.filter((entry) => entry !== name)
+        : [...previous, name],
+    );
+  }, []);
+
+  return { collapsed, toggle };
+}
+
+/** The name of the group holding the current route, or null. */
+export function activeGroupName(nav: readonly NavEntry[], pathname: string): string | null {
+  for (const entry of nav) {
+    if (!isNavGroup(entry)) continue;
+    if (entry.items.some((item) => isRouteActive(pathname, item.route, "console"))) {
+      return entry.name;
+    }
+  }
+  return null;
+}
+
+/**
+ * One collapsible group.
+ *
+ * A real `<button>` with `aria-expanded` and `aria-controls`, not a div with a
+ * click handler and a `role`: the console has already had orphan-`role` ARIA
+ * violations flagged (`role="tab"` on links with no tablist parent), and the
+ * fix for that was to use the element whose semantics are already right rather
+ * than to describe the wrong element more carefully. A button is focusable,
+ * activates on Enter and Space, and announces its expanded state — none of
+ * which has to be reimplemented here.
+ *
+ * The panel is hidden with the `hidden` attribute rather than unmounted or
+ * merely visually hidden, so a collapsed group's links leave the tab order and
+ * the accessibility tree together.
+ */
+function NavGroupSection({
+  group,
+  pathname,
+  open,
+  onToggle,
+}: {
+  group: NavGroup;
+  pathname: string;
+  open: boolean;
+  onToggle: (name: string) => void;
+}) {
+  const panelId = useId();
+  return (
+    <div className="pt-4 first:pt-0">
+      <button
+        type="button"
+        onClick={() => onToggle(group.name)}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/50 transition-colors hover:text-sidebar-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={clsx(
+            "h-3 w-3 shrink-0 transition-transform duration-150",
+            open && "rotate-90",
+          )}
+        />
+        <span>{group.name}</span>
+      </button>
+      <div id={panelId} hidden={!open} className="space-y-0.5 pt-1">
+        {group.items.map((item) => (
+          <NavLink key={item.name} entry={item} pathname={pathname} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
   if (isNavGroup(entry)) {
-    return (
-      <div className="pt-4 first:pt-0">
-        <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/50">
-          {entry.name}
-        </p>
-        <div className="space-y-0.5">
-          {entry.items.map((item) => (
-            <NavLink key={item.name} entry={item} pathname={pathname} />
-          ))}
-        </div>
-      </div>
-    );
+    // Groups render through `NavGroupSection`, which needs the collapse state
+    // the sidebar owns. Reaching one here means a caller passed a group where
+    // an item was expected.
+    return null;
   }
 
   const active = isRouteActive(pathname, entry.route, "console");
@@ -267,6 +411,10 @@ export function ConsoleSidebar() {
   const railKey = selected ?? fromPath;
   const rail = RAILS[railKey];
 
+  // Group names are unique across both rails, so one stored set serves both;
+  // a rail whose nav is flat (Kora's) simply never contributes to it.
+  const { collapsed, toggle } = useCollapsedGroups(activeGroupName(rail.nav, pathname));
+
   return (
     <div className="flex h-full w-56 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="p-3">
@@ -274,7 +422,11 @@ export function ConsoleSidebar() {
       </div>
 
       <nav
-        className="flex-1 overflow-y-auto px-3 pb-4"
+        // `sidebar-scroll` styles the scrollbar to the rail rather than
+        // leaving the browser default, which paints a pale bar down a dark
+        // sidebar. See globals.css — it is theme-aware through the same
+        // sidebar tokens everything else here uses.
+        className="sidebar-scroll flex-1 overflow-y-auto px-3 pb-4"
         aria-label={`${rail.label} navigation`}
       >
         {/* A flat rail still gets its section label; a grouped one carries its
@@ -285,9 +437,19 @@ export function ConsoleSidebar() {
           </p>
         )}
         <div className="space-y-0.5">
-          {rail.nav.map((entry) => (
-            <NavLink key={entry.name} entry={entry} pathname={pathname} />
-          ))}
+          {rail.nav.map((entry) =>
+            isNavGroup(entry) ? (
+              <NavGroupSection
+                key={entry.name}
+                group={entry}
+                pathname={pathname}
+                open={!collapsed.includes(entry.name)}
+                onToggle={toggle}
+              />
+            ) : (
+              <NavLink key={entry.name} entry={entry} pathname={pathname} />
+            ),
+          )}
         </div>
       </nav>
     </div>
