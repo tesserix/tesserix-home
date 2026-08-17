@@ -20,6 +20,13 @@ export interface QueueRow {
   nextActionAt: string | null;
   nextActionNote: string | null;
   lastContactedAt: string | null;
+  /** COALESCE(last_contacted_at, created_at) — what a row is actually
+   *  ordered and filtered by in the drifting query. Named for what it means
+   *  rather than exposing raw created_at, so Task 5 renders (and explains)
+   *  the order it's given instead of recomputing the same COALESCE in
+   *  TypeScript and risking the two copies disagreeing. Present on
+   *  dueOpportunities rows too so the shape is uniform across the queue. */
+  quietSince: string;
   isStarred: boolean;
 }
 
@@ -33,6 +40,7 @@ interface RawQueueRow {
   next_action_at: unknown;
   next_action_note: string | null;
   last_contacted_at: unknown;
+  quiet_since: unknown;
   is_starred: boolean;
 }
 
@@ -48,6 +56,12 @@ function toIso(value: unknown): string | null {
 }
 
 function toQueueRow(row: RawQueueRow): QueueRow {
+  const quietSince = toIso(row.quiet_since);
+  if (quietSince === null) {
+    // quiet_since is COALESCE(last_contacted_at, created_at); created_at is
+    // NOT NULL, so this only happens if the query stops selecting it.
+    throw new Error("crm-repo: quiet_since must not be null");
+  }
   return {
     id: row.id,
     organisationId: row.organisation_id,
@@ -58,6 +72,7 @@ function toQueueRow(row: RawQueueRow): QueueRow {
     nextActionAt: toIso(row.next_action_at),
     nextActionNote: row.next_action_note,
     lastContactedAt: toIso(row.last_contacted_at),
+    quietSince,
     isStarred: row.is_starred,
   };
 }
@@ -70,6 +85,7 @@ export async function dueOpportunities(limit: number): Promise<QueueRow[]> {
     `SELECT o.id, o.organisation_id, g.name AS organisation_name,
             o.product, o.stage, o.owner,
             o.next_action_at, o.next_action_note, o.last_contacted_at,
+            COALESCE(o.last_contacted_at, o.created_at) AS quiet_since,
             o.is_starred
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
@@ -109,13 +125,14 @@ export async function driftingOpportunities(
     `SELECT o.id, o.organisation_id, g.name AS organisation_name,
             o.product, o.stage, o.owner,
             o.next_action_at, o.next_action_note, o.last_contacted_at,
+            COALESCE(o.last_contacted_at, o.created_at) AS quiet_since,
             o.is_starred
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
       WHERE o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
         AND COALESCE(o.last_contacted_at, o.created_at)
-              <= now() - ($1 || ' days')::interval
+              <= now() - make_interval(days => $1::int)
       ORDER BY COALESCE(o.last_contacted_at, o.created_at) ASC
       LIMIT $2`,
     [staleDays, limit],

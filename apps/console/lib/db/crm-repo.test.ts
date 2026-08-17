@@ -61,12 +61,15 @@ describe("the queue", () => {
     // long-untouched one (created_at long ago) passes it. Both flow
     // through the same single comparison, so this is what must not
     // regress back to a bare-column or unconditional check.
+    //
+    // make_interval(days => $1::int) over ($1 || ' days')::interval: typed,
+    // rejects garbage at parse time rather than at the database.
     query.mockResolvedValue([]);
     await driftingOpportunities(14, 50);
     const [sql, params] = query.mock.calls[0];
     expect(params).toEqual([14, 50]);
     expect(sql).toMatch(
-      /COALESCE\(o\.last_contacted_at, o\.created_at\)\s*\n?\s*<= now\(\) - \(\$1 \|\| ' days'\)::interval/,
+      /COALESCE\(o\.last_contacted_at, o\.created_at\)\s*\n?\s*<= now\(\) - make_interval\(days => \$1::int\)/,
     );
   });
 
@@ -75,10 +78,33 @@ describe("the queue", () => {
       id: "o1", organisation_id: "g1", organisation_name: "Bondi Baker",
       product: null, stage: "contacted", owner: "ava@tesserix.app",
       next_action_at: new Date("2026-08-01T09:00:00Z"), next_action_note: "call back",
-      last_contacted_at: null, is_starred: false,
+      last_contacted_at: null,
+      quiet_since: new Date("2026-07-20T00:00:00Z"),
+      is_starred: false,
     }]);
     const [row] = await dueOpportunities(50);
     expect(row.nextActionAt).toBe("2026-08-01T09:00:00.000Z");
     expect(row.lastContactedAt).toBeNull();
+    expect(row.quietSince).toBe("2026-07-20T00:00:00.000Z");
+  });
+
+  it("selects quiet_since (COALESCE) as its own column, not last_contacted_at alone", async () => {
+    // Ruling 10: exposing raw created_at would let a consumer recompute the
+    // COALESCE in TypeScript, putting the business rule in two places that
+    // can disagree. The SQL must alias the COALESCE itself as quiet_since,
+    // for both queries, so the rule stays in one place.
+    query.mockResolvedValue([]);
+    await dueOpportunities(50);
+    const [dueSql] = query.mock.calls[0];
+    expect(dueSql).toContain(
+      "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
+    );
+
+    query.mockResolvedValue([]);
+    await driftingOpportunities(14, 50);
+    const [driftingSql] = query.mock.calls[1];
+    expect(driftingSql).toContain(
+      "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
+    );
   });
 });
