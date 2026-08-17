@@ -25,7 +25,12 @@ import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
 import { previewImport, commitImport } from "@/lib/db/crm-repo";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
+import { MAX_IMPORT_ROWS, type ImportRow } from "@/lib/crm";
 import { previewImportAction, commitImportAction } from "./actions";
+
+function manyRows(count: number): ImportRow[] {
+  return Array.from({ length: count }, (_, i) => ({ email: `row${i}@example.com` }));
+}
 
 function signIn(roles: readonly string[] | undefined) {
   vi.mocked(getCurrentSession).mockResolvedValue({
@@ -62,13 +67,14 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const PREVIEW = { toCreate: 1, matchedExisting: 0, skippedSuppressed: 0, malformed: 0 };
+const PREVIEW = { toCreate: 1, matchedExisting: 0, skippedSuppressed: 0, malformed: 0, matchedRows: [] };
 const COMMIT_RESULT = {
   importId: "imp1",
   created: 1,
   matchedExisting: 0,
   skippedSuppressed: 0,
   malformed: 0,
+  matchedRows: [],
 };
 
 describe("previewImportAction", () => {
@@ -114,6 +120,26 @@ describe("previewImportAction", () => {
 
     expect(result).toEqual({ ok: false, message: "Could not preview this import." });
   });
+
+  // An unbounded file holds the pool's one connection for 2×N round trips —
+  // refused before the session or the database is touched at all.
+  it("refuses a file over MAX_IMPORT_ROWS, before touching the session or the database", async () => {
+    const result = await previewImportAction(manyRows(MAX_IMPORT_ROWS + 1));
+
+    expect(result.ok).toBe(false);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(previewImport).not.toHaveBeenCalled();
+  });
+
+  it("accepts a file at exactly MAX_IMPORT_ROWS", async () => {
+    signIn(["read"]);
+    vi.mocked(previewImport).mockResolvedValue(PREVIEW);
+
+    const result = await previewImportAction(manyRows(MAX_IMPORT_ROWS));
+
+    expect(result.ok).toBe(true);
+    expect(previewImport).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("commitImportAction", () => {
@@ -124,10 +150,12 @@ describe("commitImportAction", () => {
     const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv");
 
     expect(result).toEqual({ ok: true, result: COMMIT_RESULT });
+    // 1 row, no explicit totalRows: defaults to rows.length.
     expect(commitImport).toHaveBeenCalledWith(
       [{ email: "ava@example.com" }],
       "ava@tesserix.app",
       "leads.csv",
+      1,
     );
     const audit = lastAuditInsert();
     expect(audit.actor).toBe("sub-1");
@@ -157,5 +185,48 @@ describe("commitImportAction", () => {
 
     expect(result).toEqual({ ok: false, message: "That change was not saved." });
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("refuses a file over MAX_IMPORT_ROWS, before touching the session or the database", async () => {
+    const result = await commitImportAction(manyRows(MAX_IMPORT_ROWS + 1));
+
+    expect(result.ok).toBe(false);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
+  // Minor: an operator-supplied filename is untrusted input reaching a
+  // network-reachable action, same as any CSV cell — bounded before it
+  // becomes the audit target or crm_imports.filename.
+  it("trims and truncates the filename before it reaches commitImport or the audit target", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+    const long = "  " + "a".repeat(400) + ".csv  ";
+
+    await commitImportAction([{ email: "ava@example.com" }], long);
+
+    const [, , boundedFilename] = vi.mocked(commitImport).mock.calls[0];
+    expect(boundedFilename).toHaveLength(255);
+    expect(boundedFilename).not.toMatch(/^\s|\s$/);
+    const audit = lastAuditInsert();
+    expect(audit.target).toBe(boundedFilename);
+  });
+
+  // Important 3 / Minor: the caller (import-view.tsx) knows the FULL file
+  // size, including rows client-side parsing already dropped as malformed —
+  // forwarded through so crm_imports.row_count reflects the whole file, not
+  // just the parsed survivors.
+  it("forwards an explicit totalRows to commitImport, not just rows.length", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+
+    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 5);
+
+    expect(commitImport).toHaveBeenCalledWith(
+      [{ email: "ava@example.com" }],
+      "ava@tesserix.app",
+      "leads.csv",
+      5,
+    );
   });
 });

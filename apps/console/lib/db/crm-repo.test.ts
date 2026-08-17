@@ -26,6 +26,7 @@ import {
   listSuppressions,
   previewImport,
   commitImport,
+  findMatchingOrganisationId,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -777,6 +778,34 @@ describe("import", () => {
     };
   }
 
+  // Ruling 23: `isSuppressed`/`findMatchingOrganisationId` accept an
+  // optional `query` override, defaulting to `tesserixQuery`. These two
+  // tests prove the override actually takes precedence — not just that a
+  // plausible answer comes back — by asserting the module's OWN connection
+  // (`query`, what `tesserixQuery` routes to in this harness) is never
+  // touched when an override is supplied. That's the mechanism
+  // `commitImport` relies on to read its own transaction's uncommitted
+  // writes; the shared single-spy harness elsewhere in this file can't
+  // distinguish "two connections" from "one", so this is the one place that
+  // isolates the override itself.
+  describe("query overrides (Ruling 23)", () => {
+    it("isSuppressed uses the supplied query, not the module's own connection", async () => {
+      const override = vi.fn().mockResolvedValue([{ id: "s1" }]);
+      const result = await isSuppressed({ email: "ava@example.com" }, override);
+      expect(result).toBe(true);
+      expect(override).toHaveBeenCalledTimes(1);
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it("findMatchingOrganisationId uses the supplied query, not the module's own connection", async () => {
+      const override = vi.fn().mockResolvedValue([{ organisation_id: "org1" }]);
+      const result = await findMatchingOrganisationId({ email: "ava@example.com" }, override);
+      expect(result).toBe("org1");
+      expect(override).toHaveBeenCalledTimes(1);
+      expect(query).not.toHaveBeenCalled();
+    });
+  });
+
   describe("previewImport", () => {
     it("skips suppressed rows at preview, before anything is written", async () => {
       query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }] }));
@@ -797,9 +826,14 @@ describe("import", () => {
       query.mockImplementation(
         routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
       );
-      const preview = await previewImport([{ email: "ava@example.com" }]);
+      const row = { email: "ava@example.com" };
+      const preview = await previewImport([row]);
       expect(preview.matchedExisting).toBe(1);
       expect(preview.toCreate).toBe(0);
+      // Judgement call 2: dedup-only is correct (never merge scraped CSV
+      // data over an operator-curated row) — but the list of which rows
+      // were left unchanged has to be discoverable, not just a bare count.
+      expect(preview.matchedRows).toEqual([row]);
     });
 
     it("counts a fresh row as toCreate", async () => {
@@ -910,6 +944,102 @@ describe("import", () => {
       const [, updateParams] = updateCall!;
       // 2 rows total, both skipped (1 suppressed, 1 malformed).
       expect(updateParams).toEqual(["imp1", 2, 2]);
+    });
+
+    // Important 1 (Ruling 23): the reproduction case. Two CSV rows sharing
+    // an email is ordinary content for a scraped leads sheet, not an edge
+    // case. Before the fix, row 2's dedup lookup ran on a separate
+    // connection from the transaction's own client and could not see row
+    // 1's still-uncommitted crm_contacts insert — it would attempt its own
+    // insert, trip crm_contacts_email_lower_uq, and roll the WHOLE batch
+    // back. This mock models the visibility a same-connection lookup gets
+    // (a stateful router, not `routeQuery`'s per-call-only one): row 2's
+    // "FROM crm_contacts" check only starts returning a match once row 1's
+    // "INSERT INTO crm_contacts" has actually run.
+    it("resolves an intra-batch duplicate email as matchedExisting on the second row, not a constraint violation", async () => {
+      let contactInserted = false;
+      query.mockImplementation((sql: string) => {
+        if (/INSERT INTO crm_imports/.test(sql)) return Promise.resolve([{ id: "imp1" }]);
+        if (/FROM crm_suppressions/.test(sql)) return Promise.resolve([]);
+        if (/FROM crm_contacts/.test(sql)) {
+          return Promise.resolve(contactInserted ? [{ organisation_id: "org1" }] : []);
+        }
+        if (/INSERT INTO crm_organisations/.test(sql)) return Promise.resolve([{ id: "org1" }]);
+        if (/INSERT INTO crm_contacts/.test(sql)) {
+          contactInserted = true;
+          return Promise.resolve([]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const result = await commitImport(
+        [{ email: "dup@example.com" }, { email: "dup@example.com" }],
+        "ava@tesserix.app",
+      );
+
+      expect(result.created).toBe(1);
+      expect(result.matchedExisting).toBe(1);
+      expect(
+        query.mock.calls.filter(([sql]) => /INSERT INTO crm_organisations/.test(sql)),
+      ).toHaveLength(1);
+    });
+
+    // Important 2 (Ruling 23): the mocked tesserixTx in this file is
+    // `(fn) => fn(query)` — it does not implement real BEGIN/ROLLBACK, so
+    // this cannot prove Postgres-level atomicity (crm-repo.write.integration.test.ts,
+    // via runTesserixTx against pglite, is what proves that for the shared
+    // transactional core). What this DOES pin: a failure partway through
+    // the batch must propagate as a rejection, not be swallowed into a
+    // partial `{ created: 1, ... }` the caller could mistake for full
+    // success.
+    it("rejects the whole commit when a write fails partway through the batch, rather than reporting partial success", async () => {
+      let orgInsertCount = 0;
+      query.mockImplementation((sql: string) => {
+        if (/INSERT INTO crm_imports/.test(sql)) return Promise.resolve([{ id: "imp1" }]);
+        if (/FROM crm_suppressions/.test(sql)) return Promise.resolve([]);
+        if (/FROM crm_contacts/.test(sql)) return Promise.resolve([]);
+        if (/INSERT INTO crm_organisations/.test(sql)) {
+          orgInsertCount++;
+          if (orgInsertCount === 2) return Promise.reject(new Error("connection terminated"));
+          return Promise.resolve([{ id: "org1" }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      await expect(
+        commitImport(
+          [{ email: "first@example.com" }, { email: "second@example.com" }],
+          "ava@tesserix.app",
+        ),
+      ).rejects.toThrow("connection terminated");
+    });
+
+    // Minor: crm_imports.row_count previously counted only the rows that
+    // survived client-side CSV parsing, under-reporting the source file by
+    // however many parseImportCsv already dropped as malformed. `totalRows`
+    // is how the caller (import/actions.ts) supplies the true file size.
+    it("uses totalRows, not just the parsed batch size, so row_count reflects the whole file", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      await commitImport(
+        [{ email: "ava@example.com" }],
+        "ava@tesserix.app",
+        "leads.csv",
+        5, // e.g. 4 rows the client-side parser already dropped as malformed
+      );
+      const updateCall = query.mock.calls.find(([sql]) => /UPDATE crm_imports/.test(sql));
+      const [, updateParams] = updateCall!;
+      // row_count is the full file (5), not just the 1 row that survived
+      // parsing; skipped_count reconciles exactly: row_count - created = 4.
+      expect(updateParams).toEqual(["imp1", 5, 4]);
+    });
+
+    it("lists the rows that matched an existing organisation, not just their count", async () => {
+      query.mockImplementation(
+        routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
+      );
+      const row = { email: "ava@example.com", name: "Bondi Baker" };
+      const result = await commitImport([row], "ava@tesserix.app");
+      expect(result.matchedRows).toEqual([row]);
     });
 
     it("preview and commit agree on counts for the same input", async () => {

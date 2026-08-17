@@ -5,6 +5,7 @@ import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
 import { parseImportCsv, type ImportRow } from "@/lib/crm";
 import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
 import { previewImportAction, commitImportAction } from "./actions";
+import { previewDisplayCounts, committedDisplayCounts, matchedRowLabel, type DisplayCounts } from "./counts";
 
 /**
  * CSV import: pick a file, preview what it would do, commit.
@@ -21,13 +22,6 @@ import { previewImportAction, commitImportAction } from "./actions";
  * crm-repo.ts's module comment on `previewImport`/`commitImport`).
  */
 
-interface Counts {
-  toCreate: number;
-  matchedExisting: number;
-  skippedSuppressed: number;
-  malformed: number;
-}
-
 function ErrorNote({ message }: { message: string | null }) {
   if (!message) return null;
   return (
@@ -37,7 +31,20 @@ function ErrorNote({ message }: { message: string | null }) {
   );
 }
 
-function CountsSummary({ counts, title }: { counts: Counts; title: string }) {
+function CountsSummary({
+  counts,
+  title,
+  matchedRows,
+}: {
+  counts: DisplayCounts;
+  title: string;
+  /** The rows behind `counts.matchedExisting`, if any — see the note below
+   *  the grid: dedup-only is deliberate (never overwrite an
+   *  operator-curated organisation with scraped CSV data), but that means
+   *  these rows' CSV data is discarded, and a bare number reads as success
+   *  to an operator importing, say, updated phone numbers. */
+  matchedRows: readonly ImportRow[];
+}) {
   return (
     <div className="rounded-md border border-border p-4 text-sm">
       <p className="font-medium">{title}</p>
@@ -59,6 +66,23 @@ function CountsSummary({ counts, title }: { counts: Counts; title: string }) {
           <dd className="mt-1 text-lg">{counts.malformed}</dd>
         </div>
       </dl>
+      {matchedRows.length > 0 ? (
+        <div className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          <p>
+            These already exist in the CRM. This import leaves them unchanged — their CSV data
+            (updated phone numbers, notes, etc.) is <strong>not</strong> applied, so a hand-corrected
+            record is never silently overwritten by a scrape.
+          </p>
+          <ul className="mt-2 list-disc pl-5">
+            {matchedRows.map((row, index) => (
+              // Import rows carry no stable id of their own — this is a
+              // display-only list over an immutable array from one
+              // preview/commit response, so position is a safe key here.
+              <li key={index}>{matchedRowLabel(row)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -108,7 +132,11 @@ export function ImportView() {
     if (!rows) return;
     setError(null);
     startTransition(async () => {
-      const result = await commitImportAction(rows, filename ?? undefined);
+      // The full file size — including whatever parseImportCsv already
+      // dropped as malformed — so crm_imports.row_count reflects the whole
+      // file the operator picked, not just the rows that survived parsing.
+      const totalRows = rows.length + parseMalformed;
+      const result = await commitImportAction(rows, filename ?? undefined, totalRows);
       if (!result.ok) {
         setError(result.message);
         return;
@@ -120,28 +148,13 @@ export function ImportView() {
     });
   };
 
-  // The parse step's own malformed count folds in here — a row can be
-  // malformed before it ever reaches the server (no name, email or
-  // Instagram handle at all), and `previewImport` only ever sees the rows
-  // `parseImportCsv` already judged usable, so its own `malformed` is
-  // additional, not a duplicate.
-  const previewCounts: Counts | null = preview
-    ? {
-        toCreate: preview.toCreate,
-        matchedExisting: preview.matchedExisting,
-        skippedSuppressed: preview.skippedSuppressed,
-        malformed: preview.malformed + parseMalformed,
-      }
-    : null;
-
-  const committedCounts: Counts | null = committed
-    ? {
-        toCreate: committed.created,
-        matchedExisting: committed.matchedExisting,
-        skippedSuppressed: committed.skippedSuppressed,
-        malformed: committed.malformed,
-      }
-    : null;
+  // Both derived from the same two functions the preview card and the
+  // committed card use — see counts.ts's doc comment for why that sharing
+  // is the actual fix for "preview said Malformed 3, commit said Malformed
+  // 0" (Important 3): two independent inline expressions were how that
+  // divergence happened in the first place.
+  const previewCounts = preview ? previewDisplayCounts(preview, parseMalformed) : null;
+  const committedCounts = committed ? committedDisplayCounts(committed, parseMalformed) : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -169,11 +182,12 @@ export function ImportView() {
 
       <ErrorNote message={error} />
 
-      {previewCounts ? (
+      {previewCounts && preview ? (
         <div className="flex flex-col gap-3">
           <CountsSummary
             counts={previewCounts}
             title={`Preview — ${filename ?? "file"} (nothing written yet)`}
+            matchedRows={preview.matchedRows}
           />
           <div>
             <Button type="button" size="sm" disabled={pending} onClick={runCommit}>
@@ -183,7 +197,13 @@ export function ImportView() {
         </div>
       ) : null}
 
-      {committedCounts ? <CountsSummary counts={committedCounts} title="Import committed" /> : null}
+      {committedCounts && committed ? (
+        <CountsSummary
+          counts={committedCounts}
+          title="Import committed"
+          matchedRows={committed.matchedRows}
+        />
+      ) : null}
     </div>
   );
 }

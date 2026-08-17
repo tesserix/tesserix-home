@@ -177,6 +177,37 @@ function cellsToRow(header: readonly string[], cells: readonly string[]): Import
  * that rows were lost rather than assuming every line in the file was
  * imported.
  */
+/**
+ * Upper bound on rows accepted by a single import batch, enforced at the
+ * action layer (`import/actions.ts`) before `previewImportAction` or
+ * `commitImportAction` ever reaches the database. Even after Ruling 23
+ * moved `commitImport`'s per-row suppression/dedup reads onto its own
+ * transaction's client, an unbounded file would still hold that one
+ * connection — and everything else waiting on the pool — for as long as it
+ * takes to walk. 2,000 rows is generous for a hand-exported leads sheet;
+ * anything larger should be split by the operator.
+ */
+export const MAX_IMPORT_ROWS = 2000;
+
+/** Cap on a filename before it flows into an audit `target` or
+ *  `crm_imports.filename` — a filesystem doesn't bound this, and an
+ *  operator-supplied filename reaching a server action is untrusted input
+ *  like any other cell in the file. */
+export const MAX_IMPORT_FILENAME_LENGTH = 255;
+
+/**
+ * Trims and truncates a filename to `MAX_IMPORT_FILENAME_LENGTH`.
+ * `undefined` in, or a filename that trims to nothing, both come back as
+ * `undefined` — the same "no filename supplied" value `commitImport`
+ * already treats as `NULL` in `crm_imports.filename`, so callers don't have
+ * to special-case an all-whitespace name separately from a missing one.
+ */
+export function boundFilename(filename: string | undefined): string | undefined {
+  const trimmed = filename?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, MAX_IMPORT_FILENAME_LENGTH);
+}
+
 export function parseImportCsv(text: string): ParsedImport {
   const lines = text.split(/\r\n|\r|\n/).filter((line) => line.trim() !== "");
   if (lines.length === 0) {

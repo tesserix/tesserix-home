@@ -6,6 +6,8 @@ import {
   isHumanActivityKind,
   isUsableImportRow,
   parseImportCsv,
+  boundFilename,
+  MAX_IMPORT_ROWS,
 } from "./crm";
 
 describe("crm vocabulary", () => {
@@ -138,5 +140,37 @@ describe("parseImportCsv", () => {
 
   it("returns nothing for an empty file", () => {
     expect(parseImportCsv("")).toEqual({ rows: [], malformed: 0 });
+  });
+});
+
+describe("boundFilename", () => {
+  // Minor: an operator-supplied filename flows into an audit `target` and
+  // `crm_imports.filename` — untrusted input from a network-reachable
+  // action, same as any other cell in the file, and must be bounded before
+  // either of those.
+  it("trims whitespace", () => {
+    expect(boundFilename("  leads.csv  ")).toBe("leads.csv");
+  });
+
+  it("truncates a filename longer than the cap", () => {
+    const long = "a".repeat(400) + ".csv";
+    const bounded = boundFilename(long);
+    expect(bounded).toHaveLength(255);
+    expect(bounded).toBe(long.slice(0, 255));
+  });
+
+  it("returns undefined for an absent filename", () => {
+    expect(boundFilename(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for a filename that is only whitespace", () => {
+    expect(boundFilename("   ")).toBeUndefined();
+  });
+});
+
+describe("MAX_IMPORT_ROWS", () => {
+  it("is a positive, finite cap", () => {
+    expect(MAX_IMPORT_ROWS).toBeGreaterThan(0);
+    expect(Number.isFinite(MAX_IMPORT_ROWS)).toBe(true);
   });
 });

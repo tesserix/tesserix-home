@@ -1,4 +1,4 @@
-import { tesserixQuery, tesserixTx } from "./tesserix";
+import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import {
   isUsableImportRow,
   requiresProduct,
@@ -749,8 +749,27 @@ export interface SuppressionCheck {
  * when neither key is supplied: there is nothing to check, and the caller
  * (an import row with neither an email nor a handle) should not have to
  * special-case that itself.
+ *
+ * Ruling 23: `query` defaults to `tesserixQuery` (its own pooled connection)
+ * for every existing caller, but `commitImport` passes its transaction's own
+ * scoped query instead. That matters for two reasons, not one:
+ *
+ * (1) Correctness — a lookup on a separate connection cannot see the
+ *     transaction's own uncommitted inserts. Two CSV rows sharing an email
+ *     is ordinary content for a scraped leads sheet, not an edge case: row
+ *     1's `crm_contacts` insert must be visible to row 2's dedup check, or
+ *     row 2 attempts a second insert and trips `crm_contacts_email_lower_uq`
+ *     — inside the transaction, rolling the *entire batch* back after a
+ *     preview that promised N creations.
+ * (2) Connections — `commitImport` already holds one pooled client for its
+ *     transaction; acquiring a second one per row, twice, against a pool of
+ *     `max: 2` (`tesserix.ts`), is how two operators committing at once
+ *     deadlock each other out of the pool entirely.
  */
-export async function isSuppressed(input: SuppressionCheck): Promise<boolean> {
+export async function isSuppressed(
+  input: SuppressionCheck,
+  query: TxQuery = tesserixQuery,
+): Promise<boolean> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (input.email) {
@@ -770,7 +789,7 @@ export async function isSuppressed(input: SuppressionCheck): Promise<boolean> {
   }
   if (clauses.length === 0) return false;
 
-  const rows = await tesserixQuery<{ id: string }>(
+  const rows = await query<{ id: string }>(
     `SELECT id FROM crm_suppressions WHERE ${clauses.join(" OR ")} LIMIT 1`,
     params,
   );
@@ -889,13 +908,26 @@ export async function removeSuppression(id: string): Promise<RemovedSuppression[
  * single early return a later edit could route around.
  */
 
-/** An existing organisation this row's contact details already match, if
- *  any — checked against `crm_contacts`' own unique indexes (lower(email),
- *  lower(instagram_handle)), the same two keys `crm_suppressions` is keyed
- *  on. A row that matches gets counted, not silently merged: this import
- *  does not attempt to update an existing organisation's details, only to
- *  avoid creating a duplicate one. */
-async function findMatchingOrganisationId(input: SuppressionCheck): Promise<string | null> {
+/**
+ * An existing organisation this row's contact details already match, if
+ * any — checked against `crm_contacts`' own unique indexes (lower(email),
+ * lower(instagram_handle)), the same two keys `crm_suppressions` is keyed
+ * on. A row that matches gets counted, not silently merged: this import
+ * does not attempt to update an existing organisation's details, only to
+ * avoid creating a duplicate one.
+ *
+ * Exported (not `previewImport`/`commitImport`-only) so a caller can
+ * directly test that the `query` override — the mechanism Ruling 23 relies
+ * on — actually takes precedence over the module's own `tesserixQuery`,
+ * without having to drive the whole of `commitImport` to observe it.
+ *
+ * `query` defaults to `tesserixQuery`: see `isSuppressed`'s doc comment for
+ * why `commitImport` passes its transaction's own scoped query instead.
+ */
+export async function findMatchingOrganisationId(
+  input: SuppressionCheck,
+  query: TxQuery = tesserixQuery,
+): Promise<string | null> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (input.email) {
@@ -908,7 +940,7 @@ async function findMatchingOrganisationId(input: SuppressionCheck): Promise<stri
   }
   if (clauses.length === 0) return null;
 
-  const rows = await tesserixQuery<{ organisation_id: string }>(
+  const rows = await query<{ organisation_id: string }>(
     `SELECT organisation_id FROM crm_contacts WHERE ${clauses.join(" OR ")} LIMIT 1`,
     params,
   );
@@ -920,6 +952,12 @@ export interface ImportPreview {
   matchedExisting: number;
   skippedSuppressed: number;
   malformed: number;
+  /** The rows that matched an existing organisation, in order — cheap to
+   *  keep (no extra query: `commitImport`/`previewImport` already has the
+   *  row in hand at the point it decides `matchedExisting`) and is what lets
+   *  the UI name which businesses' CSV data was left on the floor, rather
+   *  than reporting a bare count an operator can misread as "updated". */
+  matchedRows: readonly ImportRow[];
 }
 
 /**
@@ -927,12 +965,22 @@ export interface ImportPreview {
  * organisation, how many match one that already exists, how many are
  * suppressed, and how many carry nothing usable at all. Writes nothing —
  * see the module comment.
+ *
+ * Runs entirely on `tesserixQuery` (no transaction): a preview has no
+ * batch of its own writes to make an uncommitted insert visible against, so
+ * there is no dedup-visibility problem here the way there is in
+ * `commitImport` — every row's lookup sees only what's already durably
+ * committed. Two rows in the same preview sharing an email will therefore
+ * both preview as `toCreate` (neither is visible to the other yet); it is
+ * `commitImport`, not this function, that has to get that case right, and
+ * does — see Ruling 23.
  */
 export async function previewImport(rows: readonly ImportRow[]): Promise<ImportPreview> {
   let toCreate = 0;
   let matchedExisting = 0;
   let skippedSuppressed = 0;
   let malformed = 0;
+  const matchedRows: ImportRow[] = [];
 
   for (const row of rows) {
     if (!isUsableImportRow(row)) {
@@ -947,12 +995,13 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
     const matchedId = await findMatchingOrganisationId(check);
     if (matchedId) {
       matchedExisting++;
+      matchedRows.push(row);
     } else {
       toCreate++;
     }
   }
 
-  return { toCreate, matchedExisting, skippedSuppressed, malformed };
+  return { toCreate, matchedExisting, skippedSuppressed, malformed, matchedRows };
 }
 
 export interface ImportResult {
@@ -961,6 +1010,7 @@ export interface ImportResult {
   matchedExisting: number;
   skippedSuppressed: number;
   malformed: number;
+  matchedRows: readonly ImportRow[];
 }
 
 /**
@@ -980,17 +1030,27 @@ export interface ImportResult {
  * (migration 0019's comment on `crm_opportunities.product`), and every
  * created opportunity lands at stage `new`, the one stage the
  * `crm_opp_product_required_when_qualified` CHECK allows without one.
+ *
+ * `totalRows`, when supplied, is the size of the ORIGINAL file — including
+ * rows `parseImportCsv` already dropped as malformed before this function
+ * ever saw them (`lib/crm.ts`'s `ParsedImport.malformed`). Without it,
+ * `crm_imports.row_count` would under-report the file by exactly that many
+ * rows. Defaults to `rows.length` so a caller that only has the parsed rows
+ * (every existing test, and any future direct caller) still gets a
+ * self-consistent record.
  */
 export async function commitImport(
   rows: readonly ImportRow[],
   actor: string,
   filename?: string,
+  totalRows: number = rows.length,
 ): Promise<ImportResult> {
   return tesserixTx(async (query) => {
     let created = 0;
     let matchedExisting = 0;
     let skippedSuppressed = 0;
     let malformed = 0;
+    const matchedRows: ImportRow[] = [];
 
     const importRows = await query<{ id: string }>(
       `INSERT INTO crm_imports (filename, created_by) VALUES ($1, $2) RETURNING id`,
@@ -1005,18 +1065,32 @@ export async function commitImport(
       }
 
       const check: SuppressionCheck = { email: row.email, instagramHandle: row.instagramHandle };
-      // Consulted here too, not only at `previewImport` — see the module
-      // comment. `isSuppressed` reads through `tesserixQuery`, not the
-      // transaction's own client, which is fine: this is a plain lookup,
-      // not a write that needs the transaction's isolation.
-      if (await isSuppressed(check)) {
+      // Ruling 23: both lookups run on `query` — the transaction's OWN
+      // scoped client, not the module-level `tesserixQuery` (a separate
+      // pooled connection). Two things ride on this, together, not either
+      // alone:
+      //
+      // (1) A row created earlier in THIS SAME loop must be visible to a
+      //     later row's dedup check. Two CSV rows sharing an email is
+      //     ordinary content for a scraped leads sheet; on a separate
+      //     connection the second row's lookup would see nothing yet
+      //     committed, attempt its own `crm_contacts` insert, and trip
+      //     `crm_contacts_email_lower_uq` — rolling the ENTIRE batch back on
+      //     what should just resolve as `matchedExisting`.
+      // (2) No second pooled connection is acquired per row at all. Against
+      //     `max: 2` (tesserix.ts), the old shape held one client for the
+      //     transaction and tried to acquire a second, twice per row; two
+      //     operators committing concurrently could each hold one client
+      //     and starve the other out of the pool entirely.
+      if (await isSuppressed(check, query)) {
         skippedSuppressed++;
         continue;
       }
 
-      const matchedId = await findMatchingOrganisationId(check);
+      const matchedId = await findMatchingOrganisationId(check, query);
       if (matchedId) {
         matchedExisting++;
+        matchedRows.push(row);
         continue;
       }
 
@@ -1057,12 +1131,19 @@ export async function commitImport(
       created++;
     }
 
+    // Reconciled by construction: `skippedCount` is defined as "everything
+    // that wasn't created" rather than summed from the individual counters,
+    // so `row_count - skipped_count === created` can never drift the way it
+    // did when `skipped_count` was `skippedSuppressed + malformed` alone
+    // (silently excluding `matchedExisting`, which is equally "not
+    // created").
+    const skippedCount = totalRows - created;
     await query(`UPDATE crm_imports SET row_count = $2, skipped_count = $3 WHERE id = $1`, [
       importId,
-      rows.length,
-      skippedSuppressed + malformed,
+      totalRows,
+      skippedCount,
     ]);
 
-    return { importId, created, matchedExisting, skippedSuppressed, malformed };
+    return { importId, created, matchedExisting, skippedSuppressed, malformed, matchedRows };
   });
 }
