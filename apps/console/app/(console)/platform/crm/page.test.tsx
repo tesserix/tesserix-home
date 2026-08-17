@@ -333,10 +333,29 @@ describe("Handoff", () => {
     expect(screen.getByText(/bondi baker/i)).toBeInTheDocument();
     expect(screen.getByText(/unassigned/i)).toBeInTheDocument();
     // No product to address a conversion-status call to, so none is made —
-    // and the row reads `unknown`, not a fabricated "Not converted".
+    // and the row must not read as a fabricated "Not converted".
     expect(fetchConversionSignal).not.toHaveBeenCalled();
-    expect(screen.getByText(/unknown/i)).toBeInTheDocument();
     expect(screen.queryByText(/not converted/i)).toBeNull();
+    // Nor as "could not check": nothing was checked, and there was nothing
+    // to check. "Could not" describes an attempt that failed and invites an
+    // operator to wait it out; this row will read the same way until the
+    // deal has a product, which only linking a conversion gives it.
+    expect(screen.getByText(/not checked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not check/i)).toBeNull();
+  });
+
+  // The other half of that distinction, same shape as the `none`/`unknown`
+  // pair above: a row that DOES have a product and whose check genuinely
+  // failed must still say so, or the two have simply been collapsed the
+  // other way round.
+  it('renders "could not check" for a real failed check, not the not-checked copy', async () => {
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    fetchConversionSignal.mockRejectedValue(new Error("upstream is down"));
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/could not check/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no product/i)).toBeNull();
   });
 
   it("renders empty, not ready, when nothing is waiting for handoff", async () => {

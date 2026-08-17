@@ -1358,6 +1358,7 @@ describe("linkConversion", () => {
     query
       .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE
       .mockResolvedValueOnce([]) // no matching won opportunity
+      .mockResolvedValueOnce([]) // and no product-less won deal to fill either
       .mockResolvedValueOnce([]); // INSERT INTO crm_activities
 
     await linkConversion({
@@ -1368,8 +1369,66 @@ describe("linkConversion", () => {
       actor: "ava@tesserix.app",
     });
 
-    const [, activityParams] = query.mock.calls[2];
+    const [, activityParams] = query.mock.calls[3];
     expect(activityParams[4]).toBeNull();
+  });
+
+  // #214: the write that lets a migrated won deal leave the handoff queue.
+  // The queue compares the organisation's `converted_product` against the
+  // opportunity's own, so a deal the migration left product-less never
+  // cleared until `linkConversion` filled it in.
+  it("fills a product-less won opportunity's product, and notes the conversion against it", async () => {
+    query
+      .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE crm_organisations
+      .mockResolvedValueOnce([]) // no won opportunity carries this product yet
+      .mockResolvedValueOnce([{ id: "opp-migrated" }]) // the fill
+      .mockResolvedValueOnce([]); // INSERT INTO crm_activities
+
+    await linkConversion({
+      organisationId: "g1",
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    const [fillSql, fillParams] = query.mock.calls[2];
+    expect(fillSql).toContain("UPDATE crm_opportunities");
+    expect(fillSql).toContain("product = $2");
+    // Only a NULL is ever filled — never an overwrite of a product the deal
+    // already carries — and `updated_at` explicitly, since nothing on
+    // `crm_*` has a trigger to do it.
+    expect(fillSql).toContain("product IS NULL");
+    expect(fillSql).toContain("stage = 'won'");
+    expect(fillSql).toContain("updated_at = now()");
+    expect(fillParams).toEqual(["g1", "mark8ly"]);
+
+    const [, activityParams] = query.mock.calls[3];
+    expect(activityParams[4]).toBe("opp-migrated");
+  });
+
+  // The other half of "only fills a NULL": when a won deal already carries
+  // the linked product, nothing is filled at all. A *different*, product-less
+  // deal on the same organisation is not the deal this conversion is for,
+  // and stamping it would fabricate the attribution the migration declined.
+  it("does not touch any opportunity when a won deal already carries the product", async () => {
+    query
+      .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE crm_organisations
+      .mockResolvedValueOnce([{ id: "opp-1" }]) // the won deal for this product
+      .mockResolvedValueOnce([]); // INSERT INTO crm_activities
+
+    await linkConversion({
+      organisationId: "g1",
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "matched",
+      actor: "ava@tesserix.app",
+    });
+
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(
+      query.mock.calls.some(([sql]) => String(sql).includes("UPDATE crm_opportunities")),
+    ).toBe(false);
   });
 
   it("does not write an activity when the update matches no row", async () => {

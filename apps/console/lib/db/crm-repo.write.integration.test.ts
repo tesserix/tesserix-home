@@ -57,6 +57,7 @@ const {
   commitImport,
   linkConversion,
   AlreadyLinkedError,
+  wonWithoutConversion,
 } = await import("./crm-repo");
 
 let db: PGlite;
@@ -66,6 +67,8 @@ let normalOppId: string;
 let failureInjectedOppId: string;
 let freshConversionOrgId: string;
 let alreadyLinkedOrgId: string;
+let migratedWonOrgId: string;
+let migratedWonOppId: string;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -135,6 +138,24 @@ beforeAll(async () => {
     ["Already Linked Co"],
   );
   alreadyLinkedOrgId = alreadyLinkedOrg.rows[0].id;
+
+  // #214: the migrated backlog's shape, exactly as
+  // `migrate-leads-to-crm.mjs` leaves it — a WON opportunity with NO
+  // product, on an organisation with no conversion recorded. Only
+  // insertable here, while the CHECK is still dropped, which is precisely
+  // why the real rows are grandfathered.
+  const migratedWonOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+    ["Migrated Won Co"],
+  );
+  migratedWonOrgId = migratedWonOrg.rows[0].id;
+
+  const migratedWon = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities (organisation_id, stage, product, closed_at)
+     VALUES ($1, 'won', NULL, now() - interval '400 days') RETURNING id`,
+    [migratedWonOrgId],
+  );
+  migratedWonOppId = migratedWon.rows[0].id;
 
   // Re-add the CHECK as NOT VALID — 0021's actual shape. This does not
   // scan/reject the grandfathered row already inserted above, but DOES
@@ -481,5 +502,63 @@ describe("linkConversion, against a real crm_organisations row", () => {
       [alreadyLinkedOrgId],
     );
     expect(activities.rows).toHaveLength(0);
+  });
+});
+
+// #214. The defect this covers is not visible in `linkConversion` alone —
+// that call always "succeeded". It is only visible in what the handoff queue
+// says AFTERWARDS, so this test asserts against `wonWithoutConversion`, the
+// query an operator actually looks at. A mocked test cannot reach it: the
+// residue came from `NULL IS DISTINCT FROM 'kora'` evaluating in Postgres,
+// and from the reinstated CHECK's willingness to accept this particular
+// UPDATE on a grandfathered `won` row — both facts about a real database.
+describe("linkConversion clears a migrated won deal out of the handoff queue", () => {
+  const queueIds = async () =>
+    (await wonWithoutConversion(100)).map((row) => row.opportunityId);
+
+  it("shows the migrated, product-less won deal in the queue to begin with", async () => {
+    expect(await queueIds()).toContain(migratedWonOppId);
+  });
+
+  it("fills the opportunity's product and removes it from the queue for good", async () => {
+    await linkConversion({
+      organisationId: migratedWonOrgId,
+      product: "kora",
+      ref: "user_7c1",
+      label: "Migrated Won Co",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    // The write migration 0021's reinstated CHECK exists to permit: a
+    // grandfathered `won` row is un-updatable UNLESS the same statement
+    // supplies a product. This one does, so Postgres accepts it — proving
+    // the fix is not blocked by the constraint it has to live under.
+    const opp = await db.query<{ product: string | null; updated_at: Date }>(
+      `SELECT product, updated_at FROM crm_opportunities WHERE id = $1`,
+      [migratedWonOppId],
+    );
+    expect(opp.rows[0].product).toBe("kora");
+    expect(opp.rows[0].updated_at).toBeInstanceOf(Date);
+
+    // THE assertion that proves the defect is gone. Before the fix the row
+    // stayed here forever — `converted_product = 'kora'` on the
+    // organisation, `product = NULL` on the deal, still DISTINCT — and every
+    // retry threw `AlreadyLinkedError`.
+    expect(await queueIds()).not.toContain(migratedWonOppId);
+  });
+
+  it("does not resurrect the row on a retry, and refuses the retry visibly", async () => {
+    await expect(
+      linkConversion({
+        organisationId: migratedWonOrgId,
+        product: "kora",
+        ref: "user_7c1",
+        method: "manual",
+        actor: "ava@tesserix.app",
+      }),
+    ).rejects.toBeInstanceOf(AlreadyLinkedError);
+
+    expect(await queueIds()).not.toContain(migratedWonOppId);
   });
 });
