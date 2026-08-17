@@ -87,10 +87,11 @@ describe("console-native surfaces record no apps/web path", () => {
   });
 });
 
-describe("the CRM serves its queue and its do-not-contact list, but keeps import pending", () => {
-  it("serves the CRM and the suppression list, and keeps only import pending", () => {
+describe("the CRM serves its queue, its do-not-contact list, and its import flow", () => {
+  it("serves the CRM, the suppression list, and the import flow — nothing left pending", () => {
     expect(isPending("platform.crm")).toBe(false);
-    expect(isPending("platform.crmImport")).toBe(true);
+    // Task 8 built the CSV import flow this id points at.
+    expect(isPending("platform.crmImport")).toBe(false);
     // Task 7 built the do-not-contact list this id points at.
     expect(isPending("platform.crmSuppressions")).toBe(false);
   });

@@ -1,0 +1,189 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
+import { parseImportCsv, type ImportRow } from "@/lib/crm";
+import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
+import { previewImportAction, commitImportAction } from "./actions";
+
+/**
+ * CSV import: pick a file, preview what it would do, commit.
+ *
+ * All CSV parsing happens client-side, via the same pure `parseImportCsv`
+ * `lib/crm.test.ts` covers — there is nothing DB-dependent about turning a
+ * file's text into rows. The two DB-dependent steps, previewing and
+ * committing, go through server actions.
+ *
+ * Suppression is checked on BOTH `previewImportAction` and
+ * `commitImportAction` — this view calls commit with the very same `rows`
+ * array the preview ran against, and still gets a fresh answer, because a
+ * preview a few minutes old is exactly what could go stale (see
+ * crm-repo.ts's module comment on `previewImport`/`commitImport`).
+ */
+
+interface Counts {
+  toCreate: number;
+  matchedExisting: number;
+  skippedSuppressed: number;
+  malformed: number;
+}
+
+function ErrorNote({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <Callout role="alert" variant="destructive" className="mt-2">
+      <CalloutDescription>{message}</CalloutDescription>
+    </Callout>
+  );
+}
+
+function CountsSummary({ counts, title }: { counts: Counts; title: string }) {
+  return (
+    <div className="rounded-md border border-border p-4 text-sm">
+      <p className="font-medium">{title}</p>
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">To create</dt>
+          <dd className="mt-1 text-lg">{counts.toCreate}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Matches existing</dt>
+          <dd className="mt-1 text-lg">{counts.matchedExisting}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Suppressed</dt>
+          <dd className="mt-1 text-lg">{counts.skippedSuppressed}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Malformed</dt>
+          <dd className="mt-1 text-lg">{counts.malformed}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
+export function ImportView() {
+  const [filename, setFilename] = useState<string | null>(null);
+  const [rows, setRows] = useState<ImportRow[] | null>(null);
+  const [parseMalformed, setParseMalformed] = useState(0);
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
+  const [committed, setCommitted] = useState<ImportResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  const handleFile = (file: File) => {
+    setError(null);
+    setPreview(null);
+    setCommitted(null);
+    setFilename(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      const parsed = parseImportCsv(text);
+      setRows(parsed.rows);
+      setParseMalformed(parsed.malformed);
+    };
+    reader.onerror = () => {
+      setError("Could not read that file.");
+      setRows(null);
+    };
+    reader.readAsText(file);
+  };
+
+  const runPreview = () => {
+    if (!rows) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await previewImportAction(rows);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setPreview(result.preview);
+    });
+  };
+
+  const runCommit = () => {
+    if (!rows) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await commitImportAction(rows, filename ?? undefined);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setCommitted(result.result);
+      setPreview(null);
+      setRows(null);
+      setFilename(null);
+    });
+  };
+
+  // The parse step's own malformed count folds in here — a row can be
+  // malformed before it ever reaches the server (no name, email or
+  // Instagram handle at all), and `previewImport` only ever sees the rows
+  // `parseImportCsv` already judged usable, so its own `malformed` is
+  // additional, not a duplicate.
+  const previewCounts: Counts | null = preview
+    ? {
+        toCreate: preview.toCreate,
+        matchedExisting: preview.matchedExisting,
+        skippedSuppressed: preview.skippedSuppressed,
+        malformed: preview.malformed + parseMalformed,
+      }
+    : null;
+
+  const committedCounts: Counts | null = committed
+    ? {
+        toCreate: committed.created,
+        matchedExisting: committed.matchedExisting,
+        skippedSuppressed: committed.skippedSuppressed,
+        malformed: committed.malformed,
+      }
+    : null;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-end gap-3 rounded-md border border-border p-4">
+        <div>
+          <label className="text-xs uppercase tracking-wide text-muted-foreground" htmlFor="crm-import-file">
+            CSV file
+          </label>
+          <Input
+            id="crm-import-file"
+            type="file"
+            accept=".csv,text/csv"
+            className="mt-1"
+            disabled={pending}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) handleFile(file);
+            }}
+          />
+        </div>
+        <Button type="button" size="sm" disabled={!rows || pending} onClick={runPreview}>
+          {pending ? "Working…" : "Preview"}
+        </Button>
+      </div>
+
+      <ErrorNote message={error} />
+
+      {previewCounts ? (
+        <div className="flex flex-col gap-3">
+          <CountsSummary
+            counts={previewCounts}
+            title={`Preview — ${filename ?? "file"} (nothing written yet)`}
+          />
+          <div>
+            <Button type="button" size="sm" disabled={pending} onClick={runCommit}>
+              {pending ? "Importing…" : "Commit import"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {committedCounts ? <CountsSummary counts={committedCounts} title="Import committed" /> : null}
+    </div>
+  );
+}

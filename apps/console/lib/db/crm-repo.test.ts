@@ -24,6 +24,8 @@ import {
   addSuppression,
   removeSuppression,
   listSuppressions,
+  previewImport,
+  commitImport,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -735,6 +737,199 @@ describe("suppressions", () => {
       query.mockResolvedValueOnce([]);
       const rows = await removeSuppression("missing");
       expect(rows).toEqual([]);
+    });
+  });
+});
+
+/**
+ * CSV import (Task 8).
+ *
+ * The rule both `previewImport` and `commitImport` exist to hold: suppression
+ * is checked at BOTH preview and commit, never only at preview. A preview
+ * can be minutes old; someone can be suppressed in the gap, and committing a
+ * stale preview would then contact a person who asked not to be. Every test
+ * below that calls `commitImport` re-asserts the suppression check fires
+ * there too — not "trust the preview already covered it".
+ *
+ * `query.mockImplementation` routes by SQL shape rather than call order, so
+ * these tests don't depend on exactly how many statements `commitImport`
+ * issues per row — only on which statements ran and with what effect.
+ */
+describe("import", () => {
+  function routeQuery(overrides: {
+    suppressed?: unknown[];
+    matched?: unknown[];
+  }) {
+    return (sql: string) => {
+      if (/INSERT INTO crm_imports/.test(sql)) {
+        return Promise.resolve([{ id: "imp1" }]);
+      }
+      if (/FROM crm_suppressions/.test(sql)) {
+        return Promise.resolve(overrides.suppressed ?? []);
+      }
+      if (/FROM crm_contacts/.test(sql)) {
+        return Promise.resolve(overrides.matched ?? []);
+      }
+      if (/INSERT INTO crm_organisations/.test(sql)) {
+        return Promise.resolve([{ id: "org1" }]);
+      }
+      return Promise.resolve([]);
+    };
+  }
+
+  describe("previewImport", () => {
+    it("skips suppressed rows at preview, before anything is written", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }] }));
+      const preview = await previewImport([{ email: "ava@example.com" }]);
+      expect(preview.skippedSuppressed).toBe(1);
+      expect(preview.toCreate).toBe(0);
+      expect(preview.matchedExisting).toBe(0);
+      // No call issued anything that could mutate the database — the
+      // no-write property is structural (previewImport never calls
+      // tesserixTx), not a single early return that a future edit could
+      // route around.
+      expect(query.mock.calls.every(([sql]) => !/^\s*(INSERT|UPDATE|DELETE)/i.test(sql))).toBe(
+        true,
+      );
+    });
+
+    it("counts a row matching an existing contact as matchedExisting, not toCreate", async () => {
+      query.mockImplementation(
+        routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
+      );
+      const preview = await previewImport([{ email: "ava@example.com" }]);
+      expect(preview.matchedExisting).toBe(1);
+      expect(preview.toCreate).toBe(0);
+    });
+
+    it("counts a fresh row as toCreate", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const preview = await previewImport([{ email: "new@example.com" }]);
+      expect(preview.toCreate).toBe(1);
+      expect(preview.matchedExisting).toBe(0);
+      expect(preview.skippedSuppressed).toBe(0);
+    });
+
+    it("counts a row with nothing to identify it as malformed, without querying the database for it", async () => {
+      query.mockImplementation(routeQuery({}));
+      const preview = await previewImport([{ phone: "0400000000" }]);
+      expect(preview.malformed).toBe(1);
+      expect(preview.toCreate).toBe(0);
+      expect(query).not.toHaveBeenCalled();
+    });
+
+    it("never issues a write statement at all, across a full mixed batch", async () => {
+      query.mockImplementation(
+        routeQuery({ suppressed: [], matched: [] }),
+      );
+      await previewImport([
+        { email: "suppressed@example.com" },
+        { email: "matched@example.com" },
+        { email: "fresh@example.com" },
+        {},
+      ]);
+      for (const [sql] of query.mock.calls) {
+        expect(sql).not.toMatch(/^\s*(INSERT|UPDATE|DELETE)/i);
+      }
+    });
+  });
+
+  describe("commitImport", () => {
+    it("still consults suppression when committing, not only at preview", async () => {
+      // Guards the guard: checking only at preview means a stale preview
+      // commits someone who was suppressed in between.
+      query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }] }));
+      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app");
+      expect(query.mock.calls.some(([sql]) => /FROM crm_suppressions/.test(sql))).toBe(true);
+      expect(result.skippedSuppressed).toBe(1);
+      expect(result.created).toBe(0);
+      // A suppressed row must never reach the organisation insert.
+      expect(query.mock.calls.some(([sql]) => /INSERT INTO crm_organisations/.test(sql))).toBe(
+        false,
+      );
+    });
+
+    it("skips a row matching an existing contact without creating a duplicate organisation", async () => {
+      query.mockImplementation(
+        routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
+      );
+      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app");
+      expect(result.matchedExisting).toBe(1);
+      expect(result.created).toBe(0);
+      expect(query.mock.calls.some(([sql]) => /INSERT INTO crm_organisations/.test(sql))).toBe(
+        false,
+      );
+    });
+
+    it("creates an organisation, contact and opportunity for a fresh row, stamped with the import id", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const result = await commitImport(
+        [{ name: "Bondi Baker", email: "ava@example.com", instagramHandle: "@bondibaker" }],
+        "ava@tesserix.app",
+      );
+      expect(result.created).toBe(1);
+
+      const orgCall = query.mock.calls.find(([sql]) => /INSERT INTO crm_organisations/.test(sql));
+      expect(orgCall).toBeDefined();
+      const [, orgParams] = orgCall!;
+      // import_id (from the crm_imports insert) is stamped on the row.
+      expect(orgParams).toContain("imp1");
+
+      const oppCall = query.mock.calls.find(([sql]) => /INSERT INTO crm_opportunities/.test(sql));
+      expect(oppCall).toBeDefined();
+      const [oppSql, oppParams] = oppCall!;
+      // product stays null and stage lands at 'new' — migrated/imported
+      // opportunities were never matched to a product, and the CHECK
+      // constraint (crm_opp_product_required_when_qualified) only allows a
+      // null product at 'new'/'contacted'.
+      expect(oppSql).toContain("'new'");
+      expect(oppParams).not.toContain("qualified");
+    });
+
+    it("counts a row with nothing to identify it as malformed and writes nothing for it", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const result = await commitImport([{ phone: "0400000000" }], "ava@tesserix.app");
+      expect(result.malformed).toBe(1);
+      expect(result.created).toBe(0);
+      expect(query.mock.calls.some(([sql]) => /INSERT INTO crm_organisations/.test(sql))).toBe(
+        false,
+      );
+    });
+
+    it("writes one crm_imports batch row and records row/skipped counts on it", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }], matched: [] }));
+      await commitImport(
+        [{ email: "ava@example.com" }, { phone: "0400000000" }],
+        "ava@tesserix.app",
+        "leads.csv",
+      );
+      const importInsert = query.mock.calls.find(([sql]) => /INSERT INTO crm_imports/.test(sql));
+      expect(importInsert).toBeDefined();
+      const updateCall = query.mock.calls.find(([sql]) => /UPDATE crm_imports/.test(sql));
+      expect(updateCall).toBeDefined();
+      const [, updateParams] = updateCall!;
+      // 2 rows total, both skipped (1 suppressed, 1 malformed).
+      expect(updateParams).toEqual(["imp1", 2, 2]);
+    });
+
+    it("preview and commit agree on counts for the same input", async () => {
+      const rows = [
+        { email: "suppressed@example.com" },
+        { email: "matched@example.com" },
+        { email: "fresh@example.com" },
+        {},
+      ];
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const preview = await previewImport(rows);
+
+      query.mockReset();
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const committed = await commitImport(rows, "ava@tesserix.app");
+
+      expect(committed.created).toBe(preview.toCreate);
+      expect(committed.matchedExisting).toBe(preview.matchedExisting);
+      expect(committed.skippedSuppressed).toBe(preview.skippedSuppressed);
+      expect(committed.malformed).toBe(preview.malformed);
     });
   });
 });

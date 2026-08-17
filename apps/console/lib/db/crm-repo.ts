@@ -1,5 +1,11 @@
 import { tesserixQuery, tesserixTx } from "./tesserix";
-import { requiresProduct, type CrmActivityKind, type CrmStage } from "../crm";
+import {
+  isUsableImportRow,
+  requiresProduct,
+  type CrmActivityKind,
+  type CrmStage,
+  type ImportRow,
+} from "../crm";
 
 /**
  * The queue's reads: opportunities due for action, and opportunities that
@@ -862,4 +868,201 @@ export async function removeSuppression(id: string): Promise<RemovedSuppression[
     email: row.email,
     instagramHandle: row.instagram_handle,
   }));
+}
+
+/**
+ * CSV import (Task 8).
+ *
+ * The rule this section exists to hold: **suppression is checked at BOTH
+ * preview and commit, never only at preview.** A preview can be minutes
+ * old; someone can be suppressed in the gap between an operator reviewing a
+ * preview and clicking "commit", and skipping the check on commit would
+ * then contact a person who asked not to be. Both `previewImport` and
+ * `commitImport` call `isSuppressed` — the same function, the same
+ * trimmed/lowercased email and `normalizeInstagramHandle`'d Instagram
+ * comparison the do-not-contact list itself uses — so the two paths can
+ * never disagree about who is protected.
+ *
+ * `previewImport` never calls `tesserixTx` and issues no INSERT/UPDATE at
+ * all — the "dry run writes nothing" guarantee is structural (there is no
+ * write statement anywhere in the function to accidentally reach), not a
+ * single early return a later edit could route around.
+ */
+
+/** An existing organisation this row's contact details already match, if
+ *  any — checked against `crm_contacts`' own unique indexes (lower(email),
+ *  lower(instagram_handle)), the same two keys `crm_suppressions` is keyed
+ *  on. A row that matches gets counted, not silently merged: this import
+ *  does not attempt to update an existing organisation's details, only to
+ *  avoid creating a duplicate one. */
+async function findMatchingOrganisationId(input: SuppressionCheck): Promise<string | null> {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (input.email) {
+    params.push(input.email.trim());
+    clauses.push(`lower(email) = lower($${params.length})`);
+  }
+  if (input.instagramHandle) {
+    params.push(normalizeInstagramHandle(input.instagramHandle));
+    clauses.push(`lower(instagram_handle) = lower($${params.length})`);
+  }
+  if (clauses.length === 0) return null;
+
+  const rows = await tesserixQuery<{ organisation_id: string }>(
+    `SELECT organisation_id FROM crm_contacts WHERE ${clauses.join(" OR ")} LIMIT 1`,
+    params,
+  );
+  return rows[0]?.organisation_id ?? null;
+}
+
+export interface ImportPreview {
+  toCreate: number;
+  matchedExisting: number;
+  skippedSuppressed: number;
+  malformed: number;
+}
+
+/**
+ * Dry-run a batch of parsed CSV rows: how many would create a new
+ * organisation, how many match one that already exists, how many are
+ * suppressed, and how many carry nothing usable at all. Writes nothing —
+ * see the module comment.
+ */
+export async function previewImport(rows: readonly ImportRow[]): Promise<ImportPreview> {
+  let toCreate = 0;
+  let matchedExisting = 0;
+  let skippedSuppressed = 0;
+  let malformed = 0;
+
+  for (const row of rows) {
+    if (!isUsableImportRow(row)) {
+      malformed++;
+      continue;
+    }
+    const check: SuppressionCheck = { email: row.email, instagramHandle: row.instagramHandle };
+    if (await isSuppressed(check)) {
+      skippedSuppressed++;
+      continue;
+    }
+    const matchedId = await findMatchingOrganisationId(check);
+    if (matchedId) {
+      matchedExisting++;
+    } else {
+      toCreate++;
+    }
+  }
+
+  return { toCreate, matchedExisting, skippedSuppressed, malformed };
+}
+
+export interface ImportResult {
+  importId: string;
+  created: number;
+  matchedExisting: number;
+  skippedSuppressed: number;
+  malformed: number;
+}
+
+/**
+ * Commit a batch of parsed CSV rows: one `crm_imports` row for the batch,
+ * one `crm_organisations`/`crm_contacts`/`crm_opportunities` triple per row
+ * that creates something new, all in a single transaction — either the
+ * whole batch lands or none of it does, so a failure partway through never
+ * leaves an orphaned `crm_imports` row with no organisations to show for it.
+ *
+ * Re-checks suppression per row, exactly like `previewImport` — see the
+ * module comment for why a stale preview cannot be trusted to have already
+ * covered it. A row matching an existing organisation is counted but not
+ * written, same as at preview: this does not merge into or update the
+ * existing row.
+ *
+ * `product` is never set: an imported lead was never matched to a product
+ * (migration 0019's comment on `crm_opportunities.product`), and every
+ * created opportunity lands at stage `new`, the one stage the
+ * `crm_opp_product_required_when_qualified` CHECK allows without one.
+ */
+export async function commitImport(
+  rows: readonly ImportRow[],
+  actor: string,
+  filename?: string,
+): Promise<ImportResult> {
+  return tesserixTx(async (query) => {
+    let created = 0;
+    let matchedExisting = 0;
+    let skippedSuppressed = 0;
+    let malformed = 0;
+
+    const importRows = await query<{ id: string }>(
+      `INSERT INTO crm_imports (filename, created_by) VALUES ($1, $2) RETURNING id`,
+      [filename ?? null, actor],
+    );
+    const importId = importRows[0].id;
+
+    for (const row of rows) {
+      if (!isUsableImportRow(row)) {
+        malformed++;
+        continue;
+      }
+
+      const check: SuppressionCheck = { email: row.email, instagramHandle: row.instagramHandle };
+      // Consulted here too, not only at `previewImport` — see the module
+      // comment. `isSuppressed` reads through `tesserixQuery`, not the
+      // transaction's own client, which is fine: this is a plain lookup,
+      // not a write that needs the transaction's isolation.
+      if (await isSuppressed(check)) {
+        skippedSuppressed++;
+        continue;
+      }
+
+      const matchedId = await findMatchingOrganisationId(check);
+      if (matchedId) {
+        matchedExisting++;
+        continue;
+      }
+
+      const name = row.name?.trim() || row.email?.trim() || row.instagramHandle?.trim();
+      const orgRows = await query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
+        [
+          name,
+          row.websiteUrl?.trim() || null,
+          row.location?.trim() || null,
+          row.category ?? [],
+          row.tags ?? [],
+          importId,
+        ],
+      );
+      const organisationId = orgRows[0].id;
+
+      await query(
+        `INSERT INTO crm_contacts (organisation_id, name, email, phone, instagram_handle, is_primary)
+         VALUES ($1, $2, $3, $4, $5, true)`,
+        [
+          organisationId,
+          row.name?.trim() || null,
+          row.email ? row.email.trim().toLowerCase() : null,
+          row.phone?.trim() || null,
+          row.instagramHandle ? normalizeInstagramHandle(row.instagramHandle) : null,
+        ],
+      );
+
+      await query(
+        `INSERT INTO crm_opportunities (organisation_id, product, stage, source)
+         VALUES ($1, NULL, 'new', $2)`,
+        [organisationId, "import"],
+      );
+
+      created++;
+    }
+
+    await query(`UPDATE crm_imports SET row_count = $2, skipped_count = $3 WHERE id = $1`, [
+      importId,
+      rows.length,
+      skippedSuppressed + malformed,
+    ]);
+
+    return { importId, created, matchedExisting, skippedSuppressed, malformed };
+  });
 }

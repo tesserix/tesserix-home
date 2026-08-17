@@ -293,10 +293,11 @@ const ROUTES = {
   // No `web`: the import flow was never a distinct page in apps/web — it
   // lived inside the leads page itself, under `platform.crm`. There is no
   // separate predecessor to record.
+  //
+  // NOT `pending`: Task 8 builds the CSV import flow this id points at.
   "platform.crmImport": {
     mobile: "/platform/crm/import",
     capability: "read",
-    pending: true,
   },
   // No `web`: a suppression list never existed in apps/web at all. This is
   // genuinely console-native, not a migrated surface.
