@@ -5,7 +5,9 @@ import { DetailLayout } from "@/components/kit/detail-layout";
 // `states.tsx` is a "use client" module whose exports resolve to client
 // references here. See tickets/[id]/page.tsx for the incident this guards
 // against.
-import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
+import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
+// Not `toSurfaceError` — see `../read-error.ts`.
+import { crmReadError } from "../read-error";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
 import { ActivityTab, ContactsTab, OpportunitiesTab } from "./organisation-detail-view";
 
@@ -25,7 +27,7 @@ export function detailState(input: {
 }): SurfaceState {
   return resolveState({
     isLoading: false,
-    error: toSurfaceError(input.error),
+    error: crmReadError(input.error, "this organisation"),
     rows: input.detail ? [input.detail] : [],
     filtered: false,
   });
@@ -123,9 +125,17 @@ export default async function OrganisationDetailPage({
         },
         {
           label: "Converted",
+          // "No conversion recorded", not "Not converted". A null
+          // `converted_at` covers three different situations — nobody has
+          // asked the product yet, the check failed, and the product
+          // answered no — and only the last of them is "not converted".
+          // `handoff-view.tsx`'s SIGNAL_COPY goes to deliberate trouble to
+          // keep `unknown` and `none` worded apart for exactly this reason;
+          // stating the absence of a record, rather than a negative fact
+          // about the merchant, is what makes this page agree with it.
           value: organisation.convertedAt
             ? `${organisation.convertedLabel ?? organisation.convertedProduct ?? "Yes"} · ${new Date(organisation.convertedAt).toLocaleDateString()}`
-            : "Not converted",
+            : "No conversion recorded",
         },
         { label: "Added", value: new Date(organisation.createdAt).toLocaleString() },
       ]}

@@ -8,7 +8,11 @@ import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar
 // component, and `states.tsx` is a "use client" module whose exports become
 // client references that throw when called on the server. See
 // `tickets/page.tsx` for the incident this guards against.
-import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
+import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
+// Not `toSurfaceError`: these rejections come straight off `pg`, and its
+// verbatim `.message` would render a Postgres error to an operator. See
+// `read-error.ts`.
+import { crmReadError } from "./read-error";
 import {
   dueOpportunities,
   driftingOpportunities,
@@ -225,6 +229,10 @@ export interface QueueGroupStateInput {
   error: unknown;
   rows: readonly QueueItem[];
   filtered: boolean;
+  /** Named in the operator-facing failure copy ("Could not load the Due
+   *  queue"), so a failed group says WHICH group failed — the other one is
+   *  still rendering its own rows beside it. */
+  surface: string;
 }
 
 /**
@@ -237,7 +245,7 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
     // The page awaits both reads before rendering; there is no client-side
     // pending window here.
     isLoading: false,
-    error: toSurfaceError(input.error),
+    error: crmReadError(input.error, input.surface),
     rows: input.rows,
     filtered: input.filtered,
   });
@@ -440,8 +448,18 @@ async function renderWorkTab({
   const dueItems = dueRows.map(toQueueItem);
   const driftingItems = driftingRows.map(toQueueItem);
 
-  const dueState = queueGroupState({ error: dueError, rows: dueItems, filtered });
-  const driftingState = queueGroupState({ error: driftingError, rows: driftingItems, filtered });
+  const dueState = queueGroupState({
+    error: dueError,
+    rows: dueItems,
+    filtered,
+    surface: "the Due queue",
+  });
+  const driftingState = queueGroupState({
+    error: driftingError,
+    rows: driftingItems,
+    filtered,
+    surface: "the Drifting queue",
+  });
 
   return (
     <CrmQueueView
@@ -484,7 +502,7 @@ async function renderHandoffTab() {
 
   const handoffState = resolveState({
     isLoading: false,
-    error: toSurfaceError(handoffRowsError),
+    error: crmReadError(handoffRowsError, "the handoff queue"),
     rows: handoffItems,
     filtered: false,
   });

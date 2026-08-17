@@ -92,7 +92,12 @@ describe("CrmSuppressionsPage", () => {
 
     await renderPage();
 
-    expect(screen.getByText("connection terminated")).toBeInTheDocument();
+    // The error state, not the empty state — but NOT the raw pg message.
+    // `relation "crm_suppressions" does not exist` in front of an operator
+    // is the read-path version of the constraint-name leak `lib/crm-write.ts`
+    // records on the write path.
+    expect(screen.queryByText("connection terminated")).toBeNull();
+    expect(screen.getByText(/could not load the do-not-contact list/i)).toBeInTheDocument();
     expect(screen.queryByText(EMPTY_MESSAGE)).toBeNull();
   });
 });

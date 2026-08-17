@@ -7,7 +7,9 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // `SuppressionsView`, a client component, the same way `DetailLayout`
 // renders it for the organisation detail page rather than this page doing
 // so itself.
-import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
+import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
+// Not `toSurfaceError` — see `../read-error.ts`.
+import { crmReadError } from "../read-error";
 import { listSuppressions, type SuppressionRow } from "@/lib/db/crm-repo";
 import { SuppressionsView } from "./suppressions-view";
 
@@ -27,7 +29,7 @@ export function suppressionsState(input: {
 }): SurfaceState {
   return resolveState({
     isLoading: false,
-    error: toSurfaceError(input.error),
+    error: crmReadError(input.error, "the do-not-contact list"),
     rows: input.rows,
     filtered: false,
   });
@@ -49,6 +51,7 @@ export default async function CrmSuppressionsPage() {
       <ConsolePageHeader
         title="Do-not-contact list"
         description="People and businesses who asked not to be contacted. Checked before an outbound email or DM."
+        breadcrumbs={[{ label: "CRM", href: "/platform/crm" }, { label: "Do-not-contact" }]}
       />
 
       <SuppressionsView suppressions={rows} state={state} emptyMessage={EMPTY_MESSAGE} />

@@ -136,6 +136,23 @@ describe("CrmPage", () => {
     expect(screen.getByText("Bondi Store")).toBeInTheDocument();
   });
 
+  // These rejections come straight off `pg`, so a verbatim `.message` puts
+  // `relation "crm_opportunities" does not exist` in front of an operator —
+  // the read-path twin of the constraint-name leak `lib/crm-write.ts`
+  // records. The failing group must also say WHICH group failed, since the
+  // other one is still rendering rows beside it.
+  it("shows safe copy naming the failed group, never the raw database message", async () => {
+    dueOpportunities.mockRejectedValue(
+      new Error('relation "crm_opportunities" does not exist'),
+    );
+    driftingOpportunities.mockResolvedValue([DRIFTING_ROW]);
+
+    await renderCrmPage();
+
+    expect(screen.queryByText(/relation "crm_opportunities"/)).toBeNull();
+    expect(screen.getByText(/could not load the due queue/i)).toBeInTheDocument();
+  });
+
   it("renders filtered-empty, not empty, when an active filter matches nothing", async () => {
     dueOpportunities.mockResolvedValue([]);
     driftingOpportunities.mockResolvedValue([]);
