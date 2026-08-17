@@ -58,11 +58,58 @@ export type AuditSummary = Readonly<Record<string, number>>;
  */
 const SUMMARY_KEY = /^[a-z][a-z0-9_.]{0,39}$/;
 
+/**
+ * Same shape as `SUMMARY_KEY`, longer cap: an action is a dotted identifier
+ * like `crm.stage.change`, not a summary key, so it gets more room for
+ * segments, but the same lowercase-identifier constraint applies for the
+ * same reason — this is the column a retention or alerting rule
+ * discriminates on (migration 0018), not a place for free prose.
+ */
+const ACTION_NAME = /^[a-z][a-z0-9_.]{0,63}$/;
+
 /** Raised when a summary tries to carry something that is not a count. */
 export class AuditSummaryError extends Error {
   constructor(message: string) {
     super(`audit: ${message}`);
     this.name = "AuditSummaryError";
+  }
+}
+
+/**
+ * Raised when an audit `action` is not a stable dotted identifier.
+ *
+ * Before `describe` (Ruling 15), `action` was a string literal fixed at
+ * each call site — statically inspectable, impossible to get wrong at
+ * runtime. `describe` makes it a runtime return value like `summary`,
+ * which already rejects malformed input rather than sanitising it; leaving
+ * `action` unchecked would be the one asymmetry between two fields that
+ * arrive together in the same object. A silently truncated or coerced
+ * action name is a row nobody can attribute later, which is worse than a
+ * loud failure at write time — so this rejects, exactly like
+ * `serialiseSummary` does for `summary`.
+ */
+export class AuditActionError extends Error {
+  constructor(message: string) {
+    super(`audit: ${message}`);
+    this.name = "AuditActionError";
+  }
+}
+
+/**
+ * Validate an action name before it can reach the INSERT.
+ *
+ * Not sanitisation: an action that fails this is a bug in the caller's
+ * `describe` (or a hand-written `writeAuditEntry` call), and silently
+ * coercing it into something that looks like a valid action would leave
+ * that bug in place while producing a row that reads as fine.
+ */
+function validateActionName(action: string): void {
+  if (!ACTION_NAME.test(action)) {
+    throw new AuditActionError(
+      `action ${JSON.stringify(action)} is not a stable dotted identifier ` +
+        "(e.g. \"crm.stage.change\"); this is the column a retention or " +
+        "alerting rule discriminates on, not free prose",
+    );
   }
 }
 
@@ -173,11 +220,20 @@ export function serialiseSummary(summary: AuditSummary): string {
  * Exported because not every auditable event is an operation that returns
  * data to a caller. On its own it protects nothing — a caller can still
  * forget to call it, which is why anything that returns data to an operator
- * goes through `auditedOperation` instead.
+ * goes through `auditedOperation` instead. Validated here rather than only
+ * in `auditedOperation`, so this — the bare-write path — carries the same
+ * guarantee: nothing reaches `console_audit_log` with an action that isn't
+ * a stable dotted identifier, regardless of which of the two entry points
+ * produced it.
  *
  * Failures are wrapped, never swallowed.
  */
 export async function writeAuditEntry(entry: NewAuditEntry): Promise<void> {
+  // Validated before the summary and outside the try, same as
+  // `serialiseSummary` below: a malformed action is a bug in the caller, not
+  // a database failure, and must surface as its own error rather than being
+  // reported as one.
+  validateActionName(entry.action);
   const metadata =
     entry.summary === undefined ? null : serialiseSummary(entry.summary);
   const occurredAt = entry.occurredAt ?? new Date().toISOString();

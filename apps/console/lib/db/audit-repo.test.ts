@@ -8,6 +8,7 @@ vi.mock("./tesserix", async (importOriginal) => ({
 
 import { isDatabaseConfigured, tesserixQuery } from "./tesserix";
 import {
+  AuditActionError,
   AuditSummaryError,
   AuditUnavailableError,
   AuditWriteError,
@@ -183,6 +184,64 @@ describe("writeAuditEntry / recentAuditEntries", () => {
     ] as never);
 
     await expect(recentAuditEntries(10)).rejects.toThrow("expected a timestamp");
+  });
+});
+
+// Ruling 16: before `describe` (Ruling 15), `action` was a string literal
+// fixed at each call site — statically inspectable, impossible to get wrong
+// at runtime. `describe` makes it a runtime return value sitting next to
+// `summary`, which already rejects malformed input; `action` must carry the
+// same guarantee or the two fields in the same returned object have two
+// different trust levels for no reason.
+describe("writeAuditEntry — action must be a stable dotted identifier", () => {
+  it("accepts a legitimate dotted action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "crm.stage.change" }),
+    ).resolves.toBeUndefined();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
+  });
+
+  // Guards the guard: a validator that accepted everything would pass the
+  // test above too.
+  it("rejects an empty action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prose action with spaces", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "changed the stage to qualified" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an over-long action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "crm.".concat("x".repeat(65)) }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an action that starts with an uppercase letter or a digit", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "Crm.stage.change" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "1crm.stage.change" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+  });
+
+  // Rejects rather than sanitises: a malformed action is a bug in the
+  // caller's `describe`, and coercing it into something plausible-looking
+  // would leave that bug in place while producing a row that reads as fine
+  // — precisely what migration 0018's "not free prose" comment forbids.
+  it("never reaches the INSERT for a malformed action, even with a valid summary", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "not an action", summary: { crm: 1 } }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 });
 

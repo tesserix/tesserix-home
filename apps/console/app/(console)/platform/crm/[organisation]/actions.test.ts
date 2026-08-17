@@ -231,6 +231,14 @@ describe("changeStage", () => {
     // `{ok: true}` for a change whose audit row does not exist.
     expect(advanceStage).toHaveBeenCalledTimes(1);
     expect(revalidatePath).not.toHaveBeenCalled();
+    // Pins WHICH query failed: `advanceStage` is mocked (it never reaches
+    // `tesserixQuery` in this test), so the one call `tesserixQuery` sees is
+    // `writeAuditEntry`'s INSERT — the same assertion `audit-repo.test.ts`
+    // makes for this exact property, on the real `writeAuditEntry` call.
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(tesserixQuery).mock.calls[0][0]).toContain(
+      "INSERT INTO console_audit_log",
+    );
   });
 });
 
