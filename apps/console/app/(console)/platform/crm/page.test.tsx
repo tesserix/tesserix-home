@@ -455,6 +455,42 @@ describe("buildHandoffItems", () => {
     expect(items.every((item) => item.signal.state === "none")).toBe(true);
   });
 
+  // Ruling 32: the cap bounds concurrent CONNECTIONS, not total TIME —
+  // without a total deadline, a queue where every call hangs runs
+  // `HANDOFF_LIMIT / HANDOFF_FETCH_CONCURRENCY` sequential waves of the
+  // client's own 8s timeout each, an order of magnitude past a single
+  // unbounded fan-out. A row still in flight when the deadline elapses must
+  // render as `unknown` — the render must not wait on it — while a row that
+  // genuinely answered before the deadline keeps its real answer.
+  it("renders a row that has not answered by the deadline as unknown, without waiting for it", async () => {
+    const answered: HandoffRow = { ...HANDOFF_ROW, opportunityId: "fast", organisationId: "org-fast" };
+    const hung: HandoffRow = {
+      ...HANDOFF_ROW,
+      opportunityId: "slow",
+      organisationId: "org-slow",
+      primaryEmail: "slow@example.com",
+    };
+    fetchConversionSignal.mockImplementation(
+      async (_product: string, email: string) =>
+        email === answered.primaryEmail
+          ? { product: "mark8ly", state: "none" }
+          : new Promise<ConversionSignal>(() => {}), // never resolves
+    );
+
+    const started = Date.now();
+    const items = await buildHandoffItems([answered, hung], "tx_session=abc", {
+      deadlineMs: 20,
+    });
+    const elapsed = Date.now() - started;
+
+    // The whole call returned close to the deadline, not stuck waiting on
+    // the hung row indefinitely.
+    expect(elapsed).toBeLessThan(2_000);
+    const byId = Object.fromEntries(items.map((item) => [item.opportunityId, item]));
+    expect(byId.fast.signal.state).toBe("none");
+    expect(byId.slow.signal.state).toBe("unknown");
+  });
+
   it("treats a row with no contact email as unknown without calling the product", async () => {
     const row: HandoffRow = { ...HANDOFF_ROW, primaryEmail: null };
     const items = await buildHandoffItems([row], "tx_session=abc");

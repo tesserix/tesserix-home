@@ -42,10 +42,33 @@ const HANDOFF_LIMIT = 100;
  *  9's review, carried forward) — correct for "one hung product must not
  *  stall the others", but 100 *simultaneous* connections through the one
  *  apps/web proxy every product's conversion-status check goes through is
- *  its own kind of thundering herd. `mapWithConcurrencyLimit` keeps the
- *  "never sequential" guarantee while bounding how many are in flight at
- *  once. */
+ *  its own kind of thundering herd.
+ *
+ *  Ruling 32: a concurrency cap ALONE does not bound total latency — it
+ *  multiplies it. At 10 workers and up to `HANDOFF_LIMIT` (100) rows, a
+ *  queue where every call times out runs ~10 sequential waves of ~10
+ *  requests each: 100 / 10 × 8s (`fetchConversionSignal`'s own timeout) =
+ *  80s worst case — TEN TIMES the 8s a single unbounded fan-out would have
+ *  taken, and past most hosting request budgets outright. The cap bounds
+ *  concurrent CONNECTIONS; `HANDOFF_FETCH_DEADLINE_MS` below is what
+ *  actually bounds render TIME. */
 const HANDOFF_FETCH_CONCURRENCY = 10;
+
+/**
+ * Total wall-clock budget for the whole handoff fan-out, independent of how
+ * many rows there are or how the concurrency cap paces them (Ruling 32).
+ * Once this elapses, every row still in flight is rendered as `unknown` and
+ * the page proceeds with whatever answered in time — never a fabricated
+ * `none`. That costs nothing in correctness: `unknown` is already the
+ * honest state for "we could not get a trustworthy answer in time"
+ * (`crm-conversion.ts`'s own contract for a timeout or an unreachable
+ * product), and it already renders distinctly from `none`
+ * (`handoff-view.tsx`). The underlying `fetchConversionSignal` calls are
+ * not cancelled when the deadline passes — they keep running until they
+ * resolve or hit their own 8s timeout — this just stops the RENDER from
+ * waiting on them.
+ */
+const HANDOFF_FETCH_DEADLINE_MS = 10_000;
 
 /** The `empty` copy for each group, exported so tests assert on the string
  *  the page ships rather than a second copy of it that could drift. */
@@ -221,82 +244,78 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
 }
 
 /**
- * Runs `fn` over `items` with at most `concurrency` in flight at once.
- * Settles like `Promise.allSettled` — one item's rejection is isolated to
- * its own slot, never delaying or blanking the rest — but bounded, unlike
- * `Promise.allSettled(items.map(fn))`, which starts every call at once.
- *
- * A small worker pool, not a batch-of-N-then-wait chunking scheme: batching
- * would let one slow request in a batch hold up every other slot in that
- * same batch even though `concurrency - 1` other workers sit idle; a pool
- * immediately hands a finished worker the next item, so throughput is
- * bounded by `concurrency`, not by the slowest item in an arbitrary chunk.
+ * One row's signal, never throwing: a missing contact email skips the
+ * network call entirely (nothing to ask, honestly `unknown`, not a wasted
+ * request and not `none`), and a `fetchConversionSignal` rejection — its own
+ * contract says this shouldn't happen, this is belt-and-braces against a
+ * caller-side bug — is caught here rather than left to reject the worker
+ * that's awaiting it.
  */
-async function mapWithConcurrencyLimit<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
-  let cursor = 0;
-
-  async function worker(): Promise<void> {
-    while (cursor < items.length) {
-      const index = cursor++;
-      try {
-        results[index] = { status: "fulfilled", value: await fn(items[index]) };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
+async function fetchRowSignal(row: HandoffRow, cookieHeader: string): Promise<ConversionSignal> {
+  if (!row.primaryEmail) {
+    return { product: row.product, state: "unknown" };
   }
-
-  const workerCount = Math.min(concurrency, items.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
+  try {
+    return await fetchConversionSignal(row.product, row.primaryEmail, cookieHeader);
+  } catch {
+    return { product: row.product, state: "unknown" };
+  }
 }
 
 /**
- * The handoff tab's fan-out: one `fetchConversionSignal` call per row.
+ * The handoff tab's fan-out: one `fetchConversionSignal` call per row,
+ * bounded two ways at once (Ruling 32) — `HANDOFF_FETCH_CONCURRENCY` caps
+ * how many are ever in flight together, and `HANDOFF_FETCH_DEADLINE_MS`
+ * caps how long the render waits for the whole batch, so the cap alone can
+ * never turn into the N-waves latency the module doc comment above works
+ * through.
  *
- * Task 9's review carried its own rule into this task: never sequential
- * awaits. Against an 8s-timeout client, N leads awaited one at a time is an
- * N×8s user-visible stall on a server-rendered page, and a single hung or
- * failing product must not delay — or blank — the rest of the queue.
- * `mapWithConcurrencyLimit` keeps that guarantee while bounding how many
- * requests are ever in flight at once (`HANDOFF_FETCH_CONCURRENCY`).
- * `fetchConversionSignal` itself never throws (its whole contract is "a
- * non-answer resolves to `unknown`"), so the `rejected` branch below is
- * belt-and-braces against a caller-side bug, not a path this module expects
- * to take in practice.
+ * A worker pool, not a batch-of-N-then-wait chunking scheme: batching would
+ * let one slow request in a batch hold up every other slot in that same
+ * batch even though `concurrency - 1` other workers sit idle; a pool
+ * immediately hands a finished worker the next row, so throughput is
+ * bounded by `concurrency`, not by the slowest row in an arbitrary chunk.
+ * Each worker writes straight into `results` as it finishes, so whichever
+ * side of the `Promise.race` below wins, every row that DID finish in time
+ * is still there to read — only rows a worker never reached before the
+ * deadline are missing, and those fall through to `unknown` in the final
+ * map. The still-running calls behind them are not cancelled; nothing here
+ * waits on them past the deadline either way.
  *
- * A row with no primary contact email never calls `fetchConversionSignal` at
- * all: there is nothing to ask a product about, and the honest answer is
- * `unknown` — not a wasted network call, and not `none`.
+ * `deadlineMs` is a parameter (not only the module constant) so a test can
+ * exercise the deadline path without a real ~10s wait.
  */
 export async function buildHandoffItems(
   rows: readonly HandoffRow[],
   cookieHeader: string,
+  options: { deadlineMs?: number } = {},
 ): Promise<HandoffItem[]> {
-  const settled = await mapWithConcurrencyLimit(rows, HANDOFF_FETCH_CONCURRENCY, (row) =>
-    row.primaryEmail
-      ? fetchConversionSignal(row.product, row.primaryEmail, cookieHeader)
-      : Promise.resolve<ConversionSignal>({ product: row.product, state: "unknown" }),
-  );
+  const deadlineMs = options.deadlineMs ?? HANDOFF_FETCH_DEADLINE_MS;
+  const results: (ConversionSignal | undefined)[] = new Array(rows.length);
 
-  return rows.map((row, index) => {
-    const outcome = settled[index];
-    const signal: ConversionSignal =
-      outcome.status === "fulfilled" ? outcome.value : { product: row.product, state: "unknown" };
-    return {
-      opportunityId: row.opportunityId,
-      organisationId: row.organisationId,
-      organisationName: row.organisationName,
-      product: row.product,
-      closedAt: row.closedAt,
-      signal,
-    };
-  });
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < rows.length) {
+      const index = cursor++;
+      results[index] = await fetchRowSignal(rows[index], cookieHeader);
+    }
+  }
+  const workerCount = Math.min(HANDOFF_FETCH_CONCURRENCY, rows.length);
+  const poolSettled = Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+  await Promise.race([poolSettled, new Promise<void>((resolve) => setTimeout(resolve, deadlineMs))]);
+
+  return rows.map((row, index) => ({
+    opportunityId: row.opportunityId,
+    organisationId: row.organisationId,
+    organisationName: row.organisationName,
+    product: row.product,
+    closedAt: row.closedAt,
+    // A row no worker reached before the deadline elapsed has no entry yet
+    // — `unknown`, the same honest answer as a timed-out or unreachable
+    // product, never a fabricated `none`.
+    signal: results[index] ?? { product: row.product, state: "unknown" },
+  }));
 }
 
 export type CrmTab = "work" | "handoff";
@@ -348,13 +367,23 @@ function CrmTabNav({
     { id: "handoff", label: "Handoff" },
   ];
   return (
+    // Plain page links, not ARIA tabs: `role="tab"` with no `role="tablist"`
+    // parent is an orphan-role violation, and `aria-selected` is the wrong
+    // semantic for an element that navigates rather than toggling a panel
+    // in place — `aria-current="page"` is the correct affordance for "which
+    // page, among these links, is the current one".
     <nav className="flex gap-1 border-b border-border" aria-label="CRM views">
       {tabs.map((tab) => (
         <Link
           key={tab.id}
           href={tabHref(searchParams, tab.id)}
-          role="tab"
-          aria-selected={active === tab.id}
+          aria-current={active === tab.id ? "page" : undefined}
+          // Explicit, not relying on Next's own heuristics for a fully
+          // dynamic route: prefetching Handoff would fire its fan-out the
+          // moment this link scrolls into view on the Work tab, which is
+          // exactly the load this whole fix exists to avoid paying for
+          // unless the operator actually clicks it.
+          prefetch={tab.id === "handoff" ? false : undefined}
           className={
             active === tab.id
               ? "border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground"

@@ -49,14 +49,23 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { advanceStage, setNextAction, logActivity, MissingProductError, commitImport } =
-  await import("./crm-repo");
+const {
+  advanceStage,
+  setNextAction,
+  logActivity,
+  MissingProductError,
+  commitImport,
+  linkConversion,
+  AlreadyLinkedError,
+} = await import("./crm-repo");
 
 let db: PGlite;
 let orgId: string;
 let grandfatheredOppId: string;
 let normalOppId: string;
 let failureInjectedOppId: string;
+let freshConversionOrgId: string;
+let alreadyLinkedOrgId: string;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -105,6 +114,27 @@ beforeAll(async () => {
     [orgId],
   );
   failureInjectedOppId = failureInjected.rows[0].id;
+
+  // Ruling 33: a second, dedicated organisation with NO conversion recorded
+  // yet, for `linkConversion`'s happy path.
+  const freshConversionOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+    ["Fresh Conversion Co"],
+  );
+  freshConversionOrgId = freshConversionOrg.rows[0].id;
+
+  // A third organisation, seeded with `converted_*` already set — the
+  // Ruling 30 scenario: a second won opportunity for the same organisation,
+  // on a different product, whose handoff-queue row is confirmed after the
+  // first already linked this organisation to something else.
+  const alreadyLinkedOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations
+       (name, converted_product, converted_ref, converted_label, converted_at, converted_link_method)
+     VALUES ($1, 'mark8ly', 'tenant_first', 'First Product Conversion', now(), 'matched')
+     RETURNING id`,
+    ["Already Linked Co"],
+  );
+  alreadyLinkedOrgId = alreadyLinkedOrg.rows[0].id;
 
   // Re-add the CHECK as NOT VALID — 0021's actual shape. This does not
   // scan/reject the grandfathered row already inserted above, but DOES
@@ -354,5 +384,102 @@ describe("commitImport dedups within one batch, against the real crm_contacts_em
     // (`.trim().toLowerCase()`), from row 1 — proves the row that survived
     // is genuinely canonical, not just whatever string happened to be typed.
     expect(contacts.rows[0].email).toBe("dup@example.com");
+  });
+});
+
+// Ruling 33: `crm-repo.test.ts`'s `linkConversion` tests are mocked-query
+// string checks — `expect(sql).toContain("converted_at IS NULL")` pins that
+// the guard clause is IN the SQL, not that Postgres actually enforces it.
+// The whole value of Ruling 30 is "a second confirmation cannot overwrite
+// the first" — only a real UPDATE against a real row, seeded with a
+// conversion already recorded, proves that.
+describe("linkConversion, against a real crm_organisations row", () => {
+  it("links a fresh organisation and writes the UPDATE and the activity note atomically", async () => {
+    const result = await linkConversion({
+      organisationId: freshConversionOrgId,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+      actor: "ava@tesserix.app",
+    });
+
+    expect(result).toEqual({
+      organisationId: freshConversionOrgId,
+      organisationName: "Fresh Conversion Co",
+      product: "mark8ly",
+      method: "matched",
+    });
+
+    const org = await db.query<{
+      converted_product: string | null;
+      converted_ref: string | null;
+      converted_link_method: string | null;
+    }>(
+      `SELECT converted_product, converted_ref, converted_link_method
+         FROM crm_organisations WHERE id = $1`,
+      [freshConversionOrgId],
+    );
+    expect(org.rows[0]).toEqual({
+      converted_product: "mark8ly",
+      converted_ref: "tenant_9f2",
+      converted_link_method: "matched",
+    });
+
+    // Ruling 31: the timeline note, in the same write.
+    const activities = await db.query<{ kind: string; body: string }>(
+      `SELECT kind, body FROM crm_activities WHERE organisation_id = $1`,
+      [freshConversionOrgId],
+    );
+    expect(activities.rows).toHaveLength(1);
+    expect(activities.rows[0].kind).toBe("note");
+    expect(activities.rows[0].body).toContain("tenant_9f2");
+  });
+
+  // THE case Ruling 30 exists for: `alreadyLinkedOrgId` was seeded above
+  // with a conversion already recorded for a DIFFERENT product
+  // (`mark8ly`/`tenant_first`) — the two-won-opportunities-on-one-org
+  // scenario. Confirming a second product's suggestion must not overwrite
+  // the first.
+  it("refuses to overwrite an organisation that already has a conversion recorded", async () => {
+    await expect(
+      linkConversion({
+        organisationId: alreadyLinkedOrgId,
+        product: "kora",
+        ref: "user_2",
+        label: "Second Product Conversion",
+        method: "matched",
+        actor: "ava@tesserix.app",
+      }),
+    ).rejects.toBeInstanceOf(AlreadyLinkedError);
+
+    // The ONE assertion that matters: the original conversion — written for
+    // an entirely different product — survived the attempted overwrite
+    // unchanged. A mocked test can prove the guard clause is in the SQL; only
+    // this proves Postgres actually refused the second write.
+    const org = await db.query<{
+      converted_product: string | null;
+      converted_ref: string | null;
+      converted_label: string | null;
+    }>(
+      `SELECT converted_product, converted_ref, converted_label
+         FROM crm_organisations WHERE id = $1`,
+      [alreadyLinkedOrgId],
+    );
+    expect(org.rows[0]).toEqual({
+      converted_product: "mark8ly",
+      converted_ref: "tenant_first",
+      converted_label: "First Product Conversion",
+    });
+
+    // No activity note was left behind by the refused attempt either — the
+    // UPDATE and the INSERT are one transaction, and this write never
+    // reached the INSERT at all (linkConversion throws before attempting
+    // it once the guarded UPDATE returns zero rows).
+    const activities = await db.query<{ id: string }>(
+      `SELECT id FROM crm_activities WHERE organisation_id = $1`,
+      [alreadyLinkedOrgId],
+    );
+    expect(activities.rows).toHaveLength(0);
   });
 });

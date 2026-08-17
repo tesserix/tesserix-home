@@ -107,6 +107,14 @@ function HandoffRowItem({
       });
       if (!result.ok) {
         setError(result.message);
+        // Refreshed even on failure: the one error this button can hit is
+        // "already linked" (Ruling 30) — meaning some OTHER row for this
+        // same organisation just won the race this click lost. Without a
+        // refresh, this row's stale `complete` signal and its still-live
+        // Confirm button stay on screen, telling the operator the thing
+        // they were just told is already handled is still pending — wrong
+        // at the exact moment the guard just corrected them.
+        router.refresh();
         return;
       }
       router.refresh();
