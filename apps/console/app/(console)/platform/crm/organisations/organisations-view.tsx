@@ -150,6 +150,10 @@ export interface OrganisationsViewProps {
    *  operator sizing up a 259-lead backlog needs the number, not a vague
    *  "there are more". */
   total: number;
+  /** How many matching rows sort ahead of this page, straight from the repo
+   *  — 0 on the first page. The range below is rendered from this, so the
+   *  displayed position always describes the rows actually fetched. */
+  precedingCount: number;
   /** Where `?cursor=` for the next page points, with every other active
    *  param carried over by `page.tsx`'s `buildNextHref`; `null` on the last
    *  page. */
@@ -157,7 +161,11 @@ export interface OrganisationsViewProps {
 }
 
 /**
- * "N of TOTAL" plus the next-page link.
+ * The position of this page within the matching set, plus the next-page link.
+ *
+ * A range ("101–200 of 259"), not a bare count of the rows on screen: with
+ * `rows.length` both page 1 and page 2 of a 259-row result read "100 of 259"
+ * and an operator could not tell which page they were on.
  *
  * `aria-live="polite"` on the count: it changes both when the operator
  * types a search and when they page, and a screen reader user needs to
@@ -171,14 +179,17 @@ export interface OrganisationsViewProps {
 interface ResultCountProps {
   rows: readonly OrganisationListRow[];
   total: number;
+  precedingCount: number;
   nextHref: string | null;
 }
 
-function ResultCount({ rows, total, nextHref }: ResultCountProps) {
+function ResultCount({ rows, total, precedingCount, nextHref }: ResultCountProps) {
+  const first = precedingCount + 1;
+  const last = precedingCount + rows.length;
   return (
     <div className="flex items-center justify-between gap-2">
       <span aria-live="polite" className="text-sm text-muted-foreground">
-        {rows.length} of {total}
+        {first}–{last} of {total}
       </span>
       {nextHref ? (
         <Button asChild size="sm" variant="outline">
@@ -196,6 +207,7 @@ export function OrganisationsView({
   descriptors,
   values,
   total,
+  precedingCount,
   nextHref,
 }: OrganisationsViewProps) {
   const { set, clear } = useOrganisationUrlFilters(descriptors);
@@ -214,7 +226,7 @@ export function OrganisationsView({
 
       {state.kind === "ready" ? (
         <div className="flex flex-col gap-3">
-          <ResultCount rows={rows} total={total} nextHref={nextHref} />
+          <ResultCount rows={rows} total={total} precedingCount={precedingCount} nextHref={nextHref} />
           <Table aria-label="Organisations">
             <TableHeader>
               <TableRow>

@@ -45,17 +45,18 @@ function orgRows(count: number): OrganisationListRow[] {
   }));
 }
 
-/** `listOrganisations` now returns `{ rows, total, nextCursor }` (Task 1).
- *  Defaults `total` to `rows.length` and `nextCursor` to `null` — the
- *  common case for these tests, which are about the page's own read of the
- *  rows/total it's handed, not about the cursor a later task's pager uses. */
+/** `listOrganisations` returns `{ rows, total, precedingCount, nextCursor }`.
+ *  Defaults `total` to `rows.length`, `precedingCount` to 0 and `nextCursor`
+ *  to `null` — the first-page case for these tests, which are about the
+ *  page's own read of the rows/total it's handed. */
 function orgPage(
   rows: OrganisationListRow[],
-  overrides: { total?: number; nextCursor?: string | null } = {},
+  overrides: { total?: number; precedingCount?: number; nextCursor?: string | null } = {},
 ) {
   return {
     rows,
     total: overrides.total ?? rows.length,
+    precedingCount: overrides.precedingCount ?? 0,
     nextCursor: overrides.nextCursor ?? null,
   };
 }
@@ -129,20 +130,37 @@ describe("OrganisationsPage", () => {
       expect(limit).toBe(100);
     });
 
-    it("shows how many of the total are on screen", async () => {
-      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
+    it("shows which rows of the total are on screen, as a range", async () => {
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259, nextCursor: "abc" }));
       render(await Page({ searchParams: Promise.resolve({}) }));
-      expect(screen.getByText(/100 of 259/i)).toBeInTheDocument();
+      expect(screen.getByText(/1–100 of 259/i)).toBeInTheDocument();
+    });
+
+    it("reports the range for a later page, not the page size again", async () => {
+      // The bug this pins: a bare `rows.length` made page 1 and page 2 both
+      // read "100 of 259", so an operator could not tell which page they
+      // were on.
+      listOrganisations.mockResolvedValue(
+        orgPage(orgRows(100), { total: 259, precedingCount: 100, nextCursor: "def" }),
+      );
+      render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
+      expect(screen.getByText(/101–200 of 259/i)).toBeInTheDocument();
+    });
+
+    it("reports the range for a short final page", async () => {
+      listOrganisations.mockResolvedValue(orgPage(orgRows(59), { total: 259, precedingCount: 200 }));
+      render(await Page({ searchParams: Promise.resolve({ cursor: "def" }) }));
+      expect(screen.getByText(/201–259 of 259/i)).toBeInTheDocument();
     });
 
     it("offers a next control only when there is a next page", async () => {
-      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259, nextCursor: "abc" }));
       render(await Page({ searchParams: Promise.resolve({}) }));
       expect(screen.getByRole("link", { name: /next/i })).toBeInTheDocument();
     });
 
     it("offers no next control on the last page", async () => {
-      listOrganisations.mockResolvedValue({ rows: orgRows(9), total: 9, nextCursor: null });
+      listOrganisations.mockResolvedValue(orgPage(orgRows(9)));
       render(await Page({ searchParams: Promise.resolve({}) }));
       expect(screen.queryByRole("link", { name: /next/i })).toBeNull();
     });
@@ -159,7 +177,7 @@ describe("OrganisationsPage", () => {
     // filters the moment they page, landing them on an unfiltered page 2
     // with no reason to suspect the link rather than the data.
     it("preserves an unrelated search param when building the next link", async () => {
-      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259, nextCursor: "abc" }));
       render(
         await Page({ searchParams: Promise.resolve({ q: "priya", someFutureFilter: "x" }) }),
       );
@@ -244,6 +262,18 @@ describe("OrganisationsPage", () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ country: "ZZ" }) }));
       expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+
+    it("drops an Object.prototype member name as a country rather than passing it to SQL", async () => {
+      // `rawCountry in COUNTRY_LABELS` walked the prototype chain, so
+      // `?country=__proto__` (or `constructor`, `toString`) read as a
+      // recognised code and reached the repo's exact-match clause.
+      for (const key of ["__proto__", "constructor", "toString"]) {
+        listOrganisations.mockClear();
+        listOrganisations.mockResolvedValue(orgPage([]));
+        render(await Page({ searchParams: Promise.resolve({ country: key }) }));
+        expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      }
     });
 
     it("only recognises email=1, dropping any other value rather than enabling the filter", async () => {

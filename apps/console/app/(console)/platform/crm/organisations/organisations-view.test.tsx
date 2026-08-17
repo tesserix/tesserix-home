@@ -37,6 +37,7 @@ function renderView() {
       descriptors={DESCRIPTORS}
       values={{ q: "priya" }}
       total={0}
+      precedingCount={0}
       nextHref={null}
     />,
   );
