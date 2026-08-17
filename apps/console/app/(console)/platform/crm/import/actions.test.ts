@@ -183,7 +183,14 @@ describe("commitImportAction", () => {
 
     const result = await commitImportAction([{ email: "ava@example.com" }]);
 
-    expect(result).toEqual({ ok: false, message: "That change was not saved." });
+    // `auditedOperation` runs the operation FIRST, so by the time the audit
+    // write fails the rows are already in the database. "Not saved" was a
+    // plain falsehood on the one write that creates hundreds of them, and an
+    // operator who believed it would re-upload the same CSV.
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/rows were imported/i);
+    expect(result.ok === false && result.message).toMatch(/audit log/i);
+    expect(result.ok === false && result.message).not.toMatch(/not saved/i);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 

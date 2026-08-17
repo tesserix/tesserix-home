@@ -75,11 +75,23 @@ export async function withCrmWrite<T>(
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION_MESSAGE };
     }
-    if (cause instanceof AuditUnavailableError || cause instanceof AuditWriteError) {
+    // `AuditUnavailableError` is checked BEFORE the operation runs
+    // (`auditedOperation`), so nothing happened and "not saved" is exactly
+    // true. `AuditWriteError` is the opposite: the operation already ran and
+    // committed, and only the audit row failed. For most CRM writes "not
+    // saved" is still the safer thing to tell an operator — they will retry
+    // one stage change, and a retry is harmless. For a write that created
+    // hundreds of rows it is a lie with consequences, so a caller may map it
+    // to something honest. `mapError` gets first refusal on it and this
+    // wrapper keeps the conservative default for everyone who doesn't.
+    if (cause instanceof AuditUnavailableError) {
       return { ok: false, message: NOT_SAVED_MESSAGE };
     }
     const mapped = mapError?.(cause);
     if (mapped) return mapped;
+    if (cause instanceof AuditWriteError) {
+      return { ok: false, message: NOT_SAVED_MESSAGE };
+    }
     return { ok: false, message: NOT_SAVED_MESSAGE };
   }
 }

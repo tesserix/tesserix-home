@@ -10,6 +10,7 @@ import {
   type ImportResult,
 } from "@/lib/db/crm-repo";
 import { withCrmWrite } from "@/lib/crm-write";
+import { AuditWriteError } from "@/lib/db/audit-repo";
 import { MAX_IMPORT_ROWS, boundFilename, validateTotalRows, type ImportRow } from "@/lib/crm";
 import { committedDisplayCounts } from "./counts";
 
@@ -63,6 +64,33 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
     }
     return { ok: false, message: PREVIEW_FAILED_MESSAGE };
   }
+}
+
+/**
+ * `AuditWriteError` means the batch COMMITTED and only the audit row failed
+ * — `auditedOperation` runs the operation first and refuses to hand back its
+ * result if it could not record it. The shared wrapper's default for that is
+ * "That change was not saved", which is the safe thing to say about one
+ * stage change and a plain falsehood about this write: the rows are in the
+ * database, and an operator told nothing was saved will re-upload the same
+ * CSV — which `commitImport`'s own dedup will then report as hundreds of
+ * "matched existing" rows, leaving them with no idea which run is real.
+ *
+ * Still `ok: false`: the import IS unaccounted for, this action's result is
+ * deliberately discarded, and reporting success for a write nobody can audit
+ * would defeat the control. The message just has to say which of the two
+ * happened.
+ */
+function mapUnrecordedCommit(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The rows were imported, but the action could not be recorded in the audit log. " +
+        "Do not re-run this import — check the CRM before importing again.",
+    };
+  }
+  return undefined;
 }
 
 export type CommitImportResult =
@@ -123,6 +151,7 @@ export async function commitImportAction(
         },
       };
     },
+    mapUnrecordedCommit,
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm/import");
