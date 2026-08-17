@@ -1718,6 +1718,11 @@ export interface OrganisationListRow {
   location: string | null;
   contactName: string | null;
   contactEmail: string | null;
+  /** Primary contact's Instagram handle, for handle-first rendering. */
+  contactHandle: string | null;
+  /** How many contacts this organisation has. */
+  contactCount: number;
+  websiteUrl: string | null;
   /** Open (non-won/lost) opportunity count. */
   openOpportunities: number;
   /** Distinct products across this org's opportunities, nulls dropped. */
@@ -1892,6 +1897,9 @@ interface RawOrganisationListRow {
   location: string | null;
   contact_name: string | null;
   contact_email: string | null;
+  contact_handle: string | null;
+  contact_count: string | number;
+  website_url: string | null;
   open_opportunities: string | number;
   products: (string | null)[] | null;
   created_at: unknown;
@@ -1904,6 +1912,10 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
     location: row.location,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
+    contactHandle: row.contact_handle,
+    // count(*) comes back as a string from pg's bigint mapping.
+    contactCount: Number(row.contact_count),
+    websiteUrl: row.website_url,
     // count(*) comes back as a string from pg's bigint mapping.
     openOpportunities: Number(row.open_opportunities),
     // array_agg returns NULL (not an empty array) when nothing matches.
@@ -1982,7 +1994,7 @@ export async function listOrganisations(
       countParams,
     ),
     tesserixQuery<RawOrganisationListRow>(
-      `SELECT g.id, g.name, g.location, g.created_at,
+      `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
               (SELECT c.name FROM crm_contacts c
                 WHERE c.organisation_id = g.id
                 ORDER BY c.is_primary DESC, c.created_at ASC
@@ -1991,6 +2003,12 @@ export async function listOrganisations(
                 WHERE c.organisation_id = g.id
                 ORDER BY c.is_primary DESC, c.created_at ASC
                 LIMIT 1) AS contact_email,
+              (SELECT c.instagram_handle FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY c.is_primary DESC, c.created_at ASC
+                LIMIT 1) AS contact_handle,
+              (SELECT count(*) FROM crm_contacts c
+                WHERE c.organisation_id = g.id) AS contact_count,
               (SELECT count(*) FROM crm_opportunities o
                 WHERE o.organisation_id = g.id
                   AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,

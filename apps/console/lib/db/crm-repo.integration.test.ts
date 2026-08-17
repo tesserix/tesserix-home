@@ -550,6 +550,12 @@ describe("listOrganisations", () => {
     expect(page.rows[0].products).toEqual(["mark8ly"]);
   });
 
+  it("returns the primary contact's handle and the contact count", async () => {
+    const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
+    expect(page.rows[0].contactHandle).toBe("glebeflowers");
+    expect(page.rows[0].contactCount).toBeGreaterThanOrEqual(1);
+  });
+
   it("returns an empty array, not null, when an organisation has no products", async () => {
     // Pins the `(row.products ?? []).filter(...)` coalesce: array_agg
     // returns raw NULL (not `[null]`) when nothing matches its FILTER, and

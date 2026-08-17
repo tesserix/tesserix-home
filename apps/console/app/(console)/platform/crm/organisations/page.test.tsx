@@ -26,6 +26,12 @@ const ORG_ROW: OrganisationListRow = {
   location: "Sydney",
   contactName: "Priya Raman",
   contactEmail: "priya@glebeflowers.example",
+  contactHandle: "glebeflowers",
+  contactCount: 1,
+  // A website means this is a registered business, not a solo creator —
+  // ORG_ROW renders name-first, which is what most of this file's tests
+  // (all written before Task 7) assume when they check for `row.name`.
+  websiteUrl: "https://glebeflowers.example",
   openOpportunities: 1,
   products: [],
   createdAt: "2026-08-01T00:00:00.000Z",
@@ -251,6 +257,50 @@ describe("OrganisationsPage", () => {
       listOrganisations.mockClear();
       render(await Page({ searchParams: Promise.resolve({ email: "0" }) }));
       expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+  });
+
+  describe("handle-first identity for solo creators", () => {
+    const soloCreatorRow: OrganisationListRow = {
+      ...ORG_ROW,
+      id: "org-solo",
+      name: "Glebe Flowers",
+      contactHandle: "glebeflowers",
+      contactCount: 1,
+      websiteUrl: null,
+    };
+
+    const realBusinessRow: OrganisationListRow = {
+      ...ORG_ROW,
+      id: "org-business",
+      name: "Newtown Roasters",
+      contactHandle: "newtownroasters",
+      contactCount: 1,
+      websiteUrl: "https://newtownroasters.example",
+    };
+
+    it("leads with the handle for a single-contact organisation with no website", async () => {
+      // 201 of 259 production rows are exactly this shape: a solo creator whose
+      // organisation name is derived from their profile.
+      listOrganisations.mockResolvedValue(orgPage([soloCreatorRow]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      const link = screen.getByRole("link", { name: /@glebeflowers/ });
+      expect(link).toBeInTheDocument();
+    });
+
+    it("leads with the organisation name when it is a real business", async () => {
+      // A row with a website or several contacts is a business, and its name is
+      // the thing an operator recognises. 58 of 259 have a website.
+      listOrganisations.mockResolvedValue(orgPage([realBusinessRow]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      expect(screen.getByRole("link", { name: /Newtown Roasters/ })).toBeInTheDocument();
+    });
+
+    it("still shows the organisation name as secondary when leading with a handle", async () => {
+      // Never hide it — the operator may have typed that name into search.
+      listOrganisations.mockResolvedValue(orgPage([soloCreatorRow]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      expect(screen.getByText("Glebe Flowers")).toBeInTheDocument();
     });
   });
 });

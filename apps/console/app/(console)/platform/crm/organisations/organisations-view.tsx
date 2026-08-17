@@ -89,6 +89,52 @@ function ProductsCell({ products }: { products: readonly string[] }) {
   return <span>{products.join(", ")}</span>;
 }
 
+/**
+ * A row is a solo creator when it has exactly one contact and no website. For
+ * those, the organisation name is derived from the Instagram profile and the
+ * handle is the real identity, so the handle leads. Anything else is a
+ * business and leads with its name.
+ *
+ * `location` is deliberately NOT part of this test, though an earlier draft of
+ * this plan included it. Measured against production: 201 of 259 organisations
+ * have no website, but only 159 of those also have no location — so requiring
+ * `!location` would render 42 solo creators name-first purely because
+ * Instagram listed a city on their profile. Location is scraped profile
+ * metadata; it is no evidence of being a registered business. A website is.
+ *
+ * `contactCount === 1` is inert today (every one of the 259 has exactly one
+ * contact) and is kept for the case it actually guards: a business with
+ * several named contacts is a business regardless of its website.
+ */
+function leadsWithHandle(row: OrganisationListRow): boolean {
+  return row.contactCount === 1 && !row.websiteUrl && Boolean(row.contactHandle);
+}
+
+/**
+ * The row's leading identity cell. When `leadsWithHandle`, the handle is the
+ * primary (larger, first) text and the organisation name renders beneath it
+ * as secondary text — never dropped, since an operator may have searched for
+ * that name (search covers organisation name and contact name/email/handle;
+ * see `organisationFilterClauses`). The link's accessible name comes from its
+ * full text content, so it always includes both the handle and the name —
+ * never just "@handle" with the business itself unidentifiable.
+ */
+function NameCell({ row }: { row: OrganisationListRow }) {
+  if (leadsWithHandle(row)) {
+    return (
+      <Link href={`/platform/crm/${row.id}`} className="flex flex-col hover:underline">
+        <span className="font-medium">@{row.contactHandle}</span>
+        <span className="text-muted-foreground">{row.name}</span>
+      </Link>
+    );
+  }
+  return (
+    <Link href={`/platform/crm/${row.id}`} className="font-medium hover:underline">
+      {row.name}
+    </Link>
+  );
+}
+
 export interface OrganisationsViewProps {
   rows: readonly OrganisationListRow[];
   state: SurfaceState;
@@ -183,9 +229,7 @@ export function OrganisationsView({
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>
-                    <Link href={`/platform/crm/${row.id}`} className="font-medium hover:underline">
-                      {row.name}
-                    </Link>
+                    <NameCell row={row} />
                   </TableCell>
                   <TableCell>{row.location ?? <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell>
