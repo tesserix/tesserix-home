@@ -1828,9 +1828,18 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
   }
 
   if (filter.hasEmail) {
+    // Bound to the primary contact, same as followers above — an org
+    // matching through a non-primary contact's email would satisfy the
+    // filter while the displayed contactEmail column stays blank.
     clauses.push(`EXISTS (
         SELECT 1 FROM crm_contacts c
          WHERE c.organisation_id = g.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = g.id
+              ORDER BY c2.is_primary DESC, c2.created_at ASC
+              LIMIT 1
+           )
            AND c.email IS NOT NULL
       )`);
   }

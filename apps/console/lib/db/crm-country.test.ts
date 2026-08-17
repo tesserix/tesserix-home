@@ -24,6 +24,25 @@ describe("countryFromLocation", () => {
     expect(countryFromLocation("  chennai ")).toBe("IN");
   });
 
+  it("maps production locations found unmapped in a live run", () => {
+    // Fix round 1: these 10 distinct locations (Indian, every one) were
+    // seen in production and returned null before this table was extended.
+    // "Ranchi, Jharkhand" is covered by adding the missing "jharkhand"
+    // state entry (the "City, State" parse already worked — see
+    // "Kochi, Kerala" above — Jharkhand was simply absent from the state
+    // table), not a hardcoded "ranchi" entry.
+    expect(countryFromLocation("Aluva")).toBe("IN");
+    expect(countryFromLocation("Borivali East")).toBe("IN");
+    expect(countryFromLocation("Navi Mumbai")).toBe("IN");
+    expect(countryFromLocation("Puthanathani")).toBe("IN");
+    expect(countryFromLocation("Ranchi, Jharkhand")).toBe("IN");
+    expect(countryFromLocation("Salua")).toBe("IN");
+    expect(countryFromLocation("Sindhudurg")).toBe("IN");
+    expect(countryFromLocation("Siliguri")).toBe("IN");
+    expect(countryFromLocation("Srinagar")).toBe("IN");
+    expect(countryFromLocation("Mathura Vrindavan")).toBe("IN");
+  });
+
   it("returns null for an unknown location rather than guessing", () => {
     // A wrong country is worse than no country: it silently files a lead
     // under a market it is not in, and the operator has no way to notice.

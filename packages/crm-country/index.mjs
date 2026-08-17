@@ -95,6 +95,9 @@ export const COUNTRY_BY_LOCATION = {
   gurgaon: "IN",
   gurugram: "IN",
   noida: "IN",
+  "navi mumbai": "IN",
+  siliguri: "IN",
+  srinagar: "IN",
 
   // Indian states
   maharashtra: "IN",
@@ -114,6 +117,21 @@ export const COUNTRY_BY_LOCATION = {
   odisha: "IN",
   assam: "IN",
   goa: "IN",
+  // Jharkhand was missing entirely — the gap that made "Ranchi, Jharkhand"
+  // unmappable even though the "City, State" parsing already worked (see
+  // "Jaipur, Rajasthan" / "Durgapur, West Bengal" above). Adding the state
+  // fixes Ranchi and every other Jharkhand city the next scrape brings in,
+  // not just this one.
+  jharkhand: "IN",
+
+  // Districts / smaller towns seen in production that don't reduce to one
+  // of the metros or states above.
+  aluva: "IN", // Kerala
+  "borivali east": "IN", // Mumbai suburb, Maharashtra
+  puthanathani: "IN", // Kerala
+  sindhudurg: "IN", // Maharashtra district
+  salua: "IN", // West Bengal
+  "mathura vrindavan": "IN", // Uttar Pradesh
 };
 
 /**

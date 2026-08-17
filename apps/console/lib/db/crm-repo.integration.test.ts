@@ -772,6 +772,7 @@ describe("listOrganisations", () => {
     let bigCreatorOrgId: string;
     let nullFollowersOrgId: string;
     let emailOrgId: string;
+    let nonPrimaryEmailOrgId: string;
 
     beforeAll(async () => {
       const mark8ly = await db.query<{ id: string }>(
@@ -856,6 +857,26 @@ describe("listOrganisations", () => {
          VALUES ($1, $2, true, $3)`,
         [emailOrgId, "Has Email Contact", "filtertest@example.com"],
       );
+
+      // Primary contact has no email; a second, non-primary contact does.
+      // The displayed contactEmail comes from the primary contact only, so
+      // hasEmail must not match here — matching would filter for
+      // "reachable by email" and hand back a row with a blank email column.
+      const nonPrimaryEmailOrg = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Non-Primary Email Org"],
+      );
+      nonPrimaryEmailOrgId = nonPrimaryEmailOrg.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, email)
+         VALUES ($1, $2, true, NULL)`,
+        [nonPrimaryEmailOrgId, "Primary No Email"],
+      );
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, email)
+         VALUES ($1, $2, false, $3)`,
+        [nonPrimaryEmailOrgId, "Secondary Has Email", "secondary@example.com"],
+      );
     });
 
     it("matches an organisation by a product on any of its opportunities", async () => {
@@ -919,6 +940,14 @@ describe("listOrganisations", () => {
       // earlier in the file, and hasEmail alone would catch that too.
       const page = await listOrganisations({ hasEmail: true, search: "Filter Test" }, 50);
       expect(page.rows.map((r) => r.id)).toEqual([emailOrgId]);
+    });
+
+    it("does not match on a non-primary contact's email", async () => {
+      // hasEmail is bound to the primary contact, mirroring followers — an
+      // org whose only emailed contact is non-primary must be excluded, or
+      // the operator gets a row back with a blank email column.
+      const page = await listOrganisations({ hasEmail: true, search: "Filter Test" }, 50);
+      expect(page.rows.map((r) => r.id)).not.toContain(nonPrimaryEmailOrgId);
     });
 
     it("composes filters", async () => {
