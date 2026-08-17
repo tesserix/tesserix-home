@@ -7,9 +7,12 @@
 //   1. apply migrations through 0020 (drops 0019's product-required CHECK
 //      on crm_opportunities so historical rows with no product can land)
 //   2. run this script with --commit, and CHECK ITS EXIT CODE. It exits
-//      non-zero if any lead failed; 0021's guard is satisfied by one
-//      migrated row, so a partial backfill would otherwise pass step 3 and
-//      strand every remaining product-less lead behind the reinstated CHECK.
+//      non-zero unless EVERY lead migrated — whether one failed at insert
+//      time, was rejected before it (unnameable / unmappable status), or the
+//      run refused to start at all (see "Refusals" below). 0021's guard is
+//      satisfied by one migrated row, so a partial backfill would otherwise
+//      pass step 3 and strand every remaining product-less lead behind the
+//      reinstated CHECK.
 //   3. apply 0021 (re-adds the CHECK, NOT VALID, so it grandfathers the
 //      rows this script just inserted while enforcing on everything after)
 // 0021 itself refuses to apply if step 2 hasn't run yet, but nothing stops
@@ -39,6 +42,33 @@
 // covers leads Task 1's schema doesn't require an email for. It's also
 // enforced structurally by 0020's unique partial index, not just by this
 // script's in-memory check.
+//
+// REFUSALS — a non-zero exit is not always "try again".
+//
+// This script normalises contact keys (trim, strip leading `@`s, lowercase)
+// before insert, so two source rows that differ only in those respects —
+// `@BondiBaker` and `bondibaker` — become ONE identity here even though
+// `leads`' own unique indexes saw them as two. On `email`, `crm_contacts`
+// has a unique index on `lower(email)`, so the second one fails its INSERT
+// every time it is attempted, forever. On `instagram_handle` there is no
+// unique index, so the second one SUCCEEDS and leaves two contacts sharing
+// one canonical handle, which is worse: `findMatchingOrganisationId` then
+// has two answers to a question with one right one.
+//
+// So the collision check runs FIRST, before anything is written, and refuses
+// the whole run — printing every colliding group with raw values and ids.
+// It does not skip, merge, or keep-the-first: Ruling 21 settled that for
+// 0022's backfill and it holds here. "Re-run until it exits 0" is only
+// honest because of this: re-running a refused run changes nothing, so the
+// script says plainly that the SOURCE ROWS have to be fixed. Once they are,
+// the next run proceeds — and because nothing is written before the check,
+// a refusal never leaves partial state behind.
+//
+// The same is true of rejected leads (no name to derive an organisation
+// from, or a status this script has no stage for): they are named on exit,
+// and they will not clear on a re-run either. Fix the lead, then re-run.
+// Insert-time FAILURES are the one kind that genuinely may clear on a
+// re-run, and are reported separately for that reason.
 //
 // Usage:
 //   TESSERIX_DB_HOST=... TESSERIX_DB_USER=... TESSERIX_DB_PASSWORD=... \
@@ -198,13 +228,148 @@ export function mapLead(lead) {
   return { organisation, contact, opportunity };
 }
 
-/** Thrown when a `--commit` run wrote some leads but not all of them.
- *  Carries the count so the exit path can report it without re-deriving it. */
-export class PartialMigrationError extends Error {
-  constructor(failureCount) {
-    super(`${failureCount} lead(s) failed to migrate; the backfill is incomplete`);
-    this.name = "PartialMigrationError";
+/**
+ * Every normalised contact key one lead would write. `null` entries are
+ * dropped by the caller — a lead with no email is not a lead colliding on
+ * the empty string.
+ */
+function contactKeysOf(mapped) {
+  return [
+    { field: "email", key: mapped.contact.email },
+    { field: "instagram_handle", key: mapped.contact.instagram_handle },
+  ].filter((entry) => entry.key !== null);
+}
+
+/** The same two keys, read off a row already sitting in `crm_contacts` and
+ *  normalised HERE rather than trusted as stored. Rows written by the CSV
+ *  import path predate any normalisation on this table (0022 gave
+ *  `crm_suppressions` a trigger; `crm_contacts` never got one), so a stored
+ *  `@BondiBaker` has to be folded to `bondibaker` before it can be compared
+ *  against what this script is about to insert — otherwise the check would
+ *  miss precisely the collisions it exists to find. */
+function existingContactKeys(row) {
+  return [
+    { field: "email", key: normalizedOrNull(row.email, normalizeEmail) },
+    {
+      field: "instagram_handle",
+      key: normalizedOrNull(row.instagram_handle, normalizeInstagramHandle),
+    },
+  ].filter((entry) => entry.key !== null);
+}
+
+/**
+ * PRE-FLIGHT: every normalised contact key that more than one row would
+ * claim — either two leads in this same run, or one lead and a contact
+ * already in `crm_contacts`.
+ *
+ * Why this has to run BEFORE anything is written, rather than being caught
+ * per row on insert:
+ *
+ *   - `crm_contacts` has a UNIQUE index on `lower(email)` (0019). A lead
+ *     whose email already belongs to a contact created by the CSV import
+ *     path therefore fails its INSERT every single time. Caught per row, it
+ *     lands in `failures`, the run exits non-zero, and the header's old
+ *     instruction — "re-run until it exits 0" — describes a loop that can
+ *     never terminate, because nothing about re-running changes the
+ *     outcome. The operator has to change the DATA, and nothing was telling
+ *     them that.
+ *   - `instagram_handle` has no unique index, so a handle collision does
+ *     NOT fail an insert — it succeeds, quietly, and leaves two contacts
+ *     sharing one canonical handle. `findMatchingOrganisationId`
+ *     (crm-repo.ts) then has two equally valid answers to a question with
+ *     one right one, and picks by whatever order the query returns. That is
+ *     worse than the error: it is a wrong answer nobody is told about.
+ *
+ * Both are the same root fact — two source rows that normalise to one
+ * identity — so both are refused the same way, before the first write.
+ *
+ * Deliberately does NOT resolve anything: no skipping, no merging, no
+ * keeping the first. Ruling 21 settled this for 0022's backfill and the
+ * reasoning carries: a migration that silently drops or fuses records
+ * destroys history that cannot be reconstructed, and is worse than one that
+ * refuses and says why. The operator decides which row is authoritative,
+ * fixes the source, and re-runs — which is a loop that terminates.
+ *
+ * Returns one entry per colliding key, each carrying the RAW values and the
+ * ids, because "bondibaker collides" is not something a human can act on
+ * and "lead 41 (`@BondiBaker`) and lead 92 (`bondibaker`)" is.
+ */
+export function findContactKeyCollisions(toMigrate, existingContacts = []) {
+  /** key: `${field} ${normalised}` -> { field, key, leads, existing } */
+  const groups = new Map();
+
+  const groupFor = (field, key) => {
+    const id = `${field} ${key}`;
+    let group = groups.get(id);
+    if (!group) {
+      group = { field, key, leads: [], existing: [] };
+      groups.set(id, group);
+    }
+    return group;
+  };
+
+  for (const { lead, mapped } of toMigrate) {
+    for (const { field, key } of contactKeysOf(mapped)) {
+      groupFor(field, key).leads.push({ id: lead.id, raw: lead[field] ?? null });
+    }
+  }
+
+  for (const row of existingContacts) {
+    for (const { field, key } of existingContactKeys(row)) {
+      const group = groups.get(`${field} ${key}`);
+      // Only tracked when a lead in THIS run wants the same key. Two
+      // pre-existing contacts colliding with each other is a fact about
+      // data this script did not write and will not touch; reporting it
+      // here would block a migration on something the migration cannot
+      // cause and cannot fix.
+      if (group) group.existing.push({ id: row.id, raw: row[field] ?? null });
+    }
+  }
+
+  return [...groups.values()]
+    .filter((group) => group.leads.length + group.existing.length > 1)
+    .sort((a, b) => a.field.localeCompare(b.field) || a.key.localeCompare(b.key));
+}
+
+/** Human-readable lines for one collision group. Separate from the printing
+ *  so a test can assert on the exact text an operator is asked to act on. */
+export function describeCollision(group) {
+  const lines = [`${group.field} "${group.key}" is claimed by more than one row:`];
+  for (const entry of group.existing) {
+    lines.push(`    crm_contacts ${entry.id} (stored as ${JSON.stringify(entry.raw)})`);
+  }
+  for (const entry of group.leads) {
+    lines.push(`    lead ${entry.id} (stored as ${JSON.stringify(entry.raw)})`);
+  }
+  return lines;
+}
+
+/** Thrown before any write when two rows would normalise to one contact
+ *  identity. Nothing has been written when this is raised — the whole point
+ *  of checking first — so there is no partial state to unwind. */
+export class ContactKeyCollisionError extends Error {
+  constructor(collisionCount) {
+    super(
+      `${collisionCount} normalised contact key(s) are claimed by more than one row; ` +
+        `nothing was written. Resolve the source rows and re-run.`,
+    );
+    this.name = "ContactKeyCollisionError";
+    this.collisionCount = collisionCount;
+  }
+}
+
+/** Thrown when a `--commit` run did not migrate every lead — whether they
+ *  failed at insert time or were rejected before it. Carries both counts so
+ *  the exit path can report them without re-deriving them. */
+export class IncompleteMigrationError extends Error {
+  constructor({ failureCount = 0, rejectedCount = 0 } = {}) {
+    const parts = [];
+    if (failureCount > 0) parts.push(`${failureCount} failed`);
+    if (rejectedCount > 0) parts.push(`${rejectedCount} rejected`);
+    super(`${parts.join(", ")}; the backfill is incomplete`);
+    this.name = "IncompleteMigrationError";
     this.failureCount = failureCount;
+    this.rejectedCount = rejectedCount;
   }
 }
 
@@ -417,6 +582,20 @@ async function countPlannedActivities(client, lead) {
   return count;
 }
 
+/** Names every rejected lead again at the end of the run. They were warned
+ *  about at the top, hundreds of lines of per-lead output ago; an operator
+ *  reading the tail to find out why the exit code is non-zero should not
+ *  have to scroll back for the list of rows they have to go and fix. */
+function reportRejected(rejected) {
+  console.error(
+    `[migrate] ${rejected.length} lead(s) were rejected and will never ` +
+      `migrate until their source rows are fixed:`,
+  );
+  for (const { lead, reason } of rejected) {
+    console.error(`[migrate]   lead ${lead.id}: ${reason}`);
+  }
+}
+
 function printSummary({ leadsRead, toWrite, skipped, rejected }) {
   console.log(`[migrate] leads read: ${leadsRead}`);
   console.log(
@@ -461,6 +640,38 @@ async function main() {
       console.warn(`[migrate] rejected lead ${lead.id}: ${reason}`);
     }
 
+    // PRE-FLIGHT, before either branch below: a dry run is a preview of the
+    // commit run, and a preview that says "would write 259" for a run that
+    // cannot write anything is not a preview. Refusing here also means the
+    // refusal costs nothing — no transaction has been opened, so there is
+    // no partial state whichever mode this is.
+    const existingContactsRes = await client.query(
+      `SELECT id, email, instagram_handle FROM crm_contacts
+        WHERE email IS NOT NULL OR instagram_handle IS NOT NULL`,
+    );
+    const collisions = findContactKeyCollisions(
+      toMigrate,
+      existingContactsRes.rows,
+    );
+    if (collisions.length > 0) {
+      console.error(
+        `[migrate] REFUSING TO START — ${collisions.length} normalised contact ` +
+          `key(s) would be claimed by more than one row.`,
+      );
+      for (const group of collisions) {
+        for (const line of describeCollision(group)) {
+          console.error(`[migrate]   ${line}`);
+        }
+      }
+      console.error(
+        `[migrate] This script will not choose between them: dropping or ` +
+          `merging a record silently is not something a migration gets to ` +
+          `decide. Decide which row is authoritative, fix the source rows by ` +
+          `hand, then re-run — nothing has been written.`,
+      );
+      throw new ContactKeyCollisionError(collisions.length);
+    }
+
     if (!commit) {
       let activities = 0;
       for (const { lead } of toMigrate) {
@@ -478,6 +689,13 @@ async function main() {
         rejected: rejected.length,
       });
       console.log(`[migrate] dry run — nothing written. Pass --commit to write.`);
+      // A dry run that previewed rejections has previewed a run that cannot
+      // finish the backfill; saying so with the exit code as well as the
+      // log is the same honesty the commit path owes.
+      if (rejected.length > 0) {
+        reportRejected(rejected);
+        throw new IncompleteMigrationError({ rejectedCount: rejected.length });
+      }
       return;
     }
 
@@ -508,6 +726,9 @@ async function main() {
     console.log(`[migrate] committed ${written} lead(s).`);
     if (failures.length > 0) {
       console.error(`[migrate] ${failures.length} lead(s) failed and were skipped.`);
+    }
+    if (rejected.length > 0) reportRejected(rejected);
+    if (failures.length > 0 || rejected.length > 0) {
       // Exit non-zero, and it matters more than a normal "report the
       // failures" convention would suggest. 0021's guard is satisfied by a
       // SINGLE migrated row, so a run where 258 of 259 leads failed still
@@ -518,10 +739,25 @@ async function main() {
       // the guard exists to make unnecessary. A non-zero exit is what stops
       // an operator (or a deploy script running steps 2 and 3 in sequence)
       // from proceeding to 0021 on a partial backfill.
+      //
+      // REJECTED leads count for exactly the same reason, and used to be
+      // reported only in the summary. A lead `planMigration` could not name,
+      // or whose status did not map, is a lead that was never written — so a
+      // run where every `qualified`/`won` lead was REJECTED rather than
+      // failed still exited 0, still green-lit 0021, and stranded all of
+      // them behind the reinstated CHECK just as surely. "Nothing failed" is
+      // not the same claim as "everything migrated", and only the second one
+      // makes 0021 safe.
       console.error(
-        `[migrate] NOT SAFE to apply 0021 — re-run this script until it exits 0.`,
+        `[migrate] NOT SAFE to apply 0021 — every lead must migrate first. ` +
+          `Failures are usually transient and clear on a re-run; rejections ` +
+          `never are, and need the source lead fixed (give it a name or a ` +
+          `recognised status) before this can exit 0.`,
       );
-      throw new PartialMigrationError(failures.length);
+      throw new IncompleteMigrationError({
+        failureCount: failures.length,
+        rejectedCount: rejected.length,
+      });
     }
   } finally {
     await client.end();
@@ -530,9 +766,12 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    // A partial backfill has already reported every failing lead by id; the
+    // Both of these have already reported every offending row by id; the
     // stack of the summary error adds nothing an operator can act on.
-    console.error(err instanceof PartialMigrationError ? err.message : err);
+    const summarised =
+      err instanceof IncompleteMigrationError ||
+      err instanceof ContactKeyCollisionError;
+    console.error(summarised ? err.message : err);
     process.exit(1);
   });
 }
