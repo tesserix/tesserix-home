@@ -1009,7 +1009,10 @@ export async function removeSuppression(id: string): Promise<RemovedSuppression[
  * any — checked against `crm_contacts`' own unique indexes
  * (`crm_contacts_email_lower_uq` on lower(email), migration 0019;
  * `crm_contacts_instagram_lower_uq` on lower(instagram_handle), migration
- * 0023), the same two keys `crm_suppressions` is keyed on. A row that
+ * 0023 — over a column 0023's `crm_contacts_normalize_trg` keeps in the
+ * same canonical form `normalizeInstagramHandle` produces, so the index
+ * constrains what this function actually looks up), the same two keys
+ * `crm_suppressions` is keyed on. A row that
  * matches gets counted, not silently merged: this import does not attempt
  * to update an existing organisation's details, only to avoid creating a
  * duplicate one.
@@ -1078,15 +1081,14 @@ export interface ImportPreview {
  *  same trim/lowercase (email) and `normalizeInstagramHandle` (handle) the
  *  database's own unique indexes and `isSuppressed` use, so this can never
  *  disagree with what a real insert would collide on — true of the handle
- *  only since migration 0023 added `crm_contacts_instagram_lower_uq`; before
- *  it, this set was the ONLY thing stopping two contacts sharing one
- *  canonical handle (issue #215). One residual gap, inherited from the index
- *  being expressed over `lower()` alone: the database sees `@bondibaker` and
- *  `bondibaker` as distinct where this function sees one key. Every writer in
- *  this repo normalises before insert (`commitImport` below,
- *  migrate-leads-to-crm.mjs), so the two only diverge for a row written by
- *  hand — `crm_contacts` has no normalising trigger, unlike
- *  `crm_suppressions` since 0022. */
+ *  only since migration 0023, which added BOTH halves it needs:
+ *  `crm_contacts_instagram_lower_uq`, and the
+ *  `crm_contacts_normalize_trg` trigger that guarantees the column holds the
+ *  canonical form the index is expressed over. Before 0023 this set was the
+ *  ONLY thing stopping two contacts sharing one canonical handle (issue
+ *  #215); the index alone would have been only a partial backstop, since
+ *  `lower('@bondibaker')` is `@bondibaker` and would have coexisted happily
+ *  with a stored `bondibaker`. */
 function importRowKeys(row: ImportRow): string[] {
   const keys: string[] = [];
   if (row.email) keys.push(`email:${row.email.trim().toLowerCase()}`);
