@@ -32,6 +32,44 @@ describe("the queue", () => {
     expect(sql).not.toMatch(/next_action_at IS NULL\s+OR/i);
   });
 
+  it("measures staleness from last contact, or from creation if never contacted", async () => {
+    query.mockResolvedValue([]);
+    await driftingOpportunities(14, 50);
+    const [sql] = query.mock.calls[0];
+    // NULL last_contacted_at means "never contacted", not "contacted at the
+    // dawn of time". Without COALESCE(..., created_at), every freshly
+    // imported lead (no next action, no contact yet) would be instantly
+    // drifting, flooding the queue the moment an import finishes. A
+    // never-contacted lead gets the same 14-day grace period, counted from
+    // when it entered the system — not zero days.
+    expect(sql).toContain("COALESCE(o.last_contacted_at, o.created_at)");
+    // NULLS FIRST would float every never-contacted lead to the top
+    // regardless of how recently it was created — the exact bug the
+    // COALESCE fixes. It must not appear on the ordering.
+    expect(sql).not.toMatch(/NULLS FIRST/i);
+  });
+
+  it("passes staleDays as a bind parameter used against the COALESCE, not last_contacted_at alone", async () => {
+    // Pins the specific regression: comparing staleDays against bare
+    // last_contacted_at would make every never-contacted row (NULL)
+    // satisfy `NULL <= now() - interval` as unknown/false in SQL terms
+    // inconsistently, OR (with the old explicit "IS NULL OR" clause) make
+    // it unconditionally true — either way decoupled from staleDays. The
+    // fix binds staleDays against a comparison that is well-defined for
+    // every row: COALESCE(last_contacted_at, created_at). A freshly
+    // created row (created_at = now()) fails `<= now() - 14 days`; a
+    // long-untouched one (created_at long ago) passes it. Both flow
+    // through the same single comparison, so this is what must not
+    // regress back to a bare-column or unconditional check.
+    query.mockResolvedValue([]);
+    await driftingOpportunities(14, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(params).toEqual([14, 50]);
+    expect(sql).toMatch(
+      /COALESCE\(o\.last_contacted_at, o\.created_at\)\s*\n?\s*<= now\(\) - \(\$1 \|\| ' days'\)::interval/,
+    );
+  });
+
   it("normalises timestamps to ISO strings", async () => {
     query.mockResolvedValue([{
       id: "o1", organisation_id: "g1", organisation_name: "Bondi Baker",

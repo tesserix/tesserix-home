@@ -82,11 +82,25 @@ export async function dueOpportunities(limit: number): Promise<QueueRow[]> {
   return rows.map(toQueueRow);
 }
 
-/** Opportunities with no next action scheduled AND a stale (or absent) last
- *  contact — drifting requires BOTH conditions, not either. An OR here would
- *  surface every scheduled lead as drifting the moment it went quiet, which
- *  is the opposite of the point. Longest-quiet-first (nulls, i.e. never
- *  contacted at all, sort first as the most urgent). */
+/** Opportunities with no next action scheduled AND a stale last contact —
+ *  drifting requires BOTH conditions, not either. An OR here would surface
+ *  every scheduled lead as drifting the moment it went quiet, which is the
+ *  opposite of the point.
+ *
+ *  NULL `last_contacted_at` means "never contacted", not "contacted at the
+ *  dawn of time" — so staleness (and ordering) is measured from
+ *  COALESCE(last_contacted_at, created_at). Without this, every freshly
+ *  imported lead (NULL last_contacted_at, no next_action_at) would be
+ *  instantly drifting, flooding the queue the moment an import finishes.
+ *  A never-contacted lead gets the same grace period as a contacted one,
+ *  counted from when it entered the system.
+ *
+ *  This is not index-ordered: crm_opp_drifting_idx is on bare
+ *  last_contacted_at, and the COALESCE can't use it for sorting. Left
+ *  alone deliberately — the partial predicate (next_action_at IS NULL AND
+ *  stage NOT IN ('won','lost')) is what makes the index selective, and at
+ *  259 rows a plain sort of the remainder costs nothing. An expression
+ *  index would be premature tuning today. */
 export async function driftingOpportunities(
   staleDays: number,
   limit: number,
@@ -100,9 +114,9 @@ export async function driftingOpportunities(
        JOIN crm_organisations g ON g.id = o.organisation_id
       WHERE o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
-        AND (o.last_contacted_at IS NULL
-             OR o.last_contacted_at <= now() - ($1 || ' days')::interval)
-      ORDER BY o.last_contacted_at ASC NULLS FIRST
+        AND COALESCE(o.last_contacted_at, o.created_at)
+              <= now() - ($1 || ' days')::interval
+      ORDER BY COALESCE(o.last_contacted_at, o.created_at) ASC
       LIMIT $2`,
     [staleDays, limit],
   );
