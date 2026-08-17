@@ -1006,11 +1006,26 @@ export async function removeSuppression(id: string): Promise<RemovedSuppression[
 
 /**
  * An existing organisation this row's contact details already match, if
- * any — checked against `crm_contacts`' own unique indexes (lower(email),
- * lower(instagram_handle)), the same two keys `crm_suppressions` is keyed
- * on. A row that matches gets counted, not silently merged: this import
- * does not attempt to update an existing organisation's details, only to
- * avoid creating a duplicate one.
+ * any — checked against `crm_contacts`' own unique indexes
+ * (`crm_contacts_email_lower_uq` on lower(email), migration 0019;
+ * `crm_contacts_instagram_lower_uq` on lower(instagram_handle), migration
+ * 0023), the same two keys `crm_suppressions` is keyed on. A row that
+ * matches gets counted, not silently merged: this import does not attempt
+ * to update an existing organisation's details, only to avoid creating a
+ * duplicate one.
+ *
+ * The handle index arrived late (issue #215: 0019 shipped it plain, not
+ * unique, while this comment and the import's dedup both assumed
+ * otherwise), so the `ORDER BY` below is not redundant with it. With both
+ * indexes in place at most one row can match either clause, and the order
+ * decides nothing; it exists for the case where they are somehow not — a
+ * database predating 0023, or one where the index was dropped — so that a
+ * wrong answer is at least the SAME wrong answer on every call. `created_at`
+ * first because the oldest contact is the one earlier imports already
+ * resolved this handle to, so answers stay stable as newer rows arrive
+ * rather than flipping to whichever duplicate landed last; `id` as
+ * tie-break because `created_at` has no uniqueness of its own and two
+ * contacts written in the same transaction share it exactly.
  *
  * Exported (not `previewImport`/`commitImport`-only) so a caller can
  * directly test that the `query` override — the mechanism Ruling 23 relies
@@ -1037,7 +1052,8 @@ export async function findMatchingOrganisationId(
   if (clauses.length === 0) return null;
 
   const rows = await query<{ organisation_id: string }>(
-    `SELECT organisation_id FROM crm_contacts WHERE ${clauses.join(" OR ")} LIMIT 1`,
+    `SELECT organisation_id FROM crm_contacts WHERE ${clauses.join(" OR ")}
+      ORDER BY created_at, id LIMIT 1`,
     params,
   );
   return rows[0]?.organisation_id ?? null;
@@ -1061,7 +1077,16 @@ export interface ImportPreview {
  *  normal form. Shared by `previewImport`'s in-batch dedup set below — the
  *  same trim/lowercase (email) and `normalizeInstagramHandle` (handle) the
  *  database's own unique indexes and `isSuppressed` use, so this can never
- *  disagree with what a real insert would collide on. */
+ *  disagree with what a real insert would collide on — true of the handle
+ *  only since migration 0023 added `crm_contacts_instagram_lower_uq`; before
+ *  it, this set was the ONLY thing stopping two contacts sharing one
+ *  canonical handle (issue #215). One residual gap, inherited from the index
+ *  being expressed over `lower()` alone: the database sees `@bondibaker` and
+ *  `bondibaker` as distinct where this function sees one key. Every writer in
+ *  this repo normalises before insert (`commitImport` below,
+ *  migrate-leads-to-crm.mjs), so the two only diverge for a row written by
+ *  hand — `crm_contacts` has no normalising trigger, unlike
+ *  `crm_suppressions` since 0022. */
 function importRowKeys(row: ImportRow): string[] {
   const keys: string[] = [];
   if (row.email) keys.push(`email:${row.email.trim().toLowerCase()}`);
