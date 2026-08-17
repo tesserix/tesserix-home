@@ -827,6 +827,34 @@ describe("eraseContactAction", () => {
     expect(secondSummary).not.toEqual(firstSummary);
   });
 
+  // Important (fix round 2): the same audit-write-fails-after-commit risk
+  // `deleteOrganisationAction` was fixed for applies here too, with more
+  // force — this is the DPDP path, where the audit row is the evidence a
+  // request was honoured. Mirrors "tells the operator the deletion
+  // succeeded but was not recorded" above.
+  it("tells the operator the erasure succeeded but was not recorded, when the audit write fails", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+      erasedAt: null,
+    });
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The contact's details are gone, but that erasure was not recorded in the audit log. Please report this.",
+    });
+    // Guards the guard: the erasure genuinely ran — this is not an earlier
+    // bail-out — but the audit row for it does not exist.
+    expect(eraseContact).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("refuses an operator who holds read but not hard-delete", async () => {
     signIn(["read"]);
 
@@ -923,12 +951,29 @@ describe("deleteOrganisationAction", () => {
     expect(result).toEqual({
       ok: false,
       message:
-        "The organisation was deleted, but that action was not recorded in the audit log. Please report this.",
+        "The organisation is gone, but that action was not recorded in the audit log. Please report this.",
     });
     // Guards the guard: the cascade genuinely ran — this is not an
     // earlier bail-out — but the audit row for it does not exist.
     expect(deleteOrganisation).toHaveBeenCalledTimes(1);
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  // Minor (fix round 2): the copy must not claim a deletion happened when
+  // the organisation was already gone before this call — "is gone" is true
+  // either way, "was deleted" would be a lie in this case.
+  it("uses the same honest copy when the audit write fails for an organisation that no longer existed", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOrganisation).mockResolvedValue(null);
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await deleteOrganisationAction(ORG_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The organisation is gone, but that action was not recorded in the audit log. Please report this.",
+    });
   });
 
   it("refuses an operator who holds read but not hard-delete", async () => {

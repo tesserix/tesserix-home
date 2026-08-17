@@ -380,6 +380,29 @@ export async function createOpportunityAction(
 }
 
 /**
+ * `AuditWriteError` fires AFTER `eraseContact` has already run and
+ * committed — same timing as `mapDeleteAuditFailure` below, and the same
+ * reasoning applies with more force: this is the DPDP path, where the audit
+ * row IS the evidence a request was honoured (#140 consumes it as such), not
+ * just a record for support to read later. `withCrmWrite`'s default "That
+ * change was not saved." would tell the operator an overwrite of someone's
+ * personal data never happened when it did. Worded to hold whether this call
+ * was the one that erased the contact or the contact was already erased (or
+ * never existed) — in every case the contact's details are, right now, not
+ * present. Allowlisted to this one exception type, not "any Error".
+ */
+function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The contact's details are gone, but that erasure was not recorded in the audit log. Please report this.",
+    };
+  }
+  return undefined;
+}
+
+/**
  * Erase a contact's identifying data (DPDP "forget me" — #213/#154). The
  * organisation, its opportunities and its activity log are untouched; see
  * `eraseContact` in crm-erasure.ts for why that split matters.
@@ -417,7 +440,7 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
           : contactId,
       };
     },
-    undefined,
+    mapEraseAuditFailure,
     { capability: "hard-delete" },
   );
   if (!result.ok) return result;
@@ -440,13 +463,19 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
  * not send them looking for data that no longer exists. Allowlisted to this
  * one exception type, not "any Error", same discipline as `mapMissingProduct`
  * and `mapAlreadyLinked` above.
+ *
+ * Worded to hold in both cases `deleteOrganisationRow` can return: a real
+ * cascade this call just performed, or `null` because the organisation was
+ * already gone. "Was deleted" would be a lie in the second case — an
+ * operator reading it would believe this call was the one that removed a
+ * business that, in fact, this call found nothing to remove.
  */
 function mapDeleteAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
   if (cause instanceof AuditWriteError) {
     return {
       ok: false,
       message:
-        "The organisation was deleted, but that action was not recorded in the audit log. Please report this.",
+        "The organisation is gone, but that action was not recorded in the audit log. Please report this.",
     };
   }
   return undefined;
