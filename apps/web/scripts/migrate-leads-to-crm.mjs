@@ -36,6 +36,7 @@ import process from "node:process";
 import pg from "pg";
 
 const ACTOR_MIGRATION = "migration";
+const LAWFUL_BASIS_UNRECORDED = "not_recorded_pre_migration";
 
 export function organisationName(lead) {
   const candidate =
@@ -103,6 +104,14 @@ export function mapLead(lead) {
     is_primary: true,
     source: lead.source ?? null,
     sourced_at: lead.created_at,
+    // 0019 added lawful_basis deliberately for DPDP: it records why we
+    // hold data about a person who never filled in a form. Leaving it
+    // null on migrated rows would be indistinguishable from "not yet
+    // filled in" for a live contact. These rows predate the field
+    // entirely — no lawful basis was ever captured at collection time —
+    // so the honest value is an explicit marker saying so, not a
+    // fabricated basis like "consent" or "legitimate_interest".
+    lawful_basis: LAWFUL_BASIS_UNRECORDED,
   };
 
   const opportunity = {
@@ -194,8 +203,9 @@ async function insertContact(client, contact, organisationId) {
   const res = await client.query(
     `INSERT INTO crm_contacts
        (organisation_id, name, email, phone, instagram_handle,
-        followers_count, posts_count, biography, is_primary, source, sourced_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        followers_count, posts_count, biography, is_primary, source,
+        sourced_at, lawful_basis)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      RETURNING id`,
     [
       organisationId,
@@ -209,6 +219,7 @@ async function insertContact(client, contact, organisationId) {
       contact.is_primary,
       contact.source,
       contact.sourced_at,
+      contact.lawful_basis,
     ],
   );
   return res.rows[0].id;
@@ -238,11 +249,12 @@ async function insertOpportunity(client, opportunity, organisationId) {
 async function insertActivity(client, activity) {
   await client.query(
     `INSERT INTO crm_activities
-       (organisation_id, opportunity_id, kind, actor, body, metadata, occurred_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+       (organisation_id, opportunity_id, contact_id, kind, actor, body, metadata, occurred_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [
       activity.organisation_id,
       activity.opportunity_id,
+      activity.contact_id,
       activity.kind,
       activity.actor,
       activity.body,
@@ -258,7 +270,7 @@ async function migrateOneLead(client, lead, mapped) {
   await client.query("BEGIN");
   try {
     const organisationId = await insertOrganisation(client, mapped.organisation);
-    await insertContact(client, mapped.contact, organisationId);
+    const contactId = await insertContact(client, mapped.contact, organisationId);
     const opportunityId = await insertOpportunity(
       client,
       mapped.opportunity,
@@ -271,6 +283,7 @@ async function migrateOneLead(client, lead, mapped) {
       await insertActivity(client, {
         organisation_id: organisationId,
         opportunity_id: opportunityId,
+        contact_id: contactId,
         kind: "note",
         actor: ACTOR_MIGRATION,
         body: lead.notes,
@@ -288,6 +301,7 @@ async function migrateOneLead(client, lead, mapped) {
       await insertActivity(client, {
         organisation_id: organisationId,
         opportunity_id: opportunityId,
+        contact_id: contactId,
         kind: mapActivityKind(row.kind),
         actor: row.actor_email,
         body: row.body,
