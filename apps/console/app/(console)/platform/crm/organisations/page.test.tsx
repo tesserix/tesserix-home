@@ -302,5 +302,24 @@ describe("OrganisationsPage", () => {
       render(await Page({ searchParams: Promise.resolve({}) }));
       expect(screen.getByText("Glebe Flowers")).toBeInTheDocument();
     });
+
+    it("leads with the organisation name when the org has more than one contact, even with no website and a handle present", async () => {
+      // The case `contactCount === 1` exists to guard: several named contacts
+      // means a real business regardless of website. Untested until now, this
+      // clause could be removed or flipped to `!== 1` without any test here
+      // catching it.
+      const multiContactRow: OrganisationListRow = {
+        ...ORG_ROW,
+        id: "org-multi",
+        name: "Newtown Roasters",
+        contactHandle: "newtownroasters",
+        contactCount: 2,
+        websiteUrl: null,
+      };
+      listOrganisations.mockResolvedValue(orgPage([multiContactRow]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      expect(screen.getByRole("link", { name: /Newtown Roasters/ })).toBeInTheDocument();
+      expect(screen.queryByText("@newtownroasters")).toBeNull();
+    });
   });
 });
