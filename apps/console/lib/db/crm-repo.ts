@@ -1,3 +1,4 @@
+import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { UNASSIGNED_PRODUCT } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
@@ -1304,14 +1305,21 @@ export async function commitImport(
       if (trimmedWebsiteUrl && !websiteUrl) {
         droppedWebsiteUrls++;
       }
+      // `country` is derived from `location` at insert time, not left for a
+      // later backfill to catch: a column no writer maintains decays into a
+      // filter that silently stops matching new rows (see migration 0025).
+      // `countryFromLocation` never guesses — an unmappable location yields
+      // NULL, the same as it would for the one-shot backfill.
+      const location = row.location?.trim() || null;
       const orgRows = await query<{ id: string }>(
-        `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO crm_organisations (name, website_url, location, country, category, tags, import_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
           name,
           websiteUrl,
-          row.location?.trim() || null,
+          location,
+          countryFromLocation(location),
           row.category ?? [],
           row.tags ?? [],
           importId,

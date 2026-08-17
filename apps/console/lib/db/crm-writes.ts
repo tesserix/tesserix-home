@@ -1,3 +1,4 @@
+import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { isSafeWebsiteUrl } from "./crm-url";
 import { isSuppressed, SuppressedContactError } from "./crm-repo";
@@ -157,11 +158,17 @@ async function insertOrganisation(
   name: string,
   input: CreateOrganisationInput,
 ): Promise<string> {
+  // Same derivation `commitImport` uses (crm-repo.ts) — one mapper, so an
+  // organisation created by hand agrees with one created by import about
+  // what country the same raw location resolves to. Never overwrites: the
+  // raw string is stored in `location` exactly as given, and `country` is
+  // just a derived read of it.
+  const location = input.location?.trim() || null;
   const rows = await query<{ id: string }>(
-    `INSERT INTO crm_organisations (name, location, website_url)
-     VALUES ($1, $2, $3)
+    `INSERT INTO crm_organisations (name, location, country, website_url)
+     VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [name, input.location?.trim() || null, input.websiteUrl?.trim() || null],
+    [name, location, countryFromLocation(location), input.websiteUrl?.trim() || null],
   );
   return rows[0].id;
 }

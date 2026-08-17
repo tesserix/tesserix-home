@@ -64,6 +64,15 @@ beforeAll(async () => {
     "../../../web/db/migrations/0022_crm_suppressions_normalize.sql",
   );
   await db.exec(readFileSync(normalizeMigrationPath, "utf-8"));
+
+  // 0025 adds `crm_organisations.country`, which `createOrganisation` now
+  // writes — without it here, this fixture's inserts would fail on an
+  // unknown column.
+  const countryMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0025_crm_organisations_country.sql",
+  );
+  await db.exec(readFileSync(countryMigrationPath, "utf-8"));
 });
 
 afterAll(async () => {
@@ -99,6 +108,30 @@ describe("createOrganisation / createOpportunity", () => {
       [organisationId],
     );
     expect((opps.rows[0] as { stage: string }).stage).toBe("new");
+  });
+
+  // Task 4: `createOrganisation` must derive `country` the same way
+  // `commitImport` does, using the shared `countryFromLocation` mapper —
+  // otherwise a manually-added organisation and one created by import could
+  // disagree about the same location.
+  it("derives country on manual create", async () => {
+    const { organisationId } = await createOrganisation({ name: "Manual Co", location: "Delhi" });
+    const rows = await db.query(`SELECT location, country FROM crm_organisations WHERE id = $1`, [
+      organisationId,
+    ]);
+    expect((rows.rows[0] as { location: string | null }).location).toBe("Delhi");
+    expect((rows.rows[0] as { country: string | null }).country).toBe("IN");
+  });
+
+  it("leaves country null for a manual create with an unmappable location", async () => {
+    const { organisationId } = await createOrganisation({
+      name: "Unmappable Co",
+      location: "Somewhere Else",
+    });
+    const rows = await db.query(`SELECT country FROM crm_organisations WHERE id = $1`, [
+      organisationId,
+    ]);
+    expect((rows.rows[0] as { country: string | null }).country).toBeNull();
   });
 
   it("creates a second opportunity against an existing organisation", async () => {

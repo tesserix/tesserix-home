@@ -80,6 +80,15 @@ beforeAll(async () => {
   );
   await db.exec(readFileSync(migrationPath, "utf-8"));
 
+  // 0025 adds `crm_organisations.country`, which `commitImport` now writes
+  // on every row — without it here, this fixture's inserts would fail on an
+  // unknown column.
+  const countryMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0025_crm_organisations_country.sql",
+  );
+  await db.exec(readFileSync(countryMigrationPath, "utf-8"));
+
   // Migration 0020 (not replayed here — its only job is backfilling
   // `leads`) drops the CHECK so grandfathered rows can be inserted; 0021
   // re-adds the identical CHECK as NOT VALID. Reproduced directly rather
@@ -459,6 +468,43 @@ describe("commitImport rejects an unsafe website_url without aborting the batch"
     expect(result.created).toBe(2);
     // A blank cell is not a drop: nothing was supplied, so nothing was lost.
     expect(result.droppedWebsiteUrls).toBe(0);
+  });
+});
+
+// Task 4: `commitImport` must derive `country` at insert time, using the
+// same `countryFromLocation` mapper the one-shot backfill (migration 0025)
+// used — otherwise a row created after the backfill silently stops
+// participating in a country filter, and the operator has no reason to
+// suspect the filter rather than the data.
+describe("commitImport derives country from location", () => {
+  it("derives country when an import row carries a mappable location", async () => {
+    const result = await commitImport(
+      [{ name: "Chennai Chai Co", email: "chennai@example.com", location: "Chennai" }],
+      "ava@tesserix.app",
+    );
+    expect(result.created).toBe(1);
+
+    const rows = await db.query<{ location: string | null; country: string | null }>(
+      `SELECT location, country FROM crm_organisations WHERE name = $1`,
+      ["Chennai Chai Co"],
+    );
+    // location is kept exactly as scraped; country is the derived view of it.
+    expect(rows.rows[0].location).toBe("Chennai");
+    expect(rows.rows[0].country).toBe("IN");
+  });
+
+  it("leaves country null for an unmappable import location, never guessing", async () => {
+    const result = await commitImport(
+      [{ name: "Nowhere Co", email: "nowhere@example.com", location: "Somewhere Else" }],
+      "ava@tesserix.app",
+    );
+    expect(result.created).toBe(1);
+
+    const rows = await db.query<{ country: string | null }>(
+      `SELECT country FROM crm_organisations WHERE name = $1`,
+      ["Nowhere Co"],
+    );
+    expect(rows.rows[0].country).toBeNull();
   });
 });
 
