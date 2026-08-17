@@ -133,7 +133,7 @@ test.describe("console command palette", () => {
     // specificity. The clipped-ring fix does not take effect.
     await page.getByRole("button", { name: /search/i }).click();
     const dialog = page.getByRole("dialog");
-    const input = dialog.getByRole("textbox");
+    const input = dialog.getByRole("combobox");
     await input.focus();
 
     const outlineOffset = await input.evaluate((el) =>
@@ -166,7 +166,7 @@ test.describe("console command palette", () => {
     await page.keyboard.press(`${MOD_KEY}+k`);
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
-    const input = dialog.getByRole("textbox");
+    const input = dialog.getByRole("combobox");
     await expect(input).toBeFocused();
 
     // 2. Typing narrows the list. "cost" matches exactly two tools —
@@ -266,7 +266,7 @@ test.describe("console command palette", () => {
     // written rather than adapted to dodge it.
     await page.keyboard.press(`${MOD_KEY}+k`);
     const dialog = page.getByRole("dialog");
-    const input = dialog.getByRole("textbox");
+    const input = dialog.getByRole("combobox");
 
     // "break glass" matches exactly the pending platform.breakGlass route.
     await input.fill("break glass");
