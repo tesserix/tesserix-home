@@ -222,5 +222,35 @@ describe("OrganisationsPage", () => {
       fireEvent.click(screen.getByLabelText("Product"));
       expect(screen.getByText(/unassigned/i)).toBeInTheDocument();
     });
+
+    it("drops an unrecognised product rather than passing it to SQL", async () => {
+      // Same contract as the followers rejection above: a product the
+      // estate doesn't declare (and that isn't UNASSIGNED_PRODUCT) is not a
+      // value the repo should ever have to defend against.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ product: "not-a-real-product" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+
+    it("drops an unrecognised country rather than passing it to SQL", async () => {
+      // Country is a closed set (COUNTRY_LABELS); a code outside it must
+      // read as unfiltered, not reach the repo's exact-match clause.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ country: "ZZ" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+
+    it("only recognises email=1, dropping any other value rather than enabling the filter", async () => {
+      // `hasEmail` is a boolean gate: anything other than the exact string
+      // "1" (a stray "true", an accidental "0") must not silently turn the
+      // filter on.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ email: "true" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+
+      listOrganisations.mockClear();
+      render(await Page({ searchParams: Promise.resolve({ email: "0" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
   });
 });
