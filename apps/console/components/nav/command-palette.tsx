@@ -155,6 +155,17 @@ export function ConsoleCommandPalette({
     (value: string) => {
       const entry = entriesByPaletteValue.get(value);
       if (!entry || entry.disabled) return;
+      // This used to carry a guard against a stale `activeValue` firing on
+      // Enter: `CommandInput`'s `onChange` set the active value from
+      // `getVisibleItems()[0]` synchronously, before the newly-filtered items
+      // had re-registered, so Enter could navigate to whatever was highlighted
+      // before the operator's last keystroke.
+      //
+      // `@tesserix/web@2.1.0` fixes it upstream — `onChange` no longer sets an
+      // active value at all, the highlight is reconciled against the live match
+      // set, and Enter re-checks membership before firing. The guard's own
+      // comment said to delete it when that landed, so it is deleted rather
+      // than left as a second opinion about a bug that no longer exists.
       if (entry.external) {
         window.open(entry.href, "_blank", "noopener,noreferrer");
       } else {
