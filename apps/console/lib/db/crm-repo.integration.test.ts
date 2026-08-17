@@ -124,19 +124,19 @@ afterAll(async () => {
 
 describe("driftingOpportunities against a real database", () => {
   it("excludes a recently created, never-contacted lead", async () => {
-    const rows = await driftingOpportunities(14, 50);
+    const rows = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("11111111-1111-1111-1111-111111111111");
   });
 
   it("excludes any row with a next_action_at set, however stale", async () => {
-    const rows = await driftingOpportunities(14, 50);
+    const rows = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("44444444-4444-4444-4444-444444444444");
   });
 
   it("returns exactly the two stale rows, ordered most-overdue-first by quietSince", async () => {
-    const rows = await driftingOpportunities(14, 50);
+    const rows = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     // Order pins the COALESCE-vs-bare-column regression: H (never
     // contacted, created 90 days ago) is more overdue than I (contacted 20
@@ -150,7 +150,7 @@ describe("driftingOpportunities against a real database", () => {
   });
 
   it("reports quietSince as the COALESCE value, not raw last_contacted_at", async () => {
-    const rows = await driftingOpportunities(14, 50);
+    const rows = await driftingOpportunities({}, 14, 50);
     const h = rows.find(
       (r) => r.id === "22222222-2222-2222-2222-222222222222",
     );
@@ -166,8 +166,64 @@ describe("driftingOpportunities against a real database", () => {
 
 describe("dueOpportunities against a real database", () => {
   it("returns only the overdue, non-terminal opportunity", async () => {
-    const rows = await dueOpportunities(50);
+    const rows = await dueOpportunities({}, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toEqual(["55555555-5555-5555-5555-555555555555"]);
+  });
+});
+
+describe("filtering runs in SQL ahead of ORDER BY/LIMIT (Ruling 11)", () => {
+  // The discriminating case: seed more due rows than the limit, with the one
+  // matching row ranked BELOW the cut-off by next_action_at. Filtering the
+  // already-limited TypeScript array can never see it — the predicate has to
+  // run in the query, ahead of ORDER BY/LIMIT, for the matching row to
+  // survive at all. This test fails against a TypeScript post-filter
+  // (`filterRows` over a `LIMIT 2` page) and passes against the SQL-bound
+  // implementation — that discrimination is the point.
+  const orgId2Holder: { id?: string } = {};
+
+  beforeAll(async () => {
+    const org2 = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Kora Kitchen"],
+    );
+    orgId2Holder.id = org2.rows[0].id;
+
+    // Two "mark8ly" rows, more overdue (smaller next_action_at sorts first
+    // ASC) than the one "kora" row that follows them. A LIMIT 2 read of the
+    // unfiltered due set fills up on the two mark8ly rows and never reaches
+    // the kora row.
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ('88888888-8888-8888-8888-888888888888', $1, 'contacted', 'mark8ly', $2::timestamptz, NULL, $2::timestamptz),
+         ('99999999-9999-9999-9999-999999999999', $1, 'contacted', 'mark8ly', $3::timestamptz, NULL, $3::timestamptz),
+         ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $4, 'contacted', 'kora', $5::timestamptz, NULL, $5::timestamptz)`,
+      [orgId, daysAgo(30), daysAgo(29), orgId2Holder.id, daysAgo(1)],
+    );
+  });
+
+  it("returns a product-matching row even when it ranks below the limit among unfiltered due rows", async () => {
+    // With limit=2 and no filter, the two most-overdue mark8ly rows fill the
+    // page and the kora row (created most recently, least overdue) is cut
+    // off. Filtering that 2-row page for product=kora would return nothing —
+    // the false negative Ruling 11 exists to prevent.
+    const unfiltered = await dueOpportunities({}, 2);
+    expect(unfiltered.map((r) => r.id)).not.toContain(
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    );
+
+    const filtered = await dueOpportunities({ product: "kora" }, 2);
+    expect(filtered.map((r) => r.id)).toEqual([
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    ]);
+  });
+
+  it("binds product/stage/owner filters against driftingOpportunities the same way", async () => {
+    const rows = await driftingOpportunities({ product: "kora" }, 14, 50);
+    const ids = rows.map((r) => r.id);
+    expect(ids).not.toContain("22222222-2222-2222-2222-222222222222"); // H, no product
+    expect(ids).not.toContain("33333333-3333-3333-3333-333333333333"); // I, no product
   });
 });

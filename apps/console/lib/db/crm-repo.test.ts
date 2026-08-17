@@ -13,7 +13,7 @@ beforeEach(() => query.mockReset());
 describe("the queue", () => {
   it("asks only for opportunities whose next action has arrived", async () => {
     query.mockResolvedValue([]);
-    await dueOpportunities(50);
+    await dueOpportunities({}, 50);
     const [sql] = query.mock.calls[0];
     expect(sql).toContain("next_action_at <= now()");
     // Terminal deals are done; surfacing them would make the queue a to-do
@@ -23,7 +23,7 @@ describe("the queue", () => {
 
   it("treats drifting as no next action AND stale contact, not either", async () => {
     query.mockResolvedValue([]);
-    await driftingOpportunities(14, 50);
+    await driftingOpportunities({}, 14, 50);
     const [sql] = query.mock.calls[0];
     expect(sql).toContain("next_action_at IS NULL");
     expect(sql).toContain("last_contacted_at");
@@ -34,7 +34,7 @@ describe("the queue", () => {
 
   it("measures staleness from last contact, or from creation if never contacted", async () => {
     query.mockResolvedValue([]);
-    await driftingOpportunities(14, 50);
+    await driftingOpportunities({}, 14, 50);
     const [sql] = query.mock.calls[0];
     // NULL last_contacted_at means "never contacted", not "contacted at the
     // dawn of time". Without COALESCE(..., created_at), every freshly
@@ -65,7 +65,7 @@ describe("the queue", () => {
     // make_interval(days => $1::int) over ($1 || ' days')::interval: typed,
     // rejects garbage at parse time rather than at the database.
     query.mockResolvedValue([]);
-    await driftingOpportunities(14, 50);
+    await driftingOpportunities({}, 14, 50);
     const [sql, params] = query.mock.calls[0];
     expect(params).toEqual([14, 50]);
     expect(sql).toMatch(
@@ -82,7 +82,7 @@ describe("the queue", () => {
       quiet_since: new Date("2026-07-20T00:00:00Z"),
       is_starred: false,
     }]);
-    const [row] = await dueOpportunities(50);
+    const [row] = await dueOpportunities({}, 50);
     expect(row.nextActionAt).toBe("2026-08-01T09:00:00.000Z");
     expect(row.lastContactedAt).toBeNull();
     expect(row.quietSince).toBe("2026-07-20T00:00:00.000Z");
@@ -94,17 +94,95 @@ describe("the queue", () => {
     // can disagree. The SQL must alias the COALESCE itself as quiet_since,
     // for both queries, so the rule stays in one place.
     query.mockResolvedValue([]);
-    await dueOpportunities(50);
+    await dueOpportunities({}, 50);
     const [dueSql] = query.mock.calls[0];
     expect(dueSql).toContain(
       "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
     );
 
     query.mockResolvedValue([]);
-    await driftingOpportunities(14, 50);
+    await driftingOpportunities({}, 14, 50);
     const [driftingSql] = query.mock.calls[1];
     expect(driftingSql).toContain(
       "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
     );
+  });
+});
+
+describe("the queue's filters — bound parameters, not string interpolation", () => {
+  it("adds no clause and no extra param when no filter is active", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50);
+    const [sql, params] = query.mock.calls[0];
+    // `o.owner` legitimately appears in the SELECT list; only the WHERE-clause
+    // forms (`o.product =`, `o.owner ILIKE`) indicate an active filter.
+    expect(sql).not.toMatch(/o\.product\s*=/);
+    expect(sql).not.toMatch(/o\.owner ILIKE/);
+    expect(params).toEqual([50]);
+  });
+
+  it("binds product as a parameter, not interpolated into the SQL text", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ product: "mark8ly" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.product = $1");
+    expect(sql).not.toContain("mark8ly");
+    expect(params).toEqual(["mark8ly", 50]);
+  });
+
+  it("binds stage as a parameter", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ stage: "qualified" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.stage = $1");
+    expect(sql).not.toContain("'qualified'");
+    expect(params).toEqual(["qualified", 50]);
+  });
+
+  it("binds owner as a parameter, matched case-insensitively", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ owner: "Asha" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.owner ILIKE $1");
+    expect(sql).not.toContain("Asha");
+    expect(params).toEqual(["%Asha%", 50]);
+  });
+
+  it("combines all three filters, each its own bound parameter, before ORDER BY/LIMIT", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ product: "mark8ly", stage: "qualified", owner: "Asha" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.product = $1");
+    expect(sql).toContain("o.stage = $2");
+    expect(sql).toContain("o.owner ILIKE $3");
+    expect(sql.indexOf("o.owner ILIKE")).toBeLessThan(sql.indexOf("ORDER BY"));
+    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", 50]);
+  });
+
+  it("keeps the due predicate first so the partial index stays usable", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ product: "mark8ly" }, 50);
+    const [sql] = query.mock.calls[0];
+    expect(sql.indexOf("next_action_at <= now()")).toBeLessThan(sql.indexOf("o.product ="));
+  });
+
+  it("binds product, stage, owner and staleDays as separate parameters on the drifting query", async () => {
+    query.mockResolvedValue([]);
+    await driftingOpportunities({ product: "mark8ly", stage: "new", owner: "Asha" }, 14, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.product = $1");
+    expect(sql).toContain("o.stage = $2");
+    expect(sql).toContain("o.owner ILIKE $3");
+    expect(sql).toContain("make_interval(days => $4::int)");
+    expect(sql).toContain("LIMIT $5");
+    expect(params).toEqual(["mark8ly", "new", "%Asha%", 14, 50]);
+  });
+
+  it("keeps the drifting partial-index predicates first, filters appended after", async () => {
+    query.mockResolvedValue([]);
+    await driftingOpportunities({ product: "mark8ly" }, 14, 50);
+    const [sql] = query.mock.calls[0];
+    expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("o.product ="));
+    expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("o.product ="));
   });
 });

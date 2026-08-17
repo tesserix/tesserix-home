@@ -23,7 +23,6 @@ import CrmPage, {
   readQueueFilters,
   toFilterValues,
   toQueueItem,
-  filterRows,
 } from "./page";
 
 afterEach(() => {
@@ -118,13 +117,49 @@ describe("CrmPage", () => {
   });
 
   it("renders filtered-empty, not empty, when an active filter matches nothing", async () => {
-    dueOpportunities.mockResolvedValue([DUE_ROW]);
+    dueOpportunities.mockResolvedValue([]);
     driftingOpportunities.mockResolvedValue([]);
 
     await renderCrmPage({ product: "homechef" });
 
     expect(screen.queryByText(DUE_EMPTY_MESSAGE)).toBeNull();
     expect(screen.getAllByText("No matches").length).toBeGreaterThan(0);
+  });
+
+  it("passes the parsed filter to both reads rather than filtering the returned page", async () => {
+    // Ruling 11: `dueOpportunities`/`driftingOpportunities` are ORDER BY …
+    // LIMIT. A row matching the filter but ranked below the limit cut-off is
+    // only ever returned if the predicate runs in SQL — filtering the
+    // already-paged TypeScript array can never see it. This test pins that
+    // the page forwards the filter into the read rather than reintroducing
+    // a post-filter; `crm-repo.integration.test.ts` pins the SQL side of the
+    // same guarantee against a real database.
+    dueOpportunities.mockResolvedValue([]);
+    driftingOpportunities.mockResolvedValue([]);
+
+    await renderCrmPage({ product: "mark8ly", stage: "qualified", owner: "Asha" });
+
+    expect(dueOpportunities).toHaveBeenCalledWith(
+      { product: "mark8ly", stage: "qualified", owner: "Asha" },
+      expect.any(Number),
+    );
+    expect(driftingOpportunities).toHaveBeenCalledWith(
+      { product: "mark8ly", stage: "qualified", owner: "Asha" },
+      expect.any(Number),
+      expect.any(Number),
+    );
+  });
+
+  it("does not forward an unrecognised stage from the URL to the reads", async () => {
+    // A bad value in a hand-edited or bookmarked URL reads as "unfiltered",
+    // never reaches SQL, and never renders a 500.
+    dueOpportunities.mockResolvedValue([]);
+    driftingOpportunities.mockResolvedValue([]);
+
+    await renderCrmPage({ stage: "banana" });
+
+    expect(dueOpportunities).toHaveBeenCalledWith({}, expect.any(Number));
+    expect(screen.getByText(DUE_EMPTY_MESSAGE)).toBeInTheDocument();
   });
 });
 
@@ -154,18 +189,6 @@ describe("readQueueFilters", () => {
 describe("toFilterValues", () => {
   it("shows the bar only what the server actually applied", () => {
     expect(toFilterValues({ stage: "contacted" })).toEqual({ stage: "contacted" });
-  });
-});
-
-describe("filterRows", () => {
-  it("matches product, stage and owner filters", () => {
-    expect(filterRows([DUE_ROW, DRIFTING_ROW], { product: "mark8ly" })).toEqual([DUE_ROW]);
-    expect(filterRows([DUE_ROW, DRIFTING_ROW], { stage: "new" })).toEqual([DRIFTING_ROW]);
-    expect(filterRows([DUE_ROW, DRIFTING_ROW], { owner: "asha" })).toEqual([DUE_ROW]);
-  });
-
-  it("returns every row when no filter is active", () => {
-    expect(filterRows([DUE_ROW, DRIFTING_ROW], {})).toEqual([DUE_ROW, DRIFTING_ROW]);
   });
 });
 

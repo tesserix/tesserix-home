@@ -7,7 +7,12 @@ import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar
 // client references that throw when called on the server. See
 // `tickets/page.tsx` for the incident this guards against.
 import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
-import { dueOpportunities, driftingOpportunities, type QueueRow } from "@/lib/db/crm-repo";
+import {
+  dueOpportunities,
+  driftingOpportunities,
+  type QueueRow,
+  type QueueFilter,
+} from "@/lib/db/crm-repo";
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
 import { CrmQueueView } from "./queue-view";
 
@@ -123,21 +128,19 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
 
 export type QueueSearchParams = Record<string, string | string[] | undefined>;
 
-export interface QueueFilters {
-  product?: string;
-  stage?: CrmStage;
-  owner?: string;
-}
-
 /**
  * Read the filters out of the URL.
  *
  * A query string is untrusted input: `stage` is only honoured when it is a
- * real `CrmStage`, `product` only when the estate declares it, and a
- * repeated param (arrives as an array) is dropped rather than guessed at.
+ * real `CrmStage` (an unrecognised value — e.g. `?stage=banana` — is treated
+ * the same as no filter at all, not forwarded to SQL and not reported as an
+ * error: a bad value in a bookmarked or hand-edited URL should read as
+ * "unfiltered", not break the page), `product` only when the estate declares
+ * it, and a repeated param (arrives as an array) is dropped rather than
+ * guessed at.
  */
-export function readQueueFilters(searchParams: QueueSearchParams): QueueFilters {
-  const filters: QueueFilters = {};
+export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
+  const filters: QueueFilter = {};
 
   const rawProduct = searchParams.product;
   if (typeof rawProduct === "string" && rawProduct !== "") {
@@ -160,30 +163,12 @@ export function readQueueFilters(searchParams: QueueSearchParams): QueueFilters 
 }
 
 /** The applied filters as the bar's display values. */
-export function toFilterValues(filters: QueueFilters): FilterValues {
+export function toFilterValues(filters: QueueFilter): FilterValues {
   const values: FilterValues = {};
   if (filters.product) values.product = filters.product;
   if (filters.stage) values.stage = filters.stage;
   if (filters.owner) values.owner = filters.owner;
   return values;
-}
-
-/**
- * Applied in TypeScript, not SQL: `dueOpportunities`/`driftingOpportunities`
- * take only a limit (and, for drifting, `staleDays`) — Task 4 built no filter
- * predicates into either query. Both reads are small (the drifting query's
- * own comment puts the whole table at ~259 rows), so filtering the returned
- * page here costs nothing today.
- */
-export function filterRows(rows: readonly QueueRow[], filters: QueueFilters): QueueRow[] {
-  return rows.filter((row) => {
-    if (filters.product && row.product !== filters.product) return false;
-    if (filters.stage && row.stage !== filters.stage) return false;
-    if (filters.owner && !(row.owner ?? "").toLowerCase().includes(filters.owner.toLowerCase())) {
-      return false;
-    }
-    return true;
-  });
 }
 
 export interface QueueGroupStateInput {
@@ -219,9 +204,14 @@ export default async function CrmPage({
   // `allSettled`, not `all`: a failure reading one group (due vs. drifting —
   // two independent queries) must not blank the other. `Promise.all` rejects
   // the whole render on the first rejection.
+  //
+  // `filters` is passed straight into both reads — the predicates run in
+  // SQL, ahead of ORDER BY/LIMIT (Ruling 11). Filtering the returned page in
+  // TypeScript instead would answer "rows matching the filter among the
+  // first N overall", silently dropping a match ranked below the cut-off.
   const [dueResult, driftingResult] = await Promise.allSettled([
-    dueOpportunities(DUE_LIMIT),
-    driftingOpportunities(DRIFT_DAYS, DRIFTING_LIMIT),
+    dueOpportunities(filters, DUE_LIMIT),
+    driftingOpportunities(filters, DRIFT_DAYS, DRIFTING_LIMIT),
   ]);
 
   const dueRows: QueueRow[] = dueResult.status === "fulfilled" ? dueResult.value : [];
@@ -231,8 +221,8 @@ export default async function CrmPage({
     driftingResult.status === "fulfilled" ? driftingResult.value : [];
   const driftingError: unknown = driftingResult.status === "rejected" ? driftingResult.reason : null;
 
-  const dueItems = filterRows(dueRows, filters).map(toQueueItem);
-  const driftingItems = filterRows(driftingRows, filters).map(toQueueItem);
+  const dueItems = dueRows.map(toQueueItem);
+  const driftingItems = driftingRows.map(toQueueItem);
 
   const dueState = queueGroupState({ error: dueError, rows: dueItems, filtered });
   const driftingState = queueGroupState({ error: driftingError, rows: driftingItems, filtered });

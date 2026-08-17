@@ -10,6 +10,24 @@ import type { CrmStage } from "../crm";
  * index predicates exactly so Postgres can use them.
  */
 
+/**
+ * The queue's filters — applied in SQL, not in TypeScript.
+ *
+ * Ruling 11: `dueOpportunities`/`driftingOpportunities` are `ORDER BY …
+ * LIMIT`. Filtering the *returned* page in TypeScript answers "rows matching
+ * the filter among the first N overall", not "the first N rows matching the
+ * filter" — a match ranked below the cut-off is silently dropped, which in a
+ * work queue is a false negative ("nothing to do") rather than a visible
+ * error. The predicates below therefore live in the WHERE clause, ahead of
+ * ORDER BY/LIMIT, so a matching row's rank among *all* matching rows — not
+ * its rank in the unfiltered set — decides whether it's returned.
+ */
+export interface QueueFilter {
+  product?: string;
+  stage?: CrmStage;
+  owner?: string;
+}
+
 export interface QueueRow {
   id: string;
   organisationId: string;
@@ -77,10 +95,43 @@ function toQueueRow(row: RawQueueRow): QueueRow {
   };
 }
 
+/**
+ * Builds `AND …` clauses for an optional product/stage/owner filter, pushing
+ * each present value onto `params` as a bound parameter (never interpolated
+ * into the SQL string) and returning the clause fragment to splice after the
+ * query's own predicates. An absent filter key adds no clause at all — the
+ * partial indexes' own predicates stay first and untouched, so
+ * `crm_opp_due_idx`/`crm_opp_drifting_idx` remain usable regardless of which
+ * filters are active.
+ */
+function filterClause(filter: QueueFilter, params: unknown[]): string {
+  const clauses: string[] = [];
+  if (filter.product) {
+    params.push(filter.product);
+    clauses.push(`o.product = $${params.length}`);
+  }
+  if (filter.stage) {
+    params.push(filter.stage);
+    clauses.push(`o.stage = $${params.length}`);
+  }
+  if (filter.owner) {
+    params.push(`%${filter.owner}%`);
+    clauses.push(`o.owner ILIKE $${params.length}`);
+  }
+  return clauses.length > 0 ? `\n        AND ${clauses.join("\n        AND ")}` : "";
+}
+
 /** Opportunities whose next action has arrived. Terminal deals (won/lost)
  *  are excluded — surfacing them would make the queue a to-do list of things
  *  already finished. Most-overdue-first. */
-export async function dueOpportunities(limit: number): Promise<QueueRow[]> {
+export async function dueOpportunities(
+  filter: QueueFilter,
+  limit: number,
+): Promise<QueueRow[]> {
+  const params: unknown[] = [];
+  const filterSql = filterClause(filter, params);
+  params.push(limit);
+  const limitParam = params.length;
   const rows = await tesserixQuery<RawQueueRow>(
     `SELECT o.id, o.organisation_id, g.name AS organisation_name,
             o.product, o.stage, o.owner,
@@ -90,10 +141,10 @@ export async function dueOpportunities(limit: number): Promise<QueueRow[]> {
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
       WHERE o.next_action_at <= now()
-        AND o.stage NOT IN ('won', 'lost')
+        AND o.stage NOT IN ('won', 'lost')${filterSql}
       ORDER BY o.next_action_at ASC
-      LIMIT $1`,
-    [limit],
+      LIMIT $${limitParam}`,
+    params,
   );
   return rows.map(toQueueRow);
 }
@@ -118,9 +169,16 @@ export async function dueOpportunities(limit: number): Promise<QueueRow[]> {
  *  259 rows a plain sort of the remainder costs nothing. An expression
  *  index would be premature tuning today. */
 export async function driftingOpportunities(
+  filter: QueueFilter,
   staleDays: number,
   limit: number,
 ): Promise<QueueRow[]> {
+  const params: unknown[] = [];
+  const filterSql = filterClause(filter, params);
+  params.push(staleDays);
+  const staleDaysParam = params.length;
+  params.push(limit);
+  const limitParam = params.length;
   const rows = await tesserixQuery<RawQueueRow>(
     `SELECT o.id, o.organisation_id, g.name AS organisation_name,
             o.product, o.stage, o.owner,
@@ -132,10 +190,10 @@ export async function driftingOpportunities(
       WHERE o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
         AND COALESCE(o.last_contacted_at, o.created_at)
-              <= now() - make_interval(days => $1::int)
+              <= now() - make_interval(days => $${staleDaysParam}::int)${filterSql}
       ORDER BY COALESCE(o.last_contacted_at, o.created_at) ASC
-      LIMIT $2`,
-    [staleDays, limit],
+      LIMIT $${limitParam}`,
+    params,
   );
   return rows.map(toQueueRow);
 }
