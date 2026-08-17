@@ -275,6 +275,38 @@ const ROUTES = {
   // from every operator who cannot rotate keys. Gate the Stripe section, not
   // the route, once the surface exists.
   "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true },
+
+  // The CRM: a sales queue for inbound leads, replacing apps/web's
+  // Mark8ly-scoped leads page with an estate-native surface.
+  //
+  // `web` records `/admin/apps/mark8ly/leads` as the predecessor. That page is
+  // a genuine ancestor of this queue — it is the thing being replaced, not
+  // mirrored — and recording it is consistent with `platform.tickets`, which
+  // records `/admin/platform-tickets` as its own `web` path even though that
+  // page is already gone. `web` is a record of where a capability lived, not
+  // a link; the no-linking rule lives on `isPending` and binds renderers, not
+  // this field. See RouteEntry.web.
+  //
+  // NOT `pending`: the queue is this task's reason for existing, and later
+  // tasks build the surface this id points at.
+  "platform.crm": { web: "/admin/apps/mark8ly/leads", mobile: "/platform/crm", capability: "read" },
+  // No `web`: the import flow was never a distinct page in apps/web — it
+  // lived inside the leads page itself, under `platform.crm`. There is no
+  // separate predecessor to record.
+  //
+  // NOT `pending`: Task 8 builds the CSV import flow this id points at.
+  "platform.crmImport": {
+    mobile: "/platform/crm/import",
+    capability: "read",
+  },
+  // No `web`: a suppression list never existed in apps/web at all. This is
+  // genuinely console-native, not a migrated surface.
+  //
+  // NOT `pending`: Task 7 builds the do-not-contact list this id points at.
+  "platform.crmSuppressions": {
+    mobile: "/platform/crm/suppressions",
+    capability: "read",
+  },
 } as const satisfies Record<string, RouteEntry>;
 
 export type RouteId = keyof typeof ROUTES & string;

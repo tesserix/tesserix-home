@@ -116,4 +116,31 @@ export const platformNav: readonly NavEntry[] = [
       { name: "Settings", route: "platform.settings", icon: "settings" },
     ],
   },
+  {
+    // Growth is a new group, not a fourth item bolted onto Operate. Operate
+    // is service upkeep — the ticket queue, identity lookup, live chat,
+    // announcements — all things done TO keep the platform running. A sales
+    // queue is not upkeep: it is revenue work, done to bring tenants in
+    // rather than to keep existing ones served. Filing it in Operate would
+    // blur that line the same way filing the audit log there would have
+    // blurred Governance's.
+    name: "Growth",
+    icon: "users",
+    // All three CRM surfaces, not just the queue. Import and the
+    // do-not-contact list were reachable only by typing their URLs, and a
+    // page nobody can navigate to barely exists — which matters most for
+    // exactly these two: the spec's emphasis is that suppression must be in
+    // place BEFORE the first import, and an operator who cannot find the
+    // list will simply import without it. Ordered queue → do-not-contact →
+    // import so the rail reads in the order the work has to happen.
+    items: [
+      { name: "CRM", route: "platform.crm", icon: "users" },
+      { name: "Do-not-contact", route: "platform.crmSuppressions", icon: "shield" },
+      // `inbox` rather than a new "upload" key, for the reason already
+      // recorded on "Identity lookup" above: IconKey is consumed as
+      // `Record<IconKey, ...>` in web, mobile and console, so a new key is
+      // three apps changed for one rail entry.
+      { name: "Import leads", route: "platform.crmImport", icon: "inbox" },
+    ],
+  },
 ];

@@ -25,6 +25,7 @@
     "swr": "^2.4.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.5",
     "@playwright/test": "1.61.1",
     "@tailwindcss/postcss": "^4",
     "@tesserix/eslint-config": "workspace:*",

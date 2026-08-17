@@ -58,11 +58,58 @@ export type AuditSummary = Readonly<Record<string, number>>;
  */
 const SUMMARY_KEY = /^[a-z][a-z0-9_.]{0,39}$/;
 
+/**
+ * Same shape as `SUMMARY_KEY`, longer cap: an action is a dotted identifier
+ * like `crm.stage.change`, not a summary key, so it gets more room for
+ * segments, but the same lowercase-identifier constraint applies for the
+ * same reason — this is the column a retention or alerting rule
+ * discriminates on (migration 0018), not a place for free prose.
+ */
+const ACTION_NAME = /^[a-z][a-z0-9_.]{0,63}$/;
+
 /** Raised when a summary tries to carry something that is not a count. */
 export class AuditSummaryError extends Error {
   constructor(message: string) {
     super(`audit: ${message}`);
     this.name = "AuditSummaryError";
+  }
+}
+
+/**
+ * Raised when an audit `action` is not a stable dotted identifier.
+ *
+ * Before `describe` (Ruling 15), `action` was a string literal fixed at
+ * each call site — statically inspectable, impossible to get wrong at
+ * runtime. `describe` makes it a runtime return value like `summary`,
+ * which already rejects malformed input rather than sanitising it; leaving
+ * `action` unchecked would be the one asymmetry between two fields that
+ * arrive together in the same object. A silently truncated or coerced
+ * action name is a row nobody can attribute later, which is worse than a
+ * loud failure at write time — so this rejects, exactly like
+ * `serialiseSummary` does for `summary`.
+ */
+export class AuditActionError extends Error {
+  constructor(message: string) {
+    super(`audit: ${message}`);
+    this.name = "AuditActionError";
+  }
+}
+
+/**
+ * Validate an action name before it can reach the INSERT.
+ *
+ * Not sanitisation: an action that fails this is a bug in the caller's
+ * `describe` (or a hand-written `writeAuditEntry` call), and silently
+ * coercing it into something that looks like a valid action would leave
+ * that bug in place while producing a row that reads as fine.
+ */
+function validateActionName(action: string): void {
+  if (!ACTION_NAME.test(action)) {
+    throw new AuditActionError(
+      `action ${JSON.stringify(action)} is not a stable dotted identifier ` +
+        "(e.g. \"crm.stage.change\"); this is the column a retention or " +
+        "alerting rule discriminates on, not free prose",
+    );
   }
 }
 
@@ -173,11 +220,20 @@ export function serialiseSummary(summary: AuditSummary): string {
  * Exported because not every auditable event is an operation that returns
  * data to a caller. On its own it protects nothing — a caller can still
  * forget to call it, which is why anything that returns data to an operator
- * goes through `auditedOperation` instead.
+ * goes through `auditedOperation` instead. Validated here rather than only
+ * in `auditedOperation`, so this — the bare-write path — carries the same
+ * guarantee: nothing reaches `console_audit_log` with an action that isn't
+ * a stable dotted identifier, regardless of which of the two entry points
+ * produced it.
  *
  * Failures are wrapped, never swallowed.
  */
 export async function writeAuditEntry(entry: NewAuditEntry): Promise<void> {
+  // Validated before the summary and outside the try, same as
+  // `serialiseSummary` below: a malformed action is a bug in the caller, not
+  // a database failure, and must surface as its own error rather than being
+  // reported as one.
+  validateActionName(entry.action);
   const metadata =
     entry.summary === undefined ? null : serialiseSummary(entry.summary);
   const occurredAt = entry.occurredAt ?? new Date().toISOString();
@@ -229,19 +285,47 @@ export async function recentAuditEntries(limit: number): Promise<AuditEntry[]> {
   }));
 }
 
+/** What an operation's audit row should say, computed from its own result.
+ *
+ * `target` is optional and, when present, overrides `AuditedOperation.target`
+ * (Ruling 20). Most callers know their target before the operation runs (an
+ * opportunity id, say) and pass it as `AuditedOperation.target` directly. But
+ * some don't: `removeSuppression` is looked up and deleted by an opaque
+ * uuid, while the identifier an auditor actually wants to see — the email or
+ * Instagram handle #204 already calls the accountable fact — is only known
+ * from the operation's *result*, exactly like `action`/`summary` above. This
+ * is the same reason those two live in `describe` rather than at the call
+ * site: a single call cannot always know upfront what it will turn out to be
+ * accounting for. */
+export interface AuditDescription {
+  readonly action: string;
+  readonly summary: AuditSummary;
+  readonly target?: string;
+}
+
 /** An audited operation and the facts that account for it. */
 export interface AuditedOperation<T> {
   readonly actor: string;
-  readonly action: string;
+  /** Used verbatim unless `describe`'s result overrides it — see
+   *  `AuditDescription.target`. */
   readonly target?: string;
   /** The work being accounted for. Runs only if the audit can be written. */
   readonly operation: () => Promise<T>;
   /**
-   * Reduces the result to counts. Its return type is the reason a caller
-   * cannot hand result rows to the audit trail: there is nowhere in
-   * `AuditSummary` for a row to go.
+   * Reduces the result to what the audit row should say: which action
+   * happened, and counts. Takes the *result*, not a value fixed at the call
+   * site, because a single call site can cover more than one real action —
+   * a write that turned out to be a no-op is not the same action as one that
+   * changed something, and neither is a write that changed a different field
+   * than the one the call site was named for. `action` living here, next to
+   * `summary`, is what lets a caller report that honestly with one write
+   * instead of picking an action name before it knows what happened.
+   *
+   * Its `summary` return type is also the reason a caller cannot hand result
+   * rows to the audit trail: there is nowhere in `AuditSummary` for a row to
+   * go.
    */
-  readonly summarise: (result: T) => AuditSummary;
+  readonly describe: (result: T) => AuditDescription;
 }
 
 /**
@@ -263,7 +347,7 @@ export interface AuditedOperation<T> {
  *    nothing went unaccounted for. See AuditUnavailableError.
  * 2. Run the operation. Its own failure propagates unchanged — a failed
  *    operation returned no data, so there are no unaudited results.
- * 3. Summarise, then write. **The row is written even when the operation
+ * 3. Describe, then write. **The row is written even when the operation
  *    returned nothing**: "who searched for whom and found nothing" is the
  *    interesting case, and a zero-result summary is still a summary.
  * 4. The write throws → the result is discarded and AuditWriteError
@@ -277,15 +361,24 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
 
   const result = await spec.operation();
 
-  // Summarised before the write and outside its try, so a summariser bug
+  // Described before the write and outside its try, so a bug in `describe`
   // surfaces as AuditSummaryError rather than being reported as a database
   // failure — and so the result is still discarded either way.
-  const summary = spec.summarise(result);
+  const { action, summary, target } = spec.describe(result);
 
   await writeAuditEntry({
     actor: spec.actor,
-    action: spec.action,
-    target: spec.target,
+    action,
+    // Ruling 20: `describe`'s target, when it supplies one, overrides the
+    // upfront `spec.target` — the result is the only place some callers
+    // (`removeSuppression`) ever learn the identifier worth recording.
+    // Falls back on an empty string too, not only `undefined`/`null`: a
+    // `describe` that computed `""` (e.g. a removal whose row had neither
+    // an email nor a handle, which the CHECK constraint should prevent but
+    // this function has no way to verify) has nothing worth recording
+    // either, and writing an empty target would be strictly less useful
+    // than the upfront fallback it was supposed to improve on.
+    target: target || spec.target,
     summary,
   });
 

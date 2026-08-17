@@ -8,6 +8,7 @@ vi.mock("./tesserix", async (importOriginal) => ({
 
 import { isDatabaseConfigured, tesserixQuery } from "./tesserix";
 import {
+  AuditActionError,
   AuditSummaryError,
   AuditUnavailableError,
   AuditWriteError,
@@ -186,6 +187,64 @@ describe("writeAuditEntry / recentAuditEntries", () => {
   });
 });
 
+// Ruling 16: before `describe` (Ruling 15), `action` was a string literal
+// fixed at each call site — statically inspectable, impossible to get wrong
+// at runtime. `describe` makes it a runtime return value sitting next to
+// `summary`, which already rejects malformed input; `action` must carry the
+// same guarantee or the two fields in the same returned object have two
+// different trust levels for no reason.
+describe("writeAuditEntry — action must be a stable dotted identifier", () => {
+  it("accepts a legitimate dotted action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "crm.stage.change" }),
+    ).resolves.toBeUndefined();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
+  });
+
+  // Guards the guard: a validator that accepted everything would pass the
+  // test above too.
+  it("rejects an empty action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects a prose action with spaces", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "changed the stage to qualified" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an over-long action", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "crm.".concat("x".repeat(65)) }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("rejects an action that starts with an uppercase letter or a digit", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "Crm.stage.change" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "1crm.stage.change" }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+  });
+
+  // Rejects rather than sanitises: a malformed action is a bug in the
+  // caller's `describe`, and coercing it into something plausible-looking
+  // would leave that bug in place while producing a row that reads as fine
+  // — precisely what migration 0018's "not free prose" comment forbids.
+  it("never reaches the INSERT for a malformed action, even with a valid summary", async () => {
+    await expect(
+      writeAuditEntry({ actor: "op-1", action: "not an action", summary: { crm: 1 } }),
+    ).rejects.toBeInstanceOf(AuditActionError);
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+});
+
 describe("serialiseSummary — metadata cannot smuggle result rows", () => {
   it("rejects a key that is an email address", () => {
     expect(() => serialiseSummary({ "asha@example.com": 1 })).toThrow(
@@ -230,10 +289,9 @@ describe("auditedOperation", () => {
   it("writes a row and returns the result", async () => {
     const result = await auditedOperation({
       actor: "op-1",
-      action: "identity.lookup",
       target: "asha@example.com",
       operation: async () => [{ id: "u1" }, { id: "u2" }],
-      summarise: (rows) => ({ mark8ly: rows.length }),
+      describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
     });
 
     expect(result).toEqual([{ id: "u1" }, { id: "u2" }]);
@@ -242,15 +300,88 @@ describe("auditedOperation", () => {
     expect(entry.metadata).toBe('{"mark8ly":2}');
   });
 
+  // The reason `describe` takes the result rather than a fixed `action` at
+  // the call site: one call can cover more than one real action, and the
+  // audit row must name the one that actually happened.
+  it("names the action from the result, not a value fixed before the operation ran", async () => {
+    const result = await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ stageChanged: false, productChanged: true }),
+      describe: (outcome) => ({
+        action: outcome.stageChanged ? "crm.stage.change" : "crm.product.set",
+        summary: { transitions: outcome.stageChanged ? 1 : 0 },
+      }),
+    });
+
+    expect(result).toEqual({ stageChanged: false, productChanged: true });
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.action).toBe("crm.product.set");
+    expect(entry.metadata).toBe('{"transitions":0}');
+  });
+
+  // Ruling 20: some callers only learn the identifier worth recording from
+  // the operation's own result — `removeSuppression` is looked up and
+  // deleted by an opaque uuid, but the accountable fact (#204) is the email
+  // or Instagram handle the DELETE ... RETURNING reports back. `describe`'s
+  // `target` exists for exactly that case, the same way `action` does for a
+  // call site that can't know its own action upfront.
+  it("lets describe's target override the upfront spec.target", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "5bf22000-uuid-fallback",
+      operation: async () => [{ id: "s1", email: "ava@example.com" }],
+      describe: (rows) => ({
+        action: "crm.suppression.remove",
+        summary: { removed: rows.length },
+        target: rows[0]?.email,
+      }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("ava@example.com");
+  });
+
+  // Guards the guard: when describe supplies no target at all (the ordinary
+  // case, every other call site in this codebase), the upfront spec.target
+  // must still be what gets written — the override is additive, not a
+  // replacement for the simple case.
+  it("falls back to spec.target when describe supplies none", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ ok: true }),
+      describe: () => ({ action: "crm.stage.change", summary: { transitions: 1 } }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("org-1");
+  });
+
+  // Fix round 3, minor: an empty string is falsy but not `undefined`/`null`
+  // — `target ?? spec.target` would let it win and write an empty target.
+  // No caller does this today, but the fallback exists to guarantee a
+  // useful value reaches the row, not merely a defined one.
+  it("falls back to spec.target when describe supplies an empty string", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ ok: true }),
+      describe: () => ({ action: "crm.stage.change", summary: { transitions: 1 }, target: "" }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("org-1");
+  });
+
   it("writes the row when the operation returned nothing", async () => {
     // "Who searched for whom and found nothing" is the interesting case; a
     // zero-result lookup that leaves no trace is the failure this guards.
     const result = await auditedOperation({
       actor: "op-1",
-      action: "identity.lookup",
       target: "nobody@example.com",
       operation: async () => [] as { id: string }[],
-      summarise: (rows) => ({ mark8ly: rows.length }),
+      describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
     });
 
     expect(result).toEqual([]);
@@ -266,10 +397,9 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         target: "asha@example.com",
         operation,
-        summarise: (rows) => ({ mark8ly: rows.length }),
+        describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
       }),
     ).rejects.toBeInstanceOf(AuditWriteError);
 
@@ -289,11 +419,10 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation: async () => {
           throw new Error("upstream 503");
         },
-        summarise: () => ({ mark8ly: 0 }),
+        describe: () => ({ action: "identity.lookup", summary: { mark8ly: 0 } }),
       }),
     ).rejects.toThrow("upstream 503");
 
@@ -301,24 +430,22 @@ describe("auditedOperation", () => {
     expect(table).toHaveLength(0);
   });
 
-  it("discards the result when the summariser tries to smuggle rows", async () => {
+  it("discards the result when describe's summary tries to smuggle rows", async () => {
     const operation = vi.fn(async () => [{ email: "asha@example.com" }]);
 
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation,
-        summarise: (rows) =>
-          Object.fromEntries(rows.map((r) => [r.email, 1])) as Record<
-            string,
-            number
-          >,
+        describe: (rows) => ({
+          action: "identity.lookup",
+          summary: Object.fromEntries(rows.map((r) => [r.email, 1])) as Record<string, number>,
+        }),
       }),
     ).rejects.toBeInstanceOf(AuditSummaryError);
 
-    // Guards the guard: the operation ran, so the rejection is the
-    // summariser's and not an earlier bail-out.
+    // Guards the guard: the operation ran, so the rejection is describe's
+    // and not an earlier bail-out.
     expect(operation).toHaveBeenCalledTimes(1);
     expect(table).toHaveLength(0);
   });
@@ -333,9 +460,8 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation,
-        summarise: () => ({ mark8ly: 1 }),
+        describe: () => ({ action: "identity.lookup", summary: { mark8ly: 1 } }),
       }),
     ).rejects.toBeInstanceOf(AuditUnavailableError);
 

@@ -155,4 +155,21 @@ describe("platformNav", () => {
       expect(() => webPath(item.route)).not.toThrow();
     }
   });
+
+  it("puts the CRM in Growth, not Operate", () => {
+    // Growth exists because a sales queue does not belong beside service
+    // health (Operate) or policy/accountability (Governance) — it is revenue
+    // work, not platform upkeep.
+    const growth: NavGroup | undefined = platformNav
+      .filter(isNavGroup)
+      .find((group) => group.name === "Growth");
+    expect(growth).toBeDefined();
+    const names = growth!.items.map((item) => item.route);
+    expect(names).toContain("platform.crm");
+
+    const operate: NavGroup | undefined = platformNav
+      .filter(isNavGroup)
+      .find((group) => group.name === "Operate");
+    expect(operate!.items.map((item) => item.route)).not.toContain("platform.crm");
+  });
 });

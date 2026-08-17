@@ -73,3 +73,90 @@ export async function tesserixQuery<R extends QueryResultRow>(
   const result = await getPool().query<R>(sql, params as unknown[]);
   return result.rows;
 }
+
+/** The query shape handed to a `tesserixTx` callback — same signature as
+ *  `tesserixQuery`, but every call runs on the transaction's own client. */
+export type TxQuery = <R extends QueryResultRow>(
+  sql: string,
+  params?: readonly unknown[],
+) => Promise<R[]>;
+
+/** The minimal shape `runTesserixTx` needs from a client: something it can
+ *  send `BEGIN`/`COMMIT`/`ROLLBACK` and every statement in between to. A
+ *  `pg.PoolClient` satisfies this structurally, which is all `tesserixTx`
+ *  needs — and so does anything else with the same `query` signature, which
+ *  is what makes this testable (see crm-repo.write.integration.test.ts). */
+export interface TxClient {
+  query<R extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    params?: unknown[],
+  ): Promise<{ rows: R[] }>;
+}
+
+/**
+ * The transactional core: `BEGIN`, run the callback, `COMMIT` — or
+ * `ROLLBACK` on failure — against whatever client it's given.
+ *
+ * Pulled out of `tesserixTx` and exported specifically so it can be tested
+ * against a real database. `tesserixTx` below is untestable without a real
+ * network Postgres (it calls `pool.connect()`), but the thing the "one
+ * transaction" guarantee actually rests on is this function, not how the
+ * client was acquired — and this function's only requirement of its client
+ * is the structural `TxClient` shape above, which an embedded Postgres
+ * (pglite) satisfies too. A mock that reimplements BEGIN/COMMIT/ROLLBACK by
+ * hand, however faithfully, is still not a test of this code; a test that
+ * calls this function IS.
+ */
+export async function runTesserixTx<T>(
+  client: TxClient,
+  fn: (query: TxQuery) => Promise<T>,
+): Promise<T> {
+  await client.query("BEGIN");
+  try {
+    const scopedQuery: TxQuery = async <R extends QueryResultRow>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ) => {
+      const result = await client.query<R>(sql, params as unknown[]);
+      return result.rows;
+    };
+    const out = await fn(scopedQuery);
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ROLLBACK on a dead connection — ignore, the caller's error is the
+      // one that matters.
+    }
+    throw err;
+  }
+}
+
+/**
+ * Run a callback inside a single transaction, on a single client.
+ *
+ * `tesserixQuery` pulls from a 2-connection pool — a BEGIN and the UPDATE
+ * that follows it can land on two different connections, which is not a
+ * transaction at all, just two unrelated statements that happen to run near
+ * each other. Any multi-statement write that must be atomic (crm-repo's
+ * `advanceStage`, which updates the opportunity and inserts its
+ * `stage_change` activity together) needs one client held for BEGIN,
+ * every statement, and COMMIT/ROLLBACK.
+ *
+ * That client comes out of the pool for the whole transaction, not just one
+ * statement — with `max: 2`, two concurrent stage saves already hold both
+ * connections between them, and a third caller (a save, or an unrelated
+ * read anywhere else in the console) queues behind `connectionTimeoutMillis`
+ * (5s) rather than failing outright. Acceptable today at this write volume;
+ * raise `max` only against measurement, not in anticipation of this.
+ */
+export async function tesserixTx<T>(fn: (query: TxQuery) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    return await runTesserixTx(client, fn);
+  } finally {
+    client.release();
+  }
+}
