@@ -164,9 +164,24 @@ describe("eraseContact", () => {
     expect((rows.rows[0] as { n: number }).n).toBe(2);
   });
 
-  it("is idempotent — erasing twice is not an error", async () => {
+  it("is idempotent — erasing twice does not move erased_at or remove the row", async () => {
     await eraseContact(contactId);
-    await expect(eraseContact(contactId)).resolves.not.toThrow();
+    const firstRows = await db.query(`SELECT erased_at FROM crm_contacts WHERE id = $1`, [
+      contactId,
+    ]);
+    const erasedAtAfterFirst = (firstRows.rows[0] as { erased_at: string }).erased_at;
+
+    // The second erasure must be a no-op on erased_at: that date evidences
+    // when the request was actually honoured, and a re-erase silently
+    // moving it forward would destroy that evidence.
+    const second = await eraseContact(contactId);
+    expect(second).not.toBeNull();
+
+    const secondRows = await db.query(`SELECT erased_at FROM crm_contacts WHERE id = $1`, [
+      contactId,
+    ]);
+    expect(secondRows.rows).toHaveLength(1);
+    expect((secondRows.rows[0] as { erased_at: string }).erased_at).toEqual(erasedAtAfterFirst);
   });
 
   it("returns null for a contact that does not exist", async () => {
@@ -187,11 +202,28 @@ describe("deleteOrganisation", () => {
   });
 
   it("reports what it removed, for the audit row", async () => {
+    // Asymmetric counts (2 contacts, 3 opportunities on top of the
+    // beforeEach fixture) so this test can fail for the reason it names:
+    // symmetric fixtures pass even if the two fields were swapped, or one
+    // count read the wrong table.
+    await db.query(`INSERT INTO crm_contacts (organisation_id, name) VALUES ($1, $2)`, [
+      orgId,
+      "Second Contact",
+    ]);
+    await db.query(`INSERT INTO crm_opportunities (organisation_id, product) VALUES ($1, $2)`, [
+      orgId,
+      "kora",
+    ]);
+    await db.query(`INSERT INTO crm_opportunities (organisation_id, product) VALUES ($1, $2)`, [
+      orgId,
+      "hms",
+    ]);
+
     const result = await deleteOrganisation(orgId);
     // A delete that reports only "ok" gives the audit log nothing to show
     // for an irreversible action.
-    expect(result?.contactsDeleted).toBeGreaterThan(0);
-    expect(result?.opportunitiesDeleted).toBeGreaterThan(0);
+    expect(result?.contactsDeleted).toBe(2);
+    expect(result?.opportunitiesDeleted).toBe(3);
   });
 
   it("returns null for an id that does not exist", async () => {

@@ -44,14 +44,21 @@ export interface ErasedContact {
  * evidence that the erasure was owed. Erasing them would destroy the audit
  * trail of the erasure's own justification.
  *
- * Idempotent — erasing an already-erased contact just re-overwrites the same
- * (already-null) columns; it is not an error.
+ * Idempotent — erasing an already-erased contact re-overwrites the same
+ * (already-null) columns and is not an error, but MUST NOT move
+ * `erased_at` forward. The date an erasure was actually performed is the
+ * compliance-relevant fact: it is what evidences the request was honoured
+ * inside the statutory window, and a second call is exactly what would
+ * destroy it if `erased_at` were reset unconditionally. `updated_at` is
+ * left moving on every call — that column means something else (last
+ * write, full stop).
  */
 export async function eraseContact(contactId: string): Promise<ErasedContact | null> {
   return tesserixTx(async (query) => {
-    // A data-modifying CTE: `old` captures the pre-update row so the UPDATE's
-    // RETURNING can hand back the name as it was, without a second
-    // round-trip. Plain `UPDATE ... RETURNING` only ever sees the post-image.
+    // `old` is a plain CTE (its body is a SELECT, not itself a write) that
+    // captures the pre-update row so the UPDATE's RETURNING can hand back
+    // the name as it was, without a second round-trip. Plain
+    // `UPDATE ... RETURNING` only ever sees the post-image.
     const rows = await query<{
       id: string;
       organisation_id: string;
@@ -68,7 +75,7 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
               biography = NULL,
               followers_count = NULL,
               posts_count = NULL,
-              erased_at = now(),
+              erased_at = COALESCE(c.erased_at, now()),
               updated_at = now()
          FROM old
         WHERE c.id = old.id
@@ -99,12 +106,18 @@ export interface DeletedOrganisation {
 /**
  * Delete an organisation and everything under it.
  *
- * Contacts and opportunities are counted before the delete, inside the same
- * transaction, so the audit row can report what was removed — a delete that
- * reports only "ok" gives the audit log nothing to show for an irreversible
- * action. `ON DELETE CASCADE` on `crm_contacts.organisation_id`,
- * `crm_opportunities.organisation_id` and `crm_activities.organisation_id`
- * does the actual removal of everything but the organisation row itself.
+ * Contacts and opportunities are deleted explicitly (not left to
+ * `ON DELETE CASCADE` from the organisation delete), and the audit counts
+ * are the number of rows each `DELETE ... RETURNING` actually returned —
+ * not a `SELECT count(*)` taken beforehand. A count-then-delete would open a
+ * window between the two statements: a contact committed by another session
+ * in that window would still be removed by the cascade but never counted,
+ * silently understating what was destroyed. These counts feed the audit row
+ * for an irreversible action, and an audit row that *understates* the
+ * damage is worse than no count at all — so what's counted must be exactly
+ * what's deleted, in the same statement. `ON DELETE CASCADE` on
+ * `crm_activities.organisation_id` still does its job for the activity log,
+ * which isn't counted.
  */
 export async function deleteOrganisation(
   organisationId: string,
@@ -118,22 +131,24 @@ export async function deleteOrganisation(
       return null;
     }
 
-    const contactRows = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM crm_contacts WHERE organisation_id = $1`,
+    const deletedContacts = await query<{ id: string }>(
+      `DELETE FROM crm_contacts WHERE organisation_id = $1 RETURNING id`,
       [organisationId],
     );
-    const opportunityRows = await query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM crm_opportunities WHERE organisation_id = $1`,
+    const deletedOpportunities = await query<{ id: string }>(
+      `DELETE FROM crm_opportunities WHERE organisation_id = $1 RETURNING id`,
       [organisationId],
     );
 
+    // Everything under the organisation is already gone; this delete's own
+    // cascade only has crm_activities left to remove.
     await query(`DELETE FROM crm_organisations WHERE id = $1`, [organisationId]);
 
     return {
       organisationId: orgRows[0].id,
       name: orgRows[0].name,
-      contactsDeleted: contactRows[0].n,
-      opportunitiesDeleted: opportunityRows[0].n,
+      contactsDeleted: deletedContacts.length,
+      opportunitiesDeleted: deletedOpportunities.length,
     };
   });
 }
