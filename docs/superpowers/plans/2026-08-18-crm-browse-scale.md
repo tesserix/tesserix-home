@@ -611,8 +611,8 @@ it("returns the primary contact's handle and the contact count", async () => {
 - [ ] **Step 2: Write the failing view test**
 
 ```typescript
-it("leads with the handle for a single-contact organisation with no website or location", async () => {
-  // 208 of 259 migrated rows are exactly this shape: a solo creator whose
+it("leads with the handle for a single-contact organisation with no website", async () => {
+  // 201 of 259 production rows are exactly this shape: a solo creator whose
   // organisation name is derived from their profile.
   listOrganisations.mockResolvedValue({ rows: [soloCreatorRow], total: 1, nextCursor: null });
   render(await Page({ searchParams: Promise.resolve({}) }));
@@ -621,8 +621,8 @@ it("leads with the handle for a single-contact organisation with no website or l
 });
 
 it("leads with the organisation name when it is a real business", async () => {
-  // A row with a website, a location or several contacts is a business, and
-  // its name is the thing an operator recognises.
+  // A row with a website or several contacts is a business, and its name is
+  // the thing an operator recognises. 58 of 259 have a website.
   listOrganisations.mockResolvedValue({ rows: [realBusinessRow], total: 1, nextCursor: null });
   render(await Page({ searchParams: Promise.resolve({}) }));
   expect(screen.getByRole("link", { name: /Newtown Roasters/ })).toBeInTheDocument();
@@ -649,14 +649,24 @@ Extract the decision into a named predicate so the rule is stated once and testa
 
 ```typescript
 /**
- * A row is a solo creator when it has exactly one contact, no website and no
- * location — the shape all 259 migrated Instagram leads have. For those, the
- * organisation name is derived from the profile and the handle is the real
- * identity, so the handle leads. Anything else is a business and leads with
- * its name.
+ * A row is a solo creator when it has exactly one contact and no website. For
+ * those, the organisation name is derived from the Instagram profile and the
+ * handle is the real identity, so the handle leads. Anything else is a
+ * business and leads with its name.
+ *
+ * `location` is deliberately NOT part of this test, though an earlier draft of
+ * this plan included it. Measured against production: 201 of 259 organisations
+ * have no website, but only 159 of those also have no location — so requiring
+ * `!location` would render 42 solo creators name-first purely because
+ * Instagram listed a city on their profile. Location is scraped profile
+ * metadata; it is no evidence of being a registered business. A website is.
+ *
+ * `contactCount === 1` is inert today (every one of the 259 has exactly one
+ * contact) and is kept for the case it actually guards: a business with
+ * several named contacts is a business regardless of its website.
  */
 function leadsWithHandle(row: OrganisationListRow): boolean {
-  return row.contactCount === 1 && !row.websiteUrl && !row.location && Boolean(row.contactHandle);
+  return row.contactCount === 1 && !row.websiteUrl && Boolean(row.contactHandle);
 }
 ```
 
