@@ -21,3 +21,8 @@ export function isCrmActivityKind(value: string): value is CrmActivityKind {
 export function requiresProduct(stage: CrmStage): boolean {
   return stage !== "new" && stage !== "contacted";
 }
+
+/** Days of silence before a no-next-action opportunity counts as "drifting"
+ *  in the queue. A guess about sales rhythm, not a measured threshold — there
+ *  is no usage data yet. Revisit once real queues exist to tune against. */
+export const DRIFT_DAYS = 14;
