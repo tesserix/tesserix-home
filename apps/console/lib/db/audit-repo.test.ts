@@ -230,10 +230,9 @@ describe("auditedOperation", () => {
   it("writes a row and returns the result", async () => {
     const result = await auditedOperation({
       actor: "op-1",
-      action: "identity.lookup",
       target: "asha@example.com",
       operation: async () => [{ id: "u1" }, { id: "u2" }],
-      summarise: (rows) => ({ mark8ly: rows.length }),
+      describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
     });
 
     expect(result).toEqual([{ id: "u1" }, { id: "u2" }]);
@@ -242,15 +241,34 @@ describe("auditedOperation", () => {
     expect(entry.metadata).toBe('{"mark8ly":2}');
   });
 
+  // The reason `describe` takes the result rather than a fixed `action` at
+  // the call site: one call can cover more than one real action, and the
+  // audit row must name the one that actually happened.
+  it("names the action from the result, not a value fixed before the operation ran", async () => {
+    const result = await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ stageChanged: false, productChanged: true }),
+      describe: (outcome) => ({
+        action: outcome.stageChanged ? "crm.stage.change" : "crm.product.set",
+        summary: { transitions: outcome.stageChanged ? 1 : 0 },
+      }),
+    });
+
+    expect(result).toEqual({ stageChanged: false, productChanged: true });
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.action).toBe("crm.product.set");
+    expect(entry.metadata).toBe('{"transitions":0}');
+  });
+
   it("writes the row when the operation returned nothing", async () => {
     // "Who searched for whom and found nothing" is the interesting case; a
     // zero-result lookup that leaves no trace is the failure this guards.
     const result = await auditedOperation({
       actor: "op-1",
-      action: "identity.lookup",
       target: "nobody@example.com",
       operation: async () => [] as { id: string }[],
-      summarise: (rows) => ({ mark8ly: rows.length }),
+      describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
     });
 
     expect(result).toEqual([]);
@@ -266,10 +284,9 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         target: "asha@example.com",
         operation,
-        summarise: (rows) => ({ mark8ly: rows.length }),
+        describe: (rows) => ({ action: "identity.lookup", summary: { mark8ly: rows.length } }),
       }),
     ).rejects.toBeInstanceOf(AuditWriteError);
 
@@ -289,11 +306,10 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation: async () => {
           throw new Error("upstream 503");
         },
-        summarise: () => ({ mark8ly: 0 }),
+        describe: () => ({ action: "identity.lookup", summary: { mark8ly: 0 } }),
       }),
     ).rejects.toThrow("upstream 503");
 
@@ -301,24 +317,22 @@ describe("auditedOperation", () => {
     expect(table).toHaveLength(0);
   });
 
-  it("discards the result when the summariser tries to smuggle rows", async () => {
+  it("discards the result when describe's summary tries to smuggle rows", async () => {
     const operation = vi.fn(async () => [{ email: "asha@example.com" }]);
 
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation,
-        summarise: (rows) =>
-          Object.fromEntries(rows.map((r) => [r.email, 1])) as Record<
-            string,
-            number
-          >,
+        describe: (rows) => ({
+          action: "identity.lookup",
+          summary: Object.fromEntries(rows.map((r) => [r.email, 1])) as Record<string, number>,
+        }),
       }),
     ).rejects.toBeInstanceOf(AuditSummaryError);
 
-    // Guards the guard: the operation ran, so the rejection is the
-    // summariser's and not an earlier bail-out.
+    // Guards the guard: the operation ran, so the rejection is describe's
+    // and not an earlier bail-out.
     expect(operation).toHaveBeenCalledTimes(1);
     expect(table).toHaveLength(0);
   });
@@ -333,9 +347,8 @@ describe("auditedOperation", () => {
     await expect(
       auditedOperation({
         actor: "op-1",
-        action: "identity.lookup",
         operation,
-        summarise: () => ({ mark8ly: 1 }),
+        describe: () => ({ action: "identity.lookup", summary: { mark8ly: 1 } }),
       }),
     ).rejects.toBeInstanceOf(AuditUnavailableError);
 

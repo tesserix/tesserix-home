@@ -11,20 +11,21 @@ vi.mock("@/lib/db/crm-repo", async (importOriginal) => ({
   setNextAction: vi.fn(),
   logActivity: vi.fn(),
 }));
-vi.mock("@/lib/db/audit-repo", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/db/audit-repo")>()),
-  writeAuditEntry: vi.fn(),
-}));
+// Ruling 15: `actions.ts` now goes through the REAL `auditedOperation`
+// (audit-repo.ts is not mocked) — only its own two leaf dependencies are,
+// exactly the way `audit-repo.test.ts` tests `auditedOperation` itself.
+// That is the point: a passing test here is evidence about the actual
+// control this app ships, not about a copy of it.
 vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/tesserix")>()),
+  tesserixQuery: vi.fn(),
   isDatabaseConfigured: vi.fn(),
 }));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
 import { advanceStage, setNextAction, logActivity, MissingProductError } from "@/lib/db/crm-repo";
-import { writeAuditEntry } from "@/lib/db/audit-repo";
-import { isDatabaseConfigured } from "@/lib/db/tesserix";
+import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import { changeStage, scheduleNextAction, addActivity } from "./actions";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
@@ -40,11 +41,28 @@ function signIn(roles: readonly string[] | undefined) {
   } as never);
 }
 
+/** The one write `writeAuditEntry` issues — `[actor, action, target,
+ *  occurredAt, metadata]`, per audit-repo.ts. Pulled out so every test reads
+ *  the audit row the same way instead of indexing into `mock.calls` inline. */
+function lastAuditInsert(): { action: string; target: string | null; summary: unknown } {
+  const call = vi.mocked(tesserixQuery).mock.calls.at(-1);
+  if (!call) throw new Error("tesserixQuery was never called");
+  const [, params] = call;
+  const [, action, target, , metadata] = params as [
+    string,
+    string,
+    string | null,
+    string,
+    string | null,
+  ];
+  return { action, target, summary: metadata ? JSON.parse(metadata) : null };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("AUTH_PROVIDER", "zitadel");
   vi.mocked(isDatabaseConfigured).mockReturnValue(true);
-  vi.mocked(writeAuditEntry).mockResolvedValue(undefined);
+  vi.mocked(tesserixQuery).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -71,8 +89,7 @@ describe("changeStage", () => {
       product: "mark8ly",
       lostReason: undefined,
     });
-    expect(writeAuditEntry).toHaveBeenCalledWith({
-      actor: "sub-1",
+    expect(lastAuditInsert()).toEqual({
       action: "crm.stage.change",
       target: OPP_ID,
       summary: { transitions: 1 },
@@ -96,9 +113,11 @@ describe("changeStage", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "crm.stage.change", summary: { transitions: 0 } }),
-    );
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.stage.change",
+      target: OPP_ID,
+      summary: { transitions: 0 },
+    });
   });
 
   // Important 3: a product re-pointed on a live deal with the stage
@@ -117,9 +136,11 @@ describe("changeStage", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    expect(writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "crm.product.set", summary: { transitions: 0 } }),
-    );
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.product.set",
+      target: OPP_ID,
+      summary: { transitions: 0 },
+    });
   });
 
   it("refuses without console entry, before any transport or audit call", async () => {
@@ -134,7 +155,7 @@ describe("changeStage", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(advanceStage).not.toHaveBeenCalled();
-    expect(writeAuditEntry).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 
   it("rejects an unrecognised stage without calling the session or the repo", async () => {
@@ -183,7 +204,33 @@ describe("changeStage", () => {
 
     expect(result).toEqual({ ok: false, message: "That change was not saved." });
     expect(advanceStage).not.toHaveBeenCalled();
-    expect(writeAuditEntry).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  // The single most important property of `auditedOperation`: a failed
+  // audit write discards the result and throws — a caller must never be
+  // able to obtain a value the audit trail doesn't also have a row for.
+  // Exercised here against the REAL `auditedOperation` (only `tesserixQuery`
+  // is mocked, to make the INSERT itself fail) rather than a mock of
+  // `auditedOperation` standing in for that guarantee.
+  it("discards the result when the audit write fails, and does not report success", async () => {
+    signIn(["read"]);
+    vi.mocked(advanceStage).mockResolvedValue({ stageChanged: true, productChanged: true });
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await changeStage({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      to: "qualified",
+      product: "mark8ly",
+    });
+
+    expect(result).toEqual({ ok: false, message: "That change was not saved." });
+    // Guards the guard: the operation genuinely ran (this is a real failure
+    // of the WRITE, not an earlier bail-out) — but the caller never gets
+    // `{ok: true}` for a change whose audit row does not exist.
+    expect(advanceStage).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
 
@@ -206,9 +253,11 @@ describe("scheduleNextAction", () => {
       note: "call back",
       actor: "ava@tesserix.app",
     });
-    expect(writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "crm.next_action.set", target: OPP_ID }),
-    );
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.next_action.set",
+      target: OPP_ID,
+      summary: { scheduled: 1 },
+    });
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
   });
 
@@ -229,7 +278,7 @@ describe("scheduleNextAction", () => {
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/product/i);
-    expect(writeAuditEntry).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 });
 
@@ -253,9 +302,7 @@ describe("addActivity", () => {
       actor: "ava@tesserix.app",
       body: "left a voicemail",
     });
-    expect(writeAuditEntry).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "crm.activity.log" }),
-    );
+    expect(lastAuditInsert().action).toBe("crm.activity.log");
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
   });
 
@@ -290,7 +337,7 @@ describe("addActivity", () => {
     });
     expect(getCurrentSession).not.toHaveBeenCalled();
     expect(logActivity).not.toHaveBeenCalled();
-    expect(writeAuditEntry).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 
   it("rejects an attempt to log an assigned activity directly", async () => {

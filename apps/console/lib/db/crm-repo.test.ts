@@ -315,8 +315,13 @@ describe("advanceStage", () => {
     });
     const [updateSql, updateParams] = query.mock.calls[1];
     expect(updateSql).toContain("closed_at = NULL");
-    expect(updateSql).toMatch(/lost_reason = \$\d/);
-    expect(updateParams).toContain(null);
+    expect(updateSql).toContain("lost_reason = $3");
+    // Pinned by position, not `toContain(null)`: `updateParams` is
+    // `[opportunityId, to, lostReason]` here (product is unchanged, so no
+    // fourth param is pushed) — `toContain(null)` would pass just as well
+    // if some OTHER parameter happened to be null, which proves nothing
+    // about lost_reason specifically.
+    expect(updateParams).toEqual(["o1", "qualified", null]);
   });
 
   it("moving lost -> won clears lost_reason but still sets closed_at", async () => {
@@ -331,7 +336,10 @@ describe("advanceStage", () => {
     });
     const [updateSql, updateParams] = query.mock.calls[1];
     expect(updateSql).toContain("closed_at = now()");
-    expect(updateParams).toContain(null); // lost_reason cleared
+    // Pinned by position (see the comment above): params are
+    // `[opportunityId, to, lostReason]`, and lost_reason — index 2 — is the
+    // one that must be null, not merely "some param is null".
+    expect(updateParams).toEqual(["o1", "won", null]);
   });
 
   it("always sets updated_at, since crm_opportunities has no update trigger", async () => {

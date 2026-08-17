@@ -229,19 +229,33 @@ export async function recentAuditEntries(limit: number): Promise<AuditEntry[]> {
   }));
 }
 
+/** What an operation's audit row should say, computed from its own result. */
+export interface AuditDescription {
+  readonly action: string;
+  readonly summary: AuditSummary;
+}
+
 /** An audited operation and the facts that account for it. */
 export interface AuditedOperation<T> {
   readonly actor: string;
-  readonly action: string;
   readonly target?: string;
   /** The work being accounted for. Runs only if the audit can be written. */
   readonly operation: () => Promise<T>;
   /**
-   * Reduces the result to counts. Its return type is the reason a caller
-   * cannot hand result rows to the audit trail: there is nowhere in
-   * `AuditSummary` for a row to go.
+   * Reduces the result to what the audit row should say: which action
+   * happened, and counts. Takes the *result*, not a value fixed at the call
+   * site, because a single call site can cover more than one real action —
+   * a write that turned out to be a no-op is not the same action as one that
+   * changed something, and neither is a write that changed a different field
+   * than the one the call site was named for. `action` living here, next to
+   * `summary`, is what lets a caller report that honestly with one write
+   * instead of picking an action name before it knows what happened.
+   *
+   * Its `summary` return type is also the reason a caller cannot hand result
+   * rows to the audit trail: there is nowhere in `AuditSummary` for a row to
+   * go.
    */
-  readonly summarise: (result: T) => AuditSummary;
+  readonly describe: (result: T) => AuditDescription;
 }
 
 /**
@@ -263,7 +277,7 @@ export interface AuditedOperation<T> {
  *    nothing went unaccounted for. See AuditUnavailableError.
  * 2. Run the operation. Its own failure propagates unchanged — a failed
  *    operation returned no data, so there are no unaudited results.
- * 3. Summarise, then write. **The row is written even when the operation
+ * 3. Describe, then write. **The row is written even when the operation
  *    returned nothing**: "who searched for whom and found nothing" is the
  *    interesting case, and a zero-result summary is still a summary.
  * 4. The write throws → the result is discarded and AuditWriteError
@@ -277,14 +291,14 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
 
   const result = await spec.operation();
 
-  // Summarised before the write and outside its try, so a summariser bug
+  // Described before the write and outside its try, so a bug in `describe`
   // surfaces as AuditSummaryError rather than being reported as a database
   // failure — and so the result is still discarded either way.
-  const summary = spec.summarise(result);
+  const { action, summary } = spec.describe(result);
 
   await writeAuditEntry({
     actor: spec.actor,
-    action: spec.action,
+    action,
     target: spec.target,
     summary,
   });

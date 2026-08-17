@@ -11,12 +11,11 @@ import {
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
 import {
-  writeAuditEntry,
+  auditedOperation,
   AuditUnavailableError,
   AuditWriteError,
-  type AuditSummary,
+  type AuditDescription,
 } from "@/lib/db/audit-repo";
-import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
 export type CrmActionResult = { ok: true } | { ok: false; message: string };
@@ -51,45 +50,36 @@ const NOT_SAVED_MESSAGE = "That change was not saved.";
  * for the audit row below.
  */
 
-/** What to write to the audit trail, decided from the write's own outcome —
- *  not fixed at the call site. `changeStage` needs this: whether the write
- *  was a real stage transition or only a product correction on an unchanged
- *  stage isn't known until `advanceStage` has run, and the two must not
- *  share an audit action (a `crm.stage.change` row that names no transition
- *  is a false record). */
-interface CrmAudit {
-  action: string;
-  summary: AuditSummary;
-}
-
 /**
- * `auditedOperation` (audit-repo.ts) is the right tool when the audit
- * `action` string is fixed at the call site — but here it can't be: which
- * action to record depends on what `advanceStage` actually did. This
- * reimplements `auditedOperation`'s guarantee by hand (refuse before running
- * if the database isn't configured; run; write exactly one audit row; never
- * hand back a result the audit write didn't happen for) but lets `toAudit`
- * compute the action and summary from the real result instead of assuming
- * one upfront.
+ * Ruling 15: this is `auditedOperation` (audit-repo.ts) plus a session
+ * check and error mapping — nothing more. It used to reimplement
+ * `auditedOperation`'s guarantee by hand, on the theory that a dynamic audit
+ * `action` needed a different control. It didn't: `AuditedOperation.describe`
+ * already takes the operation's *result* and returns `{ action, summary }`
+ * together, which is exactly what `changeStage` needs (whether the write was
+ * a real stage transition or only a product correction on an unchanged stage
+ * isn't known until `advanceStage` has run). A hand-rolled copy in a leaf
+ * file — even a faithful one — is a second place the one structural control
+ * in this codebase can drift from what the shared module actually enforces.
  */
 async function withCrmWrite<T>(
   target: string,
   run: (actor: { sub: string; email: string }) => Promise<T>,
-  toAudit: (result: T) => CrmAudit,
+  describe: (result: T) => AuditDescription,
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
     checkOperatorCapability(session, "read");
-    if (!isDatabaseConfigured()) {
-      throw new AuditUnavailableError();
-    }
     const actor = {
       sub: session?.sub ?? "unknown",
       email: session?.email ?? session?.sub ?? "unknown",
     };
-    const value = await run(actor);
-    const { action, summary } = toAudit(value);
-    await writeAuditEntry({ actor: actor.sub, action, target, summary });
+    const value = await auditedOperation({
+      actor: actor.sub,
+      target,
+      operation: () => run(actor),
+      describe,
+    });
     return { ok: true, value };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
