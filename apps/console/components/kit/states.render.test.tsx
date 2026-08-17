@@ -68,4 +68,19 @@ describe("SurfaceStateView", () => {
     expect(screen.queryByText("Runs appear here.")).toBeNull();
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
   });
+
+  it("keeps the instrumentation icon on the same row as its title", () => {
+    // Callout renders a bare padded div with no icon slot, so an icon placed
+    // as a plain sibling of the h5 wraps onto its own line above the heading.
+    // Assert the structure that prevents it: one flex row holding both.
+    const { container } = renderState({ kind: "instrumentation-unavailable" });
+
+    const icon = container.querySelector("svg");
+    const title = screen.getByText("Instrumentation unavailable");
+    const row = icon?.parentElement;
+
+    expect(row).not.toBeNull();
+    expect(row?.className).toContain("flex");
+    expect(row?.contains(title)).toBe(true);
+  });
 });

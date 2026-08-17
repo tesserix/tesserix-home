@@ -106,14 +106,26 @@ export function SurfaceStateView({
       // to measure" or "the request failed and a retry might fix it".
       return (
         <Callout variant="warning" role="status">
-          <PlugZap className="h-4 w-4" aria-hidden="true" />
-          {/* The state may carry its own copy — an un-migrated database is
-              the same calm "not wired up yet" state as a parked data plane,
-              but its remedy is running migrations, not reading the park doc. */}
-          <CalloutTitle>{state.title ?? "Instrumentation unavailable"}</CalloutTitle>
-          <CalloutDescription>
-            {state.message ?? INSTRUMENTATION_UNAVAILABLE_MESSAGE}
-          </CalloutDescription>
+          {/* Callout is a bare padded div — unlike shadcn's Alert it has no
+              grid or `[&>svg]` slot, so an icon dropped in as a sibling of
+              CalloutTitle (an h5) lands on its own line above the heading.
+              The row lives here rather than in the design system because the
+              icon is this surface's choice, not the Callout's. */}
+          <div className="flex items-start gap-2">
+            <PlugZap className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            {/* min-w-0 lets the description wrap instead of forcing the flex
+                item to its content width and overflowing the card. */}
+            <div className="min-w-0">
+              {/* The state may carry its own copy — an un-migrated database is
+                  the same calm "not wired up yet" state as a parked data plane,
+                  but its remedy is running migrations, not reading the park
+                  doc. */}
+              <CalloutTitle>{state.title ?? "Instrumentation unavailable"}</CalloutTitle>
+              <CalloutDescription>
+                {state.message ?? INSTRUMENTATION_UNAVAILABLE_MESSAGE}
+              </CalloutDescription>
+            </div>
+          </div>
         </Callout>
       );
 
