@@ -23,6 +23,14 @@ export interface DisplayCounts {
   matchedExisting: number;
   skippedSuppressed: number;
   malformed: number;
+  /**
+   * Rows created with their `website_url` dropped as unsafe. `null` — not 0
+   * — on a preview: `previewImport` writes nothing and so drops nothing, and
+   * showing "Website dropped 0" beside a preview would assert a fact about
+   * an import that has not happened. The card renders this cell only when it
+   * is a number.
+   */
+  droppedWebsiteUrls: number | null;
 }
 
 export function previewDisplayCounts(preview: ImportPreview, parseMalformed: number): DisplayCounts {
@@ -31,6 +39,7 @@ export function previewDisplayCounts(preview: ImportPreview, parseMalformed: num
     matchedExisting: preview.matchedExisting,
     skippedSuppressed: preview.skippedSuppressed,
     malformed: preview.malformed + parseMalformed,
+    droppedWebsiteUrls: null,
   };
 }
 
@@ -40,6 +49,7 @@ export function committedDisplayCounts(result: ImportResult, parseMalformed: num
     matchedExisting: result.matchedExisting,
     skippedSuppressed: result.skippedSuppressed,
     malformed: result.malformed + parseMalformed,
+    droppedWebsiteUrls: result.droppedWebsiteUrls,
   };
 }
 

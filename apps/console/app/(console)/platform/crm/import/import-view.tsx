@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
 import { parseImportCsv, type ImportRow } from "@/lib/crm";
 import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
@@ -72,7 +73,26 @@ function CountsSummary({
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Malformed</dt>
           <dd className="mt-1 text-lg">{counts.malformed}</dd>
         </div>
+        {/* Only on a committed import — a preview drops nothing, so the
+         *  count is `null` there rather than a misleading zero. Shown beside
+         *  the other counts because there is no organisation edit surface:
+         *  the only remedy for a dropped address is a re-import, and an
+         *  operator who is never told the drop happened cannot choose it. */}
+        {counts.droppedWebsiteUrls !== null ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+              Website dropped
+            </dt>
+            <dd className="mt-1 text-lg">{counts.droppedWebsiteUrls}</dd>
+          </div>
+        ) : null}
       </dl>
+      {counts.droppedWebsiteUrls ? (
+        <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          These rows were created, but their website cell was not a http:// or https:// address and
+          was left blank. Correct the CSV and import again to add it.
+        </p>
+      ) : null}
       {matchedRows.length > 0 ? (
         <div className="mt-3 border-t border-border pt-3 text-muted-foreground">
           <p>
@@ -215,11 +235,27 @@ export function ImportView() {
       ) : null}
 
       {committedCounts && committed ? (
-        <CountsSummary
-          counts={committedCounts}
-          title="Import committed"
-          matchedRows={committed.matchedRows}
-        />
+        <div className="flex flex-col gap-3">
+          <CountsSummary
+            counts={committedCounts}
+            title="Import committed"
+            matchedRows={committed.matchedRows}
+          />
+          {/* Without this the import flow was a dead end: it reported "47
+           *  created" and offered no way to see any of them, and those rows
+           *  sat on neither CRM queue for fourteen days. Gated on `created`,
+           *  not just rendering unconditionally — an import that only
+           *  matched or skipped rows created nothing this link could show. */}
+          {committed.created > 0 ? (
+            <Link
+              href={`/platform/crm/organisations?import=${committed.importId}`}
+              className="text-sm font-medium hover:underline"
+            >
+              View {committed.created} new{" "}
+              {committed.created === 1 ? "organisation" : "organisations"}
+            </Link>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

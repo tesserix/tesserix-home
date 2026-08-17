@@ -32,6 +32,7 @@ import {
   AlreadyLinkedError,
   SuppressedContactError,
 } from "./crm-repo";
+import { UNASSIGNED_PRODUCT } from "./crm-filters";
 
 beforeEach(() => {
   query.mockReset();
@@ -140,6 +141,26 @@ describe("the queue", () => {
     expect(driftingSql).toContain(
       "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
     );
+  });
+
+  it("matches NULL product for the unassigned sentinel, not equality", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ product: UNASSIGNED_PRODUCT }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.product IS NULL");
+    expect(sql).not.toMatch(/o\.product\s*=/);
+    // The sentinel must never reach the database as a value — a product
+    // literally named "__unassigned__" is not what the operator asked for.
+    expect(params).not.toContain(UNASSIGNED_PRODUCT);
+    expect(params).toEqual([50]);
+  });
+
+  it("still uses equality for a real product", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ product: "mark8ly" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/o\.product\s*=/);
+    expect(params).toContain("mark8ly");
   });
 });
 

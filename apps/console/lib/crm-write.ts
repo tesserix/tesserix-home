@@ -1,4 +1,8 @@
-import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
+import {
+  CapabilityError,
+  getCurrentSession,
+  type Capability,
+} from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
 import {
   auditedOperation,
@@ -9,8 +13,11 @@ import {
 
 /**
  * The one wrapper every CRM write goes through: session check +
- * `checkOperatorCapability(session, "read")` + `auditedOperation` + error
- * mapping.
+ * `checkOperatorCapability(session, options?.capability ?? "read")` +
+ * `auditedOperation` + error mapping. Defaults to `"read"` because that is
+ * the only gate an edit can be checked against today — see the comment on
+ * `withCrmWrite` for the one exception (erasure, gated on `hard-delete`)
+ * and why the default leaves every other caller unchanged.
  *
  * Ruling 17: originally lived only in `crm/[organisation]/actions.ts`. Task 7
  * added a second CRM surface (the do-not-contact list) that hand-rolled its
@@ -50,16 +57,22 @@ const NOT_SAVED_MESSAGE = "That change was not saved.";
  * entry — every operator already holds it) and made accountable through
  * `auditedOperation` instead. Closing this properly is one Zitadel role
  * change that covers every CRM surface, not one per surface.
+ *
+ * Erasure is the one exception: `hard-delete` fits exactly what it does, so
+ * a caller that erases a contact passes `{ capability: "hard-delete" }`
+ * rather than sharing the `read` gate every edit is stuck with. `options`
+ * defaults `capability` to `"read"`, so every existing caller is unchanged.
  */
 export async function withCrmWrite<T>(
   target: string,
   run: (actor: { sub: string; email: string }) => Promise<T>,
   describe: (result: T) => AuditDescription,
   mapError?: (cause: unknown) => { ok: false; message: string } | undefined,
+  options?: { capability?: Capability },
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "read");
+    checkOperatorCapability(session, options?.capability ?? "read");
     const actor = {
       sub: session?.sub ?? "unknown",
       email: session?.email ?? session?.sub ?? "unknown",

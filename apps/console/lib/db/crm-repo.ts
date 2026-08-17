@@ -1,4 +1,6 @@
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
+import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { isSafeWebsiteUrl } from "./crm-url";
 import {
   isUsableImportRow,
   requiresProduct,
@@ -112,7 +114,11 @@ function toQueueRow(row: RawQueueRow): QueueRow {
  */
 function filterClause(filter: QueueFilter, params: unknown[]): string {
   const clauses: string[] = [];
-  if (filter.product) {
+  if (filter.product === UNASSIGNED_PRODUCT) {
+    // No bound parameter: this is a NULL test, not a comparison. `= NULL`
+    // is never true in SQL, which is the bug this branch exists to fix.
+    clauses.push(`o.product IS NULL`);
+  } else if (filter.product) {
     params.push(filter.product);
     clauses.push(`o.product = $${params.length}`);
   }
@@ -485,19 +491,27 @@ const OUTBOUND_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
 ]);
 
 /**
- * Thrown when outreach is logged against an organisation whose contacts are
- * on the do-not-contact list. design.md:224 says the list is checked "at
- * import and when logging outreach"; before this, only the two import
- * callers checked, so half of what the feature claims was absent. An
- * allowlisted, operator-facing exception (see `mapError` in
+ * Thrown when the do-not-contact list refuses a write. design.md:224 says the
+ * list is checked "at import and when logging outreach"; before this, only
+ * the two import callers checked, so half of what the feature claims was
+ * absent. An allowlisted, operator-facing exception (see `mapError` in
  * `lib/crm-write.ts`) rather than a generic failure: an operator who just
  * hit this needs to know WHY, or they will simply try again.
+ *
+ * `organisationId` is optional and `message` overridable because the same
+ * refusal now has two shapes. Outreach is refused against a known
+ * organisation; a MANUAL CREATE (`crm-writes.ts`) is refused for a person who
+ * asked not to be contacted, and on the new-organisation path there is no
+ * organisation id yet — the whole point is that the row does not get written.
+ * The message says which of the two happened, and neither wording names any
+ * detail the operator did not just type in themselves.
  */
 export class SuppressedContactError extends Error {
-  constructor(readonly organisationId: string) {
-    super(
-      "This organisation is on the do-not-contact list. Remove the suppression before logging outreach.",
-    );
+  constructor(
+    readonly organisationId?: string,
+    message = "This organisation is on the do-not-contact list. Remove the suppression before logging outreach.",
+  ) {
+    super(message);
     this.name = "SuppressedContactError";
   }
 }
@@ -1173,6 +1187,16 @@ export interface ImportResult {
   matchedExisting: number;
   skippedSuppressed: number;
   malformed: number;
+  /**
+   * Rows that WERE created, but whose `website_url` cell failed
+   * `isSafeWebsiteUrl` and was stored as NULL. Deliberately not folded into
+   * `malformed` — that counter means "no organisation was created for this
+   * row" — but it cannot go unreported either: there is no organisation edit
+   * surface, so an operator who is never told cannot ever put the address
+   * back. Zero for an import where every URL was fine, which is the common
+   * case and reads as such.
+   */
+  droppedWebsiteUrls: number;
   matchedRows: readonly ImportRow[];
 }
 
@@ -1213,6 +1237,7 @@ export async function commitImport(
     let matchedExisting = 0;
     let skippedSuppressed = 0;
     let malformed = 0;
+    let droppedWebsiteUrls = 0;
     const matchedRows: ImportRow[] = [];
 
     const importRows = await query<{ id: string }>(
@@ -1258,13 +1283,34 @@ export async function commitImport(
       }
 
       const name = row.name?.trim() || row.email?.trim() || row.instagramHandle?.trim();
+      // A hostile `website_url` cell (`javascript:alert(1)`, `data:...`) is
+      // one bad field on an otherwise usable row — not a reason to reject
+      // the whole row, and certainly not a reason to throw mid-loop and roll
+      // back every row already committed in this batch (Ruling 23's
+      // same-transaction guarantee cuts both ways: one bad row must not cost
+      // the others). Stored as NULL instead, exactly like the column's
+      // existing "blank cell" handling one line below.
+      //
+      // Counted, though, in its own `droppedWebsiteUrls` — not in
+      // `malformed`, which means "no organisation was created for this row"
+      // (see the `isUsableImportRow` check above) and would come to mean two
+      // things at once. The count is what makes the drop recoverable at all:
+      // there is no organisation edit surface anywhere in the console, so a
+      // silently dropped address is gone until the row is re-imported, and an
+      // operator who is not told has no way to know a re-import is owed.
+      const trimmedWebsiteUrl = row.websiteUrl?.trim() || null;
+      const websiteUrl =
+        trimmedWebsiteUrl && isSafeWebsiteUrl(trimmedWebsiteUrl) ? trimmedWebsiteUrl : null;
+      if (trimmedWebsiteUrl && !websiteUrl) {
+        droppedWebsiteUrls++;
+      }
       const orgRows = await query<{ id: string }>(
         `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
         [
           name,
-          row.websiteUrl?.trim() || null,
+          websiteUrl,
           row.location?.trim() || null,
           row.category ?? [],
           row.tags ?? [],
@@ -1307,7 +1353,15 @@ export async function commitImport(
       skippedCount,
     ]);
 
-    return { importId, created, matchedExisting, skippedSuppressed, malformed, matchedRows };
+    return {
+      importId,
+      created,
+      matchedExisting,
+      skippedSuppressed,
+      malformed,
+      droppedWebsiteUrls,
+      matchedRows,
+    };
   });
 }
 
@@ -1629,4 +1683,128 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
 
     return { organisationId: row.id, organisationName: row.name, product, method };
   });
+}
+
+export interface OrganisationFilter {
+  /** Free-text: matches organisation name, contact name, contact email,
+   *  contact instagram handle. Case-insensitive substring. */
+  search?: string;
+  /** Only organisations created by this import batch. */
+  importId?: string;
+}
+
+export interface OrganisationListRow {
+  id: string;
+  name: string;
+  location: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  /** Open (non-won/lost) opportunity count. */
+  openOpportunities: number;
+  /** Distinct products across this org's opportunities, nulls dropped. */
+  products: readonly string[];
+  createdAt: string;
+}
+
+/**
+ * Browse and search. The reason this exists (#213): `commitImport` creates
+ * every opportunity at stage 'new' with a null `next_action_at` and null
+ * `last_contacted_at`, so a freshly imported lead is on neither queue for
+ * fourteen days — Due needs a next action, Drifting needs a quiet period.
+ * Without a list surface those rows are unreachable in the meantime.
+ *
+ * Search spans the organisation name AND its contacts' name/email/handle
+ * because an imported lead is almost never looked up by business name —
+ * the operator has the handle or the address the CSV carried.
+ *
+ * The contact columns are correlated subqueries rather than a LEFT JOIN:
+ * joining contacts fans a multi-contact organisation into one row per
+ * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
+ * every selected column) costs more than reading the primary contact
+ * directly. `is_primary DESC, created_at ASC` picks the flagged contact
+ * when there is one and is otherwise stable rather than arbitrary.
+ */
+export async function listOrganisations(
+  filter: OrganisationFilter,
+  limit: number,
+): Promise<OrganisationListRow[]> {
+  const params: unknown[] = [];
+  const clauses: string[] = [];
+
+  if (filter.search) {
+    // Escape backslash first so it doesn't double-escape what follows,
+    // then % and _ — same treatment as the owner filter in filterClause.
+    const escaped = filter.search
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
+    params.push(`%${escaped}%`);
+    const p = `$${params.length}`;
+    clauses.push(`(
+        g.name ILIKE ${p} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM crm_contacts c
+           WHERE c.organisation_id = g.id
+             AND (
+               c.name ILIKE ${p} ESCAPE '\\'
+               OR c.email ILIKE ${p} ESCAPE '\\'
+               OR c.instagram_handle ILIKE ${p} ESCAPE '\\'
+             )
+        )
+      )`);
+  }
+
+  if (filter.importId) {
+    params.push(filter.importId);
+    clauses.push(`g.import_id = $${params.length}`);
+  }
+
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+  const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
+
+  const rows = await tesserixQuery<{
+    id: string;
+    name: string;
+    location: string | null;
+    contact_name: string | null;
+    contact_email: string | null;
+    open_opportunities: string | number;
+    products: (string | null)[] | null;
+    created_at: unknown;
+  }>(
+    `SELECT g.id, g.name, g.location, g.created_at,
+            (SELECT c.name FROM crm_contacts c
+              WHERE c.organisation_id = g.id
+              ORDER BY c.is_primary DESC, c.created_at ASC
+              LIMIT 1) AS contact_name,
+            (SELECT c.email FROM crm_contacts c
+              WHERE c.organisation_id = g.id
+              ORDER BY c.is_primary DESC, c.created_at ASC
+              LIMIT 1) AS contact_email,
+            (SELECT count(*) FROM crm_opportunities o
+              WHERE o.organisation_id = g.id
+                AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
+            (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
+              WHERE o.organisation_id = g.id
+                AND o.product IS NOT NULL) AS products
+       FROM crm_organisations g
+       ${where}
+      ORDER BY g.created_at DESC
+      LIMIT ${limitParam}`,
+    params,
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    location: row.location,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    // count(*) comes back as a string from pg's bigint mapping.
+    openOpportunities: Number(row.open_opportunities),
+    // array_agg returns NULL (not an empty array) when nothing matches.
+    products: (row.products ?? []).filter((p): p is string => p !== null),
+    createdAt: toIsoRequired(row.created_at),
+  }));
 }

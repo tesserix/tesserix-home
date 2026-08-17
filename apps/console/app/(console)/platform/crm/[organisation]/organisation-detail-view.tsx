@@ -1,15 +1,43 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Callout, CalloutDescription, Textarea } from "@tesserix/web";
+import {
+  Badge,
+  Button,
+  Callout,
+  CalloutDescription,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from "@tesserix/web";
 import { CRM_STAGES, requiresProduct, type CrmStage } from "@/lib/crm";
 import type {
   ActivityRow,
   ContactRow,
   OpportunityRow,
 } from "@/lib/db/crm-repo";
-import { addActivity, changeStage, scheduleNextAction } from "./actions";
+import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
+import {
+  addActivity,
+  addContactAction,
+  changeStage,
+  createOpportunityAction,
+  deleteOrganisationAction,
+  eraseContactAction,
+  scheduleNextAction,
+} from "./actions";
 
 const STAGE_LABELS: Record<CrmStage, string> = {
   new: "New",
@@ -24,12 +52,318 @@ interface ProductOption {
   name: string;
 }
 
+/**
+ * `eraseContact` writes `'[erased]'` into `crm_contacts.name` as a database
+ * tombstone (crm-erasure.ts) — a value chosen to be unambiguous in SQL, not
+ * to be read by an operator. Rendered verbatim it produces UI copy like
+ * "Erase [erased]?", which reads as a bug. Mapped to a human display string
+ * here, at the row, so the tombstone stays exactly what the database needs
+ * it to be.
+ */
+function displayContactName(name: string | null): string {
+  if (name === "[erased]") return "Erased contact";
+  return name ?? "Unnamed contact";
+}
+
 function ErrorNote({ message }: { message: string | null }) {
   if (!message) return null;
   return (
     <Callout role="alert" variant="destructive" className="mt-2">
       <CalloutDescription>{message}</CalloutDescription>
     </Callout>
+  );
+}
+
+/**
+ * The typed-confirmation gate both hard-delete controls below sit behind.
+ *
+ * Not `window.confirm`: it blocks the render thread, and there is no way to
+ * recover if a browser extension or a slow tab leaves it stuck — see #213.
+ * Typing the organisation's name is the same "make the operator stop and
+ * read" friction, fully keyboard-operable and recoverable, and it works for
+ * contact erasure too — asking someone to retype a person's own name back at
+ * them, right after telling them it's about to be erased, is an odd ask; the
+ * organisation's name is the stable thing both actions share.
+ *
+ * Compared case-insensitively (after trimming): requiring exact case is
+ * friction with no safety benefit — it produces a disabled button and no
+ * stated reason a sighted operator can even see, let alone a screen-reader
+ * one. Still requires the full name, not a prefix.
+ *
+ * This is the client-side defence against a slip of the mouse, not the
+ * authorization control — `hard-delete` on the server is that, checked
+ * again by `withCrmWrite` regardless of what this dialog does.
+ */
+function useTypedConfirmation(expected: string) {
+  const [value, setValue] = useState("");
+  const normalised = value.trim().toLowerCase();
+  return { value, setValue, matches: normalised.length > 0 && normalised === expected.toLowerCase() };
+}
+
+function ConfirmTypedName({
+  id,
+  statusId,
+  organisationName,
+  value,
+  matches,
+  onChange,
+  error,
+}: {
+  id: string;
+  statusId: string;
+  organisationName: string;
+  value: string;
+  matches: boolean;
+  onChange: (value: string) => void;
+  error: string | null;
+}) {
+  return (
+    <div className="mt-2">
+      <Label htmlFor={id}>
+        Type <span className="font-medium">{organisationName}</span> to confirm (not
+        case-sensitive)
+      </Label>
+      <Input
+        id={id}
+        className="mt-1"
+        value={value}
+        autoComplete="off"
+        aria-describedby={statusId}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {/* `aria-live` announces the reason the confirm button below is
+          unreachable — and the moment it stops being unreachable — to a
+          screen-reader operator who can already see the button is disabled
+          but not why. */}
+      <p id={statusId} aria-live="polite" className="mt-1 text-xs text-muted-foreground">
+        {matches
+          ? "Name matches. The confirm button is enabled."
+          : `Confirm button is disabled until this matches "${organisationName}".`}
+      </p>
+      <ErrorNote message={error} />
+    </div>
+  );
+}
+
+/**
+ * The shared destructive-confirmation shell both hard-delete controls use.
+ *
+ * Built on `Dialog`'s own primitives, not the packaged `ConfirmDialog`: its
+ * confirm button doesn't accept `aria-describedby`, and that association —
+ * pointing the button at the same status text the typed-name field
+ * describes itself with — is exactly what a screen-reader operator needs to
+ * learn why a mistyped name leaves the button unreachable.
+ */
+function DestructiveConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  confirmId,
+  statusId,
+  loading,
+  confirmDisabled,
+  onConfirm,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  confirmId: string;
+  statusId: string;
+  loading: boolean;
+  confirmDisabled: boolean;
+  onConfirm: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {children}
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={loading} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            id={confirmId}
+            type="button"
+            variant="destructive"
+            aria-describedby={statusId}
+            disabled={loading || confirmDisabled}
+            onClick={onConfirm}
+          >
+            {loading ? "Please wait…" : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * A contact's "forget me" control (DPDP erasure — #213/#154).
+ *
+ * Overwrites the person's identifying details and keeps everything else:
+ * the organisation, its opportunities, and the activity log the funnel
+ * measurement depends on. Rendered only when the session holds
+ * `hard-delete` — see `ContactsTab`'s caller in `page.tsx` — because a
+ * control the operator cannot use is worse than no control at all: it
+ * invites them through a confirmation only to hit a permission error on the
+ * other side of it.
+ */
+function EraseContactButton({
+  organisationName,
+  contact,
+}: {
+  organisationName: string;
+  contact: ContactRow;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const { value, setValue, matches } = useTypedConfirmation(organisationName);
+
+  const reset = () => {
+    setValue("");
+    setError(null);
+  };
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await eraseContactAction(contact.id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setOpen(false);
+      reset();
+      router.refresh();
+    });
+  };
+
+  // `[erased]` is the database tombstone, never a display string — see
+  // `displayContactName`. Not reading it here would produce "Erase [erased]?".
+  const contactLabel = displayContactName(contact.name);
+  const statusId = `erase-confirm-status-${contact.id}`;
+
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Erase
+      </Button>
+      <DestructiveConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) reset();
+        }}
+        title={`Erase ${contactLabel}?`}
+        description={`This overwrites ${contactLabel}'s name, email, phone, and Instagram handle. ${organisationName}'s deal history — its opportunities and activity log — is kept exactly as it is. This cannot be undone.`}
+        confirmLabel="Erase contact"
+        confirmId={`erase-confirm-button-${contact.id}`}
+        statusId={statusId}
+        loading={pending}
+        confirmDisabled={!matches}
+        onConfirm={submit}
+      >
+        <ConfirmTypedName
+          id={`erase-confirm-${contact.id}`}
+          statusId={statusId}
+          organisationName={organisationName}
+          value={value}
+          matches={matches}
+          onChange={setValue}
+          error={error}
+        />
+      </DestructiveConfirmDialog>
+    </>
+  );
+}
+
+/**
+ * The organisation-level delete control (DPDP "this business should not
+ * exist here" — #213/#154, distinct from erasure: a true cascade over the
+ * organisation, its contacts, its opportunities and its activities).
+ *
+ * Rendered by the page header, not this file's tab content, but defined
+ * here alongside `EraseContactButton` since both share the typed-confirmation
+ * gate above. Same `hard-delete` gate as the erase control — see that
+ * comment for why hiding beats a post-confirmation permission error.
+ */
+export function DeleteOrganisationButton({
+  organisationId,
+  organisationName,
+}: {
+  organisationId: string;
+  organisationName: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const { value, setValue, matches } = useTypedConfirmation(organisationName);
+  const statusId = "delete-organisation-confirm-status";
+
+  const reset = () => {
+    setValue("");
+    setError(null);
+  };
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteOrganisationAction(organisationId);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // The organisation this page is showing no longer exists — back to
+      // the list, not a refresh of a page with nothing left to render.
+      router.push("/platform/crm");
+      router.refresh();
+    });
+  };
+
+  return (
+    <>
+      <Button type="button" size="sm" variant="destructive" onClick={() => setOpen(true)}>
+        Delete organisation
+      </Button>
+      <DestructiveConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) reset();
+        }}
+        title={`Delete ${organisationName}?`}
+        description={`This removes ${organisationName} and every opportunity and activity recorded against it — unlike erasing a contact, there is no deal history left afterwards. This cannot be undone.`}
+        confirmLabel="Delete organisation"
+        confirmId="delete-organisation-confirm-button"
+        statusId={statusId}
+        loading={pending}
+        confirmDisabled={!matches}
+        onConfirm={submit}
+      >
+        <ConfirmTypedName
+          id="delete-organisation-confirm"
+          statusId={statusId}
+          organisationName={organisationName}
+          value={value}
+          matches={matches}
+          onChange={setValue}
+          error={error}
+        />
+      </DestructiveConfirmDialog>
+    </>
   );
 }
 
@@ -312,6 +646,87 @@ export function ActivityTab({
   );
 }
 
+/**
+ * Open a new opportunity against this organisation.
+ *
+ * Rendered whether or not `opportunities` is empty — the design's third
+ * motivating case (crm-writes.ts) is exactly a returning organisation whose
+ * last opportunity is long since won or lost, so this control has to be
+ * reachable from a tab that may otherwise show nothing.
+ */
+function NewOpportunityForm({
+  organisationId,
+  products,
+}: {
+  organisationId: string;
+  products: readonly ProductOption[];
+}) {
+  const router = useRouter();
+  const [product, setProduct] = useState(NO_PRODUCT_VALUE);
+  const [owner, setOwner] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await createOpportunityAction({
+        organisationId,
+        product: product === NO_PRODUCT_VALUE ? undefined : product,
+        owner: owner.trim() || undefined,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setProduct(NO_PRODUCT_VALUE);
+      setOwner("");
+      router.refresh();
+    });
+  };
+
+  return (
+    <form
+      className="flex flex-wrap items-end gap-2 rounded-md border border-border p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div>
+        <Label htmlFor="new-opportunity-product">Product</Label>
+        <Select value={product} onValueChange={setProduct} disabled={pending}>
+          <SelectTrigger id="new-opportunity-product" size="sm" className="mt-1 w-44">
+            <SelectValue placeholder="Choose a product…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_PRODUCT_VALUE}>No product yet</SelectItem>
+            {products.map((p) => (
+              <SelectItem key={p.context} value={p.context}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label htmlFor="new-opportunity-owner">Owner</Label>
+        <Input
+          id="new-opportunity-owner"
+          className="mt-1 h-9"
+          value={owner}
+          disabled={pending}
+          onChange={(event) => setOwner(event.target.value)}
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={pending}>
+        {pending ? "Opening…" : "New opportunity"}
+      </Button>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
 export function OpportunitiesTab({
   organisationId,
   opportunities,
@@ -321,42 +736,163 @@ export function OpportunitiesTab({
   opportunities: readonly OpportunityRow[];
   products: readonly ProductOption[];
 }) {
-  if (opportunities.length === 0) {
-    return <p className="text-sm text-muted-foreground">No opportunities for this organisation yet.</p>;
-  }
   return (
     <div className="flex flex-col gap-4">
-      {opportunities.map((opportunity) => (
-        <OpportunityCard
-          key={opportunity.id}
-          organisationId={organisationId}
-          opportunity={opportunity}
-          products={products}
-        />
-      ))}
+      <NewOpportunityForm organisationId={organisationId} products={products} />
+      {opportunities.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No opportunities for this organisation yet.</p>
+      ) : (
+        opportunities.map((opportunity) => (
+          <OpportunityCard
+            key={opportunity.id}
+            organisationId={organisationId}
+            opportunity={opportunity}
+            products={products}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-export function ContactsTab({ contacts }: { contacts: readonly ContactRow[] }) {
-  if (contacts.length === 0) {
-    return <p className="text-sm text-muted-foreground">No contacts recorded for this organisation.</p>;
-  }
+/**
+ * Add a second contact to an existing organisation — the other half of the
+ * manual-create door (#213). `organisations/new` covers the first contact on
+ * a brand-new organisation; this covers every one after.
+ */
+function AddContactForm({ organisationId }: { organisationId: string }) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [instagramHandle, setInstagramHandle] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const hasField = [name, email, phone, instagramHandle].some((value) => value.trim().length > 0);
+
+  const submit = () => {
+    if (!hasField) {
+      setError("Enter at least a name, email, phone, or Instagram handle.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await addContactAction({
+        organisationId,
+        name: name.trim() || undefined,
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        instagramHandle: instagramHandle.trim() || undefined,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setName("");
+      setEmail("");
+      setPhone("");
+      setInstagramHandle("");
+      router.refresh();
+    });
+  };
+
   return (
-    <ul className="flex flex-col gap-3">
-      {contacts.map((contact) => (
-        <li key={contact.id} className="border-t border-border pt-3 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
-            {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
-            {contact.email ? <span>{contact.email}</span> : null}
-            {contact.phone ? <span>{contact.phone}</span> : null}
-            {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
-          </div>
-        </li>
-      ))}
-    </ul>
+    <form
+      className="flex flex-wrap items-end gap-2 rounded-md border border-border p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div>
+        <Label htmlFor="new-contact-name">Name</Label>
+        <Input
+          id="new-contact-name"
+          className="mt-1 h-9"
+          value={name}
+          disabled={pending}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-email">Email</Label>
+        <Input
+          id="new-contact-email"
+          className="mt-1 h-9"
+          type="email"
+          value={email}
+          disabled={pending}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-phone">Phone</Label>
+        <Input
+          id="new-contact-phone"
+          className="mt-1 h-9"
+          value={phone}
+          disabled={pending}
+          onChange={(event) => setPhone(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-handle">Instagram handle</Label>
+        <Input
+          id="new-contact-handle"
+          className="mt-1 h-9"
+          value={instagramHandle}
+          disabled={pending}
+          placeholder="@bondibaker"
+          onChange={(event) => setInstagramHandle(event.target.value)}
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={pending || !hasField}>
+        {pending ? "Adding…" : "Add contact"}
+      </Button>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
+export function ContactsTab({
+  organisationId,
+  organisationName,
+  contacts,
+  canHardDelete,
+}: {
+  organisationId: string;
+  organisationName: string;
+  contacts: readonly ContactRow[];
+  canHardDelete: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <AddContactForm organisationId={organisationId} />
+      {contacts.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No contacts recorded for this organisation.</p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {contacts.map((contact) => (
+            <li key={contact.id} className="border-t border-border pt-3 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{displayContactName(contact.name)}</span>
+                  {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
+                </div>
+                {canHardDelete ? (
+                  <EraseContactButton organisationName={organisationName} contact={contact} />
+                ) : null}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
+                {contact.email ? <span>{contact.email}</span> : null}
+                {contact.phone ? <span>{contact.phone}</span> : null}
+                {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

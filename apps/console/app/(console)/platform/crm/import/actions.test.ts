@@ -74,6 +74,7 @@ const COMMIT_RESULT = {
   matchedExisting: 0,
   skippedSuppressed: 0,
   malformed: 0,
+  droppedWebsiteUrls: 0,
   matchedRows: [],
 };
 

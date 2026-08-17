@@ -172,4 +172,14 @@ describe("platformNav", () => {
       .find((group) => group.name === "Operate");
     expect(operate!.items.map((item) => item.route)).not.toContain("platform.crm");
   });
+
+  it("puts Organisations in Growth, ahead of import", () => {
+    // Browse is how an operator reaches a row that is on neither queue for
+    // its first fourteen days; it belongs beside the queue, not after the
+    // import flow that produced the unreachable rows.
+    const growth = platformNav.filter(isNavGroup).find((group) => group.name === "Growth");
+    const names = growth?.items.map((item) => item.name) ?? [];
+    expect(names).toContain("Organisations");
+    expect(names.indexOf("Organisations")).toBeLessThan(names.indexOf("Import leads"));
+  });
 });

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { getCurrentSession, hasCapability } from "@tesserix/platform-auth";
 import { ESTATE } from "@tesserix/console-core";
 import { DetailLayout } from "@/components/kit/detail-layout";
 // From `surface-state`, not `states`: this is a server component, and
@@ -8,8 +9,14 @@ import { DetailLayout } from "@/components/kit/detail-layout";
 import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
 // Not `toSurfaceError` — see `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
+import { requiresCapability } from "@/lib/internal-access";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
-import { ActivityTab, ContactsTab, OpportunitiesTab } from "./organisation-detail-view";
+import {
+  ActivityTab,
+  ContactsTab,
+  DeleteOrganisationButton,
+  OpportunitiesTab,
+} from "./organisation-detail-view";
 
 /**
  * One organisation: its identity facts in the summary rail, and its
@@ -73,6 +80,13 @@ export default async function OrganisationDetailPage({
 
   const state: SurfaceState = detailState({ error, detail });
 
+  // Same gate as tickets/[id]/page.tsx's `canRespond`: a role-less session
+  // under the pre-cutover `google` provider is treated as holding every
+  // capability, so hard-delete controls behave the same as they always
+  // have until the Zitadel cutover actually carries roles.
+  const session = await getCurrentSession();
+  const canHardDelete = !requiresCapability() || hasCapability(session?.roles, "hard-delete");
+
   if (!detail) {
     return (
       <DetailLayout
@@ -98,6 +112,14 @@ export default async function OrganisationDetailPage({
         { label: "CRM", href: "/platform/crm" },
         { label: organisation.name },
       ]}
+      actions={
+        canHardDelete ? (
+          <DeleteOrganisationButton
+            organisationId={organisation.id}
+            organisationName={organisation.name}
+          />
+        ) : undefined
+      }
       summary={[
         {
           label: "Website",
@@ -148,7 +170,14 @@ export default async function OrganisationDetailPage({
         {
           id: "contacts",
           label: "Contacts",
-          content: <ContactsTab contacts={contacts} />,
+          content: (
+            <ContactsTab
+              organisationId={organisation.id}
+              organisationName={organisation.name}
+              contacts={contacts}
+              canHardDelete={canHardDelete}
+            />
+          ),
         },
         {
           id: "opportunities",

@@ -307,6 +307,16 @@ const ROUTES = {
     mobile: "/platform/crm/suppressions",
     capability: "read",
   },
+  // No `web`: an organisation browse surface never existed in apps/web. The
+  // old leads page was a single flat list of lead rows with no concept of a
+  // business distinct from the person, so there is no predecessor path to
+  // record here.
+  //
+  // NOT `pending`: this plan's Task 3 builds the surface this id points at.
+  "platform.crmOrganisations": {
+    mobile: "/platform/crm/organisations",
+    capability: "read",
+  },
 } as const satisfies Record<string, RouteEntry>;
 
 export type RouteId = keyof typeof ROUTES & string;

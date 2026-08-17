@@ -12,6 +12,15 @@ import {
   SuppressedContactError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
+import {
+  createContact,
+  createOpportunity as createOpportunityRow,
+} from "@/lib/db/crm-writes";
+import {
+  eraseContact as eraseContactRow,
+  deleteOrganisation as deleteOrganisationRow,
+} from "@/lib/db/crm-erasure";
+import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
@@ -280,5 +289,249 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
   if (!result.ok) return result;
   revalidatePath("/platform/crm");
   revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+export interface AddContactInput {
+  organisationId: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  instagramHandle?: string;
+}
+
+/**
+ * Add a contact to an existing organisation. The other half of the
+ * manual-create door (#213): `organisations/new` covers the first contact
+ * on a brand-new organisation, this covers every one after — a second phone
+ * number for an organisation that's already in the CRM.
+ *
+ * At least one identifying field is required, checked before any session or
+ * database work: a contact row with nothing in it is unfindable and
+ * unreachable, the same reasoning `createOrganisation` applies to a blank
+ * organisation name.
+ */
+export async function addContactAction(input: AddContactInput): Promise<CrmActionResult> {
+  const name = input.name?.trim() || undefined;
+  const email = input.email?.trim() || undefined;
+  const phone = input.phone?.trim() || undefined;
+  const instagramHandle = input.instagramHandle?.trim() || undefined;
+
+  if (!name && !email && !phone && !instagramHandle) {
+    return { ok: false, message: "Enter at least a name, email, phone, or Instagram handle." };
+  }
+
+  const result = await withCrmWrite(
+    input.organisationId,
+    () =>
+      createContact({
+        organisationId: input.organisationId,
+        name,
+        email,
+        phone,
+        instagramHandle,
+      }),
+    () => ({ action: "crm.contact.create", summary: { contacts: 1 } }),
+    // `createContact` now refuses a suppressed contact at the data layer
+    // (crm-writes.ts). Allowlisted to the same operator-facing exception
+    // `addActivity` maps: without it the refusal would surface as the
+    // generic "That change was not saved." and read as a bug.
+    mapSuppressedContact,
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+export interface CreateOpportunityInput {
+  organisationId: string;
+  product?: string;
+  owner?: string;
+}
+
+/**
+ * Open a new opportunity against an existing organisation.
+ *
+ * The design's third motivating case (crm-writes.ts): a business lost in
+ * March that returns in November is a NEW opportunity against the same
+ * organisation, not a resurrection of the old row. `product` is optional and
+ * passed through exactly as given — never invented when the caller omits
+ * it, same as `changeStage` above — but is checked against the estate when
+ * supplied, since it is the same untyped `text` column with no CHECK.
+ */
+export async function createOpportunityAction(
+  input: CreateOpportunityInput,
+): Promise<CrmActionResult> {
+  const product = input.product?.trim() || undefined;
+  const owner = input.owner?.trim() || undefined;
+
+  if (product && !isEstateProduct(product)) {
+    return { ok: false, message: unknownProductMessage(product) };
+  }
+
+  const result = await withCrmWrite(
+    input.organisationId,
+    () =>
+      createOpportunityRow({
+        organisationId: input.organisationId,
+        product,
+        owner,
+      }),
+    () => ({ action: "crm.opportunity.create", summary: { opportunities: 1 } }),
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+/**
+ * `AuditWriteError` fires AFTER `eraseContact` has already run and
+ * committed — same timing as `mapDeleteAuditFailure` below, and the same
+ * reasoning applies with more force: this is the DPDP path, where the audit
+ * row IS the evidence a request was honoured (#140 consumes it as such), not
+ * just a record for support to read later. `withCrmWrite`'s default "That
+ * change was not saved." would tell the operator an overwrite of someone's
+ * personal data never happened when it did. Worded to hold whether this call
+ * was the one that erased the contact or the contact was already erased (or
+ * never existed) — in every case the contact's details are, right now, not
+ * present. Allowlisted to this one exception type, not "any Error".
+ */
+function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The contact's details are gone, but that erasure was not recorded in the audit log. Please report this.",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Erase a contact's identifying data (DPDP "forget me" — #213/#154). The
+ * organisation, its opportunities and its activity log are untouched; see
+ * `eraseContact` in crm-erasure.ts for why that split matters.
+ *
+ * Gated on `hard-delete`, not the `read` every other CRM write shares — this
+ * is the one action `withCrmWrite`'s capability actually fits. A missing
+ * contact (already erased, or never existed) resolves to `{ ok: true }`:
+ * "already gone" is the outcome an operator honouring an erasure request
+ * wanted, not a failure to report.
+ *
+ * `eraseContact` returns `previousName` so the audit row can say who was
+ * erased. It is deliberately retained there — `console_audit_log.target` is
+ * the DPDP evidence the request was honoured, and an evidence row that
+ * cannot name whose data was erased is worth nothing — and it is deliberately
+ * kept out of THIS action's return value, because echoing it back would put
+ * the erased person's name on the exact screen this action was just used to
+ * remove it from. Two separate decisions, not one.
+ */
+export async function eraseContactAction(contactId: string): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    contactId,
+    () => eraseContactRow(contactId),
+    (outcome) => {
+      // `outcome.erasedAt` is the PRE-image: non-null means the contact was
+      // ALREADY erased before this call. Reporting `erased: 1` here would
+      // write a second, indistinguishable "this person was erased" row into
+      // `console_audit_log` — the exact trail #140 consumes as evidence a
+      // DPDP request was honoured — for a click that erased nothing new.
+      const alreadyErased = outcome !== null && outcome.erasedAt !== null;
+      return {
+        action: "crm.contact.erase",
+        summary: { erased: outcome && !alreadyErased ? 1 : 0 },
+        // The name belongs here, in the free-string audit target, and only
+        // here: never in `summary` (counts only) and never in the
+        // CrmActionResult below. Keeping it in the audit row is what makes
+        // that row evidence; keeping it out of the response is what stops it
+        // being re-displayed.
+        target: outcome
+          ? `${outcome.previousName ?? "(no name on file)"} (${outcome.contactId})`
+          : contactId,
+      };
+    },
+    mapEraseAuditFailure,
+    { capability: "hard-delete" },
+  );
+  if (!result.ok) return result;
+  if (result.value) {
+    revalidatePath(`/platform/crm/${result.value.organisationId}`);
+    // The browse list renders each organisation's primary contact name, so
+    // without this the erased name stays on screen at
+    // `/platform/crm/organisations` — the one surface that reaches a lead in
+    // its first fourteen days, and the one `createOrganisationAction`
+    // already revalidates. Inside the `result.value` guard, like the detail
+    // path: a contact that was already gone changed nothing to revalidate.
+    revalidatePath("/platform/crm/organisations");
+  }
+  return { ok: true };
+}
+
+/**
+ * `AuditWriteError` is thrown by `auditedOperation` AFTER the operation has
+ * already run and committed — see crm-write.ts:93-99. For most CRM writes
+ * `withCrmWrite`'s conservative default ("That change was not saved.") is
+ * still safe to tell an operator, because retrying one stage change is
+ * harmless even if it did in fact save. It is not safe here: the operation
+ * this wraps is a full cascade, already committed, and the default message
+ * says the opposite of what happened. An operator told nothing was saved
+ * will reasonably retry a delete that already ran — the organisation is
+ * already gone, so a retry cannot make it "more" deleted, but the copy must
+ * not send them looking for data that no longer exists. Allowlisted to this
+ * one exception type, not "any Error", same discipline as `mapMissingProduct`
+ * and `mapAlreadyLinked` above.
+ *
+ * Worded to hold in both cases `deleteOrganisationRow` can return: a real
+ * cascade this call just performed, or `null` because the organisation was
+ * already gone. "Was deleted" would be a lie in the second case — an
+ * operator reading it would believe this call was the one that removed a
+ * business that, in fact, this call found nothing to remove.
+ */
+function mapDeleteAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The organisation is gone, but that action was not recorded in the audit log. Please report this.",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Delete an organisation and everything under it (DPDP "this business
+ * should not exist here" — #213/#154, distinct from erasure: see
+ * `deleteOrganisation` in crm-erasure.ts for why the two must not collapse
+ * into one action).
+ *
+ * Gated on `hard-delete`, same as `eraseContactAction`. A missing
+ * organisation resolves to `{ ok: true }` — already gone is success, same
+ * reasoning as above — and no audit row's counts are fabricated for it: the
+ * `describe` callback reports zero of everything rather than guessing what
+ * an already-absent organisation might have held.
+ */
+export async function deleteOrganisationAction(
+  organisationId: string,
+): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    organisationId,
+    () => deleteOrganisationRow(organisationId),
+    (outcome) => ({
+      action: "crm.organisation.delete",
+      summary: outcome
+        ? { contacts: outcome.contactsDeleted, opportunities: outcome.opportunitiesDeleted }
+        : { contacts: 0, opportunities: 0 },
+      // Ruling 20-style: the id alongside the name, so the one CRM audit row
+      // for an org that no longer exists can still be joined back to it.
+      target: outcome ? `${outcome.name} (${outcome.organisationId})` : organisationId,
+    }),
+    mapDeleteAuditFailure,
+    { capability: "hard-delete" },
+  );
+  if (!result.ok) return result;
+  revalidatePath("/platform/crm");
+  // Not just the queue: a deleted organisation that is still listed on the
+  // browse surface links to a detail page that no longer exists.
+  revalidatePath("/platform/crm/organisations");
   return { ok: true };
 }

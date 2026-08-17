@@ -408,6 +408,60 @@ describe("commitImport dedups within one batch, against the real crm_contacts_em
   });
 });
 
+// Fix round 1 on #213's manual-create review: import is the higher-volume
+// writer of `crm_organisations.website_url` and the likelier one to carry a
+// hostile row (a scraped leads sheet, not a hand-typed form). A `javascript:`
+// URL there would become a stored, clickable payload on the organisation
+// detail page's `<a href target="_blank">` the same way a manual create's
+// would — `isSafeWebsiteUrl` (`crm-url.ts`) is the one check both writers
+// share.
+describe("commitImport rejects an unsafe website_url without aborting the batch", () => {
+  it("stores NULL for a javascript: URL, still creates the row, and does not roll back other rows in the batch", async () => {
+    const result = await commitImport(
+      [
+        { name: "Clean Co", email: "clean@example.com", websiteUrl: "https://clean.example" },
+        { name: "Hostile Co", email: "hostile@example.com", websiteUrl: "javascript:alert(1)" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    // Not aborted: both rows created, not just the one with a safe URL.
+    expect(result.created).toBe(2);
+
+    const rows = await db.query<{ name: string; website_url: string | null }>(
+      `SELECT name, website_url FROM crm_organisations WHERE name IN ('Clean Co', 'Hostile Co')`,
+    );
+    const clean = rows.rows.find((row) => row.name === "Clean Co");
+    const hostile = rows.rows.find((row) => row.name === "Hostile Co");
+    expect(clean?.website_url).toBe("https://clean.example");
+    // Stored as NULL, not rejected — one bad field on an otherwise usable
+    // row is not a reason to drop the row (Ruling 23's same-transaction
+    // guarantee cuts both ways: one bad row must not cost the others).
+    expect(hostile?.website_url).toBeNull();
+
+    // Finding 5: the drop has to be REPORTED. There is no organisation edit
+    // surface in the console, so the comment's old claim that "an operator
+    // can re-add it by hand once the row exists" was false — a re-import is
+    // the only remedy, and an operator who is never told the drop happened
+    // cannot choose it.
+    expect(result.droppedWebsiteUrls).toBe(1);
+  });
+
+  it("counts no dropped urls when every website cell is safe or blank", async () => {
+    const result = await commitImport(
+      [
+        { name: "Fine Co", email: "fine@example.com", websiteUrl: "https://fine.example" },
+        { name: "Blank Co", email: "blank@example.com" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    expect(result.created).toBe(2);
+    // A blank cell is not a drop: nothing was supplied, so nothing was lost.
+    expect(result.droppedWebsiteUrls).toBe(0);
+  });
+});
+
 // Ruling 33: `crm-repo.test.ts`'s `linkConversion` tests are mocked-query
 // string checks — `expect(sql).toContain("converted_at IS NULL")` pins that
 // the guard clause is IN the SQL, not that Postgres actually enforces it.
