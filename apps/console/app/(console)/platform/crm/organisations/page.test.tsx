@@ -111,32 +111,57 @@ describe("OrganisationsPage", () => {
     );
   });
 
-  // Finding 1: full pagination is deliberately deferred, but the truncation
-  // must not be silent — a 300-row import links here and this page is the
-  // only way to reach a lead in its first fourteen days. Since Task 1,
-  // truncation is read off `page.total`, not an over-fetched extra row.
-  describe("truncation", () => {
-    it("asks the repo for exactly PAGE_SIZE rows, not one extra", async () => {
+  // Finding 1: real pagination lands in Task 2. The truncation notice this
+  // replaced said only "there are more" — an operator sizing up a 259-lead
+  // backlog needs the number, and a way to actually reach page 2.
+  describe("pagination", () => {
+    it("asks the repo for exactly PAGE_SIZE rows per page", async () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({}) }));
       const [, limit] = listOrganisations.mock.calls[0];
       expect(limit).toBe(100);
     });
 
-    it("renders the given rows and announces the truncation when total exceeds PAGE_SIZE", async () => {
-      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 137 }));
+    it("shows how many of the total are on screen", async () => {
+      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
       render(await Page({ searchParams: Promise.resolve({}) }));
-      expect(screen.getByText("Organisation 99")).toBeInTheDocument();
-      const notice = screen.getByRole("status");
-      expect(notice).toHaveTextContent(/Showing the 100 most recent organisations/);
-      expect(notice).toHaveTextContent(/search/);
+      expect(screen.getByText(/100 of 259/i)).toBeInTheDocument();
     });
 
-    it("shows no truncation notice when the whole list fits", async () => {
-      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 100 }));
+    it("offers a next control only when there is a next page", async () => {
+      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
       render(await Page({ searchParams: Promise.resolve({}) }));
-      expect(screen.getByText("Organisation 99")).toBeInTheDocument();
-      expect(screen.queryByRole("status")).toBeNull();
+      expect(screen.getByRole("link", { name: /next/i })).toBeInTheDocument();
+    });
+
+    it("offers no next control on the last page", async () => {
+      listOrganisations.mockResolvedValue({ rows: orgRows(9), total: 9, nextCursor: null });
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryByRole("link", { name: /next/i })).toBeNull();
+    });
+
+    it("passes the cursor through to the repo", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), "abc");
+    });
+
+    // Not in the brief — a ruling. A later task adds four more filter params
+    // (`product`, `country`, `followers`, `email`); a next-link builder that
+    // named only `q` and `import` would silently drop an operator's other
+    // filters the moment they page, landing them on an unfiltered page 2
+    // with no reason to suspect the link rather than the data.
+    it("preserves an unrelated search param when building the next link", async () => {
+      listOrganisations.mockResolvedValue({ rows: orgRows(100), total: 259, nextCursor: "abc" });
+      render(
+        await Page({ searchParams: Promise.resolve({ q: "priya", someFutureFilter: "x" }) }),
+      );
+      const next = screen.getByRole("link", { name: /next/i });
+      const href = next.getAttribute("href") ?? "";
+      const params = new URLSearchParams(href.split("?")[1]);
+      expect(params.get("q")).toBe("priya");
+      expect(params.get("someFutureFilter")).toBe("x");
+      expect(params.get("cursor")).toBe("abc");
     });
   });
 

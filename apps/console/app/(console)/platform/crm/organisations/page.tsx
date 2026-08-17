@@ -21,17 +21,10 @@ import { OrganisationsView } from "./organisations-view";
  */
 
 /**
- * How many rows this surface renders. `listOrganisations` now returns a
- * total and a keyset cursor (Task 1), but the pager UI that would let an
- * operator actually reach page 2 is a later task — DELIBERATELY DEFERRED,
- * not built here.
- *
- * What is not deferrable is the silence. Until this branch, a 300-row import
- * linked here and showed 100 rows with nothing to say the other 200 existed,
- * and this page is the only way to reach a lead in its first fourteen days.
- * So this page still shows only the first page, but now names the true total
- * via `OrganisationsView`'s truncation notice instead of over-fetching by one
- * row to detect it.
+ * How many rows this surface renders per page. A 300-row import linked here
+ * and, before pagination, showed 100 rows with nothing to say the other 200
+ * existed — this page is the only way to reach a lead in its first fourteen
+ * days, so the count and the next-page link both matter.
  */
 const PAGE_SIZE = 100;
 
@@ -64,6 +57,33 @@ export function readOrganisationFilters(searchParams: OrganisationsSearchParams)
   return filters;
 }
 
+const BASE_PATH = "/platform/crm/organisations";
+
+/**
+ * Builds the `?cursor=` link for the next page by copying every param
+ * already on the URL and replacing only `cursor` — never by naming the
+ * params this page currently knows about. A later task adds four more
+ * filter params (`product`, `country`, `followers`, `email`); a builder
+ * that enumerated known params would silently drop them the moment an
+ * operator pages, landing them on an unfiltered page 2.
+ */
+export function buildNextHref(searchParams: OrganisationsSearchParams, nextCursor: string | null): string | null {
+  if (!nextCursor) return null;
+
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "cursor") continue;
+    if (typeof value === "string") {
+      params.set(key, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) params.append(key, entry);
+    }
+  }
+  params.set("cursor", nextCursor);
+
+  return `${BASE_PATH}?${params.toString()}`;
+}
+
 export interface OrganisationsStateInput {
   error: unknown;
   rows: readonly OrganisationListRow[];
@@ -93,16 +113,24 @@ export default async function OrganisationsPage({
   // import's result link.
   const filtered = Boolean(filters.search) || Boolean(filters.importId);
 
+  const rawCursor = resolvedSearchParams.cursor;
+  const cursor = typeof rawCursor === "string" && rawCursor !== "" ? rawCursor : undefined;
+
   let rows: readonly OrganisationListRow[] = [];
-  let truncated = false;
+  let total = 0;
+  let nextHref: string | null = null;
   let error: unknown = null;
   try {
-    const page = await listOrganisations(filters, PAGE_SIZE);
+    // Omitted (not `undefined`) when there is no cursor: existing tests
+    // assert `listOrganisations` was called with exactly two arguments on
+    // the first page, and an explicit `undefined` third argument fails that
+    // equality check.
+    const page = cursor
+      ? await listOrganisations(filters, PAGE_SIZE, cursor)
+      : await listOrganisations(filters, PAGE_SIZE);
     rows = page.rows;
-    // The true total, not an over-fetched extra row: this is what makes
-    // "there are exactly 100" distinguishable from "there are 300" without
-    // asking for one row more than will ever be shown.
-    truncated = page.total > PAGE_SIZE;
+    total = page.total;
+    nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
   } catch (caught) {
     error = caught;
   }
@@ -122,8 +150,8 @@ export default async function OrganisationsPage({
         state={state}
         emptyMessage={EMPTY_MESSAGE}
         search={filters.search ?? ""}
-        truncated={truncated}
-        pageSize={PAGE_SIZE}
+        total={total}
+        nextHref={nextHref}
       />
     </div>
   );
