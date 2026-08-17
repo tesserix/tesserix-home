@@ -16,6 +16,10 @@ import {
   createContact,
   createOpportunity as createOpportunityRow,
 } from "@/lib/db/crm-writes";
+import {
+  eraseContact as eraseContactRow,
+  deleteOrganisation as deleteOrganisationRow,
+} from "@/lib/db/crm-erasure";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
@@ -371,5 +375,79 @@ export async function createOpportunityAction(
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+/**
+ * Erase a contact's identifying data (DPDP "forget me" — #213/#154). The
+ * organisation, its opportunities and its activity log are untouched; see
+ * `eraseContact` in crm-erasure.ts for why that split matters.
+ *
+ * Gated on `hard-delete`, not the `read` every other CRM write shares — this
+ * is the one action `withCrmWrite`'s capability actually fits. A missing
+ * contact (already erased, or never existed) resolves to `{ ok: true }`:
+ * "already gone" is the outcome an operator honouring an erasure request
+ * wanted, not a failure to report.
+ *
+ * `eraseContact` returns `previousName` so the audit row can say who was
+ * erased — but that name never reaches the return value here. Echoing it
+ * back would put the erased person's name on the exact screen this action
+ * was just used to remove it from.
+ */
+export async function eraseContactAction(contactId: string): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    contactId,
+    () => eraseContactRow(contactId),
+    (outcome) => ({
+      action: "crm.contact.erase",
+      summary: { erased: outcome ? 1 : 0 },
+      // The name belongs only here, in the free-string audit target — never
+      // in `summary` (counts only) and never in the CrmActionResult below.
+      target: outcome
+        ? `${outcome.previousName ?? "(no name on file)"} (${outcome.contactId})`
+        : contactId,
+    }),
+    undefined,
+    { capability: "hard-delete" },
+  );
+  if (!result.ok) return result;
+  if (result.value) {
+    revalidatePath(`/platform/crm/${result.value.organisationId}`);
+  }
+  return { ok: true };
+}
+
+/**
+ * Delete an organisation and everything under it (DPDP "this business
+ * should not exist here" — #213/#154, distinct from erasure: see
+ * `deleteOrganisation` in crm-erasure.ts for why the two must not collapse
+ * into one action).
+ *
+ * Gated on `hard-delete`, same as `eraseContactAction`. A missing
+ * organisation resolves to `{ ok: true }` — already gone is success, same
+ * reasoning as above — and no audit row's counts are fabricated for it: the
+ * `describe` callback reports zero of everything rather than guessing what
+ * an already-absent organisation might have held.
+ */
+export async function deleteOrganisationAction(
+  organisationId: string,
+): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    organisationId,
+    () => deleteOrganisationRow(organisationId),
+    (outcome) => ({
+      action: "crm.organisation.delete",
+      summary: outcome
+        ? { contacts: outcome.contactsDeleted, opportunities: outcome.opportunitiesDeleted }
+        : { contacts: 0, opportunities: 0 },
+      // Ruling 20-style: the id alongside the name, so the one CRM audit row
+      // for an org that no longer exists can still be joined back to it.
+      target: outcome ? `${outcome.name} (${outcome.organisationId})` : organisationId,
+    }),
+    undefined,
+    { capability: "hard-delete" },
+  );
+  if (!result.ok) return result;
+  revalidatePath("/platform/crm");
   return { ok: true };
 }

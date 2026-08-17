@@ -17,6 +17,21 @@ vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
   createContact: vi.fn(),
   createOpportunity: vi.fn(),
 }));
+vi.mock("@/lib/db/crm-erasure", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/crm-erasure")>()),
+  eraseContact: vi.fn(),
+  deleteOrganisation: vi.fn(),
+}));
+// `withCrmWrite` itself is wrapped, not replaced: the erasure tests below
+// need to inspect the exact arguments actions.ts passes it (the `hard-delete`
+// capability, the `describe` callback) while still exercising the real
+// gate/audit path every other describe block in this file relies on — a
+// bare mock would have to reimplement `withCrmWrite`'s own contract to keep
+// those other tests meaningful.
+vi.mock("@/lib/crm-write", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/crm-write")>();
+  return { ...actual, withCrmWrite: vi.fn(actual.withCrmWrite) };
+});
 // Ruling 15: `actions.ts` now goes through the REAL `auditedOperation`
 // (audit-repo.ts is not mocked) — only its own two leaf dependencies are,
 // exactly the way `audit-repo.test.ts` tests `auditedOperation` itself.
@@ -40,6 +55,8 @@ import {
   SuppressedContactError,
 } from "@/lib/db/crm-repo";
 import { createContact, createOpportunity as createOpportunityRow } from "@/lib/db/crm-writes";
+import { eraseContact, deleteOrganisation } from "@/lib/db/crm-erasure";
+import { withCrmWrite } from "@/lib/crm-write";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   changeStage,
@@ -48,6 +65,8 @@ import {
   linkConversion,
   addContactAction,
   createOpportunityAction,
+  eraseContactAction,
+  deleteOrganisationAction,
 } from "./actions";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
@@ -690,5 +709,153 @@ describe("createOpportunityAction", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(createOpportunityRow).not.toHaveBeenCalled();
+  });
+});
+
+describe("eraseContactAction", () => {
+  const CONTACT_ID = "contact-1";
+
+  it("gates contact erasure on hard-delete, not read", async () => {
+    await eraseContactAction(CONTACT_ID);
+    const options = vi.mocked(withCrmWrite).mock.calls[0][4];
+    expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
+  });
+
+  it("erases, audits crm.contact.erase, and revalidates the organisation's detail page", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(eraseContact).toHaveBeenCalledWith(CONTACT_ID);
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.contact.erase",
+      target: `Priya Raman (${CONTACT_ID})`,
+      summary: { erased: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  // The name belongs in the audit row (asserted above via `target`), not
+  // echoed back to the screen the erasure was just performed on.
+  it("does not put the erased contact's name in the UI result", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(JSON.stringify(result)).not.toContain("Priya Raman");
+  });
+
+  it("reports a missing contact as already gone rather than as a failure", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue(null);
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result.ok).toBe(true);
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.contact.erase",
+      target: CONTACT_ID,
+      summary: { erased: 0 },
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("refuses an operator who holds read but not hard-delete", async () => {
+    signIn(["read"]);
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(eraseContact).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteOrganisationAction", () => {
+  it("gates organisation delete on hard-delete", async () => {
+    await deleteOrganisationAction(ORG_ID);
+    const options = vi.mocked(withCrmWrite).mock.calls[0][4];
+    expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
+  });
+
+  it("counts what was deleted, and identifies it in target not summary", async () => {
+    await deleteOrganisationAction(ORG_ID);
+    const describe = vi.mocked(withCrmWrite).mock.calls[0][2];
+
+    const description = describe({
+      organisationId: ORG_ID,
+      name: "Glebe Flowers",
+      contactsDeleted: 2,
+      opportunitiesDeleted: 3,
+    });
+
+    // An irreversible action whose audit row says only "ok" is not an audit
+    // trail. But `AuditSummary` is Readonly<Record<string, number>> — counts
+    // only — and SUMMARY_KEY rejects anything that isn't a lowercase dotted
+    // identifier, so the organisation's name cannot go in summary. It goes
+    // in `target`, which is the free-string field.
+    expect(description.action).toBe("crm.organisation.delete");
+    expect(description.summary).toEqual({ contacts: 2, opportunities: 3 });
+    expect(description.target).toContain(ORG_ID);
+  });
+
+  it("deletes, audits crm.organisation.delete, and revalidates the organisations list", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOrganisation).mockResolvedValue({
+      organisationId: ORG_ID,
+      name: "Glebe Flowers",
+      contactsDeleted: 2,
+      opportunitiesDeleted: 3,
+    });
+
+    const result = await deleteOrganisationAction(ORG_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(deleteOrganisation).toHaveBeenCalledWith(ORG_ID);
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.organisation.delete",
+      target: `Glebe Flowers (${ORG_ID})`,
+      summary: { contacts: 2, opportunities: 3 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+  });
+
+  it("reports a missing organisation as already gone rather than as a failure", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOrganisation).mockResolvedValue(null);
+
+    const result = await deleteOrganisationAction(ORG_ID);
+
+    expect(result.ok).toBe(true);
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.organisation.delete",
+      target: ORG_ID,
+      summary: { contacts: 0, opportunities: 0 },
+    });
+  });
+
+  it("refuses an operator who holds read but not hard-delete", async () => {
+    signIn(["read"]);
+
+    const result = await deleteOrganisationAction(ORG_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(deleteOrganisation).not.toHaveBeenCalled();
   });
 });

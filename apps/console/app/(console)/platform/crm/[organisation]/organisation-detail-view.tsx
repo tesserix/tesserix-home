@@ -7,6 +7,7 @@ import {
   Button,
   Callout,
   CalloutDescription,
+  ConfirmDialog,
   Input,
   Label,
   Select,
@@ -22,7 +23,15 @@ import type {
   ContactRow,
   OpportunityRow,
 } from "@/lib/db/crm-repo";
-import { addActivity, addContactAction, changeStage, createOpportunityAction, scheduleNextAction } from "./actions";
+import {
+  addActivity,
+  addContactAction,
+  changeStage,
+  createOpportunityAction,
+  deleteOrganisationAction,
+  eraseContactAction,
+  scheduleNextAction,
+} from "./actions";
 
 // Radix's Select cannot hold an empty-string item value (see
 // `components/kit/filter-bar.tsx`) — this sentinel stands in for "no
@@ -50,6 +59,196 @@ function ErrorNote({ message }: { message: string | null }) {
     <Callout role="alert" variant="destructive" className="mt-2">
       <CalloutDescription>{message}</CalloutDescription>
     </Callout>
+  );
+}
+
+/**
+ * The typed-confirmation gate both hard-delete controls below sit behind.
+ *
+ * Not `window.confirm`: it blocks the render thread, and there is no way to
+ * recover if a browser extension or a slow tab leaves it stuck — see #213.
+ * Typing the organisation's name is the same "make the operator stop and
+ * read" friction, fully keyboard-operable and recoverable, and it works for
+ * contact erasure too — asking someone to retype a person's own name back at
+ * them, right after telling them it's about to be erased, is an odd ask; the
+ * organisation's name is the stable thing both actions share.
+ */
+function useTypedConfirmation(expected: string) {
+  const [value, setValue] = useState("");
+  return { value, setValue, matches: value.trim().length > 0 && value.trim() === expected };
+}
+
+function ConfirmTypedName({
+  id,
+  organisationName,
+  value,
+  onChange,
+  error,
+}: {
+  id: string;
+  organisationName: string;
+  value: string;
+  onChange: (value: string) => void;
+  error: string | null;
+}) {
+  return (
+    <div className="mt-2">
+      <Label htmlFor={id}>
+        Type <span className="font-medium">{organisationName}</span> to confirm
+      </Label>
+      <Input id={id} className="mt-1" value={value} autoComplete="off" onChange={(event) => onChange(event.target.value)} />
+      <ErrorNote message={error} />
+    </div>
+  );
+}
+
+/**
+ * A contact's "forget me" control (DPDP erasure — #213/#154).
+ *
+ * Overwrites the person's identifying details and keeps everything else:
+ * the organisation, its opportunities, and the activity log the funnel
+ * measurement depends on. Rendered only when the session holds
+ * `hard-delete` — see `ContactsTab`'s caller in `page.tsx` — because a
+ * control the operator cannot use is worse than no control at all: it
+ * invites them through a confirmation only to hit a permission error on the
+ * other side of it.
+ */
+function EraseContactButton({
+  organisationName,
+  contact,
+}: {
+  organisationName: string;
+  contact: ContactRow;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const { value, setValue, matches } = useTypedConfirmation(organisationName);
+
+  const reset = () => {
+    setValue("");
+    setError(null);
+  };
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await eraseContactAction(contact.id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setOpen(false);
+      reset();
+      router.refresh();
+    });
+  };
+
+  const contactLabel = contact.name ?? "this contact";
+
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Erase
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) reset();
+        }}
+        title={`Erase ${contactLabel}?`}
+        description={`This overwrites ${contactLabel}'s name, email, phone, and Instagram handle. ${organisationName}'s deal history — its opportunities and activity log — is kept exactly as it is. This cannot be undone.`}
+        confirmLabel="Erase contact"
+        variant="destructive"
+        loading={pending}
+        confirmDisabled={!matches}
+        onConfirm={submit}
+      >
+        <ConfirmTypedName
+          id={`erase-confirm-${contact.id}`}
+          organisationName={organisationName}
+          value={value}
+          onChange={setValue}
+          error={error}
+        />
+      </ConfirmDialog>
+    </>
+  );
+}
+
+/**
+ * The organisation-level delete control (DPDP "this business should not
+ * exist here" — #213/#154, distinct from erasure: a true cascade over the
+ * organisation, its contacts, its opportunities and its activities).
+ *
+ * Rendered by the page header, not this file's tab content, but defined
+ * here alongside `EraseContactButton` since both share the typed-confirmation
+ * gate above. Same `hard-delete` gate as the erase control — see that
+ * comment for why hiding beats a post-confirmation permission error.
+ */
+export function DeleteOrganisationButton({
+  organisationId,
+  organisationName,
+}: {
+  organisationId: string;
+  organisationName: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const { value, setValue, matches } = useTypedConfirmation(organisationName);
+
+  const reset = () => {
+    setValue("");
+    setError(null);
+  };
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteOrganisationAction(organisationId);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // The organisation this page is showing no longer exists — back to
+      // the list, not a refresh of a page with nothing left to render.
+      router.push("/platform/crm");
+      router.refresh();
+    });
+  };
+
+  return (
+    <>
+      <Button type="button" size="sm" variant="destructive" onClick={() => setOpen(true)}>
+        Delete organisation
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) reset();
+        }}
+        title={`Delete ${organisationName}?`}
+        description={`This removes ${organisationName} and every opportunity and activity recorded against it — unlike erasing a contact, there is no deal history left afterwards. This cannot be undone.`}
+        confirmLabel="Delete organisation"
+        variant="destructive"
+        loading={pending}
+        confirmDisabled={!matches}
+        onConfirm={submit}
+      >
+        <ConfirmTypedName
+          id="delete-organisation-confirm"
+          organisationName={organisationName}
+          value={value}
+          onChange={setValue}
+          error={error}
+        />
+      </ConfirmDialog>
+    </>
   );
 }
 
@@ -543,10 +742,14 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
 
 export function ContactsTab({
   organisationId,
+  organisationName,
   contacts,
+  canHardDelete,
 }: {
   organisationId: string;
+  organisationName: string;
   contacts: readonly ContactRow[];
+  canHardDelete: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -557,9 +760,14 @@ export function ContactsTab({
         <ul className="flex flex-col gap-3">
           {contacts.map((contact) => (
             <li key={contact.id} className="border-t border-border pt-3 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
-                {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
+                  {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
+                </div>
+                {canHardDelete ? (
+                  <EraseContactButton organisationName={organisationName} contact={contact} />
+                ) : null}
               </div>
               <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
                 {contact.email ? <span>{contact.email}</span> : null}
