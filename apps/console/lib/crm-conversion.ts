@@ -154,18 +154,25 @@ export function parseConversionBody(json: unknown): ConversionResponseBody {
   if (body.label !== undefined && typeof body.label !== "string") {
     throw new PlatformApiError("conversion-status: label is not a string");
   }
-  if (
-    body.idle_hours !== undefined &&
-    (typeof body.idle_hours !== "number" || !Number.isFinite(body.idle_hours))
-  ) {
-    throw new PlatformApiError("conversion-status: idle_hours is not a number");
+  // A separate `let` + narrowed assignment, rather than the compound
+  // condition inlined at the return: the compiler cannot carry a narrowing
+  // through `a !== undefined && (typeof a !== "x" || !check(a))` back out to
+  // a later `return` expression, and the alternative is asserting the type
+  // with `as` — telling the compiler rather than letting the guard prove it,
+  // the one place this otherwise cast-free parser would have done that.
+  let idleHours: number | undefined;
+  if (body.idle_hours !== undefined) {
+    if (typeof body.idle_hours !== "number" || !Number.isFinite(body.idle_hours)) {
+      throw new PlatformApiError("conversion-status: idle_hours is not a number");
+    }
+    idleHours = body.idle_hours;
   }
 
   return {
     state: body.state,
     ref: body.ref,
     label: body.label,
-    idleHours: body.idle_hours as number | undefined,
+    idleHours,
     observedAt: body.observed_at,
   };
 }
@@ -173,6 +180,29 @@ export function parseConversionBody(json: unknown): ConversionResponseBody {
 // Same origin as every other cross-product read in `platform-api.ts` — the
 // console never talks to a product directly, only ever to apps/web.
 const WEB_ORIGIN = process.env.WEB_INTERNAL_ORIGIN ?? "http://localhost:3002";
+
+/**
+ * RULING 29. Node's `fetch` has no default request timeout — an apps/web
+ * that accepts the connection and never responds would hang this promise
+ * forever, which is neither `unknown` nor a thrown error: it is a stuck
+ * server render. That matters more here than anywhere in the console:
+ * Task 10 fans this call out once per lead in the handoff queue, so one
+ * hung upstream would stall the whole surface, and this is the one module
+ * whose entire contract is "a non-answer resolves to `unknown`" — a promise
+ * that never resolves breaks that promise (the English kind) outright.
+ *
+ * 8s, not `platform-api.ts`'s absence of one: apps/web's own upstream calls
+ * to Kora/Fe3dr are themselves HMAC-signed HTTP round trips, so this request
+ * is a proxy of a proxy. Generous enough that a normally-slow upstream still
+ * answers; short enough that a queue rendering several of these in sequence
+ * does not itself start to feel stuck.
+ *
+ * `lib/platform-api.ts` has the same missing-timeout gap and is NOT fixed
+ * here — that is estate-wide and out of this task's scope, logged as a
+ * follow-up. Fixed in this module specifically because this module's whole
+ * reason to exist is the promise that a non-answer becomes `unknown`.
+ */
+const CONVERSION_STATUS_TIMEOUT_MS = 8_000;
 
 /**
  * Ask apps/web whether `email` has converted for `product`.
@@ -198,11 +228,18 @@ export async function fetchConversionSignal(
       {
         headers: { cookie: cookieHeader },
         cache: "no-store",
+        // RULING 29: bounds the request so a hung apps/web cannot hang this
+        // promise forever. The resulting `AbortError`/`TimeoutError` is a
+        // rejection like any other transport failure, and lands in the same
+        // `catch` below — it must never escape as an unhandled rejection or
+        // leave the caller waiting indefinitely.
+        signal: AbortSignal.timeout(CONVERSION_STATUS_TIMEOUT_MS),
       },
     );
   } catch {
-    // Unreachable apps/web, DNS failure, timeout — a transport failure, not
-    // an answer. THE rule: this must never read as "not converted".
+    // Unreachable apps/web, DNS failure, a timed-out AbortSignal — all
+    // transport failures, not answers. THE rule: this must never read as
+    // "not converted".
     return unknown();
   }
 

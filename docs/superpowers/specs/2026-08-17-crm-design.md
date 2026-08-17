@@ -272,6 +272,22 @@ GET {product_admin_api}/internal/conversion-status?email=<email>
 anything other than a valid 200 (404, 501, unreachable, timeout) → unknown
 ```
 
+**RULING 27 (binding, #153).** The product implements this endpoint on its own
+admin API. **The console never calls it directly, and holds no
+product → base-URL registry.** Every other cross-product read the console
+makes already goes through `apps/web` — tickets, support analytics, the
+aggregate audit log — because `apps/web` holds the HMAC keys Kora and Fe3dr
+require to sign requests to their own admin APIs. Moving those keys into the
+console would be a secret-distribution change, not a refactor, and the same
+constraint applies here: the console asks `apps/web` at
+`/api/admin/apps/{product}/conversion-status?email=…`, and `apps/web` is what
+actually reaches the product's `/internal/conversion-status` above, signing
+the request with the key it already holds. A product with no adapter wired up
+yet, and a product the console has simply never heard of, both surface to the
+console as the same thing — `apps/web` answering something other than a valid
+200 — which Ruling 28 below already resolves to `unknown`. There is no second
+list of product base URLs to keep in sync with anything.
+
 **RULING 28.** 404 originally carried "product has no conversion concept" as a
 definite answer. It cannot: 404 is also what this exact route returns when it
 does not exist at all, which is indistinguishable on the wire from the product
@@ -293,12 +309,13 @@ Three rules, each because the alternative fails quietly:
    stalled.
 2. **The product's answer only ever adds a conversion, never removes one.** The
    CRM's own `stage = won` is authoritative about the agreement.
-3. **`ref` is opaque and stored with `converted_product`, and the email match
-   itself is only a suggestion an operator confirms.** A tenant id and a
-   facility id are only meaningful together with whose namespace they are in;
-   the person who onboards may not be the person prospected, and a wrongly
-   auto-linked conversion corrupts exactly the attribution this exists to
-   produce. `converted_link_method` records which way it happened.
+3. **`ref` is opaque and stored with `converted_product`. Email is the lookup
+   key, but the match itself is only a suggestion an operator confirms.** A
+   tenant id and a facility id are only meaningful together with whose
+   namespace they are in; the person who onboards may not be the person
+   prospected, and a wrongly auto-linked conversion corrupts exactly the
+   attribution this exists to produce. `converted_link_method` records which
+   way it happened.
 
 **Coupling test** — if the platform is unavailable, must the product still
 function? Yes. The product never calls us; we call it, and it holds no platform
