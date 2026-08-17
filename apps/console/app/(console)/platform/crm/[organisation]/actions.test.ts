@@ -10,6 +10,7 @@ vi.mock("@/lib/db/crm-repo", async (importOriginal) => ({
   advanceStage: vi.fn(),
   setNextAction: vi.fn(),
   logActivity: vi.fn(),
+  linkConversion: vi.fn(),
 }));
 // Ruling 15: `actions.ts` now goes through the REAL `auditedOperation`
 // (audit-repo.ts is not mocked) — only its own two leaf dependencies are,
@@ -24,9 +25,15 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
-import { advanceStage, setNextAction, logActivity, MissingProductError } from "@/lib/db/crm-repo";
+import {
+  advanceStage,
+  setNextAction,
+  logActivity,
+  linkConversion as linkConversionRow,
+  MissingProductError,
+} from "@/lib/db/crm-repo";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { changeStage, scheduleNextAction, addActivity } from "./actions";
+import { changeStage, scheduleNextAction, addActivity, linkConversion } from "./actions";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
 const OPP_ID = "5f0b2c34-0000-0000-0000-000000000000";
@@ -355,5 +362,90 @@ describe("addActivity", () => {
     });
     expect(result.ok).toBe(false);
     expect(logActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("linkConversion", () => {
+  it("links, audits crm.conversion.link with the organisation name, and revalidates both surfaces", async () => {
+    signIn(["read"]);
+    vi.mocked(linkConversionRow).mockResolvedValue({
+      organisationId: ORG_ID,
+      organisationName: "Bondi Baker",
+      product: "mark8ly",
+      method: "matched",
+    });
+
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(linkConversionRow).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.conversion.link",
+      target: "Bondi Baker",
+      summary: { linked: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  it("rejects a missing ref without calling the session or the repo", async () => {
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "   ",
+      method: "manual",
+    });
+    expect(result).toEqual({
+      ok: false,
+      message: "A product and a reference are required to link a conversion.",
+    });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(linkConversionRow).not.toHaveBeenCalled();
+  });
+
+  // THE rule this action exists to encode: an email match is a suggestion an
+  // operator confirms, never an automatic link. There is no code path here
+  // that reaches `linkConversionRow` without the caller — the handoff view's
+  // confirm button or its manual-entry form — having already supplied a
+  // `method`, and an invalid one is refused before any write is attempted.
+  it("rejects an invalid link method before touching the session", async () => {
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "auto" as never,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/valid link method/);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(linkConversionRow).not.toHaveBeenCalled();
+  });
+
+  it("refuses without console entry, before any transport or audit call", async () => {
+    signIn(undefined);
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "manual",
+    });
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(linkConversionRow).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 });

@@ -1187,3 +1187,135 @@ export async function commitImport(
     return { importId, created, matchedExisting, skippedSuppressed, malformed, matchedRows };
   });
 }
+
+/**
+ * The handoff queue (Task 10): a won opportunity whose organisation has not
+ * yet been linked to a conversion.
+ *
+ * `converted_at` lives on `crm_organisations`, not `crm_opportunities`
+ * (migration 0019) — one business, one conversion, even though it can carry
+ * several per-product opportunities over time — so "no conversion recorded"
+ * is read off the organisation, not the individual deal.
+ */
+
+export interface HandoffRow {
+  opportunityId: string;
+  organisationId: string;
+  organisationName: string;
+  /** Never null here: `stage = 'won'` requires a product — migration 0019's
+   *  `crm_opp_product_required_when_qualified` CHECK, mirrored by
+   *  `requiresProduct` in `lib/crm.ts`. `toHandoffRow` fails loud if that
+   *  ever stops being true rather than silently showing a row with nothing
+   *  to ask apps/web about. */
+  product: string;
+  /** The organisation's primary contact email, if it has one — what Task 9's
+   *  `fetchConversionSignal` is asked about. `null` when no contact on the
+   *  organisation carries an email at all: the row still shows (an operator
+   *  can still link a conversion by hand), there is just nothing to check
+   *  upstream for. */
+  primaryEmail: string | null;
+  closedAt: string | null;
+}
+
+interface RawHandoffRow {
+  id: string;
+  organisation_id: string;
+  organisation_name: string;
+  product: string | null;
+  primary_email: string | null;
+  closed_at: unknown;
+}
+
+function toHandoffRow(row: RawHandoffRow): HandoffRow {
+  if (!row.product) {
+    throw new Error(`crm-repo: won opportunity ${row.id} has no product`);
+  }
+  return {
+    opportunityId: row.id,
+    organisationId: row.organisation_id,
+    organisationName: row.organisation_name,
+    product: row.product,
+    primaryEmail: row.primary_email,
+    closedAt: toIso(row.closed_at),
+  };
+}
+
+/**
+ * Won opportunities whose organisation has not yet been linked to a
+ * conversion, oldest-won-first — the longest a merchant has been sitting
+ * unaccounted for is the one an operator should look at first.
+ */
+export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]> {
+  const rows = await tesserixQuery<RawHandoffRow>(
+    `SELECT o.id, o.organisation_id, g.name AS organisation_name, o.product, o.closed_at,
+            c.email AS primary_email
+       FROM crm_opportunities o
+       JOIN crm_organisations g ON g.id = o.organisation_id
+       LEFT JOIN LATERAL (
+         SELECT email FROM crm_contacts
+          WHERE organisation_id = g.id AND email IS NOT NULL
+          ORDER BY is_primary DESC, name ASC NULLS LAST
+          LIMIT 1
+       ) c ON true
+      WHERE o.stage = 'won'
+        AND g.converted_at IS NULL
+      ORDER BY o.closed_at ASC NULLS LAST
+      LIMIT $1`,
+    [limit],
+  );
+  return rows.map(toHandoffRow);
+}
+
+export interface LinkConversionInput {
+  organisationId: string;
+  product: string;
+  ref: string;
+  label?: string;
+  method: "matched" | "manual";
+}
+
+export interface LinkedConversion {
+  organisationId: string;
+  organisationName: string;
+  product: string;
+  method: "matched" | "manual";
+}
+
+/**
+ * Link an organisation to a product's conversion.
+ *
+ * Never called for an unconfirmed suggestion — the caller (the action layer)
+ * only reaches this after an operator has explicitly confirmed one, or typed
+ * a conversion in by hand; `method` records which happened, so a bad
+ * auto-link can never be indistinguishable from an operator's own decision.
+ *
+ * `product`/`ref` are validated here, together, before the UPDATE runs.
+ * Migration 0019's `crm_org_conversion_complete` CHECK (both null or both
+ * set) would refuse a half-supplied write anyway, but a raw
+ * constraint-violation error reaching the operator is not this boundary's
+ * job to produce when a clear message can be raised first.
+ */
+export async function linkConversion(input: LinkConversionInput): Promise<LinkedConversion> {
+  const { organisationId, product, ref, label, method } = input;
+  if (!product.trim() || !ref.trim()) {
+    throw new Error("linkConversion: both product and ref are required");
+  }
+
+  const rows = await tesserixQuery<{ id: string; name: string }>(
+    `UPDATE crm_organisations
+        SET converted_product = $2,
+            converted_ref = $3,
+            converted_label = $4,
+            converted_at = now(),
+            converted_link_method = $5,
+            updated_at = now()
+      WHERE id = $1
+      RETURNING id, name`,
+    [organisationId, product, ref, label ?? null, method],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`linkConversion: organisation ${organisationId} not found`);
+  }
+  return { organisationId: row.id, organisationName: row.name, product, method };
+}

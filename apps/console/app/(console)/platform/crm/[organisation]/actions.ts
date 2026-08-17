@@ -5,6 +5,7 @@ import {
   advanceStage,
   setNextAction,
   logActivity,
+  linkConversion as linkConversionRow,
   MissingProductError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
@@ -155,6 +156,70 @@ export async function addActivity(input: AddActivityInput): Promise<CrmActionRes
     () => ({ action: "crm.activity.log", summary: { logged: 1 } }),
   );
   if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+const LINK_METHODS = ["matched", "manual"] as const;
+type LinkMethod = (typeof LINK_METHODS)[number];
+
+function isLinkMethod(value: string): value is LinkMethod {
+  return (LINK_METHODS as readonly string[]).includes(value);
+}
+
+export interface LinkConversionInput {
+  organisationId: string;
+  product: string;
+  ref: string;
+  label?: string;
+  method: LinkMethod;
+}
+
+/**
+ * Link an organisation's won deal to a product's conversion.
+ *
+ * The email match Task 9's conversion-status client surfaces is a
+ * suggestion, never an automatic link (see the handoff view): this action is
+ * the one place that suggestion — or a hand-typed entry — becomes a durable
+ * write, and it is only ever reached by an explicit operator action, through
+ * either path. `method` records which one happened, so a bad match can never
+ * be indistinguishable, after the fact, from an operator's own decision.
+ *
+ * Validated here, before any session or database work — same shape as
+ * `changeStage` above — so an incomplete request never reaches the audit
+ * trail: there is nothing yet worth accounting for.
+ */
+export async function linkConversion(input: LinkConversionInput): Promise<CrmActionResult> {
+  const product = input.product.trim();
+  const ref = input.ref.trim();
+  const label = input.label?.trim() || undefined;
+
+  if (!product || !ref) {
+    return { ok: false, message: "A product and a reference are required to link a conversion." };
+  }
+  if (!isLinkMethod(input.method)) {
+    return { ok: false, message: `"${input.method}" is not a valid link method.` };
+  }
+
+  const method = input.method;
+  const result = await withCrmWrite(
+    input.organisationId,
+    () =>
+      linkConversionRow({
+        organisationId: input.organisationId,
+        product,
+        ref,
+        label,
+        method,
+      }),
+    (outcome) => ({
+      action: "crm.conversion.link",
+      summary: { linked: 1 },
+      target: outcome.organisationName,
+    }),
+  );
+  if (!result.ok) return result;
+  revalidatePath("/platform/crm");
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
 }

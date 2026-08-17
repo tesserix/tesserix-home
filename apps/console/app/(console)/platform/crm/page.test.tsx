@@ -1,13 +1,25 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import type { QueueRow } from "@/lib/db/crm-repo";
+import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
+import type { ConversionSignal } from "@/lib/crm-conversion";
 
 const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
+const wonWithoutConversion = vi.fn();
+const fetchConversionSignal = vi.fn();
 
 vi.mock("@/lib/db/crm-repo", () => ({
   dueOpportunities: (...args: unknown[]) => dueOpportunities(...args),
   driftingOpportunities: (...args: unknown[]) => driftingOpportunities(...args),
+  wonWithoutConversion: (...args: unknown[]) => wonWithoutConversion(...args),
+}));
+
+vi.mock("@/lib/crm-conversion", () => ({
+  fetchConversionSignal: (...args: unknown[]) => fetchConversionSignal(...args),
+}));
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({ toString: () => "tx_session=abc" }),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -19,10 +31,12 @@ vi.mock("next/navigation", () => ({
 import CrmPage, {
   DUE_EMPTY_MESSAGE,
   DRIFTING_EMPTY_MESSAGE,
+  HANDOFF_EMPTY_MESSAGE,
   QUEUE_FILTERS,
   readQueueFilters,
   toFilterValues,
   toQueueItem,
+  buildHandoffItems,
 } from "./page";
 
 afterEach(() => {
@@ -31,7 +45,13 @@ afterEach(() => {
 
 beforeEach(() => {
   dueOpportunities.mockReset();
+  dueOpportunities.mockResolvedValue([]);
   driftingOpportunities.mockReset();
+  driftingOpportunities.mockResolvedValue([]);
+  wonWithoutConversion.mockReset();
+  wonWithoutConversion.mockResolvedValue([]);
+  fetchConversionSignal.mockReset();
+  fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "unknown" });
 });
 
 const DUE_ROW: QueueRow = {
@@ -200,6 +220,112 @@ describe("readQueueFilters", () => {
 describe("toFilterValues", () => {
   it("shows the bar only what the server actually applied", () => {
     expect(toFilterValues({ stage: "contacted" })).toEqual({ stage: "contacted" });
+  });
+});
+
+const HANDOFF_ROW: HandoffRow = {
+  opportunityId: "opp-9",
+  organisationId: "org-9",
+  organisationName: "Bondi Baker",
+  product: "mark8ly",
+  primaryEmail: "priya@bondibaker.example",
+  closedAt: "2026-08-10T00:00:00.000Z",
+};
+
+describe("Handoff", () => {
+  it("lists won opportunities with no conversion recorded", async () => {
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/bondi baker/i)).toBeInTheDocument();
+  });
+
+  it("shows a suggested match as unconfirmed rather than linking it", async () => {
+    // A wrongly auto-linked conversion corrupts the attribution this exists
+    // to produce, and writes a ref into the wrong product's namespace.
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    fetchConversionSignal.mockResolvedValue({
+      product: "mark8ly",
+      state: "complete",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      observedAt: "2026-08-17T09:00:00.000Z",
+    });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByRole("button", { name: /confirm/i })).toBeInTheDocument();
+    // Not linked automatically: the page's own read of the organisation
+    // never happened (this is a server render pulling apart the union), and
+    // nothing here calls `linkConversion` — only user interaction with the
+    // confirm button can.
+  });
+
+  it("shows unknown rather than not-converted when the product could not be reached", async () => {
+    // THE rule: `unknown` and `none` must never read the same to an
+    // operator. Rendering `unknown` as "not converted" is the false
+    // negative this whole surface exists to prevent.
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "unknown" });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/unknown/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not converted/i)).toBeNull();
+  });
+
+  it("does not offer a confirm button for a definite \"none\"", async () => {
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "none" });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.queryByRole("button", { name: /confirm/i })).toBeNull();
+  });
+
+  it("renders empty, not ready, when nothing is waiting for handoff", async () => {
+    wonWithoutConversion.mockResolvedValue([]);
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(HANDOFF_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+});
+
+describe("buildHandoffItems", () => {
+  it("fans out concurrently — one failing/hanging product does not blank the others", async () => {
+    const rowA: HandoffRow = { ...HANDOFF_ROW, opportunityId: "a", organisationId: "org-a" };
+    const rowB: HandoffRow = {
+      ...HANDOFF_ROW,
+      opportunityId: "b",
+      organisationId: "org-b",
+      primaryEmail: "other@example.com",
+    };
+    fetchConversionSignal.mockImplementation(async (_product: string, email: string) => {
+      if (email === rowA.primaryEmail) throw new Error("upstream hung");
+      return { product: "mark8ly", state: "none" } satisfies ConversionSignal;
+    });
+
+    const items = await buildHandoffItems([rowA, rowB], "tx_session=abc");
+
+    expect(items).toHaveLength(2);
+    expect(items[0].signal.state).toBe("unknown");
+    expect(items[1].signal.state).toBe("none");
+  });
+
+  it("treats a row with no contact email as unknown without calling the product", async () => {
+    const row: HandoffRow = { ...HANDOFF_ROW, primaryEmail: null };
+    const items = await buildHandoffItems([row], "tx_session=abc");
+    expect(items[0].signal).toEqual({ product: "mark8ly", state: "unknown" });
+    expect(fetchConversionSignal).not.toHaveBeenCalled();
+  });
+
+  it("asks each row's own product, not a fixed one", async () => {
+    fetchConversionSignal.mockResolvedValue({ product: "kora", state: "none" });
+    const row: HandoffRow = { ...HANDOFF_ROW, product: "kora" };
+    await buildHandoffItems([row], "tx_session=abc");
+    expect(fetchConversionSignal).toHaveBeenCalledWith("kora", row.primaryEmail, "tx_session=abc");
   });
 });
 

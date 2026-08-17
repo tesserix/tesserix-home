@@ -27,6 +27,8 @@ import {
   previewImport,
   commitImport,
   findMatchingOrganisationId,
+  wonWithoutConversion,
+  linkConversion,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -1100,5 +1102,116 @@ describe("import", () => {
       expect(committed.skippedSuppressed).toBe(preview.skippedSuppressed);
       expect(committed.malformed).toBe(preview.malformed);
     });
+  });
+});
+
+describe("wonWithoutConversion", () => {
+  it("only asks for won opportunities on an organisation with no conversion recorded", async () => {
+    query.mockResolvedValueOnce([]);
+    await wonWithoutConversion(50);
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("o.stage = 'won'");
+    expect(sql).toContain("g.converted_at IS NULL");
+  });
+
+  it("maps a row's primary contact email and product", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "o1",
+        organisation_id: "g1",
+        organisation_name: "Bondi Baker",
+        product: "mark8ly",
+        closed_at: new Date("2026-08-10T00:00:00Z"),
+        primary_email: "priya@bondibaker.example",
+      },
+    ]);
+    const rows = await wonWithoutConversion(50);
+    expect(rows).toEqual([
+      {
+        opportunityId: "o1",
+        organisationId: "g1",
+        organisationName: "Bondi Baker",
+        product: "mark8ly",
+        primaryEmail: "priya@bondibaker.example",
+        closedAt: "2026-08-10T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("carries a null primary email through rather than failing the row", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "o1",
+        organisation_id: "g1",
+        organisation_name: "No Contact Co",
+        product: "kora",
+        closed_at: null,
+        primary_email: null,
+      },
+    ]);
+    const [row] = await wonWithoutConversion(50);
+    expect(row.primaryEmail).toBeNull();
+  });
+
+  // Guards the guard: migration 0019's CHECK should make a won,
+  // product-less opportunity unreachable. If it ever isn't, this must fail
+  // loud rather than silently hand the caller a row with nothing to ask
+  // apps/web about.
+  it("throws rather than silently drop the product on a malformed row", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "o1",
+        organisation_id: "g1",
+        organisation_name: "Bad Row Co",
+        product: null,
+        closed_at: null,
+        primary_email: null,
+      },
+    ]);
+    await expect(wonWithoutConversion(50)).rejects.toThrow(/no product/);
+  });
+});
+
+describe("linkConversion", () => {
+  it("rejects a missing product or ref before touching the database", async () => {
+    await expect(
+      linkConversion({ organisationId: "g1", product: "", ref: "tenant_1", method: "manual" }),
+    ).rejects.toThrow(/product and ref/);
+    await expect(
+      linkConversion({ organisationId: "g1", product: "mark8ly", ref: "", method: "manual" }),
+    ).rejects.toThrow(/product and ref/);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("writes converted_* and updated_at together, and returns the linked method", async () => {
+    query.mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]);
+
+    const result = await linkConversion({
+      organisationId: "g1",
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+    });
+
+    expect(result).toEqual({
+      organisationId: "g1",
+      organisationName: "Bondi Baker",
+      product: "mark8ly",
+      method: "matched",
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("converted_product = $2");
+    expect(sql).toContain("converted_ref = $3");
+    expect(sql).toContain("converted_link_method = $5");
+    expect(sql).toContain("updated_at = now()");
+    expect(params).toEqual(["g1", "mark8ly", "tenant_9f2", "Bondi Store", "matched"]);
+  });
+
+  it("throws when the organisation no longer exists rather than reporting success", async () => {
+    query.mockResolvedValueOnce([]);
+    await expect(
+      linkConversion({ organisationId: "missing", product: "mark8ly", ref: "tenant_1", method: "manual" }),
+    ).rejects.toThrow(/not found/);
   });
 });
