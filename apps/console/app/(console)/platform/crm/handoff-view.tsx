@@ -133,6 +133,14 @@ function HandoffRowItem({
       });
       if (!result.ok) {
         setError(result.message);
+        // Refreshed on failure for the same reason `confirmSuggestion` is,
+        // and more so: the manual path is the likelier race loser — it is
+        // open for as long as the operator spends typing a reference, which
+        // is the whole window another row (or another operator) has to link
+        // this organisation first. Without this, the row and its still-live
+        // form stay on screen after the guard has just said the work is
+        // already done.
+        router.refresh();
         return;
       }
       setManualOpen(false);
