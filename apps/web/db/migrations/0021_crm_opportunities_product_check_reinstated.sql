@@ -56,11 +56,25 @@
 -- The predicate below is deliberately weak — "does at least one migrated
 -- opportunity exist", not "was every nameable lead migrated". A strict
 -- version would have to reimplement organisationName()'s fallback chain in
--- SQL, and would deadlock forever on the one lead the migration script
--- (and its test seed) deliberately rejects as unnameable — that lead can
--- never produce a crm_opportunities row, so a strict "all leads migrated"
--- check would never pass even after a fully successful run. "At least one"
--- is the check that can actually be satisfied by a real, correct run.
+-- SQL, in a DO block, duplicating logic that already exists (and is already
+-- tested) in the migration script. It isn't worth writing twice.
+--
+-- It is also no longer the load-bearing guard it once read as. This header
+-- previously said a permanently-unnameable lead was an expected steady
+-- state, so a strict check "would deadlock forever". That is no longer true:
+-- migrate-leads-to-crm.mjs now exits NON-ZERO while any lead is rejected,
+-- not only when one fails at insert time, so there is no such thing as a
+-- completed backfill that left an unnameable lead behind. The operator
+-- resolves it at source — by supplying a real identity if one is known, or
+-- by DELETING the lead, which is a legitimate resolution for a row with
+-- nothing to migrate — and only then does step 2 exit 0 and step 3 become
+-- safe to run.
+--
+-- So the strict condition is enforced, just not here: it is enforced by the
+-- script's exit code, which is the runbook's actual gate. What is left below
+-- is belt-and-braces — the cheapest possible catch for "step 2 was never run
+-- at all" — and it should be read that way rather than as the thing keeping
+-- a partial backfill out.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM leads)

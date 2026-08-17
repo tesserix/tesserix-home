@@ -48,8 +48,25 @@ const SIGNAL_COPY: Record<ConversionState, { label: string; tone: "neutral" | "w
   complete: { label: "Converted", tone: "success" },
 };
 
+/**
+ * The one `unknown` that is not a failed check. A migrated deal carries no
+ * product (see `HandoffRow.product`), so `fetchRowSignal` never asks anyone
+ * anything about it — there is no product admin API to address the question
+ * to. "Could not check" says a check was attempted and did not come back,
+ * which for these rows is simply untrue, and it reads as a system fault an
+ * operator might wait out. Nothing was checked, nothing will be until the
+ * deal has a product, and the row is worked by hand either way.
+ *
+ * `signal.product === null` is exactly this case and only this case — the
+ * `ConversionSignal.product` contract says so.
+ */
+const NOT_CHECKED_COPY = { label: "Not checked — no product", tone: "neutral" as const };
+
 function SignalBadge({ signal }: { signal: ConversionSignal }) {
-  const copy = SIGNAL_COPY[signal.state];
+  const copy =
+    signal.state === "unknown" && signal.product === null
+      ? NOT_CHECKED_COPY
+      : SIGNAL_COPY[signal.state];
   return (
     <Badge variant={copy.tone === "success" ? "default" : "secondary"}>
       {copy.label}

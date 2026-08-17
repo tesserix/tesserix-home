@@ -594,9 +594,30 @@ function reportRejected(rejected) {
   for (const { lead, reason } of rejected) {
     console.error(`[migrate]   lead ${lead.id}: ${reason}`);
   }
+  // Printed on the dry-run path too, which also exits non-zero on a
+  // rejection: the operator meeting this first in a preview deserves the
+  // same two options as the one who meets it mid-deploy.
+  console.error(
+    `[migrate] Two honest resolutions, and only two: supply a real identity ` +
+      `the lead actually has (a company, name or handle — or a recognised ` +
+      `status), or DELETE the lead. A lead nobody can identify has nothing ` +
+      `to migrate, and deleting it is a legitimate resolution rather than a ` +
+      `workaround. Do NOT invent a name to get past this check: that ` +
+      `fabricates an identity the same way guessing a product would ` +
+      `fabricate attribution, which is the thing this migration exists to ` +
+      `avoid.`,
+  );
 }
 
-function printSummary({ leadsRead, toWrite, skipped, rejected }) {
+/** `rejected` and `failed` are counted and printed SEPARATELY, never summed.
+ *  They are different problems with different answers, which the exit
+ *  message goes to some trouble to say: a failure is usually transient and
+ *  often clears on a re-run, a rejection never does and needs the source
+ *  lead resolved by hand. A single conflated total under one label ("rejected
+ *  (unnameable / unmappable)") told an operator to go hand-fix rows that
+ *  might only have needed the script run again. `failed` defaults to 0 for
+ *  the dry-run path, which cannot have insert-time failures at all. */
+function printSummary({ leadsRead, toWrite, skipped, rejected, failed = 0 }) {
   console.log(`[migrate] leads read: ${leadsRead}`);
   console.log(
     `[migrate] to write — organisations: ${toWrite.organisations}, ` +
@@ -605,6 +626,7 @@ function printSummary({ leadsRead, toWrite, skipped, rejected }) {
   );
   console.log(`[migrate] skipped (already migrated): ${skipped}`);
   console.log(`[migrate] rejected (unnameable / unmappable): ${rejected}`);
+  console.log(`[migrate] failed at insert (may clear on a re-run): ${failed}`);
 }
 
 async function main() {
@@ -721,7 +743,8 @@ async function main() {
         activities,
       },
       skipped: skipped.length,
-      rejected: rejected.length + failures.length,
+      rejected: rejected.length,
+      failed: failures.length,
     });
     console.log(`[migrate] committed ${written} lead(s).`);
     if (failures.length > 0) {
@@ -748,11 +771,17 @@ async function main() {
       // them behind the reinstated CHECK just as surely. "Nothing failed" is
       // not the same claim as "everything migrated", and only the second one
       // makes 0021 safe.
+      // The old wording here told the operator to "give it a name", which
+      // for a lead with no company, no name and no handle asks them to
+      // INVENT an identity — the same fabrication this migration refuses
+      // when it declines to guess a product. The two honest resolutions,
+      // including deleting the lead, are printed by `reportRejected` just
+      // above; this line is the 0021 gate itself.
       console.error(
         `[migrate] NOT SAFE to apply 0021 — every lead must migrate first. ` +
           `Failures are usually transient and clear on a re-run; rejections ` +
-          `never are, and need the source lead fixed (give it a name or a ` +
-          `recognised status) before this can exit 0.`,
+          `never do, and need the source lead resolved (see above) before ` +
+          `this can exit 0. 0021 must not be applied until it does.`,
       );
       throw new IncompleteMigrationError({
         failureCount: failures.length,

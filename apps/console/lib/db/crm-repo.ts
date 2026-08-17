@@ -1311,7 +1311,10 @@ export interface HandoffRow {
    *  handoff surface into its error state instead. There is also nothing
    *  lost by carrying the null: `linkConversion` takes the product from the
    *  operator's own selection, not from the opportunity, so a null-product
-   *  row is still linkable by hand. The only thing it cannot do is be asked
+   *  row is still linkable by hand — and that link is where the null ends,
+   *  because `linkConversion` writes the chosen product back onto the deal
+   *  (#214), which is what lets the row leave this queue at all. The
+   *  only thing it cannot do before that is be asked
    *  about upstream — `fetchRowSignal` has no product to address a
    *  conversion-status call to, so the row reads `unknown`, which is the
    *  honest answer rather than a fabricated `none`. */
@@ -1370,6 +1373,22 @@ function toHandoffRow(row: RawHandoffRow): HandoffRow {
  * the opportunity, which is a schema change to a shipped design and
  * deliberately out of scope here; it is the thing to do if multi-product
  * conversions become common rather than theoretical.
+ *
+ * #214 — the `IS DISTINCT FROM` comparison KEEPS its place, now that
+ * `linkConversion` fills a product-less won deal's `product` as it links it.
+ * Reverting to a bare `g.converted_at IS NULL` was considered and rejected:
+ * that is precisely the per-organisation test Ruling 35 replaced, and it
+ * brings back the silent disappearance of a second product's won deal the
+ * moment the first is confirmed. What #214 fixed was the other half of the
+ * comparison — a null that no write ever cleared — not the comparison.
+ *
+ * Both branches are load-bearing, and neither is redundant. 0019's
+ * `crm_org_conversion_complete` CHECK makes `converted_at` and
+ * `converted_product` null together, so on a never-converted organisation
+ * the comparison reads `NULL IS DISTINCT FROM o.product`, which is FALSE for
+ * a product-less won deal — dropping the `converted_at IS NULL` branch would
+ * hide the entire migrated backlog on day one, the exact bug this queue was
+ * fixed for once already.
  */
 export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]> {
   const rows = await tesserixQuery<RawHandoffRow>(
@@ -1449,6 +1468,11 @@ export class AlreadyLinkedError extends Error {
  * constraint-violation error reaching the operator is not this boundary's
  * job to produce when a clear message can be raised first.
  *
+ * It also fills the won opportunity's `product` when that deal has none
+ * (#214) — see the comment on that statement below. Every write here is one
+ * transaction: organisation, opportunity, and timeline note land together or
+ * not at all.
+ *
  * The UPDATE and the `crm_activities` write both run inside `tesserixTx`
  * (Ruling 31), on one client: either both land or neither does. A
  * conversion that updated the organisation but left no note on its timeline
@@ -1500,10 +1524,11 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
     // record; without an `opportunity_id` it lands only on the
     // organisation, and the deal's own timeline — the one place a rep looks
     // to ask "what happened to this?" — still shows nothing after "won".
-    // Null when no won opportunity carries this product (a manual link for
-    // a product the organisation has no deal on): the note is still worth
-    // writing at the organisation level, and inventing an association with
-    // some other product's deal would be worse than none.
+    // Null when no won opportunity carries this product and none could be
+    // given it (a manual link for a product the organisation has no deal on
+    // at all): the note is still worth writing at the organisation level,
+    // and inventing an association with some other product's deal would be
+    // worse than none.
     const opportunityRows = await query<{ id: string }>(
       `SELECT id FROM crm_opportunities
         WHERE organisation_id = $1 AND product = $2 AND stage = 'won'
@@ -1511,6 +1536,57 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
         LIMIT 1`,
       [organisationId, product],
     );
+
+    // #214: the migrated backlog's exit from the handoff queue.
+    //
+    // A migrated won deal carries `product = NULL` — the backfill refuses to
+    // invent attribution it never had (see `migrate-leads-to-crm.mjs`'s
+    // header). Linking a conversion is the moment that attribution stops
+    // being unknown: an operator has just said, on the record, which product
+    // this deal became. Writing it here is what that decision means, and it
+    // is also the only thing that lets the row leave `wonWithoutConversion`
+    // — whose predicate compares the organisation's `converted_product`
+    // against THIS opportunity's, and so kept matching a null forever.
+    // Without it the row was linkable exactly once and clearable never,
+    // erroring with `AlreadyLinkedError` on every retry after.
+    //
+    // Only ever fills a NULL, and only when no won deal already carries this
+    // product (that deal is the one the conversion is for; a *different*
+    // product-less deal on the same organisation is not, and stamping it
+    // would fabricate exactly the attribution the migration declined to).
+    // `updated_at` is set explicitly — there are no triggers on `crm_*`.
+    //
+    // Migration 0021 re-added `crm_opp_product_required_when_qualified`
+    // (`stage IN ('new','contacted') OR product IS NOT NULL`) as NOT VALID,
+    // so a grandfathered `won` row with a null product is un-updatable
+    // UNLESS the same UPDATE supplies a product. This write supplies one:
+    // it is precisely the update that CHECK was shaped to permit, which
+    // `crm-repo.write.integration.test.ts` proves against a real database
+    // rather than taking on trust.
+    //
+    // Oldest-closed-first when an organisation has several product-less won
+    // deals, matching the queue's own ordering, so the row the operator was
+    // looking at is the row that clears. Any others stay in the queue and
+    // hit Ruling 30's guard — the same visible refusal a second product's
+    // deal already gets, not a new failure mode.
+    const filledRows =
+      opportunityRows.length > 0
+        ? []
+        : await query<{ id: string }>(
+            `UPDATE crm_opportunities
+                SET product = $2,
+                    updated_at = now()
+              WHERE id = (
+                SELECT id FROM crm_opportunities
+                 WHERE organisation_id = $1
+                   AND stage = 'won'
+                   AND product IS NULL
+                 ORDER BY closed_at ASC NULLS LAST, id ASC
+                 LIMIT 1
+              )
+              RETURNING id`,
+            [organisationId, product],
+          );
 
     await query(
       `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
@@ -1520,7 +1596,7 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
         actor,
         `Linked to ${product} conversion ${ref}${label ? ` (${label})` : ""}`,
         JSON.stringify({ product, ref, label: label ?? null, method }),
-        opportunityRows[0]?.id ?? null,
+        opportunityRows[0]?.id ?? filledRows[0]?.id ?? null,
       ],
     );
 
