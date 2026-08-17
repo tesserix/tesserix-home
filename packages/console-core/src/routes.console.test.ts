@@ -67,8 +67,40 @@ describe("console-native surfaces record no apps/web path", () => {
     // Guards the guard: making `web` optional must not become a licence to
     // stop recording it. Every route that apps/web actually serves still says
     // where, and only a genuinely console-native surface may omit it.
+    //
+    // Three ids now, each for its own reason, not one blanket "the CRM has no
+    // predecessor":
+    //   - platform.auditLog: apps/web served three product-scoped audit pages
+    //     and no estate-wide one — naming any single one would misrepresent
+    //     it as the whole capability's home. See RouteEntry.web.
+    //   - platform.crmImport: the import flow has no distinct page in
+    //     apps/web — it lives inside the leads page (`platform.crm`, which
+    //     DOES record a `web` path). There is nothing separate to point at.
+    //   - platform.crmSuppressions: a suppression list never existed in
+    //     apps/web at all. This is genuinely console-native, not a migration.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
-    expect(missing).toEqual(["platform.auditLog"]);
+    expect(missing).toEqual([
+      "platform.auditLog",
+      "platform.crmImport",
+      "platform.crmSuppressions",
+    ]);
+  });
+});
+
+describe("the CRM serves its queue but keeps import and suppressions pending", () => {
+  it("serves the CRM and keeps its sub-surfaces pending until built", () => {
+    expect(isPending("platform.crm")).toBe(false);
+    expect(isPending("platform.crmImport")).toBe(true);
+    expect(isPending("platform.crmSuppressions")).toBe(true);
+  });
+
+  it("records apps/web's leads page as the CRM's predecessor", () => {
+    // platform.tickets records its apps/web predecessor even though that page
+    // was deleted in #199 — `web` is a record of where a capability lived,
+    // not a link, and the no-linking rule binds `isPending`/renderers, not
+    // this field. The CRM queue is a genuine successor to the leads page, so
+    // it records the same way.
+    expect(webPath("platform.crm")).toBe("/admin/apps/mark8ly/leads");
   });
 });
 

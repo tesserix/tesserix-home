@@ -116,4 +116,16 @@ export const platformNav: readonly NavEntry[] = [
       { name: "Settings", route: "platform.settings", icon: "settings" },
     ],
   },
+  {
+    // Growth is a new group, not a fourth item bolted onto Operate. Operate
+    // is service upkeep — the ticket queue, identity lookup, live chat,
+    // announcements — all things done TO keep the platform running. A sales
+    // queue is not upkeep: it is revenue work, done to bring tenants in
+    // rather than to keep existing ones served. Filing it in Operate would
+    // blur that line the same way filing the audit log there would have
+    // blurred Governance's.
+    name: "Growth",
+    icon: "users",
+    items: [{ name: "CRM", route: "platform.crm", icon: "users" }],
+  },
 ];
