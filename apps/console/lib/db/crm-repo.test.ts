@@ -658,6 +658,29 @@ describe("suppressions", () => {
     expect(params).toEqual([null, "bondibaker", "unsubscribed", "ava@tesserix.app"]);
   });
 
+  // Belt-and-braces alongside migration 0022's trigger (Ruling 19): trimmed
+  // and lowercased here too, so the common case never has to round-trip
+  // through the database to look normal.
+  it("trims and lowercases the email before storing it", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "s1",
+        email: "ava@example.com",
+        instagram_handle: null,
+        reason: "unsubscribed",
+        created_by: "ava@tesserix.app",
+        created_at: new Date("2026-08-16T00:00:00Z"),
+      },
+    ]);
+    await addSuppression({
+      email: "  Ava@Example.com  ",
+      reason: "unsubscribed",
+      actor: "ava@tesserix.app",
+    });
+    const [, params] = query.mock.calls[0];
+    expect(params).toEqual(["ava@example.com", null, "unsubscribed", "ava@tesserix.app"]);
+  });
+
   it("refuses to add a suppression with neither key, before touching the database", async () => {
     await expect(
       addSuppression({ reason: "unsubscribed", actor: "ava@tesserix.app" }),
@@ -678,14 +701,18 @@ describe("suppressions", () => {
   // write lives in `suppressions/actions.ts`, via the shared `withCrmWrite`
   // (see `lib/crm-write.ts` and `suppressions/actions.test.ts`).
   describe("removeSuppression", () => {
-    it("deletes by id and returns exactly the rows the DELETE reports", async () => {
-      query.mockResolvedValueOnce([{ id: "s1" }]);
+    it("deletes by id and returns exactly the rows the DELETE reports, including the suppression key", async () => {
+      query.mockResolvedValueOnce([{ id: "s1", email: "ava@example.com", instagram_handle: null }]);
       const rows = await removeSuppression("s1");
       const [sql, params] = query.mock.calls[0];
       expect(sql).toContain("DELETE FROM crm_suppressions");
-      expect(sql).toContain("RETURNING id");
+      expect(sql).toContain("RETURNING id, email, instagram_handle");
       expect(params).toEqual(["s1"]);
-      expect(rows).toEqual([{ id: "s1" }]);
+      // Ruling 20: email/instagramHandle returned alongside id, and mapped
+      // to camelCase — the caller (`suppressions/actions.ts`) needs these to
+      // audit the suppression's key rather than the opaque uuid it was
+      // looked up by.
+      expect(rows).toEqual([{ id: "s1", email: "ava@example.com", instagramHandle: null }]);
     });
 
     // Important 3: a DELETE against a non-matching id succeeds with zero

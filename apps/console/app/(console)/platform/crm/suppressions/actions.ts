@@ -75,13 +75,28 @@ export async function addSuppressionAction(
 
 export async function removeSuppressionAction(id: string): Promise<CrmActionResult> {
   const result = await withCrmWrite(
+    // Fallback only: `describe` below supplies the real target once the row
+    // is in hand. Used verbatim only if nothing matched and there is no
+    // email/handle to report instead (Ruling 20).
     id,
     () => removeSuppression(id),
-    // Important 3: the real outcome, not an assumption — `removeSuppression`
-    // returns exactly the rows its DELETE ... RETURNING id reported, so a
-    // removal that matched nothing is honestly `{ removed: 0 }`, not a
-    // fabricated `{ removed: 1 }`.
-    (rows) => ({ action: "crm.suppression.remove", summary: { removed: rows.length } }),
+    (rows) => {
+      const removed = rows[0];
+      return {
+        action: "crm.suppression.remove",
+        // Important 3: the real outcome, not an assumption —
+        // `removeSuppression` returns exactly the rows its
+        // DELETE ... RETURNING reported, so a removal that matched nothing
+        // is honestly `{ removed: 0 }`, not a fabricated `{ removed: 1 }`.
+        summary: { removed: rows.length },
+        // Ruling 20: the suppression key (email or Instagram handle) on
+        // both the add and the remove path, not a uuid one and an email the
+        // other — #204 already treats this column as deliberately carrying
+        // the accountable fact, and a uuid there is unreadable at the exact
+        // moment an auditor needs it.
+        target: removed?.email ?? removed?.instagramHandle ?? id,
+      };
+    },
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm/suppressions");

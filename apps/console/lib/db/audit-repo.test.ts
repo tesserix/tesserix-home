@@ -320,6 +320,44 @@ describe("auditedOperation", () => {
     expect(entry.metadata).toBe('{"transitions":0}');
   });
 
+  // Ruling 20: some callers only learn the identifier worth recording from
+  // the operation's own result — `removeSuppression` is looked up and
+  // deleted by an opaque uuid, but the accountable fact (#204) is the email
+  // or Instagram handle the DELETE ... RETURNING reports back. `describe`'s
+  // `target` exists for exactly that case, the same way `action` does for a
+  // call site that can't know its own action upfront.
+  it("lets describe's target override the upfront spec.target", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "5bf22000-uuid-fallback",
+      operation: async () => [{ id: "s1", email: "ava@example.com" }],
+      describe: (rows) => ({
+        action: "crm.suppression.remove",
+        summary: { removed: rows.length },
+        target: rows[0]?.email,
+      }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("ava@example.com");
+  });
+
+  // Guards the guard: when describe supplies no target at all (the ordinary
+  // case, every other call site in this codebase), the upfront spec.target
+  // must still be what gets written — the override is additive, not a
+  // replacement for the simple case.
+  it("falls back to spec.target when describe supplies none", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ ok: true }),
+      describe: () => ({ action: "crm.stage.change", summary: { transitions: 1 } }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("org-1");
+  });
+
   it("writes the row when the operation returned nothing", async () => {
     // "Who searched for whom and found nothing" is the interesting case; a
     // zero-result lookup that leaves no trace is the failure this guards.

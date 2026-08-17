@@ -285,15 +285,29 @@ export async function recentAuditEntries(limit: number): Promise<AuditEntry[]> {
   }));
 }
 
-/** What an operation's audit row should say, computed from its own result. */
+/** What an operation's audit row should say, computed from its own result.
+ *
+ * `target` is optional and, when present, overrides `AuditedOperation.target`
+ * (Ruling 20). Most callers know their target before the operation runs (an
+ * opportunity id, say) and pass it as `AuditedOperation.target` directly. But
+ * some don't: `removeSuppression` is looked up and deleted by an opaque
+ * uuid, while the identifier an auditor actually wants to see — the email or
+ * Instagram handle #204 already calls the accountable fact — is only known
+ * from the operation's *result*, exactly like `action`/`summary` above. This
+ * is the same reason those two live in `describe` rather than at the call
+ * site: a single call cannot always know upfront what it will turn out to be
+ * accounting for. */
 export interface AuditDescription {
   readonly action: string;
   readonly summary: AuditSummary;
+  readonly target?: string;
 }
 
 /** An audited operation and the facts that account for it. */
 export interface AuditedOperation<T> {
   readonly actor: string;
+  /** Used verbatim unless `describe`'s result overrides it — see
+   *  `AuditDescription.target`. */
   readonly target?: string;
   /** The work being accounted for. Runs only if the audit can be written. */
   readonly operation: () => Promise<T>;
@@ -350,12 +364,15 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
   // Described before the write and outside its try, so a bug in `describe`
   // surfaces as AuditSummaryError rather than being reported as a database
   // failure — and so the result is still discarded either way.
-  const { action, summary } = spec.describe(result);
+  const { action, summary, target } = spec.describe(result);
 
   await writeAuditEntry({
     actor: spec.actor,
     action,
-    target: spec.target,
+    // Ruling 20: `describe`'s target, when it supplies one, overrides the
+    // upfront `spec.target` — the result is the only place some callers
+    // (`removeSuppression`) ever learn the identifier worth recording.
+    target: target ?? spec.target,
     summary,
   });
 

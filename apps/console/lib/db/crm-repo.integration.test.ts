@@ -62,6 +62,16 @@ beforeAll(async () => {
   );
   const migrationSql = readFileSync(migrationPath, "utf-8");
   await db.exec(migrationSql);
+  // Ruling 19: the normalisation trigger on crm_suppressions. Applied here
+  // (not left to a separate suite) because the whole point of this
+  // migration is that it holds regardless of which door a row came through
+  // — including a raw INSERT, which is exactly what the suppressions
+  // describe block below seeds with, below.
+  const normalizeMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0022_crm_suppressions_normalize.sql",
+  );
+  await db.exec(readFileSync(normalizeMigrationPath, "utf-8"));
   dbHolder.db = db;
 
   const orgResult = await db.query<{ id: string }>(
@@ -306,5 +316,55 @@ describe("suppressions match case-insensitively, and Instagram handles format-in
     expect(await isSuppressed({ instagramHandle: "@BondiBaker" })).toBe(true);
     expect(await isSuppressed({ instagramHandle: "BONDIBAKER" })).toBe(true);
     expect(await isSuppressed({ instagramHandle: "someoneelse" })).toBe(false);
+  });
+});
+
+// Ruling 19 — the discriminating case the block above cannot exercise: every
+// row up there was seeded through `addSuppression`, so `instagram_handle`
+// never held anything but the application's own already-normalised form,
+// and the column's SQL-side `lower()` was never actually load-bearing (a
+// mutation removing it from BOTH sides of the comparison entirely still
+// passed the whole suite). A row that reached the table any other way — a
+// migration backfill, Task 8's import, a DBA's manual INSERT — is not
+// guaranteed to be pre-normalised. This block bypasses `addSuppression`
+// with a raw INSERT carrying the exact hand-rolled form ('@HandRolled',
+// unstripped and mixed-case) migration 0022's header describes, and proves
+// `isSuppressed` still finds it — which is only true because the
+// `crm_suppressions_normalize_trg` trigger (0022) rewrites the row to its
+// canonical form on the way in, regardless of what INSERT sent.
+describe("a raw INSERT that bypasses addSuppression is still normalised, by the database trigger (Ruling 19)", () => {
+  beforeAll(async () => {
+    await db.query(
+      `INSERT INTO crm_suppressions (instagram_handle, reason, created_by) VALUES ($1, $2, $3)`,
+      ["@HandRolled", "manual entry, never went through addSuppression", "dba@tesserix.app"],
+    );
+  });
+
+  it("normalises a hand-rolled INSERT so a lookup in canonical form still finds it", async () => {
+    expect(await isSuppressed({ instagramHandle: "handrolled" })).toBe(true);
+  });
+
+  it("stores the row already in canonical form, not the raw '@HandRolled' the INSERT sent", async () => {
+    const rows = await db.query<{ instagram_handle: string }>(
+      `SELECT instagram_handle FROM crm_suppressions WHERE reason = $1`,
+      ["manual entry, never went through addSuppression"],
+    );
+    expect(rows.rows[0].instagram_handle).toBe("handrolled");
+  });
+
+  // The other half of the failure Ruling 19 describes: without the trigger,
+  // `addSuppression({ instagramHandle: "handrolled" })` would succeed
+  // against the un-normalised '@HandRolled' row (crm_suppressions_ig_uq
+  // does not see them as colliding), producing two rows for one person.
+  // With the trigger, the hand-rolled row is already stored as "handrolled",
+  // so this collides — exactly as it must.
+  it("collides with a normal addSuppression call for the same person, rather than creating a second, unmatchable row", async () => {
+    await expect(
+      addSuppression({
+        instagramHandle: "handrolled",
+        reason: "duplicate of the hand-rolled row",
+        actor: "ops@tesserix.app",
+      }),
+    ).rejects.toThrow(/crm_suppressions_ig_uq/);
   });
 });

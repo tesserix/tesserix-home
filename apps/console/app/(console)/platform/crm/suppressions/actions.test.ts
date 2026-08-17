@@ -176,7 +176,9 @@ describe("addSuppressionAction", () => {
 describe("removeSuppressionAction", () => {
   it("removes a suppression, audits the real row count, and revalidates", async () => {
     signIn(["read"]);
-    vi.mocked(removeSuppression).mockResolvedValue([{ id: "s1" }]);
+    vi.mocked(removeSuppression).mockResolvedValue([
+      { id: "s1", email: "ava@example.com", instagramHandle: null },
+    ]);
 
     const result = await removeSuppressionAction("s1");
 
@@ -185,9 +187,38 @@ describe("removeSuppressionAction", () => {
     const audit = lastAuditInsert();
     expect(audit.actor).toBe("sub-1");
     expect(audit.action).toBe("crm.suppression.remove");
-    expect(audit.target).toBe("s1");
     expect(audit.summary).toEqual({ removed: 1 });
     expect(revalidatePath).toHaveBeenCalledWith("/platform/crm/suppressions");
+  });
+
+  // Ruling 20: `console_audit_log.target` must hold the same kind of value
+  // on both the add and the remove path — the suppression key, not a uuid
+  // one direction and an email the other (the same divergence Critical 2
+  // flagged for `actor`, one column over). The id is what `removeSuppression`
+  // is looked up by; it must not be what gets audited once the row's real
+  // key is known.
+  it("audits the suppression's email as the target, not the uuid it was looked up by", async () => {
+    signIn(["read"]);
+    vi.mocked(removeSuppression).mockResolvedValue([
+      { id: "s1", email: "ava@example.com", instagramHandle: null },
+    ]);
+
+    await removeSuppressionAction("s1");
+
+    const audit = lastAuditInsert();
+    expect(audit.target).toBe("ava@example.com");
+    expect(audit.target).not.toBe("s1");
+  });
+
+  it("audits the instagram handle as the target when there is no email", async () => {
+    signIn(["read"]);
+    vi.mocked(removeSuppression).mockResolvedValue([
+      { id: "s1", email: null, instagramHandle: "bondibaker" },
+    ]);
+
+    await removeSuppressionAction("s1");
+
+    expect(lastAuditInsert().target).toBe("bondibaker");
   });
 
   // Important 3: a DELETE that matched nothing must not be recorded as a
@@ -201,6 +232,9 @@ describe("removeSuppressionAction", () => {
     expect(result).toEqual({ ok: true });
     const audit = lastAuditInsert();
     expect(audit.summary).toEqual({ removed: 0 });
+    // No row means no key to report — the uuid is the only identifier this
+    // call ever had, so it's the only honest fallback.
+    expect(audit.target).toBe("missing");
   });
 
   it("refuses without console entry, before any transport or audit call", async () => {
@@ -229,7 +263,9 @@ describe("removeSuppressionAction", () => {
   // failed audit write must discard the result rather than report success.
   it("discards the result when the audit write fails, and does not report success", async () => {
     signIn(["read"]);
-    vi.mocked(removeSuppression).mockResolvedValue([{ id: "s1" }]);
+    vi.mocked(removeSuppression).mockResolvedValue([
+      { id: "s1", email: "ava@example.com", instagramHandle: null },
+    ]);
     vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
 
     const result = await removeSuppressionAction("s1");

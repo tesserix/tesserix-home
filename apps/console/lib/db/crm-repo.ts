@@ -785,12 +785,17 @@ export async function addSuppression(input: AddSuppressionInput): Promise<Suppre
   if (!input.email && !input.instagramHandle) {
     throw new Error("addSuppression: requires an email or an instagram handle");
   }
+  // Trimmed at the boundary, same as `normalizeInstagramHandle` does for the
+  // handle — the database trigger (migration 0022, Ruling 19) is the
+  // invariant, this is belt-and-braces so the common case never round-trips
+  // through it to look normal.
+  const email = input.email ? input.email.trim().toLowerCase() : null;
   const rows = await tesserixQuery<RawSuppressionRow>(
     `INSERT INTO crm_suppressions (email, instagram_handle, reason, created_by)
      VALUES ($1, $2, $3, $4)
      RETURNING id, email, instagram_handle, reason, created_by, created_at`,
     [
-      input.email ?? null,
+      email,
       input.instagramHandle ? normalizeInstagramHandle(input.instagramHandle) : null,
       input.reason,
       input.actor,
@@ -811,21 +816,43 @@ export async function listSuppressions(): Promise<SuppressionRow[]> {
   return rows.map(toSuppressionRow);
 }
 
+/** What `removeSuppression`'s DELETE reports back — enough for the caller's
+ *  `describe` to name both the real outcome (Important 3: `rows.length`) and
+ *  the accountable identifier (Ruling 20: the email/handle, not the uuid it
+ *  was looked up by — see `suppressions/actions.ts`). */
+export interface RemovedSuppression {
+  id: string;
+  email: string | null;
+  instagramHandle: string | null;
+}
+
 /**
  * Take someone off the do-not-contact list.
  *
  * Plain data access (Ruling 17) — the action layer (`suppressions/actions.ts`,
  * via `withCrmWrite`) is what audits this, since accountability for a CRM
- * write lives at the layer that already has a session to check. `RETURNING
- * id` is what lets the caller's `describe` report the real outcome —
+ * write lives at the layer that already has a session to check. `RETURNING`
+ * is what lets the caller's `describe` report the real outcome —
  * `{ removed: rows.length }` — rather than assuming a match: `DELETE …
  * WHERE id = $1` on an id that no longer exists succeeds with zero rows,
  * and an audit row claiming `{ removed: 1 }` for that would be recording a
- * removal that never happened.
+ * removal that never happened. `email`/`instagram_handle` are returned
+ * alongside `id` for the same reason: the caller only has the uuid it
+ * looked the row up by, and the identifier worth putting in the audit
+ * trail (Ruling 20) is only knowable once the row is in hand.
  */
-export async function removeSuppression(id: string): Promise<{ id: string }[]> {
-  return tesserixQuery<{ id: string }>(
-    `DELETE FROM crm_suppressions WHERE id = $1 RETURNING id`,
+export async function removeSuppression(id: string): Promise<RemovedSuppression[]> {
+  const rows = await tesserixQuery<{
+    id: string;
+    email: string | null;
+    instagram_handle: string | null;
+  }>(
+    `DELETE FROM crm_suppressions WHERE id = $1 RETURNING id, email, instagram_handle`,
     [id],
   );
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    instagramHandle: row.instagram_handle,
+  }));
 }
