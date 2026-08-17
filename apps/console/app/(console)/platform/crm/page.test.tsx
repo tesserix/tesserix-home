@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
+import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
 
 const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
@@ -231,6 +232,19 @@ describe("readQueueFilters", () => {
 
   it("reads a free-text owner filter", () => {
     expect(readQueueFilters({ owner: "Asha" })).toEqual({ owner: "Asha" });
+  });
+
+  it("reads the unassigned sentinel even though it names no real product", () => {
+    // The ESTATE check alone would reject this the same way it rejects
+    // "banana" below — it has to be special-cased ahead of that check, or
+    // the "Unassigned" filter option silently does nothing when picked.
+    expect(readQueueFilters({ product: UNASSIGNED_PRODUCT })).toEqual({
+      product: UNASSIGNED_PRODUCT,
+    });
+  });
+
+  it("still drops an unrecognised product that isn't the sentinel", () => {
+    expect(readQueueFilters({ product: "banana" })).toEqual({});
   });
 });
 
