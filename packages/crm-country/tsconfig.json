@@ -1,0 +1,16 @@
+{
+  "extends": "@tesserix/tsconfig/base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    // ES2022 for Object.hasOwn, which the lookup guard uses. Node 22 runs
+    // this module as-is (no build step), so this only affects typechecking.
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["index.mjs"]
+}

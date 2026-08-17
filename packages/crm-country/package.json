@@ -1,0 +1,21 @@
+{
+  "name": "@tesserix/crm-country",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": ["index.mjs"],
+  "scripts": {
+    "lint": "eslint --max-warnings 0",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@tesserix/eslint-config": "workspace:*",
+    "@tesserix/tsconfig": "workspace:*",
+    "eslint": "^9",
+    "typescript": "5.9.3"
+  }
+}

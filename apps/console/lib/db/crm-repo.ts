@@ -1,5 +1,6 @@
+import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
-import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, type FollowerBand } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
 import {
   isUsableImportRow,
@@ -662,6 +663,32 @@ function toIsoRequired(value: unknown): string {
   return iso;
 }
 
+/**
+ * The one ordering that decides which contact is "the primary": the flagged
+ * contact, then the oldest, then by `id`.
+ *
+ * One helper rather than the ordering spelled out at each site because seven
+ * queries use this ordering — three display subqueries and two filter
+ * subqueries in `listOrganisations`, `wonWithoutConversion`'s primary-email
+ * lookup, and `organisationDetail`'s full contact list (which orders the
+ * whole list this way rather than picking one row) — and they must agree.
+ * Two of them previously ordered by `name` instead, so following a list row
+ * to its detail page could show a different "primary" contact than the list
+ * did.
+ *
+ * `id` last is load-bearing: `crm_contacts.created_at` is not unique (an
+ * import writes a batch of contacts in one transaction, sharing it exactly),
+ * so without a total order each subquery breaks a tie independently — the
+ * `followers`/`hasEmail` filter matching on one contact while the row on
+ * screen shows another. Same reason the organisation keyset carries `id`.
+ *
+ * @param alias the table alias in the calling query, or "" when unaliased.
+ */
+function primaryContactOrder(alias: string): string {
+  const prefix = alias === "" ? "" : `${alias}.`;
+  return `${prefix}is_primary DESC, ${prefix}created_at ASC, ${prefix}id ASC`;
+}
+
 /** `null` for "no such organisation" — the caller (the page) turns that into
  *  `notFound()`, the same contract `fetchTicketDetail` uses. */
 export async function organisationDetail(organisationId: string): Promise<OrganisationDetail | null> {
@@ -698,7 +725,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       `SELECT id, name, email, phone, instagram_handle, is_primary
          FROM crm_contacts
         WHERE organisation_id = $1
-        ORDER BY is_primary DESC, name ASC NULLS LAST`,
+        ORDER BY ${primaryContactOrder("")}`,
       [organisationId],
     ),
     tesserixQuery<{
@@ -1304,14 +1331,21 @@ export async function commitImport(
       if (trimmedWebsiteUrl && !websiteUrl) {
         droppedWebsiteUrls++;
       }
+      // `country` is derived from `location` at insert time, not left for a
+      // later backfill to catch: a column no writer maintains decays into a
+      // filter that silently stops matching new rows (see migration 0025).
+      // `countryFromLocation` never guesses — an unmappable location yields
+      // NULL, the same as it would for the one-shot backfill.
+      const location = row.location?.trim() || null;
       const orgRows = await query<{ id: string }>(
-        `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO crm_organisations (name, website_url, location, country, category, tags, import_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
           name,
           websiteUrl,
-          row.location?.trim() || null,
+          location,
+          countryFromLocation(location),
           row.category ?? [],
           row.tags ?? [],
           importId,
@@ -1480,7 +1514,7 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]>
        LEFT JOIN LATERAL (
          SELECT email FROM crm_contacts
           WHERE organisation_id = g.id AND email IS NOT NULL
-          ORDER BY is_primary DESC, name ASC NULLS LAST
+          ORDER BY ${primaryContactOrder("")}
           LIMIT 1
        ) c ON true
       WHERE o.stage = 'won'
@@ -1691,6 +1725,17 @@ export interface OrganisationFilter {
   search?: string;
   /** Only organisations created by this import batch. */
   importId?: string;
+  /** A real product string, or `UNASSIGNED_PRODUCT` for opportunities with
+   *  no product set. Lives on `crm_opportunities`, not the organisation —
+   *  matched with EXISTS since one organisation can have several. */
+  product?: string;
+  /** ISO 3166-1 alpha-2, exact match on the derived `crm_organisations.country`
+   *  column (Task 3/4). Never a pattern over the raw `location`. */
+  country?: string;
+  /** Follower-count band of the organisation's primary contact. */
+  followers?: FollowerBand;
+  /** True to require the primary contact to have an email on file. */
+  hasEmail?: boolean;
 }
 
 export interface OrganisationListRow {
@@ -1699,6 +1744,11 @@ export interface OrganisationListRow {
   location: string | null;
   contactName: string | null;
   contactEmail: string | null;
+  /** Primary contact's Instagram handle, for handle-first rendering. */
+  contactHandle: string | null;
+  /** How many contacts this organisation has. */
+  contactCount: number;
+  websiteUrl: string | null;
   /** Open (non-won/lost) opportunity count. */
   openOpportunities: number;
   /** Distinct products across this org's opportunities, nulls dropped. */
@@ -1706,34 +1756,45 @@ export interface OrganisationListRow {
   createdAt: string;
 }
 
+export interface OrganisationPage {
+  rows: OrganisationListRow[];
+  /** Total matching the filter, ignoring pagination. */
+  total: number;
+  /**
+   * How many matching rows sort ahead of this page — 0 on the first page.
+   *
+   * Counted in SQL, not inferred from a page number on the URL: pagination
+   * here is keyset, so a cursor carries no position, and a `?page=` param an
+   * operator could edit would let the surface state a range it hasn't got.
+   */
+  precedingCount: number;
+  /** Opaque cursor for the next page; null when this is the last page. */
+  nextCursor: string | null;
+}
+
 /**
- * Browse and search. The reason this exists (#213): `commitImport` creates
- * every opportunity at stage 'new' with a null `next_action_at` and null
- * `last_contacted_at`, so a freshly imported lead is on neither queue for
- * fourteen days — Due needs a next action, Drifting needs a quiet period.
- * Without a list surface those rows are unreachable in the meantime.
- *
- * Search spans the organisation name AND its contacts' name/email/handle
- * because an imported lead is almost never looked up by business name —
- * the operator has the handle or the address the CSV carried.
- *
- * The contact columns are correlated subqueries rather than a LEFT JOIN:
- * joining contacts fans a multi-contact organisation into one row per
- * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
- * every selected column) costs more than reading the primary contact
- * directly. `is_primary DESC, created_at ASC` picks the flagged contact
- * when there is one and is otherwise stable rather than arbitrary.
+ * Builds the `WHERE` predicate for `filter` — search, import batch, product,
+ * country, follower band and has-email — never the pagination cursor, which
+ * is position, not a predicate. Called by both the page query and the count
+ * query in `listOrganisations` so the two can never disagree about what
+ * "matching" means: a total computed from a second, hand-copied predicate is
+ * the classic way a pager starts reporting a number that doesn't match the
+ * rows on screen, and there are six predicates here that would otherwise
+ * need updating in two places.
  */
-export async function listOrganisations(
-  filter: OrganisationFilter,
-  limit: number,
-): Promise<OrganisationListRow[]> {
-  const params: unknown[] = [];
+function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]): string[] {
   const clauses: string[] = [];
 
   if (filter.search) {
     // Escape backslash first so it doesn't double-escape what follows,
     // then % and _ — same treatment as the owner filter in filterClause.
+    //
+    // This EXISTS spans ANY contact, deliberately unlike `hasEmail` and
+    // `followers` below, which bind to the primary contact: search answers
+    // "where is the row I'm thinking of", so a hit on a secondary contact's
+    // email is a hit, while those two filters describe the row the operator
+    // will actually see. A row can therefore be found by a secondary
+    // contact's email and still be excluded by "Has email on file".
     const escaped = filter.search
       .replace(/\\/g, "\\\\")
       .replace(/%/g, "\\%")
@@ -1759,52 +1820,277 @@ export async function listOrganisations(
     clauses.push(`g.import_id = $${params.length}`);
   }
 
-  params.push(limit);
-  const limitParam = `$${params.length}`;
-  const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
+  if (filter.product) {
+    // EXISTS, never a join: product lives on crm_opportunities and one
+    // organisation can have several, so a join fans one org into a row per
+    // matching opportunity and renders it twice.
+    if (filter.product === UNASSIGNED_PRODUCT) {
+      clauses.push(
+        `EXISTS (SELECT 1 FROM crm_opportunities o WHERE o.organisation_id = g.id AND o.product IS NULL)`,
+      );
+    } else {
+      params.push(filter.product);
+      clauses.push(
+        `EXISTS (SELECT 1 FROM crm_opportunities o WHERE o.organisation_id = g.id AND o.product = $${params.length})`,
+      );
+    }
+  }
 
-  const rows = await tesserixQuery<{
-    id: string;
-    name: string;
-    location: string | null;
-    contact_name: string | null;
-    contact_email: string | null;
-    open_opportunities: string | number;
-    products: (string | null)[] | null;
-    created_at: unknown;
-  }>(
-    `SELECT g.id, g.name, g.location, g.created_at,
-            (SELECT c.name FROM crm_contacts c
-              WHERE c.organisation_id = g.id
-              ORDER BY c.is_primary DESC, c.created_at ASC
-              LIMIT 1) AS contact_name,
-            (SELECT c.email FROM crm_contacts c
-              WHERE c.organisation_id = g.id
-              ORDER BY c.is_primary DESC, c.created_at ASC
-              LIMIT 1) AS contact_email,
-            (SELECT count(*) FROM crm_opportunities o
-              WHERE o.organisation_id = g.id
-                AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
-            (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
-              WHERE o.organisation_id = g.id
-                AND o.product IS NOT NULL) AS products
-       FROM crm_organisations g
-       ${where}
-      ORDER BY g.created_at DESC
-      LIMIT ${limitParam}`,
-    params,
-  );
+  if (filter.country) {
+    // Exact match on the derived column (crm_org_country_idx), not a
+    // pattern over the raw location — a NULL country matches no filter
+    // value, which is correct: an underivable location is not evidence of
+    // any market.
+    params.push(filter.country);
+    clauses.push(`g.country = $${params.length}`);
+  }
 
-  return rows.map((row) => ({
+  if (filter.followers) {
+    // Bounded on the primary contact, selected the same way the page query
+    // selects the displayed contact — otherwise a row could appear under a
+    // band its visible follower count contradicts.
+    const band = FOLLOWER_BANDS[filter.followers];
+    params.push(band.min);
+    const minParam = `$${params.length}`;
+    let upperBound = "";
+    if (band.max !== null) {
+      params.push(band.max);
+      upperBound = ` AND c.followers_count <= $${params.length}`;
+    }
+    clauses.push(`EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = g.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = g.id
+              ORDER BY ${primaryContactOrder("c2")}
+              LIMIT 1
+           )
+           -- Explicit: a NULL followers_count must never fall into the
+           -- lowest band by satisfying the upper bound on an unmeasured
+           -- contact.
+           AND c.followers_count IS NOT NULL
+           AND c.followers_count >= ${minParam}${upperBound}
+      )`);
+  }
+
+  if (filter.hasEmail) {
+    // Bound to the primary contact, same as followers above — an org
+    // matching through a non-primary contact's email would satisfy the
+    // filter while the displayed contactEmail column stays blank.
+    clauses.push(`EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = g.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = g.id
+              ORDER BY ${primaryContactOrder("c2")}
+              LIMIT 1
+           )
+           AND c.email IS NOT NULL
+      )`);
+  }
+
+  return clauses;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface OrganisationCursor {
+  createdAt: string;
+  id: string;
+}
+
+/** Opaque cursor = base64 of `<iso-created_at>|<uuid-id>`. Encoded (not a
+ *  raw pair the caller could construct) so the surface isn't tempted to
+ *  build one by hand from URL params it half-trusts. */
+function encodeOrganisationCursor(createdAt: string, id: string): string {
+  return Buffer.from(`${createdAt}|${id}`, "utf-8").toString("base64");
+}
+
+/**
+ * Decode and validate a cursor. This arrives off a URL, so a malformed or
+ * unparseable value is rejected outright — never coerced into a query, which
+ * is how a garbage `created_at` would end up bound straight into the keyset
+ * predicate below.
+ *
+ * `Buffer.from(cursor, "base64")` itself never throws — invalid base64 is
+ * decoded leniently, with invalid characters dropped, not rejected. The
+ * rejection this function promises comes entirely from the separator/date/
+ * UUID checks below, which is why there is no try/catch around the decode.
+ */
+function decodeOrganisationCursor(cursor: string): OrganisationCursor {
+  const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+  const separatorIndex = decoded.indexOf("|");
+  if (separatorIndex === -1) {
+    throw new Error("listOrganisations: malformed cursor");
+  }
+  const createdAt = decoded.slice(0, separatorIndex);
+  const id = decoded.slice(separatorIndex + 1);
+  if (Number.isNaN(Date.parse(createdAt)) || !UUID_RE.test(id)) {
+    throw new Error("listOrganisations: malformed cursor");
+  }
+  return { createdAt, id };
+}
+
+interface RawOrganisationListRow {
+  id: string;
+  name: string;
+  location: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_handle: string | null;
+  contact_count: string | number;
+  website_url: string | null;
+  open_opportunities: string | number;
+  products: (string | null)[] | null;
+  created_at: unknown;
+}
+
+function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow {
+  return {
     id: row.id,
     name: row.name,
     location: row.location,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
+    contactHandle: row.contact_handle,
+    // count(*) comes back as a string from pg's bigint mapping.
+    contactCount: Number(row.contact_count),
+    websiteUrl: row.website_url,
     // count(*) comes back as a string from pg's bigint mapping.
     openOpportunities: Number(row.open_opportunities),
     // array_agg returns NULL (not an empty array) when nothing matches.
     products: (row.products ?? []).filter((p): p is string => p !== null),
     createdAt: toIsoRequired(row.created_at),
-  }));
+  };
+}
+
+/**
+ * Browse and search. The reason this exists (#213): `commitImport` creates
+ * every opportunity at stage 'new' with a null `next_action_at` and null
+ * `last_contacted_at`, so a freshly imported lead is on neither queue for
+ * fourteen days — Due needs a next action, Drifting needs a quiet period.
+ * Without a list surface those rows are unreachable in the meantime.
+ *
+ * Search spans the organisation name AND its contacts' name/email/handle
+ * because an imported lead is almost never looked up by business name —
+ * the operator has the handle or the address the CSV carried.
+ *
+ * The contact columns are correlated subqueries rather than a LEFT JOIN:
+ * joining contacts fans a multi-contact organisation into one row per
+ * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
+ * every selected column) costs more than reading the primary contact
+ * directly. Which contact that is comes from `primaryContactOrder` — the
+ * same ordering the filter subqueries and the detail page use, so all three
+ * agree on a tie.
+ *
+ * Pagination is keyset, not OFFSET: `OFFSET N` makes Postgres walk and
+ * discard N rows every page, and a row inserted while the operator pages
+ * shifts every subsequent page by one, silently skipping whatever crossed
+ * the boundary — on this surface, a lead never contacted. Keyset on
+ * `(created_at, id)` reads straight off the existing `ORDER BY` and is
+ * stable under concurrent inserts; `id` is the tiebreaker because
+ * `created_at` is not unique (the migration wrote 259 rows in one batch).
+ *
+ * `nextCursor` is derived by fetching `limit + 1` rows and dropping the
+ * extra, not by comparing `total` to rows-seen-so-far — this function is
+ * stateless across calls and has no reliable notion of "how many rows the
+ * operator has already seen" to compare against, whereas an extra row is
+ * cheap and self-contained proof that another page exists.
+ */
+export async function listOrganisations(
+  filter: OrganisationFilter,
+  limit: number,
+  cursor?: string,
+): Promise<OrganisationPage> {
+  // Decoded (and validated) before either query runs, so a malformed cursor
+  // fails fast without spending a round trip on the count query it would
+  // never get to use.
+  const decodedCursor = cursor ? decodeOrganisationCursor(cursor) : null;
+
+  const countParams: unknown[] = [];
+  const countClauses = organisationFilterClauses(filter, countParams);
+  const countWhere = countClauses.length > 0 ? `WHERE ${countClauses.join("\n        AND ")}` : "";
+  // Rows ahead of this page = matching rows at or beyond the cursor tuple in
+  // the list's own `created_at DESC, id DESC` order (the cursor is the last
+  // row of the previous page, and the page predicate below excludes it, so
+  // the comparison is inclusive). Aggregated in the count query rather than
+  // asked for separately: it is the same predicate over the same rows.
+  let precedingSelect = "0";
+  if (decodedCursor) {
+    countParams.push(decodedCursor.createdAt);
+    const createdAtParam = `$${countParams.length}`;
+    countParams.push(decodedCursor.id);
+    const idParam = `$${countParams.length}`;
+    precedingSelect = `count(*) FILTER (WHERE (g.created_at, g.id) >= (${createdAtParam}, ${idParam}))`;
+  }
+
+  const params: unknown[] = [];
+  const clauses = organisationFilterClauses(filter, params);
+  if (decodedCursor) {
+    params.push(decodedCursor.createdAt);
+    const createdAtParam = `$${params.length}`;
+    params.push(decodedCursor.id);
+    const idParam = `$${params.length}`;
+    clauses.push(`(g.created_at, g.id) < (${createdAtParam}, ${idParam})`);
+  }
+  // limit + 1: see the doc comment above for why this, not a total
+  // comparison, is what decides nextCursor.
+  params.push(limit + 1);
+  const limitParam = `$${params.length}`;
+  const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
+
+  // Independent reads over two disjoint parameter lists (built above, never
+  // touched again) — safe to run concurrently rather than paying two
+  // sequential round trips for every page view.
+  const [countRows, rawRows] = await Promise.all([
+    tesserixQuery<{ count: string | number; preceding: string | number }>(
+      `SELECT count(*) AS count, ${precedingSelect} AS preceding
+         FROM crm_organisations g ${countWhere}`,
+      countParams,
+    ),
+    tesserixQuery<RawOrganisationListRow>(
+      `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
+              (SELECT c.name FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY ${primaryContactOrder("c")}
+                LIMIT 1) AS contact_name,
+              (SELECT c.email FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY ${primaryContactOrder("c")}
+                LIMIT 1) AS contact_email,
+              (SELECT c.instagram_handle FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY ${primaryContactOrder("c")}
+                LIMIT 1) AS contact_handle,
+              (SELECT count(*) FROM crm_contacts c
+                WHERE c.organisation_id = g.id) AS contact_count,
+              (SELECT count(*) FROM crm_opportunities o
+                WHERE o.organisation_id = g.id
+                  AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
+              (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
+                WHERE o.organisation_id = g.id
+                  AND o.product IS NOT NULL) AS products
+         FROM crm_organisations g
+         ${where}
+        ORDER BY g.created_at DESC, g.id DESC
+        LIMIT ${limitParam}`,
+      params,
+    ),
+  ]);
+  const total = Number(countRows[0]?.count ?? 0);
+  const precedingCount = Number(countRows[0]?.preceding ?? 0);
+
+  const hasNextPage = rawRows.length > limit;
+  const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
+  const rows = pageRawRows.map(toOrganisationListRow);
+
+  const lastRow = pageRawRows[pageRawRows.length - 1];
+  const nextCursor =
+    hasNextPage && lastRow
+      ? encodeOrganisationCursor(toIsoRequired(lastRow.created_at), lastRow.id)
+      : null;
+
+  return { rows, total, precedingCount, nextCursor };
 }

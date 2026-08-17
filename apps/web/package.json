@@ -22,6 +22,7 @@
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/typography": "^0.5.19",
+    "@tesserix/crm-country": "workspace:*",
     "@tesserix/homechef-shared": "workspace:*",
     "@tesserix/hooks": "^1.0.0",
     "@tesserix/otto-widget": "^0.6.0",

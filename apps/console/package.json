@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@tesserix/console-core": "workspace:*",
+    "@tesserix/crm-country": "workspace:*",
     "@tesserix/platform-auth": "workspace:*",
     "@tesserix/web": "^2.3.0",
     "clsx": "^2.1.1",
