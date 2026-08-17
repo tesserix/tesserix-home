@@ -28,6 +28,7 @@ import type {
   ContactRow,
   OpportunityRow,
 } from "@/lib/db/crm-repo";
+import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
 import {
   addActivity,
   addContactAction,
@@ -37,13 +38,6 @@ import {
   eraseContactAction,
   scheduleNextAction,
 } from "./actions";
-
-// Radix's Select cannot hold an empty-string item value (see
-// `components/kit/filter-bar.tsx`) — this sentinel stands in for "no
-// product chosen yet" on the new-opportunity form below, stripped back to
-// `undefined` before the action call so a bare click-through can never
-// invent an opportunity a caller didn't ask for.
-const NO_PRODUCT_VALUE = "__none__";
 
 const STAGE_LABELS: Record<CrmStage, string> = {
   new: "New",

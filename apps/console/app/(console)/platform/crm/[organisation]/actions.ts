@@ -332,6 +332,11 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
         instagramHandle,
       }),
     () => ({ action: "crm.contact.create", summary: { contacts: 1 } }),
+    // `createContact` now refuses a suppressed contact at the data layer
+    // (crm-writes.ts). Allowlisted to the same operator-facing exception
+    // `addActivity` maps: without it the refusal would surface as the
+    // generic "That change was not saved." and read as a bug.
+    mapSuppressedContact,
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -414,9 +419,12 @@ function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | 
  * wanted, not a failure to report.
  *
  * `eraseContact` returns `previousName` so the audit row can say who was
- * erased — but that name never reaches the return value here. Echoing it
- * back would put the erased person's name on the exact screen this action
- * was just used to remove it from.
+ * erased. It is deliberately retained there — `console_audit_log.target` is
+ * the DPDP evidence the request was honoured, and an evidence row that
+ * cannot name whose data was erased is worth nothing — and it is deliberately
+ * kept out of THIS action's return value, because echoing it back would put
+ * the erased person's name on the exact screen this action was just used to
+ * remove it from. Two separate decisions, not one.
  */
 export async function eraseContactAction(contactId: string): Promise<CrmActionResult> {
   const result = await withCrmWrite(
@@ -432,9 +440,11 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
       return {
         action: "crm.contact.erase",
         summary: { erased: outcome && !alreadyErased ? 1 : 0 },
-        // The name belongs only here, in the free-string audit target —
-        // never in `summary` (counts only) and never in the CrmActionResult
-        // below.
+        // The name belongs here, in the free-string audit target, and only
+        // here: never in `summary` (counts only) and never in the
+        // CrmActionResult below. Keeping it in the audit row is what makes
+        // that row evidence; keeping it out of the response is what stops it
+        // being re-displayed.
         target: outcome
           ? `${outcome.previousName ?? "(no name on file)"} (${outcome.contactId})`
           : contactId,
@@ -446,6 +456,13 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
   if (!result.ok) return result;
   if (result.value) {
     revalidatePath(`/platform/crm/${result.value.organisationId}`);
+    // The browse list renders each organisation's primary contact name, so
+    // without this the erased name stays on screen at
+    // `/platform/crm/organisations` — the one surface that reaches a lead in
+    // its first fourteen days, and the one `createOrganisationAction`
+    // already revalidates. Inside the `result.value` guard, like the detail
+    // path: a contact that was already gone changed nothing to revalidate.
+    revalidatePath("/platform/crm/organisations");
   }
   return { ok: true };
 }
@@ -513,5 +530,8 @@ export async function deleteOrganisationAction(
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm");
+  // Not just the queue: a deleted organisation that is still listed on the
+  // browse surface links to a detail page that no longer exists.
+  revalidatePath("/platform/crm/organisations");
   return { ok: true };
 }

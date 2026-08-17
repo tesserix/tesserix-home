@@ -16,14 +16,11 @@ import {
   SelectValue,
 } from "@tesserix/web";
 import { ConsolePageHeader } from "@/components/kit/page-header";
+// The "no product chosen yet" sentinel is defined once in `crm-filters.ts`
+// and imported by all three surfaces that compare against it — see that
+// module for why a per-file copy of the literal is the failure mode.
+import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
 import { createOrganisationAction } from "./actions";
-
-// Radix Select cannot hold an empty-string item value (see
-// `components/kit/filter-bar.tsx`) — this sentinel stands in for "no
-// product chosen yet" and is stripped back to `undefined` in `actions.ts`
-// (which keeps its own copy of the same literal: a `"use server"` file may
-// only export async functions, so it can't be imported from there).
-const NO_PRODUCT_VALUE = "__none__";
 
 const PRODUCTS = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 

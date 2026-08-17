@@ -22,7 +22,19 @@ import { tesserixTx } from "./tesserix";
 export interface ErasedContact {
   contactId: string;
   organisationId: string;
-  /** The name as it was, for the audit row only — never re-displayed. */
+  /**
+   * The name as it was, deliberately RETAINED in the `console_audit_log`
+   * row the caller writes — and readable there by any operator who opens the
+   * audit log viewer (`audit-repo.ts` selects `target` back).
+   *
+   * That retention is the point, not an oversight: the audit row is the DPDP
+   * evidence that an erasure was performed, and evidence that cannot say
+   * whose data was erased evidences nothing. What the caller must not do is
+   * echo it back in the action's RETURN VALUE — that would put the name
+   * straight back onto the record screen the erasure was just performed on.
+   * Retained in the audit trail and kept out of the response are two
+   * different things.
+   */
   previousName: string | null;
   /**
    * The erasure timestamp as it stood BEFORE this call, not after —

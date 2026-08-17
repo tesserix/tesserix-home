@@ -580,6 +580,28 @@ describe("addActivity and the do-not-contact list", () => {
     expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
     expect(revalidatePath).not.toHaveBeenCalled();
   });
+
+  // Finding 4: outreach was blocked, but manual creation was not — a person
+  // who asked not to be contacted could simply be typed back in. Refused in
+  // `createContact` (crm-writes.ts); this asserts the refusal reaches the
+  // operator intact rather than as the generic "That change was not saved."
+  it("surfaces the suppression refusal when a suppressed contact is added by hand", async () => {
+    signIn(["read"]);
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    vi.mocked(createContact).mockRejectedValue(
+      new SuppressedContactError(
+        undefined,
+        "That contact is on the do-not-contact list. Remove the suppression before adding them.",
+      ),
+    );
+
+    const result = await addContactAction({ organisationId: ORG_ID, email: "gone@example.com" });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
 });
 
 describe("addContactAction", () => {
@@ -742,6 +764,10 @@ describe("eraseContactAction", () => {
       summary: { erased: 1 },
     });
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+    // Finding 3: the browse list renders the primary contact's name, so an
+    // erasure that only revalidates the detail page leaves the erased name
+    // legible on the surface `createOrganisationAction` already revalidates.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm/organisations");
   });
 
   // The name belongs in the audit row (asserted above via `target`), not
@@ -916,6 +942,9 @@ describe("deleteOrganisationAction", () => {
       summary: { contacts: 2, opportunities: 3 },
     });
     expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+    // Finding 3: not just the queue — a deleted organisation still listed on
+    // the browse surface links to a detail page that no longer exists.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm/organisations");
   });
 
   it("reports a missing organisation as already gone rather than as a failure", async () => {

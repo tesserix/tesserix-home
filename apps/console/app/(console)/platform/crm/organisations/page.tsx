@@ -20,6 +20,18 @@ import { OrganisationsView } from "./organisations-view";
  * is the only way to reach it in the meantime.
  */
 
+/**
+ * How many rows this surface renders. Real pagination — offset/cursor, a
+ * total, page controls — is the actual fix and is DELIBERATELY DEFERRED: it
+ * needs a count query and a paging contract `listOrganisations` does not have
+ * (`crm-repo.ts` issues a bare `LIMIT` with no offset and no total).
+ *
+ * What is not deferrable is the silence. Until this branch, a 300-row import
+ * linked here and showed 100 rows with nothing to say the other 200 existed,
+ * and this page is the only way to reach a lead in its first fourteen days.
+ * So the page over-fetches by one row and tells the operator when the extra
+ * row came back — see `OrganisationsView`'s truncation notice.
+ */
 const PAGE_SIZE = 100;
 
 export const EMPTY_MESSAGE = "No organisations yet. Import some leads to get started.";
@@ -80,13 +92,20 @@ export default async function OrganisationsPage({
   // import's result link.
   const filtered = Boolean(filters.search) || Boolean(filters.importId);
 
-  let rows: OrganisationListRow[] = [];
+  // `PAGE_SIZE + 1`, not `PAGE_SIZE`: the extra row is never rendered, it is
+  // only the evidence that a further row exists. Asking for exactly
+  // `PAGE_SIZE` cannot tell "there are exactly 100" from "there are 300" —
+  // which is how the truncation went unannounced.
+  let fetched: OrganisationListRow[] = [];
   let error: unknown = null;
   try {
-    rows = await listOrganisations(filters, PAGE_SIZE);
+    fetched = await listOrganisations(filters, PAGE_SIZE + 1);
   } catch (caught) {
     error = caught;
   }
+
+  const truncated = fetched.length > PAGE_SIZE;
+  const rows = truncated ? fetched.slice(0, PAGE_SIZE) : fetched;
 
   const state = organisationsState({ error, rows, filtered });
 
@@ -98,7 +117,14 @@ export default async function OrganisationsPage({
         breadcrumbs={[{ label: "CRM", href: "/platform/crm" }, { label: "Organisations" }]}
       />
 
-      <OrganisationsView rows={rows} state={state} emptyMessage={EMPTY_MESSAGE} search={filters.search ?? ""} />
+      <OrganisationsView
+        rows={rows}
+        state={state}
+        emptyMessage={EMPTY_MESSAGE}
+        search={filters.search ?? ""}
+        truncated={truncated}
+        pageSize={PAGE_SIZE}
+      />
     </div>
   );
 }
