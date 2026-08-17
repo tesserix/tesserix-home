@@ -73,3 +73,45 @@ export async function tesserixQuery<R extends QueryResultRow>(
   const result = await getPool().query<R>(sql, params as unknown[]);
   return result.rows;
 }
+
+/** The query shape handed to a `tesserixTx` callback — same signature as
+ *  `tesserixQuery`, but every call runs on the transaction's own client. */
+export type TxQuery = <R extends QueryResultRow>(
+  sql: string,
+  params?: readonly unknown[],
+) => Promise<R[]>;
+
+/**
+ * Run a callback inside a single transaction, on a single client.
+ *
+ * `tesserixQuery` pulls from a 2-connection pool — a BEGIN and the UPDATE
+ * that follows it can land on two different connections, which is not a
+ * transaction at all, just two unrelated statements that happen to run near
+ * each other. Any multi-statement write that must be atomic (crm-repo's
+ * `advanceStage`, which updates the opportunity and inserts its
+ * `stage_change` activity together) needs one client held for BEGIN,
+ * every statement, and COMMIT/ROLLBACK.
+ */
+export async function tesserixTx<T>(fn: (query: TxQuery) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const scopedQuery: TxQuery = async (sql, params = []) => {
+      const result = await client.query(sql, params as unknown[]);
+      return result.rows;
+    };
+    const out = await fn(scopedQuery);
+    await client.query("COMMIT");
+    return out;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // ROLLBACK on a dead connection — ignore, the caller's error is the
+      // one that matters.
+    }
+    throw err;
+  } finally {
+    client.release();
+  }
+}

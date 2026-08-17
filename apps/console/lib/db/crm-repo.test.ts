@@ -3,12 +3,35 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 const query = vi.fn();
 vi.mock("./tesserix", () => ({
   tesserixQuery: (...args: unknown[]) => query(...args),
+  // `tesserixTx` hands its callback a query function scoped to one client.
+  // The mock has no notion of a separate client — every call, transactional
+  // or not, funnels through the same `query` spy, so a test can assert on
+  // the full sequence of statements (SELECT, UPDATE, INSERT) a transactional
+  // write issues, in order, exactly like it does for a plain read.
+  tesserixTx: (fn: (query: (...args: unknown[]) => unknown) => unknown) => fn(query),
   isDatabaseConfigured: () => true,
 }));
 
-import { dueOpportunities, driftingOpportunities } from "./crm-repo";
+import {
+  dueOpportunities,
+  driftingOpportunities,
+  advanceStage,
+  setNextAction,
+  logActivity,
+  organisationDetail,
+  MissingProductError,
+} from "./crm-repo";
 
-beforeEach(() => query.mockReset());
+beforeEach(() => {
+  query.mockReset();
+  // A plausible default current-row for the write tests below: a real
+  // organisation_id/product pair, stage "contacted" (product not required).
+  // Tests that care about a specific current stage override with
+  // `mockResolvedValueOnce` before calling in.
+  query.mockResolvedValue([
+    { stage: "contacted", organisation_id: "g1", product: null },
+  ]);
+});
 
 describe("the queue", () => {
   it("asks only for opportunities whose next action has arrived", async () => {
@@ -198,5 +221,268 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     const [sql] = query.mock.calls[0];
     expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("o.product ="));
     expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("o.product ="));
+  });
+});
+
+describe("advanceStage", () => {
+  // Load-bearing: this is the ONLY record of when a stage was entered, and
+  // therefore the only thing that makes funnel measurement possible later.
+  // It cannot be reconstructed afterwards.
+  it("writes a stage_change activity on every transition", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "contacted", organisation_id: "g1", product: null },
+    ]);
+    await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
+    const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
+    expect(sqlText).toContain("INSERT INTO crm_activities");
+    expect(sqlText).toContain("stage_change");
+  });
+
+  it("refuses to qualify without a product rather than guessing one", async () => {
+    // No DB call happens at all — the guard runs before anything is read,
+    // and any real row (grandfathered or not) is off the table either way.
+    await expect(
+      advanceStage({ opportunityId: "o1", to: "qualified", actor: "ava" }),
+    ).rejects.toThrow(/product/i);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("refuses to mark an opportunity lost without a reason", async () => {
+    await expect(
+      advanceStage({ opportunityId: "o1", to: "lost", product: "mark8ly", actor: "ava" }),
+    ).rejects.toThrow(/reason/i);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  // Guards the guard: a version that logged unconditionally would pass the
+  // first test while filling the timeline with noise.
+  it("does not write a stage_change when the stage is unchanged", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "contacted", organisation_id: "g1", product: null },
+    ]);
+    await advanceStage({ opportunityId: "o1", to: "contacted", actor: "ava" });
+    const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
+    expect(sqlText).not.toContain("stage_change");
+    expect(sqlText).not.toMatch(/UPDATE crm_opportunities/);
+  });
+
+  it("sets closed_at when moving to won", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "qualified", organisation_id: "g1", product: "mark8ly" },
+    ]);
+    await advanceStage({ opportunityId: "o1", to: "won", product: "mark8ly", actor: "ava" });
+    const [updateSql] = query.mock.calls[1];
+    expect(updateSql).toContain("closed_at = now()");
+  });
+
+  it("sets closed_at and lost_reason when moving to lost", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "qualified", organisation_id: "g1", product: "mark8ly" },
+    ]);
+    await advanceStage({
+      opportunityId: "o1",
+      to: "lost",
+      product: "mark8ly",
+      lostReason: "went with a competitor",
+      actor: "ava",
+    });
+    const [updateSql, updateParams] = query.mock.calls[1];
+    expect(updateSql).toContain("closed_at = now()");
+    expect(updateSql).toContain("lost_reason");
+    expect(updateParams).toContain("went with a competitor");
+  });
+
+  it("always sets updated_at, since crm_opportunities has no update trigger", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "contacted", organisation_id: "g1", product: null },
+    ]);
+    await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
+    const [updateSql] = query.mock.calls[1];
+    expect(updateSql).toContain("updated_at = now()");
+  });
+
+  // The grandfathered-row constraint (migration 0021): a row already sitting
+  // at qualified/won/lost with a null product is rewritten by ANY update,
+  // including a same-stage one that only supplies the missing product. This
+  // is how such a row gets unblocked — not a special case, just the ordinary
+  // "product changed" path with no stage transition attached.
+  it("lets a same-stage write through when it supplies the missing product, but logs no stage_change", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "qualified", organisation_id: "g1", product: null },
+    ]);
+    await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
+    const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
+    expect(sqlText).toMatch(/UPDATE crm_opportunities/);
+    expect(sqlText).not.toContain("stage_change");
+  });
+
+  it("throws when the opportunity does not exist", async () => {
+    query.mockResolvedValueOnce([]);
+    await expect(
+      advanceStage({ opportunityId: "missing", to: "contacted", actor: "ava" }),
+    ).rejects.toThrow(/not found/i);
+  });
+});
+
+describe("setNextAction", () => {
+  it("schedules a next action", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "contacted", product: null },
+    ]);
+    await setNextAction({
+      opportunityId: "o1",
+      at: "2026-08-20T09:00:00.000Z",
+      note: "call back",
+      actor: "ava",
+    });
+    const [updateSql, updateParams] = query.mock.calls[1];
+    expect(updateSql).toContain("next_action_at");
+    expect(updateSql).toContain("updated_at = now()");
+    expect(updateParams).toContain("2026-08-20T09:00:00.000Z");
+  });
+
+  // The grandfathered-row constraint again: `setNextAction` has no product
+  // argument to offer, so a row that needs one and doesn't have one is
+  // refused outright — a clear, typed error, not a raw constraint violation
+  // from Postgres reaching the operator.
+  it("refuses to touch a grandfathered row instead of letting Postgres reject the UPDATE", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "qualified", product: null },
+    ]);
+    await expect(
+      setNextAction({ opportunityId: "o1", at: null, note: null, actor: "ava" }),
+    ).rejects.toBeInstanceOf(MissingProductError);
+    // Only the SELECT ran; the UPDATE that would trip the CHECK never did.
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a grandfathered row once it already carries a product", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "won", product: "mark8ly" },
+    ]);
+    await setNextAction({ opportunityId: "o1", at: null, note: null, actor: "ava" });
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("logActivity", () => {
+  it("inserts a note without touching crm_opportunities", async () => {
+    query.mockResolvedValueOnce([]);
+    await logActivity({
+      organisationId: "g1",
+      opportunityId: "o1",
+      kind: "note",
+      actor: "ava",
+      body: "left a voicemail",
+    });
+    expect(query).toHaveBeenCalledTimes(1);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("INSERT INTO crm_activities");
+    expect(params).toContain("left a voicemail");
+  });
+
+  it("allows a note with no opportunity yet", async () => {
+    query.mockResolvedValueOnce([]);
+    await logActivity({ organisationId: "g1", kind: "note", actor: "ava", body: "first contact" });
+    const [, params] = query.mock.calls[0];
+    expect(params).toContain(null);
+  });
+});
+
+describe("organisationDetail", () => {
+  it("returns null for an organisation that does not exist, without reading the rest", async () => {
+    query.mockResolvedValueOnce([]);
+    const detail = await organisationDetail("missing");
+    expect(detail).toBeNull();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("assembles the organisation, its contacts, opportunities and activities", async () => {
+    query
+      .mockResolvedValueOnce([
+        {
+          id: "g1",
+          name: "Bondi Baker",
+          website_url: "https://bondibaker.example",
+          location: "Bondi",
+          category: ["bakery"],
+          tags: ["warm"],
+          converted_product: null,
+          converted_label: null,
+          converted_at: null,
+          created_at: new Date("2026-01-01T00:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "c1",
+          name: "Priya",
+          email: "priya@bondibaker.example",
+          phone: null,
+          instagram_handle: "@bondibaker",
+          is_primary: true,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "o1",
+          product: "mark8ly",
+          stage: "qualified",
+          owner: "ava@tesserix.app",
+          next_action_at: null,
+          next_action_note: null,
+          last_contacted_at: new Date("2026-08-01T00:00:00Z"),
+          is_starred: false,
+          closed_at: null,
+          lost_reason: null,
+          created_at: new Date("2026-01-05T00:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "a1",
+          opportunity_id: "o1",
+          kind: "note",
+          actor: "ava",
+          body: "left a voicemail",
+          occurred_at: new Date("2026-08-01T09:00:00Z"),
+        },
+      ]);
+
+    const detail = await organisationDetail("g1");
+
+    expect(detail?.organisation.name).toBe("Bondi Baker");
+    expect(detail?.contacts).toHaveLength(1);
+    expect(detail?.contacts[0].isPrimary).toBe(true);
+    expect(detail?.opportunities).toHaveLength(1);
+    expect(detail?.opportunities[0].stage).toBe("qualified");
+    expect(detail?.activities).toHaveLength(1);
+    expect(detail?.activities[0].kind).toBe("note");
+    // Timestamps normalised to ISO strings, same contract as the queue rows.
+    expect(detail?.organisation.createdAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(detail?.activities[0].occurredAt).toBe("2026-08-01T09:00:00.000Z");
+  });
+
+  it("scopes contacts, opportunities and activities to the organisation", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "g1",
+        name: "Bondi Baker",
+        website_url: null,
+        location: null,
+        category: [],
+        tags: [],
+        converted_product: null,
+        converted_label: null,
+        converted_at: null,
+        created_at: new Date("2026-01-01T00:00:00Z"),
+      },
+    ]);
+    query.mockResolvedValue([]);
+    await organisationDetail("g1");
+    const calledSql = query.mock.calls.slice(1).map(([sql]) => sql as string);
+    expect(calledSql.some((sql) => sql.includes("FROM crm_contacts") && sql.includes("organisation_id = $1"))).toBe(true);
+    expect(calledSql.some((sql) => sql.includes("FROM crm_opportunities") && sql.includes("organisation_id = $1"))).toBe(true);
+    expect(calledSql.some((sql) => sql.includes("FROM crm_activities") && sql.includes("organisation_id = $1"))).toBe(true);
   });
 });

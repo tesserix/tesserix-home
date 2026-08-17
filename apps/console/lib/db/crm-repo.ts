@@ -1,5 +1,5 @@
-import { tesserixQuery } from "./tesserix";
-import type { CrmStage } from "../crm";
+import { tesserixQuery, tesserixTx } from "./tesserix";
+import { requiresProduct, type CrmActivityKind, type CrmStage } from "../crm";
 
 /**
  * The queue's reads: opportunities due for action, and opportunities that
@@ -204,4 +204,418 @@ export async function driftingOpportunities(
     params,
   );
   return rows.map(toQueueRow);
+}
+
+/**
+ * The organisation-detail writes: stage transitions, scheduling the next
+ * action, and logging an activity note. See migration 0021's header for
+ * the constraint every write here has to respect.
+ */
+
+/**
+ * Thrown when a write targets a "grandfathered" opportunity — one migration
+ * 0021 left sitting at `qualified`/`won`/`lost` with a null `product` (the
+ * ~155 rows `NOT VALID` grandfathered past the CHECK's initial scan) — and
+ * the caller has no product to supply to fix it.
+ *
+ * `crm_opp_product_required_when_qualified` is `NOT VALID`, which only skips
+ * the constraint's initial validation scan; Postgres still evaluates it on
+ * the NEW ROW VERSION of every subsequent UPDATE, including a bare
+ * `updated_at = now()`. So a grandfathered row is effectively read-only
+ * until a product is supplied. This is thrown *before* that UPDATE runs, so
+ * the operator sees a clear, typed prompt instead of a raw Postgres
+ * constraint-violation error surfacing through the stack.
+ */
+export class MissingProductError extends Error {
+  constructor(readonly opportunityId: string) {
+    super(
+      `Opportunity ${opportunityId} was migrated without a product and must be assigned one (via a stage update) before it can be edited.`,
+    );
+    this.name = "MissingProductError";
+  }
+}
+
+export interface AdvanceStageInput {
+  opportunityId: string;
+  to: CrmStage;
+  actor: string;
+  /** Required whenever `requiresProduct(to)` is true — even if the row
+   *  already carries a product from an earlier transition. The caller
+   *  supplies it explicitly every time rather than this function silently
+   *  reusing whatever is already on the row, so a UI can pre-fill it but an
+   *  operator always makes (or confirms) the choice. */
+  product?: string;
+  /** Required when `to` is "lost". */
+  lostReason?: string;
+}
+
+/**
+ * Advance (or otherwise edit) an opportunity's stage.
+ *
+ * The rule this function exists to encode: **every stage transition writes
+ * a `stage_change` activity, in the same transaction as the stage update,
+ * without exception.** It is the only record of when a stage was entered —
+ * unreconstructable after the fact — and therefore the only thing that
+ * makes funnel measurement possible later. A stage that moved without its
+ * activity is the failure this design cannot tolerate, so both writes go
+ * through `tesserixTx` on one client: either both land or neither does.
+ *
+ * A same-stage call is not a transition (guards the guard: logging one
+ * unconditionally would fill the timeline with noise and undermine the one
+ * thing `stage_change` exists to make trustworthy) — UNLESS it also changes
+ * `product`, which is the escape hatch for a grandfathered row: an operator
+ * can supply the missing product without moving the stage, and that write
+ * goes through (no CHECK violation, since the new row still satisfies
+ * `stage IN ('new','contacted') OR product IS NOT NULL`), but logs no
+ * `stage_change` because no stage actually changed.
+ */
+export async function advanceStage(input: AdvanceStageInput): Promise<void> {
+  const { opportunityId, to, actor, product, lostReason } = input;
+
+  // Validated against the argument alone, before any row is read: a
+  // transition into a product-required stage always needs the caller to
+  // supply one, so this fails fast without a wasted round trip either way.
+  if (requiresProduct(to) && !product) {
+    throw new Error(`advanceStage: moving to "${to}" requires a product`);
+  }
+  if (to === "lost" && !lostReason) {
+    throw new Error('advanceStage: moving to "lost" requires a lostReason');
+  }
+
+  await tesserixTx(async (query) => {
+    const rows = await query<{
+      stage: CrmStage;
+      organisation_id: string;
+      product: string | null;
+    }>(
+      `SELECT stage, organisation_id, product
+         FROM crm_opportunities
+        WHERE id = $1
+          FOR UPDATE`,
+      [opportunityId],
+    );
+    const current = rows[0];
+    if (!current) {
+      throw new Error(`advanceStage: opportunity ${opportunityId} not found`);
+    }
+
+    const stageChanging = current.stage !== to;
+    const productChanging = product !== undefined && product !== current.product;
+
+    if (!stageChanging && !productChanging) {
+      return;
+    }
+
+    const setClauses = ["updated_at = now()"];
+    const params: unknown[] = [opportunityId];
+    if (stageChanging) {
+      params.push(to);
+      setClauses.push(`stage = $${params.length}`);
+    }
+    if (productChanging) {
+      params.push(product);
+      setClauses.push(`product = $${params.length}`);
+    }
+    if (stageChanging && (to === "won" || to === "lost")) {
+      setClauses.push("closed_at = now()");
+    }
+    if (stageChanging && to === "lost") {
+      params.push(lostReason);
+      setClauses.push(`lost_reason = $${params.length}`);
+    }
+
+    await query(
+      `UPDATE crm_opportunities SET ${setClauses.join(", ")} WHERE id = $1`,
+      params,
+    );
+
+    if (stageChanging) {
+      await query(
+        `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
+         VALUES ($1, $2, 'stage_change', $3, $4, $5::jsonb)`,
+        [
+          current.organisation_id,
+          opportunityId,
+          actor,
+          `${current.stage} → ${to}`,
+          JSON.stringify({ from: current.stage, to }),
+        ],
+      );
+    }
+  });
+}
+
+export interface SetNextActionInput {
+  opportunityId: string;
+  at: string | null;
+  note: string | null;
+  actor: string;
+}
+
+/**
+ * Schedule (or clear) an opportunity's next action.
+ *
+ * Reads the current row first, inside the same transaction as the UPDATE,
+ * specifically to catch the grandfathered-row case: this function has no
+ * `product` argument to offer, so if the row needs one and doesn't have
+ * one, there is no way for this call to satisfy the CHECK. Refusing here
+ * with `MissingProductError` — before the UPDATE runs — is the difference
+ * between a clear prompt and a raw constraint-violation error reaching the
+ * operator. crm_opportunities has no `updated_at` trigger, so the write
+ * sets it explicitly.
+ */
+export async function setNextAction(input: SetNextActionInput): Promise<void> {
+  // `actor` is part of the interface for parity with `advanceStage` and
+  // `logActivity`, and so a caller has it in hand for the audit row the
+  // action layer writes — but this function itself only ever touches
+  // `crm_opportunities`, so it isn't threaded through here.
+  const { opportunityId, at, note } = input;
+
+  await tesserixTx(async (query) => {
+    const rows = await query<{ stage: CrmStage; product: string | null }>(
+      `SELECT stage, product FROM crm_opportunities WHERE id = $1 FOR UPDATE`,
+      [opportunityId],
+    );
+    const current = rows[0];
+    if (!current) {
+      throw new Error(`setNextAction: opportunity ${opportunityId} not found`);
+    }
+    if (requiresProduct(current.stage) && !current.product) {
+      throw new MissingProductError(opportunityId);
+    }
+
+    await query(
+      `UPDATE crm_opportunities
+          SET next_action_at = $2, next_action_note = $3, updated_at = now()
+        WHERE id = $1`,
+      [opportunityId, at, note],
+    );
+  });
+}
+
+export interface LogActivityInput {
+  organisationId: string;
+  opportunityId?: string;
+  kind: CrmActivityKind;
+  actor: string;
+  body?: string;
+}
+
+/**
+ * Log a note/call/message activity, independent of any stage change.
+ *
+ * `crm_activities` carries no CHECK tying it to `crm_opportunities.product`
+ * — the grandfathered-row constraint (migration 0021) applies only to
+ * `crm_opportunities` — so this needs no product guard and no transaction:
+ * it is one INSERT.
+ */
+export async function logActivity(input: LogActivityInput): Promise<void> {
+  await tesserixQuery(
+    `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      input.organisationId,
+      input.opportunityId ?? null,
+      input.kind,
+      input.actor,
+      input.body ?? null,
+    ],
+  );
+}
+
+/**
+ * The organisation-detail read: the business, its people, its deals across
+ * every product, and its activity history. Four queries rather than one
+ * giant join — the tables fan out (many contacts, many opportunities, many
+ * activities per organisation) in ways a single join would either duplicate
+ * rows for or force into nested JSON aggregation; four flat reads are
+ * simpler to reason about at these row counts.
+ */
+
+export interface OrganisationRow {
+  id: string;
+  name: string;
+  websiteUrl: string | null;
+  location: string | null;
+  category: readonly string[];
+  tags: readonly string[];
+  convertedProduct: string | null;
+  convertedLabel: string | null;
+  convertedAt: string | null;
+  createdAt: string;
+}
+
+export interface ContactRow {
+  id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  instagramHandle: string | null;
+  isPrimary: boolean;
+}
+
+export interface OpportunityRow {
+  id: string;
+  product: string | null;
+  stage: CrmStage;
+  owner: string | null;
+  nextActionAt: string | null;
+  nextActionNote: string | null;
+  lastContactedAt: string | null;
+  isStarred: boolean;
+  closedAt: string | null;
+  lostReason: string | null;
+  createdAt: string;
+}
+
+export interface ActivityRow {
+  id: string;
+  opportunityId: string | null;
+  kind: CrmActivityKind;
+  actor: string;
+  body: string | null;
+  occurredAt: string;
+}
+
+export interface OrganisationDetail {
+  organisation: OrganisationRow;
+  contacts: readonly ContactRow[];
+  opportunities: readonly OpportunityRow[];
+  activities: readonly ActivityRow[];
+}
+
+/** Most recent activities shown on a detail page — a full history is a job
+ *  for export/search, not this view. */
+const ACTIVITY_LIMIT = 200;
+
+/** `toIso`, but for a column that's `NOT NULL` in the schema — same
+ *  fail-loud contract as `quiet_since` above: a null here means the query
+ *  stopped selecting the column, not a legitimate absence. */
+function toIsoRequired(value: unknown): string {
+  const iso = toIso(value);
+  if (iso === null) {
+    throw new Error("crm-repo: expected a NOT NULL timestamp");
+  }
+  return iso;
+}
+
+/** `null` for "no such organisation" — the caller (the page) turns that into
+ *  `notFound()`, the same contract `fetchTicketDetail` uses. */
+export async function organisationDetail(organisationId: string): Promise<OrganisationDetail | null> {
+  const orgRows = await tesserixQuery<{
+    id: string;
+    name: string;
+    website_url: string | null;
+    location: string | null;
+    category: string[];
+    tags: string[];
+    converted_product: string | null;
+    converted_label: string | null;
+    converted_at: unknown;
+    created_at: unknown;
+  }>(
+    `SELECT id, name, website_url, location, category, tags,
+            converted_product, converted_label, converted_at, created_at
+       FROM crm_organisations
+      WHERE id = $1`,
+    [organisationId],
+  );
+  const org = orgRows[0];
+  if (!org) return null;
+
+  const [contactRows, opportunityRows, activityRows] = await Promise.all([
+    tesserixQuery<{
+      id: string;
+      name: string | null;
+      email: string | null;
+      phone: string | null;
+      instagram_handle: string | null;
+      is_primary: boolean;
+    }>(
+      `SELECT id, name, email, phone, instagram_handle, is_primary
+         FROM crm_contacts
+        WHERE organisation_id = $1
+        ORDER BY is_primary DESC, name ASC NULLS LAST`,
+      [organisationId],
+    ),
+    tesserixQuery<{
+      id: string;
+      product: string | null;
+      stage: CrmStage;
+      owner: string | null;
+      next_action_at: unknown;
+      next_action_note: string | null;
+      last_contacted_at: unknown;
+      is_starred: boolean;
+      closed_at: unknown;
+      lost_reason: string | null;
+      created_at: unknown;
+    }>(
+      `SELECT id, product, stage, owner, next_action_at, next_action_note,
+              last_contacted_at, is_starred, closed_at, lost_reason, created_at
+         FROM crm_opportunities
+        WHERE organisation_id = $1
+        ORDER BY created_at DESC`,
+      [organisationId],
+    ),
+    tesserixQuery<{
+      id: string;
+      opportunity_id: string | null;
+      kind: CrmActivityKind;
+      actor: string;
+      body: string | null;
+      occurred_at: unknown;
+    }>(
+      `SELECT id, opportunity_id, kind, actor, body, occurred_at
+         FROM crm_activities
+        WHERE organisation_id = $1
+        ORDER BY occurred_at DESC
+        LIMIT $2`,
+      [organisationId, ACTIVITY_LIMIT],
+    ),
+  ]);
+
+  return {
+    organisation: {
+      id: org.id,
+      name: org.name,
+      websiteUrl: org.website_url,
+      location: org.location,
+      category: org.category,
+      tags: org.tags,
+      convertedProduct: org.converted_product,
+      convertedLabel: org.converted_label,
+      convertedAt: toIso(org.converted_at),
+      createdAt: toIsoRequired(org.created_at),
+    },
+    contacts: contactRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      instagramHandle: row.instagram_handle,
+      isPrimary: row.is_primary,
+    })),
+    opportunities: opportunityRows.map((row) => ({
+      id: row.id,
+      product: row.product,
+      stage: row.stage,
+      owner: row.owner,
+      nextActionAt: toIso(row.next_action_at),
+      nextActionNote: row.next_action_note,
+      lastContactedAt: toIso(row.last_contacted_at),
+      isStarred: row.is_starred,
+      closedAt: toIso(row.closed_at),
+      lostReason: row.lost_reason,
+      createdAt: toIsoRequired(row.created_at),
+    })),
+    activities: activityRows.map((row) => ({
+      id: row.id,
+      opportunityId: row.opportunity_id,
+      kind: row.kind,
+      actor: row.actor,
+      body: row.body,
+      occurredAt: toIsoRequired(row.occurred_at),
+    })),
+  };
 }
