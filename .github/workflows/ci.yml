@@ -79,6 +79,18 @@ jobs:
       - name: Lint (workspace packages)
         run: pnpm --filter './packages/*' lint
 
+      # Same gap as the lint step above, for tests (#206). packages/* holds the
+      # route table, the per-route capability declarations, the estate registry
+      # and the audit repo — the files every renderer in the estate reads — and
+      # until this step existed their tests ran only on developer machines.
+      #
+      # #200 is the case that shows why it matters: three shipped palette tests
+      # went red the moment the capability filter started biting, and that
+      # redness was the evidence the fix worked. On a developer's machine that
+      # signal is one `pnpm test` away from being lost.
+      - name: Unit tests (workspace packages)
+        run: pnpm --filter './packages/*' test:unit
+
       - name: Lint (web)
         run: pnpm --filter web lint
 

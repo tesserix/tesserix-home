@@ -52,7 +52,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Lint
+      # Deliberately narrower than ci.yml: this workflow gates a release, and
+      # ci.yml has already run the full lint/test matrix on the commit being
+      # released. What is checked here is only that `web` — the thing being
+      # built into the image below — still lints. Widening this to the whole
+      # workspace would duplicate ci.yml rather than protect anything new.
+      #
+      # It does mean a release is not independently verified against packages/*.
+      # That is acceptable only while every release comes from a commit ci.yml
+      # has already passed; if releases ever run on unmerged refs, this needs
+      # the same steps ci.yml grew in #202 and #206.
+      - name: Lint (web — the artifact this workflow builds)
         run: pnpm --filter web lint
 
 
