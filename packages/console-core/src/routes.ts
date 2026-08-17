@@ -300,10 +300,11 @@ const ROUTES = {
   },
   // No `web`: a suppression list never existed in apps/web at all. This is
   // genuinely console-native, not a migrated surface.
+  //
+  // NOT `pending`: Task 7 builds the do-not-contact list this id points at.
   "platform.crmSuppressions": {
     mobile: "/platform/crm/suppressions",
     capability: "read",
-    pending: true,
   },
 } as const satisfies Record<string, RouteEntry>;
 

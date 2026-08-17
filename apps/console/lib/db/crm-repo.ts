@@ -1,4 +1,5 @@
 import { tesserixQuery, tesserixTx } from "./tesserix";
+import { auditedOperation } from "./audit-repo";
 import { requiresProduct, type CrmActivityKind, type CrmStage } from "../crm";
 
 /**
@@ -665,4 +666,142 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       occurredAt: toIsoRequired(row.occurred_at),
     })),
   };
+}
+
+/**
+ * The do-not-contact list (migration 0019's `crm_suppressions`).
+ *
+ * Ships before Task 8 (import): a suppression added after the first import
+ * cannot retroactively protect anyone it should have. Matching is
+ * case-insensitive on both keys — the table's two partial UNIQUE indexes are
+ * on `lower(email)`/`lower(instagram_handle)`, so a lookup that compared the
+ * raw value would miss a match that differs only in case, and then collide
+ * on the very next insert.
+ *
+ * Adding a name to this list is safe; removing one is the consequential
+ * direction — it is what exposes a person who explicitly asked not to be
+ * contacted — so only `removeSuppression` is audited.
+ */
+
+export interface SuppressionRow {
+  id: string;
+  email: string | null;
+  instagramHandle: string | null;
+  reason: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+interface RawSuppressionRow {
+  id: string;
+  email: string | null;
+  instagram_handle: string | null;
+  reason: string;
+  created_by: string;
+  created_at: unknown;
+}
+
+function toSuppressionRow(row: RawSuppressionRow): SuppressionRow {
+  return {
+    id: row.id,
+    email: row.email,
+    instagramHandle: row.instagram_handle,
+    reason: row.reason,
+    createdBy: row.created_by,
+    createdAt: toIsoRequired(row.created_at),
+  };
+}
+
+export interface SuppressionCheck {
+  email?: string;
+  instagramHandle?: string;
+}
+
+/**
+ * Whether either key is already on the list. `false` — not a thrown error —
+ * when neither key is supplied: there is nothing to check, and the caller
+ * (an import row with neither an email nor a handle) should not have to
+ * special-case that itself.
+ */
+export async function isSuppressed(input: SuppressionCheck): Promise<boolean> {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (input.email) {
+    params.push(input.email);
+    clauses.push(`lower(email) = lower($${params.length})`);
+  }
+  if (input.instagramHandle) {
+    params.push(input.instagramHandle);
+    clauses.push(`lower(instagram_handle) = lower($${params.length})`);
+  }
+  if (clauses.length === 0) return false;
+
+  const rows = await tesserixQuery<{ id: string }>(
+    `SELECT id FROM crm_suppressions WHERE ${clauses.join(" OR ")} LIMIT 1`,
+    params,
+  );
+  return rows.length > 0;
+}
+
+export interface AddSuppressionInput {
+  email?: string;
+  instagramHandle?: string;
+  reason: string;
+  actor: string;
+}
+
+/**
+ * Add someone to the do-not-contact list. Not audited — see the module
+ * comment: adding is the safe direction, and every row already carries
+ * `created_by`/`created_at`, which is its own record of who added it and
+ * when.
+ *
+ * Validated here, before the database is touched, so a caller that forgot
+ * both keys gets a clear error rather than tripping `crm_suppression_has_a_key`
+ * as a raw constraint violation.
+ */
+export async function addSuppression(input: AddSuppressionInput): Promise<SuppressionRow> {
+  if (!input.email && !input.instagramHandle) {
+    throw new Error("addSuppression: requires an email or an instagram handle");
+  }
+  const rows = await tesserixQuery<RawSuppressionRow>(
+    `INSERT INTO crm_suppressions (email, instagram_handle, reason, created_by)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, email, instagram_handle, reason, created_by, created_at`,
+    [input.email ?? null, input.instagramHandle ?? null, input.reason, input.actor],
+  );
+  return toSuppressionRow(rows[0]);
+}
+
+/** Every suppression, newest first — the list is small enough that a plain
+ *  unpaginated read is honest about what it's for: a short, human-reviewed
+ *  do-not-contact register, not a growing operational table. */
+export async function listSuppressions(): Promise<SuppressionRow[]> {
+  const rows = await tesserixQuery<RawSuppressionRow>(
+    `SELECT id, email, instagram_handle, reason, created_by, created_at
+       FROM crm_suppressions
+      ORDER BY created_at DESC`,
+  );
+  return rows.map(toSuppressionRow);
+}
+
+/**
+ * Take someone off the do-not-contact list.
+ *
+ * The consequential direction — this is what re-exposes a person who
+ * explicitly asked not to be contacted — so, unlike `addSuppression`, this
+ * goes through `auditedOperation` itself rather than leaving accountability
+ * to whichever caller happens to invoke it. `action` is fixed
+ * (`crm.suppression.remove`) and `summary` is always `{ removed: 1 }`: there
+ * is only one outcome this function has (the row is gone, or the DELETE
+ * itself throws), so there is no branching to make honest the way
+ * `advanceStage`'s `describe` has to be.
+ */
+export async function removeSuppression(id: string, actor: string): Promise<void> {
+  await auditedOperation({
+    actor,
+    target: id,
+    operation: () => tesserixQuery(`DELETE FROM crm_suppressions WHERE id = $1`, [id]),
+    describe: () => ({ action: "crm.suppression.remove", summary: { removed: 1 } }),
+  });
 }

@@ -91,7 +91,8 @@ describe("the CRM serves its queue but keeps import and suppressions pending", (
   it("serves the CRM and keeps its sub-surfaces pending until built", () => {
     expect(isPending("platform.crm")).toBe(false);
     expect(isPending("platform.crmImport")).toBe(true);
-    expect(isPending("platform.crmSuppressions")).toBe(true);
+    // Task 7 built the do-not-contact list this id points at.
+    expect(isPending("platform.crmSuppressions")).toBe(false);
   });
 
   it("records apps/web's leads page as the CRM's predecessor", () => {

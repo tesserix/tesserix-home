@@ -20,6 +20,10 @@ import {
   logActivity,
   organisationDetail,
   MissingProductError,
+  isSuppressed,
+  addSuppression,
+  removeSuppression,
+  listSuppressions,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -561,5 +565,101 @@ describe("organisationDetail", () => {
     expect(calledSql.some((sql) => sql.includes("FROM crm_contacts") && sql.includes("organisation_id = $1"))).toBe(true);
     expect(calledSql.some((sql) => sql.includes("FROM crm_opportunities") && sql.includes("organisation_id = $1"))).toBe(true);
     expect(calledSql.some((sql) => sql.includes("FROM crm_activities") && sql.includes("organisation_id = $1"))).toBe(true);
+  });
+});
+
+describe("suppressions", () => {
+  // The whole point of the list: the partial UNIQUE indexes
+  // (crm_suppressions_email_uq, crm_suppressions_ig_uq) are on `lower(...)`,
+  // so a lookup that compares the raw value would miss a match that differs
+  // only in case — and then collide on the very next insert.
+  it("matches a suppression case-insensitively on either key", async () => {
+    query.mockResolvedValue([{ id: "s1" }]);
+    expect(await isSuppressed({ email: "Ava@Example.com" })).toBe(true);
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("lower(");
+  });
+
+  it("matches on instagram_handle too, case-insensitively", async () => {
+    query.mockResolvedValue([{ id: "s1" }]);
+    expect(await isSuppressed({ instagramHandle: "Bondi_Baker" })).toBe(true);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("lower(instagram_handle)");
+    expect(params).toContain("Bondi_Baker");
+  });
+
+  it("returns false without querying when neither key is supplied", async () => {
+    expect(await isSuppressed({})).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("returns false when nothing matches", async () => {
+    query.mockResolvedValue([]);
+    expect(await isSuppressed({ email: "nobody@example.com" })).toBe(false);
+  });
+
+  it("adds a suppression keyed by email", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "s1",
+        email: "ava@example.com",
+        instagram_handle: null,
+        reason: "unsubscribed",
+        created_by: "ava@tesserix.app",
+        created_at: new Date("2026-08-16T00:00:00Z"),
+      },
+    ]);
+    const row = await addSuppression({
+      email: "ava@example.com",
+      reason: "unsubscribed",
+      actor: "ava@tesserix.app",
+    });
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("INSERT INTO crm_suppressions");
+    expect(params).toEqual(["ava@example.com", null, "unsubscribed", "ava@tesserix.app"]);
+    expect(row.email).toBe("ava@example.com");
+    expect(row.createdAt).toBe("2026-08-16T00:00:00.000Z");
+  });
+
+  it("refuses to add a suppression with neither key, before touching the database", async () => {
+    await expect(
+      addSuppression({ reason: "unsubscribed", actor: "ava@tesserix.app" }),
+    ).rejects.toThrow(/email|instagram/i);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("lists suppressions newest first", async () => {
+    query.mockResolvedValue([]);
+    await listSuppressions();
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("FROM crm_suppressions");
+    expect(sql).toContain("ORDER BY created_at DESC");
+  });
+
+  // Removal is the consequential direction: adding someone is safe, but
+  // taking them off the list is what exposes a person who asked not to be
+  // contacted. It must leave a record an auditor can find.
+  it("audits removal, which is the consequential direction", async () => {
+    query.mockResolvedValue([]);
+    await removeSuppression("s1", "ava@tesserix.app");
+    const sqlText = query.mock.calls.map(([sql]) => sql as string).join("\n");
+    expect(sqlText).toContain("DELETE FROM crm_suppressions");
+    expect(sqlText).toContain("INSERT INTO console_audit_log");
+
+    const auditCall = query.mock.calls.find(([sql]) =>
+      (sql as string).includes("INSERT INTO console_audit_log"),
+    );
+    const [, auditParams] = auditCall as [string, unknown[]];
+    const [actor, action, target, , metadata] = auditParams as [
+      string,
+      string,
+      string | null,
+      string,
+      string | null,
+    ];
+    expect(actor).toBe("ava@tesserix.app");
+    expect(action).toBe("crm.suppression.remove");
+    expect(target).toBe("s1");
+    expect(JSON.parse(metadata as string)).toEqual({ removed: 1 });
   });
 });
