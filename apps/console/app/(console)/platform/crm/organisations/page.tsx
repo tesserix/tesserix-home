@@ -123,7 +123,11 @@ export function readOrganisationFilters(searchParams: OrganisationsSearchParams)
   }
 
   const rawCountry = searchParams.country;
-  if (typeof rawCountry === "string" && rawCountry !== "" && rawCountry in COUNTRY_LABELS) {
+  // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so
+  // `?country=__proto__` (or `constructor`, `toString`) passed as a
+  // recognised code and reached the repo's exact-match clause. Same guard
+  // `isFollowerBand` uses.
+  if (typeof rawCountry === "string" && rawCountry !== "" && Object.hasOwn(COUNTRY_LABELS, rawCountry)) {
     filters.country = rawCountry;
   }
 
@@ -220,12 +224,14 @@ export default async function OrganisationsPage({
 
   let rows: readonly OrganisationListRow[] = [];
   let total = 0;
+  let precedingCount = 0;
   let nextHref: string | null = null;
   let error: unknown = null;
   try {
     const page = await listOrganisations(filters, PAGE_SIZE, cursor);
     rows = page.rows;
     total = page.total;
+    precedingCount = page.precedingCount;
     nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
   } catch (caught) {
     error = caught;
@@ -248,6 +254,7 @@ export default async function OrganisationsPage({
         descriptors={ORGANISATION_FILTERS}
         values={toOrganisationFilterValues(filters)}
         total={total}
+        precedingCount={precedingCount}
         nextHref={nextHref}
       />
     </div>

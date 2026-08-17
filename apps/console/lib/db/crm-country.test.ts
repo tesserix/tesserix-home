@@ -68,6 +68,19 @@ describe("countryFromLocation", () => {
     expect(countryFromLocation("Delhi Road")).toBeNull();
   });
 
+  it("returns null for Object.prototype member names, not the inherited member", () => {
+    // `location` comes from a CSV cell or the manual-create form, and the
+    // result is bound straight into `country`. An unguarded index into the
+    // lookup object read through the prototype chain, so "constructor"
+    // returned the `Object` function and "__proto__" returned an object —
+    // both non-strings, in a column typed text, from untrusted input.
+    for (const key of ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]) {
+      expect(countryFromLocation(key)).toBeNull();
+      // The comma branch does its own lookup and needs its own guard.
+      expect(countryFromLocation(`Somewhere, ${key}`)).toBeNull();
+    }
+  });
+
   it("COUNTRY_LABELS has a display name for every code the lookup table can produce", () => {
     // Derived from the table's own value set rather than a hand-written
     // list of codes, so a new code added to COUNTRY_BY_LOCATION without a

@@ -143,6 +143,20 @@ function normalise(value) {
 }
 
 /**
+ * Own-property lookup into the table above.
+ *
+ * `COUNTRY_BY_LOCATION[key]` on its own reads through the prototype chain, so
+ * a `location` of "constructor" or "__proto__" — both reachable from a CSV
+ * cell or the manual-create form — returned `Object`'s inherited member
+ * instead of null, and that non-string went on to be bound into `country`.
+ * @param {string} key
+ * @returns {string | null}
+ */
+function lookup(key) {
+  return Object.hasOwn(COUNTRY_BY_LOCATION, key) ? COUNTRY_BY_LOCATION[key] : null;
+}
+
+/**
  * Best-effort country for a raw scraped location. Null when unknown.
  * @param {string | null} location
  * @returns {string | null}
@@ -153,7 +167,7 @@ export function countryFromLocation(location) {
   const normalised = normalise(location);
   if (normalised === "") return null;
 
-  const whole = COUNTRY_BY_LOCATION[normalised];
+  const whole = lookup(normalised);
   if (whole) return whole;
 
   // "City, State" style values: try the segment after the last comma (the
@@ -166,7 +180,7 @@ export function countryFromLocation(location) {
   if (lastCommaIndex === -1) return null;
 
   const afterLastComma = normalise(normalised.slice(lastCommaIndex + 1));
-  return COUNTRY_BY_LOCATION[afterLastComma] ?? null;
+  return lookup(afterLastComma);
 }
 
 /**
