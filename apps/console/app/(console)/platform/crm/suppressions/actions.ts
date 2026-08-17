@@ -1,55 +1,42 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
 import { addSuppression, removeSuppression } from "@/lib/db/crm-repo";
-import { AuditUnavailableError, AuditWriteError } from "@/lib/db/audit-repo";
+import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
+
+export type { CrmActionResult };
 
 /**
- * The do-not-contact list's two writes.
- *
- * Not `withCrmWrite` (see `../[organisation]/actions.ts`): that helper calls
- * `auditedOperation` itself around whatever `run` returns, and
- * `removeSuppression` (crm-repo.ts) already does that internally — removal
- * is the consequential direction (it is what re-exposes someone who asked
- * not to be contacted), so it carries its own audit guarantee rather than
- * leaving it to whichever caller happens to invoke it. Wrapping it in
- * `withCrmWrite` too would write two audit rows for one removal. This module
- * still does the same session check and capability gate `withCrmWrite`
- * does — a verb must fail closed on its own rather than inherit safety from
- * routing — it just doesn't audit a second time.
+ * The do-not-contact list's two writes, both through `withCrmWrite`
+ * (Ruling 17): session check, capability gate, `auditedOperation`, and error
+ * mapping all live there, shared with `[organisation]/actions.ts`, rather
+ * than a second hand-rolled copy — the copy this file used to be is exactly
+ * what let a raw `pg` error (`mapDuplicateSuppression` below is the one
+ * allowlisted exception to that) and a diverging audit-actor identity reach
+ * the operator in the first place.
  */
 
-export type SuppressionActionResult = { ok: true } | { ok: false; message: string };
+const ALREADY_ON_LIST_MESSAGE = "That email or Instagram handle is already on the do-not-contact list.";
 
-const NO_PERMISSION_MESSAGE = "You don't have permission to edit the do-not-contact list.";
-const NOT_SAVED_MESSAGE = "That change was not saved.";
-
-async function requireOperator(): Promise<{ sub: string; email: string }> {
-  const session = await getCurrentSession();
-  checkOperatorCapability(session, "read");
-  return {
-    sub: session?.sub ?? "unknown",
-    email: session?.email ?? session?.sub ?? "unknown",
-  };
-}
-
-function mapError(cause: unknown): SuppressionActionResult {
-  if (cause instanceof CapabilityError) {
-    return { ok: false, message: NO_PERMISSION_MESSAGE };
+/**
+ * Postgres reports a UNIQUE-index violation with a message naming the
+ * constraint (`crm_suppressions_email_uq` / `crm_suppressions_ig_uq`). This
+ * is the one database error this surface allowlists — mapped to an
+ * operator-facing "already on the list" rather than falling through to the
+ * generic "not saved", because it's the one everyday collision the form's
+ * own two-key CHECK can't catch client-side (only the database index knows
+ * the list's current contents at write time).
+ */
+function mapDuplicateSuppression(cause: unknown): { ok: false; message: string } | undefined {
+  if (
+    cause instanceof Error &&
+    /duplicate key value violates unique constraint "crm_suppressions_(email|ig)_uq"/.test(
+      cause.message,
+    )
+  ) {
+    return { ok: false, message: ALREADY_ON_LIST_MESSAGE };
   }
-  if (cause instanceof AuditUnavailableError || cause instanceof AuditWriteError) {
-    return { ok: false, message: NOT_SAVED_MESSAGE };
-  }
-  if (cause instanceof Error) {
-    // Validation errors thrown by `addSuppression` before any write (e.g.
-    // "requires an email or an instagram handle") are already
-    // operator-facing and safe to surface — nothing else this function
-    // calls throws a plain `Error` before that point.
-    return { ok: false, message: cause.message };
-  }
-  return { ok: false, message: NOT_SAVED_MESSAGE };
+  return undefined;
 }
 
 export interface AddSuppressionActionInput {
@@ -60,29 +47,43 @@ export interface AddSuppressionActionInput {
 
 export async function addSuppressionAction(
   input: AddSuppressionActionInput,
-): Promise<SuppressionActionResult> {
-  try {
-    const actor = await requireOperator();
-    await addSuppression({
-      email: input.email || undefined,
-      instagramHandle: input.instagramHandle || undefined,
-      reason: input.reason,
-      actor: actor.email,
-    });
-    revalidatePath("/platform/crm/suppressions");
-    return { ok: true };
-  } catch (cause) {
-    return mapError(cause);
+): Promise<CrmActionResult> {
+  // Trimmed here, not only in the client form: a server action is a
+  // network-reachable endpoint in its own right, and the client's `.trim()`
+  // is not the boundary that matters.
+  const email = input.email?.trim() || undefined;
+  const instagramHandle = input.instagramHandle?.trim() || undefined;
+  const reason = input.reason.trim();
+
+  if (!email && !instagramHandle) {
+    return { ok: false, message: "Enter an email or an Instagram handle." };
   }
+  if (!reason) {
+    return { ok: false, message: "Enter a reason." };
+  }
+
+  const result = await withCrmWrite(
+    email ?? instagramHandle ?? "unknown",
+    (actor) => addSuppression({ email, instagramHandle, reason, actor: actor.email }),
+    () => ({ action: "crm.suppression.add", summary: { added: 1 } }),
+    mapDuplicateSuppression,
+  );
+  if (!result.ok) return result;
+  revalidatePath("/platform/crm/suppressions");
+  return { ok: true };
 }
 
-export async function removeSuppressionAction(id: string): Promise<SuppressionActionResult> {
-  try {
-    const actor = await requireOperator();
-    await removeSuppression(id, actor.email);
-    revalidatePath("/platform/crm/suppressions");
-    return { ok: true };
-  } catch (cause) {
-    return mapError(cause);
-  }
+export async function removeSuppressionAction(id: string): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    id,
+    () => removeSuppression(id),
+    // Important 3: the real outcome, not an assumption — `removeSuppression`
+    // returns exactly the rows its DELETE ... RETURNING id reported, so a
+    // removal that matched nothing is honestly `{ removed: 0 }`, not a
+    // fabricated `{ removed: 1 }`.
+    (rows) => ({ action: "crm.suppression.remove", summary: { removed: rows.length } }),
+  );
+  if (!result.ok) return result;
+  revalidatePath("/platform/crm/suppressions");
+  return { ok: true };
 }

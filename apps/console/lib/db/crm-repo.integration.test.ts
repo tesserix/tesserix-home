@@ -40,7 +40,7 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { dueOpportunities, driftingOpportunities } = await import(
+const { dueOpportunities, driftingOpportunities, isSuppressed, addSuppression } = await import(
   "./crm-repo"
 );
 
@@ -266,5 +266,45 @@ describe("owner filter escapes LIKE metacharacters against a real database", () 
     expect(rows.map((r) => r.id)).toEqual([
       "55555555-5555-5555-5555-555555555555",
     ]);
+  });
+});
+
+// Important 7: the mocked unit tests in crm-repo.test.ts assert only that
+// the SQL text contains `lower(` and that the raw value reaches `params` —
+// an implementation of `lower(email) = $1` (`lower()` on the column only,
+// the bound parameter passed through raw) satisfies both assertions and is
+// still case-sensitive on the parameter side, which is exactly the bug
+// Ruling 18's normalization exists to prevent. Only a real comparison, with
+// a real case/format mismatch between the write and the read, tells the two
+// apart — the same reason crm-repo.integration.test.ts exists at all for the
+// drifting-queue's NULL/COALESCE semantics.
+describe("suppressions match case-insensitively, and Instagram handles format-insensitively, against a real database", () => {
+  beforeAll(async () => {
+    await addSuppression({
+      email: "Ava@Example.com",
+      reason: "unsubscribed",
+      actor: "ops@tesserix.app",
+    });
+    await addSuppression({
+      instagramHandle: "@BondiBaker",
+      reason: "asked not to be contacted",
+      actor: "ops@tesserix.app",
+    });
+  });
+
+  it("matches an email suppression stored mixed-case against a lookup in any other case", async () => {
+    expect(await isSuppressed({ email: "ava@example.com" })).toBe(true);
+    expect(await isSuppressed({ email: "AVA@EXAMPLE.COM" })).toBe(true);
+    expect(await isSuppressed({ email: "someoneelse@example.com" })).toBe(false);
+  });
+
+  it("matches an instagram suppression regardless of case or a leading '@', in either direction", async () => {
+    // Stored (after normalization) as "bondibaker" — matched here by a
+    // lookup carrying the opposite case, and separately by one carrying the
+    // `@` the write side stripped.
+    expect(await isSuppressed({ instagramHandle: "bondibaker" })).toBe(true);
+    expect(await isSuppressed({ instagramHandle: "@BondiBaker" })).toBe(true);
+    expect(await isSuppressed({ instagramHandle: "BONDIBAKER" })).toBe(true);
+    expect(await isSuppressed({ instagramHandle: "someoneelse" })).toBe(false);
   });
 });

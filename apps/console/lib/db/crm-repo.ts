@@ -1,5 +1,4 @@
 import { tesserixQuery, tesserixTx } from "./tesserix";
-import { auditedOperation } from "./audit-repo";
 import { requiresProduct, type CrmActivityKind, type CrmStage } from "../crm";
 
 /**
@@ -678,9 +677,25 @@ export async function organisationDetail(organisationId: string): Promise<Organi
  * raw value would miss a match that differs only in case, and then collide
  * on the very next insert.
  *
- * Adding a name to this list is safe; removing one is the consequential
- * direction — it is what exposes a person who explicitly asked not to be
- * contacted — so only `removeSuppression` is audited.
+ * Ruling 18: Instagram handles also need to be format-insensitive, not just
+ * case-insensitive. A handle is written with or without a leading `@`
+ * depending on where it came from (the form's own placeholder is
+ * `@bondibaker`; an imported row will plausibly carry `bondibaker`), and
+ * `lower()` alone does not bridge that gap — a suppressed person keyed one
+ * way would silently fail to match a lookup keyed the other, which is
+ * exactly the failure this feature exists to prevent. `normalizeInstagramHandle`
+ * strips a leading `@` and lowercases, and runs on both the write path
+ * (`addSuppression`) and the read path (`isSuppressed`), so the stored and
+ * the queried form can never disagree about which is canonical.
+ *
+ * Ruling 17: no `auditedOperation` in this module. It briefly lived on
+ * `removeSuppression` directly, on the theory that removal — the
+ * consequential direction, since it is what re-exposes someone who asked not
+ * to be contacted — needed its own guarantee. It didn't: the capability gate
+ * has to live at the action layer regardless (a repo function has no session
+ * to check), so auditing here too would just put the same guarantee in two
+ * places that could drift, which is what happened. `apps/console/lib/crm-write.ts`'s
+ * `withCrmWrite` is the one place both CRM action surfaces audit through now.
  */
 
 export interface SuppressionRow {
@@ -712,6 +727,12 @@ function toSuppressionRow(row: RawSuppressionRow): SuppressionRow {
   };
 }
 
+/** Strips a leading `@` and lowercases, so `@BondiBaker` and `bondibaker`
+ *  are the same key on both the write and the read side (Ruling 18). */
+function normalizeInstagramHandle(handle: string): string {
+  return handle.trim().replace(/^@+/, "").toLowerCase();
+}
+
 export interface SuppressionCheck {
   email?: string;
   instagramHandle?: string;
@@ -731,7 +752,7 @@ export async function isSuppressed(input: SuppressionCheck): Promise<boolean> {
     clauses.push(`lower(email) = lower($${params.length})`);
   }
   if (input.instagramHandle) {
-    params.push(input.instagramHandle);
+    params.push(normalizeInstagramHandle(input.instagramHandle));
     clauses.push(`lower(instagram_handle) = lower($${params.length})`);
   }
   if (clauses.length === 0) return false;
@@ -751,8 +772,8 @@ export interface AddSuppressionInput {
 }
 
 /**
- * Add someone to the do-not-contact list. Not audited — see the module
- * comment: adding is the safe direction, and every row already carries
+ * Add someone to the do-not-contact list. Not audited — adding is the safe
+ * direction (see the module comment), and every row already carries
  * `created_by`/`created_at`, which is its own record of who added it and
  * when.
  *
@@ -768,7 +789,12 @@ export async function addSuppression(input: AddSuppressionInput): Promise<Suppre
     `INSERT INTO crm_suppressions (email, instagram_handle, reason, created_by)
      VALUES ($1, $2, $3, $4)
      RETURNING id, email, instagram_handle, reason, created_by, created_at`,
-    [input.email ?? null, input.instagramHandle ?? null, input.reason, input.actor],
+    [
+      input.email ?? null,
+      input.instagramHandle ? normalizeInstagramHandle(input.instagramHandle) : null,
+      input.reason,
+      input.actor,
+    ],
   );
   return toSuppressionRow(rows[0]);
 }
@@ -788,20 +814,18 @@ export async function listSuppressions(): Promise<SuppressionRow[]> {
 /**
  * Take someone off the do-not-contact list.
  *
- * The consequential direction — this is what re-exposes a person who
- * explicitly asked not to be contacted — so, unlike `addSuppression`, this
- * goes through `auditedOperation` itself rather than leaving accountability
- * to whichever caller happens to invoke it. `action` is fixed
- * (`crm.suppression.remove`) and `summary` is always `{ removed: 1 }`: there
- * is only one outcome this function has (the row is gone, or the DELETE
- * itself throws), so there is no branching to make honest the way
- * `advanceStage`'s `describe` has to be.
+ * Plain data access (Ruling 17) — the action layer (`suppressions/actions.ts`,
+ * via `withCrmWrite`) is what audits this, since accountability for a CRM
+ * write lives at the layer that already has a session to check. `RETURNING
+ * id` is what lets the caller's `describe` report the real outcome —
+ * `{ removed: rows.length }` — rather than assuming a match: `DELETE …
+ * WHERE id = $1` on an id that no longer exists succeeds with zero rows,
+ * and an audit row claiming `{ removed: 1 }` for that would be recording a
+ * removal that never happened.
  */
-export async function removeSuppression(id: string, actor: string): Promise<void> {
-  await auditedOperation({
-    actor,
-    target: id,
-    operation: () => tesserixQuery(`DELETE FROM crm_suppressions WHERE id = $1`, [id]),
-    describe: () => ({ action: "crm.suppression.remove", summary: { removed: 1 } }),
-  });
+export async function removeSuppression(id: string): Promise<{ id: string }[]> {
+  return tesserixQuery<{ id: string }>(
+    `DELETE FROM crm_suppressions WHERE id = $1 RETURNING id`,
+    [id],
+  );
 }

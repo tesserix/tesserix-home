@@ -585,7 +585,21 @@ describe("suppressions", () => {
     expect(await isSuppressed({ instagramHandle: "Bondi_Baker" })).toBe(true);
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain("lower(instagram_handle)");
-    expect(params).toContain("Bondi_Baker");
+    // Normalized (Ruling 18): lowercased before it ever reaches SQL, not
+    // passed through raw and left to `lower()` alone.
+    expect(params).toContain("bondi_baker");
+    expect(params).not.toContain("Bondi_Baker");
+  });
+
+  // Ruling 18: a handle can arrive with or without a leading `@` depending on
+  // where it came from. `lower()` does not bridge that — only stripping the
+  // `@` at the boundary does, on both the write and the read side (the next
+  // two tests pin both directions).
+  it("strips a leading '@' before querying instagram_handle, so a lookup matches regardless of format", async () => {
+    query.mockResolvedValue([{ id: "s1" }]);
+    expect(await isSuppressed({ instagramHandle: "@BondiBaker" })).toBe(true);
+    const [, params] = query.mock.calls[0];
+    expect(params).toContain("bondibaker");
   });
 
   it("returns false without querying when neither key is supplied", async () => {
@@ -621,6 +635,29 @@ describe("suppressions", () => {
     expect(row.createdAt).toBe("2026-08-16T00:00:00.000Z");
   });
 
+  // The write-side half of Ruling 18: stored in its canonical form so the
+  // read side's own normalization always has something consistent to match
+  // against, regardless of how an operator (or an import row) typed it.
+  it("strips a leading '@' and lowercases before storing an instagram handle", async () => {
+    query.mockResolvedValueOnce([
+      {
+        id: "s1",
+        email: null,
+        instagram_handle: "bondibaker",
+        reason: "unsubscribed",
+        created_by: "ava@tesserix.app",
+        created_at: new Date("2026-08-16T00:00:00Z"),
+      },
+    ]);
+    await addSuppression({
+      instagramHandle: "@BondiBaker",
+      reason: "unsubscribed",
+      actor: "ava@tesserix.app",
+    });
+    const [, params] = query.mock.calls[0];
+    expect(params).toEqual([null, "bondibaker", "unsubscribed", "ava@tesserix.app"]);
+  });
+
   it("refuses to add a suppression with neither key, before touching the database", async () => {
     await expect(
       addSuppression({ reason: "unsubscribed", actor: "ava@tesserix.app" }),
@@ -636,30 +673,29 @@ describe("suppressions", () => {
     expect(sql).toContain("ORDER BY created_at DESC");
   });
 
-  // Removal is the consequential direction: adding someone is safe, but
-  // taking them off the list is what exposes a person who asked not to be
-  // contacted. It must leave a record an auditor can find.
-  it("audits removal, which is the consequential direction", async () => {
-    query.mockResolvedValue([]);
-    await removeSuppression("s1", "ava@tesserix.app");
-    const sqlText = query.mock.calls.map(([sql]) => sql as string).join("\n");
-    expect(sqlText).toContain("DELETE FROM crm_suppressions");
-    expect(sqlText).toContain("INSERT INTO console_audit_log");
+  // Ruling 17: `removeSuppression` is plain data access — no session to
+  // check, no `auditedOperation` call, at this layer. Accountability for the
+  // write lives in `suppressions/actions.ts`, via the shared `withCrmWrite`
+  // (see `lib/crm-write.ts` and `suppressions/actions.test.ts`).
+  describe("removeSuppression", () => {
+    it("deletes by id and returns exactly the rows the DELETE reports", async () => {
+      query.mockResolvedValueOnce([{ id: "s1" }]);
+      const rows = await removeSuppression("s1");
+      const [sql, params] = query.mock.calls[0];
+      expect(sql).toContain("DELETE FROM crm_suppressions");
+      expect(sql).toContain("RETURNING id");
+      expect(params).toEqual(["s1"]);
+      expect(rows).toEqual([{ id: "s1" }]);
+    });
 
-    const auditCall = query.mock.calls.find(([sql]) =>
-      (sql as string).includes("INSERT INTO console_audit_log"),
-    );
-    const [, auditParams] = auditCall as [string, unknown[]];
-    const [actor, action, target, , metadata] = auditParams as [
-      string,
-      string,
-      string | null,
-      string,
-      string | null,
-    ];
-    expect(actor).toBe("ava@tesserix.app");
-    expect(action).toBe("crm.suppression.remove");
-    expect(target).toBe("s1");
-    expect(JSON.parse(metadata as string)).toEqual({ removed: 1 });
+    // Important 3: a DELETE against a non-matching id succeeds with zero
+    // rows, not an error — the caller (`suppressions/actions.ts`) needs this
+    // real count to write an honest `{ removed: 0 }` rather than assuming
+    // `{ removed: 1 }` for a removal that never happened.
+    it("returns no rows, honestly, when nothing matched", async () => {
+      query.mockResolvedValueOnce([]);
+      const rows = await removeSuppression("missing");
+      expect(rows).toEqual([]);
+    });
   });
 });

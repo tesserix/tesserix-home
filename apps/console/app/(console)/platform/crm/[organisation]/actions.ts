@@ -1,8 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
 import {
   advanceStage,
   setNextAction,
@@ -10,92 +8,24 @@ import {
   MissingProductError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
-import {
-  auditedOperation,
-  AuditUnavailableError,
-  AuditWriteError,
-  type AuditDescription,
-} from "@/lib/db/audit-repo";
+import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
-export type CrmActionResult = { ok: true } | { ok: false; message: string };
-
-const NO_PERMISSION_MESSAGE = "You don't have permission to edit the CRM.";
-
-// Internal error strings (transport/database detail) must never reach the
-// UI verbatim — surfaced only as a generic, per-verb message. The two
-// exceptions are `MissingProductError` (already a clear, operator-facing
-// prompt) and validation errors this file raises itself before any write.
-const NOT_SAVED_MESSAGE = "That change was not saved.";
+export type { CrmActionResult };
 
 /**
- * The gap this module ships with, deliberately, rather than silently:
- *
- * None of the seven `Capability` values fits "edit the CRM pipeline" —
- * `respond` is documented as "reply to tickets and chats, transition their
- * status", and broadening it to mean "transition anything" would silently
- * hand every support operator write access to the sales pipeline, which is
- * exactly the separation the capability set exists to express. Adding a new
- * capability is a Zitadel role change, out of scope for this task — the
- * bulk-import spec hit the identical wall and recorded the same choice: gate
- * on `read` (console entry — every operator already holds it) and make every
- * write accountable through `auditedOperation` instead. Closing this
- * properly is ONE Zitadel role change that covers import and CRM writes
- * together, not two separate ones.
- *
- * So: this still calls `checkOperatorCapability` — not to distinguish who
- * may write from who may not (today, everyone with console access may), but
- * because a verb must fail closed on its own rather than inherit safety from
- * routing, and because a session must exist at all before `actor` is used
- * for the audit row below.
+ * `MissingProductError` is the one exception this surface maps to its own
+ * message rather than the shared wrapper's generic "not saved": it is
+ * already a clear, operator-facing prompt (migration 0021's grandfathered-row
+ * case), not a caught database error. Passed to `withCrmWrite` as `mapError`
+ * so the allowlisting stays explicit and per-caller, rather than the shared
+ * wrapper guessing which exceptions are safe to show.
  */
-
-/**
- * Ruling 15: this is `auditedOperation` (audit-repo.ts) plus a session
- * check and error mapping — nothing more. It used to reimplement
- * `auditedOperation`'s guarantee by hand, on the theory that a dynamic audit
- * `action` needed a different control. It didn't: `AuditedOperation.describe`
- * already takes the operation's *result* and returns `{ action, summary }`
- * together, which is exactly what `changeStage` needs (whether the write was
- * a real stage transition or only a product correction on an unchanged stage
- * isn't known until `advanceStage` has run). A hand-rolled copy in a leaf
- * file — even a faithful one — is a second place the one structural control
- * in this codebase can drift from what the shared module actually enforces.
- */
-async function withCrmWrite<T>(
-  target: string,
-  run: (actor: { sub: string; email: string }) => Promise<T>,
-  describe: (result: T) => AuditDescription,
-): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
-  try {
-    const session = await getCurrentSession();
-    checkOperatorCapability(session, "read");
-    const actor = {
-      sub: session?.sub ?? "unknown",
-      email: session?.email ?? session?.sub ?? "unknown",
-    };
-    const value = await auditedOperation({
-      actor: actor.sub,
-      target,
-      operation: () => run(actor),
-      describe,
-    });
-    return { ok: true, value };
-  } catch (cause) {
-    if (cause instanceof CapabilityError) {
-      return { ok: false, message: NO_PERMISSION_MESSAGE };
-    }
-    if (cause instanceof AuditUnavailableError || cause instanceof AuditWriteError) {
-      return { ok: false, message: NOT_SAVED_MESSAGE };
-    }
-    if (cause instanceof MissingProductError) {
-      // A clear, operator-facing prompt, not a caught database error — this
-      // is exactly the case migration 0021 flagged as Task 6's problem to
-      // handle deliberately.
-      return { ok: false, message: cause.message };
-    }
-    return { ok: false, message: NOT_SAVED_MESSAGE };
+function mapMissingProduct(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof MissingProductError) {
+    return { ok: false, message: cause.message };
   }
+  return undefined;
 }
 
 export interface ChangeStageInput {
@@ -153,6 +83,7 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
       // not a sentinel meaning "something went wrong".
       return { action: "crm.stage.change", summary: { transitions: 0 } };
     },
+    mapMissingProduct,
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -179,6 +110,7 @@ export async function scheduleNextAction(
         actor: actor.email,
       }),
     () => ({ action: "crm.next_action.set", summary: { scheduled: 1 } }),
+    mapMissingProduct,
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);

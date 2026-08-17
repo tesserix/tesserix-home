@@ -87,8 +87,8 @@ describe("console-native surfaces record no apps/web path", () => {
   });
 });
 
-describe("the CRM serves its queue but keeps import and suppressions pending", () => {
-  it("serves the CRM and keeps its sub-surfaces pending until built", () => {
+describe("the CRM serves its queue and its do-not-contact list, but keeps import pending", () => {
+  it("serves the CRM and the suppression list, and keeps only import pending", () => {
     expect(isPending("platform.crm")).toBe(false);
     expect(isPending("platform.crmImport")).toBe(true);
     // Task 7 built the do-not-contact list this id points at.
