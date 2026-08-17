@@ -26,7 +26,7 @@
     "@tesserix/hooks": "^1.0.0",
     "@tesserix/otto-widget": "^0.6.0",
     "@tesserix/platform-auth": "workspace:*",
-    "@tesserix/web": "^1.8.1",
+    "@tesserix/web": "^2.1.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.33.0",
     "jose": "^6.2.3",

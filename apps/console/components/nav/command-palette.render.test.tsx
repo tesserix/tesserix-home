@@ -252,14 +252,24 @@ describe("ConsoleCommandPalette", () => {
     ).toHaveValue("");
   });
 
-  it("moves the highlight on ArrowDown", async () => {
+  it("highlights nothing until the operator navigates, then moves down the list", async () => {
     // "cost" matches exactly two tools — Kubecost and Cost estimator — which
-    // is what makes the highlight's movement observable: a single-match
-    // query is already active on its only item before any key is pressed.
+    // is what makes the highlight's movement observable at all.
     // `data-active` is the primitive's own attribute for "this is the
     // highlighted item" (read from the compiled `@tesserix/web` source,
     // `CommandItem`'s `"data-active": isActive ? "true" : "false"` — not
     // `aria-selected`, which tracks the *selected* value instead).
+    //
+    // The first assertion changed in `@tesserix/web` 2.1.0 and the new
+    // behaviour is the correct one. Up to 1.8.1 `CommandInput`'s `onChange`
+    // set the highlight to the first matching item on every keystroke, so
+    // something was always pre-highlighted and a bare Enter fired it. That is
+    // the combobox anti-pattern where typing arms a destructive-looking
+    // default the operator never chose — and it is half of the stale-Enter
+    // bug, since the pre-set highlight outlived the query that produced it.
+    // 2.1.0 leaves `activeValue` undefined until an arrow key, and Enter is a
+    // no-op while nothing is active. This test now pins THAT, deliberately:
+    // it is a behaviour change, not a regression absorbed quietly.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -271,13 +281,42 @@ describe("ConsoleCommandPalette", () => {
     const kubecost = await screen.findByRole("option", { name: /Kubecost/i });
     const estimator = await screen.findByRole("option", { name: /Cost estimator/i });
 
-    expect(kubecost).toHaveAttribute("data-active", "true");
+    // Typing alone arms nothing.
+    expect(kubecost).toHaveAttribute("data-active", "false");
     expect(estimator).toHaveAttribute("data-active", "false");
 
     await user.keyboard("{ArrowDown}");
 
+    expect(kubecost).toHaveAttribute("data-active", "true");
+    expect(estimator).toHaveAttribute("data-active", "false");
+
+    // GUARDS THE GUARD: one ArrowDown landing on the first item passes just as
+    // happily if the highlight is stuck there. This is the assertion that
+    // fails if it stops moving.
+    await user.keyboard("{ArrowDown}");
+
     expect(kubecost).toHaveAttribute("data-active", "false");
     expect(estimator).toHaveAttribute("data-active", "true");
+  });
+
+  it("does nothing on Enter while nothing is highlighted", async () => {
+    // The other half of the 2.1.0 change, asserted on its own so the pair
+    // above cannot be read as cosmetic. A palette that navigates on a bare
+    // Enter — to whichever row happened to sort first — is how an operator
+    // ends up somewhere they did not ask for.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tickets",
+    );
+    await screen.findByRole("option", { name: /Platform · Tickets/i });
+    await user.keyboard("{Enter}");
+
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("opens a tool externally instead of pushing a route", async () => {
