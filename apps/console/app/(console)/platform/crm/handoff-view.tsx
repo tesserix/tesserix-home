@@ -84,17 +84,24 @@ function HandoffRowItem({
   const [manualRef, setManualRef] = useState("");
   const [manualLabel, setManualLabel] = useState("");
 
+  // Captured as `{ ref, label }`, not the whole `item.signal` object: the
+  // guard's `item.signal.ref` check narrows that specific access, but does
+  // not carry over to `suggestion.ref` if `suggestion` were the signal
+  // itself — this shape makes `ref` genuinely non-optional below, with no
+  // `!` needed to tell the compiler what the guard already proved.
   const suggestion =
-    item.signal.state === "complete" && item.signal.ref ? item.signal : null;
+    item.signal.state === "complete" && item.signal.ref
+      ? { ref: item.signal.ref, label: item.signal.label }
+      : null;
 
   const confirmSuggestion = () => {
-    if (!suggestion?.ref) return;
+    if (!suggestion) return;
     setError(null);
     startTransition(async () => {
       const result = await linkConversion({
         organisationId: item.organisationId,
         product: item.signal.product,
-        ref: suggestion.ref!,
+        ref: suggestion.ref,
         label: suggestion.label,
         method: "matched",
       });

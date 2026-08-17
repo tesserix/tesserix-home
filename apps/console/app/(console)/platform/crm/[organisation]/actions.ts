@@ -7,6 +7,7 @@ import {
   logActivity,
   linkConversion as linkConversionRow,
   MissingProductError,
+  AlreadyLinkedError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
@@ -176,6 +177,19 @@ export interface LinkConversionInput {
 }
 
 /**
+ * Ruling 30's one allowlisted exception: `AlreadyLinkedError` is a clear,
+ * operator-facing fact (a second confirmation lost a race against the
+ * first), not a caught database error — same treatment `mapMissingProduct`
+ * gives its own well-known exception above.
+ */
+function mapAlreadyLinked(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AlreadyLinkedError) {
+    return { ok: false, message: "This organisation already has a conversion recorded." };
+  }
+  return undefined;
+}
+
+/**
  * Link an organisation's won deal to a product's conversion.
  *
  * The email match Task 9's conversion-status client surfaces is a
@@ -204,19 +218,24 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
   const method = input.method;
   const result = await withCrmWrite(
     input.organisationId,
-    () =>
+    (actor) =>
       linkConversionRow({
         organisationId: input.organisationId,
         product,
         ref,
         label,
         method,
+        actor: actor.email,
       }),
     (outcome) => ({
       action: "crm.conversion.link",
       summary: { linked: 1 },
-      target: outcome.organisationName,
+      // The id alongside the name (Ruling 20-style): a display name alone
+      // is neither unique nor stable, which would make this the one CRM
+      // audit row an operator can't join back to a real record.
+      target: `${outcome.organisationName} (${outcome.organisationId})`,
     }),
+    mapAlreadyLinked,
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm");

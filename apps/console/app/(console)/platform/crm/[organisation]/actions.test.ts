@@ -31,6 +31,7 @@ import {
   logActivity,
   linkConversion as linkConversionRow,
   MissingProductError,
+  AlreadyLinkedError,
 } from "@/lib/db/crm-repo";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import { changeStage, scheduleNextAction, addActivity, linkConversion } from "./actions";
@@ -390,14 +391,40 @@ describe("linkConversion", () => {
       ref: "tenant_9f2",
       label: "Bondi Store",
       method: "matched",
+      actor: "ava@tesserix.app",
     });
     expect(lastAuditInsert()).toEqual({
       action: "crm.conversion.link",
-      target: "Bondi Baker",
+      // Minor: the id alongside the name — a display name alone is neither
+      // unique nor stable, which would make this the one CRM audit row an
+      // operator can't join back to a real record.
+      target: `Bondi Baker (${ORG_ID})`,
       summary: { linked: 1 },
     });
     expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  // Ruling 30: a second confirmation losing a race against the first (two
+  // rows for the same organisation in the handoff queue, a stale tab, a
+  // second operator) must read as a clear, distinct fact — not the generic
+  // "not saved" every other caught error falls back to.
+  it("maps AlreadyLinkedError to a distinct, operator-facing message", async () => {
+    signIn(["read"]);
+    vi.mocked(linkConversionRow).mockRejectedValue(new AlreadyLinkedError(ORG_ID));
+
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "matched",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: "This organisation already has a conversion recorded.",
+    });
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 
   it("rejects a missing ref without calling the session or the repo", async () => {

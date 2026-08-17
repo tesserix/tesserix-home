@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { ESTATE } from "@tesserix/console-core";
 import { ConsolePageHeader } from "@/components/kit/page-header";
-import { SurfaceTabs } from "@/components/kit/surface-tabs";
 import type { QueueItem, QueueStatus, QueueStatusTone } from "@/components/kit/queue-list";
 import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar";
 // Imported from `surface-state` and not from `states`: this is a server
@@ -37,6 +37,15 @@ export type { HandoffItem };
 const DUE_LIMIT = 100;
 const DRIFTING_LIMIT = 100;
 const HANDOFF_LIMIT = 100;
+/** Bounds simultaneous outbound `fetchConversionSignal` calls. A handoff
+ *  queue at `HANDOFF_LIMIT` is up to 100 requests fanned out at once (Task
+ *  9's review, carried forward) — correct for "one hung product must not
+ *  stall the others", but 100 *simultaneous* connections through the one
+ *  apps/web proxy every product's conversion-status check goes through is
+ *  its own kind of thundering herd. `mapWithConcurrencyLimit` keeps the
+ *  "never sequential" guarantee while bounding how many are in flight at
+ *  once. */
+const HANDOFF_FETCH_CONCURRENCY = 10;
 
 /** The `empty` copy for each group, exported so tests assert on the string
  *  the page ships rather than a second copy of it that could drift. */
@@ -212,14 +221,52 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
 }
 
 /**
+ * Runs `fn` over `items` with at most `concurrency` in flight at once.
+ * Settles like `Promise.allSettled` — one item's rejection is isolated to
+ * its own slot, never delaying or blanking the rest — but bounded, unlike
+ * `Promise.allSettled(items.map(fn))`, which starts every call at once.
+ *
+ * A small worker pool, not a batch-of-N-then-wait chunking scheme: batching
+ * would let one slow request in a batch hold up every other slot in that
+ * same batch even though `concurrency - 1` other workers sit idle; a pool
+ * immediately hands a finished worker the next item, so throughput is
+ * bounded by `concurrency`, not by the slowest item in an arbitrary chunk.
+ */
+async function mapWithConcurrencyLimit<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const index = cursor++;
+      try {
+        results[index] = { status: "fulfilled", value: await fn(items[index]) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+/**
  * The handoff tab's fan-out: one `fetchConversionSignal` call per row.
  *
- * Task 9's review carried its own rule into this task: `Promise.allSettled`,
- * never sequential awaits. Against an 8s-timeout client, N leads awaited one
- * at a time is an N×8s user-visible stall on a server-rendered page, and a
- * single hung or failing product must not delay — or blank — the rest of the
- * queue. `fetchConversionSignal` itself never throws (its whole contract is
- * "a non-answer resolves to `unknown`"), so the `rejected` branch below is
+ * Task 9's review carried its own rule into this task: never sequential
+ * awaits. Against an 8s-timeout client, N leads awaited one at a time is an
+ * N×8s user-visible stall on a server-rendered page, and a single hung or
+ * failing product must not delay — or blank — the rest of the queue.
+ * `mapWithConcurrencyLimit` keeps that guarantee while bounding how many
+ * requests are ever in flight at once (`HANDOFF_FETCH_CONCURRENCY`).
+ * `fetchConversionSignal` itself never throws (its whole contract is "a
+ * non-answer resolves to `unknown`"), so the `rejected` branch below is
  * belt-and-braces against a caller-side bug, not a path this module expects
  * to take in practice.
  *
@@ -231,12 +278,10 @@ export async function buildHandoffItems(
   rows: readonly HandoffRow[],
   cookieHeader: string,
 ): Promise<HandoffItem[]> {
-  const settled = await Promise.allSettled(
-    rows.map((row) =>
-      row.primaryEmail
-        ? fetchConversionSignal(row.product, row.primaryEmail, cookieHeader)
-        : Promise.resolve<ConversionSignal>({ product: row.product, state: "unknown" }),
-    ),
+  const settled = await mapWithConcurrencyLimit(rows, HANDOFF_FETCH_CONCURRENCY, (row) =>
+    row.primaryEmail
+      ? fetchConversionSignal(row.product, row.primaryEmail, cookieHeader)
+      : Promise.resolve<ConversionSignal>({ product: row.product, state: "unknown" }),
   );
 
   return rows.map((row, index) => {
@@ -254,38 +299,106 @@ export async function buildHandoffItems(
   });
 }
 
+export type CrmTab = "work" | "handoff";
+
 /** Which tab `?tab=` selects — anything else (including nothing) is "work",
  *  the surface's default. Same "unrecognised input reads as unfiltered"
  *  contract `readQueueFilters` applies to `stage`/`product`. */
-function readTab(searchParams: QueueSearchParams): "work" | "handoff" {
+export function readTab(searchParams: QueueSearchParams): CrmTab {
   return searchParams.tab === "handoff" ? "handoff" : "work";
 }
 
-export default async function CrmPage({
-  searchParams,
-}: {
-  searchParams: Promise<QueueSearchParams>;
-}) {
-  const resolvedSearchParams = await searchParams;
-  const filters = readQueueFilters(resolvedSearchParams);
-  const filtered = Object.keys(filters).length > 0;
-  const defaultTab = readTab(resolvedSearchParams);
-  const cookieHeader = (await cookies()).toString();
+/**
+ * A tab's `href`, preserving every other search param (the Work tab's own
+ * product/stage/owner filters survive a round trip through Handoff and
+ * back) and setting/clearing only `tab`.
+ *
+ * Real navigation, not a client-side tab switch: this page's two tabs do
+ * not cost the same to render. Handoff's is up to `HANDOFF_LIMIT` outbound
+ * calls to apps/web; Work's is two cheap SQL reads. A `SurfaceTabs`-style
+ * "render both panels once, switch instantly" (as `tickets/page.tsx` does
+ * for its Queue/Analytics split) would mean loading `/platform/crm` on Work
+ * always pays for the Handoff fan-out too, whether or not anyone ever
+ * clicks that tab — every one of those calls a guaranteed `unknown` today,
+ * and a genuine 8s stall on the WORK queue the day apps/web is slow to
+ * answer rather than fast to 404. Only the active tab's data is ever read.
+ */
+function tabHref(searchParams: QueueSearchParams, tab: CrmTab): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === "tab" || typeof value !== "string" || value === "") continue;
+    params.set(key, value);
+  }
+  if (tab === "handoff") {
+    params.set("tab", "handoff");
+  }
+  const qs = params.toString();
+  return qs ? `/platform/crm?${qs}` : "/platform/crm";
+}
 
-  // `allSettled`, not `all`: a failure reading one group (due, drifting,
-  // handoff — three independent queries) must not blank the others.
-  // `Promise.all` rejects the whole render on the first rejection.
+function CrmTabNav({
+  searchParams,
+  active,
+}: {
+  searchParams: QueueSearchParams;
+  active: CrmTab;
+}) {
+  const tabs: { id: CrmTab; label: string }[] = [
+    { id: "work", label: "Work" },
+    { id: "handoff", label: "Handoff" },
+  ];
+  return (
+    <nav className="flex gap-1 border-b border-border" aria-label="CRM views">
+      {tabs.map((tab) => (
+        <Link
+          key={tab.id}
+          href={tabHref(searchParams, tab.id)}
+          role="tab"
+          aria-selected={active === tab.id}
+          className={
+            active === tab.id
+              ? "border-b-2 border-foreground px-3 py-2 text-sm font-medium text-foreground"
+              : "border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+          }
+        >
+          {tab.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+/**
+ * The Work tab's content: due/drifting queues, filtered per the URL.
+ *
+ * A plain async function `CrmPage` calls and awaits — not a nested async
+ * Server Component rendered as unawaited JSX (`<WorkTab/>`). Next.js's real
+ * RSC renderer can await a nested async component fine, but this repo's
+ * tests render `CrmPage`'s output through plain `@testing-library/react`
+ * (`render(await CrmPage(...))`), which has no RSC runtime to resolve a
+ * pending child — it would silently render an empty tree. Every data-fetching
+ * page in this app (`tickets/page.tsx`, `crm/[organisation]/page.tsx`, this
+ * page before this change) awaits its data as a plain function call and
+ * returns already-resolved JSX for exactly this reason.
+ */
+async function renderWorkTab({
+  filters,
+  filtered,
+}: {
+  filters: QueueFilter;
+  filtered: boolean;
+}) {
+  // `allSettled`, not `all`: a failure reading one group (due vs. drifting —
+  // two independent queries) must not blank the other. `Promise.all` rejects
+  // the whole render on the first rejection.
   //
-  // `filters` is passed straight into the due/drifting reads — the
-  // predicates run in SQL, ahead of ORDER BY/LIMIT (Ruling 11). Filtering
-  // the returned page in TypeScript instead would answer "rows matching the
-  // filter among the first N overall", silently dropping a match ranked
-  // below the cut-off. The handoff read takes no filter — see
-  // `wonWithoutConversion`.
-  const [dueResult, driftingResult, handoffRowsResult] = await Promise.allSettled([
+  // `filters` is passed straight into both reads — the predicates run in
+  // SQL, ahead of ORDER BY/LIMIT (Ruling 11). Filtering the returned page in
+  // TypeScript instead would answer "rows matching the filter among the
+  // first N overall", silently dropping a match ranked below the cut-off.
+  const [dueResult, driftingResult] = await Promise.allSettled([
     dueOpportunities(filters, DUE_LIMIT),
     driftingOpportunities(filters, DRIFT_DAYS, DRIFTING_LIMIT),
-    wonWithoutConversion(HANDOFF_LIMIT),
   ]);
 
   const dueRows: QueueRow[] = dueResult.status === "fulfilled" ? dueResult.value : [];
@@ -295,20 +408,51 @@ export default async function CrmPage({
     driftingResult.status === "fulfilled" ? driftingResult.value : [];
   const driftingError: unknown = driftingResult.status === "rejected" ? driftingResult.reason : null;
 
-  const handoffRows: HandoffRow[] =
-    handoffRowsResult.status === "fulfilled" ? handoffRowsResult.value : [];
-  const handoffRowsError: unknown =
-    handoffRowsResult.status === "rejected" ? handoffRowsResult.reason : null;
-
   const dueItems = dueRows.map(toQueueItem);
   const driftingItems = driftingRows.map(toQueueItem);
+
+  const dueState = queueGroupState({ error: dueError, rows: dueItems, filtered });
+  const driftingState = queueGroupState({ error: driftingError, rows: driftingItems, filtered });
+
+  return (
+    <CrmQueueView
+      descriptors={QUEUE_FILTERS}
+      values={toFilterValues(filters)}
+      due={{ heading: "Due", items: dueItems, state: dueState, emptyMessage: DUE_EMPTY_MESSAGE }}
+      drifting={{
+        heading: "Drifting",
+        items: driftingItems,
+        state: driftingState,
+        emptyMessage: DRIFTING_EMPTY_MESSAGE,
+      }}
+    />
+  );
+}
+
+/**
+ * The Handoff tab's content: won opportunities awaiting a conversion link.
+ * Same "plain awaited function, not a nested async component" shape as
+ * `renderWorkTab` above, for the same testability reason — and only ever
+ * CALLED (so only ever reads `wonWithoutConversion`/fans out
+ * `fetchConversionSignal`) while this tab is the active one; see
+ * `tabHref`'s doc comment for why the Work tab must never pay for this.
+ */
+async function renderHandoffTab() {
+  const cookieHeader = (await cookies()).toString();
+
+  let handoffRows: HandoffRow[] = [];
+  let handoffRowsError: unknown = null;
+  try {
+    handoffRows = await wonWithoutConversion(HANDOFF_LIMIT);
+  } catch (caught) {
+    handoffRowsError = caught;
+  }
+
   // Only fanned out once the row read itself succeeded — a failed
   // `wonWithoutConversion` has no rows to fan a signal fetch out over, and
   // fanning out zero rows is a no-op either way.
   const handoffItems = handoffRowsError ? [] : await buildHandoffItems(handoffRows, cookieHeader);
 
-  const dueState = queueGroupState({ error: dueError, rows: dueItems, filtered });
-  const driftingState = queueGroupState({ error: driftingError, rows: driftingItems, filtered });
   const handoffState = resolveState({
     isLoading: false,
     error: toSurfaceError(handoffRowsError),
@@ -319,52 +463,42 @@ export default async function CrmPage({
   const products = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 
   return (
+    <HandoffView
+      items={handoffItems}
+      state={handoffState}
+      emptyMessage={HANDOFF_EMPTY_MESSAGE}
+      products={products}
+    />
+  );
+}
+
+export default async function CrmPage({
+  searchParams,
+}: {
+  searchParams: Promise<QueueSearchParams>;
+}) {
+  const resolvedSearchParams = await searchParams;
+  const filters = readQueueFilters(resolvedSearchParams);
+  const filtered = Object.keys(filters).length > 0;
+  const activeTab = readTab(resolvedSearchParams);
+
+  // Only the active tab's data is ever read — see `tabHref`'s doc comment.
+  // Awaited here, as a plain function call, and embedded as already-resolved
+  // JSX below, not rendered as a nested `<Tab/>` async component: see
+  // `renderWorkTab`'s doc comment for why.
+  const content =
+    activeTab === "handoff" ? await renderHandoffTab() : await renderWorkTab({ filters, filtered });
+
+  return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
         title="CRM"
         description="Leads and opportunities that need a rep's attention today."
       />
 
-      <SurfaceTabs
-        label="CRM views"
-        defaultTab={defaultTab}
-        tabs={[
-          {
-            id: "work",
-            label: "Work",
-            content: (
-              <CrmQueueView
-                descriptors={QUEUE_FILTERS}
-                values={toFilterValues(filters)}
-                due={{
-                  heading: "Due",
-                  items: dueItems,
-                  state: dueState,
-                  emptyMessage: DUE_EMPTY_MESSAGE,
-                }}
-                drifting={{
-                  heading: "Drifting",
-                  items: driftingItems,
-                  state: driftingState,
-                  emptyMessage: DRIFTING_EMPTY_MESSAGE,
-                }}
-              />
-            ),
-          },
-          {
-            id: "handoff",
-            label: "Handoff",
-            content: (
-              <HandoffView
-                items={handoffItems}
-                state={handoffState}
-                emptyMessage={HANDOFF_EMPTY_MESSAGE}
-                products={products}
-              />
-            ),
-          },
-        ]}
-      />
+      <CrmTabNav searchParams={resolvedSearchParams} active={activeTab} />
+
+      {content}
     </div>
   );
 }

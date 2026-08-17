@@ -284,6 +284,20 @@ describe("Handoff", () => {
     expect(screen.queryByRole("button", { name: /confirm/i })).toBeNull();
   });
 
+  // The other half of the distinctness rule: a test asserting only that
+  // `unknown` doesn't say "not converted" would still pass an
+  // implementation that renders `none` as "Unknown — could not check" too.
+  // Both halves have to hold.
+  it('renders "Not converted" for a definite none — not the unknown copy', async () => {
+    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "none" });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/not converted/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unknown/i)).toBeNull();
+  });
+
   it("renders empty, not ready, when nothing is waiting for handoff", async () => {
     wonWithoutConversion.mockResolvedValue([]);
 
@@ -291,10 +305,37 @@ describe("Handoff", () => {
 
     expect(screen.getByText(HANDOFF_EMPTY_MESSAGE)).toBeInTheDocument();
   });
+
+  // Important: `wonWithoutConversion` is up to `HANDOFF_LIMIT` rows, each
+  // fanned out into its own `fetchConversionSignal` call. Every one of them
+  // is a guaranteed `unknown` today (apps/web's endpoint doesn't exist yet),
+  // and if apps/web ever hangs instead of 404s, this is an 8s stall — on
+  // the WORK queue, which has nothing to do with handoff. The Work tab must
+  // never pay for a fan-out nobody is looking at.
+  it("does not read the handoff queue or fan out any signal call when the Work tab is active", async () => {
+    dueOpportunities.mockResolvedValue([]);
+    driftingOpportunities.mockResolvedValue([]);
+
+    render(await CrmPage({ searchParams: Promise.resolve({}) }));
+
+    expect(wonWithoutConversion).not.toHaveBeenCalled();
+    expect(fetchConversionSignal).not.toHaveBeenCalled();
+  });
+
+  // Symmetric check: the Handoff tab has no business paying for the Work
+  // tab's queries either.
+  it("does not read the due/drifting queues when the Handoff tab is active", async () => {
+    wonWithoutConversion.mockResolvedValue([]);
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(dueOpportunities).not.toHaveBeenCalled();
+    expect(driftingOpportunities).not.toHaveBeenCalled();
+  });
 });
 
 describe("buildHandoffItems", () => {
-  it("fans out concurrently — one failing/hanging product does not blank the others", async () => {
+  it("isolates one product's rejection to its own row, without blanking the others", async () => {
     const rowA: HandoffRow = { ...HANDOFF_ROW, opportunityId: "a", organisationId: "org-a" };
     const rowB: HandoffRow = {
       ...HANDOFF_ROW,
@@ -312,6 +353,106 @@ describe("buildHandoffItems", () => {
     expect(items).toHaveLength(2);
     expect(items[0].signal.state).toBe("unknown");
     expect(items[1].signal.state).toBe("none");
+  });
+
+  // Important (review round 1): the test above proves only per-row error
+  // isolation — a sequential `for...of` with a `try/catch` around each
+  // await passes it identically, so it never actually pins the "never
+  // sequential" guarantee (the N×8s stall Task 9's review exists to
+  // prevent). This test uses promises this suite controls the resolution
+  // of, so a sequential implementation is PROVABLY stuck after issuing only
+  // the first call — it cannot start row B's request until row A's promise
+  // settles, and nothing here ever settles it before the assertion runs,
+  // no matter how many microtask ticks pass.
+  it("issues every row's request before any of them resolves, not one at a time", async () => {
+    const rowA: HandoffRow = { ...HANDOFF_ROW, opportunityId: "a", organisationId: "org-a" };
+    const rowB: HandoffRow = {
+      ...HANDOFF_ROW,
+      opportunityId: "b",
+      organisationId: "org-b",
+      primaryEmail: "other@example.com",
+    };
+
+    let resolveA!: (signal: ConversionSignal) => void;
+    let resolveB!: (signal: ConversionSignal) => void;
+    const deferredA = new Promise<ConversionSignal>((resolve) => {
+      resolveA = resolve;
+    });
+    const deferredB = new Promise<ConversionSignal>((resolve) => {
+      resolveB = resolve;
+    });
+    let calls = 0;
+    fetchConversionSignal.mockImplementation(async (_product: string, email: string) => {
+      calls++;
+      return email === rowA.primaryEmail ? deferredA : deferredB;
+    });
+
+    const itemsPromise = buildHandoffItems([rowA, rowB], "tx_session=abc");
+
+    // Neither deferred promise has been resolved yet, so a sequential
+    // implementation cannot have issued row B's call at this point under
+    // ANY number of microtask ticks — it is still awaiting row A's, which
+    // this test deliberately has not settled.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+
+    resolveA({ product: "mark8ly", state: "unknown" });
+    resolveB({ product: "mark8ly", state: "none" });
+    const items = await itemsPromise;
+
+    expect(items[0].signal.state).toBe("unknown");
+    expect(items[1].signal.state).toBe("none");
+  });
+
+  // Important: unbounded fan-out was flagged alongside "never sequential" —
+  // a handoff queue at HANDOFF_LIMIT (100) firing 100 simultaneous requests
+  // at the one apps/web proxy every product's check goes through is its own
+  // failure mode. This pins the other half: concurrency is bounded, not
+  // just "not sequential".
+  it("caps simultaneous requests rather than firing all of them at once", async () => {
+    const rowCount = 25;
+    const rows: HandoffRow[] = Array.from({ length: rowCount }, (_, index) => ({
+      ...HANDOFF_ROW,
+      opportunityId: `opp-${index}`,
+      organisationId: `org-${index}`,
+      primaryEmail: `lead-${index}@example.com`,
+    }));
+
+    const resolvers: Array<(signal: ConversionSignal) => void> = [];
+    let calls = 0;
+    fetchConversionSignal.mockImplementation(
+      () =>
+        new Promise<ConversionSignal>((resolve) => {
+          calls++;
+          resolvers.push(resolve);
+        }),
+    );
+
+    const itemsPromise = buildHandoffItems(rows, "tx_session=abc");
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    // Fewer than every row — the cap held even though nothing has resolved
+    // yet to free up a worker.
+    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBeLessThan(rowCount);
+    const capped = calls;
+
+    // Freeing every outstanding slot lets the remaining rows proceed —
+    // proving the shortfall above was a concurrency cap, not a broken
+    // fan-out that dropped rows on the floor.
+    while (resolvers.length > 0) {
+      resolvers.shift()!({ product: "mark8ly", state: "none" });
+      await Promise.resolve();
+    }
+    const items = await itemsPromise;
+
+    expect(capped).toBeLessThan(rowCount);
+    expect(items).toHaveLength(rowCount);
+    expect(items.every((item) => item.signal.state === "none")).toBe(true);
   });
 
   it("treats a row with no contact email as unknown without calling the product", async () => {

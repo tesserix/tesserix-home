@@ -29,6 +29,7 @@ import {
   findMatchingOrganisationId,
   wonWithoutConversion,
   linkConversion,
+  AlreadyLinkedError,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -1175,16 +1176,30 @@ describe("wonWithoutConversion", () => {
 describe("linkConversion", () => {
   it("rejects a missing product or ref before touching the database", async () => {
     await expect(
-      linkConversion({ organisationId: "g1", product: "", ref: "tenant_1", method: "manual" }),
+      linkConversion({
+        organisationId: "g1",
+        product: "",
+        ref: "tenant_1",
+        method: "manual",
+        actor: "ava@tesserix.app",
+      }),
     ).rejects.toThrow(/product and ref/);
     await expect(
-      linkConversion({ organisationId: "g1", product: "mark8ly", ref: "", method: "manual" }),
+      linkConversion({
+        organisationId: "g1",
+        product: "mark8ly",
+        ref: "",
+        method: "manual",
+        actor: "ava@tesserix.app",
+      }),
     ).rejects.toThrow(/product and ref/);
     expect(query).not.toHaveBeenCalled();
   });
 
-  it("writes converted_* and updated_at together, and returns the linked method", async () => {
-    query.mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]);
+  it("writes converted_* and updated_at together, only against a row with no conversion yet", async () => {
+    query
+      .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE
+      .mockResolvedValueOnce([]); // INSERT INTO crm_activities
 
     const result = await linkConversion({
       organisationId: "g1",
@@ -1192,6 +1207,7 @@ describe("linkConversion", () => {
       ref: "tenant_9f2",
       label: "Bondi Store",
       method: "matched",
+      actor: "ava@tesserix.app",
     });
 
     expect(result).toEqual({
@@ -1205,13 +1221,98 @@ describe("linkConversion", () => {
     expect(sql).toContain("converted_ref = $3");
     expect(sql).toContain("converted_link_method = $5");
     expect(sql).toContain("updated_at = now()");
+    // Ruling 30: the guard against overwriting an existing conversion —
+    // `wonWithoutConversion` returns one row per won OPPORTUNITY, so a
+    // business with won deals on two products appears twice in the handoff
+    // queue, and confirming both would otherwise silently overwrite the
+    // first product's converted_* with the second's.
+    expect(sql).toContain("converted_at IS NULL");
     expect(params).toEqual(["g1", "mark8ly", "tenant_9f2", "Bondi Store", "matched"]);
   });
 
-  it("throws when the organisation no longer exists rather than reporting success", async () => {
-    query.mockResolvedValueOnce([]);
+  // Ruling 31: the timeline record. `console_audit_log` (written by the
+  // action layer's `withCrmWrite`) is accountability; this is the
+  // operator-facing narrative — the same escape hatch `advanceStage` uses
+  // for a mere product re-point, for a moment strictly more significant
+  // than that.
+  it("writes a note activity in the same transaction as the update", async () => {
+    query
+      .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE
+      .mockResolvedValueOnce([]); // INSERT INTO crm_activities
+
+    await linkConversion({
+      organisationId: "g1",
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+      actor: "ava@tesserix.app",
+    });
+
+    expect(query).toHaveBeenCalledTimes(2);
+    const [activitySql, activityParams] = query.mock.calls[1];
+    expect(activitySql).toContain("INSERT INTO crm_activities");
+    expect(activitySql).toContain("'note'");
+    expect(activityParams[0]).toBe("g1");
+    expect(activityParams[1]).toBe("ava@tesserix.app");
+    expect(activityParams[2]).toContain("mark8ly");
+    expect(activityParams[2]).toContain("tenant_9f2");
+    expect(JSON.parse(activityParams[3] as string)).toEqual({
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      label: "Bondi Store",
+      method: "matched",
+    });
+  });
+
+  it("does not write an activity when the update matches no row", async () => {
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([]); // UPDATE, then the existence check
+
     await expect(
-      linkConversion({ organisationId: "missing", product: "mark8ly", ref: "tenant_1", method: "manual" }),
+      linkConversion({
+        organisationId: "missing",
+        product: "mark8ly",
+        ref: "tenant_1",
+        method: "manual",
+        actor: "ava@tesserix.app",
+      }),
+    ).rejects.toThrow();
+    expect(query.mock.calls.some(([sql]) => String(sql).includes("INSERT INTO crm_activities"))).toBe(
+      false,
+    );
+  });
+
+  it("throws when the organisation no longer exists rather than reporting success", async () => {
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([]); // UPDATE matched nothing, and does not exist
+    await expect(
+      linkConversion({
+        organisationId: "missing",
+        product: "mark8ly",
+        ref: "tenant_1",
+        method: "manual",
+        actor: "ava@tesserix.app",
+      }),
     ).rejects.toThrow(/not found/);
+  });
+
+  // THE case Ruling 30 exists for: the organisation is real, but a prior
+  // write (the other product's row in the same handoff queue, a second
+  // operator, a stale tab) already recorded a conversion. Zero rows from
+  // the guarded UPDATE must not read as "not found" — that would be a false
+  // report that the organisation vanished.
+  it("throws AlreadyLinkedError, not a not-found error, when a conversion is already recorded", async () => {
+    query
+      .mockResolvedValueOnce([]) // UPDATE matched nothing — already linked
+      .mockResolvedValueOnce([{ id: "g1" }]); // it does exist
+
+    await expect(
+      linkConversion({
+        organisationId: "g1",
+        product: "kora",
+        ref: "user_2",
+        method: "matched",
+        actor: "ava@tesserix.app",
+      }),
+    ).rejects.toThrow(AlreadyLinkedError);
   });
 });

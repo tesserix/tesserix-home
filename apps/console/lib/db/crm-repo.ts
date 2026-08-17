@@ -1272,6 +1272,10 @@ export interface LinkConversionInput {
   ref: string;
   label?: string;
   method: "matched" | "manual";
+  /** Who confirmed the suggestion or typed the manual entry — carried
+   *  through to the `crm_activities` row this write leaves (Ruling 31),
+   *  same as `advanceStage`'s `actor`. */
+  actor: string;
 }
 
 export interface LinkedConversion {
@@ -1279,6 +1283,27 @@ export interface LinkedConversion {
   organisationName: string;
   product: string;
   method: "matched" | "manual";
+}
+
+/**
+ * Thrown when `organisationId` already has a conversion recorded.
+ *
+ * Ruling 30: `wonWithoutConversion` returns one row per WON OPPORTUNITY, not
+ * per organisation — a business with won deals on two products appears
+ * twice in the handoff queue. Without a guard, confirming one row's
+ * suggestion and then the other's would silently overwrite
+ * `converted_product`/`converted_ref`/`converted_at` with the second
+ * product's namespace: the exact cross-product attribution corruption this
+ * whole design exists to prevent, reachable just by a stale tab or a second
+ * operator working the same queue. Distinguished from "no such
+ * organisation" (a plain not-found `Error`) so the operator sees an
+ * accurate message rather than a report that the row vanished.
+ */
+export class AlreadyLinkedError extends Error {
+  constructor(readonly organisationId: string) {
+    super(`Organisation ${organisationId} already has a conversion recorded.`);
+    this.name = "AlreadyLinkedError";
+  }
 }
 
 /**
@@ -1294,28 +1319,64 @@ export interface LinkedConversion {
  * set) would refuse a half-supplied write anyway, but a raw
  * constraint-violation error reaching the operator is not this boundary's
  * job to produce when a clear message can be raised first.
+ *
+ * The UPDATE and the `crm_activities` write both run inside `tesserixTx`
+ * (Ruling 31), on one client: either both land or neither does. A
+ * conversion that updated the organisation but left no note on its timeline
+ * would be the single most significant moment in that business's life,
+ * invisible to the next rep reading it — the timeline would still read
+ * "won" with no sign handoff ever happened or who confirmed it.
  */
 export async function linkConversion(input: LinkConversionInput): Promise<LinkedConversion> {
-  const { organisationId, product, ref, label, method } = input;
+  const { organisationId, product, ref, label, method, actor } = input;
   if (!product.trim() || !ref.trim()) {
     throw new Error("linkConversion: both product and ref are required");
   }
 
-  const rows = await tesserixQuery<{ id: string; name: string }>(
-    `UPDATE crm_organisations
-        SET converted_product = $2,
-            converted_ref = $3,
-            converted_label = $4,
-            converted_at = now(),
-            converted_link_method = $5,
-            updated_at = now()
-      WHERE id = $1
-      RETURNING id, name`,
-    [organisationId, product, ref, label ?? null, method],
-  );
-  const row = rows[0];
-  if (!row) {
-    throw new Error(`linkConversion: organisation ${organisationId} not found`);
-  }
-  return { organisationId: row.id, organisationName: row.name, product, method };
+  return tesserixTx(async (query) => {
+    // `AND converted_at IS NULL` (Ruling 30): a row that already has a
+    // conversion recorded is not a match for this UPDATE at all, so a
+    // second confirmation — from a stale handoff-queue tab, or a second
+    // operator — can never overwrite the first product's namespace.
+    const rows = await query<{ id: string; name: string }>(
+      `UPDATE crm_organisations
+          SET converted_product = $2,
+              converted_ref = $3,
+              converted_label = $4,
+              converted_at = now(),
+              converted_link_method = $5,
+              updated_at = now()
+        WHERE id = $1
+          AND converted_at IS NULL
+        RETURNING id, name`,
+      [organisationId, product, ref, label ?? null, method],
+    );
+    const row = rows[0];
+    if (!row) {
+      // Zero rows means either "no such organisation" or "already linked" —
+      // resolved here, inside the same transaction, rather than leaving the
+      // caller to guess which one a bare empty result meant.
+      const existing = await query<{ id: string }>(
+        `SELECT id FROM crm_organisations WHERE id = $1`,
+        [organisationId],
+      );
+      if (existing.length === 0) {
+        throw new Error(`linkConversion: organisation ${organisationId} not found`);
+      }
+      throw new AlreadyLinkedError(organisationId);
+    }
+
+    await query(
+      `INSERT INTO crm_activities (organisation_id, kind, actor, body, metadata)
+       VALUES ($1, 'note', $2, $3, $4::jsonb)`,
+      [
+        organisationId,
+        actor,
+        `Linked to ${product} conversion ${ref}${label ? ` (${label})` : ""}`,
+        JSON.stringify({ product, ref, label: label ?? null, method }),
+      ],
+    );
+
+    return { organisationId: row.id, organisationName: row.name, product, method };
+  });
 }
