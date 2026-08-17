@@ -77,7 +77,15 @@ export interface ImportRow {
 export interface ParsedImport {
   rows: ImportRow[];
   malformed: number;
+  /** Set when the FILE, not a row, could not be parsed — the whole thing is
+   *  refused and `rows` is empty. Operator-facing copy; see
+   *  `UNBALANCED_QUOTES_MESSAGE`. */
+  rejected?: string;
 }
+
+export const UNBALANCED_QUOTES_MESSAGE =
+  "This file has an unclosed quote — a quoted value probably spans more than one line. " +
+  "Fix the quoting (or re-export without line breaks inside cells) and try again.";
 
 /**
  * A row worth importing has at least one field that could identify who it
@@ -268,10 +276,44 @@ export function validateTotalRows(totalRows: number, committedRowCount: number):
   return undefined;
 }
 
+/**
+ * Whether any physical line leaves a quoted field open.
+ *
+ * `parseCsvLine` deliberately does not support a quoted field spanning
+ * lines, and `parseImportCsv` splits on newlines BEFORE parsing — so a cell
+ * like `"Bondi Baker,\nSydney"` is torn in half, and the continuation
+ * fragment (`Sydney"`) is not garbage the parser rejects: it parses cleanly,
+ * satisfies `isUsableImportRow` via its `name` column, and becomes a real
+ * organisation named after half an address. That is worse than either
+ * failure mode this function replaces — worse than refusing the file, and
+ * worse than counting the fragment as malformed, because nothing about the
+ * result looks wrong until someone reads the CRM.
+ *
+ * Detected by quote parity rather than by a full multi-line parser: a
+ * well-formed line has an even number of `"` (escaped `""` included, being
+ * two), and an odd count means a field opened and never closed on that line.
+ * Supporting multi-line fields properly is a bigger change to a parser whose
+ * documented scope is hand-exported leads sheets; refusing what it cannot
+ * read correctly is the honest version of the same scope.
+ */
+function hasUnbalancedQuotes(lines: readonly string[]): boolean {
+  return lines.some((line) => {
+    let quotes = 0;
+    for (const char of line) {
+      if (char === '"') quotes++;
+    }
+    return quotes % 2 !== 0;
+  });
+}
+
 export function parseImportCsv(text: string): ParsedImport {
   const lines = text.split(/\r\n|\r|\n/).filter((line) => line.trim() !== "");
   if (lines.length === 0) {
     return { rows: [], malformed: 0 };
+  }
+
+  if (hasUnbalancedQuotes(lines)) {
+    return { rows: [], malformed: 0, rejected: UNBALANCED_QUOTES_MESSAGE };
   }
 
   const header = parseCsvLine(lines[0]).map((cell) => cell.trim().toLowerCase());

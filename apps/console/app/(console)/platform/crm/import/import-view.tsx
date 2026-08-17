@@ -113,6 +113,15 @@ export function ImportView() {
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
       const parsed = parseImportCsv(text);
+      // A whole-file rejection, not a per-row one: nothing is offered for
+      // preview, because the rows this parser would produce from a file with
+      // an unclosed quote are fragments that look like real businesses.
+      if (parsed.rejected) {
+        setError(parsed.rejected);
+        setRows(null);
+        setParseMalformed(0);
+        return;
+      }
       setRows(parsed.rows);
       setParseMalformed(parsed.malformed);
     };

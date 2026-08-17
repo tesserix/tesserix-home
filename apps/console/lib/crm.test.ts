@@ -6,6 +6,7 @@ import {
   isHumanActivityKind,
   isUsableImportRow,
   parseImportCsv,
+  UNBALANCED_QUOTES_MESSAGE,
   boundFilename,
   MAX_IMPORT_ROWS,
   validateTotalRows,
@@ -225,5 +226,31 @@ describe("validateTotalRows", () => {
   it("MAX_TOTAL_ROWS is comfortably above MAX_IMPORT_ROWS but nowhere near Postgres's integer range", () => {
     expect(MAX_TOTAL_ROWS).toBeGreaterThan(MAX_IMPORT_ROWS);
     expect(MAX_TOTAL_ROWS).toBeLessThan(2 ** 31 - 1);
+  });
+});
+
+describe("parseImportCsv and a quoted cell that spans lines", () => {
+  it("refuses the whole file rather than turning a continuation fragment into an organisation", () => {
+    // Without this, `Sydney NSW",ava@example.com` parses cleanly, satisfies
+    // isUsableImportRow via `name`, and becomes a real organisation named
+    // after half an address — silently.
+    const parsed = parseImportCsv(
+      'name,location,email\n"Bondi Baker","12 Hall St\nSydney NSW",ava@example.com',
+    );
+    expect(parsed.rows).toEqual([]);
+    expect(parsed.malformed).toBe(0);
+    expect(parsed.rejected).toBe(UNBALANCED_QUOTES_MESSAGE);
+  });
+
+  it("accepts a quoted cell containing a comma — guards the guard", () => {
+    const parsed = parseImportCsv('name,location\n"Bondi Baker","12 Hall St, Sydney"');
+    expect(parsed.rejected).toBeUndefined();
+    expect(parsed.rows).toEqual([{ name: "Bondi Baker", location: "12 Hall St, Sydney" }]);
+  });
+
+  it("accepts an escaped double quote, which is two characters and stays balanced", () => {
+    const parsed = parseImportCsv('name\n"Bondi ""The"" Baker"');
+    expect(parsed.rejected).toBeUndefined();
+    expect(parsed.rows).toEqual([{ name: 'Bondi "The" Baker' }]);
   });
 });
