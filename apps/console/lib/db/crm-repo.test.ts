@@ -30,6 +30,7 @@ import {
   wonWithoutConversion,
   linkConversion,
   AlreadyLinkedError,
+  SuppressedContactError,
 } from "./crm-repo";
 
 beforeEach(() => {
@@ -473,6 +474,66 @@ describe("logActivity", () => {
     await logActivity({ organisationId: "g1", kind: "note", actor: "ava", body: "first contact" });
     const [, params] = query.mock.calls[0];
     expect(params).toContain(null);
+  });
+
+  // The drift clock. Before this, `last_contacted_at` was written by nothing
+  // in the application, so logging a DM left the queue still reporting the
+  // organisation as quiet since whenever the backfill said.
+  it("moves last_contacted_at for a real contact, in the same transaction", async () => {
+    query.mockResolvedValue([]); // no suppressions, insert, update
+    await logActivity({
+      organisationId: "g1",
+      opportunityId: "o1",
+      kind: "dm_sent",
+      actor: "ava",
+      body: "sent a DM",
+    });
+
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    const update = statements.find((sql) => sql.includes("UPDATE crm_opportunities"));
+    expect(update).toBeDefined();
+    expect(update).toContain("last_contacted_at = now()");
+    // No triggers on these tables — updated_at has to be set by hand.
+    expect(update).toContain("updated_at = now()");
+  });
+
+  it("does not move last_contacted_at for a note, a stage change or an assignment", async () => {
+    for (const kind of ["note", "stage_change", "assigned"] as const) {
+      query.mockReset();
+      query.mockResolvedValue([]);
+      await logActivity({ organisationId: "g1", opportunityId: "o1", kind, actor: "ava" });
+      const statements = query.mock.calls.map(([sql]) => sql as string);
+      expect(statements.some((sql) => sql.includes("UPDATE crm_opportunities"))).toBe(false);
+    }
+  });
+
+  // design.md:224 — the list is checked at import AND when logging outreach.
+  it("refuses outbound outreach to a suppressed organisation", async () => {
+    query
+      .mockResolvedValueOnce([{ email: "ava@example.com", instagram_handle: null }]) // contacts
+      .mockResolvedValueOnce([{ id: "s1" }]); // isSuppressed hit
+
+    await expect(
+      logActivity({ organisationId: "g1", opportunityId: "o1", kind: "email_sent", actor: "ava" }),
+    ).rejects.toBeInstanceOf(SuppressedContactError);
+
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    expect(statements.some((sql) => sql.includes("INSERT INTO crm_activities"))).toBe(false);
+  });
+
+  // Refusing to record an inbound message from a suppressed person would
+  // destroy the record of the very contact that most needs one.
+  it("still records an inbound message from a suppressed person", async () => {
+    query.mockResolvedValue([]);
+    await logActivity({
+      organisationId: "g1",
+      opportunityId: "o1",
+      kind: "dm_received",
+      actor: "ava",
+    });
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    expect(statements.some((sql) => sql.includes("crm_suppressions"))).toBe(false);
+    expect(statements.some((sql) => sql.includes("INSERT INTO crm_activities"))).toBe(true);
   });
 });
 
@@ -1107,12 +1168,27 @@ describe("import", () => {
 });
 
 describe("wonWithoutConversion", () => {
-  it("only asks for won opportunities on an organisation with no conversion recorded", async () => {
+  it("only asks for won opportunities with no conversion recorded", async () => {
     query.mockResolvedValueOnce([]);
     await wonWithoutConversion(50);
     const [sql] = query.mock.calls[0];
     expect(sql).toContain("o.stage = 'won'");
     expect(sql).toContain("g.converted_at IS NULL");
+  });
+
+  // Ruling 35. This returns one row per won OPPORTUNITY, so excluding on
+  // `g.converted_at IS NULL` alone — a fact about the ORGANISATION — made a
+  // second product's won deal vanish from the queue the moment the first was
+  // confirmed: never linked, and with nothing telling the operator it had
+  // gone. The product comparison is what keeps the exclusion per-row.
+  it("excludes only the deal whose own product was accounted for", async () => {
+    query.mockResolvedValueOnce([]);
+    await wonWithoutConversion(50);
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("g.converted_product IS DISTINCT FROM o.product");
+    // Guards the guard: an unqualified `AND g.converted_at IS NULL` is
+    // exactly the organisation-level filter this fix replaced.
+    expect(sql).not.toMatch(/AND\s+g\.converted_at IS NULL\s*\n\s*ORDER BY/);
   });
 
   it("maps a row's primary contact email and product", async () => {
@@ -1238,6 +1314,7 @@ describe("linkConversion", () => {
   it("writes a note activity in the same transaction as the update", async () => {
     query
       .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE
+      .mockResolvedValueOnce([{ id: "opp-1" }]) // the won opportunity for this product
       .mockResolvedValueOnce([]); // INSERT INTO crm_activities
 
     await linkConversion({
@@ -1249,8 +1326,8 @@ describe("linkConversion", () => {
       actor: "ava@tesserix.app",
     });
 
-    expect(query).toHaveBeenCalledTimes(2);
-    const [activitySql, activityParams] = query.mock.calls[1];
+    expect(query).toHaveBeenCalledTimes(3);
+    const [activitySql, activityParams] = query.mock.calls[2];
     expect(activitySql).toContain("INSERT INTO crm_activities");
     expect(activitySql).toContain("'note'");
     expect(activityParams[0]).toBe("g1");
@@ -1263,6 +1340,28 @@ describe("linkConversion", () => {
       label: "Bondi Store",
       method: "matched",
     });
+    // The deal the note is ABOUT. Without it the note lands only on the
+    // organisation, and the won opportunity's own timeline — where the next
+    // rep looks — still shows nothing after "won".
+    expect(activityParams[4]).toBe("opp-1");
+  });
+
+  it("still writes the note when no won opportunity carries the linked product", async () => {
+    query
+      .mockResolvedValueOnce([{ id: "g1", name: "Bondi Baker" }]) // UPDATE
+      .mockResolvedValueOnce([]) // no matching won opportunity
+      .mockResolvedValueOnce([]); // INSERT INTO crm_activities
+
+    await linkConversion({
+      organisationId: "g1",
+      product: "mark8ly",
+      ref: "tenant_9f2",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    const [, activityParams] = query.mock.calls[2];
+    expect(activityParams[4]).toBeNull();
   });
 
   it("does not write an activity when the update matches no row", async () => {

@@ -32,6 +32,7 @@ import {
   linkConversion as linkConversionRow,
   MissingProductError,
   AlreadyLinkedError,
+  SuppressedContactError,
 } from "@/lib/db/crm-repo";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import { changeStage, scheduleNextAction, addActivity, linkConversion } from "./actions";
@@ -474,5 +475,77 @@ describe("linkConversion", () => {
     });
     expect(linkConversionRow).not.toHaveBeenCalled();
     expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `crm_opportunities.product` and `crm_organisations.converted_product` are
+ * plain `text` with no CHECK and no foreign key — the estate is a TypeScript
+ * constant, not a table — so this boundary is the only thing standing
+ * between a typo and a product name the funnel will report attribution by.
+ */
+describe("product validation against the estate", () => {
+  beforeEach(() => {
+    signIn(["read"]);
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+  });
+
+  it("refuses a stage change to a product that is not in the estate", async () => {
+    const result = await changeStage({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      to: "qualified",
+      product: "mark8ley",
+    });
+    expect(result).toEqual({ ok: false, message: `"mark8ley" is not a product in the estate.` });
+    expect(advanceStage).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("refuses a conversion link to a product that is not in the estate", async () => {
+    const result = await linkConversion({
+      organisationId: ORG_ID,
+      product: "mark8ley",
+      ref: "tenant_9f2",
+      method: "manual",
+    });
+    expect(result).toEqual({ ok: false, message: `"mark8ley" is not a product in the estate.` });
+    expect(linkConversionRow).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("still accepts a real estate context — guards the guard", async () => {
+    vi.mocked(advanceStage).mockResolvedValue({ stageChanged: true, productChanged: true });
+    const result = await changeStage({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      to: "qualified",
+      product: "mark8ly",
+    });
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+// design.md:224 — the do-not-contact list is checked at import AND when
+// logging outreach. The refusal is an operator-facing fact with a next step,
+// so it must reach them verbatim rather than as the generic "not saved".
+describe("addActivity and the do-not-contact list", () => {
+  it("surfaces the suppression refusal to the operator", async () => {
+    signIn(["read"]);
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    vi.mocked(logActivity).mockRejectedValue(new SuppressedContactError(ORG_ID));
+
+    const result = await addActivity({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      kind: "dm_sent",
+      body: "hello",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

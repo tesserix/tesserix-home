@@ -455,25 +455,121 @@ export interface LogActivityInput {
 }
 
 /**
+ * Activity kinds that record a real touch between us and the business —
+ * outbound or inbound. Logging one of these means contact happened, so it is
+ * what `last_contacted_at` (the drift clock the queue reads) must move for.
+ *
+ * `note`, `stage_change` and `assigned` are deliberately absent: they are
+ * things WE did to our own record, not contact with anyone. Counting an
+ * internal note as contact would silently reset the drift clock on an
+ * organisation nobody has actually spoken to — the exact false "recently
+ * contacted" the drift rule exists to expose.
+ */
+const CONTACT_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
+  "dm_sent",
+  "dm_received",
+  "email_sent",
+  "email_received",
+  "call",
+]);
+
+/** The subset of the above that is US reaching OUT. Only these are gated on
+ *  the do-not-contact list: recording that someone emailed *us*, or that we
+ *  took their call, is not outreach and must stay loggable — refusing to
+ *  record an inbound message from a suppressed person would destroy the
+ *  record of the very contact that most needs one. */
+const OUTBOUND_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
+  "dm_sent",
+  "email_sent",
+  "call",
+]);
+
+/**
+ * Thrown when outreach is logged against an organisation whose contacts are
+ * on the do-not-contact list. design.md:224 says the list is checked "at
+ * import and when logging outreach"; before this, only the two import
+ * callers checked, so half of what the feature claims was absent. An
+ * allowlisted, operator-facing exception (see `mapError` in
+ * `lib/crm-write.ts`) rather than a generic failure: an operator who just
+ * hit this needs to know WHY, or they will simply try again.
+ */
+export class SuppressedContactError extends Error {
+  constructor(readonly organisationId: string) {
+    super(
+      "This organisation is on the do-not-contact list. Remove the suppression before logging outreach.",
+    );
+    this.name = "SuppressedContactError";
+  }
+}
+
+/**
  * Log a note/call/message activity, independent of any stage change.
  *
  * `crm_activities` carries no CHECK tying it to `crm_opportunities.product`
  * — the grandfathered-row constraint (migration 0021) applies only to
- * `crm_opportunities` — so this needs no product guard and no transaction:
- * it is one INSERT.
+ * `crm_opportunities` — so this needs no product guard.
+ *
+ * It does need a transaction, for two reasons this function did not have
+ * before:
+ *
+ * (1) Suppression (design.md:224). Outbound kinds are refused if any of the
+ *     organisation's contacts is suppressed — read on the transaction's own
+ *     client, so the check and the insert cannot straddle a concurrent
+ *     suppression being added.
+ * (2) The drift clock. `last_contacted_at` was written by NOTHING in the
+ *     application — only the migration set it — so logging a DM or a call
+ *     left the queue still reporting the organisation as quiet since
+ *     whenever the backfill said. The activity row and the timestamp it
+ *     implies must land together or not at all; a logged call with a stale
+ *     "quiet since" is worse than either alone.
+ *
+ * `updated_at` is set explicitly. There are no triggers on these tables.
  */
 export async function logActivity(input: LogActivityInput): Promise<void> {
-  await tesserixQuery(
-    `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [
-      input.organisationId,
-      input.opportunityId ?? null,
-      input.kind,
-      input.actor,
-      input.body ?? null,
-    ],
-  );
+  await tesserixTx(async (query) => {
+    if (OUTBOUND_ACTIVITY_KINDS.has(input.kind)) {
+      const contacts = await query<{ email: string | null; instagram_handle: string | null }>(
+        `SELECT email, instagram_handle FROM crm_contacts WHERE organisation_id = $1`,
+        [input.organisationId],
+      );
+      for (const contact of contacts) {
+        const suppressed = await isSuppressed(
+          {
+            email: contact.email ?? undefined,
+            instagramHandle: contact.instagram_handle ?? undefined,
+          },
+          query,
+        );
+        if (suppressed) {
+          throw new SuppressedContactError(input.organisationId);
+        }
+      }
+    }
+
+    await query(
+      `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        input.organisationId,
+        input.opportunityId ?? null,
+        input.kind,
+        input.actor,
+        input.body ?? null,
+      ],
+    );
+
+    // Only when the activity is attached to a deal: `last_contacted_at`
+    // lives on `crm_opportunities`, and an organisation-level activity has
+    // no one deal whose clock it would be honest to reset.
+    if (input.opportunityId && CONTACT_ACTIVITY_KINDS.has(input.kind)) {
+      await query(
+        `UPDATE crm_opportunities
+            SET last_contacted_at = now(), updated_at = now()
+          WHERE id = $1`,
+        [input.opportunityId],
+      );
+    }
+  });
 }
 
 /**
@@ -1241,9 +1337,30 @@ function toHandoffRow(row: RawHandoffRow): HandoffRow {
 }
 
 /**
- * Won opportunities whose organisation has not yet been linked to a
- * conversion, oldest-won-first — the longest a merchant has been sitting
- * unaccounted for is the one an operator should look at first.
+ * Won opportunities not yet linked to a conversion, oldest-won-first — the
+ * longest a merchant has been sitting unaccounted for is the one an operator
+ * should look at first.
+ *
+ * Ruling 35 — the filter is PER OPPORTUNITY, not per organisation. This
+ * returns one row per won opportunity, but it used to exclude on
+ * `g.converted_at IS NULL`, a fact about the ORGANISATION. A business with
+ * won deals on two products therefore had both rows disappear the moment
+ * either one was confirmed: the second product's deal left the queue
+ * silently, never linked, with nothing anywhere telling an operator it had
+ * gone. Comparing the organisation's recorded `converted_product` against
+ * THIS row's product means only the deal actually accounted for drops out.
+ *
+ * The asymmetry this leaves, stated plainly rather than papered over:
+ * `converted_product`/`converted_ref`/`converted_at` live on
+ * `crm_organisations`, so an organisation can hold exactly ONE recorded
+ * conversion. The second product's deal now correctly stays in the queue —
+ * and `linkConversion`'s Ruling 30 guard will refuse to link it, with the
+ * operator-facing "already has a conversion recorded" message. That is a
+ * visible, explainable refusal instead of a silent disappearance, which is
+ * the trade this fix is making. The honest fix is to move `converted_*` onto
+ * the opportunity, which is a schema change to a shipped design and
+ * deliberately out of scope here; it is the thing to do if multi-product
+ * conversions become common rather than theoretical.
  */
 export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]> {
   const rows = await tesserixQuery<RawHandoffRow>(
@@ -1258,7 +1375,10 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]>
           LIMIT 1
        ) c ON true
       WHERE o.stage = 'won'
-        AND g.converted_at IS NULL
+        AND (
+          g.converted_at IS NULL
+          OR g.converted_product IS DISTINCT FROM o.product
+        )
       ORDER BY o.closed_at ASC NULLS LAST
       LIMIT $1`,
     [limit],
@@ -1366,14 +1486,32 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
       throw new AlreadyLinkedError(organisationId);
     }
 
+    // The won deal this conversion is FOR. Ruling 31 put this note on the
+    // timeline so the handoff is visible to the next rep reading the
+    // record; without an `opportunity_id` it lands only on the
+    // organisation, and the deal's own timeline — the one place a rep looks
+    // to ask "what happened to this?" — still shows nothing after "won".
+    // Null when no won opportunity carries this product (a manual link for
+    // a product the organisation has no deal on): the note is still worth
+    // writing at the organisation level, and inventing an association with
+    // some other product's deal would be worse than none.
+    const opportunityRows = await query<{ id: string }>(
+      `SELECT id FROM crm_opportunities
+        WHERE organisation_id = $1 AND product = $2 AND stage = 'won'
+        ORDER BY closed_at DESC NULLS LAST
+        LIMIT 1`,
+      [organisationId, product],
+    );
+
     await query(
-      `INSERT INTO crm_activities (organisation_id, kind, actor, body, metadata)
-       VALUES ($1, 'note', $2, $3, $4::jsonb)`,
+      `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
+       VALUES ($1, $5, 'note', $2, $3, $4::jsonb)`,
       [
         organisationId,
         actor,
         `Linked to ${product} conversion ${ref}${label ? ` (${label})` : ""}`,
         JSON.stringify({ product, ref, label: label ?? null, method }),
+        opportunityRows[0]?.id ?? null,
       ],
     );
 

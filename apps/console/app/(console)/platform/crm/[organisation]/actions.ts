@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { ESTATE } from "@tesserix/console-core";
 import {
   advanceStage,
   setNextAction,
@@ -8,12 +9,32 @@ import {
   linkConversion as linkConversionRow,
   MissingProductError,
   AlreadyLinkedError,
+  SuppressedContactError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
 export type { CrmActionResult };
+
+/**
+ * `crm_opportunities.product` and `crm_organisations.converted_product` are
+ * plain `text` columns with no CHECK and no foreign key — the estate is a
+ * TypeScript constant, not a table, so the database cannot police them.
+ * Every product value that reaches either column is what the funnel later
+ * reports attribution by, and a typo ("mark8ley") or a hand-crafted request
+ * body writes a product that does not exist, silently, forever. Validated at
+ * this boundary because there is nowhere below it that can be.
+ */
+const ESTATE_CONTEXTS: ReadonlySet<string> = new Set(ESTATE.map((p) => p.context));
+
+function isEstateProduct(value: string): boolean {
+  return ESTATE_CONTEXTS.has(value);
+}
+
+function unknownProductMessage(value: string): string {
+  return `"${value}" is not a product in the estate.`;
+}
 
 /**
  * `MissingProductError` is the one exception this surface maps to its own
@@ -53,6 +74,9 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
   }
   if (requiresProduct(input.to) && !input.product) {
     return { ok: false, message: `Moving to "${input.to}" requires a product.` };
+  }
+  if (input.product && !isEstateProduct(input.product)) {
+    return { ok: false, message: unknownProductMessage(input.product) };
   }
   if (input.to === "lost" && !input.lostReason) {
     return { ok: false, message: `Marking an opportunity "lost" requires a reason.` };
@@ -138,6 +162,18 @@ export interface AddActivityInput {
  * exists to prevent, and a permissive kind check here would let this action
  * cause it from the other direction.
  */
+/**
+ * The second allowlisted exception on this surface: `SuppressedContactError`
+ * is the do-not-contact list refusing outreach (design.md:224), which is an
+ * operator-facing fact with a clear next step, not a caught database error.
+ */
+function mapSuppressedContact(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof SuppressedContactError) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
 export async function addActivity(input: AddActivityInput): Promise<CrmActionResult> {
   if (!isHumanActivityKind(input.kind)) {
     return { ok: false, message: `"${input.kind}" is not an activity kind an operator can log directly.` };
@@ -155,6 +191,7 @@ export async function addActivity(input: AddActivityInput): Promise<CrmActionRes
         body: input.body,
       }),
     () => ({ action: "crm.activity.log", summary: { logged: 1 } }),
+    mapSuppressedContact,
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -210,6 +247,9 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
 
   if (!product || !ref) {
     return { ok: false, message: "A product and a reference are required to link a conversion." };
+  }
+  if (!isEstateProduct(product)) {
+    return { ok: false, message: unknownProductMessage(product) };
   }
   if (!isLinkMethod(input.method)) {
     return { ok: false, message: `"${input.method}" is not a valid link method.` };
