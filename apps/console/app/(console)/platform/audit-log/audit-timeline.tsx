@@ -1,6 +1,12 @@
 "use client";
 
-import { Callout, CalloutDescription, CalloutTitle } from "@tesserix/web";
+import {
+  AuditLogViewer,
+  Badge,
+  Callout,
+  CalloutDescription,
+  CalloutTitle,
+} from "@tesserix/web";
 import { AlertTriangle } from "lucide-react";
 import {
   FilterBar,
@@ -12,7 +18,7 @@ import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { AuditSourceFailure, SourcedAuditEntry } from "@/lib/audit";
 import { sourceLabel } from "@/lib/audit";
-import { SourcedAuditList } from "./sourced-audit-list";
+import { AuditMetadata } from "./audit-metadata";
 
 /**
  * The client half of the audit timeline.
@@ -96,6 +102,31 @@ export function IncompleteSources({
   );
 }
 
+/**
+ * The Source cell for a row, passed to `AuditLogViewer`'s `renderSource`.
+ *
+ * `sr-only` label because a bare "Fe3dr" badge is unambiguous to a sighted
+ * reader scanning a column and meaningless read aloud in sequence.
+ *
+ * A `Badge`, not bare text: the viewer's default renders `source` as plain
+ * muted text next to the timestamp, where it reads as part of the timestamp.
+ * `Badge` is a `<span>`, so it nests legally inside the `<span>` the viewer
+ * wraps this in.
+ */
+function renderSource(source: string) {
+  return (
+    <Badge variant="secondary">
+      <span className="sr-only">Source: </span>
+      {sourceLabel(source)}
+    </Badge>
+  );
+}
+
+/** See `audit-metadata.tsx` for why this is not the raw JSON string. */
+function renderMetadata(metadata: string) {
+  return <AuditMetadata metadata={metadata} />;
+}
+
 export function AuditTimeline({
   descriptors,
   values,
@@ -134,10 +165,28 @@ export function AuditTimeline({
       {/* The list renders whatever rows the working sources produced, each with
           the source that produced it. It is shown alongside the notices above,
           never instead of them: one source being down must not blank out the
-          others' rows. See `sourced-audit-list.tsx` for why this is not
-          `@tesserix/web`'s `AuditLogViewer`. */}
+          others' rows.
+
+          This used to be `sourced-audit-list.tsx`, a local re-implementation of
+          `AuditLogViewer`'s markup that existed only because the viewer's row
+          type had no `source` and its props had no slot to put one in. That
+          gap is closed as of `@tesserix/web` 1.13.0 (design-system#12), so the
+          local copy is deleted and this is the viewer again — with the
+          attribution supplied through `renderSource` rather than smuggled into
+          `target` or `metadata`, which carry the source's own audit data and
+          must keep saying what the source recorded.
+
+          No `onEntrySelect`: there is no entry-detail view on this surface, and
+          as of 2.1.0 the viewer renders a row as a plain element rather than a
+          `<button>` when the callback is absent — so omitting it is now the
+          whole fix for what used to be a focusable control that did nothing. */}
       {state.kind === "ready" ? (
-        <SourcedAuditList entries={entries} emptyMessage={emptyMessage} />
+        <AuditLogViewer
+          entries={entries}
+          emptyMessage={emptyMessage}
+          renderSource={renderSource}
+          renderMetadata={renderMetadata}
+        />
       ) : (
         <SurfaceStateView
           state={state}

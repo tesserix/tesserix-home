@@ -16,6 +16,7 @@ import {
   toFilterValues,
 } from "./page";
 import { AuditTimeline, IncompleteSources, type SourceNotice } from "./audit-timeline";
+import { parseMetadataFields } from "./audit-metadata";
 
 // `useUrlFilters` reads the router. The timeline is rendered here, not the
 // page, because a server component cannot be rendered by Testing Library —
@@ -354,6 +355,96 @@ describe("the merged timeline renders", () => {
     // read the oldest row on screen as the oldest row that exists.
     renderTimeline({ entries: withSource([CONSOLE_ROW], "console") });
     expect(screen.getByText(TIMELINE_SCOPE_NOTE)).toBeInTheDocument();
+  });
+});
+
+describe("metadata is readable, and complete", () => {
+  /** A mark8ly row's metadata, exactly as `stringifyMetadata` emits it. */
+  const MARK8LY_METADATA =
+    '{"severity":"critical","status":"success","tenant":"acme","ip":"10.0.0.1"}';
+
+  function rowWithMetadata(metadata: string): SourcedAuditEntry {
+    return { ...PRODUCT_ROW, metadata };
+  }
+
+  it("renders each key with its value instead of a line of JSON", () => {
+    // The complaint this closes: the row used to print the whole object
+    // verbatim, braces and quotes included, beside the actor.
+    renderTimeline({ entries: [rowWithMetadata(MARK8LY_METADATA)] });
+
+    expect(screen.getByText("severity")).toBeInTheDocument();
+    expect(screen.getByText("critical")).toBeInTheDocument();
+    expect(screen.queryByText(MARK8LY_METADATA)).not.toBeInTheDocument();
+  });
+
+  it("shows EVERY key, not a readable subset", () => {
+    // GUARDS THE GUARD, and it is the assertion that matters most here. A
+    // formatter that renders the two keys it recognises passes the test above
+    // while quietly hiding the rest of an audit record — worse than the JSON,
+    // which at least never understated how much there was.
+    renderTimeline({ entries: [rowWithMetadata(MARK8LY_METADATA)] });
+
+    for (const key of ["severity", "status", "tenant", "ip"]) {
+      expect(screen.getByText(key)).toBeInTheDocument();
+    }
+    for (const value of ["critical", "success", "acme", "10.0.0.1"]) {
+      expect(screen.getByText(value)).toBeInTheDocument();
+    }
+  });
+
+  it("keeps a key this build has never heard of", () => {
+    // mark8ly spreads `...row.metadata` into its object, so per-event keys
+    // arrive that no whitelist here could anticipate. The unusual field is
+    // exactly the one an operator is reading the row for.
+    renderTimeline({
+      entries: [rowWithMetadata('{"severity":"high","quarantine_reason":"rate-limit"}')],
+    });
+
+    expect(screen.getByText("quarantine_reason")).toBeInTheDocument();
+    expect(screen.getByText("rate-limit")).toBeInTheDocument();
+  });
+
+  it("renders a nested diff as JSON under its own label, not as [object Object]", () => {
+    // kora's and homechef's metadata is `{before, after}` and both values are
+    // objects. `String(value)` would render each as "[object Object]" — the
+    // one formatting that destroys the content outright.
+    renderTimeline({
+      entries: [rowWithMetadata('{"before":{"plan":"free"},"after":{"plan":"pro"}}')],
+    });
+
+    expect(screen.getByText("before")).toBeInTheDocument();
+    expect(screen.getByText('{"plan":"free"}')).toBeInTheDocument();
+    expect(screen.getByText("after")).toBeInTheDocument();
+    expect(screen.getByText('{"plan":"pro"}')).toBeInTheDocument();
+    expect(screen.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
+  });
+
+  it("shows the raw string when it is not a JSON object", () => {
+    // A formatter is the wrong place to discover a producer changed shape.
+    // Showing the operator the record as it arrived is the honest failure.
+    renderTimeline({ entries: [rowWithMetadata("not json at all")] });
+    expect(screen.getByText("not json at all")).toBeInTheDocument();
+  });
+
+  it("parses to fields, or to null when there is nothing to lay out", () => {
+    expect(parseMetadataFields('{"a":1,"b":"x"}')).toEqual([
+      { key: "a", value: "1" },
+      { key: "b", value: "x" },
+    ]);
+    // `null`, arrays and `{}` all take the render-verbatim path: no producer
+    // emits them, and guessing at how to label one invents a reading of an
+    // audit record.
+    expect(parseMetadataFields("null")).toBeNull();
+    expect(parseMetadataFields('["a"]')).toBeNull();
+    expect(parseMetadataFields("{}")).toBeNull();
+    expect(parseMetadataFields("{oops")).toBeNull();
+  });
+
+  it("renders no metadata block for a row that has none", () => {
+    // PRODUCT_ROW carries no metadata, and `stringifyMetadata` returns
+    // undefined rather than "{}" precisely so an empty strip never appears.
+    renderTimeline({ entries: [PRODUCT_ROW] });
+    expect(screen.queryByRole("definition")).not.toBeInTheDocument();
   });
 });
 

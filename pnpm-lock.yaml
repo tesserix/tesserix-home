@@ -39,8 +39,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/platform-auth
       '@tesserix/web':
-        specifier: ^1.8.1
-        version: 1.8.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)
+        specifier: ^2.1.0
+        version: 2.1.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -245,8 +245,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/platform-auth
       '@tesserix/web':
-        specifier: ^1.8.1
-        version: 1.8.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)
+        specifier: ^2.1.0
+        version: 2.1.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -2492,8 +2492,8 @@ packages:
     peerDependencies:
       react: 19.2.3
 
-  '@tesserix/web@1.8.1':
-    resolution: {integrity: sha512-15g+i/0kfdhtRnpvegQX9v4mjGcIZtQcSurdKrcRr9DZ+7cOsSHBk5u8nxfoKoofcwccWFJgjqWH1odT03l+ug==}
+  '@tesserix/web@2.1.0':
+    resolution: {integrity: sha512-ywGEMvu/zUhKcK68apedx8g3CSs65I/L6L/dhZN1ZxK6IqgSC16IGkP4UNdnu6N7Wk1WJNinBOP6bMDtKLPWIA==}
     peerDependencies:
       framer-motion: ^11.0.0 || ^12.0.0
       react: 19.2.3
@@ -8550,9 +8550,7 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
-      - bufferutil
       - supports-color
-      - utf-8-validate
 
   '@react-native/normalize-colors@0.85.3': {}
 
@@ -8767,7 +8765,7 @@ snapshots:
       '@tesserix/hooks': 1.0.0(react@19.2.3)
       react: 19.2.3
 
-  '@tesserix/web@1.8.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)':
+  '@tesserix/web@2.1.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(framer-motion@12.42.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(tailwindcss@4.3.3)':
     dependencies:
       '@radix-ui/react-avatar': 1.2.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@radix-ui/react-checkbox': 1.3.9(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

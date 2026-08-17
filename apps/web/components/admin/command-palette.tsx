@@ -14,6 +14,19 @@
 // (non-cmdk) implementation that exposes selection via `onValueChange` on
 // the Command wrapper rather than a per-item `onSelect`. We register a
 // value→handler map and dispatch on Enter or click.
+//
+// "on Enter" only became true at @tesserix/web 2.1.0. Up to 1.8.1 the
+// primitive bound the arrows and Enter to CommandList's own onKeyDown — a
+// handler on the listbox div, which is a SIBLING of the search input rather
+// than an ancestor of it — so a keydown fired while the operator was typing
+// never reached it and this palette was click-only in practice
+// (design-system#7). 2.1.0 moved the handler onto Command's wrapper and this
+// palette gained working keyboard navigation with no change here.
+//
+// The same release stopped pre-highlighting the first match on every
+// keystroke, so nothing is armed until the operator presses an arrow key and
+// a bare Enter is a no-op. Nothing is lost: Enter did not work here at all
+// before.
 
 import {
   createContext,

@@ -38,8 +38,14 @@ export function isAuditProduct(value: string): value is AuditProduct {
  * An entry plus the source that produced it.
  *
  * `AuditLogEntry` is `@tesserix/web`'s and is EXTENDED here, never redeclared —
- * a merged entry is still exactly what `AuditLogViewer` accepts, with one extra
- * field it ignores.
+ * a merged entry is still exactly what `AuditLogViewer` accepts.
+ *
+ * As of `@tesserix/web` 1.13.0 the base type carries `source?: string` and the
+ * viewer RENDERS it (design-system#12). This is no longer an extra field the
+ * component ignores; the extension now only narrows it — from optional and any
+ * string, to required and one of `AUDIT_PRODUCTS`. That narrowing is the part
+ * worth keeping: the viewer tolerates a row with no source, and this wire shape
+ * does not.
  *
  * Why the field has to exist at all: `/api/admin/apps/all/audit-logs` merges
  * three products into one list, and without this there is nothing on a row

@@ -168,13 +168,14 @@ describe("ConsoleCommandPalette", () => {
 
   it("does not claim nothing matches while a full list of routes is showing", async () => {
     // Regression test for the "Nothing matching..." + full result list bug:
-    // `CommandEmpty` counts only registered *visible* items, and disabled
-    // `CommandItem`s never register — so with an empty query (which matches
-    // everything, including the pending/disabled routes) `CommandEmpty` saw
-    // zero registrations and rendered its message directly above a
-    // screenful of matching rows. The empty state is now computed by hand
-    // from the same entries and the same matcher, so it must stay silent
-    // here.
+    // up to `@tesserix/web` 1.8.1 `CommandEmpty` counted only registered
+    // *visible* items and disabled `CommandItem`s never registered — so with
+    // an empty query (which matches everything, including the pending/disabled
+    // routes) it saw zero registrations and rendered its message directly
+    // above a screenful of matching rows. This test outlived two
+    // implementations of the fix — a hand-computed empty state, and now 2.1.0
+    // counting what it actually rendered — and is unchanged across both,
+    // which is what makes it the specification rather than either of them.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -220,13 +221,12 @@ describe("ConsoleCommandPalette", () => {
   });
 
   it("navigates on ArrowDown + Enter, then closes and clears the query", async () => {
-    // Keyboard-driven on purpose: this is the path that proves
-    // forwardToListbox (command-palette.tsx) actually works, not just that
-    // clicking an option works. ArrowDown here bubbles from the search
-    // input to Command's wrapper and gets re-dispatched onto the listbox
-    // node, which is what lets CommandList's own onKeyDown move its private
-    // `activeValue` — see the workaround's comment for why a click-only
-    // test would not have caught a regression here.
+    // Keyboard-driven on purpose, and it is the test that outlived the
+    // workaround it was written for. It used to prove `forwardToListbox`
+    // re-dispatched the key onto the listbox node; now it proves the same
+    // keystroke reaches `@tesserix/web` 2.1.0's own handler on `Command`'s
+    // wrapper, with nothing in between. The assertion never changed, which is
+    // the point — a click-only test would not have caught either failure.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -252,14 +252,24 @@ describe("ConsoleCommandPalette", () => {
     ).toHaveValue("");
   });
 
-  it("moves the highlight on ArrowDown", async () => {
+  it("highlights nothing until the operator navigates, then moves down the list", async () => {
     // "cost" matches exactly two tools — Kubecost and Cost estimator — which
-    // is what makes the highlight's movement observable: a single-match
-    // query is already active on its only item before any key is pressed.
+    // is what makes the highlight's movement observable at all.
     // `data-active` is the primitive's own attribute for "this is the
     // highlighted item" (read from the compiled `@tesserix/web` source,
     // `CommandItem`'s `"data-active": isActive ? "true" : "false"` — not
     // `aria-selected`, which tracks the *selected* value instead).
+    //
+    // The first assertion changed in `@tesserix/web` 2.1.0 and the new
+    // behaviour is the correct one. Up to 1.8.1 `CommandInput`'s `onChange`
+    // set the highlight to the first matching item on every keystroke, so
+    // something was always pre-highlighted and a bare Enter fired it. That is
+    // the combobox anti-pattern where typing arms a destructive-looking
+    // default the operator never chose — and it is half of the stale-Enter
+    // bug, since the pre-set highlight outlived the query that produced it.
+    // 2.1.0 leaves `activeValue` undefined until an arrow key, and Enter is a
+    // no-op while nothing is active. This test now pins THAT, deliberately:
+    // it is a behaviour change, not a regression absorbed quietly.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -271,13 +281,42 @@ describe("ConsoleCommandPalette", () => {
     const kubecost = await screen.findByRole("option", { name: /Kubecost/i });
     const estimator = await screen.findByRole("option", { name: /Cost estimator/i });
 
-    expect(kubecost).toHaveAttribute("data-active", "true");
+    // Typing alone arms nothing.
+    expect(kubecost).toHaveAttribute("data-active", "false");
     expect(estimator).toHaveAttribute("data-active", "false");
 
     await user.keyboard("{ArrowDown}");
 
+    expect(kubecost).toHaveAttribute("data-active", "true");
+    expect(estimator).toHaveAttribute("data-active", "false");
+
+    // GUARDS THE GUARD: one ArrowDown landing on the first item passes just as
+    // happily if the highlight is stuck there. This is the assertion that
+    // fails if it stops moving.
+    await user.keyboard("{ArrowDown}");
+
     expect(kubecost).toHaveAttribute("data-active", "false");
     expect(estimator).toHaveAttribute("data-active", "true");
+  });
+
+  it("does nothing on Enter while nothing is highlighted", async () => {
+    // The other half of the 2.1.0 change, asserted on its own so the pair
+    // above cannot be read as cosmetic. A palette that navigates on a bare
+    // Enter — to whichever row happened to sort first — is how an operator
+    // ends up somewhere they did not ask for.
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "tickets",
+    );
+    await screen.findByRole("option", { name: /Platform · Tickets/i });
+    await user.keyboard("{Enter}");
+
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("opens a tool externally instead of pushing a route", async () => {
