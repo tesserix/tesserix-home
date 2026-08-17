@@ -45,6 +45,7 @@ import {
   isNotConfigured,
   type AuditProduct,
   type AuditQuery,
+  type Mark8lyLegacyBody,
   type Mark8lySeverity,
 } from "@/lib/audit/sources";
 import { logger } from "@/lib/logger";
@@ -62,13 +63,19 @@ interface SourceFailure {
 }
 
 /**
- * The whole response. There is no longer a second, mark8ly-shaped half of it.
+ * The whole response, plus an optional second, mark8ly-shaped half of it.
  *
- * `rows` and `filterOptions` were carried alongside `entries` while
- * `/admin/apps/mark8ly/audit-logs` still rendered from them; that page is
- * retired (#139) and both are gone, along with the two DISTINCT scans that
- * built `filterOptions` on every request. `summary` stays — the product
- * overviews' critical-events tile reads it and they are not being retired.
+ * `rows` and `filterOptions` are what `/admin/apps/mark8ly/audit-logs` renders
+ * from. #139 retired that page and dropped both; the page is restored and so
+ * are they — the two systems run side by side and read the SAME endpoint,
+ * neither one reshaping it for the other. The console reads `entries`; the
+ * admin page reads `rows`.
+ *
+ * They are present only when the caller passes `?include=rows` against a
+ * mark8ly-scoped URL. That opt-in is not decoration: `filterOptions` costs two
+ * DISTINCT scans over audit_logs on a db-f1-micro, and the two callers that do
+ * not want it — the console's `all` fan-out and the product overviews'
+ * critical-events tile — outnumber the one that does.
  */
 interface AuditResponseBody {
   readonly product: string;
@@ -88,6 +95,8 @@ interface AuditResponseBody {
   readonly summary: { readonly criticalLast24h: number | null };
   readonly sinceHours: number;
   readonly generatedAt: string;
+  readonly rows?: Mark8lyLegacyBody["rows"];
+  readonly filterOptions?: Mark8lyLegacyBody["filterOptions"];
 }
 
 const DEFAULT_LIMIT = 200;
@@ -102,9 +111,12 @@ function clampInt(raw: string | null, fallback: number, min: number, max: number
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-function parseQuery(url: URL): AuditQuery {
+function parseQuery(url: URL, product: string): AuditQuery {
   const p = url.searchParams;
   return {
+    // mark8ly-scoped only: `all` merges three products and there is no single
+    // product's raw rows to hand back.
+    includeLegacyMark8ly: product === "mark8ly" && p.get("include") === "rows",
     severity: p.get("severity") ?? undefined,
     status: p.get("status") ?? undefined,
     action: p.get("action") ?? undefined,
@@ -136,7 +148,7 @@ export async function GET(
     return NextResponse.json({ error: "unsupported_product" }, { status: 404 });
   }
 
-  const query = parseQuery(new URL(req.url));
+  const query = parseQuery(new URL(req.url), product);
 
   // allSettled, not all: one product's upstream being down must not erase the
   // others' rows. Same reasoning (and same response shape) as /admin/search.
@@ -149,6 +161,7 @@ export async function GET(
   let everyFailureIsUnconfigured = true;
   let succeeded = 0;
   let severity: Mark8lySeverity | undefined;
+  let legacy: Mark8lyLegacyBody | undefined;
 
   for (let i = 0; i < settled.length; i++) {
     const outcome = settled[i];
@@ -157,6 +170,7 @@ export async function GET(
       succeeded++;
       entries.push(...outcome.value.entries);
       if (outcome.value.severity) severity = outcome.value.severity;
+      if (outcome.value.legacy) legacy = outcome.value.legacy;
       continue;
     }
     const reason: unknown = outcome.reason;
@@ -190,6 +204,10 @@ export async function GET(
     summary: { criticalLast24h: severity ? severity.criticalLast24h : null },
     sinceHours: query.sinceHours,
     generatedAt: new Date().toISOString(),
+    // Spread, not two `?? undefined` fields: an unrequested legacy body must
+    // leave the keys absent rather than serialise as `"rows": null`, which a
+    // caller cannot tell from "mark8ly has no rows".
+    ...(legacy ? { rows: legacy.rows, filterOptions: legacy.filterOptions } : {}),
   };
   return NextResponse.json(body);
 }

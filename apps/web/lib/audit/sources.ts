@@ -15,6 +15,7 @@
 // invented actor in an audit log is worse than a missing one.
 
 import {
+  getAuditFilterOptions,
   getCriticalEventCount,
   listAuditLogs,
   type AuditLogRow,
@@ -61,15 +62,20 @@ export interface AuditQuery {
   readonly tenantId?: string;
   readonly sinceHours: number;
   readonly limit: number;
+  /**
+   * Ask mark8ly for the extra `rows` + `filterOptions` its own admin page
+   * renders from. Off by default and never set for `all`, so the console's
+   * fan-out pays nothing for a shape it does not read.
+   */
+  readonly includeLegacyMark8ly?: boolean;
 }
 
 /**
  * mark8ly's severity summary — the one thing `entries` cannot express.
  *
- * This was `Mark8lyLegacyBody` and carried `rows` and `filterOptions` too, so
- * `/admin/apps/mark8ly/audit-logs` could keep rendering while the generic
- * endpoint was built underneath it. That page is retired (#139), and both
- * fields went with it.
+ * `rows` and `filterOptions` are the other half of what
+ * `/admin/apps/mark8ly/audit-logs` renders from. They went with that page in
+ * #139 and are back with it — see `Mark8lyLegacyBody` below.
  *
  * `criticalLast24h` did NOT go with it, and the distinction is worth stating
  * because it looks like leftover debt and is not. It feeds the critical-events
@@ -86,9 +92,27 @@ export interface Mark8lySeverity {
   readonly criticalLast24h: number;
 }
 
+/**
+ * The mark8ly-shaped half of the response, for mark8ly's own admin page.
+ *
+ * `rows` are `audit_logs` rows verbatim plus a resolved `tenantName` — NOT
+ * `entries`. The two are not interchangeable: `entries` flattens severity,
+ * status, tenant and IP into a metadata string for the merged timeline, and
+ * the admin page renders those as sortable, filterable columns of their own.
+ *
+ * Produced only when `AuditQuery.includeLegacyMark8ly` is set, which the route
+ * does only for a mark8ly-scoped request. The console asks for `all` and never
+ * sees this.
+ */
+export interface Mark8lyLegacyBody {
+  readonly rows: readonly (AuditLogRow & { tenantName: string })[];
+  readonly filterOptions: { actions: string[]; resourceTypes: string[] };
+}
+
 export interface AuditSourceResult {
   readonly entries: readonly SourcedAuditLogEntry[];
   readonly severity?: Mark8lySeverity;
+  readonly legacy?: Mark8lyLegacyBody;
 }
 
 // Each normaliser below attributes its own rows via `attributeTo`, naming its
@@ -113,11 +137,11 @@ export interface AuditSourceResult {
  * depends on it, not only from the issue tracker.
  */
 async function fetchMark8ly(q: AuditQuery): Promise<AuditSourceResult> {
-  // `getAuditFilterOptions` used to be a third query here, feeding the retired
-  // page's action/resource-type dropdowns. Dropped with the page (#139): it was
-  // two DISTINCT scans over audit_logs that nothing reads any more, against a
-  // db-f1-micro, on every request.
-  const [rows, criticalLast24h] = await Promise.all([
+  // `getAuditFilterOptions` is a third query feeding the admin page's
+  // action/resource-type dropdowns: two DISTINCT scans over audit_logs against
+  // a db-f1-micro. It runs ONLY when that page asked — the console's fan-out
+  // and the product-overview KPI tile do not, and must not pay for it.
+  const [rows, criticalLast24h, filterOptions] = await Promise.all([
     listAuditLogs({
       severity: q.severity,
       status: q.status,
@@ -129,6 +153,7 @@ async function fetchMark8ly(q: AuditQuery): Promise<AuditSourceResult> {
       limit: q.limit,
     }),
     getCriticalEventCount(24),
+    q.includeLegacyMark8ly ? getAuditFilterOptions() : undefined,
   ]);
 
   // Tenant names are a second query against a different mark8ly database, so
@@ -152,6 +177,7 @@ async function fetchMark8ly(q: AuditQuery): Promise<AuditSourceResult> {
   return {
     entries: withNames.map(normaliseMark8ly),
     severity: { criticalLast24h },
+    legacy: filterOptions ? { rows: withNames, filterOptions } : undefined,
   };
 }
 

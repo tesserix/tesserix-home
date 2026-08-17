@@ -91,7 +91,26 @@ export async function getCriticalEventCount(sinceHours = 24): Promise<number> {
   return Number(res.rows[0]?.n ?? 0);
 }
 
-// `getAuditFilterOptions` lived here — DISTINCT action / DISTINCT resource_type
-// over audit_logs, feeding the filter dropdowns on /admin/apps/mark8ly/audit-logs.
-// Deleted with that page (#139). The console's audit surface filters by SOURCE,
-// upstream, and asks for no such list.
+// Distinct values for the filter dropdowns on /admin/apps/mark8ly/audit-logs.
+// Removed with that page by #139 and restored with it: the console's audit
+// surface filters by SOURCE and asks for no such list, so this runs only for a
+// mark8ly-scoped request — see the route's `wantsLegacyMark8lyBody`.
+export async function getAuditFilterOptions(): Promise<{
+  actions: string[];
+  resourceTypes: string[];
+}> {
+  const [actions, resources] = await Promise.all([
+    mark8lyQuery<{ action: string }>(
+      "marketplace_api",
+      `SELECT DISTINCT action FROM audit_logs ORDER BY action LIMIT 100`,
+    ),
+    mark8lyQuery<{ resource_type: string }>(
+      "marketplace_api",
+      `SELECT DISTINCT resource_type FROM audit_logs ORDER BY resource_type LIMIT 100`,
+    ),
+  ]);
+  return {
+    actions: actions.rows.map((r) => r.action),
+    resourceTypes: resources.rows.map((r) => r.resource_type),
+  };
+}

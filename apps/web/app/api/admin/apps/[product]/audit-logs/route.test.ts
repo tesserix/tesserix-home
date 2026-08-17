@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   listAuditLogs: vi.fn(),
   getCriticalEventCount: vi.fn(),
+  getAuditFilterOptions: vi.fn(),
   mark8lyQuery: vi.fn(),
   listKoraEvents: vi.fn(),
   homechefAdmin: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 const {
   listAuditLogs,
   getCriticalEventCount,
+  getAuditFilterOptions,
   mark8lyQuery,
   listKoraEvents,
   homechefAdmin,
@@ -26,6 +28,7 @@ const {
 vi.mock("@/lib/db/mark8ly-audit", () => ({
   listAuditLogs: mocks.listAuditLogs,
   getCriticalEventCount: mocks.getCriticalEventCount,
+  getAuditFilterOptions: mocks.getAuditFilterOptions,
 }));
 vi.mock("@/lib/db/mark8ly", () => ({ mark8lyQuery: mocks.mark8lyQuery }));
 vi.mock("@/lib/api/kora-admin", () => ({ listKoraEvents: mocks.listKoraEvents }));
@@ -52,12 +55,12 @@ interface WireBody {
   failures: { source: string; message: string }[];
   summary: { criticalLast24h: number | null };
   /**
-   * Not part of the contract — declared only so the tests below can assert it
-   * is ABSENT. `rows` was the retired mark8ly page's half of this response
-   * (#139); typing it as never-present would make those assertions unwritable.
+   * The mark8ly-shaped half of the response, served only for a mark8ly-scoped
+   * request that passes `?include=rows`. Optional here because it is optional
+   * on the wire, and the tests below assert both its presence and its absence.
    */
-  rows?: unknown[];
-  filterOptions?: unknown;
+  rows?: { tenantName?: string }[];
+  filterOptions?: { actions: string[]; resourceTypes: string[] };
 }
 
 function call(product: string, query = "") {
@@ -121,6 +124,10 @@ function notConfigured(): Error {
 beforeEach(() => {
   vi.clearAllMocks();
   getCriticalEventCount.mockResolvedValue(3);
+  getAuditFilterOptions.mockResolvedValue({
+    actions: ["store.settings.update"],
+    resourceTypes: ["store"],
+  });
   mark8lyQuery.mockResolvedValue({ rows: [] });
   listAuditLogs.mockResolvedValue([MARK8LY_ROW]);
   listKoraEvents.mockResolvedValue({ items: [KORA_EVENT], total: 1 });
@@ -417,29 +424,75 @@ describe("[product]/audit-logs — partial results across products", () => {
   });
 });
 
-describe("[product]/audit-logs — the retired mark8ly body", () => {
-  // This block used to assert the OPPOSITE: that `rows` and `filterOptions`
-  // were still served, because /admin/apps/mark8ly/audit-logs rendered from
-  // them. That page is a redirect now (#139), so the fields are gone and their
-  // absence is what is worth holding — re-adding them would put a second,
-  // product-shaped response next to `entries` and start the divergence this
-  // endpoint was rewritten to end.
-  it("no longer serves the retired page\'s rows or filterOptions", async () => {
+describe("[product]/audit-logs — the mark8ly page's own body", () => {
+  // This block asserted the OPPOSITE while /admin/apps/mark8ly/audit-logs was
+  // a redirect (#139). That page is restored, so `rows` and `filterOptions`
+  // are servable again — but only when asked for, and only for mark8ly. The
+  // console's merged `entries` is still what this route serves by default, and
+  // neither surface reshapes the response for the other.
+  it("omits rows and filterOptions unless the caller asks", async () => {
     const res = await call("mark8ly");
     expect(res.status).toBe(200);
     const body = (await res.json()) as WireBody;
     expect(body.rows).toBeUndefined();
     expect(body.filterOptions).toBeUndefined();
-    // Guards the guard: absence must be because the fields went, not because
-    // mark8ly returned nothing at all.
+    // Guards the guard: absent because unrequested, not because mark8ly
+    // returned nothing at all.
+    expect(body.entries).toHaveLength(1);
+    // The expensive half is not merely hidden — it is never run. This is the
+    // reason the opt-in exists: two DISTINCT scans on a db-f1-micro.
+    expect(getAuditFilterOptions).not.toHaveBeenCalled();
+  });
+
+  it("serves them for a mark8ly request that opts in", async () => {
+    const res = await call("mark8ly", "?include=rows");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as WireBody;
+    expect(body.rows).toHaveLength(1);
+    // `rows` are mark8ly's own columns, NOT `entries`: the page renders
+    // severity, status and tenant as columns, which the flattened entry
+    // metadata string cannot give it back.
+    expect(body.rows?.[0]).toMatchObject({
+      id: "m-1",
+      severity: "critical",
+      status: "success",
+      action: "store.settings.update",
+    });
+    expect(body.filterOptions).toEqual({
+      actions: ["store.settings.update"],
+      resourceTypes: ["store"],
+    });
+    // Both shapes at once, from one read. The console is unaffected by the
+    // opt-in and still gets its entries.
+    body.entries.forEach(expectAuditLogEntry);
     expect(body.entries).toHaveLength(1);
   });
 
+  it("resolves the tenant name on every row", async () => {
+    // The page shows a tenant NAME. Unresolved, the column falls back to the
+    // uuid, which is not a regression the page can report for itself.
+    mark8lyQuery.mockResolvedValue({
+      rows: [{ id: MARK8LY_ROW.tenant_id, name: "Acme Stores" }],
+    });
+    const body = (await (await call("mark8ly", "?include=rows")).json()) as WireBody;
+    expect(body.rows?.[0]?.tenantName).toBe("Acme Stores");
+  });
+
+  it("never serves them for the console's merged fan-out", async () => {
+    // `all` merges three products; there is no single product's raw rows to
+    // hand back, and the console does not read them. An `?include=rows` here
+    // must not make the merge pay for mark8ly's two DISTINCT scans.
+    const body = (await (await call("all", "?include=rows")).json()) as WireBody;
+    expect(body.rows).toBeUndefined();
+    expect(body.filterOptions).toBeUndefined();
+    expect(getAuditFilterOptions).not.toHaveBeenCalled();
+    expect(body.entries).toHaveLength(3);
+  });
+
   it("still serves the summary the product overview tile reads", async () => {
-    // The one part of the old body that survived, and NOT an oversight: the
-    // critical-events KPI tile on every product overview reads it, and those
-    // pages are not being retired. A 24-hour aggregate is also not derivable
-    // from the capped `entries` list.
+    // Unchanged by any of the above: the critical-events KPI tile on every
+    // product overview reads it, and a 24-hour aggregate is not derivable from
+    // the capped `entries` list.
     const res = await call("mark8ly", "?severity=critical&since_hours=168");
     expect(res.status).toBe(200);
     const body = (await res.json()) as WireBody & { sinceHours: number };

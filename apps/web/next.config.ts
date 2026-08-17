@@ -5,16 +5,6 @@ import path from "node:path";
  * Security Headers Configuration for Tesserix Homepage & Admin Portal
  */
 
-/**
- * Where the retired admin surfaces now live.
- *
- * Kept in lockstep with `CONSOLE_ORIGIN` in `apps/console/lib/platform-api.ts`:
- * that one names this app to satisfy its CSRF gate, this one names the console
- * to send a browser there. Same host, opposite direction.
- */
-export const CONSOLE_ORIGIN =
-  process.env.CONSOLE_PUBLIC_ORIGIN ?? "https://console.tesserix.app";
-
 const nextConfig: NextConfig = {
   output: 'standalone',
 
@@ -50,66 +40,18 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
 
-      // Retired to apps/console (#133). The pages here are deleted, so without
-      // these a bookmark — or one of this app's own remaining nav links — 404s.
+      // The six admin pages #199 and #207 retired into the console had
+      // redirects here. Both the pages and the redirects are back to the
+      // pre-#199 arrangement: nothing under /admin/ is retired until the
+      // console app is complete, so /admin/platform-tickets,
+      // /admin/platform-tickets/:id, /admin/analytics/support and the three
+      // product audit pages SERVE rather than redirect. The console's own
+      // surfaces are untouched and reachable at their own origin — the two
+      // systems run side by side and read the same API.
       //
-      // Next re-appends any query param the destination path did not consume,
-      // which is load-bearing rather than incidental: the console's queue reads
-      // ?status, ?priority and ?product. Asserted in next.config.test.ts against
-      // Next's own matcher, not assumed from the docs.
-      {
-        source: "/admin/platform-tickets",
-        destination: `${CONSOLE_ORIGIN}/platform/tickets`,
-        permanent: true,
-      },
-      {
-        source: "/admin/platform-tickets/:id",
-        destination: `${CONSOLE_ORIGIN}/platform/tickets/:id`,
-        permanent: true,
-      },
-      // Support analytics is a tab on the queue now, not a page of its own.
-      // The active tab is local state, not a query param (see the console's
-      // surface-tabs.tsx, which says why), so this lands on the queue with
-      // Analytics one click away rather than deep-linking the tab.
-      {
-        source: "/admin/analytics/support",
-        destination: `${CONSOLE_ORIGIN}/platform/tickets`,
-        permanent: true,
-      },
-      // The three product-scoped audit pages, retired into the console's one
-      // estate-wide timeline (#139). Deleted here, so without these a bookmark
-      // — or this app's own nav-config entries, which still point at them —
-      // 404s.
-      //
-      // Each carries `?source=` rather than landing on the unfiltered estate.
-      // These were product-scoped surfaces: dropping the product would widen a
-      // bookmark from "Kora's audit trail" to "everything anyone has ever
-      // done", which looks like it worked. Same argument as the ticket queue's
-      // filters above, and the ids are the console's own `AUDIT_SOURCES`.
-      //
-      // The old pages' own params (`?severity` on mark8ly, `?target_id` and
-      // `?offset` on kora) get re-appended by `appendParamsToQuery` and are
-      // ignored by the console, which offers neither filter. Next has no way to
-      // drop an unconsumed param, and the alternative — no redirect — is worse
-      // than a stale query key. Asserted in next.config.test.ts.
-      {
-        source: "/admin/apps/mark8ly/audit-logs",
-        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=mark8ly`,
-        permanent: true,
-      },
-      {
-        source: "/admin/apps/kora/audit",
-        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=kora`,
-        permanent: true,
-      },
-      // `homechef`, not `fe3dr`: the console's source id is the product's
-      // CONTEXT key, which is what the aggregate endpoint dispatches on. The
-      // display name differs and is resolved from ESTATE at render time.
-      {
-        source: "/admin/apps/homechef/audit-logs",
-        destination: `${CONSOLE_ORIGIN}/platform/audit-log?source=homechef`,
-        permanent: true,
-      },
+      // next.config.test.ts asserts, against Next's own matcher, that none of
+      // the six matches a redirect. That is the guard: a future redirect added
+      // for any of them is the retirement this rule forbids.
 
       // Deliberately NOT /admin/support/live-chat: #197 owns that surface, it
       // has no console equivalent yet, and it must keep working here.
