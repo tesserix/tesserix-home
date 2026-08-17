@@ -249,6 +249,21 @@ export interface AdvanceStageInput {
   lostReason?: string;
 }
 
+/** What actually happened, so a caller (the audit/action layer) can name
+ *  and count the write honestly instead of assuming a transition occurred.
+ *  `{ stageChanged: false, productChanged: false }` is the no-op case — a
+ *  valid, zero-effect outcome, not an error. */
+export interface AdvanceStageResult {
+  stageChanged: boolean;
+  productChanged: boolean;
+}
+
+const TERMINAL_STAGES: readonly CrmStage[] = ["won", "lost"];
+
+function isTerminal(stage: CrmStage): boolean {
+  return (TERMINAL_STAGES as readonly string[]).includes(stage);
+}
+
 /**
  * Advance (or otherwise edit) an opportunity's stage.
  *
@@ -266,10 +281,24 @@ export interface AdvanceStageInput {
  * `product`, which is the escape hatch for a grandfathered row: an operator
  * can supply the missing product without moving the stage, and that write
  * goes through (no CHECK violation, since the new row still satisfies
- * `stage IN ('new','contacted') OR product IS NOT NULL`), but logs no
- * `stage_change` because no stage actually changed.
+ * `stage IN ('new','contacted') OR product IS NOT NULL`). That write still
+ * gets its own activity — a product moving underneath a live deal, silently,
+ * is exactly the kind of change the timeline exists to catch — just not a
+ * `stage_change` one, because no stage actually changed.
+ *
+ * Ruling 14: a reverse transition (e.g. `lost` → `qualified`) is ALLOWED,
+ * not rejected — mis-marking a deal lost is ordinary human error, and
+ * refusing the correction would force a hand-written database fix for a
+ * mistake the UI itself permitted. But `closed_at`/`lost_reason` describe
+ * the stage being left, not carried baggage: they are recomputed from `to`
+ * on every stage change, not only ever added. Leaving a re-opened deal with
+ * a stale close date and loss reason would corrupt close-rate and
+ * cycle-time reads exactly the way an unlogged transition corrupts the
+ * funnel — the design treats a returning business as a NEW opportunity, so
+ * this reverse path is a correction, not the normal flow, but the record it
+ * leaves must still be honest.
  */
-export async function advanceStage(input: AdvanceStageInput): Promise<void> {
+export async function advanceStage(input: AdvanceStageInput): Promise<AdvanceStageResult> {
   const { opportunityId, to, actor, product, lostReason } = input;
 
   // Validated against the argument alone, before any row is read: a
@@ -282,7 +311,7 @@ export async function advanceStage(input: AdvanceStageInput): Promise<void> {
     throw new Error('advanceStage: moving to "lost" requires a lostReason');
   }
 
-  await tesserixTx(async (query) => {
+  return tesserixTx(async (query) => {
     const rows = await query<{
       stage: CrmStage;
       organisation_id: string;
@@ -303,7 +332,7 @@ export async function advanceStage(input: AdvanceStageInput): Promise<void> {
     const productChanging = product !== undefined && product !== current.product;
 
     if (!stageChanging && !productChanging) {
-      return;
+      return { stageChanged: false, productChanged: false };
     }
 
     const setClauses = ["updated_at = now()"];
@@ -311,17 +340,17 @@ export async function advanceStage(input: AdvanceStageInput): Promise<void> {
     if (stageChanging) {
       params.push(to);
       setClauses.push(`stage = $${params.length}`);
+      // Recomputed from `to`, not conditionally appended: entering a
+      // terminal stage sets these, but LEAVING one (Ruling 14's reverse
+      // transition) must clear them just as deliberately, or a corrected
+      // "lost" deal keeps its close date and reason forever.
+      setClauses.push(isTerminal(to) ? "closed_at = now()" : "closed_at = NULL");
+      params.push(to === "lost" ? lostReason : null);
+      setClauses.push(`lost_reason = $${params.length}`);
     }
     if (productChanging) {
       params.push(product);
       setClauses.push(`product = $${params.length}`);
-    }
-    if (stageChanging && (to === "won" || to === "lost")) {
-      setClauses.push("closed_at = now()");
-    }
-    if (stageChanging && to === "lost") {
-      params.push(lostReason);
-      setClauses.push(`lost_reason = $${params.length}`);
     }
 
     await query(
@@ -341,7 +370,25 @@ export async function advanceStage(input: AdvanceStageInput): Promise<void> {
           JSON.stringify({ from: current.stage, to }),
         ],
       );
+    } else if (productChanging) {
+      // Not a stage_change — the timeline's audience needs to be able to
+      // tell "the deal moved" from "someone re-pointed it to a different
+      // product without moving it" apart, which is exactly what a shared
+      // activity kind would erase.
+      await query(
+        `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
+         VALUES ($1, $2, 'note', $3, $4, $5::jsonb)`,
+        [
+          current.organisation_id,
+          opportunityId,
+          actor,
+          `Product set to ${product} (was ${current.product ?? "none"})`,
+          JSON.stringify({ productFrom: current.product, productTo: product }),
+        ],
+      );
     }
+
+    return { stageChanged: stageChanging, productChanged: productChanging };
   });
 }
 

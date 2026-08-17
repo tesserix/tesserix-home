@@ -8,14 +8,16 @@ import {
   setNextAction,
   logActivity,
   MissingProductError,
+  type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
 import {
-  auditedOperation,
+  writeAuditEntry,
   AuditUnavailableError,
   AuditWriteError,
   type AuditSummary,
 } from "@/lib/db/audit-repo";
-import { isCrmStage, isCrmActivityKind, requiresProduct } from "@/lib/crm";
+import { isDatabaseConfigured } from "@/lib/db/tesserix";
+import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
 export type CrmActionResult = { ok: true } | { ok: false; message: string };
 
@@ -48,26 +50,46 @@ const NOT_SAVED_MESSAGE = "That change was not saved.";
  * routing, and because a session must exist at all before `actor` is used
  * for the audit row below.
  */
+
+/** What to write to the audit trail, decided from the write's own outcome —
+ *  not fixed at the call site. `changeStage` needs this: whether the write
+ *  was a real stage transition or only a product correction on an unchanged
+ *  stage isn't known until `advanceStage` has run, and the two must not
+ *  share an audit action (a `crm.stage.change` row that names no transition
+ *  is a false record). */
+interface CrmAudit {
+  action: string;
+  summary: AuditSummary;
+}
+
+/**
+ * `auditedOperation` (audit-repo.ts) is the right tool when the audit
+ * `action` string is fixed at the call site — but here it can't be: which
+ * action to record depends on what `advanceStage` actually did. This
+ * reimplements `auditedOperation`'s guarantee by hand (refuse before running
+ * if the database isn't configured; run; write exactly one audit row; never
+ * hand back a result the audit write didn't happen for) but lets `toAudit`
+ * compute the action and summary from the real result instead of assuming
+ * one upfront.
+ */
 async function withCrmWrite<T>(
-  action: string,
   target: string,
   run: (actor: { sub: string; email: string }) => Promise<T>,
-  summarise: (result: T) => AuditSummary,
+  toAudit: (result: T) => CrmAudit,
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
     checkOperatorCapability(session, "read");
+    if (!isDatabaseConfigured()) {
+      throw new AuditUnavailableError();
+    }
     const actor = {
       sub: session?.sub ?? "unknown",
       email: session?.email ?? session?.sub ?? "unknown",
     };
-    const value = await auditedOperation({
-      actor: actor.sub,
-      action,
-      target,
-      operation: () => run(actor),
-      summarise,
-    });
+    const value = await run(actor);
+    const { action, summary } = toAudit(value);
+    await writeAuditEntry({ actor: actor.sub, action, target, summary });
     return { ok: true, value };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
@@ -116,7 +138,6 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
 
   const to = input.to;
   const result = await withCrmWrite(
-    "crm.stage.change",
     input.opportunityId,
     (actor) =>
       advanceStage({
@@ -126,7 +147,22 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
         product: input.product,
         lostReason: input.lostReason,
       }),
-    () => ({ transitions: 1 }),
+    (outcome: AdvanceStageResult) => {
+      // A real transition, however it arrived, is `crm.stage.change` — even
+      // one that also happened to set the product for the first time. Only
+      // a write that touched product WITHOUT moving the stage gets its own
+      // action: that's the case an audit reader must be able to tell apart
+      // from a transition, because nothing about the pipeline moved.
+      if (outcome.stageChanged) {
+        return { action: "crm.stage.change", summary: { transitions: 1 } };
+      }
+      if (outcome.productChanged) {
+        return { action: "crm.product.set", summary: { transitions: 0 } };
+      }
+      // The no-op case: `{ transitions: 0 }` is a valid, honest summary —
+      // not a sentinel meaning "something went wrong".
+      return { action: "crm.stage.change", summary: { transitions: 0 } };
+    },
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -144,7 +180,6 @@ export async function scheduleNextAction(
   input: ScheduleNextActionInput,
 ): Promise<CrmActionResult> {
   const result = await withCrmWrite(
-    "crm.next_action.set",
     input.opportunityId,
     (actor) =>
       setNextAction({
@@ -153,7 +188,7 @@ export async function scheduleNextAction(
         note: input.note,
         actor: actor.email,
       }),
-    () => ({ scheduled: 1 }),
+    () => ({ action: "crm.next_action.set", summary: { scheduled: 1 } }),
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -167,14 +202,25 @@ export interface AddActivityInput {
   body?: string;
 }
 
+/**
+ * Log a human-authored activity — a note, a call, a message sent or
+ * received. NOT `stage_change` or `assigned`: those are system-authored,
+ * written only by the code that performs the thing they describe
+ * (`advanceStage`, an owner-assignment write), inside the same transaction
+ * as that change. `isHumanActivityKind` — not `isCrmActivityKind` — is the
+ * gate here specifically so this action can never forge a `stage_change`
+ * row: an arbitrary body claiming a transition, with no stage having moved,
+ * is exactly the corruption `advanceStage`'s one-transaction guarantee
+ * exists to prevent, and a permissive kind check here would let this action
+ * cause it from the other direction.
+ */
 export async function addActivity(input: AddActivityInput): Promise<CrmActionResult> {
-  if (!isCrmActivityKind(input.kind)) {
-    return { ok: false, message: `"${input.kind}" is not an activity kind.` };
+  if (!isHumanActivityKind(input.kind)) {
+    return { ok: false, message: `"${input.kind}" is not an activity kind an operator can log directly.` };
   }
 
   const kind = input.kind;
   const result = await withCrmWrite(
-    "crm.activity.log",
     input.opportunityId ?? input.organisationId,
     (actor) =>
       logActivity({
@@ -184,7 +230,7 @@ export async function addActivity(input: AddActivityInput): Promise<CrmActionRes
         actor: actor.email,
         body: input.body,
       }),
-    () => ({ logged: 1 }),
+    () => ({ action: "crm.activity.log", summary: { logged: 1 } }),
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);

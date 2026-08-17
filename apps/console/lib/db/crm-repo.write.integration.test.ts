@@ -14,46 +14,40 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
  * behaves the way migration 0021's header says it does — that a bare
  * UPDATE on a grandfathered row is rejected by Postgres itself. Only a
  * real database proves that, which is the whole point of this file.
+ *
+ * `tesserixTx` (in `./tesserix.ts`) is untestable directly: it calls
+ * `pool.connect()` against a real network Postgres this suite doesn't have.
+ * `runTesserixTx` is its transactional core, pulled out specifically so it
+ * can run here — unmodified — against pglite, which satisfies the same
+ * `TxClient` shape a `pg.PoolClient` does. Mocking `tesserixTx` is on
+ * purpose (there is no pool to connect to); what makes this a real test of
+ * the "one transaction" guarantee is that `tesserixTx` below delegates to
+ * `runTesserixTx`, the actual shared BEGIN/COMMIT/ROLLBACK logic — not a
+ * hand-rolled reimplementation of it that could silently diverge from what
+ * ships.
  */
 
 const dbHolder = vi.hoisted(() => ({ db: undefined as unknown }));
 
-vi.mock("./tesserix", () => ({
-  tesserixQuery: async (sql: string, params: readonly unknown[] = []) => {
-    const db = dbHolder.db as {
-      query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }>;
-    };
-    const result = await db.query(sql, params as unknown[]);
-    return result.rows;
-  },
-  // pglite has no separate connection pool to acquire a client from, so
-  // there is nothing distinct to hand out — every statement in the
-  // callback runs through the same in-process instance, wrapped in a real
-  // BEGIN/COMMIT/ROLLBACK exactly like `tesserixTx` does against a pool.
-  tesserixTx: async (fn: (query: typeof tesserixQueryForTx) => unknown) => {
-    const db = dbHolder.db as {
-      query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }>;
-    };
-    await db.query("BEGIN", []);
-    try {
-      const out = await fn(tesserixQueryForTx);
-      await db.query("COMMIT", []);
-      return out;
-    } catch (err) {
-      await db.query("ROLLBACK", []);
-      throw err;
-    }
-  },
-  isDatabaseConfigured: () => true,
-}));
-
-async function tesserixQueryForTx(sql: string, params: readonly unknown[] = []) {
-  const db = dbHolder.db as {
-    query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }>;
+vi.mock("./tesserix", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./tesserix")>();
+  return {
+    ...actual,
+    tesserixQuery: async (sql: string, params: readonly unknown[] = []) => {
+      const db = dbHolder.db as {
+        query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }>;
+      };
+      const result = await db.query(sql, params as unknown[]);
+      return result.rows;
+    },
+    // pglite is a single embedded session with no separate pool to acquire
+    // a client from — so it IS a client, structurally: `runTesserixTx`
+    // only ever calls `.query(sql, params)` on whatever it's given.
+    tesserixTx: async (fn: Parameters<typeof actual.runTesserixTx>[1]) =>
+      actual.runTesserixTx(dbHolder.db as Parameters<typeof actual.runTesserixTx>[0], fn),
+    isDatabaseConfigured: () => true,
   };
-  const result = await db.query(sql, params as unknown[]);
-  return result.rows;
-}
+});
 
 const { advanceStage, setNextAction, logActivity, MissingProductError } = await import(
   "./crm-repo"
@@ -63,6 +57,7 @@ let db: PGlite;
 let orgId: string;
 let grandfatheredOppId: string;
 let normalOppId: string;
+let failureInjectedOppId: string;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -105,6 +100,13 @@ beforeAll(async () => {
   );
   normalOppId = normal.rows[0].id;
 
+  const failureInjected = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities (organisation_id, stage)
+     VALUES ($1, 'new') RETURNING id`,
+    [orgId],
+  );
+  failureInjectedOppId = failureInjected.rows[0].id;
+
   // Re-add the CHECK as NOT VALID — 0021's actual shape. This does not
   // scan/reject the grandfathered row already inserted above, but DOES
   // enforce the CHECK on every statement from here on.
@@ -114,6 +116,29 @@ beforeAll(async () => {
          stage IN ('new', 'contacted') OR product IS NOT NULL
        ) NOT VALID`,
   );
+
+  // A failure-injection trigger: any INSERT into crm_activities naming
+  // `failureInjectedOppId` as its opportunity fails, deliberately, so the
+  // atomicity test below can prove the UPDATE that precedes it does not
+  // survive. This is the discriminating case Critical 1 asked for — the
+  // "commits both together" test on its own only proves the SUCCESS path,
+  // which passes identically whether `advanceStage` runs its two
+  // statements in one transaction or as two independent `tesserixQuery`
+  // calls. Only a forced mid-write failure tells the two apart.
+  await db.exec(`
+    CREATE OR REPLACE FUNCTION crm_test_inject_activity_failure() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.opportunity_id = '${failureInjectedOppId}' THEN
+        RAISE EXCEPTION 'injected failure for atomicity test';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER crm_test_inject_activity_failure_trg
+    BEFORE INSERT ON crm_activities
+    FOR EACH ROW EXECUTE FUNCTION crm_test_inject_activity_failure();
+  `);
 });
 
 afterAll(async () => {
@@ -241,5 +266,32 @@ describe("advanceStage writes the opportunity and its stage_change activity atom
       [grandfatheredOppId],
     );
     expect(activities.rows.map((r) => r.body)).toContain("a plain note, no stage involved");
+  });
+
+  // Critical 1's discriminating case: force the SECOND statement (the
+  // activity INSERT) to fail after the FIRST (the opportunity UPDATE) has
+  // already run, and assert the UPDATE did not survive. This is the test
+  // that tells a real transaction apart from two independent `tesserixQuery`
+  // calls — against non-transactional code, the UPDATE commits on its own
+  // the moment it runs, so the row would read "contacted" here regardless
+  // of what happens to the INSERT after it. It only reads "new" — its
+  // starting stage — because `runTesserixTx` rolled the UPDATE back along
+  // with the failed INSERT, on the one client both statements shared.
+  it("rolls back the UPDATE when the activity INSERT fails — the real discriminator for atomicity", async () => {
+    await expect(
+      advanceStage({ opportunityId: failureInjectedOppId, to: "contacted", actor: "ava" }),
+    ).rejects.toThrow(/injected failure/);
+
+    const opp = await db.query<{ stage: string }>(
+      `SELECT stage FROM crm_opportunities WHERE id = $1`,
+      [failureInjectedOppId],
+    );
+    expect(opp.rows[0].stage).toBe("new");
+
+    const activities = await db.query<{ id: string }>(
+      `SELECT id FROM crm_activities WHERE opportunity_id = $1`,
+      [failureInjectedOppId],
+    );
+    expect(activities.rows).toHaveLength(0);
   });
 });

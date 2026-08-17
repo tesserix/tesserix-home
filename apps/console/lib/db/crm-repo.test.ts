@@ -232,10 +232,16 @@ describe("advanceStage", () => {
     query.mockResolvedValueOnce([
       { stage: "contacted", organisation_id: "g1", product: null },
     ]);
-    await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
+    const result = await advanceStage({
+      opportunityId: "o1",
+      to: "qualified",
+      product: "mark8ly",
+      actor: "ava",
+    });
     const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
     expect(sqlText).toContain("INSERT INTO crm_activities");
     expect(sqlText).toContain("stage_change");
+    expect(result).toEqual({ stageChanged: true, productChanged: true });
   });
 
   it("refuses to qualify without a product rather than guessing one", async () => {
@@ -260,10 +266,11 @@ describe("advanceStage", () => {
     query.mockResolvedValueOnce([
       { stage: "contacted", organisation_id: "g1", product: null },
     ]);
-    await advanceStage({ opportunityId: "o1", to: "contacted", actor: "ava" });
+    const result = await advanceStage({ opportunityId: "o1", to: "contacted", actor: "ava" });
     const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
     expect(sqlText).not.toContain("stage_change");
     expect(sqlText).not.toMatch(/UPDATE crm_opportunities/);
+    expect(result).toEqual({ stageChanged: false, productChanged: false });
   });
 
   it("sets closed_at when moving to won", async () => {
@@ -292,6 +299,41 @@ describe("advanceStage", () => {
     expect(updateParams).toContain("went with a competitor");
   });
 
+  // Ruling 14: leaving a terminal stage clears both fields — they describe
+  // the stage being left, not baggage that survives a correction. Not
+  // rejected: mis-marking a deal lost is ordinary human error, and this is
+  // the fix for it, recorded honestly via the ordinary stage_change path.
+  it("clears closed_at and lost_reason when leaving a terminal stage (Ruling 14)", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "lost", organisation_id: "g1", product: "mark8ly" },
+    ]);
+    await advanceStage({
+      opportunityId: "o1",
+      to: "qualified",
+      product: "mark8ly",
+      actor: "ava",
+    });
+    const [updateSql, updateParams] = query.mock.calls[1];
+    expect(updateSql).toContain("closed_at = NULL");
+    expect(updateSql).toMatch(/lost_reason = \$\d/);
+    expect(updateParams).toContain(null);
+  });
+
+  it("moving lost -> won clears lost_reason but still sets closed_at", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "lost", organisation_id: "g1", product: "mark8ly" },
+    ]);
+    await advanceStage({
+      opportunityId: "o1",
+      to: "won",
+      product: "mark8ly",
+      actor: "ava",
+    });
+    const [updateSql, updateParams] = query.mock.calls[1];
+    expect(updateSql).toContain("closed_at = now()");
+    expect(updateParams).toContain(null); // lost_reason cleared
+  });
+
   it("always sets updated_at, since crm_opportunities has no update trigger", async () => {
     query.mockResolvedValueOnce([
       { stage: "contacted", organisation_id: "g1", product: null },
@@ -310,10 +352,37 @@ describe("advanceStage", () => {
     query.mockResolvedValueOnce([
       { stage: "qualified", organisation_id: "g1", product: null },
     ]);
-    await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
+    const result = await advanceStage({
+      opportunityId: "o1",
+      to: "qualified",
+      product: "mark8ly",
+      actor: "ava",
+    });
     const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
     expect(sqlText).toMatch(/UPDATE crm_opportunities/);
     expect(sqlText).not.toContain("stage_change");
+    expect(result).toEqual({ stageChanged: false, productChanged: true });
+  });
+
+  // A product re-pointed underneath a live deal, with the stage untouched,
+  // must still leave a trace — the whole reason this branch exists (an
+  // audit row alone can't be read by anyone browsing the organisation's
+  // timeline).
+  it("logs an activity for a stage-unchanged product change, not tagged stage_change", async () => {
+    query.mockResolvedValueOnce([
+      { stage: "qualified", organisation_id: "g1", product: "kora" },
+    ]);
+    await advanceStage({
+      opportunityId: "o1",
+      to: "qualified",
+      product: "mark8ly",
+      actor: "ava",
+    });
+    const [activitySql, activityParams] = query.mock.calls[2];
+    expect(activitySql).toContain("INSERT INTO crm_activities");
+    expect(activitySql).toContain("'note'");
+    expect(activitySql).not.toContain("stage_change");
+    expect(activityParams).toContain("Product set to mark8ly (was kora)");
   });
 
   it("throws when the opportunity does not exist", async () => {
