@@ -135,6 +135,17 @@ export const platformNav: readonly NavEntry[] = [
     // import so the rail reads in the order the work has to happen.
     items: [
       { name: "CRM", route: "platform.crm", icon: "users" },
+      // Second, not last: an imported lead sits on neither queue for its
+      // first fourteen days (Due needs a next action, Drifting needs a
+      // quiet period), so browse is the only way to reach it in the
+      // meantime.
+      //
+      // `users` duplicates the CRM item's icon, which is a wart — but
+      // IconKey is consumed as `Record<IconKey, ...>` in web, mobile and
+      // console (icons.ts:14-16), so a dedicated "building" key is three
+      // renderers changed for one rail entry, one of them apps/web. The
+      // duplicate icon is the cheaper wrong thing.
+      { name: "Organisations", route: "platform.crmOrganisations", icon: "users" },
       { name: "Do-not-contact", route: "platform.crmSuppressions", icon: "shield" },
       // `inbox` rather than a new "upload" key, for the reason already
       // recorded on "Identity lookup" above: IconKey is consumed as
