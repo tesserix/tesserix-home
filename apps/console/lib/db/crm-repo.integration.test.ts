@@ -702,6 +702,48 @@ describe("listOrganisations", () => {
       expect(second.rows.map((r) => r.id)).toContain(midId);
     });
 
+    // Fix round 1: nothing above catches `id` being dropped from the
+    // keyset — every other fixture uses distinct `created_at` values, so a
+    // tuple that silently degraded to `g.created_at < $cursorTs` alone would
+    // still pass "pages forward without repeating" and the boundary test
+    // (those only catch `<` vs `<=`). Production wrote 259 rows in one
+    // migration batch, so two organisations sharing an identical
+    // `created_at` is the normal case this design exists for, not an edge
+    // one — this seeds exactly that and pages through one row at a time.
+    it("uses id as a tiebreaker so two rows sharing an identical created_at are each returned exactly once", async () => {
+      const sharedCreatedAt = daysAgo(10);
+      const inserted = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, created_at)
+         VALUES ($1, $3::timestamptz), ($2, $3::timestamptz)
+         RETURNING id`,
+        ["Tiebreak Org A", "Tiebreak Org B", sharedCreatedAt],
+      );
+      const seededIds = new Set(inserted.rows.map((r) => r.id));
+
+      const first = await listOrganisations({ search: "Tiebreak Org" }, 1);
+      expect(first.rows).toHaveLength(1);
+      // A `created_at`-only keyset (`id` dropped from both ORDER BY and the
+      // predicate) would have no next page here — with two rows tied on the
+      // only ordering column, Postgres could just as easily hand back the
+      // same tied row twice as the "first" one.
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await listOrganisations(
+        { search: "Tiebreak Org" },
+        1,
+        first.nextCursor ?? undefined,
+      );
+      expect(second.rows).toHaveLength(1);
+
+      const seenIds = [first.rows[0].id, second.rows[0].id];
+      // `<=` degrading from `<` would repeat the first row here; a bare `<`
+      // on `created_at` alone (both rows tied) would exclude the second row
+      // from every subsequent page — never seen at all. Either failure mode
+      // is caught by asserting both seeded ids were returned, exactly once.
+      expect(seenIds[0]).not.toBe(seenIds[1]);
+      expect(new Set(seenIds)).toEqual(seededIds);
+    });
+
     it("rejects a malformed cursor instead of coercing it into a query", async () => {
       await expect(
         listOrganisations({ search: "Pagination Org" }, 2, "not-a-real-cursor"),

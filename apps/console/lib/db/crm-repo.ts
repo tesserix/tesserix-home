@@ -1776,14 +1776,14 @@ function encodeOrganisationCursor(createdAt: string, id: string): string {
  * unparseable value is rejected outright — never coerced into a query, which
  * is how a garbage `created_at` would end up bound straight into the keyset
  * predicate below.
+ *
+ * `Buffer.from(cursor, "base64")` itself never throws — invalid base64 is
+ * decoded leniently, with invalid characters dropped, not rejected. The
+ * rejection this function promises comes entirely from the separator/date/
+ * UUID checks below, which is why there is no try/catch around the decode.
  */
 function decodeOrganisationCursor(cursor: string): OrganisationCursor {
-  let decoded: string;
-  try {
-    decoded = Buffer.from(cursor, "base64").toString("utf-8");
-  } catch {
-    throw new Error("listOrganisations: malformed cursor");
-  }
+  const decoded = Buffer.from(cursor, "base64").toString("utf-8");
   const separatorIndex = decoded.indexOf("|");
   if (separatorIndex === -1) {
     throw new Error("listOrganisations: malformed cursor");
@@ -1859,55 +1859,62 @@ export async function listOrganisations(
   limit: number,
   cursor?: string,
 ): Promise<OrganisationPage> {
+  // Decoded (and validated) before either query runs, so a malformed cursor
+  // fails fast without spending a round trip on the count query it would
+  // never get to use.
+  const decodedCursor = cursor ? decodeOrganisationCursor(cursor) : null;
+
   const countParams: unknown[] = [];
   const countClauses = organisationFilterClauses(filter, countParams);
   const countWhere = countClauses.length > 0 ? `WHERE ${countClauses.join("\n        AND ")}` : "";
-  const countRows = await tesserixQuery<{ count: string | number }>(
-    `SELECT count(*) FROM crm_organisations g ${countWhere}`,
-    countParams,
-  );
-  const total = Number(countRows[0]?.count ?? 0);
 
   const params: unknown[] = [];
   const clauses = organisationFilterClauses(filter, params);
-
-  if (cursor) {
-    const decoded = decodeOrganisationCursor(cursor);
-    params.push(decoded.createdAt);
+  if (decodedCursor) {
+    params.push(decodedCursor.createdAt);
     const createdAtParam = `$${params.length}`;
-    params.push(decoded.id);
+    params.push(decodedCursor.id);
     const idParam = `$${params.length}`;
     clauses.push(`(g.created_at, g.id) < (${createdAtParam}, ${idParam})`);
   }
-
   // limit + 1: see the doc comment above for why this, not a total
   // comparison, is what decides nextCursor.
   params.push(limit + 1);
   const limitParam = `$${params.length}`;
   const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
 
-  const rawRows = await tesserixQuery<RawOrganisationListRow>(
-    `SELECT g.id, g.name, g.location, g.created_at,
-            (SELECT c.name FROM crm_contacts c
-              WHERE c.organisation_id = g.id
-              ORDER BY c.is_primary DESC, c.created_at ASC
-              LIMIT 1) AS contact_name,
-            (SELECT c.email FROM crm_contacts c
-              WHERE c.organisation_id = g.id
-              ORDER BY c.is_primary DESC, c.created_at ASC
-              LIMIT 1) AS contact_email,
-            (SELECT count(*) FROM crm_opportunities o
-              WHERE o.organisation_id = g.id
-                AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
-            (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
-              WHERE o.organisation_id = g.id
-                AND o.product IS NOT NULL) AS products
-       FROM crm_organisations g
-       ${where}
-      ORDER BY g.created_at DESC, g.id DESC
-      LIMIT ${limitParam}`,
-    params,
-  );
+  // Independent reads over two disjoint parameter lists (built above, never
+  // touched again) — safe to run concurrently rather than paying two
+  // sequential round trips for every page view.
+  const [countRows, rawRows] = await Promise.all([
+    tesserixQuery<{ count: string | number }>(
+      `SELECT count(*) FROM crm_organisations g ${countWhere}`,
+      countParams,
+    ),
+    tesserixQuery<RawOrganisationListRow>(
+      `SELECT g.id, g.name, g.location, g.created_at,
+              (SELECT c.name FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY c.is_primary DESC, c.created_at ASC
+                LIMIT 1) AS contact_name,
+              (SELECT c.email FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                ORDER BY c.is_primary DESC, c.created_at ASC
+                LIMIT 1) AS contact_email,
+              (SELECT count(*) FROM crm_opportunities o
+                WHERE o.organisation_id = g.id
+                  AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
+              (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
+                WHERE o.organisation_id = g.id
+                  AND o.product IS NOT NULL) AS products
+         FROM crm_organisations g
+         ${where}
+        ORDER BY g.created_at DESC, g.id DESC
+        LIMIT ${limitParam}`,
+      params,
+    ),
+  ]);
+  const total = Number(countRows[0]?.count ?? 0);
 
   const hasNextPage = rawRows.length > limit;
   const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
