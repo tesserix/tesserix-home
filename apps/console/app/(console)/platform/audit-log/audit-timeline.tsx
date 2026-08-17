@@ -122,9 +122,29 @@ function renderSource(source: string) {
   );
 }
 
-/** See `audit-metadata.tsx` for why this is not the raw JSON string. */
-function renderMetadata(metadata: string) {
-  return <AuditMetadata metadata={metadata} />;
+/**
+ * Reshapes entries for `AuditLogViewer`: `metadata` becomes `detail`.
+ *
+ * The viewer renders `entry.metadata` inline and ALWAYS EXPANDED whenever it
+ * is set — that check is independent of `detail`, so passing `metadata`
+ * through unchanged would render the same content twice: once raw and
+ * inline (the legacy path, kept for callers who never adopted the
+ * disclosure), once formatted behind the new collapsed control. Moving it
+ * into `detail` and dropping `metadata` is what actually relocates it rather
+ * than duplicating it.
+ *
+ * `detail` is `undefined`, not an empty `<AuditMetadata>`, when there is no
+ * metadata — the viewer renders a disclosure control only when `detail` is
+ * present, and most `console_audit_log` rows carry none. A disclosure with
+ * nothing behind it is a control that promises detail and delivers none.
+ *
+ * See `audit-metadata.tsx` for why the content is not the raw JSON string.
+ */
+function toViewerEntries(entries: readonly SourcedAuditEntry[]) {
+  return entries.map(({ metadata, ...entry }) => ({
+    ...entry,
+    detail: metadata ? <AuditMetadata metadata={metadata} /> : undefined,
+  }));
 }
 
 export function AuditTimeline({
@@ -179,13 +199,22 @@ export function AuditTimeline({
           No `onEntrySelect`: there is no entry-detail view on this surface, and
           as of 2.1.0 the viewer renders a row as a plain element rather than a
           `<button>` when the callback is absent — so omitting it is now the
-          whole fix for what used to be a focusable control that did nothing. */}
+          whole fix for what used to be a focusable control that did nothing.
+
+          `detail`, not `renderMetadata`: before 2.2.0 the viewer had no
+          disclosure slot, so `renderMetadata` was the only place metadata
+          could go and it rendered inline on every row, always expanded — a
+          timeline of thirty entries became thirty stacked metadata blocks,
+          each headline pushed down by the body above it. `toViewerEntries`
+          moves the same content behind a per-row disclosure that starts
+          collapsed, so metadata a reader isn't looking at stays out of the
+          way — and out of the accessibility tree entirely, not just visually
+          hidden. */}
       {state.kind === "ready" ? (
         <AuditLogViewer
-          entries={entries}
+          entries={toViewerEntries(entries)}
           emptyMessage={emptyMessage}
           renderSource={renderSource}
-          renderMetadata={renderMetadata}
         />
       ) : (
         <SurfaceStateView
