@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
 
 const listOrganisations = vi.fn();
@@ -67,7 +67,7 @@ describe("OrganisationsPage", () => {
     // reason the queue filters in SQL.
     listOrganisations.mockResolvedValue(orgPage([]));
     render(await Page({ searchParams: Promise.resolve({ q: "priya" }) }));
-    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number));
+    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number), undefined);
   });
 
   it("shows the filtered-empty state when a search matches nothing", async () => {
@@ -108,6 +108,7 @@ describe("OrganisationsPage", () => {
     expect(listOrganisations).toHaveBeenCalledWith(
       { importId: "8f14e45f-ceea-467e-b7ea-05a3778a1234" },
       expect.any(Number),
+      undefined,
     );
   });
 
@@ -174,5 +175,52 @@ describe("OrganisationsPage", () => {
     );
     expect(screen.getByText("No matches")).toBeInTheDocument();
     expect(screen.queryByText("Nothing here yet")).toBeNull();
+  });
+
+  describe("filter bar", () => {
+    it("passes every recognised filter through to the repo", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(
+        await Page({
+          searchParams: Promise.resolve({
+            q: "priya",
+            product: "mark8ly",
+            country: "IN",
+            followers: "over10k",
+            email: "1",
+          }),
+        }),
+      );
+      expect(listOrganisations).toHaveBeenCalledWith(
+        { search: "priya", product: "mark8ly", country: "IN", followers: "over10k", hasEmail: true },
+        expect.any(Number),
+        undefined,
+      );
+    });
+
+    it("drops an unrecognised follower band rather than passing it to SQL", async () => {
+      // Same contract the queue's readQueueFilters follows: an unrecognised
+      // value means no filter, never a value the repo has to defend against.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ followers: "banana" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+
+    it("resolves filtered-empty, not empty, when a filter matches nothing", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ product: "mark8ly" }) }));
+      expect(screen.getByText("No matches")).toBeInTheDocument();
+      expect(screen.queryByText("Nothing here yet")).toBeNull();
+    });
+
+    it("offers Unassigned as a product option", async () => {
+      // Every migrated lead is unassigned; without this option the product
+      // filter hides the entire current dataset. The option lives inside a
+      // Radix `Select`, which portals its content only once opened.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      fireEvent.click(screen.getByLabelText("Product"));
+      expect(screen.getByText(/unassigned/i)).toBeInTheDocument();
+    });
   });
 });

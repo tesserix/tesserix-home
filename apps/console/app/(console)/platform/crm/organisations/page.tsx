@@ -1,3 +1,4 @@
+import { ESTATE } from "@tesserix/console-core";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 // Imported from `surface-state` and not from `states`: this is a server
 // component, and `states.tsx` is a "use client" module whose exports become
@@ -9,6 +10,9 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
 import { listOrganisations, type OrganisationFilter, type OrganisationListRow } from "@/lib/db/crm-repo";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
+import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, isFollowerBand } from "@/lib/db/crm-filters";
+import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar";
 import { OrganisationsView } from "./organisations-view";
 
 /**
@@ -33,13 +37,67 @@ export const EMPTY_MESSAGE = "No organisations yet. Import some leads to get sta
 export type OrganisationsSearchParams = Record<string, string | string[] | undefined>;
 
 /**
+ * The organisations surface's filter bar.
+ *
+ * Product options come from the estate, not from whatever rows happen to be
+ * on the current page — same reasoning as `QUEUE_FILTERS` in `crm/page.tsx`.
+ * "Unassigned" is last rather than alphabetised in: every migrated lead and
+ * every import lands with a null product (the bug #213 fixes), so it answers
+ * a different question ("show me the rows nothing has been assigned to yet")
+ * than picking a product does, and it is the option that surfaces the entire
+ * present dataset — omitting it would hide all 259 production organisations
+ * behind a filter that looks like it covers everyone.
+ *
+ * Country options are the closed set `COUNTRY_LABELS` declares — chips over
+ * the derived column, never a free-text box over the raw `location` that
+ * column exists to replace.
+ */
+export const ORGANISATION_FILTERS: FilterDescriptor[] = [
+  { key: "q", label: "Search organisations", type: "search" },
+  {
+    key: "product",
+    label: "Product",
+    type: "select",
+    options: [
+      ...ESTATE.map((product) => ({ value: product.context, label: product.name })),
+      { value: UNASSIGNED_PRODUCT, label: "Unassigned" },
+    ],
+  },
+  {
+    key: "country",
+    label: "Country",
+    type: "select",
+    options: Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+  },
+  {
+    key: "followers",
+    label: "Followers",
+    type: "select",
+    options: Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+  },
+  {
+    key: "email",
+    label: "Email",
+    type: "select",
+    options: [{ value: "1", label: "Has email on file" }],
+  },
+];
+
+/**
  * Read the filters out of the URL.
  *
- * `q` maps to `OrganisationFilter.search`. `import` maps to
- * `OrganisationFilter.importId` — an import's result page links here as
- * `/platform/crm/organisations?import=<uuid>`, and without honouring that
- * param the link would land on the unfiltered list showing every
- * organisation, not just the batch the operator just imported.
+ * A query string is untrusted input, so every filter follows the same
+ * contract `readQueueFilters` (`crm/page.tsx`) established: an unrecognised
+ * value — a `followers` band that isn't one of `FOLLOWER_BANDS`, a `product`
+ * the estate doesn't declare and isn't `UNASSIGNED_PRODUCT`, a `country` not
+ * in `COUNTRY_LABELS` — is treated as no filter at all, never forwarded to
+ * SQL and never reported as an error. `q` maps to `OrganisationFilter.search`.
+ * `import` maps to `OrganisationFilter.importId` — an import's result page
+ * links here as `/platform/crm/organisations?import=<uuid>`, and without
+ * honouring that param the link would land on the unfiltered list showing
+ * every organisation, not just the batch the operator just imported.
+ * `email=1` is the only recognised value for the boolean `hasEmail` filter;
+ * anything else (including absence) leaves it unset.
  */
 export function readOrganisationFilters(searchParams: OrganisationsSearchParams): OrganisationFilter {
   const filters: OrganisationFilter = {};
@@ -54,7 +112,43 @@ export function readOrganisationFilters(searchParams: OrganisationsSearchParams)
     filters.importId = rawImportId;
   }
 
+  const rawProduct = searchParams.product;
+  if (typeof rawProduct === "string" && rawProduct !== "") {
+    // The sentinel is checked first, or it would fail the ESTATE check below
+    // and round-trip through the URL as if it were an unrecognised value —
+    // same ordering `readQueueFilters` uses.
+    if (rawProduct === UNASSIGNED_PRODUCT || ESTATE.some((product) => product.context === rawProduct)) {
+      filters.product = rawProduct;
+    }
+  }
+
+  const rawCountry = searchParams.country;
+  if (typeof rawCountry === "string" && rawCountry !== "" && rawCountry in COUNTRY_LABELS) {
+    filters.country = rawCountry;
+  }
+
+  const rawFollowers = searchParams.followers;
+  if (typeof rawFollowers === "string" && isFollowerBand(rawFollowers)) {
+    filters.followers = rawFollowers;
+  }
+
+  if (searchParams.email === "1") {
+    filters.hasEmail = true;
+  }
+
   return filters;
+}
+
+/** The applied filters as the bar's display values — same shape as
+ *  `toFilterValues` in `crm/page.tsx`. */
+export function toOrganisationFilterValues(filters: OrganisationFilter): FilterValues {
+  const values: FilterValues = {};
+  if (filters.search) values.q = filters.search;
+  if (filters.product) values.product = filters.product;
+  if (filters.country) values.country = filters.country;
+  if (filters.followers) values.followers = filters.followers;
+  if (filters.hasEmail) values.email = "1";
+  return values;
 }
 
 const BASE_PATH = "/platform/crm/organisations";
@@ -62,10 +156,11 @@ const BASE_PATH = "/platform/crm/organisations";
 /**
  * Builds the `?cursor=` link for the next page by copying every param
  * already on the URL and replacing only `cursor` — never by naming the
- * params this page currently knows about. A later task adds four more
- * filter params (`product`, `country`, `followers`, `email`); a builder
- * that enumerated known params would silently drop them the moment an
- * operator pages, landing them on an unfiltered page 2.
+ * params this page currently knows about. This surface now has five filter
+ * params (`q`, `product`, `country`, `followers`, `email`) on top of
+ * `import`; a builder that enumerated known params would silently drop
+ * whichever ones it forgot the moment an operator pages, landing them on an
+ * unfiltered (or differently filtered) page 2.
  */
 export function buildNextHref(searchParams: OrganisationsSearchParams, nextCursor: string | null): string | null {
   if (!nextCursor) return null;
@@ -106,12 +201,19 @@ export default async function OrganisationsPage({
 }) {
   const resolvedSearchParams = await searchParams;
   const filters = readOrganisationFilters(resolvedSearchParams);
-  // Counts `importId` toward `filtered`, not just `search`: an empty result
-  // under `?import=` must resolve to `filtered-empty` ("this batch has
-  // nothing"), not the plain `empty` state ("no organisations exist at
-  // all") — the two read very differently to an operator following an
-  // import's result link.
-  const filtered = Boolean(filters.search) || Boolean(filters.importId);
+  // Every active filter counts toward `filtered`, not just `search`: an
+  // empty result under any one of them must resolve to `filtered-empty`
+  // ("nothing matches what you asked for"), not the plain `empty` state
+  // ("no organisations exist at all") — the two read very differently to an
+  // operator who just narrowed the list, and only one has a way out
+  // (`onClearFilters`).
+  const filtered =
+    Boolean(filters.search) ||
+    Boolean(filters.importId) ||
+    Boolean(filters.product) ||
+    Boolean(filters.country) ||
+    Boolean(filters.followers) ||
+    Boolean(filters.hasEmail);
 
   const rawCursor = resolvedSearchParams.cursor;
   const cursor = typeof rawCursor === "string" && rawCursor !== "" ? rawCursor : undefined;
@@ -121,13 +223,7 @@ export default async function OrganisationsPage({
   let nextHref: string | null = null;
   let error: unknown = null;
   try {
-    // Omitted (not `undefined`) when there is no cursor: existing tests
-    // assert `listOrganisations` was called with exactly two arguments on
-    // the first page, and an explicit `undefined` third argument fails that
-    // equality check.
-    const page = cursor
-      ? await listOrganisations(filters, PAGE_SIZE, cursor)
-      : await listOrganisations(filters, PAGE_SIZE);
+    const page = await listOrganisations(filters, PAGE_SIZE, cursor);
     rows = page.rows;
     total = page.total;
     nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
@@ -149,7 +245,8 @@ export default async function OrganisationsPage({
         rows={rows}
         state={state}
         emptyMessage={EMPTY_MESSAGE}
-        search={filters.search ?? ""}
+        descriptors={ORGANISATION_FILTERS}
+        values={toOrganisationFilterValues(filters)}
         total={total}
         nextHref={nextHref}
       />
