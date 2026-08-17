@@ -11,6 +11,7 @@ COPY apps/mobile/package.json apps/mobile/package.json
 COPY packages/tsconfig/package.json packages/tsconfig/package.json
 COPY packages/eslint-config/package.json packages/eslint-config/package.json
 COPY packages/homechef-shared/package.json packages/homechef-shared/package.json
+COPY packages/crm-country/package.json packages/crm-country/package.json
 # apps/web imports @tesserix/platform-auth (session + CSRF) in ~60 files. Its
 # package.json entries point at dist/, so it must be part of the workspace here
 # AND built below, or `next build` fails with module-not-found.
