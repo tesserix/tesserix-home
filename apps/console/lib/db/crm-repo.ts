@@ -663,6 +663,30 @@ function toIsoRequired(value: unknown): string {
   return iso;
 }
 
+/**
+ * The one ordering that decides which contact is "the primary": the flagged
+ * contact, then the oldest, then by `id`.
+ *
+ * One helper rather than the ordering spelled out at each site because eight
+ * queries choose a primary contact — three display subqueries and two filter
+ * subqueries in `listOrganisations`, plus `organisationDetail` and
+ * `wonWithoutConversion` — and they must agree. Two of them previously
+ * ordered by `name` instead, so following a list row to its detail page could
+ * show a different "primary" contact than the list did.
+ *
+ * `id` last is load-bearing: `crm_contacts.created_at` is not unique (an
+ * import writes a batch of contacts in one transaction, sharing it exactly),
+ * so without a total order each subquery breaks a tie independently — the
+ * `followers`/`hasEmail` filter matching on one contact while the row on
+ * screen shows another. Same reason the organisation keyset carries `id`.
+ *
+ * @param alias the table alias in the calling query, or "" when unaliased.
+ */
+function primaryContactOrder(alias: string): string {
+  const prefix = alias === "" ? "" : `${alias}.`;
+  return `${prefix}is_primary DESC, ${prefix}created_at ASC, ${prefix}id ASC`;
+}
+
 /** `null` for "no such organisation" — the caller (the page) turns that into
  *  `notFound()`, the same contract `fetchTicketDetail` uses. */
 export async function organisationDetail(organisationId: string): Promise<OrganisationDetail | null> {
@@ -699,7 +723,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       `SELECT id, name, email, phone, instagram_handle, is_primary
          FROM crm_contacts
         WHERE organisation_id = $1
-        ORDER BY is_primary DESC, name ASC NULLS LAST`,
+        ORDER BY ${primaryContactOrder("")}`,
       [organisationId],
     ),
     tesserixQuery<{
@@ -1488,7 +1512,7 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]>
        LEFT JOIN LATERAL (
          SELECT email FROM crm_contacts
           WHERE organisation_id = g.id AND email IS NOT NULL
-          ORDER BY is_primary DESC, name ASC NULLS LAST
+          ORDER BY ${primaryContactOrder("")}
           LIMIT 1
        ) c ON true
       WHERE o.stage = 'won'
@@ -1734,18 +1758,27 @@ export interface OrganisationPage {
   rows: OrganisationListRow[];
   /** Total matching the filter, ignoring pagination. */
   total: number;
+  /**
+   * How many matching rows sort ahead of this page — 0 on the first page.
+   *
+   * Counted in SQL, not inferred from a page number on the URL: pagination
+   * here is keyset, so a cursor carries no position, and a `?page=` param an
+   * operator could edit would let the surface state a range it hasn't got.
+   */
+  precedingCount: number;
   /** Opaque cursor for the next page; null when this is the last page. */
   nextCursor: string | null;
 }
 
 /**
- * Builds the `WHERE` predicate for `filter` — search and import-batch only,
- * never the pagination cursor, which is position, not a predicate. Called by
- * both the page query and the count query in `listOrganisations` so the two
- * can never disagree about what "matching" means: a total computed from a
- * second, hand-copied predicate is the classic way a pager starts reporting
- * a number that doesn't match the rows on screen, and Task 2 is about to add
- * four more filters that would otherwise need updating in two places.
+ * Builds the `WHERE` predicate for `filter` — search, import batch, product,
+ * country, follower band and has-email — never the pagination cursor, which
+ * is position, not a predicate. Called by both the page query and the count
+ * query in `listOrganisations` so the two can never disagree about what
+ * "matching" means: a total computed from a second, hand-copied predicate is
+ * the classic way a pager starts reporting a number that doesn't match the
+ * rows on screen, and there are six predicates here that would otherwise
+ * need updating in two places.
  */
 function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]): string[] {
   const clauses: string[] = [];
@@ -1753,6 +1786,13 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
   if (filter.search) {
     // Escape backslash first so it doesn't double-escape what follows,
     // then % and _ — same treatment as the owner filter in filterClause.
+    //
+    // This EXISTS spans ANY contact, deliberately unlike `hasEmail` and
+    // `followers` below, which bind to the primary contact: search answers
+    // "where is the row I'm thinking of", so a hit on a secondary contact's
+    // email is a hit, while those two filters describe the row the operator
+    // will actually see. A row can therefore be found by a secondary
+    // contact's email and still be excluded by "Has email on file".
     const escaped = filter.search
       .replace(/\\/g, "\\\\")
       .replace(/%/g, "\\%")
@@ -1821,7 +1861,7 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
            AND c.id = (
              SELECT c2.id FROM crm_contacts c2
               WHERE c2.organisation_id = g.id
-              ORDER BY c2.is_primary DESC, c2.created_at ASC
+              ORDER BY ${primaryContactOrder("c2")}
               LIMIT 1
            )
            -- Explicit: a NULL followers_count must never fall into the
@@ -1842,7 +1882,7 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
            AND c.id = (
              SELECT c2.id FROM crm_contacts c2
               WHERE c2.organisation_id = g.id
-              ORDER BY c2.is_primary DESC, c2.created_at ASC
+              ORDER BY ${primaryContactOrder("c2")}
               LIMIT 1
            )
            AND c.email IS NOT NULL
@@ -1939,8 +1979,9 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
  * joining contacts fans a multi-contact organisation into one row per
  * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
  * every selected column) costs more than reading the primary contact
- * directly. `is_primary DESC, created_at ASC` picks the flagged contact
- * when there is one and is otherwise stable rather than arbitrary.
+ * directly. Which contact that is comes from `primaryContactOrder` — the
+ * same ordering the filter subqueries and the detail page use, so all three
+ * agree on a tie.
  *
  * Pagination is keyset, not OFFSET: `OFFSET N` makes Postgres walk and
  * discard N rows every page, and a row inserted while the operator pages
@@ -1969,6 +2010,19 @@ export async function listOrganisations(
   const countParams: unknown[] = [];
   const countClauses = organisationFilterClauses(filter, countParams);
   const countWhere = countClauses.length > 0 ? `WHERE ${countClauses.join("\n        AND ")}` : "";
+  // Rows ahead of this page = matching rows at or beyond the cursor tuple in
+  // the list's own `created_at DESC, id DESC` order (the cursor is the last
+  // row of the previous page, and the page predicate below excludes it, so
+  // the comparison is inclusive). Aggregated in the count query rather than
+  // asked for separately: it is the same predicate over the same rows.
+  let precedingSelect = "0";
+  if (decodedCursor) {
+    countParams.push(decodedCursor.createdAt);
+    const createdAtParam = `$${countParams.length}`;
+    countParams.push(decodedCursor.id);
+    const idParam = `$${countParams.length}`;
+    precedingSelect = `count(*) FILTER (WHERE (g.created_at, g.id) >= (${createdAtParam}, ${idParam}))`;
+  }
 
   const params: unknown[] = [];
   const clauses = organisationFilterClauses(filter, params);
@@ -1989,23 +2043,24 @@ export async function listOrganisations(
   // touched again) — safe to run concurrently rather than paying two
   // sequential round trips for every page view.
   const [countRows, rawRows] = await Promise.all([
-    tesserixQuery<{ count: string | number }>(
-      `SELECT count(*) FROM crm_organisations g ${countWhere}`,
+    tesserixQuery<{ count: string | number; preceding: string | number }>(
+      `SELECT count(*) AS count, ${precedingSelect} AS preceding
+         FROM crm_organisations g ${countWhere}`,
       countParams,
     ),
     tesserixQuery<RawOrganisationListRow>(
       `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
               (SELECT c.name FROM crm_contacts c
                 WHERE c.organisation_id = g.id
-                ORDER BY c.is_primary DESC, c.created_at ASC
+                ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_name,
               (SELECT c.email FROM crm_contacts c
                 WHERE c.organisation_id = g.id
-                ORDER BY c.is_primary DESC, c.created_at ASC
+                ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_email,
               (SELECT c.instagram_handle FROM crm_contacts c
                 WHERE c.organisation_id = g.id
-                ORDER BY c.is_primary DESC, c.created_at ASC
+                ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_handle,
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
@@ -2023,6 +2078,7 @@ export async function listOrganisations(
     ),
   ]);
   const total = Number(countRows[0]?.count ?? 0);
+  const precedingCount = Number(countRows[0]?.preceding ?? 0);
 
   const hasNextPage = rawRows.length > limit;
   const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
@@ -2034,5 +2090,5 @@ export async function listOrganisations(
       ? encodeOrganisationCursor(toIsoRequired(lastRow.created_at), lastRow.id)
       : null;
 
-  return { rows, total, nextCursor };
+  return { rows, total, precedingCount, nextCursor };
 }

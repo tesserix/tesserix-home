@@ -969,4 +969,98 @@ describe("listOrganisations", () => {
       expect(page.total).toBe(3);
     });
   });
+
+  // `crm_contacts.created_at` is not unique — an import writes a batch of
+  // contacts in one transaction, sharing it exactly. Without a total order,
+  // each of the subqueries that picks "the primary contact" breaks such a tie
+  // independently, so the followers/hasEmail filter can match on one contact
+  // while the row on screen displays another. Only a real database with a
+  // real tie tells the two apart; a shape assertion on the SQL cannot.
+  describe("a tie on contact created_at resolves to the same contact everywhere", () => {
+    let tiedOrgId: string;
+    let primaryName: string;
+    let primaryFollowers: number;
+    let primaryHasEmail: boolean;
+
+    beforeAll(async () => {
+      const org = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Tied Contacts Org"],
+      );
+      tiedOrgId = org.rows[0].id;
+
+      // Identical created_at, neither flagged primary, so only the id
+      // tiebreaker can decide. Follower bands and email presence are set to
+      // disagree between the two, so picking the wrong one is observable.
+      const sharedCreatedAt = daysAgo(5);
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count, email, created_at)
+         VALUES ($1, 'Tied Contact Low', false, 500, NULL, $2::timestamptz),
+                ($1, 'Tied Contact High', false, 20000, 'tied@example.com', $2::timestamptz)`,
+        [tiedOrgId, sharedCreatedAt],
+      );
+
+      // Which contact wins is decided by the id ordering the queries use, not
+      // by anything this test can choose — so read it back rather than
+      // hard-coding an expectation the uuid generator would flake on.
+      const winner = await db.query<{
+        name: string;
+        followers_count: number;
+        email: string | null;
+      }>(
+        `SELECT name, followers_count, email FROM crm_contacts
+          WHERE organisation_id = $1
+          ORDER BY is_primary DESC, created_at ASC, id ASC
+          LIMIT 1`,
+        [tiedOrgId],
+      );
+      primaryName = winner.rows[0].name;
+      primaryFollowers = winner.rows[0].followers_count;
+      primaryHasEmail = winner.rows[0].email !== null;
+    });
+
+    it("displays the same contact the follower filter matched on", async () => {
+      const page = await listOrganisations({ search: "Tied Contacts Org" }, 50);
+      expect(page.rows.map((r) => r.id)).toEqual([tiedOrgId]);
+      expect(page.rows[0].contactName).toBe(primaryName);
+
+      const matchingBand = primaryFollowers >= 10000 ? "over10k" : "under1k";
+      const otherBand = matchingBand === "over10k" ? "under1k" : "over10k";
+      const matched = await listOrganisations(
+        { search: "Tied Contacts Org", followers: matchingBand },
+        50,
+      );
+      expect(matched.rows.map((r) => r.id)).toEqual([tiedOrgId]);
+      const excluded = await listOrganisations(
+        { search: "Tied Contacts Org", followers: otherBand },
+        50,
+      );
+      expect(excluded.rows.map((r) => r.id)).toEqual([]);
+    });
+
+    it("agrees with the hasEmail filter about which contact is primary", async () => {
+      const page = await listOrganisations({ search: "Tied Contacts Org", hasEmail: true }, 50);
+      expect(page.rows.map((r) => r.id)).toEqual(primaryHasEmail ? [tiedOrgId] : []);
+    });
+  });
+
+  // Keyset pagination carries no page number, so the surface's "101–200 of
+  // 259" range comes from the repo counting the rows ahead of the cursor —
+  // not from a `?page=` param an operator could edit into a range the page
+  // hasn't got.
+  describe("precedingCount", () => {
+    it("is 0 on the first page and counts the rows already paged past on the next", async () => {
+      const first = await listOrganisations({ search: "Pagination Org" }, 2);
+      expect(first.precedingCount).toBe(0);
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await listOrganisations(
+        { search: "Pagination Org" },
+        2,
+        first.nextCursor ?? undefined,
+      );
+      expect(second.precedingCount).toBe(first.rows.length);
+      expect(second.total).toBe(first.total);
+    });
+  });
 });
