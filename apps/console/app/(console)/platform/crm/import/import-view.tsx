@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
 import { parseImportCsv, type ImportRow } from "@/lib/crm";
 import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
@@ -215,11 +216,26 @@ export function ImportView() {
       ) : null}
 
       {committedCounts && committed ? (
-        <CountsSummary
-          counts={committedCounts}
-          title="Import committed"
-          matchedRows={committed.matchedRows}
-        />
+        <div className="flex flex-col gap-3">
+          <CountsSummary
+            counts={committedCounts}
+            title="Import committed"
+            matchedRows={committed.matchedRows}
+          />
+          {/* Without this the import flow was a dead end: it reported "47
+           *  created" and offered no way to see any of them, and those rows
+           *  sat on neither CRM queue for fourteen days. Gated on `created`,
+           *  not just rendering unconditionally — an import that only
+           *  matched or skipped rows created nothing this link could show. */}
+          {committed.created > 0 ? (
+            <Link
+              href={`/platform/crm/organisations?import=${committed.importId}`}
+              className="text-sm font-medium hover:underline"
+            >
+              View {committed.created} new organisations
+            </Link>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
