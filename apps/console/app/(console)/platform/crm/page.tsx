@@ -96,6 +96,13 @@ export function toQueueItem(row: QueueRow): QueueItem {
   };
 }
 
+/** Stages an operator can actually filter to. Both `dueOpportunities` and
+ *  `driftingOpportunities` exclude `won`/`lost` unconditionally (terminal
+ *  deals are not work) — offering them in the select would let an operator
+ *  pick a filter that always renders two empty groups, with nothing telling
+ *  them the choice was refused rather than simply unmatched. */
+const OPEN_CRM_STAGES = CRM_STAGES.filter((stage) => stage !== "won" && stage !== "lost");
+
 /**
  * The queue's filters.
  *
@@ -117,7 +124,7 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
     key: "stage",
     label: "Stage",
     type: "select",
-    options: CRM_STAGES.map((stage) => ({ value: stage, label: STAGE_LABELS[stage] })),
+    options: OPEN_CRM_STAGES.map((stage) => ({ value: stage, label: STAGE_LABELS[stage] })),
   },
   {
     key: "owner",

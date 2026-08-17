@@ -144,8 +144,22 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     await dueOpportunities({ owner: "Asha" }, 50);
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain("o.owner ILIKE $1");
+    expect(sql).toContain("ESCAPE '\\'");
     expect(sql).not.toContain("Asha");
     expect(params).toEqual(["%Asha%", 50]);
+  });
+
+  it("escapes LIKE metacharacters in the owner value rather than passing them through as wildcards", async () => {
+    // Bound parameter, so this was never SQL injection — but an unescaped
+    // "%" or "_" in the value acts as a LIKE wildcard rather than a literal
+    // character, which is a silently wrong filter (an owner of exactly "%"
+    // would match every row with a non-null owner). Only the value's own
+    // `%`/`_`/`\` are escaped; the wrapping `%...%` that makes this a
+    // substring search stays literal wildcards.
+    query.mockResolvedValue([]);
+    await dueOpportunities({ owner: "100%_done\\now" }, 50);
+    const [, params] = query.mock.calls[0];
+    expect(params).toEqual(["%100\\%\\_done\\\\now%", 50]);
   });
 
   it("combines all three filters, each its own bound parameter, before ORDER BY/LIMIT", async () => {

@@ -115,8 +115,16 @@ function filterClause(filter: QueueFilter, params: unknown[]): string {
     clauses.push(`o.stage = $${params.length}`);
   }
   if (filter.owner) {
-    params.push(`%${filter.owner}%`);
-    clauses.push(`o.owner ILIKE $${params.length}`);
+    // Bound parameter, so this is not injectable — but an unescaped value
+    // still lets `%`/`_` act as LIKE wildcards instead of literal characters
+    // (an owner filter of exactly "%" would match every row with a non-null
+    // owner). Escaping backslash first (so it doesn't double-escape the
+    // characters it introduces), then `%` and `_`, keeps the match a literal
+    // substring search; `ESCAPE '\'` tells Postgres `\` is the escape
+    // character rather than a literal backslash in the pattern.
+    const escaped = filter.owner.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    params.push(`%${escaped}%`);
+    clauses.push(`o.owner ILIKE $${params.length} ESCAPE '\\'`);
   }
   return clauses.length > 0 ? `\n        AND ${clauses.join("\n        AND ")}` : "";
 }

@@ -170,6 +170,17 @@ describe("readQueueFilters", () => {
     expect(product?.options?.length).toBeGreaterThan(3);
   });
 
+  it("does not offer won/lost in the stage select — both queries always exclude them", () => {
+    // Offering a stage the query refuses would render two empty groups with
+    // nothing telling the operator the choice was refused rather than
+    // simply unmatched.
+    const stage = QUEUE_FILTERS.find((d) => d.key === "stage");
+    const values = stage?.options?.map((o) => o.value) ?? [];
+    expect(values).not.toContain("won");
+    expect(values).not.toContain("lost");
+    expect(values).toEqual(["new", "contacted", "qualified"]);
+  });
+
   it("drops a value no descriptor offers", () => {
     expect(readQueueFilters({ stage: "banana" })).toEqual({});
   });

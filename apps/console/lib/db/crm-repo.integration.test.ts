@@ -165,6 +165,15 @@ describe("driftingOpportunities against a real database", () => {
 });
 
 describe("dueOpportunities against a real database", () => {
+  // This asserts the exact due set from the top-level `beforeAll` seed only.
+  // The "filtering runs in SQL..." describe below adds three more due rows
+  // (two mark8ly, one kora) in its own nested `beforeAll` — if that ran
+  // first, this `toEqual` would fail. It's safe today because Vitest runs a
+  // file's describes, and their `beforeAll`s, in declaration order, and this
+  // describe is declared above that one. That ordering guarantee does NOT
+  // hold under `--sequence.shuffle`; if this suite ever adopts shuffled
+  // execution, this assertion (and the nested seed below) need to move to
+  // the top-level `beforeAll`/a distinct org so they stop depending on it.
   it("returns only the overdue, non-terminal opportunity", async () => {
     const rows = await dueOpportunities({}, 50);
     const ids = rows.map((r) => r.id);
@@ -180,6 +189,10 @@ describe("filtering runs in SQL ahead of ORDER BY/LIMIT (Ruling 11)", () => {
   // survive at all. This test fails against a TypeScript post-filter
   // (`filterRows` over a `LIMIT 2` page) and passes against the SQL-bound
   // implementation — that discrimination is the point.
+  //
+  // Seeded in a nested `beforeAll` (after the describe above's assertions
+  // already depend on the top-level seed alone) rather than in the top-level
+  // seed — see the ordering-dependence note on the previous describe.
   const orgId2Holder: { id?: string } = {};
 
   beforeAll(async () => {
@@ -225,5 +238,33 @@ describe("filtering runs in SQL ahead of ORDER BY/LIMIT (Ruling 11)", () => {
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("22222222-2222-2222-2222-222222222222"); // H, no product
     expect(ids).not.toContain("33333333-3333-3333-3333-333333333333"); // I, no product
+  });
+});
+
+describe("owner filter escapes LIKE metacharacters against a real database", () => {
+  // A literal "%" (or "_") in the filter value must not act as a LIKE
+  // wildcard — an unescaped owner of "%" would otherwise match every row
+  // with a non-null owner, which is a silently wrong filter, not a crash.
+  beforeAll(async () => {
+    await db.query(
+      `UPDATE crm_opportunities SET owner = 'Asha Rao' WHERE id = $1`,
+      ["55555555-5555-5555-5555-555555555555"],
+    );
+  });
+
+  it("does not treat a literal '%' owner value as 'match everything'", async () => {
+    const rows = await dueOpportunities({ owner: "%" }, 50);
+    // The due set (top-level seed) has exactly one owned row ("Asha Rao"),
+    // plus whatever the sibling describe above seeded with no owner set. An
+    // unescaped "%" would return all of them; escaped, "%" has no literal
+    // match and the filter returns nothing.
+    expect(rows).toEqual([]);
+  });
+
+  it("still matches a literal substring once escaped", async () => {
+    const rows = await dueOpportunities({ owner: "Asha" }, 50);
+    expect(rows.map((r) => r.id)).toEqual([
+      "55555555-5555-5555-5555-555555555555",
+    ]);
   });
 });
