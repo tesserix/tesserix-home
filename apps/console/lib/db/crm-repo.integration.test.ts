@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { UNASSIGNED_PRODUCT } from "./crm-filters";
 
 /**
  * Integration coverage for the drifting-queue's NULL/COALESCE semantics.
@@ -71,6 +72,12 @@ beforeAll(async () => {
     "../../../web/db/migrations/0022_crm_suppressions_normalize.sql",
   );
   await db.exec(readFileSync(normalizeMigrationPath, "utf-8"));
+  // Task 3/4: derived `country` column the filter tests below need.
+  const countryMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0025_crm_organisations_country.sql",
+  );
+  await db.exec(readFileSync(countryMigrationPath, "utf-8"));
   dbHolder.db = db;
 
   const orgResult = await db.query<{ id: string }>(
@@ -748,6 +755,183 @@ describe("listOrganisations", () => {
       await expect(
         listOrganisations({ search: "Pagination Org" }, 2, "not-a-real-cursor"),
       ).rejects.toThrow();
+    });
+  });
+
+  // Task 5: product/country/followers/email predicates. Seeded in its own
+  // describe block, isolated by name filters where needed, so assertions
+  // below know exactly which rows and how many are in play.
+  describe("filters", () => {
+    let mark8lyOrgId: string;
+    let unassignedOrgId: string;
+    let chennaiOrgId: string;
+    let keralaOrgId: string;
+    let mumbaiOrgId: string;
+    let australiaOrgId: string;
+    let noLocationOrgId: string;
+    let bigCreatorOrgId: string;
+    let nullFollowersOrgId: string;
+    let emailOrgId: string;
+
+    beforeAll(async () => {
+      const mark8ly = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Mark8ly Org"],
+      );
+      mark8lyOrgId = mark8ly.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_opportunities (organisation_id, stage, product) VALUES ($1, 'new', 'mark8ly')`,
+        [mark8lyOrgId],
+      );
+
+      const unassigned = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Unassigned Org"],
+      );
+      unassignedOrgId = unassigned.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_opportunities (organisation_id, stage, product) VALUES ($1, 'new', NULL)`,
+        [unassignedOrgId],
+      );
+
+      const chennai = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+        ["Filter Test Chennai Org", "Chennai", "IN"],
+      );
+      chennaiOrgId = chennai.rows[0].id;
+
+      const kerala = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+        ["Filter Test Kerala Org", "Kerala", "IN"],
+      );
+      keralaOrgId = kerala.rows[0].id;
+
+      const mumbai = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+        ["Filter Test Mumbai Org", "Mumbai, Maharashtra", "IN"],
+      );
+      mumbaiOrgId = mumbai.rows[0].id;
+
+      const australia = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+        ["Filter Test Australia Org", "Australia", "AU"],
+      );
+      australiaOrgId = australia.rows[0].id;
+
+      const noLocation = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test No Location Org"],
+      );
+      noLocationOrgId = noLocation.rows[0].id;
+
+      const bigCreator = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Big Creator Org"],
+      );
+      bigCreatorOrgId = bigCreator.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+         VALUES ($1, $2, true, $3)`,
+        [bigCreatorOrgId, "Big Creator", 15000],
+      );
+
+      const nullFollowers = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Null Followers Org"],
+      );
+      nullFollowersOrgId = nullFollowers.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+         VALUES ($1, $2, true, NULL)`,
+        [nullFollowersOrgId, "Unmeasured Contact"],
+      );
+
+      const emailOrg = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Email Org"],
+      );
+      emailOrgId = emailOrg.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, email)
+         VALUES ($1, $2, true, $3)`,
+        [emailOrgId, "Has Email Contact", "filtertest@example.com"],
+      );
+    });
+
+    it("matches an organisation by a product on any of its opportunities", async () => {
+      // product lives on the opportunity, and an org may have several — so
+      // this is an EXISTS, never a join that would duplicate the org row.
+      const page = await listOrganisations({ product: "mark8ly" }, 50);
+      expect(page.rows.map((r) => r.id)).toContain(mark8lyOrgId);
+      expect(page.rows.map((r) => r.id)).not.toContain(unassignedOrgId);
+    });
+
+    it("matches unassigned organisations on the shared sentinel", async () => {
+      // Every migrated lead is unassigned today — this is the most-used
+      // option, not an edge case.
+      const page = await listOrganisations({ product: UNASSIGNED_PRODUCT }, 50);
+      expect(page.rows.map((r) => r.id)).toContain(unassignedOrgId);
+      expect(page.rows.map((r) => r.id)).not.toContain(mark8lyOrgId);
+    });
+
+    it("returns one row per organisation when several opportunities match", async () => {
+      // Two mark8ly opportunities on one org must not render it twice.
+      await db.query(
+        `INSERT INTO crm_opportunities (organisation_id, stage, product) VALUES ($1, 'new', 'mark8ly')`,
+        [mark8lyOrgId],
+      );
+      const page = await listOrganisations({ product: "mark8ly" }, 50);
+      expect(page.rows.filter((r) => r.id === mark8lyOrgId)).toHaveLength(1);
+    });
+
+    it("matches organisations by derived country, across location granularities", async () => {
+      // The point of the derived column: "Chennai", "Kerala" and "Mumbai,
+      // Maharashtra" are one country and must come back together, which no
+      // substring match on the raw location could do.
+      const page = await listOrganisations({ country: "IN" }, 50);
+      const ids = page.rows.map((r) => r.id);
+      expect(ids).toEqual(expect.arrayContaining([chennaiOrgId, keralaOrgId, mumbaiOrgId]));
+      expect(ids).not.toContain(australiaOrgId);
+    });
+
+    it("excludes organisations whose country could not be derived", async () => {
+      // Most rows have no location at all. They must not fall into some
+      // default country and be read as leads in a market they are not in.
+      const page = await listOrganisations({ country: "IN" }, 50);
+      expect(page.rows.map((r) => r.id)).not.toContain(noLocationOrgId);
+    });
+
+    it("filters by follower band on the primary contact", async () => {
+      const page = await listOrganisations({ followers: "over10k" }, 50);
+      expect(page.rows.map((r) => r.id)).toEqual([bigCreatorOrgId]);
+    });
+
+    it("excludes unknown follower counts from every band", async () => {
+      // A contact with no follower count must not silently land in the
+      // lowest band and be read as a qualified-out lead.
+      const page = await listOrganisations({ followers: "under1k" }, 50);
+      expect(page.rows.map((r) => r.id)).not.toContain(nullFollowersOrgId);
+    });
+
+    it("filters to organisations whose contact has an email", async () => {
+      // Scoped to this describe block's fixtures with `search` — the suite
+      // seeds another organisation with an emailed contact (Glebe Flowers)
+      // earlier in the file, and hasEmail alone would catch that too.
+      const page = await listOrganisations({ hasEmail: true, search: "Filter Test" }, 50);
+      expect(page.rows.map((r) => r.id)).toEqual([emailOrgId]);
+    });
+
+    it("composes filters", async () => {
+      const page = await listOrganisations({ product: UNASSIGNED_PRODUCT, hasEmail: true }, 50);
+      expect(page.total).toBe(page.rows.length);
+    });
+
+    it("counts the filtered set when filters compose", async () => {
+      // The count query and the page query must build their predicate from
+      // the same helper — a hand-copied second predicate is how a pager
+      // starts lying.
+      const page = await listOrganisations({ country: "IN" }, 1);
+      expect(page.total).toBe(3);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
-import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, type FollowerBand } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
 import {
   isUsableImportRow,
@@ -1699,6 +1699,17 @@ export interface OrganisationFilter {
   search?: string;
   /** Only organisations created by this import batch. */
   importId?: string;
+  /** A real product string, or `UNASSIGNED_PRODUCT` for opportunities with
+   *  no product set. Lives on `crm_opportunities`, not the organisation —
+   *  matched with EXISTS since one organisation can have several. */
+  product?: string;
+  /** ISO 3166-1 alpha-2, exact match on the derived `crm_organisations.country`
+   *  column (Task 3/4). Never a pattern over the raw `location`. */
+  country?: string;
+  /** Follower-count band of the organisation's primary contact. */
+  followers?: FollowerBand;
+  /** True to require the primary contact to have an email on file. */
+  hasEmail?: boolean;
 }
 
 export interface OrganisationListRow {
@@ -1760,6 +1771,68 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
   if (filter.importId) {
     params.push(filter.importId);
     clauses.push(`g.import_id = $${params.length}`);
+  }
+
+  if (filter.product) {
+    // EXISTS, never a join: product lives on crm_opportunities and one
+    // organisation can have several, so a join fans one org into a row per
+    // matching opportunity and renders it twice.
+    if (filter.product === UNASSIGNED_PRODUCT) {
+      clauses.push(
+        `EXISTS (SELECT 1 FROM crm_opportunities o WHERE o.organisation_id = g.id AND o.product IS NULL)`,
+      );
+    } else {
+      params.push(filter.product);
+      clauses.push(
+        `EXISTS (SELECT 1 FROM crm_opportunities o WHERE o.organisation_id = g.id AND o.product = $${params.length})`,
+      );
+    }
+  }
+
+  if (filter.country) {
+    // Exact match on the derived column (crm_org_country_idx), not a
+    // pattern over the raw location — a NULL country matches no filter
+    // value, which is correct: an underivable location is not evidence of
+    // any market.
+    params.push(filter.country);
+    clauses.push(`g.country = $${params.length}`);
+  }
+
+  if (filter.followers) {
+    // Bounded on the primary contact, selected the same way the page query
+    // selects the displayed contact — otherwise a row could appear under a
+    // band its visible follower count contradicts.
+    const band = FOLLOWER_BANDS[filter.followers];
+    params.push(band.min);
+    const minParam = `$${params.length}`;
+    let upperBound = "";
+    if (band.max !== null) {
+      params.push(band.max);
+      upperBound = ` AND c.followers_count <= $${params.length}`;
+    }
+    clauses.push(`EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = g.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = g.id
+              ORDER BY c2.is_primary DESC, c2.created_at ASC
+              LIMIT 1
+           )
+           -- Explicit: a NULL followers_count must never fall into the
+           -- lowest band by satisfying the upper bound on an unmeasured
+           -- contact.
+           AND c.followers_count IS NOT NULL
+           AND c.followers_count >= ${minParam}${upperBound}
+      )`);
+  }
+
+  if (filter.hasEmail) {
+    clauses.push(`EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = g.id
+           AND c.email IS NOT NULL
+      )`);
   }
 
   return clauses;
