@@ -120,6 +120,32 @@ jobs:
             echo "tag=main-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           fi
 
+      # Build BOTH images on pull requests, without pushing.
+      #
+      # The push-only-on-main rule below is right and stays. But "do not push"
+      # was implemented as "do not build", and those are different things: for
+      # eight consecutive merges (#200 through #212) every PR went green while
+      # every main build failed on the same Dockerfile error, because nothing
+      # compiled a Dockerfile until after the merge. Building without tagging a
+      # registry or calling `docker push` publishes nothing and cannot trigger a
+      # Kargo promotion, so the deploy-safety reason for skipping it does not
+      # apply.
+      #
+      # Local tags only. No registry reference, no push, no scan.
+      - name: Build images (PR check, no push)
+        if: github.event_name == 'pull_request'
+        run: |
+          docker build \
+            --secret id=NODE_AUTH_TOKEN,env=NODE_AUTH_TOKEN \
+            --platform linux/amd64 \
+            -t tesserix-home:pr-check \
+            .
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.console \
+            -t tesserix-console:pr-check \
+            .
+
       # Image build/push (and the scan steps below) run ONLY on pushes to main.
       # A push to any other branch (feat/**, etc.) would otherwise publish a
       # main-<sha> image that Kargo auto-promotes straight to prod — an
