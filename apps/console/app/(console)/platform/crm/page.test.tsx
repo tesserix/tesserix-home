@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
 
