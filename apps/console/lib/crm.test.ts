@@ -8,7 +8,7 @@ import {
   parseImportCsv,
   boundFilename,
   MAX_IMPORT_ROWS,
-  clampTotalRows,
+  validateTotalRows,
   MAX_TOTAL_ROWS,
 } from "./crm";
 
@@ -177,35 +177,49 @@ describe("MAX_IMPORT_ROWS", () => {
   });
 });
 
-describe("clampTotalRows", () => {
-  // Important 2 (review round 2): totalRows is a server-action parameter —
-  // untrusted input reaching `crm_imports.row_count`, an `integer NOT NULL`
-  // column with no CHECK — exactly like `filename` (`boundFilename`).
-  it("passes through a sane value unchanged", () => {
-    expect(clampTotalRows(12, 10)).toBe(12);
+describe("validateTotalRows", () => {
+  // Important 2 (review round 2), Ruling 26 (review round 3): totalRows is
+  // a server-action parameter — untrusted input reaching
+  // `crm_imports.row_count`, an `integer NOT NULL` column with no CHECK —
+  // exactly like `filename` (`boundFilename`). Round 3 changed the
+  // response from silent correction to refusal: a clamped value still fed
+  // the audit record, so a capability-gated operator could plant a false
+  // audit summary with no error and no trace.
+  it("accepts a sane value", () => {
+    expect(validateTotalRows(12, 10)).toBeUndefined();
   });
 
-  it("truncates a fractional value to an integer", () => {
-    expect(clampTotalRows(12.9, 10)).toBe(12);
+  it("accepts the committed row count itself (the floor)", () => {
+    expect(validateTotalRows(10, 10)).toBeUndefined();
   });
 
-  it("never returns less than the rows actually being committed", () => {
+  it("accepts MAX_TOTAL_ROWS itself (the ceiling)", () => {
+    expect(validateTotalRows(MAX_TOTAL_ROWS, 10)).toBeUndefined();
+  });
+
+  it("rejects a fractional value", () => {
+    expect(validateTotalRows(12.9, 10)).toBeDefined();
+  });
+
+  it("rejects a value smaller than the rows actually being committed", () => {
     // totalRows can't be smaller than the batch it's describing — a caller
-    // passing a bogus low value (or omitting it) still gets an honest floor.
-    expect(clampTotalRows(3, 10)).toBe(10);
+    // passing a bogus low value is a bug worth surfacing, not smoothing
+    // into an honest-looking floor.
+    expect(validateTotalRows(3, 10)).toBeDefined();
   });
 
-  it("clamps an absurdly large value instead of letting it overflow an integer column", () => {
-    expect(clampTotalRows(1e10, 10)).toBe(MAX_TOTAL_ROWS);
+  it("rejects a value larger than MAX_TOTAL_ROWS, instead of forwarding it toward an integer-column overflow", () => {
+    expect(validateTotalRows(1e10, 10)).toBeDefined();
+    expect(validateTotalRows(MAX_TOTAL_ROWS + 1, 10)).toBeDefined();
   });
 
-  it("clamps a negative value up to the committed row count", () => {
-    expect(clampTotalRows(-5, 10)).toBe(10);
+  it("rejects a negative value", () => {
+    expect(validateTotalRows(-5, 10)).toBeDefined();
   });
 
-  it("falls back to the committed row count for NaN or Infinity", () => {
-    expect(clampTotalRows(Number.NaN, 10)).toBe(10);
-    expect(clampTotalRows(Number.POSITIVE_INFINITY, 10)).toBe(10);
+  it("rejects NaN or Infinity", () => {
+    expect(validateTotalRows(Number.NaN, 10)).toBeDefined();
+    expect(validateTotalRows(Number.POSITIVE_INFINITY, 10)).toBeDefined();
   });
 
   it("MAX_TOTAL_ROWS is comfortably above MAX_IMPORT_ROWS but nowhere near Postgres's integer range", () => {

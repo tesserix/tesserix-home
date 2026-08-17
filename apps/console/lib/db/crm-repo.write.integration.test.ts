@@ -312,7 +312,19 @@ describe("advanceStage writes the opportunity and its stage_change activity atom
 // site per lookup, both passed `query`), so a container test here would be
 // a load test, not a regression test.
 describe("commitImport dedups within one batch, against the real crm_contacts_email_lower_uq", () => {
-  it("commits the first occurrence of a shared email and matches the second, as one organisation", async () => {
+  // Round 3 review probe: the first version of this fixture put the messy
+  // form ("  Dup@Example.com  ") ONLY on row 1 and the already-canonical
+  // form ("dup@example.com") on row 2 — which only exercises the INSERT
+  // side's `.trim().toLowerCase()`. Row 2's dedup SELECT never had to
+  // normalise anything to match, so a broken SELECT-side normalisation
+  // (e.g. `lower(email) = lower($1)` without the `.trim()` `isSuppressed`/
+  // `findMatchingOrganisationId` apply to the bound parameter) would have
+  // passed this test anyway. Row 2 is now ALSO messy
+  // ("  DUP@Example.com  "), so the SELECT side has to normalise
+  // (trim + lowercase) the value it's given to find row 1's insert — the
+  // same round trip a real CSV export, with inconsistent casing/whitespace
+  // on every row, would produce.
+  it("commits the first occurrence of a shared email and matches the second, even when both are messy", async () => {
     const before = await db.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM crm_organisations`,
     );
@@ -321,7 +333,7 @@ describe("commitImport dedups within one batch, against the real crm_contacts_em
     const result = await commitImport(
       [
         { name: "Dup Co", email: "  Dup@Example.com  " },
-        { name: "Dup Co Again", email: "dup@example.com" },
+        { name: "Dup Co Again", email: "  DUP@Example.com  " },
       ],
       "ava@tesserix.app",
     );
@@ -338,5 +350,9 @@ describe("commitImport dedups within one batch, against the real crm_contacts_em
       `SELECT email FROM crm_contacts WHERE lower(email) = 'dup@example.com'`,
     );
     expect(contacts.rows).toHaveLength(1);
+    // The stored form is the INSERT side's own normalisation
+    // (`.trim().toLowerCase()`), from row 1 — proves the row that survived
+    // is genuinely canonical, not just whatever string happened to be typed.
+    expect(contacts.rows[0].email).toBe("dup@example.com");
   });
 });

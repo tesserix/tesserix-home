@@ -230,28 +230,60 @@ describe("commitImportAction", () => {
     );
   });
 
-  // Important 2 (review round 2): totalRows is a server-action parameter,
-  // reachable directly over the network with no client in between — same
-  // reasoning as the filename test above, applied to the parameter that
-  // was missed the first time.
-  it("clamps an absurd totalRows instead of forwarding it to an integer column unbounded", async () => {
+  // Important 2 (review round 2), Ruling 26 (review round 3): totalRows is
+  // a server-action parameter, reachable directly over the network with no
+  // client in between — same reasoning as the filename test above, but
+  // REJECTED rather than clamped: a silently-corrected value still fed the
+  // audit record (`parseMalformed` is derived from it), which let a
+  // capability-gated operator plant a false audit summary with no error and
+  // no trace — `commitImportAction([oneRow], "x.csv", 1e10)` used to write
+  // `row_count: 10000, skipped_count: 9999` and audit `malformed: 9999` for
+  // a genuinely one-row import.
+  it("rejects an absurd totalRows instead of forwarding it to an integer column, and writes nothing", async () => {
     signIn(["read"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 1e10);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 1e10);
 
-    const [, , , clamped] = vi.mocked(commitImport).mock.calls[0];
-    expect(clamped).toBe(MAX_TOTAL_ROWS);
+    expect(result.ok).toBe(false);
+    expect(commitImport).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
   });
 
-  it("clamps a negative or fractional totalRows up to the committed row count", async () => {
+  it("rejects a totalRows over MAX_TOTAL_ROWS, before touching the session", async () => {
+    const result = await commitImportAction(
+      [{ email: "ava@example.com" }],
+      "leads.csv",
+      MAX_TOTAL_ROWS + 1,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative or fractional totalRows, and writes nothing", async () => {
     signIn(["read"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", -3.7);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", -3.7);
 
-    const [, , , clamped] = vi.mocked(commitImport).mock.calls[0];
-    expect(clamped).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a totalRows smaller than the committed row count", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+
+    const result = await commitImportAction(
+      [{ email: "ava@example.com" }, { email: "second@example.com" }],
+      "leads.csv",
+      1,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(commitImport).not.toHaveBeenCalled();
   });
 
   // Minor (review round 2): the audit summary is a THIRD copy of these

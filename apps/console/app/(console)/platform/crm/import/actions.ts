@@ -10,7 +10,7 @@ import {
   type ImportResult,
 } from "@/lib/db/crm-repo";
 import { withCrmWrite } from "@/lib/crm-write";
-import { MAX_IMPORT_ROWS, boundFilename, clampTotalRows, type ImportRow } from "@/lib/crm";
+import { MAX_IMPORT_ROWS, boundFilename, validateTotalRows, type ImportRow } from "@/lib/crm";
 import { committedDisplayCounts } from "./counts";
 
 /**
@@ -83,21 +83,29 @@ export async function commitImportAction(
   if (rows.length > MAX_IMPORT_ROWS) {
     return { ok: false, message: tooManyRowsMessage(rows.length) };
   }
+  // Important 2 (review round 2), Ruling 26 (review round 3): totalRows is
+  // a server-action parameter — reachable directly over the network, no
+  // client in between guaranteeing it's sane — flowing into
+  // `crm_imports.row_count`/`.skipped_count`, `integer NOT NULL` columns
+  // with no CHECK. Rejected, not clamped: a silently-corrected value would
+  // still feed the audit record (`parseMalformed` below is derived from
+  // it), which is the same failure mode `serialiseSummary`/
+  // `validateActionName` already reject rather than sanitise elsewhere in
+  // this codebase — a capability-gated operator could otherwise plant a
+  // false audit summary with no error and no trace.
+  const totalRowsProblem = validateTotalRows(totalRows, rows.length);
+  if (totalRowsProblem) {
+    return { ok: false, message: totalRowsProblem };
+  }
   const bounded = boundFilename(filename);
-  // Important 2 (review round 2): totalRows is a server-action parameter —
-  // reachable directly over the network, no client in between guaranteeing
-  // it's sane — flowing into `crm_imports.row_count`/`.skipped_count`,
-  // `integer NOT NULL` columns with no CHECK. Clamped here, the same
-  // reasoning `boundFilename` already applies to `filename` just above.
-  const clampedTotalRows = clampTotalRows(totalRows, rows.length);
   // The rows the client-side parser dropped before this batch ever formed
-  // — recoverable from the gap between the clamped total and what's
+  // — recoverable from the gap between the (now validated) total and what's
   // actually being committed, without a third parameter for the same fact
   // `totalRows` already carries.
-  const parseMalformed = clampedTotalRows - rows.length;
+  const parseMalformed = totalRows - rows.length;
   const result = await withCrmWrite(
     bounded ?? "import",
-    (actor) => commitImport(rows, actor.email, bounded, clampedTotalRows),
+    (actor) => commitImport(rows, actor.email, bounded, totalRows),
     (outcome: ImportResult) => {
       // Minor (review round 2): routed through the SAME `committedDisplayCounts`
       // the UI's committed card uses (`import-view.tsx`, `counts.ts`) — this

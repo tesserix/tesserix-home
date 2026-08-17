@@ -221,37 +221,51 @@ export function boundFilename(filename: string | undefined): string | undefined 
 
 /**
  * Upper bound on `totalRows` (the caller-reported full file size, including
- * rows the client already dropped as malformed) that `clampTotalRows` will
- * ever pass through — deliberately independent of `MAX_IMPORT_ROWS`, which
- * only bounds the rows actually being written. 20× `MAX_IMPORT_ROWS` is
- * generous headroom for a file that is mostly junk (a batch at the row cap
- * with 19 malformed lines for every usable one), while staying nowhere
- * near Postgres's 32-bit `integer` range — the column `crm_imports.row_count`
+ * rows the client already dropped as malformed) that `validateTotalRows`
+ * will accept — deliberately independent of `MAX_IMPORT_ROWS`, which only
+ * bounds the rows actually being written. 20× `MAX_IMPORT_ROWS` is generous
+ * headroom for a file that is mostly junk (a batch at the row cap with 19
+ * malformed lines for every usable one), while staying nowhere near
+ * Postgres's 32-bit `integer` range — the column `crm_imports.row_count`
  * and `.skipped_count` actually are.
  */
 export const MAX_TOTAL_ROWS = MAX_IMPORT_ROWS * 20;
 
 /**
- * Clamps a caller-supplied `totalRows` to a safe, honest range before it
- * reaches `commitImport` — Important 2 (review round 2): a server-action
- * parameter is untrusted input reaching an `integer NOT NULL` column with
- * no CHECK, exactly the same reasoning `boundFilename` applies to
- * `filename`. Without this, `totalRows: 1e10` fails `commitImport`'s
- * `UPDATE crm_imports` with an integer-overflow error AFTER every row's
- * insert has already run, rolling back an otherwise-fine batch; a negative
- * or fractional value would write garbage into an audit-relevant column.
+ * Validates a caller-supplied `totalRows` before it reaches `commitImport`
+ * — Important 2 (review round 2), then Ruling 26 (review round 3): a
+ * server-action parameter is untrusted input reaching an `integer NOT
+ * NULL` column with no CHECK, the same reasoning `boundFilename` applies
+ * to `filename`. Without a check at all, `totalRows: 1e10` fails
+ * `commitImport`'s `UPDATE crm_imports` with an integer-overflow error
+ * AFTER every row's insert has already run, rolling back an
+ * otherwise-fine batch.
  *
- * Truncates to an integer, then clamps to
- * [`committedRowCount`, `MAX_TOTAL_ROWS`] — never less than the rows
- * actually being committed (the total can't be smaller than the batch it
- * describes) and never more than the cap. `NaN`/`Infinity` fall back to
- * `committedRowCount`, the same honest floor an out-of-range value clamps
- * to, rather than propagating a non-finite number into SQL.
+ * Rejects rather than clamps. An earlier version of this function silently
+ * rewrote an out-of-range value to the nearest valid one — but the
+ * rewritten value still fed the audit record (`parseMalformed` is derived
+ * from it), so a capability-gated operator could plant a false audit
+ * summary just by sending a nonsensical `totalRows`, with no error and no
+ * trace that anything was corrected. That is the same failure mode this
+ * codebase has already rejected twice — `serialiseSummary` refuses a bad
+ * summary key, `validateActionName` refuses a bad action name, both reject
+ * over sanitise for exactly this reason: a silently-corrected value
+ * produces an audit row nobody can trust. `totalRows` is computed by the
+ * client from its own parse (`rows.length + parseImportCsv(...).malformed`
+ * in `import-view.tsx`); a value outside what's possible for THIS batch is
+ * a bug worth surfacing, not smoothing over.
+ *
+ * Returns an operator-facing message when `totalRows` is not a finite
+ * integer in `[committedRowCount, MAX_TOTAL_ROWS]` — never smaller than
+ * the rows actually in the batch (the total can't be smaller than what it
+ * describes) and never larger than the cap. Returns `undefined` when the
+ * value is valid.
  */
-export function clampTotalRows(totalRows: number, committedRowCount: number): number {
-  if (!Number.isFinite(totalRows)) return committedRowCount;
-  const truncated = Math.trunc(totalRows);
-  return Math.min(Math.max(truncated, committedRowCount), MAX_TOTAL_ROWS);
+export function validateTotalRows(totalRows: number, committedRowCount: number): string | undefined {
+  if (!Number.isInteger(totalRows) || totalRows < committedRowCount || totalRows > MAX_TOTAL_ROWS) {
+    return `totalRows (${totalRows}) must be a whole number between ${committedRowCount} and ${MAX_TOTAL_ROWS}.`;
+  }
+  return undefined;
 }
 
 export function parseImportCsv(text: string): ParsedImport {
