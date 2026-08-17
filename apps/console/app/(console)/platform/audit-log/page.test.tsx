@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE } from "@/components/kit/surface-state";
 import { PlatformApiError } from "@/lib/platform-api";
 import type { AuditEntry, AuditSourceFailure, SourcedAuditEntry } from "@/lib/audit";
@@ -459,22 +460,35 @@ describe("metadata is readable, and complete", () => {
     return { ...PRODUCT_ROW, metadata };
   }
 
-  it("renders each key with its value instead of a line of JSON", () => {
+  /**
+   * Metadata now renders behind the viewer's disclosure, collapsed by
+   * default (see `audit-timeline.tsx`'s `toViewerEntries`) — these tests care
+   * about the formatting, not the disclosure itself, so they open it before
+   * asserting on content. `getByRole("button", { name: /show details/i })`
+   * matches the viewer's default label from `defaultAuditLogLabels`.
+   */
+  async function expandDetail() {
+    await userEvent.click(screen.getByRole("button", { name: /show details/i }));
+  }
+
+  it("renders each key with its value instead of a line of JSON", async () => {
     // The complaint this closes: the row used to print the whole object
     // verbatim, braces and quotes included, beside the actor.
     renderTimeline({ entries: [rowWithMetadata(MARK8LY_METADATA)] });
+    await expandDetail();
 
     expect(screen.getByText("severity")).toBeInTheDocument();
     expect(screen.getByText("critical")).toBeInTheDocument();
     expect(screen.queryByText(MARK8LY_METADATA)).not.toBeInTheDocument();
   });
 
-  it("shows EVERY key, not a readable subset", () => {
+  it("shows EVERY key, not a readable subset", async () => {
     // GUARDS THE GUARD, and it is the assertion that matters most here. A
     // formatter that renders the two keys it recognises passes the test above
     // while quietly hiding the rest of an audit record — worse than the JSON,
     // which at least never understated how much there was.
     renderTimeline({ entries: [rowWithMetadata(MARK8LY_METADATA)] });
+    await expandDetail();
 
     for (const key of ["severity", "status", "tenant", "ip"]) {
       expect(screen.getByText(key)).toBeInTheDocument();
@@ -484,25 +498,27 @@ describe("metadata is readable, and complete", () => {
     }
   });
 
-  it("keeps a key this build has never heard of", () => {
+  it("keeps a key this build has never heard of", async () => {
     // mark8ly spreads `...row.metadata` into its object, so per-event keys
     // arrive that no whitelist here could anticipate. The unusual field is
     // exactly the one an operator is reading the row for.
     renderTimeline({
       entries: [rowWithMetadata('{"severity":"high","quarantine_reason":"rate-limit"}')],
     });
+    await expandDetail();
 
     expect(screen.getByText("quarantine_reason")).toBeInTheDocument();
     expect(screen.getByText("rate-limit")).toBeInTheDocument();
   });
 
-  it("renders a nested diff as JSON under its own label, not as [object Object]", () => {
+  it("renders a nested diff as JSON under its own label, not as [object Object]", async () => {
     // kora's and homechef's metadata is `{before, after}` and both values are
     // objects. `String(value)` would render each as "[object Object]" — the
     // one formatting that destroys the content outright.
     renderTimeline({
       entries: [rowWithMetadata('{"before":{"plan":"free"},"after":{"plan":"pro"}}')],
     });
+    await expandDetail();
 
     expect(screen.getByText("before")).toBeInTheDocument();
     expect(screen.getByText('{"plan":"free"}')).toBeInTheDocument();
@@ -511,10 +527,11 @@ describe("metadata is readable, and complete", () => {
     expect(screen.queryByText(/\[object Object\]/)).not.toBeInTheDocument();
   });
 
-  it("shows the raw string when it is not a JSON object", () => {
+  it("shows the raw string when it is not a JSON object", async () => {
     // A formatter is the wrong place to discover a producer changed shape.
     // Showing the operator the record as it arrived is the honest failure.
     renderTimeline({ entries: [rowWithMetadata("not json at all")] });
+    await expandDetail();
     expect(screen.getByText("not json at all")).toBeInTheDocument();
   });
 
