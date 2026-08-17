@@ -148,7 +148,7 @@ export default async function OrganisationDetailPage({
         {
           id: "contacts",
           label: "Contacts",
-          content: <ContactsTab contacts={contacts} />,
+          content: <ContactsTab organisationId={organisation.id} contacts={contacts} />,
         },
         {
           id: "opportunities",

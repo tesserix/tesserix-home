@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@tesserix/web";
+import { Button, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@tesserix/web";
 import { SearchFilterInput, useUrlFilters, type FilterDescriptor } from "@/components/kit/filter-bar";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
@@ -32,11 +32,19 @@ export function OrganisationsView({ rows, state, emptyMessage, search }: Organis
 
   return (
     <div className="flex flex-col gap-6">
-      <SearchFilterInput
-        label={SEARCH_DESCRIPTOR.label}
-        value={search}
-        onCommit={(next) => set(SEARCH_DESCRIPTOR.key, next)}
-      />
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <SearchFilterInput
+          label={SEARCH_DESCRIPTOR.label}
+          value={search}
+          onCommit={(next) => set(SEARCH_DESCRIPTOR.key, next)}
+        />
+        {/* A lead phoned in has no CSV row to import through — this is the
+         *  other door into the CRM (#213), same manual-create surface
+         *  `createOrganisationAction` writes through. */}
+        <Button asChild size="sm">
+          <Link href="/platform/crm/organisations/new">Add organisation</Link>
+        </Button>
+      </div>
 
       {state.kind === "ready" ? (
         <Table aria-label="Organisations">

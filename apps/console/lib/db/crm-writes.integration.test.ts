@@ -114,6 +114,19 @@ describe("createOrganisation / createOpportunity", () => {
     expect(opps.rows.map((r) => (r as { product: string }).product)).toEqual(["kora", "mark8ly"]);
   });
 
+  it("persists a null product, not a fabricated one, when the caller supplies none", async () => {
+    // Global constraint on this whole feature: a null product at stage
+    // 'new' is legal (crm_opp_product_required_when_qualified only bites
+    // from 'qualified' on), and inventing one here would fabricate
+    // attribution the funnel later reports as fact.
+    const { organisationId } = await createOrganisation({ name: "No Product Yet" });
+    const { opportunityId } = await createOpportunity({ organisationId });
+    const rows = await db.query(`SELECT product FROM crm_opportunities WHERE id = $1`, [
+      opportunityId,
+    ]);
+    expect((rows.rows[0] as { product: string | null }).product).toBeNull();
+  });
+
   it("writes no activity row for a manual create", async () => {
     // Creating an opportunity is not a stage transition. Writing a
     // stage_change here would fabricate a transition into 'new' that never

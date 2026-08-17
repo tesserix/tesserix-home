@@ -12,6 +12,10 @@ import {
   SuppressedContactError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
+import {
+  createContact,
+  createOpportunity as createOpportunityRow,
+} from "@/lib/db/crm-writes";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
@@ -279,6 +283,93 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm");
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+export interface AddContactInput {
+  organisationId: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  instagramHandle?: string;
+}
+
+/**
+ * Add a contact to an existing organisation. The other half of the
+ * manual-create door (#213): `organisations/new` covers the first contact
+ * on a brand-new organisation, this covers every one after — a second phone
+ * number for an organisation that's already in the CRM.
+ *
+ * At least one identifying field is required, checked before any session or
+ * database work: a contact row with nothing in it is unfindable and
+ * unreachable, the same reasoning `createOrganisation` applies to a blank
+ * organisation name.
+ */
+export async function addContactAction(input: AddContactInput): Promise<CrmActionResult> {
+  const name = input.name?.trim() || undefined;
+  const email = input.email?.trim() || undefined;
+  const phone = input.phone?.trim() || undefined;
+  const instagramHandle = input.instagramHandle?.trim() || undefined;
+
+  if (!name && !email && !phone && !instagramHandle) {
+    return { ok: false, message: "Enter at least a name, email, phone, or Instagram handle." };
+  }
+
+  const result = await withCrmWrite(
+    input.organisationId,
+    () =>
+      createContact({
+        organisationId: input.organisationId,
+        name,
+        email,
+        phone,
+        instagramHandle,
+      }),
+    () => ({ action: "crm.contact.create", summary: { contacts: 1 } }),
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  return { ok: true };
+}
+
+export interface CreateOpportunityInput {
+  organisationId: string;
+  product?: string;
+  owner?: string;
+}
+
+/**
+ * Open a new opportunity against an existing organisation.
+ *
+ * The design's third motivating case (crm-writes.ts): a business lost in
+ * March that returns in November is a NEW opportunity against the same
+ * organisation, not a resurrection of the old row. `product` is optional and
+ * passed through exactly as given — never invented when the caller omits
+ * it, same as `changeStage` above — but is checked against the estate when
+ * supplied, since it is the same untyped `text` column with no CHECK.
+ */
+export async function createOpportunityAction(
+  input: CreateOpportunityInput,
+): Promise<CrmActionResult> {
+  const product = input.product?.trim() || undefined;
+  const owner = input.owner?.trim() || undefined;
+
+  if (product && !isEstateProduct(product)) {
+    return { ok: false, message: unknownProductMessage(product) };
+  }
+
+  const result = await withCrmWrite(
+    input.organisationId,
+    () =>
+      createOpportunityRow({
+        organisationId: input.organisationId,
+        product,
+        owner,
+      }),
+    () => ({ action: "crm.opportunity.create", summary: { opportunities: 1 } }),
+  );
+  if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
 }

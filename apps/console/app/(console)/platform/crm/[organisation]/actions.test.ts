@@ -12,6 +12,11 @@ vi.mock("@/lib/db/crm-repo", async (importOriginal) => ({
   logActivity: vi.fn(),
   linkConversion: vi.fn(),
 }));
+vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/crm-writes")>()),
+  createContact: vi.fn(),
+  createOpportunity: vi.fn(),
+}));
 // Ruling 15: `actions.ts` now goes through the REAL `auditedOperation`
 // (audit-repo.ts is not mocked) — only its own two leaf dependencies are,
 // exactly the way `audit-repo.test.ts` tests `auditedOperation` itself.
@@ -34,8 +39,16 @@ import {
   AlreadyLinkedError,
   SuppressedContactError,
 } from "@/lib/db/crm-repo";
+import { createContact, createOpportunity as createOpportunityRow } from "@/lib/db/crm-writes";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { changeStage, scheduleNextAction, addActivity, linkConversion } from "./actions";
+import {
+  changeStage,
+  scheduleNextAction,
+  addActivity,
+  linkConversion,
+  addContactAction,
+  createOpportunityAction,
+} from "./actions";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
 const OPP_ID = "5f0b2c34-0000-0000-0000-000000000000";
@@ -547,5 +560,135 @@ describe("addActivity and the do-not-contact list", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("addContactAction", () => {
+  it("adds a contact, audits crm.contact.create, and revalidates", async () => {
+    signIn(["read"]);
+    vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });
+
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      name: "Ava",
+      email: "ava@example.com",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(createContact).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      name: "Ava",
+      email: "ava@example.com",
+      phone: undefined,
+      instagramHandle: undefined,
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.contact.create",
+      target: ORG_ID,
+      summary: { contacts: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  it("trims every field server-side", async () => {
+    signIn(["read"]);
+    vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });
+
+    await addContactAction({
+      organisationId: ORG_ID,
+      name: "  Ava  ",
+      phone: "  0400 000 000  ",
+      instagramHandle: "  @bondibaker  ",
+    });
+
+    expect(createContact).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      name: "Ava",
+      email: undefined,
+      phone: "0400 000 000",
+      instagramHandle: "@bondibaker",
+    });
+  });
+
+  it("refuses a contact with no identifying field, before touching the session", async () => {
+    const result = await addContactAction({ organisationId: ORG_ID });
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Enter at least a name, email, phone, or Instagram handle.",
+    });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(createContact).not.toHaveBeenCalled();
+  });
+
+  it("refuses without console entry", async () => {
+    signIn(undefined);
+    const result = await addContactAction({ organisationId: ORG_ID, name: "Ava" });
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(createContact).not.toHaveBeenCalled();
+  });
+});
+
+describe("createOpportunityAction", () => {
+  it("opens an opportunity, audits crm.opportunity.create, and revalidates", async () => {
+    signIn(["read"]);
+    vi.mocked(createOpportunityRow).mockResolvedValue({ opportunityId: "opp-2" });
+
+    const result = await createOpportunityAction({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      owner: "priya",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(createOpportunityRow).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      product: "mark8ly",
+      owner: "priya",
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.create",
+      target: ORG_ID,
+      summary: { opportunities: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  // The design's third motivating case (crm-writes.ts): a business lost in
+  // March that returns in November is a new opportunity, not a resurrection
+  // of the old row — a bare organisationId, no product yet, is legal.
+  it("opens an opportunity with no product", async () => {
+    signIn(["read"]);
+    vi.mocked(createOpportunityRow).mockResolvedValue({ opportunityId: "opp-3" });
+
+    const result = await createOpportunityAction({ organisationId: ORG_ID });
+
+    expect(result).toEqual({ ok: true });
+    expect(createOpportunityRow).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      product: undefined,
+      owner: undefined,
+    });
+  });
+
+  it("refuses a product that is not in the estate, before touching the session", async () => {
+    const result = await createOpportunityAction({ organisationId: ORG_ID, product: "mark8ley" });
+
+    expect(result).toEqual({ ok: false, message: `"mark8ley" is not a product in the estate.` });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(createOpportunityRow).not.toHaveBeenCalled();
+  });
+
+  it("refuses without console entry", async () => {
+    signIn(undefined);
+    const result = await createOpportunityAction({ organisationId: ORG_ID, product: "mark8ly" });
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(createOpportunityRow).not.toHaveBeenCalled();
   });
 });

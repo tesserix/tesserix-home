@@ -2,14 +2,34 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Callout, CalloutDescription, Textarea } from "@tesserix/web";
+import {
+  Badge,
+  Button,
+  Callout,
+  CalloutDescription,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from "@tesserix/web";
 import { CRM_STAGES, requiresProduct, type CrmStage } from "@/lib/crm";
 import type {
   ActivityRow,
   ContactRow,
   OpportunityRow,
 } from "@/lib/db/crm-repo";
-import { addActivity, changeStage, scheduleNextAction } from "./actions";
+import { addActivity, addContactAction, changeStage, createOpportunityAction, scheduleNextAction } from "./actions";
+
+// Radix's Select cannot hold an empty-string item value (see
+// `components/kit/filter-bar.tsx`) — this sentinel stands in for "no
+// product chosen yet" on the new-opportunity form below, stripped back to
+// `undefined` before the action call so a bare click-through can never
+// invent an opportunity a caller didn't ask for.
+const NO_PRODUCT_VALUE = "__none__";
 
 const STAGE_LABELS: Record<CrmStage, string> = {
   new: "New",
@@ -312,6 +332,87 @@ export function ActivityTab({
   );
 }
 
+/**
+ * Open a new opportunity against this organisation.
+ *
+ * Rendered whether or not `opportunities` is empty — the design's third
+ * motivating case (crm-writes.ts) is exactly a returning organisation whose
+ * last opportunity is long since won or lost, so this control has to be
+ * reachable from a tab that may otherwise show nothing.
+ */
+function NewOpportunityForm({
+  organisationId,
+  products,
+}: {
+  organisationId: string;
+  products: readonly ProductOption[];
+}) {
+  const router = useRouter();
+  const [product, setProduct] = useState(NO_PRODUCT_VALUE);
+  const [owner, setOwner] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await createOpportunityAction({
+        organisationId,
+        product: product === NO_PRODUCT_VALUE ? undefined : product,
+        owner: owner.trim() || undefined,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setProduct(NO_PRODUCT_VALUE);
+      setOwner("");
+      router.refresh();
+    });
+  };
+
+  return (
+    <form
+      className="flex flex-wrap items-end gap-2 rounded-md border border-border p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div>
+        <Label htmlFor="new-opportunity-product">Product</Label>
+        <Select value={product} onValueChange={setProduct} disabled={pending}>
+          <SelectTrigger id="new-opportunity-product" size="sm" className="mt-1 w-44">
+            <SelectValue placeholder="Choose a product…" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_PRODUCT_VALUE}>No product yet</SelectItem>
+            {products.map((p) => (
+              <SelectItem key={p.context} value={p.context}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <Label htmlFor="new-opportunity-owner">Owner</Label>
+        <Input
+          id="new-opportunity-owner"
+          className="mt-1 h-9"
+          value={owner}
+          disabled={pending}
+          onChange={(event) => setOwner(event.target.value)}
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={pending}>
+        {pending ? "Opening…" : "New opportunity"}
+      </Button>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
 export function OpportunitiesTab({
   organisationId,
   opportunities,
@@ -321,42 +422,154 @@ export function OpportunitiesTab({
   opportunities: readonly OpportunityRow[];
   products: readonly ProductOption[];
 }) {
-  if (opportunities.length === 0) {
-    return <p className="text-sm text-muted-foreground">No opportunities for this organisation yet.</p>;
-  }
   return (
     <div className="flex flex-col gap-4">
-      {opportunities.map((opportunity) => (
-        <OpportunityCard
-          key={opportunity.id}
-          organisationId={organisationId}
-          opportunity={opportunity}
-          products={products}
-        />
-      ))}
+      <NewOpportunityForm organisationId={organisationId} products={products} />
+      {opportunities.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No opportunities for this organisation yet.</p>
+      ) : (
+        opportunities.map((opportunity) => (
+          <OpportunityCard
+            key={opportunity.id}
+            organisationId={organisationId}
+            opportunity={opportunity}
+            products={products}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-export function ContactsTab({ contacts }: { contacts: readonly ContactRow[] }) {
-  if (contacts.length === 0) {
-    return <p className="text-sm text-muted-foreground">No contacts recorded for this organisation.</p>;
-  }
+/**
+ * Add a second contact to an existing organisation — the other half of the
+ * manual-create door (#213). `organisations/new` covers the first contact on
+ * a brand-new organisation; this covers every one after.
+ */
+function AddContactForm({ organisationId }: { organisationId: string }) {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [instagramHandle, setInstagramHandle] = useState("");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const hasField = [name, email, phone, instagramHandle].some((value) => value.trim().length > 0);
+
+  const submit = () => {
+    if (!hasField) {
+      setError("Enter at least a name, email, phone, or Instagram handle.");
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await addContactAction({
+        organisationId,
+        name: name.trim() || undefined,
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        instagramHandle: instagramHandle.trim() || undefined,
+      });
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setName("");
+      setEmail("");
+      setPhone("");
+      setInstagramHandle("");
+      router.refresh();
+    });
+  };
+
   return (
-    <ul className="flex flex-col gap-3">
-      {contacts.map((contact) => (
-        <li key={contact.id} className="border-t border-border pt-3 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
-            {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
-            {contact.email ? <span>{contact.email}</span> : null}
-            {contact.phone ? <span>{contact.phone}</span> : null}
-            {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
-          </div>
-        </li>
-      ))}
-    </ul>
+    <form
+      className="flex flex-wrap items-end gap-2 rounded-md border border-border p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div>
+        <Label htmlFor="new-contact-name">Name</Label>
+        <Input
+          id="new-contact-name"
+          className="mt-1 h-9"
+          value={name}
+          disabled={pending}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-email">Email</Label>
+        <Input
+          id="new-contact-email"
+          className="mt-1 h-9"
+          type="email"
+          value={email}
+          disabled={pending}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-phone">Phone</Label>
+        <Input
+          id="new-contact-phone"
+          className="mt-1 h-9"
+          value={phone}
+          disabled={pending}
+          onChange={(event) => setPhone(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="new-contact-handle">Instagram handle</Label>
+        <Input
+          id="new-contact-handle"
+          className="mt-1 h-9"
+          value={instagramHandle}
+          disabled={pending}
+          placeholder="@bondibaker"
+          onChange={(event) => setInstagramHandle(event.target.value)}
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={pending || !hasField}>
+        {pending ? "Adding…" : "Add contact"}
+      </Button>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
+export function ContactsTab({
+  organisationId,
+  contacts,
+}: {
+  organisationId: string;
+  contacts: readonly ContactRow[];
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <AddContactForm organisationId={organisationId} />
+      {contacts.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No contacts recorded for this organisation.</p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {contacts.map((contact) => (
+            <li key={contact.id} className="border-t border-border pt-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
+                {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
+                {contact.email ? <span>{contact.email}</span> : null}
+                {contact.phone ? <span>{contact.phone}</span> : null}
+                {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
