@@ -2,16 +2,18 @@
 
 import useSWR from "swr";
 
-// What is left of this module after #139.
+import type { AuditEvent } from "@/components/admin/audit/audit-row";
+
+// Audit reads for the admin surface.
 //
-// It used to carry `useAuditLogs` + `AuditFilters` + `AuditLogsResponse` for
-// `/admin/apps/mark8ly/audit-logs`, which is now a redirect to the console's
-// estate-wide audit timeline. `useCriticalEventCount` survives ALONE because
-// its consumer does not: `product-overview-layout.tsx` renders a critical-events
-// KPI tile on every product overview, and those pages are not being retired.
+// `useAuditLogs` was removed by #139 when `/admin/apps/mark8ly/audit-logs` was
+// retired into the console's estate-wide timeline. It is BACK, along with that
+// page: the console's audit surface stays exactly as it is, and the admin page
+// it replaced runs beside it until the console app is complete. Both read the
+// same endpoint — the console asks for `entries`, this asks for `rows`.
 //
-// So the endpoint keeps a `summary` and has lost its `rows`/`filterOptions` —
-// see the route's own header. This hook reads the one field still consumed.
+// `useCriticalEventCount` never left: `product-overview-layout.tsx` renders a
+// critical-events KPI tile on every product overview.
 
 // Mirrors lib/admin/use-metrics.ts's FetchError — callers need to distinguish a
 // permanent 404 (product has no audit source) from a transient failure.
@@ -31,6 +33,47 @@ const fetcher = async (url: string): Promise<unknown> => {
   }
   return res.json();
 };
+
+export interface AuditLogsResponse {
+  summary: { criticalLast24h: number };
+  filterOptions: { actions: string[]; resourceTypes: string[] };
+  rows: AuditEvent[];
+  sinceHours: number;
+  generatedAt: string;
+}
+
+export interface AuditFilters {
+  severity?: string;
+  status?: string;
+  action?: string;
+  resourceType?: string;
+  actorEmail?: string;
+  sinceHours?: number;
+}
+
+function buildKey(productId: string, filters: AuditFilters): string {
+  const qs = new URLSearchParams();
+  if (filters.severity) qs.set("severity", filters.severity);
+  if (filters.status) qs.set("status", filters.status);
+  if (filters.action) qs.set("action", filters.action);
+  if (filters.resourceType) qs.set("resource_type", filters.resourceType);
+  if (filters.actorEmail) qs.set("actor_email", filters.actorEmail);
+  if (filters.sinceHours) qs.set("since_hours", String(filters.sinceHours));
+  // Opt in to the mark8ly-shaped `rows` + `filterOptions`. The endpoint serves
+  // the console's merged `entries` by default and only pays for this page's
+  // extra two DISTINCT scans when this page is the one asking.
+  qs.set("include", "rows");
+  const q = qs.toString();
+  return `/api/admin/apps/${productId}/audit-logs${q ? `?${q}` : ""}`;
+}
+
+export function useAuditLogs(productId: string, filters: AuditFilters) {
+  return useSWR<AuditLogsResponse>(
+    buildKey(productId, filters),
+    fetcher as (u: string) => Promise<AuditLogsResponse>,
+    { revalidateOnFocus: false, dedupingInterval: 30_000 },
+  );
+}
 
 /**
  * `criticalLast24h` is null for a product whose audit has no severity concept

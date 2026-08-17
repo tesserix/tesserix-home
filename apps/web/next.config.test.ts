@@ -3,7 +3,7 @@ import { formatUrl } from "next/dist/shared/lib/router/utils/format-url";
 import { getPathMatch } from "next/dist/shared/lib/router/utils/path-match";
 import { prepareDestination } from "next/dist/shared/lib/router/utils/prepare-destination";
 import { describe, expect, it } from "vitest";
-import nextConfig, { CONSOLE_ORIGIN } from "./next.config";
+import nextConfig from "./next.config";
 
 async function cspDirectives(): Promise<Record<string, string>> {
   const headerGroups = await nextConfig.headers!();
@@ -77,116 +77,53 @@ async function resolveRedirect(url: string): Promise<string | null> {
   return null;
 }
 
-describe("the retired support surfaces redirect to the console", () => {
-  it("sends the ticket queue to the console", async () => {
-    expect(await resolveRedirect("/admin/platform-tickets")).toBe(
-      `${CONSOLE_ORIGIN}/platform/tickets`,
-    );
+describe("the admin surfaces #199 and #207 retired are served, not redirected", () => {
+  // Inverted from the assertions #199 and #207 left here. Nothing under
+  // /admin/ is retired until the console app is complete, so these six pages
+  // exist again and their redirects are gone. Asserting "no redirect matches"
+  // is the guard that rule wants: re-adding one for any of these is exactly
+  // the retirement it forbids, and it fails here rather than in review.
+  //
+  // The console's own surfaces are untouched. Both systems serve the same
+  // work from their own origins and read the same API.
+  it.each([
+    ["the ticket queue", "/admin/platform-tickets"],
+    ["a ticket detail page", "/admin/platform-tickets/abc-123"],
+    ["support analytics", "/admin/analytics/support"],
+    ["mark8ly's audit log", "/admin/apps/mark8ly/audit-logs"],
+    ["kora's audit trail", "/admin/apps/kora/audit"],
+    ["homechef's audit log", "/admin/apps/homechef/audit-logs"],
+  ])("serves %s", async (_label, path) => {
+    expect(await resolveRedirect(path)).toBeNull();
   });
 
-  it("carries the queue's filters across", async () => {
-    // The console's queue reads all three (`readQueueFilters`). A redirect that
-    // dropped them would silently widen a filtered bookmark to the whole
-    // estate — which looks like it worked.
+  it("serves them with their own query params too", async () => {
+    // A redirect added with a query-bearing source would slip past a
+    // bare-path assertion. These are the params the restored pages read.
     expect(
-      await resolveRedirect(
-        "/admin/platform-tickets?status=open&priority=urgent&product=mark8ly",
-      ),
-    ).toBe(
-      `${CONSOLE_ORIGIN}/platform/tickets?status=open&priority=urgent&product=mark8ly`,
-    );
-  });
-
-  it("keeps the ticket id when redirecting a detail page", async () => {
-    expect(await resolveRedirect("/admin/platform-tickets/abc-123")).toBe(
-      `${CONSOLE_ORIGIN}/platform/tickets/abc-123`,
-    );
-  });
-
-  it("does not repeat a consumed path param in the query string", async () => {
-    // `:id` is spent on the path, so `appendParamsToQuery` must not also emit
-    // `?id=`. Guards a destination that forgot the `:id` placeholder: that
-    // would still "pass" a laxer assertion by smuggling the id into the query.
-    expect(await resolveRedirect("/admin/platform-tickets/abc-123?status=open")).toBe(
-      `${CONSOLE_ORIGIN}/platform/tickets/abc-123?status=open`,
-    );
-  });
-
-  it("sends support analytics to the queue, which now hosts it as a tab", async () => {
-    expect(await resolveRedirect("/admin/analytics/support")).toBe(
-      `${CONSOLE_ORIGIN}/platform/tickets`,
-    );
+      await resolveRedirect("/admin/platform-tickets?status=open&priority=urgent"),
+    ).toBeNull();
+    expect(
+      await resolveRedirect("/admin/apps/mark8ly/audit-logs?severity=critical"),
+    ).toBeNull();
+    expect(
+      await resolveRedirect("/admin/apps/kora/audit?target_id=f-1&offset=50"),
+    ).toBeNull();
   });
 
   it("leaves live chat alone", async () => {
-    // #197 owns /admin/support/live-chat and it has no console equivalent.
-    // Redirecting it would take a working surface offline.
+    // #197 owns /admin/support/live-chat and it never had a redirect.
     expect(await resolveRedirect("/admin/support/live-chat")).toBeNull();
   });
 
   it("does not swallow the rest of the admin", async () => {
-    // Guards the guard, twice over. A resolver that returned the first entry
-    // regardless of the path would pass every assertion above, and a `source`
-    // written as a prefix rather than an exact path would retire surfaces
-    // nobody meant to touch.
+    // Guards the guard: a resolver that returned null for everything would
+    // pass every assertion above. The non-admin redirects that predate this
+    // work still resolve, so the resolver is doing real matching.
     expect(await resolveRedirect("/admin/dashboard")).toBeNull();
-    expect(await resolveRedirect("/admin/platform-announcements")).toBeNull();
-  });
-});
-
-describe("the three product audit pages redirect to the estate timeline", () => {
-  // #139 merged them into one console surface. Each redirect carries
-  // `?source=` because these were PRODUCT-SCOPED pages: landing unfiltered
-  // would widen "Kora's audit trail" into "everything anyone has ever done",
-  // which is the same silent widening the ticket-queue filter test guards.
-  it.each([
-    ["/admin/apps/mark8ly/audit-logs", "mark8ly"],
-    ["/admin/apps/kora/audit", "kora"],
-    ["/admin/apps/homechef/audit-logs", "homechef"],
-  ])("sends %s to the console filtered to its own source", async (path, source) => {
-    expect(await resolveRedirect(path)).toBe(
-      `${CONSOLE_ORIGIN}/platform/audit-log?source=${source}`,
-    );
-  });
-
-  it("keeps the source filter when the old page carried query params of its own", async () => {
-    // Verified against Next's own redirect path rather than assumed, and the
-    // answer is not the one the plan expected. The request's params ARE carried
-    // across a destination that has a query string of its own — they are merged
-    // ahead of it, since the destination's values take priority and land last.
-    //
-    // The old pages' params are meaningless to the console (it offers no
-    // severity, target or offset filter) but harmless, and the assertion is on
-    // the whole string so the `source=` that IS load-bearing cannot be lost in
-    // the merge without this failing.
-    expect(
-      await resolveRedirect("/admin/apps/mark8ly/audit-logs?severity=critical"),
-    ).toBe(`${CONSOLE_ORIGIN}/platform/audit-log?severity=critical&source=mark8ly`);
-    expect(
-      await resolveRedirect("/admin/apps/kora/audit?target_id=f-1&offset=50"),
-    ).toBe(
-      `${CONSOLE_ORIGIN}/platform/audit-log?target_id=f-1&offset=50&source=kora`,
-    );
-  });
-
-  it("does not let an inbound ?source override the product it came from", async () => {
-    // A hand-edited `/admin/apps/kora/audit?source=mark8ly` must not land on
-    // mark8ly's trail. The destination's own value wins outright — one `source`
-    // key, not two — because it is spread last over the request's query.
-    expect(await resolveRedirect("/admin/apps/kora/audit?source=mark8ly")).toBe(
-      `${CONSOLE_ORIGIN}/platform/audit-log?source=kora`,
-    );
-  });
-
-  it("leaves the rest of each product's admin alone", async () => {
-    // The audit page is one entry in each product's rail. A `source` written
-    // loosely — `/admin/apps/kora` — would retire the whole product section.
-    expect(await resolveRedirect("/admin/apps/kora")).toBeNull();
     expect(await resolveRedirect("/admin/apps/kora/foods")).toBeNull();
-    expect(await resolveRedirect("/admin/apps/mark8ly/tenants")).toBeNull();
-    expect(await resolveRedirect("/admin/apps/homechef/orders")).toBeNull();
+    expect(await resolveRedirect("/launch")).toBe("/products");
   });
-
 });
 
 describe("content security policy", () => {
