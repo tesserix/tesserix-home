@@ -41,8 +41,14 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { dueOpportunities, driftingOpportunities, isSuppressed, addSuppression, listOrganisations } =
-  await import("./crm-repo");
+const {
+  dueOpportunities,
+  driftingOpportunities,
+  isSuppressed,
+  addSuppression,
+  listOrganisations,
+  organisationDetail,
+} = await import("./crm-repo");
 
 let db: PGlite;
 let orgId: string;
@@ -978,9 +984,15 @@ describe("listOrganisations", () => {
   // real tie tells the two apart; a shape assertion on the SQL cannot.
   describe("a tie on contact created_at resolves to the same contact everywhere", () => {
     let tiedOrgId: string;
-    let primaryName: string;
-    let primaryFollowers: number;
-    let primaryHasEmail: boolean;
+    // Explicit, ordered UUIDs rather than the column default: the contacts
+    // must sort deterministically on `id` alone, and a generated UUID has no
+    // guaranteed relationship to insertion order. "...001" sorts first, so
+    // it is the primary contact whenever the tiebreaker is in play.
+    const primaryContactId = "00000000-0000-0000-0000-000000000001";
+    const otherContactId = "00000000-0000-0000-0000-000000000002";
+    const primaryName = "Tied Contact A";
+    const primaryFollowers = 20000;
+    const primaryHasEmail = true;
 
     beforeAll(async () => {
       const org = await db.query<{ id: string }>(
@@ -992,31 +1004,30 @@ describe("listOrganisations", () => {
       // Identical created_at, neither flagged primary, so only the id
       // tiebreaker can decide. Follower bands and email presence are set to
       // disagree between the two, so picking the wrong one is observable.
+      //
+      // The row that should win the tie (`primaryContactId`, "...001") is
+      // inserted SECOND, after the row that should lose ("...002"). That's
+      // deliberate: without an `ORDER BY id`, a sequential scan tends to
+      // return ties in physical/insertion order, so an insertion order that
+      // happened to match id order would let this test pass by accident even
+      // with `, c.id ASC` stripped from `primaryContactOrder()`. Inserting
+      // out of id order means the two orderings disagree on the winner,
+      // which is what makes the id tiebreaker's absence observable.
       const sharedCreatedAt = daysAgo(5);
       await db.query(
-        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count, email, created_at)
-         VALUES ($1, 'Tied Contact Low', false, 500, NULL, $2::timestamptz),
-                ($1, 'Tied Contact High', false, 20000, 'tied@example.com', $2::timestamptz)`,
-        [tiedOrgId, sharedCreatedAt],
+        `INSERT INTO crm_contacts (id, organisation_id, name, is_primary, followers_count, email, created_at)
+         VALUES ($7, $2, 'Tied Contact B', false, 500, NULL, $6::timestamptz),
+                ($1, $2, $3, false, $4, $5, $6::timestamptz)`,
+        [
+          primaryContactId,
+          tiedOrgId,
+          primaryName,
+          primaryFollowers,
+          "tied@example.com",
+          sharedCreatedAt,
+          otherContactId,
+        ],
       );
-
-      // Which contact wins is decided by the id ordering the queries use, not
-      // by anything this test can choose — so read it back rather than
-      // hard-coding an expectation the uuid generator would flake on.
-      const winner = await db.query<{
-        name: string;
-        followers_count: number;
-        email: string | null;
-      }>(
-        `SELECT name, followers_count, email FROM crm_contacts
-          WHERE organisation_id = $1
-          ORDER BY is_primary DESC, created_at ASC, id ASC
-          LIMIT 1`,
-        [tiedOrgId],
-      );
-      primaryName = winner.rows[0].name;
-      primaryFollowers = winner.rows[0].followers_count;
-      primaryHasEmail = winner.rows[0].email !== null;
     });
 
     it("displays the same contact the follower filter matched on", async () => {
@@ -1062,5 +1073,51 @@ describe("listOrganisations", () => {
       expect(second.precedingCount).toBe(first.rows.length);
       expect(second.total).toBe(first.total);
     });
+  });
+});
+
+// `organisationDetail`'s contact list uses `primaryContactOrder` — the same
+// helper the list page and its filters use — so the head of the list agrees
+// with what those queries call "the primary contact". That much is required
+// for consistency (Ruling covered by the tie test above). Ordering the
+// *tail* the same way — oldest-first for every non-primary contact, not just
+// the head — is a separate, deliberate choice: one shared ordering for the
+// whole helper rather than a special case for the detail page. Nothing
+// enforced either choice before this test, so a future edit to
+// `primaryContactOrder` or to this query would change the detail page's
+// contact order silently.
+describe("organisationDetail orders contacts is_primary, then created_at, then id", () => {
+  it("lists contacts flagged-primary first, then oldest first, with id breaking ties", async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Detail Order Org"],
+    );
+    const detailOrgId = org.rows[0].id;
+
+    const oldest = daysAgo(30);
+    const middle = daysAgo(10);
+    // The flagged-primary contact is the newest of the three by created_at —
+    // if the query ordered by created_at alone (ignoring is_primary), it
+    // would sort last instead of first.
+    const newest = daysAgo(1);
+
+    await db.query(
+      `INSERT INTO crm_contacts (id, organisation_id, name, is_primary, created_at)
+       VALUES
+         ('10000000-0000-0000-0000-000000000002', $1, 'Oldest, id 2', false, $2::timestamptz),
+         ('10000000-0000-0000-0000-000000000001', $1, 'Oldest, id 1', false, $2::timestamptz),
+         ('10000000-0000-0000-0000-000000000003', $1, 'Middle', false, $3::timestamptz),
+         ('10000000-0000-0000-0000-000000000004', $1, 'Flagged Primary', true, $4::timestamptz)`,
+      [detailOrgId, oldest, middle, newest],
+    );
+
+    const detail = await organisationDetail(detailOrgId);
+
+    expect(detail?.contacts.map((c) => c.name)).toEqual([
+      "Flagged Primary",
+      "Oldest, id 1",
+      "Oldest, id 2",
+      "Middle",
+    ]);
   });
 });

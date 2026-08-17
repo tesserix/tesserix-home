@@ -667,12 +667,14 @@ function toIsoRequired(value: unknown): string {
  * The one ordering that decides which contact is "the primary": the flagged
  * contact, then the oldest, then by `id`.
  *
- * One helper rather than the ordering spelled out at each site because eight
- * queries choose a primary contact — three display subqueries and two filter
- * subqueries in `listOrganisations`, plus `organisationDetail` and
- * `wonWithoutConversion` — and they must agree. Two of them previously
- * ordered by `name` instead, so following a list row to its detail page could
- * show a different "primary" contact than the list did.
+ * One helper rather than the ordering spelled out at each site because seven
+ * queries use this ordering — three display subqueries and two filter
+ * subqueries in `listOrganisations`, `wonWithoutConversion`'s primary-email
+ * lookup, and `organisationDetail`'s full contact list (which orders the
+ * whole list this way rather than picking one row) — and they must agree.
+ * Two of them previously ordered by `name` instead, so following a list row
+ * to its detail page could show a different "primary" contact than the list
+ * did.
  *
  * `id` last is load-bearing: `crm_contacts.created_at` is not unique (an
  * import writes a batch of contacts in one transaction, sharing it exactly),
