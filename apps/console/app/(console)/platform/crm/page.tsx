@@ -260,7 +260,13 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
  * that's awaiting it.
  */
 async function fetchRowSignal(row: HandoffRow, cookieHeader: string): Promise<ConversionSignal> {
-  if (!row.primaryEmail) {
+  // A migrated deal has no product (0020/0021 grandfather those rows), so
+  // there is no product admin API to address the question to — the same
+  // "nothing to ask" case as a missing email, and the same honest
+  // `unknown`. Skipping the call is also what keeps the URL well-formed:
+  // asking `/api/admin/apps/null/conversion-status` would be a fabricated
+  // question whose 404 answer means nothing.
+  if (!row.product || !row.primaryEmail) {
     return { product: row.product, state: "unknown" };
   }
   try {

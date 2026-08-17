@@ -11,7 +11,10 @@ export interface HandoffItem {
   opportunityId: string;
   organisationId: string;
   organisationName: string;
-  product: string;
+  /** Null for a migrated deal — see `HandoffRow.product` in crm-repo.ts.
+   *  Rendered as "Unassigned", the same word the work queue already uses
+   *  for an opportunity with no product set. */
+  product: string | null;
   closedAt: string | null;
   signal: ConversionSignal;
 }
@@ -80,7 +83,12 @@ function HandoffRowItem({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
-  const [manualProduct, setManualProduct] = useState(item.product);
+  // Defaults to the row's own product when it has one. A migrated row has
+  // none, and the default is then the empty string — an explicit "Select a
+  // product…" the operator must answer, NOT the first entry in `products`,
+  // which a bare `<select>` would otherwise silently pre-select and file the
+  // conversion against the wrong product on a single click.
+  const [manualProduct, setManualProduct] = useState(item.product ?? "");
   const [manualRef, setManualRef] = useState("");
   const [manualLabel, setManualLabel] = useState("");
 
@@ -89,9 +97,19 @@ function HandoffRowItem({
   // not carry over to `suggestion.ref` if `suggestion` were the signal
   // itself — this shape makes `ref` genuinely non-optional below, with no
   // `!` needed to tell the compiler what the guard already proved.
+  //
+  // `product` is captured here too, and the guard requires it: a definite
+  // `complete` can only come from a product that was actually asked, so it
+  // is never null in practice — capturing it is what proves that to the
+  // compiler without a `!`, now that a migrated row's signal can carry a
+  // null product (always with `state: "unknown"`, which has no suggestion).
   const suggestion =
-    item.signal.state === "complete" && item.signal.ref
-      ? { ref: item.signal.ref, label: item.signal.label }
+    item.signal.state === "complete" && item.signal.ref && item.signal.product
+      ? {
+          ref: item.signal.ref,
+          label: item.signal.label,
+          product: item.signal.product,
+        }
       : null;
 
   const confirmSuggestion = () => {
@@ -100,7 +118,7 @@ function HandoffRowItem({
     startTransition(async () => {
       const result = await linkConversion({
         organisationId: item.organisationId,
-        product: item.signal.product,
+        product: suggestion.product,
         ref: suggestion.ref,
         label: suggestion.label,
         method: "matched",
@@ -150,7 +168,9 @@ function HandoffRowItem({
     });
   };
 
-  const productName = products.find((p) => p.context === item.product)?.name ?? item.product;
+  const productName = item.product
+    ? (products.find((p) => p.context === item.product)?.name ?? item.product)
+    : "Unassigned";
 
   return (
     <li className="border-t border-border py-3 text-sm">
@@ -207,6 +227,13 @@ function HandoffRowItem({
               disabled={pending}
               onChange={(event) => setManualProduct(event.target.value)}
             >
+              {/* Only rendered when there is no product to default to. A row
+                  that HAS one starts on it, and this placeholder never
+                  appears — so an operator can never be shown a blank
+                  selection for a deal whose product is already known. */}
+              {item.product ? null : (
+                <option value="">Select a product…</option>
+              )}
               {products.map((p) => (
                 <option key={p.context} value={p.context}>
                   {p.name}
@@ -249,7 +276,11 @@ function HandoffRowItem({
           <Button
             type="button"
             size="sm"
-            disabled={pending || manualRef.trim().length === 0}
+            // `manualProduct` is only ever empty on a migrated row the
+            // operator has not answered the product question for yet;
+            // `linkConversion` would refuse it server-side anyway, and
+            // refusing it here says so before the round trip.
+            disabled={pending || manualRef.trim().length === 0 || manualProduct.length === 0}
             onClick={submitManual}
           >
             {pending ? "Linking…" : "Link"}

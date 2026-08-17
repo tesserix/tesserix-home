@@ -315,6 +315,30 @@ describe("Handoff", () => {
     expect(screen.queryByText(/unknown/i)).toBeNull();
   });
 
+  // The case the live data produces on DAY ONE: `migrate-leads-to-crm.mjs`
+  // maps `converted → won` with `product: null` on every migrated deal, so
+  // the first migrated won lead lands straight in this queue. The surface
+  // used to throw on it — one such row put the entire handoff tab into its
+  // error state — and excluding those rows instead would have hidden the
+  // whole migrated backlog. It renders, labelled "Unassigned" the same way
+  // the work queue labels a product-less opportunity, and nothing is asked
+  // of a product that was never assigned.
+  it("renders a migrated won opportunity with no product rather than throwing", async () => {
+    wonWithoutConversion.mockResolvedValue([
+      { ...HANDOFF_ROW, product: null, primaryEmail: "priya@bondibaker.example" },
+    ]);
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/bondi baker/i)).toBeInTheDocument();
+    expect(screen.getByText(/unassigned/i)).toBeInTheDocument();
+    // No product to address a conversion-status call to, so none is made —
+    // and the row reads `unknown`, not a fabricated "Not converted".
+    expect(fetchConversionSignal).not.toHaveBeenCalled();
+    expect(screen.getByText(/unknown/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not converted/i)).toBeNull();
+  });
+
   it("renders empty, not ready, when nothing is waiting for handoff", async () => {
     wonWithoutConversion.mockResolvedValue([]);
 

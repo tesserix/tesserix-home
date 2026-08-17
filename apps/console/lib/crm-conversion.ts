@@ -81,7 +81,15 @@ export type ConversionState = "unknown" | "none" | "in_flight" | "complete";
  * `product` alongside.
  */
 export interface ConversionSignal {
-  readonly product: string;
+  /**
+   * Null only on the one signal nobody asked a product for: a migrated
+   * opportunity carries no product (see `HandoffRow.product`), so there is
+   * no admin API to address the question to. `fetchConversionSignal` itself
+   * still requires a real product — a null here can only ever accompany
+   * `state: "unknown"`, never a definite answer, because a definite answer
+   * can only come from a product that was actually asked.
+   */
+  readonly product: string | null;
   readonly state: ConversionState;
   readonly ref?: string;
   readonly label?: string;

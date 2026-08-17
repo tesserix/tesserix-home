@@ -1230,22 +1230,30 @@ describe("wonWithoutConversion", () => {
     expect(row.primaryEmail).toBeNull();
   });
 
-  // Guards the guard: migration 0019's CHECK should make a won,
-  // product-less opportunity unreachable. If it ever isn't, this must fail
-  // loud rather than silently hand the caller a row with nothing to ask
-  // apps/web about.
-  it("throws rather than silently drop the product on a malformed row", async () => {
+  // 0019's CHECK does NOT make a won, product-less opportunity unreachable
+  // — 0020 drops it and 0021 reinstates it NOT VALID precisely so the
+  // migrated rows survive. This row is expected, not malformed.
+  it("carries a null product through rather than throwing — that is what every migrated won deal looks like", async () => {
+    // `migrate-leads-to-crm.mjs` writes `product: null` on every opportunity
+    // it creates, and 0020/0021 grandfather exactly those rows past the
+    // product CHECK. So the FIRST migrated won lead hits this function on
+    // day one. Throwing here put the whole handoff surface into its error
+    // state; the row is genuinely won-but-not-converted and belongs in the
+    // queue, and `linkConversion` takes the product from the operator's
+    // selection rather than from the opportunity, so it is still linkable.
     query.mockResolvedValueOnce([
       {
         id: "o1",
         organisation_id: "g1",
-        organisation_name: "Bad Row Co",
+        organisation_name: "Migrated Co",
         product: null,
         closed_at: null,
         primary_email: null,
       },
     ]);
-    await expect(wonWithoutConversion(50)).rejects.toThrow(/no product/);
+    const [row] = await wonWithoutConversion(50);
+    expect(row.product).toBeNull();
+    expect(row.organisationName).toBe("Migrated Co");
   });
 });
 

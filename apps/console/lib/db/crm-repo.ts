@@ -1298,12 +1298,24 @@ export interface HandoffRow {
   opportunityId: string;
   organisationId: string;
   organisationName: string;
-  /** Never null here: `stage = 'won'` requires a product — migration 0019's
-   *  `crm_opp_product_required_when_qualified` CHECK, mirrored by
-   *  `requiresProduct` in `lib/crm.ts`. `toHandoffRow` fails loud if that
-   *  ever stops being true rather than silently showing a row with nothing
-   *  to ask apps/web about. */
-  product: string;
+  /** Null for a migrated deal, and legitimately so. 0019's
+   *  `crm_opp_product_required_when_qualified` CHECK does require a product
+   *  from `qualified` onward, but 0020/0021 deliberately grandfather the
+   *  rows `migrate-leads-to-crm.mjs` writes: a lead that closed before this
+   *  schema existed was never matched to a product, and the migration
+   *  refuses to invent one (see that script's header).
+   *
+   *  Such a row genuinely IS won-but-not-converted, so it belongs in this
+   *  queue — excluding it would hide the entire migrated backlog on day
+   *  one, and `toHandoffRow` used to THROW on it, which put the whole
+   *  handoff surface into its error state instead. There is also nothing
+   *  lost by carrying the null: `linkConversion` takes the product from the
+   *  operator's own selection, not from the opportunity, so a null-product
+   *  row is still linkable by hand. The only thing it cannot do is be asked
+   *  about upstream — `fetchRowSignal` has no product to address a
+   *  conversion-status call to, so the row reads `unknown`, which is the
+   *  honest answer rather than a fabricated `none`. */
+  product: string | null;
   /** The organisation's primary contact email, if it has one — what Task 9's
    *  `fetchConversionSignal` is asked about. `null` when no contact on the
    *  organisation carries an email at all: the row still shows (an operator
@@ -1323,9 +1335,6 @@ interface RawHandoffRow {
 }
 
 function toHandoffRow(row: RawHandoffRow): HandoffRow {
-  if (!row.product) {
-    throw new Error(`crm-repo: won opportunity ${row.id} has no product`);
-  }
   return {
     opportunityId: row.id,
     organisationId: row.organisation_id,
