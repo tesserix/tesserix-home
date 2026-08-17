@@ -35,6 +35,9 @@ importers:
       '@tesserix/console-core':
         specifier: workspace:*
         version: link:../../packages/console-core
+      '@tesserix/crm-country':
+        specifier: workspace:*
+        version: link:../../packages/crm-country
       '@tesserix/platform-auth':
         specifier: workspace:*
         version: link:../../packages/platform-auth
@@ -238,6 +241,9 @@ importers:
       '@tailwindcss/typography':
         specifier: ^0.5.19
         version: 0.5.20(tailwindcss@4.3.3)
+      '@tesserix/crm-country':
+        specifier: workspace:*
+        version: link:../../packages/crm-country
       '@tesserix/homechef-shared':
         specifier: workspace:*
         version: link:../../packages/homechef-shared
@@ -366,6 +372,8 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@20.19.43)(jiti@2.7.0)(jsdom@30.0.1)(lightningcss@1.33.0)(terser@5.49.0)(yaml@2.9.0)
+
+  packages/crm-country: {}
 
   packages/eslint-config:
     dependencies:

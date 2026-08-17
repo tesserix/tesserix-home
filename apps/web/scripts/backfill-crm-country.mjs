@@ -3,17 +3,31 @@
 // from the existing `location` free text (migration 0025).
 //
 // The mapping itself is NOT reimplemented here. It lives in exactly one
-// place — apps/console/lib/db/crm-country.ts — and this script imports it
-// directly rather than duplicating the lookup table in SQL or in this
-// file. That's deliberate: the import path and manual create both need the
-// same mapping, and a second copy anywhere is exactly the kind of
-// divergence this codebase has been bitten by before.
+// place — @tesserix/crm-country (packages/crm-country/index.mjs, plain JS +
+// JSDoc) — and this script imports it BY PACKAGE NAME, through the pnpm
+// workspace, not by a relative path into another app's internals. That's
+// deliberate on two counts: the import path and manual create both need the
+// same mapping, so a second copy anywhere is exactly the kind of divergence
+// this codebase has been bitten by before; and a relative reach across an
+// app boundary (this script previously did `../../console/lib/db/...ts`)
+// is fragile in a way nothing here would catch — nothing in CI runs this
+// script, so a moved file, or a `.ts` import depending on Node's
+// type-stripping (unflagged only from Node >=22.18), would break it
+// silently on the next one-shot run against production. The package has no
+// build step either, so there's no "did you remember to build it first" to
+// get wrong.
 //
 // `country` is DERIVED, never authoritative: `location` is never read from
 // here to overwrite anything, and this script never writes `location`.
 // Rows whose location doesn't map return `country = NULL` — never a guess.
 // A wrong country silently files a lead under a market it is not in, and
 // the operator has no way to notice; NULL is at least visibly unfiltered.
+//
+// A row whose `country` is ALREADY SET is never touched, deliberately: the
+// query below reads only `WHERE country IS NULL`, so an operator's manual
+// correction (or a value this script itself already wrote) is never
+// silently reverted by a re-run. Re-running is therefore always safe and
+// only ever fills gaps, never overwrites a decision someone already made.
 //
 // Usage:
 //   TESSERIX_DB_HOST=... TESSERIX_DB_USER=... TESSERIX_DB_PASSWORD=... \
@@ -24,7 +38,7 @@
 
 import process from "node:process";
 import pg from "pg";
-import { countryFromLocation } from "../../console/lib/db/crm-country.ts";
+import { planBackfill } from "@tesserix/crm-country";
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -57,33 +71,10 @@ function makeClient() {
   });
 }
 
-/**
- * Pure: rows -> { mapped, unmapped }. `mapped` carries only what's needed
- * to write (`id`, `country`); `unmapped` carries the raw `location` values
- * so the caller can name them, distinct, on exit.
- */
-export function planBackfill(rows) {
-  const mapped = [];
-  const unmappedLocations = new Set();
-
-  for (const row of rows) {
-    const country = countryFromLocation(row.location);
-    if (country) {
-      mapped.push({ id: row.id, country });
-    } else if (row.location) {
-      // A NULL location isn't a mapping gap — there was nothing to map.
-      // Only a present-but-unrecognised location is worth an operator's
-      // attention.
-      unmappedLocations.add(row.location);
-    }
-  }
-
-  return { mapped, unmappedLocations: [...unmappedLocations].sort() };
-}
-
 /** Names every distinct unmapped location on exit, so an operator extends
- *  `COUNTRY_BY_LOCATION` in crm-country.ts rather than discovering the gap
- *  later through a country filter that silently returns nothing. */
+ *  `COUNTRY_BY_LOCATION` in packages/crm-country/index.mjs rather than
+ *  discovering the gap later through a country filter that silently
+ *  returns nothing. */
 function reportUnmapped(unmappedLocations) {
   console.error(
     `[backfill] ${unmappedLocations.length} distinct location value(s) did ` +
@@ -94,9 +85,9 @@ function reportUnmapped(unmappedLocations) {
   }
   console.error(
     `[backfill] Extend COUNTRY_BY_LOCATION in ` +
-      `apps/console/lib/db/crm-country.ts to cover these, then re-run. Do ` +
-      `NOT guess a country for a row here — a wrong country is worse than ` +
-      `no country at all.`,
+      `packages/crm-country/index.mjs to cover these, then re-run. Do NOT ` +
+      `guess a country for a row here — a wrong country is worse than no ` +
+      `country at all.`,
   );
 }
 
@@ -107,20 +98,30 @@ async function main() {
   console.log(`[backfill] connected ${commit ? "(COMMIT)" : "(DRY RUN)"}`);
 
   try {
+    // WHERE country IS NULL: an already-set country (a prior run of this
+    // script, or an operator's manual correction) is never re-read and
+    // never overwritten. See the header — this is the thing that makes a
+    // re-run safe.
     const res = await client.query(
       `SELECT id, location FROM crm_organisations WHERE country IS NULL`,
     );
     const rows = res.rows;
 
-    const { mapped, unmappedLocations } = planBackfill(rows);
+    const { mapped, unmappedRowCount, unmappedLocations } = planBackfill(rows);
+
+    // These three are row counts, not distinct-value counts, and are
+    // constructed to sum to `rows.length` exactly: `mapped.length` and
+    // `unmappedRowCount` both count ROWS (planBackfill counts a row towards
+    // `unmappedRowCount` for every occurrence of an unrecognised location,
+    // not once per distinct string — `unmappedLocations` is the distinct
+    // list, kept separate precisely so it can't be substituted into this
+    // arithmetic by mistake).
+    const noLocationCount = rows.length - mapped.length - unmappedRowCount;
 
     console.log(`[backfill] organisations read (country IS NULL): ${rows.length}`);
     console.log(`[backfill] would map: ${mapped.length}`);
-    console.log(
-      `[backfill] no location / already covered: ${
-        rows.length - mapped.length - unmappedLocations.length
-      }`,
-    );
+    console.log(`[backfill] unrecognised location (left NULL): ${unmappedRowCount}`);
+    console.log(`[backfill] no location at all: ${noLocationCount}`);
 
     if (!commit) {
       console.log(`[backfill] dry run — nothing written. Pass --commit to write.`);
