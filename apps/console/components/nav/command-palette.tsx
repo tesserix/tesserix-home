@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import {
@@ -42,9 +42,19 @@ export interface CommandPaletteProps {
  *
  * Selection is dispatched through `Command`'s own `onValueChange`: every
  * `CommandItem`'s built-in click handler already calls it with the item's
- * `value`, and `CommandList` calls it again on Enter for the active item —
- * so wiring navigation there covers both mouse and keyboard in one place
- * instead of attaching a duplicate `onClick` per item.
+ * `value`, and `Command`'s own key handler calls it again on Enter for the
+ * active item — so wiring navigation there covers both mouse and keyboard in
+ * one place instead of attaching a duplicate `onClick` per item.
+ *
+ * Keyboard navigation needs nothing from this component. Up to `@tesserix/web`
+ * 1.8.1 it did: the primitive bound the arrows and Enter to `CommandList`'s
+ * own `onKeyDown`, a handler on the listbox div, which is a *sibling* of the
+ * search input rather than an ancestor of it — so a keydown fired while the
+ * operator was typing never reached it and the palette had no keyboard
+ * navigation at all. This file carried a `forwardToListbox` shim that
+ * re-dispatched those keys onto the listbox node. 2.1.0 moved the handler onto
+ * `Command`'s wrapper (design-system#7), which *is* an ancestor of both, and
+ * the shim is deleted.
  */
 export function ConsoleCommandPalette({
   capabilities,
@@ -56,7 +66,6 @@ export function ConsoleCommandPalette({
   const [query, setQuery] = useState("");
   const [tickets, setTickets] = useState<SearchEntry[]>([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const routes = useMemo(
     () => visibleTo(routeEntries(), capabilities, enforceCapabilities),
@@ -189,7 +198,7 @@ export function ConsoleCommandPalette({
       </button>
 
       <CommandDialog open={open} onOpenChange={handleOpenChange}>
-        <Command onValueChange={selectEntry} onKeyDown={(event) => forwardToListbox(event, listRef.current)}>
+        <Command onValueChange={selectEntry}>
           <CommandInput
             placeholder="Search routes, tools and tickets…"
             // The global `:focus-visible` rule (apps/console/app/globals.css)
@@ -209,7 +218,7 @@ export function ConsoleCommandPalette({
             className="focus-visible:outline-offset-[-2px]"
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
-          <CommandList ref={listRef} className="space-y-2 p-3">
+          <CommandList className="space-y-2 p-3">
             {!loadingTickets && !hasAnyMatch ? (
               <div className="py-6 text-center text-sm text-muted-foreground">
                 Nothing matching that in routes, tools or tickets.
@@ -252,59 +261,6 @@ export function ConsoleCommandPalette({
       </CommandDialog>
     </>
   );
-}
-
-/**
- * WORKAROUND for tesserix/design-system#7 — delete this whole function (and
- * the `listRef`/wrapper `onKeyDown` that call it) once that ships. This is
- * scaffolding, not design.
- *
- * The structural problem: `@tesserix/web`'s `Command` primitive wires
- * ArrowDown/ArrowUp/Enter entirely on `CommandList`'s own `onKeyDown` — a
- * handler that lives on the `role="listbox"` div. `CommandInput`'s `<input>`
- * is a *sibling* of that div, not a descendant of it (both are direct
- * children of `Command`'s wrapper), so a keydown fired while the search box
- * has focus — the only place focus realistically is while narrowing a
- * query — never bubbles into the listbox's handler. As shipped, this
- * palette (and every other consumer of `Command`) has no keyboard
- * navigation at all: not Enter, not the arrows.
- *
- * The workaround: `Command`'s own wrapper div *is* an ancestor of both the
- * input and the list (`CommandProps` extends
- * `React.HTMLAttributes<HTMLDivElement>`, so it takes a real `onKeyDown`
- * that does receive the bubbled event), so this function forwards the three
- * keys the primitive cares about down to the listbox node by re-dispatching
- * a synthetic `keydown` there. React's delegated listener on that node picks
- * it up and runs the *primitive's own* handler — not a reimplementation of
- * it. That matters because the primitive's `activeValue` (which item is
- * highlighted) lives in private context this component cannot read; a
- * second, hand-rolled highlight tracker would have no way to stay in sync
- * with it and would drift the moment the two disagreed.
- *
- * The containment check below (`listNode.contains(event.target)`) is doing
- * double duty — read both readings before touching it:
- *   1. Skips a keydown that started inside the listbox itself (e.g. focus
- *      moved there by a click), since the primitive's own `onKeyDown` is
- *      already the one firing for that event.
- *   2. Is *also* the re-entry guard: the event this function dispatches on
- *      `listNode` bubbles back up to this same wrapper handler, but by then
- *      its `target` is the listbox — which the check catches and returns
- *      on before a second dispatch happens. This is the only thing standing
- *      between this function and an infinite forward loop. Do not delete it
- *      as a "redundant" check without replacing it with something that
- *      still breaks that cycle.
- */
-function forwardToListbox(
-  event: React.KeyboardEvent<HTMLDivElement>,
-  listNode: HTMLDivElement | null,
-): void {
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Enter") return;
-  if (event.nativeEvent.isComposing) return;
-  if (!listNode) return;
-  if (listNode.contains(event.target as Node)) return;
-
-  event.preventDefault();
-  listNode.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, bubbles: true }));
 }
 
 const TICKET_DEBOUNCE_MS = 250;

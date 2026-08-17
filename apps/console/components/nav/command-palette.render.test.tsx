@@ -220,13 +220,12 @@ describe("ConsoleCommandPalette", () => {
   });
 
   it("navigates on ArrowDown + Enter, then closes and clears the query", async () => {
-    // Keyboard-driven on purpose: this is the path that proves
-    // forwardToListbox (command-palette.tsx) actually works, not just that
-    // clicking an option works. ArrowDown here bubbles from the search
-    // input to Command's wrapper and gets re-dispatched onto the listbox
-    // node, which is what lets CommandList's own onKeyDown move its private
-    // `activeValue` — see the workaround's comment for why a click-only
-    // test would not have caught a regression here.
+    // Keyboard-driven on purpose, and it is the test that outlived the
+    // workaround it was written for. It used to prove `forwardToListbox`
+    // re-dispatched the key onto the listbox node; now it proves the same
+    // keystroke reaches `@tesserix/web` 2.1.0's own handler on `Command`'s
+    // wrapper, with nothing in between. The assertion never changed, which is
+    // the point — a click-only test would not have caught either failure.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
