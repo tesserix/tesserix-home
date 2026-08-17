@@ -168,13 +168,14 @@ describe("ConsoleCommandPalette", () => {
 
   it("does not claim nothing matches while a full list of routes is showing", async () => {
     // Regression test for the "Nothing matching..." + full result list bug:
-    // `CommandEmpty` counts only registered *visible* items, and disabled
-    // `CommandItem`s never register — so with an empty query (which matches
-    // everything, including the pending/disabled routes) `CommandEmpty` saw
-    // zero registrations and rendered its message directly above a
-    // screenful of matching rows. The empty state is now computed by hand
-    // from the same entries and the same matcher, so it must stay silent
-    // here.
+    // up to `@tesserix/web` 1.8.1 `CommandEmpty` counted only registered
+    // *visible* items and disabled `CommandItem`s never registered — so with
+    // an empty query (which matches everything, including the pending/disabled
+    // routes) it saw zero registrations and rendered its message directly
+    // above a screenful of matching rows. This test outlived two
+    // implementations of the fix — a hand-computed empty state, and now 2.1.0
+    // counting what it actually rendered — and is unchanged across both,
+    // which is what makes it the specification rather than either of them.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);

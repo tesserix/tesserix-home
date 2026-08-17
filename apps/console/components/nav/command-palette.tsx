@@ -6,6 +6,7 @@ import { Search } from "lucide-react";
 import {
   Command,
   CommandDialog,
+  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -150,21 +151,6 @@ export function ConsoleCommandPalette({
     [allEntries],
   );
 
-  // `CommandEmpty` (see `command.mjs`) renders whenever `getVisibleItems()`
-  // is empty — and `CommandItem` only calls `registerVisibleItem` when
-  // `matchesQuery && !disabled`, so a disabled entry never registers even
-  // though it is on screen. With an empty query this palette lists a couple
-  // dozen pending (disabled) routes: `CommandEmpty`'s count would be zero
-  // and it would render "Nothing matching..." directly above a screenful of
-  // matching rows. So the empty state is computed here instead, using the
-  // exact same matcher `CommandItem` uses internally (copied from the
-  // compiled source: a case-insensitive substring test of the trimmed query
-  // against `[value, ...keywords].join(" ")`), over disabled entries too.
-  const hasAnyMatch = useMemo(
-    () => allEntries.some((entry) => matchesEntryQuery(entry, query)),
-    [allEntries, query],
-  );
-
   const selectEntry = useCallback(
     (value: string) => {
       const entry = entriesByPaletteValue.get(value);
@@ -219,11 +205,20 @@ export function ConsoleCommandPalette({
             onInput={(event) => setQuery((event.target as HTMLInputElement).value)}
           />
           <CommandList className="space-y-2 p-3">
-            {!loadingTickets && !hasAnyMatch ? (
-              <div className="py-6 text-center text-sm text-muted-foreground">
-                Nothing matching that in routes, tools or tickets.
-              </div>
-            ) : null}
+            {/* `CommandEmpty` again, rather than a hand-computed empty state.
+                Up to 1.8.1 `CommandItem` only registered itself when
+                `matchesQuery && !disabled`, so the couple of dozen pending
+                (disabled) routes this palette lists never counted — with an
+                empty query `CommandEmpty` saw zero registrations and rendered
+                "Nothing matching…" directly above a screenful of matching
+                rows. The workaround recomputed the empty state here from a
+                copy of the primitive's own matcher, read out of its compiled
+                source; 2.1.0 registers on `matchesQuery` alone and counts what
+                is actually rendered, so the copy — and the way it would have
+                drifted the moment the primitive's matcher changed — is gone. */}
+            <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
+              Nothing matching that in routes, tools or tickets.
+            </CommandEmpty>
 
             {loadingTickets || tickets.length > 0 ? (
               <CommandGroup>
@@ -309,20 +304,6 @@ const KIND_CODE: Record<SearchKind, string> = { ticket: "t", route: "r", tool: "
 function paletteValue(entry: SearchEntry): string {
   const raw = entry.id.slice(entry.kind.length + 1);
   return `${KIND_CODE[entry.kind]}:${raw}`;
-}
-
-/**
- * Replicates `CommandItem`'s own match test (`command.mjs`) — a
- * case-insensitive substring test of the trimmed query against
- * `[value, ...keywords].join(" ")` — using the exact same `value` and
- * `keywords` this entry is rendered with in `PaletteItem`, so this can never
- * disagree with what the primitive itself decides to show.
- */
-function matchesEntryQuery(entry: SearchEntry, rawQuery: string): boolean {
-  const haystack = [paletteValue(entry), ...entry.keywords, entry.label]
-    .join(" ")
-    .toLowerCase();
-  return haystack.includes(rawQuery.toLowerCase().trim());
 }
 
 function PaletteItem({ entry }: { entry: SearchEntry }) {
