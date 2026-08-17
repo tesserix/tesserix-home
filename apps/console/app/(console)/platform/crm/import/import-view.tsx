@@ -5,7 +5,13 @@ import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
 import { parseImportCsv, type ImportRow } from "@/lib/crm";
 import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
 import { previewImportAction, commitImportAction } from "./actions";
-import { previewDisplayCounts, committedDisplayCounts, matchedRowLabel, type DisplayCounts } from "./counts";
+import {
+  previewDisplayCounts,
+  committedDisplayCounts,
+  matchedRowLabel,
+  visibleMatchedRows,
+  type DisplayCounts,
+} from "./counts";
 
 /**
  * CSV import: pick a file, preview what it would do, commit.
@@ -45,6 +51,7 @@ function CountsSummary({
    *  to an operator importing, say, updated phone numbers. */
   matchedRows: readonly ImportRow[];
 }) {
+  const { visible, more } = visibleMatchedRows(matchedRows);
   return (
     <div className="rounded-md border border-border p-4 text-sm">
       <p className="font-medium">{title}</p>
@@ -74,13 +81,14 @@ function CountsSummary({
             record is never silently overwritten by a scrape.
           </p>
           <ul className="mt-2 list-disc pl-5">
-            {matchedRows.map((row, index) => (
+            {visible.map((row, index) => (
               // Import rows carry no stable id of their own — this is a
               // display-only list over an immutable array from one
               // preview/commit response, so position is a safe key here.
               <li key={index}>{matchedRowLabel(row)}</li>
             ))}
           </ul>
+          {more > 0 ? <p className="mt-1">…and {more} more.</p> : null}
         </div>
       ) : null}
     </div>

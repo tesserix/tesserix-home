@@ -960,20 +960,38 @@ export interface ImportPreview {
   matchedRows: readonly ImportRow[];
 }
 
+/** Normalised keys a row could be deduped on, namespaced (`email:`/`ig:`)
+ *  so an email and an Instagram handle can never collide with each other's
+ *  normal form. Shared by `previewImport`'s in-batch dedup set below — the
+ *  same trim/lowercase (email) and `normalizeInstagramHandle` (handle) the
+ *  database's own unique indexes and `isSuppressed` use, so this can never
+ *  disagree with what a real insert would collide on. */
+function importRowKeys(row: ImportRow): string[] {
+  const keys: string[] = [];
+  if (row.email) keys.push(`email:${row.email.trim().toLowerCase()}`);
+  if (row.instagramHandle) keys.push(`ig:${normalizeInstagramHandle(row.instagramHandle)}`);
+  return keys;
+}
+
 /**
  * Dry-run a batch of parsed CSV rows: how many would create a new
  * organisation, how many match one that already exists, how many are
  * suppressed, and how many carry nothing usable at all. Writes nothing —
  * see the module comment.
  *
- * Runs entirely on `tesserixQuery` (no transaction): a preview has no
- * batch of its own writes to make an uncommitted insert visible against, so
- * there is no dedup-visibility problem here the way there is in
- * `commitImport` — every row's lookup sees only what's already durably
- * committed. Two rows in the same preview sharing an email will therefore
- * both preview as `toCreate` (neither is visible to the other yet); it is
- * `commitImport`, not this function, that has to get that case right, and
- * does — see Ruling 23.
+ * Important 1 (review round 2): earlier this ran entirely on
+ * `tesserixQuery` with no memory across rows, on the theory that a preview
+ * has no transaction of its own for a later row to see. That's still true
+ * of the DATABASE, but it left a gap this function itself has to close: two
+ * rows in the same preview sharing an email — "ordinary content for a
+ * scraped leads sheet" is this module's own description of that input —
+ * both previewed as `toCreate`, while `commitImport` (Ruling 23) correctly
+ * resolves the second as `matchedExisting`. Same input, two different
+ * numbers, on the one page whose entire premise is "preview what this would
+ * do." `seenKeys` is this function's own in-memory memory of every row IT
+ * has already decided to create in THIS SAME preview — not a database read,
+ * so it costs nothing extra, and it is what lets a preview agree with what
+ * `commitImport` will actually do without needing a transaction to prove it.
  */
 export async function previewImport(rows: readonly ImportRow[]): Promise<ImportPreview> {
   let toCreate = 0;
@@ -981,6 +999,7 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
   let skippedSuppressed = 0;
   let malformed = 0;
   const matchedRows: ImportRow[] = [];
+  const seenKeys = new Set<string>();
 
   for (const row of rows) {
     if (!isUsableImportRow(row)) {
@@ -992,12 +1011,33 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
       skippedSuppressed++;
       continue;
     }
+
+    const keys = importRowKeys(row);
+    if (keys.some((key) => seenKeys.has(key))) {
+      // An earlier row in this SAME batch already claimed this identity —
+      // exactly the case `commitImport` resolves via the transaction seeing
+      // its own uncommitted insert (Ruling 23). No database round trip
+      // needed to know the answer: this preview already decided to create
+      // that row.
+      matchedExisting++;
+      matchedRows.push(row);
+      continue;
+    }
+
     const matchedId = await findMatchingOrganisationId(check);
     if (matchedId) {
       matchedExisting++;
       matchedRows.push(row);
     } else {
       toCreate++;
+      // Registered only on the branch that will actually create something
+      // new — mirrors `commitImport`, where only a row that reaches its own
+      // `crm_contacts` insert becomes visible to a later row's lookup. A
+      // row that matched an existing organisation doesn't need to be
+      // remembered here: any later row sharing its identity will
+      // independently find the same durably-committed match via
+      // `findMatchingOrganisationId`.
+      keys.forEach((key) => seenKeys.add(key));
     }
   }
 

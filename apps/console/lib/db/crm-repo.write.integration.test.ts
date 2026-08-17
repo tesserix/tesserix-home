@@ -49,9 +49,8 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { advanceStage, setNextAction, logActivity, MissingProductError } = await import(
-  "./crm-repo"
-);
+const { advanceStage, setNextAction, logActivity, MissingProductError, commitImport } =
+  await import("./crm-repo");
 
 let db: PGlite;
 let orgId: string;
@@ -293,5 +292,51 @@ describe("advanceStage writes the opportunity and its stage_change activity atom
       [failureInjectedOppId],
     );
     expect(activities.rows).toHaveLength(0);
+  });
+});
+
+// Ruling 25 (review round 2): the mocked unit tests in crm-repo.test.ts
+// prove `commitImport` threads its transaction's own `query` into
+// `isSuppressed`/`findMatchingOrganisationId` (Ruling 23) — but a mock
+// never executes SQL, so it can only pin the WIRING, never prove the dedup
+// SELECT actually matches what the INSERT two lines below it wrote. If the
+// two normalisations (this SELECT's `lower(email)` vs. the INSERT's
+// `.trim().toLowerCase()`) ever drifted, the same-connection read would
+// find nothing, the second row's insert would trip
+// `crm_contacts_email_lower_uq`, and the whole batch would roll back — the
+// original symptom, with the mock test still green. Only a real database,
+// with the real unique index and the real normalisation round trip, can
+// catch that. This is the ONE case this file adds for Ruling 23 — no
+// Postgres container, no pool: the two-connection property itself is
+// already structural and greppable (`crm-repo.ts` has exactly one call
+// site per lookup, both passed `query`), so a container test here would be
+// a load test, not a regression test.
+describe("commitImport dedups within one batch, against the real crm_contacts_email_lower_uq", () => {
+  it("commits the first occurrence of a shared email and matches the second, as one organisation", async () => {
+    const before = await db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM crm_organisations`,
+    );
+    const orgCountBefore = Number(before.rows[0].count);
+
+    const result = await commitImport(
+      [
+        { name: "Dup Co", email: "  Dup@Example.com  " },
+        { name: "Dup Co Again", email: "dup@example.com" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    expect(result.created).toBe(1);
+    expect(result.matchedExisting).toBe(1);
+
+    const after = await db.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM crm_organisations`,
+    );
+    expect(Number(after.rows[0].count)).toBe(orgCountBefore + 1);
+
+    const contacts = await db.query<{ email: string }>(
+      `SELECT email FROM crm_contacts WHERE lower(email) = 'dup@example.com'`,
+    );
+    expect(contacts.rows).toHaveLength(1);
   });
 });

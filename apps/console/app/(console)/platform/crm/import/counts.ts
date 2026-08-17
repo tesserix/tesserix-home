@@ -55,3 +55,22 @@ export function committedDisplayCounts(result: ImportResult, parseMalformed: num
 export function matchedRowLabel(row: ImportRow): string {
   return row.name?.trim() || row.email?.trim() || row.instagramHandle?.trim() || "(unidentified row)";
 }
+
+/** How many rows the "left unchanged" list renders before summarising the
+ *  rest as "and N more" — Minor (review round 2): at `MAX_IMPORT_ROWS`, an
+ *  all-matched import would otherwise render a 500-`<li>` list. */
+export const MATCHED_ROWS_DISPLAY_LIMIT = 25;
+
+export interface VisibleMatchedRows {
+  visible: readonly ImportRow[];
+  /** Rows beyond `MATCHED_ROWS_DISPLAY_LIMIT`, named as a count rather than
+   *  rendered — 0 when the full list already fits. */
+  more: number;
+}
+
+export function visibleMatchedRows(rows: readonly ImportRow[]): VisibleMatchedRows {
+  return {
+    visible: rows.slice(0, MATCHED_ROWS_DISPLAY_LIMIT),
+    more: Math.max(0, rows.length - MATCHED_ROWS_DISPLAY_LIMIT),
+  };
+}

@@ -25,7 +25,7 @@ import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
 import { previewImport, commitImport } from "@/lib/db/crm-repo";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { MAX_IMPORT_ROWS, type ImportRow } from "@/lib/crm";
+import { MAX_IMPORT_ROWS, MAX_TOTAL_ROWS, type ImportRow } from "@/lib/crm";
 import { previewImportAction, commitImportAction } from "./actions";
 
 function manyRows(count: number): ImportRow[] {
@@ -228,5 +228,45 @@ describe("commitImportAction", () => {
       "leads.csv",
       5,
     );
+  });
+
+  // Important 2 (review round 2): totalRows is a server-action parameter,
+  // reachable directly over the network with no client in between — same
+  // reasoning as the filename test above, applied to the parameter that
+  // was missed the first time.
+  it("clamps an absurd totalRows instead of forwarding it to an integer column unbounded", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+
+    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 1e10);
+
+    const [, , , clamped] = vi.mocked(commitImport).mock.calls[0];
+    expect(clamped).toBe(MAX_TOTAL_ROWS);
+  });
+
+  it("clamps a negative or fractional totalRows up to the committed row count", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+
+    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", -3.7);
+
+    const [, , , clamped] = vi.mocked(commitImport).mock.calls[0];
+    expect(clamped).toBe(1);
+  });
+
+  // Minor (review round 2): the audit summary is a THIRD copy of these
+  // counts (alongside the preview card and the committed card in
+  // import-view.tsx) — it must fold in the same parseMalformed-derived
+  // count as the other two, not report `outcome.malformed` bare.
+  it("folds the parse-time malformed count (encoded in totalRows) into the audited malformed count", async () => {
+    signIn(["read"]);
+    vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
+
+    // 1 row committed, totalRows 4: 3 rows were dropped client-side before
+    // commitImport ever saw them.
+    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 4);
+
+    const audit = lastAuditInsert();
+    expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, malformed: 3 });
   });
 });

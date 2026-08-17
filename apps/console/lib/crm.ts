@@ -180,14 +180,25 @@ function cellsToRow(header: readonly string[], cells: readonly string[]): Import
 /**
  * Upper bound on rows accepted by a single import batch, enforced at the
  * action layer (`import/actions.ts`) before `previewImportAction` or
- * `commitImportAction` ever reaches the database. Even after Ruling 23
- * moved `commitImport`'s per-row suppression/dedup reads onto its own
- * transaction's client, an unbounded file would still hold that one
- * connection — and everything else waiting on the pool — for as long as it
- * takes to walk. 2,000 rows is generous for a hand-exported leads sheet;
- * anything larger should be split by the operator.
+ * `commitImportAction` ever reaches the database.
+ *
+ * Ruling 24 (review round 2): derived from `tesserix.ts`'s own numbers, not
+ * picked. Per created row `commitImport` runs up to 2 SELECTs + 3 INSERTs,
+ * all awaited in series, on ONE of the pool's `max: 2` connections — a
+ * 2,000-row commit is ~10,000 serial round trips (5-20s in-cluster) while
+ * `connectionTimeoutMillis` is 5,000 and the pool comment already warns
+ * that two concurrent holders queue a third caller behind them. A
+ * max-size import could therefore exceed the connection timeout for
+ * unrelated console reads waiting on the same pool — the exact failure
+ * this cap exists to prevent, just slower. 500 rows is ~2,500 round trips,
+ * comfortably inside that budget even with a second commit running
+ * concurrently.
+ *
+ * Batched multi-row INSERTs (one round trip for N rows instead of N) are
+ * the real fix for the underlying throughput limit, but are a redesign of
+ * `commitImport`'s write shape, not a cap — out of scope for this round.
  */
-export const MAX_IMPORT_ROWS = 2000;
+export const MAX_IMPORT_ROWS = 500;
 
 /** Cap on a filename before it flows into an audit `target` or
  *  `crm_imports.filename` — a filesystem doesn't bound this, and an
@@ -206,6 +217,41 @@ export function boundFilename(filename: string | undefined): string | undefined 
   const trimmed = filename?.trim();
   if (!trimmed) return undefined;
   return trimmed.slice(0, MAX_IMPORT_FILENAME_LENGTH);
+}
+
+/**
+ * Upper bound on `totalRows` (the caller-reported full file size, including
+ * rows the client already dropped as malformed) that `clampTotalRows` will
+ * ever pass through — deliberately independent of `MAX_IMPORT_ROWS`, which
+ * only bounds the rows actually being written. 20× `MAX_IMPORT_ROWS` is
+ * generous headroom for a file that is mostly junk (a batch at the row cap
+ * with 19 malformed lines for every usable one), while staying nowhere
+ * near Postgres's 32-bit `integer` range — the column `crm_imports.row_count`
+ * and `.skipped_count` actually are.
+ */
+export const MAX_TOTAL_ROWS = MAX_IMPORT_ROWS * 20;
+
+/**
+ * Clamps a caller-supplied `totalRows` to a safe, honest range before it
+ * reaches `commitImport` — Important 2 (review round 2): a server-action
+ * parameter is untrusted input reaching an `integer NOT NULL` column with
+ * no CHECK, exactly the same reasoning `boundFilename` applies to
+ * `filename`. Without this, `totalRows: 1e10` fails `commitImport`'s
+ * `UPDATE crm_imports` with an integer-overflow error AFTER every row's
+ * insert has already run, rolling back an otherwise-fine batch; a negative
+ * or fractional value would write garbage into an audit-relevant column.
+ *
+ * Truncates to an integer, then clamps to
+ * [`committedRowCount`, `MAX_TOTAL_ROWS`] — never less than the rows
+ * actually being committed (the total can't be smaller than the batch it
+ * describes) and never more than the cap. `NaN`/`Infinity` fall back to
+ * `committedRowCount`, the same honest floor an out-of-range value clamps
+ * to, rather than propagating a non-finite number into SQL.
+ */
+export function clampTotalRows(totalRows: number, committedRowCount: number): number {
+  if (!Number.isFinite(totalRows)) return committedRowCount;
+  const truncated = Math.trunc(totalRows);
+  return Math.min(Math.max(truncated, committedRowCount), MAX_TOTAL_ROWS);
 }
 
 export function parseImportCsv(text: string): ParsedImport {

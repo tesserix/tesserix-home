@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { previewDisplayCounts, committedDisplayCounts, matchedRowLabel } from "./counts";
+import {
+  previewDisplayCounts,
+  committedDisplayCounts,
+  matchedRowLabel,
+  visibleMatchedRows,
+  MATCHED_ROWS_DISPLAY_LIMIT,
+} from "./counts";
+import type { ImportRow } from "@/lib/crm";
 
 const PREVIEW = { toCreate: 1, matchedExisting: 2, skippedSuppressed: 3, malformed: 4, matchedRows: [] };
 const RESULT = {
@@ -53,5 +60,32 @@ describe("matchedRowLabel", () => {
 
   it("falls back to the Instagram handle when there is no name or email", () => {
     expect(matchedRowLabel({ instagramHandle: "@bondibaker" })).toBe("@bondibaker");
+  });
+});
+
+function rows(count: number): ImportRow[] {
+  return Array.from({ length: count }, (_, i) => ({ email: `row${i}@example.com` }));
+}
+
+describe("visibleMatchedRows", () => {
+  // Minor (review round 2): at the row cap, an all-matched import produces
+  // a 500-item list — capped, with the overflow named rather than rendered.
+  it("returns every row unchanged when under the limit", () => {
+    const input = rows(3);
+    expect(visibleMatchedRows(input)).toEqual({ visible: input, more: 0 });
+  });
+
+  it("returns exactly the limit with more: 0 at the boundary", () => {
+    const input = rows(MATCHED_ROWS_DISPLAY_LIMIT);
+    const result = visibleMatchedRows(input);
+    expect(result.visible).toHaveLength(MATCHED_ROWS_DISPLAY_LIMIT);
+    expect(result.more).toBe(0);
+  });
+
+  it("truncates to the limit and reports how many more, over the boundary", () => {
+    const input = rows(MATCHED_ROWS_DISPLAY_LIMIT + 7);
+    const result = visibleMatchedRows(input);
+    expect(result.visible).toHaveLength(MATCHED_ROWS_DISPLAY_LIMIT);
+    expect(result.more).toBe(7);
   });
 });

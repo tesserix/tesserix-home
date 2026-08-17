@@ -8,6 +8,8 @@ import {
   parseImportCsv,
   boundFilename,
   MAX_IMPORT_ROWS,
+  clampTotalRows,
+  MAX_TOTAL_ROWS,
 } from "./crm";
 
 describe("crm vocabulary", () => {
@@ -172,5 +174,42 @@ describe("MAX_IMPORT_ROWS", () => {
   it("is a positive, finite cap", () => {
     expect(MAX_IMPORT_ROWS).toBeGreaterThan(0);
     expect(Number.isFinite(MAX_IMPORT_ROWS)).toBe(true);
+  });
+});
+
+describe("clampTotalRows", () => {
+  // Important 2 (review round 2): totalRows is a server-action parameter —
+  // untrusted input reaching `crm_imports.row_count`, an `integer NOT NULL`
+  // column with no CHECK — exactly like `filename` (`boundFilename`).
+  it("passes through a sane value unchanged", () => {
+    expect(clampTotalRows(12, 10)).toBe(12);
+  });
+
+  it("truncates a fractional value to an integer", () => {
+    expect(clampTotalRows(12.9, 10)).toBe(12);
+  });
+
+  it("never returns less than the rows actually being committed", () => {
+    // totalRows can't be smaller than the batch it's describing — a caller
+    // passing a bogus low value (or omitting it) still gets an honest floor.
+    expect(clampTotalRows(3, 10)).toBe(10);
+  });
+
+  it("clamps an absurdly large value instead of letting it overflow an integer column", () => {
+    expect(clampTotalRows(1e10, 10)).toBe(MAX_TOTAL_ROWS);
+  });
+
+  it("clamps a negative value up to the committed row count", () => {
+    expect(clampTotalRows(-5, 10)).toBe(10);
+  });
+
+  it("falls back to the committed row count for NaN or Infinity", () => {
+    expect(clampTotalRows(Number.NaN, 10)).toBe(10);
+    expect(clampTotalRows(Number.POSITIVE_INFINITY, 10)).toBe(10);
+  });
+
+  it("MAX_TOTAL_ROWS is comfortably above MAX_IMPORT_ROWS but nowhere near Postgres's integer range", () => {
+    expect(MAX_TOTAL_ROWS).toBeGreaterThan(MAX_IMPORT_ROWS);
+    expect(MAX_TOTAL_ROWS).toBeLessThan(2 ** 31 - 1);
   });
 });

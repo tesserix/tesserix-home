@@ -10,7 +10,8 @@ import {
   type ImportResult,
 } from "@/lib/db/crm-repo";
 import { withCrmWrite } from "@/lib/crm-write";
-import { MAX_IMPORT_ROWS, boundFilename, type ImportRow } from "@/lib/crm";
+import { MAX_IMPORT_ROWS, boundFilename, clampTotalRows, type ImportRow } from "@/lib/crm";
+import { committedDisplayCounts } from "./counts";
 
 /**
  * CSV import's two server actions.
@@ -83,21 +84,37 @@ export async function commitImportAction(
     return { ok: false, message: tooManyRowsMessage(rows.length) };
   }
   const bounded = boundFilename(filename);
+  // Important 2 (review round 2): totalRows is a server-action parameter —
+  // reachable directly over the network, no client in between guaranteeing
+  // it's sane — flowing into `crm_imports.row_count`/`.skipped_count`,
+  // `integer NOT NULL` columns with no CHECK. Clamped here, the same
+  // reasoning `boundFilename` already applies to `filename` just above.
+  const clampedTotalRows = clampTotalRows(totalRows, rows.length);
+  // The rows the client-side parser dropped before this batch ever formed
+  // — recoverable from the gap between the clamped total and what's
+  // actually being committed, without a third parameter for the same fact
+  // `totalRows` already carries.
+  const parseMalformed = clampedTotalRows - rows.length;
   const result = await withCrmWrite(
     bounded ?? "import",
-    (actor) => commitImport(rows, actor.email, bounded, totalRows),
-    (outcome: ImportResult) => ({
-      action: "crm.import",
-      // Counts-only, matching every other CRM audit summary — the real
-      // outcome `commitImport` reported, not an assumption that every row
-      // in the batch was created.
-      summary: {
-        created: outcome.created,
-        matched: outcome.matchedExisting,
-        skipped: outcome.skippedSuppressed,
-        malformed: outcome.malformed,
-      },
-    }),
+    (actor) => commitImport(rows, actor.email, bounded, clampedTotalRows),
+    (outcome: ImportResult) => {
+      // Minor (review round 2): routed through the SAME `committedDisplayCounts`
+      // the UI's committed card uses (`import-view.tsx`, `counts.ts`) — this
+      // summary was a third, independent copy of these counts that forgot
+      // to fold in `parseMalformed`, and so disagreed with both UI cards
+      // for the same import. One function both call sites share now.
+      const counts = committedDisplayCounts(outcome, parseMalformed);
+      return {
+        action: "crm.import",
+        summary: {
+          created: counts.toCreate,
+          matched: counts.matchedExisting,
+          skipped: counts.skippedSuppressed,
+          malformed: counts.malformed,
+        },
+      };
+    },
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm/import");

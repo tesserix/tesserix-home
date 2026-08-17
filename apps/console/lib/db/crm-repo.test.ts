@@ -844,6 +844,45 @@ describe("import", () => {
       expect(preview.skippedSuppressed).toBe(0);
     });
 
+    // Important 1 (review round 2): the exact regression. Before this fix,
+    // two rows sharing an email both previewed as toCreate, while
+    // commitImport (Ruling 23) correctly resolved the second as
+    // matchedExisting — a preview silently misreporting the one input its
+    // own module comments call "ordinary content for a scraped leads
+    // sheet", on the one page whose entire premise is "preview what this
+    // would do".
+    it("resolves an intra-batch duplicate email as matchedExisting on the second row, matching what commitImport will do", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const preview = await previewImport([
+        { email: "dup@example.com" },
+        { email: "dup@example.com" },
+      ]);
+      expect(preview.toCreate).toBe(1);
+      expect(preview.matchedExisting).toBe(1);
+    });
+
+    it("resolves an intra-batch duplicate Instagram handle the same way, format- and case-insensitively", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const preview = await previewImport([
+        { instagramHandle: "@BondiBaker" },
+        { instagramHandle: "bondibaker" },
+      ]);
+      expect(preview.toCreate).toBe(1);
+      expect(preview.matchedExisting).toBe(1);
+    });
+
+    it("does not treat an email and an Instagram handle sharing normalised text as duplicates of each other", async () => {
+      query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
+      const preview = await previewImport([
+        { email: "bondibaker@example.com" },
+        { instagramHandle: "bondibaker@example.com" },
+      ]);
+      // Namespaced keys (`email:`/`ig:`) — an email and a handle that
+      // happen to share the same literal text are not the same identity.
+      expect(preview.toCreate).toBe(2);
+      expect(preview.matchedExisting).toBe(0);
+    });
+
     it("counts a row with nothing to identify it as malformed, without querying the database for it", async () => {
       query.mockImplementation(routeQuery({}));
       const preview = await previewImport([{ phone: "0400000000" }]);
