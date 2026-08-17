@@ -20,6 +20,7 @@ import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
 } from "@/lib/db/crm-erasure";
+import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
@@ -398,15 +399,24 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
   const result = await withCrmWrite(
     contactId,
     () => eraseContactRow(contactId),
-    (outcome) => ({
-      action: "crm.contact.erase",
-      summary: { erased: outcome ? 1 : 0 },
-      // The name belongs only here, in the free-string audit target — never
-      // in `summary` (counts only) and never in the CrmActionResult below.
-      target: outcome
-        ? `${outcome.previousName ?? "(no name on file)"} (${outcome.contactId})`
-        : contactId,
-    }),
+    (outcome) => {
+      // `outcome.erasedAt` is the PRE-image: non-null means the contact was
+      // ALREADY erased before this call. Reporting `erased: 1` here would
+      // write a second, indistinguishable "this person was erased" row into
+      // `console_audit_log` — the exact trail #140 consumes as evidence a
+      // DPDP request was honoured — for a click that erased nothing new.
+      const alreadyErased = outcome !== null && outcome.erasedAt !== null;
+      return {
+        action: "crm.contact.erase",
+        summary: { erased: outcome && !alreadyErased ? 1 : 0 },
+        // The name belongs only here, in the free-string audit target —
+        // never in `summary` (counts only) and never in the CrmActionResult
+        // below.
+        target: outcome
+          ? `${outcome.previousName ?? "(no name on file)"} (${outcome.contactId})`
+          : contactId,
+      };
+    },
     undefined,
     { capability: "hard-delete" },
   );
@@ -415,6 +425,31 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
     revalidatePath(`/platform/crm/${result.value.organisationId}`);
   }
   return { ok: true };
+}
+
+/**
+ * `AuditWriteError` is thrown by `auditedOperation` AFTER the operation has
+ * already run and committed — see crm-write.ts:93-99. For most CRM writes
+ * `withCrmWrite`'s conservative default ("That change was not saved.") is
+ * still safe to tell an operator, because retrying one stage change is
+ * harmless even if it did in fact save. It is not safe here: the operation
+ * this wraps is a full cascade, already committed, and the default message
+ * says the opposite of what happened. An operator told nothing was saved
+ * will reasonably retry a delete that already ran — the organisation is
+ * already gone, so a retry cannot make it "more" deleted, but the copy must
+ * not send them looking for data that no longer exists. Allowlisted to this
+ * one exception type, not "any Error", same discipline as `mapMissingProduct`
+ * and `mapAlreadyLinked` above.
+ */
+function mapDeleteAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The organisation was deleted, but that action was not recorded in the audit log. Please report this.",
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -444,7 +479,7 @@ export async function deleteOrganisationAction(
       // for an org that no longer exists can still be joined back to it.
       target: outcome ? `${outcome.name} (${outcome.organisationId})` : organisationId,
     }),
-    undefined,
+    mapDeleteAuditFailure,
     { capability: "hard-delete" },
   );
   if (!result.ok) return result;

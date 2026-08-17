@@ -1,13 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   Badge,
   Button,
   Callout,
   CalloutDescription,
-  ConfirmDialog,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
   Label,
   Select,
@@ -53,6 +58,19 @@ interface ProductOption {
   name: string;
 }
 
+/**
+ * `eraseContact` writes `'[erased]'` into `crm_contacts.name` as a database
+ * tombstone (crm-erasure.ts) — a value chosen to be unambiguous in SQL, not
+ * to be read by an operator. Rendered verbatim it produces UI copy like
+ * "Erase [erased]?", which reads as a bug. Mapped to a human display string
+ * here, at the row, so the tombstone stays exactly what the database needs
+ * it to be.
+ */
+function displayContactName(name: string | null): string {
+  if (name === "[erased]") return "Erased contact";
+  return name ?? "Unnamed contact";
+}
+
 function ErrorNote({ message }: { message: string | null }) {
   if (!message) return null;
   return (
@@ -72,33 +90,126 @@ function ErrorNote({ message }: { message: string | null }) {
  * contact erasure too — asking someone to retype a person's own name back at
  * them, right after telling them it's about to be erased, is an odd ask; the
  * organisation's name is the stable thing both actions share.
+ *
+ * Compared case-insensitively (after trimming): requiring exact case is
+ * friction with no safety benefit — it produces a disabled button and no
+ * stated reason a sighted operator can even see, let alone a screen-reader
+ * one. Still requires the full name, not a prefix.
+ *
+ * This is the client-side defence against a slip of the mouse, not the
+ * authorization control — `hard-delete` on the server is that, checked
+ * again by `withCrmWrite` regardless of what this dialog does.
  */
 function useTypedConfirmation(expected: string) {
   const [value, setValue] = useState("");
-  return { value, setValue, matches: value.trim().length > 0 && value.trim() === expected };
+  const normalised = value.trim().toLowerCase();
+  return { value, setValue, matches: normalised.length > 0 && normalised === expected.toLowerCase() };
 }
 
 function ConfirmTypedName({
   id,
+  statusId,
   organisationName,
   value,
+  matches,
   onChange,
   error,
 }: {
   id: string;
+  statusId: string;
   organisationName: string;
   value: string;
+  matches: boolean;
   onChange: (value: string) => void;
   error: string | null;
 }) {
   return (
     <div className="mt-2">
       <Label htmlFor={id}>
-        Type <span className="font-medium">{organisationName}</span> to confirm
+        Type <span className="font-medium">{organisationName}</span> to confirm (not
+        case-sensitive)
       </Label>
-      <Input id={id} className="mt-1" value={value} autoComplete="off" onChange={(event) => onChange(event.target.value)} />
+      <Input
+        id={id}
+        className="mt-1"
+        value={value}
+        autoComplete="off"
+        aria-describedby={statusId}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {/* `aria-live` announces the reason the confirm button below is
+          unreachable — and the moment it stops being unreachable — to a
+          screen-reader operator who can already see the button is disabled
+          but not why. */}
+      <p id={statusId} aria-live="polite" className="mt-1 text-xs text-muted-foreground">
+        {matches
+          ? "Name matches. The confirm button is enabled."
+          : `Confirm button is disabled until this matches "${organisationName}".`}
+      </p>
       <ErrorNote message={error} />
     </div>
+  );
+}
+
+/**
+ * The shared destructive-confirmation shell both hard-delete controls use.
+ *
+ * Built on `Dialog`'s own primitives, not the packaged `ConfirmDialog`: its
+ * confirm button doesn't accept `aria-describedby`, and that association —
+ * pointing the button at the same status text the typed-name field
+ * describes itself with — is exactly what a screen-reader operator needs to
+ * learn why a mistyped name leaves the button unreachable.
+ */
+function DestructiveConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  confirmId,
+  statusId,
+  loading,
+  confirmDisabled,
+  onConfirm,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  confirmId: string;
+  statusId: string;
+  loading: boolean;
+  confirmDisabled: boolean;
+  onConfirm: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[425px]">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        {children}
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={loading} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            id={confirmId}
+            type="button"
+            variant="destructive"
+            aria-describedby={statusId}
+            disabled={loading || confirmDisabled}
+            onClick={onConfirm}
+          >
+            {loading ? "Please wait…" : confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -145,14 +256,17 @@ function EraseContactButton({
     });
   };
 
-  const contactLabel = contact.name ?? "this contact";
+  // `[erased]` is the database tombstone, never a display string — see
+  // `displayContactName`. Not reading it here would produce "Erase [erased]?".
+  const contactLabel = displayContactName(contact.name);
+  const statusId = `erase-confirm-status-${contact.id}`;
 
   return (
     <>
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
         Erase
       </Button>
-      <ConfirmDialog
+      <DestructiveConfirmDialog
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
@@ -161,19 +275,22 @@ function EraseContactButton({
         title={`Erase ${contactLabel}?`}
         description={`This overwrites ${contactLabel}'s name, email, phone, and Instagram handle. ${organisationName}'s deal history — its opportunities and activity log — is kept exactly as it is. This cannot be undone.`}
         confirmLabel="Erase contact"
-        variant="destructive"
+        confirmId={`erase-confirm-button-${contact.id}`}
+        statusId={statusId}
         loading={pending}
         confirmDisabled={!matches}
         onConfirm={submit}
       >
         <ConfirmTypedName
           id={`erase-confirm-${contact.id}`}
+          statusId={statusId}
           organisationName={organisationName}
           value={value}
+          matches={matches}
           onChange={setValue}
           error={error}
         />
-      </ConfirmDialog>
+      </DestructiveConfirmDialog>
     </>
   );
 }
@@ -200,6 +317,7 @@ export function DeleteOrganisationButton({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const { value, setValue, matches } = useTypedConfirmation(organisationName);
+  const statusId = "delete-organisation-confirm-status";
 
   const reset = () => {
     setValue("");
@@ -226,7 +344,7 @@ export function DeleteOrganisationButton({
       <Button type="button" size="sm" variant="destructive" onClick={() => setOpen(true)}>
         Delete organisation
       </Button>
-      <ConfirmDialog
+      <DestructiveConfirmDialog
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
@@ -235,19 +353,22 @@ export function DeleteOrganisationButton({
         title={`Delete ${organisationName}?`}
         description={`This removes ${organisationName} and every opportunity and activity recorded against it — unlike erasing a contact, there is no deal history left afterwards. This cannot be undone.`}
         confirmLabel="Delete organisation"
-        variant="destructive"
+        confirmId="delete-organisation-confirm-button"
+        statusId={statusId}
         loading={pending}
         confirmDisabled={!matches}
         onConfirm={submit}
       >
         <ConfirmTypedName
           id="delete-organisation-confirm"
+          statusId={statusId}
           organisationName={organisationName}
           value={value}
+          matches={matches}
           onChange={setValue}
           error={error}
         />
-      </ConfirmDialog>
+      </DestructiveConfirmDialog>
     </>
   );
 }
@@ -762,7 +883,7 @@ export function ContactsTab({
             <li key={contact.id} className="border-t border-border pt-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium">{contact.name ?? "Unnamed contact"}</span>
+                  <span className="font-medium">{displayContactName(contact.name)}</span>
                   {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
                 </div>
                 {canHardDelete ? (

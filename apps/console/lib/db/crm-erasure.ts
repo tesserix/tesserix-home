@@ -24,6 +24,17 @@ export interface ErasedContact {
   organisationId: string;
   /** The name as it was, for the audit row only — never re-displayed. */
   previousName: string | null;
+  /**
+   * The erasure timestamp as it stood BEFORE this call, not after —
+   * `erased_at` is COALESCE'd (see below) so the post-image is the same
+   * non-null value on every call once a contact has been erased once, which
+   * would make it useless for telling a genuine erasure apart from a
+   * repeat. `null` here means this call is the one that erased the contact;
+   * a real timestamp means it was already erased and this call was a no-op.
+   * The caller needs this distinction to keep `crm.contact.erase` audit rows
+   * honest: a second click must not read as a second erasure.
+   */
+  erasedAt: string | null;
 }
 
 /**
@@ -63,9 +74,10 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
       id: string;
       organisation_id: string;
       previous_name: string | null;
+      previous_erased_at: string | null;
     }>(
       `WITH old AS (
-         SELECT id, name FROM crm_contacts WHERE id = $1
+         SELECT id, name, erased_at FROM crm_contacts WHERE id = $1
        )
        UPDATE crm_contacts c
           SET name = '[erased]',
@@ -79,7 +91,7 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
               updated_at = now()
          FROM old
         WHERE c.id = old.id
-        RETURNING c.id, c.organisation_id, old.name AS previous_name`,
+        RETURNING c.id, c.organisation_id, old.name AS previous_name, old.erased_at AS previous_erased_at`,
       [contactId],
     );
 
@@ -92,6 +104,7 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
       contactId: row.id,
       organisationId: row.organisation_id,
       previousName: row.previous_name,
+      erasedAt: row.previous_erased_at,
     };
   });
 }

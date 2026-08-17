@@ -1,6 +1,44 @@
-import { describe, expect, it } from "vitest";
-import { detailState, isUuidShaped } from "./page";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { OrganisationDetail } from "@/lib/db/crm-repo";
+
+const organisationDetail = vi.fn();
+
+vi.mock("@/lib/db/crm-repo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/crm-repo")>()),
+  organisationDetail: (...args: unknown[]) => organisationDetail(...args),
+}));
+
+const getCurrentSession = vi.fn();
+
+// `hasCapability` itself is NOT mocked — the real implementation from
+// `@tesserix/platform-auth` is what decides whether the erase/delete
+// controls render, and a passing test should be evidence about that
+// decision, not about a stand-in for it.
+vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tesserix/platform-auth")>()),
+  getCurrentSession: (...args: unknown[]) => getCurrentSession(...args),
+}));
+
+// Forces the `hard-delete` gate to actually check roles rather than the
+// pre-cutover "every session holds every capability" bypass — same reason
+// `tickets/[id]/page.test.tsx` doesn't need this (it mocks `hasCapability`
+// directly instead).
+vi.mock("@/lib/internal-access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/internal-access")>()),
+  requiresCapability: () => true,
+}));
+
+// `EraseContactButton`/`DeleteOrganisationButton` call `useRouter()` to
+// refresh/redirect after a server action — same reason `crm/page.test.tsx`
+// and `suppressions/page.test.tsx` mock this.
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+}));
+
+import OrganisationDetailPage, { detailState, isUuidShaped } from "./page";
 
 const DETAIL = {
   organisation: { id: "g1", name: "Bondi Baker" },
@@ -8,6 +46,40 @@ const DETAIL = {
   opportunities: [],
   activities: [],
 } as unknown as OrganisationDetail;
+
+const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
+
+const DETAIL_WITH_CONTACT = {
+  organisation: {
+    id: ORG_ID,
+    name: "Glebe Flowers",
+    websiteUrl: null,
+    location: null,
+    category: [],
+    tags: [],
+    convertedAt: null,
+    convertedLabel: null,
+    convertedProduct: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  },
+  contacts: [
+    { id: "contact-1", name: "Priya Raman", email: null, phone: null, instagramHandle: null, isPrimary: true },
+  ],
+  opportunities: [],
+  activities: [],
+} as unknown as OrganisationDetail;
+
+async function renderOrganisationPage(roles: readonly string[] | undefined) {
+  organisationDetail.mockResolvedValue(DETAIL_WITH_CONTACT);
+  getCurrentSession.mockResolvedValue({
+    sub: "op-1",
+    email: "op@tesserix.app",
+    roles,
+    iat: 0,
+    exp: 0,
+  });
+  render(await OrganisationDetailPage({ params: Promise.resolve({ organisation: ORG_ID }) }));
+}
 
 describe("detailState", () => {
   it("reports empty — not ready — when the record never arrived", () => {
@@ -51,5 +123,48 @@ describe("isUuidShaped", () => {
 
   it("rejects a uuid-length string with an invalid character", () => {
     expect(isUuidShaped("8b6a7a4a-0000-0000-0000-00000000000z")).toBe(false);
+  });
+});
+
+// Important 3 (fix round 1): the `canHardDelete` gate at page.tsx and the
+// typed-name gate in organisation-detail-view.tsx are the two controls
+// standing between an operator and an irreversible destroy — nothing was
+// asserting either survives a refactor.
+describe("hard-delete controls on the organisation detail page", () => {
+  it("hides the Erase and Delete organisation controls for a session without hard-delete", async () => {
+    await renderOrganisationPage(["read"]);
+
+    expect(screen.queryByRole("button", { name: "Delete organisation" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+    expect(screen.queryByRole("button", { name: "Erase" })).toBeNull();
+  });
+
+  it("shows the Erase and Delete organisation controls for a session with hard-delete", async () => {
+    await renderOrganisationPage(["hard-delete"]);
+
+    expect(screen.getByRole("button", { name: "Delete organisation" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("tab", { name: "Contacts" }));
+    expect(screen.getByRole("button", { name: "Erase" })).toBeInTheDocument();
+  });
+
+  it("keeps the confirm button disabled until the typed organisation name matches, case-insensitively", async () => {
+    const user = userEvent.setup();
+    await renderOrganisationPage(["hard-delete"]);
+
+    await user.click(screen.getByRole("button", { name: "Delete organisation" }));
+
+    const dialog = screen.getByRole("dialog");
+    const confirmButton = within(dialog).getByRole("button", { name: "Delete organisation" });
+    expect(confirmButton).toBeDisabled();
+
+    const input = within(dialog).getByLabelText(/Type Glebe Flowers to confirm/i);
+    await user.type(input, "glebe flowers");
+    expect(confirmButton).not.toBeDisabled();
+
+    await user.clear(input);
+    await user.type(input, "not the org name");
+    expect(confirmButton).toBeDisabled();
   });
 });

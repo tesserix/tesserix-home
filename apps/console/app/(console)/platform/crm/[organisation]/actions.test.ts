@@ -716,6 +716,7 @@ describe("eraseContactAction", () => {
   const CONTACT_ID = "contact-1";
 
   it("gates contact erasure on hard-delete, not read", async () => {
+    signIn(undefined);
     await eraseContactAction(CONTACT_ID);
     const options = vi.mocked(withCrmWrite).mock.calls[0][4];
     expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
@@ -727,6 +728,8 @@ describe("eraseContactAction", () => {
       contactId: CONTACT_ID,
       organisationId: ORG_ID,
       previousName: "Priya Raman",
+      // null: this call is the one that erased the contact, not a repeat.
+      erasedAt: null,
     });
 
     const result = await eraseContactAction(CONTACT_ID);
@@ -749,6 +752,7 @@ describe("eraseContactAction", () => {
       contactId: CONTACT_ID,
       organisationId: ORG_ID,
       previousName: "Priya Raman",
+      erasedAt: null,
     });
 
     const result = await eraseContactAction(CONTACT_ID);
@@ -771,6 +775,58 @@ describe("eraseContactAction", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
+  // Important 2 (fix round 1): re-erasing an already-erased contact must not
+  // write a second, indistinguishable "erased" row into console_audit_log —
+  // that log is the evidence #140 consumes that a DPDP request was honoured,
+  // and a fabricated second erasure in it is worse than a redundant click.
+  it("reports erased: 0, not 1, when the contact was already erased", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "[erased]",
+      // Non-null: the PRE-image already carried an erasure timestamp, so
+      // this call is a no-op re-erase, not a genuine first one.
+      erasedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.contact.erase",
+      target: `[erased] (${CONTACT_ID})`,
+      summary: { erased: 0 },
+    });
+  });
+
+  // The two audit summaries a real first-then-second click sequence
+  // produces must differ, exactly as they would in `console_audit_log`.
+  it("the second call's audit summary differs from the first's", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValueOnce({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+      erasedAt: null,
+    });
+    await eraseContactAction(CONTACT_ID);
+    const firstSummary = lastAuditInsert().summary;
+
+    vi.mocked(eraseContact).mockResolvedValueOnce({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "[erased]",
+      erasedAt: "2026-01-01T00:00:00.000Z",
+    });
+    await eraseContactAction(CONTACT_ID);
+    const secondSummary = lastAuditInsert().summary;
+
+    expect(firstSummary).toEqual({ erased: 1 });
+    expect(secondSummary).toEqual({ erased: 0 });
+    expect(secondSummary).not.toEqual(firstSummary);
+  });
+
   it("refuses an operator who holds read but not hard-delete", async () => {
     signIn(["read"]);
 
@@ -786,6 +842,7 @@ describe("eraseContactAction", () => {
 
 describe("deleteOrganisationAction", () => {
   it("gates organisation delete on hard-delete", async () => {
+    signIn(undefined);
     await deleteOrganisationAction(ORG_ID);
     const options = vi.mocked(withCrmWrite).mock.calls[0][4];
     expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
@@ -845,6 +902,33 @@ describe("deleteOrganisationAction", () => {
       target: ORG_ID,
       summary: { contacts: 0, opportunities: 0 },
     });
+  });
+
+  // Important 1 (fix round 1): the cascade already committed by the time
+  // `auditedOperation`'s own INSERT fails — `withCrmWrite`'s default
+  // "That change was not saved." would tell the operator the opposite of
+  // what happened for the strongest instance of that risk in the codebase.
+  it("tells the operator the deletion succeeded but was not recorded, when the audit write fails", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOrganisation).mockResolvedValue({
+      organisationId: ORG_ID,
+      name: "Glebe Flowers",
+      contactsDeleted: 2,
+      opportunitiesDeleted: 3,
+    });
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await deleteOrganisationAction(ORG_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The organisation was deleted, but that action was not recorded in the audit log. Please report this.",
+    });
+    // Guards the guard: the cascade genuinely ran — this is not an
+    // earlier bail-out — but the audit row for it does not exist.
+    expect(deleteOrganisation).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("refuses an operator who holds read but not hard-delete", async () => {

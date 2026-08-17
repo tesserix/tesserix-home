@@ -112,6 +112,9 @@ describe("eraseContact", () => {
   it("overwrites every personal column and keeps the row", async () => {
     const result = await eraseContact(contactId);
     expect(result?.previousName).toBe("Priya Raman");
+    // `erasedAt` is the PRE-image value — null here means this call is the
+    // one that erased the contact, not a repeat.
+    expect(result?.erasedAt).toBeNull();
     const rows = await db.query(
       `SELECT name, email, phone, instagram_handle, biography,
               followers_count, posts_count, erased_at
@@ -165,7 +168,8 @@ describe("eraseContact", () => {
   });
 
   it("is idempotent — erasing twice does not move erased_at or remove the row", async () => {
-    await eraseContact(contactId);
+    const first = await eraseContact(contactId);
+    expect(first?.erasedAt).toBeNull();
     const firstRows = await db.query(`SELECT erased_at FROM crm_contacts WHERE id = $1`, [
       contactId,
     ]);
@@ -176,6 +180,11 @@ describe("eraseContact", () => {
     // moving it forward would destroy that evidence.
     const second = await eraseContact(contactId);
     expect(second).not.toBeNull();
+    // The second call's `erasedAt` is non-null — the PRE-image now carries
+    // the first call's timestamp — which is exactly the signal a caller
+    // needs to tell a genuine erasure apart from a no-op re-erase, without a
+    // second query. See `eraseContactAction`'s use of this.
+    expect(second?.erasedAt).not.toBeNull();
 
     const secondRows = await db.query(`SELECT erased_at FROM crm_contacts WHERE id = $1`, [
       contactId,
