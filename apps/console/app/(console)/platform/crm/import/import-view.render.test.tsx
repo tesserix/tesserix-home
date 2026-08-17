@@ -31,6 +31,7 @@ function committedResult(overrides: Partial<ImportResult> = {}): ImportResult {
     matchedExisting: 3,
     skippedSuppressed: 1,
     malformed: 0,
+    droppedWebsiteUrls: 0,
     matchedRows: [],
     ...overrides,
   };
@@ -74,6 +75,36 @@ describe("ImportView committed result", () => {
       "href",
       "/platform/crm/organisations?import=11111111-1111-1111-1111-111111111111",
     );
+  });
+
+  it("says organisation, singular, when the import created exactly one", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ created: 1 }));
+
+    const link = screen.getByRole("link", { name: /view/i });
+    expect(link).toHaveTextContent("View 1 new organisation");
+    expect(link).not.toHaveTextContent("organisations");
+  });
+
+  // Finding 5: `commitImport` stores an unsafe website_url as NULL and keeps
+  // the row. There is no organisation edit surface anywhere in the console,
+  // so an operator who is not told cannot put the address back by hand — the
+  // count is the only thing that makes a re-import a choice they can make.
+  it("reports website urls the import dropped", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ droppedWebsiteUrls: 2 }));
+
+    expect(screen.getByText("Website dropped")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText(/website cell was not a http/i)).toBeInTheDocument();
+  });
+
+  it("offers no dropped-url explanation when every website url was fine", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ droppedWebsiteUrls: 0 }));
+
+    expect(screen.getByText("Website dropped")).toBeInTheDocument();
+    expect(screen.queryByText(/website cell was not a http/i)).toBeNull();
   });
 
   it("offers no link when the import created nothing", async () => {

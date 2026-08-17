@@ -10,10 +10,20 @@
  * `data:`, `vbscript:`, ...) from reaching this column and becoming a
  * clickable link for the next operator who opens the record.
  *
- * `crm-writes.ts` (manual create) and `crm-repo.ts` (CSV import,
- * `commitImport`) are both writers of this column; each calls this one
- * exported check rather than a copy, so a third writer can't reintroduce
- * the hole by skipping it.
+ * `crm-writes.ts` (`createOrganisation`, manual create) and `crm-repo.ts`
+ * (`commitImport`, CSV import) are the only two writers of this column, and
+ * each calls this check itself, inside the data-layer function that performs
+ * the INSERT — not one layer up in its action. That placement is the whole
+ * guarantee: an exported writer that trusts its caller to have checked is
+ * reachable unguarded by the next caller someone adds. `organisations/new`'s
+ * action checks as well, and should — it is what turns the refusal into a
+ * field-level message on the form — but nothing depends on it having done so.
+ *
+ * The two writers differ in what they do on a failed check, deliberately:
+ * a manual create rejects the whole write (the operator is right there and
+ * can fix the field), while an import stores NULL and counts the drop
+ * (`droppedWebsiteUrls`), because one bad cell must not cost the other rows
+ * in the batch.
  *
  * Parsed with the `URL` constructor, not a regex — a hand-rolled pattern
  * match on URLs is its own bug, prone to exactly the kind of scheme-check

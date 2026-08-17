@@ -44,7 +44,8 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { createOrganisation, createOpportunity } = await import("./crm-writes");
+const { createOrganisation, createContact, createOpportunity } = await import("./crm-writes");
+const { addSuppression, SuppressedContactError } = await import("./crm-repo");
 
 let db: PGlite;
 
@@ -157,5 +158,78 @@ describe("createOrganisation / createOpportunity", () => {
     // crm_contacts_email_lower_uq is case-insensitive; a partial write here
     // would leave an organisation with no contact and no way to tell why.
     expect(orgs.rows).toHaveLength(0);
+  });
+
+  // The guarantee has to hold at THIS layer, not only in
+  // `organisations/new/actions.ts`: `createOrganisation` is exported, and a
+  // future caller that forgets the action-layer check would put a
+  // `javascript:` href back on the organisation detail page.
+  it("rejects a javascript: website url when called directly", async () => {
+    await expect(
+      createOrganisation({ name: "Hostile Co", websiteUrl: "javascript:alert(1)" }),
+    ).rejects.toThrow(/websiteUrl/);
+    const orgs = await db.query(`SELECT id FROM crm_organisations WHERE name = $1`, ["Hostile Co"]);
+    expect(orgs.rows).toHaveLength(0);
+  });
+
+  it("still accepts an ordinary https website url", async () => {
+    const { organisationId } = await createOrganisation({
+      name: "Safe Co",
+      websiteUrl: "https://safe.example",
+    });
+    const rows = await db.query(`SELECT website_url FROM crm_organisations WHERE id = $1`, [
+      organisationId,
+    ]);
+    expect((rows.rows[0] as { website_url: string }).website_url).toBe("https://safe.example");
+  });
+});
+
+/**
+ * Suppression on the MANUAL create paths.
+ *
+ * `commitImport` has checked per row since Task 8; neither manual door did,
+ * so a person who asked not to be contacted could simply be re-added by
+ * hand. design.md:224 requires the list to survive the next import — the
+ * same reasoning makes it have to survive a typed-in row.
+ */
+describe("manual create honours the do-not-contact list", () => {
+  it("refuses a new organisation whose first contact is suppressed, and writes nothing", async () => {
+    await addSuppression({ email: "gone@example.com", reason: "asked", actor: "ops@tesserix.app" });
+
+    await expect(
+      createOrganisation({
+        name: "Suppressed Lead",
+        contact: { email: "GONE@example.com" },
+      }),
+    ).rejects.toBeInstanceOf(SuppressedContactError);
+
+    const orgs = await db.query(`SELECT id FROM crm_organisations WHERE name = $1`, [
+      "Suppressed Lead",
+    ]);
+    expect(orgs.rows).toHaveLength(0);
+  });
+
+  it("refuses a suppressed contact added to an existing organisation", async () => {
+    await addSuppression({
+      instagramHandle: "@quiet_shop",
+      reason: "asked",
+      actor: "ops@tesserix.app",
+    });
+    const { organisationId } = await createOrganisation({ name: "Existing Co" });
+
+    await expect(
+      createContact({ organisationId, instagramHandle: "quiet_shop" }),
+    ).rejects.toBeInstanceOf(SuppressedContactError);
+
+    const contacts = await db.query(`SELECT id FROM crm_contacts WHERE organisation_id = $1`, [
+      organisationId,
+    ]);
+    expect(contacts.rows).toHaveLength(0);
+  });
+
+  it("still creates a contact whose keys are not on the list", async () => {
+    const { organisationId } = await createOrganisation({ name: "Welcome Co" });
+    const { contactId } = await createContact({ organisationId, email: "fine@example.com" });
+    expect(contactId).toBeTruthy();
   });
 });

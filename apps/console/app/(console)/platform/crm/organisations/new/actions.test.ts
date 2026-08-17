@@ -15,6 +15,7 @@ vi.mock("@/lib/crm-write", async (importOriginal) => ({
   withCrmWrite: vi.fn(),
 }));
 
+import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { revalidatePath } from "next/cache";
 import { createOrganisation } from "@/lib/db/crm-writes";
 import { withCrmWrite } from "@/lib/crm-write";
@@ -169,5 +170,23 @@ describe("createOrganisationAction", () => {
     expect(createOrganisation).toHaveBeenCalledWith(
       expect.objectContaining({ name: "__none__", location: "__none__" }),
     );
+  });
+
+  // Finding 4: `createOrganisation` refuses a suppressed first contact at
+  // the data layer. Without this mapper the refusal would arrive as
+  // `withCrmWrite`'s generic "That change was not saved.", which reads as a
+  // bug and invites a retry that can never succeed.
+  it("surfaces the do-not-contact refusal as its own message, not the generic one", async () => {
+    const mapError = () => undefined;
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+      const mapped = (map ?? mapError)(new SuppressedContactError(undefined, "on the list"));
+      return mapped ?? { ok: false, message: "That change was not saved." };
+    });
+    const form = new FormData();
+    form.set("name", "Suppressed Lead");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result).toEqual({ ok: false, message: "on the list" });
   });
 });

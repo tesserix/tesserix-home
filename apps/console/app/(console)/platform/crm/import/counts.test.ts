@@ -15,6 +15,7 @@ const RESULT = {
   matchedExisting: 2,
   skippedSuppressed: 3,
   malformed: 4,
+  droppedWebsiteUrls: 0,
   matchedRows: [],
 };
 
@@ -36,6 +37,7 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       matchedExisting: 2,
       skippedSuppressed: 3,
       malformed: 4,
+      droppedWebsiteUrls: null,
     });
   });
 
@@ -45,6 +47,7 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       matchedExisting: 2,
       skippedSuppressed: 3,
       malformed: 4,
+      droppedWebsiteUrls: 0,
     });
   });
 });

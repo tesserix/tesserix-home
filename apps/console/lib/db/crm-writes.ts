@@ -1,4 +1,6 @@
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
+import { isSafeWebsiteUrl } from "./crm-url";
+import { isSuppressed, SuppressedContactError } from "./crm-repo";
 
 /**
  * Manual create for the CRM: the only door into `crm_organisations` /
@@ -9,7 +11,45 @@ import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
  *
  * Kept in its own file rather than folded into crm-repo.ts, which is already
  * past 1,500 lines.
+ *
+ * Two guarantees live at THIS layer rather than in the actions above it,
+ * because an exported function is reachable by any future caller and a
+ * guarantee that depends on callers remembering is not a guarantee:
+ *
+ * - Website URLs are scheme-checked (`isSafeWebsiteUrl`). The action layer
+ *   checks too, and should: it turns the refusal into a field-level message.
+ * - The do-not-contact list is honoured (`isSuppressed`). `commitImport`
+ *   already checks per row, but a person who asked not to be contacted could
+ *   be re-added by hand through either function below. Suppression has to
+ *   survive a manual add for the same reason design.md:224 requires it to
+ *   survive the next import.
  */
+
+/**
+ * The suppression refusal for a manual create. Names the fact — this contact
+ * is on the do-not-contact list — and the remedy, without echoing back which
+ * key matched: the operator supplied both, and the list's contents are not
+ * this message's to disclose.
+ */
+const SUPPRESSED_ON_CREATE_MESSAGE =
+  "That contact is on the do-not-contact list. Remove the suppression before adding them.";
+
+/**
+ * Refuse the write if either identifying key is suppressed.
+ *
+ * Runs on the caller's own `query` — the transaction's scoped client, not a
+ * second pooled connection — for Ruling 23's reason: the check and the insert
+ * must not straddle a concurrent suppression being added, and the pool is
+ * `max: 2`.
+ */
+async function assertNotSuppressed(
+  query: TxQuery,
+  keys: { email?: string; instagramHandle?: string },
+): Promise<void> {
+  if (await isSuppressed(keys, query)) {
+    throw new SuppressedContactError(undefined, SUPPRESSED_ON_CREATE_MESSAGE);
+  }
+}
 
 export interface CreateOrganisationInput {
   name: string;
@@ -69,7 +109,25 @@ export async function createOrganisation(
     throw new Error("createOrganisation: name is required");
   }
 
+  // The scheme check belongs here, not only in the action that happens to
+  // call this today: `crm_organisations.website_url` is rendered back as a
+  // clickable `<a href target="_blank">`, and an exported writer that trusts
+  // its caller to have checked is exactly how `javascript:` gets back in.
+  // The action layer keeps its own check because it produces the field-level
+  // message; this one is the one that cannot be skipped.
+  const websiteUrl = input.websiteUrl?.trim();
+  if (websiteUrl && !isSafeWebsiteUrl(websiteUrl)) {
+    throw new Error("createOrganisation: websiteUrl must be an http(s) address");
+  }
+
   return tesserixTx(async (query) => {
+    if (input.contact) {
+      await assertNotSuppressed(query, {
+        email: input.contact.email,
+        instagramHandle: input.contact.instagramHandle,
+      });
+    }
+
     const organisationId = await insertOrganisation(query, name, input);
 
     if (input.contact) {
@@ -109,14 +167,21 @@ async function insertOrganisation(
 }
 
 /**
- * Create a contact against an existing organisation, outside any
- * organisation-level transaction — a single INSERT needs no transaction of
- * its own, and `tesserixQuery`'s pooled connection is exactly what a lone
- * statement wants.
+ * Create a contact against an existing organisation.
+ *
+ * Transactional despite being a single INSERT: the suppression check and the
+ * insert have to see the same client, or a suppression added between them is
+ * simply missed — the same reasoning `logActivity` applies to outreach.
  */
 export async function createContact(input: CreateContactInput): Promise<{ contactId: string }> {
-  const contactId = await insertContact(tesserixQuery, input);
-  return { contactId };
+  return tesserixTx(async (query) => {
+    await assertNotSuppressed(query, {
+      email: input.email,
+      instagramHandle: input.instagramHandle,
+    });
+    const contactId = await insertContact(query, input);
+    return { contactId };
+  });
 }
 
 async function insertContact(

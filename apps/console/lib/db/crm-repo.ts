@@ -491,19 +491,27 @@ const OUTBOUND_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
 ]);
 
 /**
- * Thrown when outreach is logged against an organisation whose contacts are
- * on the do-not-contact list. design.md:224 says the list is checked "at
- * import and when logging outreach"; before this, only the two import
- * callers checked, so half of what the feature claims was absent. An
- * allowlisted, operator-facing exception (see `mapError` in
+ * Thrown when the do-not-contact list refuses a write. design.md:224 says the
+ * list is checked "at import and when logging outreach"; before this, only
+ * the two import callers checked, so half of what the feature claims was
+ * absent. An allowlisted, operator-facing exception (see `mapError` in
  * `lib/crm-write.ts`) rather than a generic failure: an operator who just
  * hit this needs to know WHY, or they will simply try again.
+ *
+ * `organisationId` is optional and `message` overridable because the same
+ * refusal now has two shapes. Outreach is refused against a known
+ * organisation; a MANUAL CREATE (`crm-writes.ts`) is refused for a person who
+ * asked not to be contacted, and on the new-organisation path there is no
+ * organisation id yet — the whole point is that the row does not get written.
+ * The message says which of the two happened, and neither wording names any
+ * detail the operator did not just type in themselves.
  */
 export class SuppressedContactError extends Error {
-  constructor(readonly organisationId: string) {
-    super(
-      "This organisation is on the do-not-contact list. Remove the suppression before logging outreach.",
-    );
+  constructor(
+    readonly organisationId?: string,
+    message = "This organisation is on the do-not-contact list. Remove the suppression before logging outreach.",
+  ) {
+    super(message);
     this.name = "SuppressedContactError";
   }
 }
@@ -1179,6 +1187,16 @@ export interface ImportResult {
   matchedExisting: number;
   skippedSuppressed: number;
   malformed: number;
+  /**
+   * Rows that WERE created, but whose `website_url` cell failed
+   * `isSafeWebsiteUrl` and was stored as NULL. Deliberately not folded into
+   * `malformed` — that counter means "no organisation was created for this
+   * row" — but it cannot go unreported either: there is no organisation edit
+   * surface, so an operator who is never told cannot ever put the address
+   * back. Zero for an import where every URL was fine, which is the common
+   * case and reads as such.
+   */
+  droppedWebsiteUrls: number;
   matchedRows: readonly ImportRow[];
 }
 
@@ -1219,6 +1237,7 @@ export async function commitImport(
     let matchedExisting = 0;
     let skippedSuppressed = 0;
     let malformed = 0;
+    let droppedWebsiteUrls = 0;
     const matchedRows: ImportRow[] = [];
 
     const importRows = await query<{ id: string }>(
@@ -1270,16 +1289,21 @@ export async function commitImport(
       // back every row already committed in this batch (Ruling 23's
       // same-transaction guarantee cuts both ways: one bad row must not cost
       // the others). Stored as NULL instead, exactly like the column's
-      // existing "blank cell" handling one line below — an operator who
-      // needs the website back can re-add it by hand once the row exists.
-      // Not counted in `malformed`: that counter means "this row was not
-      // usable at all and no organisation was created for it" (see the
-      // `isUsableImportRow` check above); a row that lost only its website
-      // field is still fully created, so folding it into `malformed` would
-      // make that counter mean two different things.
-      const trimmedWebsiteUrl = row.websiteUrl?.trim();
+      // existing "blank cell" handling one line below.
+      //
+      // Counted, though, in its own `droppedWebsiteUrls` — not in
+      // `malformed`, which means "no organisation was created for this row"
+      // (see the `isUsableImportRow` check above) and would come to mean two
+      // things at once. The count is what makes the drop recoverable at all:
+      // there is no organisation edit surface anywhere in the console, so a
+      // silently dropped address is gone until the row is re-imported, and an
+      // operator who is not told has no way to know a re-import is owed.
+      const trimmedWebsiteUrl = row.websiteUrl?.trim() || null;
       const websiteUrl =
         trimmedWebsiteUrl && isSafeWebsiteUrl(trimmedWebsiteUrl) ? trimmedWebsiteUrl : null;
+      if (trimmedWebsiteUrl && !websiteUrl) {
+        droppedWebsiteUrls++;
+      }
       const orgRows = await query<{ id: string }>(
         `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -1329,7 +1353,15 @@ export async function commitImport(
       skippedCount,
     ]);
 
-    return { importId, created, matchedExisting, skippedSuppressed, malformed, matchedRows };
+    return {
+      importId,
+      created,
+      matchedExisting,
+      skippedSuppressed,
+      malformed,
+      droppedWebsiteUrls,
+      matchedRows,
+    };
   });
 }
 

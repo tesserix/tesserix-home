@@ -73,7 +73,26 @@ function CountsSummary({
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Malformed</dt>
           <dd className="mt-1 text-lg">{counts.malformed}</dd>
         </div>
+        {/* Only on a committed import — a preview drops nothing, so the
+         *  count is `null` there rather than a misleading zero. Shown beside
+         *  the other counts because there is no organisation edit surface:
+         *  the only remedy for a dropped address is a re-import, and an
+         *  operator who is never told the drop happened cannot choose it. */}
+        {counts.droppedWebsiteUrls !== null ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+              Website dropped
+            </dt>
+            <dd className="mt-1 text-lg">{counts.droppedWebsiteUrls}</dd>
+          </div>
+        ) : null}
       </dl>
+      {counts.droppedWebsiteUrls ? (
+        <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          These rows were created, but their website cell was not a http:// or https:// address and
+          was left blank. Correct the CSV and import again to add it.
+        </p>
+      ) : null}
       {matchedRows.length > 0 ? (
         <div className="mt-3 border-t border-border pt-3 text-muted-foreground">
           <p>
@@ -232,7 +251,8 @@ export function ImportView() {
               href={`/platform/crm/organisations?import=${committed.importId}`}
               className="text-sm font-medium hover:underline"
             >
-              View {committed.created} new organisations
+              View {committed.created} new{" "}
+              {committed.created === 1 ? "organisation" : "organisations"}
             </Link>
           ) : null}
         </div>

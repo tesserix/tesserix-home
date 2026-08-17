@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { ESTATE } from "@tesserix/console-core";
 import { createOrganisation } from "@/lib/db/crm-writes";
+// One definition, three comparers — see `crm-filters.ts`. A `"use server"`
+// file may only export async functions, which is why this module imports the
+// sentinel rather than owning it.
+import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
 import { isSafeWebsiteUrl } from "@/lib/db/crm-url";
+import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 
 export type { CrmActionResult };
@@ -33,14 +38,12 @@ function unknownProductMessage(value: string): string {
 
 const UNSAFE_WEBSITE_URL_MESSAGE = "Website must be a web address starting with http:// or https://.";
 
-/**
- * Radix's `Select` cannot hold an empty-string item value (see
- * `components/kit/filter-bar.tsx`), so `page.tsx`'s "no product chosen yet"
- * option carries this sentinel instead. Not exported: a `"use server"` file
- * may only export async functions, so `page.tsx` keeps its own copy of the
- * same literal rather than importing it from here.
- */
-const NO_PRODUCT_VALUE = "__none__";
+function mapSuppressedContact(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof SuppressedContactError) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
 
 // Generic: strips whitespace and empty-string, nothing else. The
 // `NO_PRODUCT_VALUE` sentinel is meaningful only to the product field, so it
@@ -120,6 +123,11 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
       // display name is neither unique nor stable.
       target: `${name} (${outcome.organisationId})`,
     }),
+    // `createOrganisation` refuses a suppressed first contact at the data
+    // layer (crm-writes.ts). Allowlisted here, same discipline as the
+    // `[organisation]/actions.ts` mappers: it is an operator-facing fact
+    // with a clear next step, not a caught database error.
+    mapSuppressedContact,
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm/organisations");

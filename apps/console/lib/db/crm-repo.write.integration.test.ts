@@ -438,6 +438,27 @@ describe("commitImport rejects an unsafe website_url without aborting the batch"
     // row is not a reason to drop the row (Ruling 23's same-transaction
     // guarantee cuts both ways: one bad row must not cost the others).
     expect(hostile?.website_url).toBeNull();
+
+    // Finding 5: the drop has to be REPORTED. There is no organisation edit
+    // surface in the console, so the comment's old claim that "an operator
+    // can re-add it by hand once the row exists" was false — a re-import is
+    // the only remedy, and an operator who is never told the drop happened
+    // cannot choose it.
+    expect(result.droppedWebsiteUrls).toBe(1);
+  });
+
+  it("counts no dropped urls when every website cell is safe or blank", async () => {
+    const result = await commitImport(
+      [
+        { name: "Fine Co", email: "fine@example.com", websiteUrl: "https://fine.example" },
+        { name: "Blank Co", email: "blank@example.com" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    expect(result.created).toBe(2);
+    // A blank cell is not a drop: nothing was supplied, so nothing was lost.
+    expect(result.droppedWebsiteUrls).toBe(0);
   });
 });
 
