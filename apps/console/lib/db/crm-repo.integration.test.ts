@@ -538,6 +538,18 @@ describe("listOrganisations", () => {
     // The lost opportunity must not be counted — an operator browsing for
     // work should not see a closed deal inflate the number.
     expect(rows[0].openOpportunities).toBe(1);
+    // The lost opportunity still carries a product, so it must appear here
+    // even though it's excluded from openOpportunities above.
+    expect(rows[0].products).toEqual(["mark8ly"]);
+  });
+
+  it("returns an empty array, not null, when an organisation has no products", async () => {
+    // Pins the `(row.products ?? []).filter(...)` coalesce: array_agg
+    // returns raw NULL (not `[null]`) when nothing matches its FILTER, and
+    // an unguarded coalesce miss would surface as `null` here instead.
+    const rows = await listOrganisations({ search: "Unrelated Cafe" }, 50);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].products).toEqual([]);
   });
 
   it("finds an organisation by its contact's email, not just by name", async () => {
@@ -575,5 +587,27 @@ describe("listOrganisations", () => {
   it("returns everything when no filter is given", async () => {
     const rows = await listOrganisations({}, 50);
     expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining([searchOrgA, searchOrgB]));
+  });
+
+  it("filters to only the organisations created by the given import batch", async () => {
+    // crm_organisations.import_id is a FK to crm_imports, so the batch has
+    // to exist for real, not just be a bare uuid string.
+    const importResult = await db.query<{ id: string }>(
+      `INSERT INTO crm_imports (filename, row_count, created_by) VALUES ($1, $2, $3) RETURNING id`,
+      ["glebe-leads.csv", 1, "ops@tesserix.app"],
+    );
+    const importId = importResult.rows[0].id;
+
+    const attached = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, import_id) VALUES ($1, $2) RETURNING id`,
+      ["Imported From Glebe", importId],
+    );
+    const attachedId = attached.rows[0].id;
+
+    // searchOrgA/searchOrgB (and the org above, without an import_id) must
+    // not leak into the result — a wrong predicate here silently shows an
+    // import result page every organisation instead of just its own batch.
+    const rows = await listOrganisations({ importId }, 50);
+    expect(rows.map((r) => r.id)).toEqual([attachedId]);
   });
 });
