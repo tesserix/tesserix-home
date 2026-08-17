@@ -37,6 +37,7 @@
 // Pass --commit to actually write.
 
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { planBackfill } from "@tesserix/crm-country";
 
@@ -147,7 +148,11 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// `pathToFileURL`, not a hand-built `file://${argv[1]}`: any path component
+// needing percent-encoding (a space, a '#') makes the string compare false,
+// and this script would then exit 0 having written nothing — silent failure
+// on a one-shot production write.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

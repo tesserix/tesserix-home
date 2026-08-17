@@ -17,13 +17,15 @@
 -- wrong country silently files a lead under a market it is not in, which
 -- is worse than an organisation the filter doesn't (yet) catch.
 --
--- The mapping itself lives in TypeScript only
--- (apps/console/lib/db/crm-country.ts), not here: this migration adds the
--- column and its index and nothing else. Backfilling in SQL would be a
--- second copy of the same lookup table, and divergence between two copies
--- is exactly what this codebase has been bitten by before. Existing rows
--- are populated by scripts/backfill-crm-country.mjs, which imports that
--- same TypeScript mapper.
+-- The mapping itself lives in one place only — the `@tesserix/crm-country`
+-- workspace package (packages/crm-country/index.mjs; plain JS so a bare
+-- Node script can import it without a build step). Not here: this migration
+-- adds the column and its index and nothing else. Backfilling in SQL would
+-- be a second copy of the same lookup table, and divergence between two
+-- copies is exactly what this codebase has been bitten by before. Existing
+-- rows are populated by scripts/backfill-crm-country.mjs, which imports that
+-- package; apps/console/lib/db/crm-country.ts is only a re-export shell over
+-- it, so extend the package, never the shell.
 ALTER TABLE crm_organisations
   ADD COLUMN IF NOT EXISTS country text;
 
