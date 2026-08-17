@@ -870,6 +870,22 @@ describe("import", () => {
     });
   });
 
+  // Issue #215. Migration 0023 makes lower(instagram_handle) unique, so at
+  // most one row can match and the order decides nothing on a current
+  // database. The ORDER BY is for the database that is NOT current — one
+  // predating 0023, or one where the index was dropped — where LIMIT 1 with
+  // no order picks arbitrarily and unrepeatably. Asserted on the SQL rather
+  // than on a returned row because a fake query can't reproduce Postgres's
+  // choice of plan, which is exactly the thing being pinned down.
+  describe("findMatchingOrganisationId determinism (#215)", () => {
+    it("orders by created_at then id so a multi-row match resolves the same way every call", async () => {
+      const override = vi.fn().mockResolvedValue([]);
+      await findMatchingOrganisationId({ instagramHandle: "@BondiBaker" }, override);
+      const [sql] = override.mock.calls[0];
+      expect(sql).toMatch(/ORDER BY\s+created_at,\s*id\s+LIMIT 1/);
+    });
+  });
+
   describe("previewImport", () => {
     it("skips suppressed rows at preview, before anything is written", async () => {
       query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }] }));

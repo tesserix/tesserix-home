@@ -128,8 +128,14 @@ export function mapActivityKind(kind) {
 /**
  * Contact keys are stored NORMALISED, exactly as the application stores
  * them. `crm_suppressions` got a database trigger for this in 0022;
- * `crm_contacts` never did, so it is this script's job on the migration
- * path. It is not cosmetic: `findMatchingOrganisationId` (crm-repo.ts)
+ * `crm_contacts` got its own (`crm_contacts_normalize_trg`) in 0023, so on
+ * a fully-migrated database this is now belt and braces rather than the
+ * only thing holding the invariant — but it stays, and stays correct, for
+ * two reasons: this script must run BEFORE 0023 in the required order (see
+ * the header), so on the database it actually runs against the trigger does
+ * not exist yet; and the pre-flight below compares these normalised keys to
+ * decide whether to refuse, which it has to do without writing anything at
+ * all. It is not cosmetic: `findMatchingOrganisationId` (crm-repo.ts)
  * normalises its input and then compares against `lower(instagram_handle)`,
  * so a stored `@BondiBaker` can never match a lookup for `bondibaker` — and
  * every migrated lead whose handle carries a leading `@` would be created a
@@ -137,7 +143,8 @@ export function mapActivityKind(kind) {
  * to prevent.
  *
  * Must stay byte-identical in behaviour to `normalizeInstagramHandle` in
- * `apps/console/lib/db/crm-repo.ts`: trim, strip leading `@`s, lowercase.
+ * `apps/console/lib/db/crm-repo.ts` and to 0023's `crm_contacts_normalize()`
+ * trigger function: trim, strip leading `@`s, lowercase.
  */
 export function normalizeInstagramHandle(handle) {
   return handle.trim().replace(/^@+/, "").toLowerCase();
@@ -243,7 +250,8 @@ function contactKeysOf(mapped) {
 /** The same two keys, read off a row already sitting in `crm_contacts` and
  *  normalised HERE rather than trusted as stored. Rows written by the CSV
  *  import path predate any normalisation on this table (0022 gave
- *  `crm_suppressions` a trigger; `crm_contacts` never got one), so a stored
+ *  `crm_suppressions` a trigger; `crm_contacts` gets one only in 0023, which
+ *  the required run order puts AFTER this script), so a stored
  *  `@BondiBaker` has to be folded to `bondibaker` before it can be compared
  *  against what this script is about to insert — otherwise the check would
  *  miss precisely the collisions it exists to find. */
@@ -273,12 +281,15 @@ function existingContactKeys(row) {
  *     never terminate, because nothing about re-running changes the
  *     outcome. The operator has to change the DATA, and nothing was telling
  *     them that.
- *   - `instagram_handle` has no unique index, so a handle collision does
- *     NOT fail an insert — it succeeds, quietly, and leaves two contacts
- *     sharing one canonical handle. `findMatchingOrganisationId`
- *     (crm-repo.ts) then has two equally valid answers to a question with
- *     one right one, and picks by whatever order the query returns. That is
- *     worse than the error: it is a wrong answer nobody is told about.
+ *   - `instagram_handle` has no unique index at the point this script runs
+ *     (0023 adds one, and the required run order puts it after this
+ *     script), so a handle collision does NOT fail an insert — it succeeds,
+ *     quietly, and leaves two contacts sharing one canonical handle.
+ *     `findMatchingOrganisationId` (crm-repo.ts) then has two equally valid
+ *     answers to a question with one right one. That is worse than the
+ *     error: it is a wrong answer nobody is told about. It also strands the
+ *     database one migration short of usable, since 0023's own guard will
+ *     then refuse to apply until a human unpicks the duplicate by hand.
  *
  * Both are the same root fact — two source rows that normalise to one
  * identity — so both are refused the same way, before the first write.
