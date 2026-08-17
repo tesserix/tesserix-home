@@ -6,7 +6,10 @@
 // most of the migration silently (see 0021's header for the full hazard):
 //   1. apply migrations through 0020 (drops 0019's product-required CHECK
 //      on crm_opportunities so historical rows with no product can land)
-//   2. run this script with --commit
+//   2. run this script with --commit, and CHECK ITS EXIT CODE. It exits
+//      non-zero if any lead failed; 0021's guard is satisfied by one
+//      migrated row, so a partial backfill would otherwise pass step 3 and
+//      strand every remaining product-less lead behind the reinstated CHECK.
 //   3. apply 0021 (re-adds the CHECK, NOT VALID, so it grandfathers the
 //      rows this script just inserted while enforcing on everything after)
 // 0021 itself refuses to apply if step 2 hasn't run yet, but nothing stops
@@ -92,24 +95,68 @@ export function mapActivityKind(kind) {
   return mapped;
 }
 
+/**
+ * Contact keys are stored NORMALISED, exactly as the application stores
+ * them. `crm_suppressions` got a database trigger for this in 0022;
+ * `crm_contacts` never did, so it is this script's job on the migration
+ * path. It is not cosmetic: `findMatchingOrganisationId` (crm-repo.ts)
+ * normalises its input and then compares against `lower(instagram_handle)`,
+ * so a stored `@BondiBaker` can never match a lookup for `bondibaker` — and
+ * every migrated lead whose handle carries a leading `@` would be created a
+ * second time by the next CSV import, the one outcome that function exists
+ * to prevent.
+ *
+ * Must stay byte-identical in behaviour to `normalizeInstagramHandle` in
+ * `apps/console/lib/db/crm-repo.ts`: trim, strip leading `@`s, lowercase.
+ */
+export function normalizeInstagramHandle(handle) {
+  return handle.trim().replace(/^@+/, "").toLowerCase();
+}
+
+/** Trim + lowercase, matching the email half of `isSuppressed`/
+ *  `findMatchingOrganisationId` and 0022's trigger. */
+export function normalizeEmail(email) {
+  return email.trim().toLowerCase();
+}
+
+function normalizedOrNull(value, normalize) {
+  if (value === null || value === undefined) return null;
+  const normalized = normalize(value);
+  return normalized === "" ? null : normalized;
+}
+
+/** Terminal stages. A migrated deal in one of these already closed — it just
+ *  closed before this schema existed to record when. */
+const TERMINAL_STAGES = new Set(["won", "lost"]);
+
 // Pure: leads row -> {organisation, contact, opportunity}. No DB access.
 // Throws if the lead can't be named (see organisationName) or has an
 // unrecognized status (see mapStage) — callers are expected to catch and
 // count those as rejected rather than let one bad row abort the run.
 export function mapLead(lead) {
+  const stage = mapStage(lead.status);
+
   const organisation = {
     name: organisationName(lead),
     website_url: lead.website_url ?? null,
     location: lead.location ?? null,
     category: lead.category ?? [],
     tags: lead.tags ?? [],
+    // Preserved, not left to DEFAULT now(): a migrated lead that reads as
+    // created today is a lead with no history, and the drift rule
+    // (DRIFT_DAYS) would then surface nothing at all for the first two
+    // weeks after cutover — precisely the backlog the queue exists to show.
+    created_at: lead.created_at,
   };
 
   const contact = {
-    email: lead.email ?? null,
+    email: normalizedOrNull(lead.email, normalizeEmail),
     name: lead.name ?? null,
     phone: lead.phone ?? null,
-    instagram_handle: lead.instagram_handle ?? null,
+    instagram_handle: normalizedOrNull(
+      lead.instagram_handle,
+      normalizeInstagramHandle,
+    ),
     followers_count: lead.followers_count ?? null,
     posts_count: lead.posts_count ?? null,
     biography: lead.biography ?? null,
@@ -124,19 +171,41 @@ export function mapLead(lead) {
     // so the honest value is an explicit marker saying so, not a
     // fabricated basis like "consent" or "legitimate_interest".
     lawful_basis: LAWFUL_BASIS_UNRECORDED,
+    created_at: lead.created_at,
   };
 
   const opportunity = {
-    stage: mapStage(lead.status),
+    stage,
     owner: lead.owner ?? null,
     last_contacted_at: lead.last_contacted_at ?? null,
     is_starred: lead.is_starred ?? false,
     source: lead.source ?? null,
     product: null,
     migrated_from_lead_id: lead.id,
+    created_at: lead.created_at,
+    // A won/lost deal closed at some point the `leads` table never recorded.
+    // Left null, it sorts LAST under the handoff queue's
+    // `ORDER BY o.closed_at ASC NULLS LAST` — the exact inverse of
+    // "longest-waiting first", which would bury every migrated deal beneath
+    // every deal closed since. The best evidence available is the last time
+    // anyone touched the lead, falling back to when it was created; both are
+    // real dates from the row, neither is invented.
+    closed_at: TERMINAL_STAGES.has(stage)
+      ? (lead.last_contacted_at ?? lead.created_at)
+      : null,
   };
 
   return { organisation, contact, opportunity };
+}
+
+/** Thrown when a `--commit` run wrote some leads but not all of them.
+ *  Carries the count so the exit path can report it without re-deriving it. */
+export class PartialMigrationError extends Error {
+  constructor(failureCount) {
+    super(`${failureCount} lead(s) failed to migrate; the backfill is incomplete`);
+    this.name = "PartialMigrationError";
+    this.failureCount = failureCount;
+  }
 }
 
 function parseArgs() {
@@ -196,8 +265,8 @@ function planMigration(leads, migratedLeadIds) {
 async function insertOrganisation(client, organisation, importId = null) {
   const res = await client.query(
     `INSERT INTO crm_organisations
-       (name, website_url, location, category, tags, import_id)
-     VALUES ($1, $2, $3, $4, $5, $6)
+       (name, website_url, location, category, tags, import_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()))
      RETURNING id`,
     [
       organisation.name,
@@ -206,6 +275,7 @@ async function insertOrganisation(client, organisation, importId = null) {
       organisation.category,
       organisation.tags,
       importId,
+      organisation.created_at ?? null,
     ],
   );
   return res.rows[0].id;
@@ -216,8 +286,9 @@ async function insertContact(client, contact, organisationId) {
     `INSERT INTO crm_contacts
        (organisation_id, name, email, phone, instagram_handle,
         followers_count, posts_count, biography, is_primary, source,
-        sourced_at, lawful_basis)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        sourced_at, lawful_basis, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+             COALESCE($13, now()))
      RETURNING id`,
     [
       organisationId,
@@ -232,6 +303,7 @@ async function insertContact(client, contact, organisationId) {
       contact.source,
       contact.sourced_at,
       contact.lawful_basis,
+      contact.created_at ?? null,
     ],
   );
   return res.rows[0].id;
@@ -241,8 +313,8 @@ async function insertOpportunity(client, opportunity, organisationId) {
   const res = await client.query(
     `INSERT INTO crm_opportunities
        (organisation_id, product, stage, owner, source, last_contacted_at,
-        is_starred, migrated_from_lead_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        is_starred, migrated_from_lead_id, closed_at, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, now()))
      RETURNING id`,
     [
       organisationId,
@@ -253,6 +325,8 @@ async function insertOpportunity(client, opportunity, organisationId) {
       opportunity.last_contacted_at,
       opportunity.is_starred,
       opportunity.migrated_from_lead_id,
+      opportunity.closed_at ?? null,
+      opportunity.created_at ?? null,
     ],
   );
   return res.rows[0].id;
@@ -434,6 +508,20 @@ async function main() {
     console.log(`[migrate] committed ${written} lead(s).`);
     if (failures.length > 0) {
       console.error(`[migrate] ${failures.length} lead(s) failed and were skipped.`);
+      // Exit non-zero, and it matters more than a normal "report the
+      // failures" convention would suggest. 0021's guard is satisfied by a
+      // SINGLE migrated row, so a run where 258 of 259 leads failed still
+      // exits cleanly, still satisfies the guard, and 0021 then reinstates
+      // the product CHECK — after which every remaining qualified/won/lost
+      // lead with a null product is permanently un-migratable without hand
+      // DDL on production. That is exactly the recovery 0021's header says
+      // the guard exists to make unnecessary. A non-zero exit is what stops
+      // an operator (or a deploy script running steps 2 and 3 in sequence)
+      // from proceeding to 0021 on a partial backfill.
+      console.error(
+        `[migrate] NOT SAFE to apply 0021 — re-run this script until it exits 0.`,
+      );
+      throw new PartialMigrationError(failures.length);
     }
   } finally {
     await client.end();
@@ -442,7 +530,9 @@ async function main() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {
-    console.error(err);
+    // A partial backfill has already reported every failing lead by id; the
+    // stack of the summary error adds nothing an operator can act on.
+    console.error(err instanceof PartialMigrationError ? err.message : err);
     process.exit(1);
   });
 }
