@@ -11,8 +11,7 @@
  *   GET {product_admin_api}/internal/conversion-status?email=<email>
  *   200 { state: "none" | "in_flight" | "complete", ref?, label?,
  *         idle_hours?, observed_at }
- *   404 product has no conversion concept
- *   501 not implemented yet
+ *   anything other than a valid 200 (404, 501, unreachable, timeout) → unknown
  *
  * RULING 27 (binding, #153): the console never calls a product's admin API
  * directly, and does not hold a product → base-URL registry. Every other
@@ -36,17 +35,24 @@
  * genuinely unimplemented product, which is the correct, honest behaviour
  * for a client stood up ahead of its server.
  *
- * THE RULE THIS FILE EXISTS TO ENFORCE:
+ * THE RULE THIS FILE EXISTS TO ENFORCE (RULING 28):
  *
- * A 501, an unreachable apps/web, a timeout, any other transport failure, or
- * a 200 body that does not parse — all map to `unknown`, NEVER to `none`.
+ * Only an explicit 200 with a valid body produces a definite state. A 404, a
+ * 501, an unreachable apps/web, a timeout, any other transport failure, or a
+ * 200 body that does not parse — ALL map to `unknown`, NEVER to `none`.
  * `none` means "the product answered, and this person has not converted".
  * `unknown` means "we could not find out". Collapsing the two under-reports
  * the funnel and, worse, leaves a merchant who is actually live sitting in
  * the handoff queue looking like they stalled.
  *
- * A 404 maps to `none` — the product genuinely has no conversion concept,
- * which is a real, trustworthy answer, not an absence of one.
+ * 404 does NOT map to `none`. The original design let it: "the product has
+ * no conversion concept" reads like a real answer. But 404 is also exactly
+ * what this route returns when apps/web's endpoint does not exist at all —
+ * true of every product before its adapter ships — and the two are
+ * indistinguishable on the wire. A meaning chosen for "the product answered"
+ * cannot also be the framework's own answer for "there is no route here". A
+ * product that wants to assert "not converted" does so honestly, by
+ * answering `200 { state: "none" }`.
  *
  * The product's answer may only ever ADD a conversion, never remove one:
  * nothing in this module reads or clears `stage = won`, which stays the
@@ -81,9 +87,10 @@ export interface ConversionSignal {
   readonly label?: string;
   readonly idleHours?: number;
   /**
-   * When the product's answer was produced. Absent for `none` reached via a
-   * 404 (no body to read one from) and for `unknown` (nothing was
-   * trustworthy enough to read a timestamp off).
+   * When the product's answer was produced. Present only for a definite
+   * state (`none` / `in_flight` / `complete`), all of which are reached
+   * exclusively through a valid 200 body that carries this field. Absent for
+   * `unknown` — there was never a trustworthy body to read a timestamp off.
    */
   readonly observedAt?: string;
 }
@@ -183,7 +190,6 @@ export async function fetchConversionSignal(
   cookieHeader: string,
 ): Promise<ConversionSignal> {
   const unknown = (): ConversionSignal => ({ product, state: "unknown" });
-  const none = (): ConversionSignal => ({ product, state: "none" });
 
   let response: Response;
   try {
@@ -200,15 +206,19 @@ export async function fetchConversionSignal(
     return unknown();
   }
 
-  // 404: the product genuinely has no conversion concept. A real, trustworthy
-  // answer — the one non-2xx status that is allowed to become `none`.
-  if (response.status === 404) {
-    return none();
-  }
-
-  // 501 (not implemented for this product yet) and every other non-2xx
-  // (a real upstream error) collapse to the same `unknown` — neither is an
-  // answer the CRM can act on as though the product had spoken.
+  // RULING 28: 404 ("no conversion concept"), 501 ("not implemented yet"),
+  // and every other non-2xx all collapse to `unknown`. The contract's
+  // original design let 404 carry a definite `none`, but 404 is also what
+  // this exact route returns when it does not exist at all — which is true
+  // of every product today, since apps/web's endpoint has not been built
+  // yet. A meaning chosen for "the product answered" cannot also be the
+  // framework's own answer for "there is no route here"; the two are
+  // indistinguishable on the wire, so 404 can never be trusted to mean the
+  // first one. "No conversion concept" and "not implemented" are the same
+  // fact from the CRM's side anyway — nothing can be learned either way —
+  // so both belong in `unknown`. Only an explicit 200 produces a definite
+  // state; a product asserting "not converted" does so by answering
+  // `200 { state: "none" }`, which is the one honest way to say it.
   if (!response.ok) {
     return unknown();
   }

@@ -269,23 +269,36 @@ GET {product_admin_api}/internal/conversion-status?email=<email>
       idle_hours?: number,   // how long stalled, when in_flight
       observed_at: string }
 
-404  product has no conversion concept
-501  not implemented yet
+anything other than a valid 200 (404, 501, unreachable, timeout) → unknown
 ```
 
-Four rules, each because the alternative fails quietly:
+**RULING 28.** 404 originally carried "product has no conversion concept" as a
+definite answer. It cannot: 404 is also what this exact route returns when it
+does not exist at all, which is indistinguishable on the wire from the product
+having answered — and true of every product before its endpoint ships. A
+meaning chosen for "the product spoke" cannot also be the framework's own
+answer for "there is no route here". "No conversion concept" and "not
+implemented" are the same fact from the CRM's side anyway — nothing can be
+learned either way — so both collapse into `unknown`, alongside 501, an
+unreachable product, a timeout, and a malformed body. Only an explicit 200
+produces a definite state; a product asserting "not converted" does so
+honestly, by answering `200 { state: "none" }`.
 
-1. **501 or an unreachable product means `unknown`, never `none`.** A falsely
-   negative conversion under-reports the funnel and leaves a live merchant
-   sitting in the handoff queue as though they had stalled.
+Three rules, each because the alternative fails quietly:
+
+1. **Only an explicit 200 produces a definite state.** 404, 501, an
+   unreachable product, a timeout, or a malformed body all mean `unknown`,
+   never `none`. A falsely negative conversion under-reports the funnel and
+   leaves a live merchant sitting in the handoff queue as though they had
+   stalled.
 2. **The product's answer only ever adds a conversion, never removes one.** The
    CRM's own `stage = won` is authoritative about the agreement.
-3. **`ref` is opaque and stored with `converted_product`.** A tenant id and a
-   facility id are only meaningful together with whose namespace they are in.
-4. **Email is the lookup key, but the match is a suggestion an operator
-   confirms.** The person who onboards may not be the person prospected, and a
-   wrongly auto-linked conversion corrupts exactly the attribution this exists
-   to produce. `converted_link_method` records which way it happened.
+3. **`ref` is opaque and stored with `converted_product`, and the email match
+   itself is only a suggestion an operator confirms.** A tenant id and a
+   facility id are only meaningful together with whose namespace they are in;
+   the person who onboards may not be the person prospected, and a wrongly
+   auto-linked conversion corrupts exactly the attribution this exists to
+   produce. `converted_link_method` records which way it happened.
 
 **Coupling test** — if the platform is unavailable, must the product still
 function? Yes. The product never calls us; we call it, and it holds no platform

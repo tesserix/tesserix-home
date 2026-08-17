@@ -36,10 +36,31 @@ describe("fetchConversionSignal", () => {
     expect(signal.state).toBe("unknown");
   });
 
-  it("maps 404 to none — the product genuinely has no conversion concept", async () => {
+  // Ruling 28: 404 can no longer carry "no conversion concept" — it is also
+  // what this exact route returns when apps/web's endpoint does not exist at
+  // all, which is true for every product today. A meaning chosen for "the
+  // product answered" cannot also be the framework's own answer for "there is
+  // no route here"; the two are indistinguishable on the wire. Only an
+  // explicit 200 can produce a definite state.
+  it("maps 404 to unknown — indistinguishable from the route not existing", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
+    expect(signal.state).toBe("unknown");
+  });
+
+  // The definite path stays pinned: a product that wants to assert "not
+  // converted" does so honestly, by answering 200 with `{ state: "none" }`.
+  it("maps a 200 body of { state: \"none\" } to none", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ state: "none", observed_at: "2026-08-17T09:00:00.000Z" }),
+        { status: 200 },
+      ),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
