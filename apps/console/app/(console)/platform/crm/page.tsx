@@ -23,6 +23,7 @@ import {
 } from "@/lib/db/crm-repo";
 import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversion";
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
+import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
 import { CrmQueueView } from "./queue-view";
 import { HandoffView, type HandoffItem } from "./handoff-view";
 
@@ -165,7 +166,14 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
     key: "product",
     label: "Product",
     type: "select",
-    options: ESTATE.map((product) => ({ value: product.context, label: product.name })),
+    // "Unassigned" is last, not alphabetised in with the estate: every
+    // import and every migrated lead has a null product (the bug #213
+    // fixes), so this option answers a different question ("show me the
+    // rows nothing has been assigned to yet") than picking a product does.
+    options: [
+      ...ESTATE.map((product) => ({ value: product.context, label: product.name })),
+      { value: UNASSIGNED_PRODUCT, label: "Unassigned" },
+    ],
   },
   {
     key: "stage",
@@ -198,7 +206,10 @@ export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
 
   const rawProduct = searchParams.product;
   if (typeof rawProduct === "string" && rawProduct !== "") {
-    if (ESTATE.some((product) => product.context === rawProduct)) {
+    // The sentinel isn't a real product's context, so it fails the ESTATE
+    // check below by design — checked first, or "Unassigned" would round-trip
+    // through the URL as if it were an unrecognised value and silently drop.
+    if (rawProduct === UNASSIGNED_PRODUCT || ESTATE.some((product) => product.context === rawProduct)) {
       filters.product = rawProduct;
     }
   }

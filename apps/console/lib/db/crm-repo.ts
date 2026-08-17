@@ -1,4 +1,5 @@
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
+import { UNASSIGNED_PRODUCT } from "./crm-filters";
 import {
   isUsableImportRow,
   requiresProduct,
@@ -112,7 +113,11 @@ function toQueueRow(row: RawQueueRow): QueueRow {
  */
 function filterClause(filter: QueueFilter, params: unknown[]): string {
   const clauses: string[] = [];
-  if (filter.product) {
+  if (filter.product === UNASSIGNED_PRODUCT) {
+    // No bound parameter: this is a NULL test, not a comparison. `= NULL`
+    // is never true in SQL, which is the bug this branch exists to fix.
+    clauses.push(`o.product IS NULL`);
+  } else if (filter.product) {
     params.push(filter.product);
     clauses.push(`o.product = $${params.length}`);
   }
