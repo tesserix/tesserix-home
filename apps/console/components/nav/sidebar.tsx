@@ -422,7 +422,11 @@ export function ConsoleSidebar() {
       </div>
 
       <nav
-        className="flex-1 overflow-y-auto px-3 pb-4"
+        // `sidebar-scroll` styles the scrollbar to the rail rather than
+        // leaving the browser default, which paints a pale bar down a dark
+        // sidebar. See globals.css — it is theme-aware through the same
+        // sidebar tokens everything else here uses.
+        className="sidebar-scroll flex-1 overflow-y-auto px-3 pb-4"
         aria-label={`${rail.label} navigation`}
       >
         {/* A flat rail still gets its section label; a grouped one carries its

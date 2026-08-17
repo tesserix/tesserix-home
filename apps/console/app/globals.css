@@ -270,3 +270,46 @@
     outline-offset: 3px;
   }
 }
+
+/* The sidebar's own scrollbar.
+ *
+ * The rail is dark in both themes, so the browser default — a pale bar sized
+ * for a light page — reads as a seam down the side of it. Both the standard
+ * properties and the WebKit pseudo-elements are declared: Firefox implements
+ * only the former, Safari only the latter, and Chrome honours the standard
+ * ones (which silently disable the pseudo-element styling when both apply).
+ *
+ * Colours come from the sidebar tokens rather than fixed hex values, so this
+ * follows the theme with everything else in the rail — the tokens are
+ * redefined under both `prefers-color-scheme: dark` and `[data-theme="dark"]`
+ * above, and this inherits both without repeating either.
+ *
+ * Declared outside `@layer base` on purpose: `globals.test.ts` parses the
+ * `:root` and theme blocks above, and a custom property added inside them
+ * would be read as a token that must exist in console-core. */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--sidebar-foreground) 22%, transparent) transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--sidebar-foreground) 22%, transparent);
+  /* Inset by a transparent border so the thumb reads as a slim pill with air
+     around it rather than a bar welded to the edge of the rail. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+
+.sidebar-scroll:hover::-webkit-scrollbar-thumb,
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--sidebar-foreground) 40%, transparent);
+}
