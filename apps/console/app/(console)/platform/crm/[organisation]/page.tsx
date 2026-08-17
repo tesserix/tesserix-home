@@ -6,8 +6,8 @@ import { DetailLayout } from "@/components/kit/detail-layout";
 // references here. See tickets/[id]/page.tsx for the incident this guards
 // against.
 import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
-// Not `toSurfaceError` — see `../read-error.ts`.
-import { crmReadError } from "../read-error";
+// Not `toSurfaceError` — see `@/lib/db-read-error`.
+import { dbReadError } from "@/lib/db-read-error";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
 import { ActivityTab, ContactsTab, OpportunitiesTab } from "./organisation-detail-view";
 
@@ -27,7 +27,7 @@ export function detailState(input: {
 }): SurfaceState {
   return resolveState({
     isLoading: false,
-    error: crmReadError(input.error, "this organisation"),
+    error: dbReadError(input.error, "this organisation"),
     rows: input.detail ? [input.detail] : [],
     filtered: false,
   });

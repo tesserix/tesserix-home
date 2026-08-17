@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE } from "@/components/kit/surface-state";
 import { PlatformApiError } from "@/lib/platform-api";
 import type { AuditEntry, AuditSourceFailure, SourcedAuditEntry } from "@/lib/audit";
 import { mergeTimeline, withSource } from "@/lib/audit";
+import { migrationsPendingMessage, readFailedMessage } from "@/lib/db-read-error";
 import {
   ALL_PRODUCTS_LABEL,
+  CONSOLE_LOG_SURFACE,
+  consoleReadError,
   AUDIT_FILTERS,
   TIMELINE_EMPTY_MESSAGE,
   TIMELINE_SCOPE_NOTE,
@@ -17,6 +20,23 @@ import {
 } from "./page";
 import { AuditTimeline, IncompleteSources, type SourceNotice } from "./audit-timeline";
 import { parseMetadataFields } from "./audit-metadata";
+
+// `dbReadError` logs the real error server-side on every call — that is the
+// half of it an engineer needs, and it is deliberately noisy in production
+// logs, not in a test run.
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+const CONSOLE_READ_FAILED = readFailedMessage(CONSOLE_LOG_SURFACE);
+
+/** Postgres reporting a missing relation, exactly as `pg` raises it: the
+ *  SQLSTATE on `.code`, the relation name in `.message`. */
+function undefinedTable(relation: string): Error & { code: string } {
+  return Object.assign(new Error(`relation "${relation}" does not exist`), {
+    code: "42P01",
+  });
+}
 
 // `useUrlFilters` reads the router. The timeline is rendered here, not the
 // page, because a server component cannot be rendered by Testing Library —
@@ -160,11 +180,62 @@ describe("timelineState", () => {
     expect(
       timelineState({
         upstreamError: new PlatformApiError("parked", 501),
-        consoleError: new PlatformApiError("connection refused", undefined),
+        consoleError: consoleReadError(new PlatformApiError("connection refused", undefined)),
         rows: [],
         filtered: false,
       }),
-    ).toEqual({ kind: "error", message: "connection refused" });
+      // Not "connection refused": the console's log is read off `pg`, and its
+      // rejection message is written for a server log, not for this page.
+    ).toEqual({ kind: "error", message: CONSOLE_READ_FAILED });
+  });
+
+  it("reads an un-migrated table as instrumentation-unavailable, not as an error", () => {
+    // The screenshot this fix came from: the tables do not exist because the
+    // migrations have not been run. That is not "something went wrong" — it is
+    // the calm "not wired up yet" state, and its copy names the remedy.
+    expect(
+      timelineState({
+        upstreamError: null,
+        consoleError: consoleReadError(undefinedTable("console_audit_log")),
+        rows: [],
+        filtered: false,
+      }),
+    ).toEqual({
+      kind: "instrumentation-unavailable",
+      title: "Not set up yet",
+      message: migrationsPendingMessage(CONSOLE_LOG_SURFACE),
+    });
+  });
+
+  it("still reads a different Postgres failure as an error", () => {
+    // Guards the guard above: mapping every `pg` rejection to
+    // instrumentation-unavailable would pass that test and quietly describe a
+    // dead database as an un-migrated one.
+    const denied = Object.assign(new Error("permission denied for table console_audit_log"), {
+      code: "42501",
+    });
+    expect(
+      timelineState({
+        upstreamError: null,
+        consoleError: consoleReadError(denied),
+        rows: [],
+        filtered: false,
+      }),
+    ).toEqual({ kind: "error", message: CONSOLE_READ_FAILED });
+  });
+
+  it("never carries the driver's own message into the state", () => {
+    for (const caught of [undefinedTable("console_audit_log"), new Error("ECONNREFUSED 10.0.0.4:5432")]) {
+      const state = timelineState({
+        upstreamError: null,
+        consoleError: consoleReadError(caught),
+        rows: [],
+        filtered: false,
+      });
+      const rendered = "message" in state ? (state.message ?? "") : "";
+      expect(rendered).not.toContain("relation");
+      expect(rendered).not.toContain("ECONNREFUSED");
+    }
   });
 
   it("stays ready when one source failed and the other returned rows", () => {
@@ -240,7 +311,7 @@ describe("buildSourceNotices", () => {
   it("reports the console's own log independently of the products", () => {
     const notices = buildSourceNotices({
       upstreamError: null,
-      consoleError: new PlatformApiError("not configured", 501),
+      consoleError: consoleReadError(new PlatformApiError("not configured", 501)),
       upstreamProduct: "all",
       consoleQueried: true,
     });
@@ -267,6 +338,27 @@ describe("the merged timeline renders", () => {
     expect(rows[0]).toHaveTextContent("tenant.suspend");
     expect(rows[1]).toHaveTextContent("sunita@tesserix.app");
     expect(rows[1]).toHaveTextContent("identity.lookup");
+  });
+
+  it("renders the migration remedy, not the driver's message, for a missing table", () => {
+    // The whole bug in one assertion: `relation "console_audit_log" does not
+    // exist` was rendered verbatim to an operator, followed by advice to try
+    // again shortly — which could never work.
+    renderTimeline({
+      state: timelineState({
+        upstreamError: null,
+        consoleError: consoleReadError(undefinedTable("console_audit_log")),
+        rows: [],
+        filtered: false,
+      }),
+    });
+
+    expect(screen.getByText("Not set up yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(migrationsPendingMessage(CONSOLE_LOG_SURFACE)),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("relation");
+    expect(document.body.textContent).not.toContain("Try again shortly");
   });
 
   it("keeps the console's rows when the upstream is parked", () => {

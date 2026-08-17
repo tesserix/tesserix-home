@@ -29,11 +29,28 @@ export type SurfaceState =
   | { kind: "empty" }
   | { kind: "filtered-empty" }
   | { kind: "error"; message: string }
-  | { kind: "instrumentation-unavailable" };
+  /**
+   * `title`/`message` are optional overrides for the default parked-data-plane
+   * copy. They exist because "not wired up yet" has more than one cause and
+   * only one of them is the observability park: an un-migrated database is the
+   * same calm state with a different remedy, and telling an operator to read
+   * the observability doc would send them to the wrong place.
+   */
+  | { kind: "instrumentation-unavailable"; title?: string; message?: string };
 
 export interface SurfaceError {
   status?: number;
   message?: string;
+  /**
+   * Copy for the `instrumentation-unavailable` state, when the producer of
+   * this error knows something more specific than the default.
+   *
+   * Opt-in rather than reusing `message`: `message` on a 501 is an internal
+   * string in most callers ("console audit log: tesserix database is not
+   * configured"), and passing that through to the callout would leak exactly
+   * the kind of text this state exists to keep off the page.
+   */
+  unavailable?: { title?: string; message: string };
 }
 
 export interface ResolveStateInput {
@@ -68,7 +85,10 @@ export function resolveState(input: ResolveStateInput): SurfaceState {
   }
   if (input.error) {
     if (input.error.status === NOT_IMPLEMENTED) {
-      return { kind: "instrumentation-unavailable" };
+      const copy = input.error.unavailable;
+      return copy
+        ? { kind: "instrumentation-unavailable", title: copy.title, message: copy.message }
+        : { kind: "instrumentation-unavailable" };
     }
     return { kind: "error", message: input.error.message ?? FALLBACK_ERROR_MESSAGE };
   }
