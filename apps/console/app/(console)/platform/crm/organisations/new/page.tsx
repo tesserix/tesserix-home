@@ -27,6 +27,12 @@ const NO_PRODUCT_VALUE = "__none__";
 
 const PRODUCTS = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 
+// `createOrganisationAction`'s one product-specific rejection
+// (`unknownProductMessage` in `actions.ts`), matched so it can be routed to
+// the product field itself rather than left in the form-level Callout where
+// nothing associates it with the control that caused it.
+const PRODUCT_ERROR_PATTERN = / is not a product in the estate\.$/;
+
 /**
  * Manual create for the CRM (#213): a lead phoned in has no CSV row to
  * import through. `name` is the only required field — location, website,
@@ -57,6 +63,8 @@ export default function NewOrganisationPage() {
       router.refresh();
     });
   };
+
+  const isProductError = error !== null && PRODUCT_ERROR_PATTERN.test(error);
 
   return (
     <div className="flex flex-col gap-6">
@@ -129,9 +137,18 @@ export default function NewOrganisationPage() {
             {/* Radix's Select mirrors its value onto a hidden native
                 <select>, keyed by `name`, so it participates in
                 `FormData` the same way `Input`/`Label` do — no controlled
-                state or hidden-input shim needed here. */}
+                state or hidden-input shim needed here. No `aria-label`: the
+                `Label htmlFor="product"` above already names the control,
+                and an `aria-label` here would override that computed name
+                rather than add to it — a screen reader would announce
+                "Product, combobox" regardless of the selected value. */}
             <Select name="product" defaultValue={NO_PRODUCT_VALUE} disabled={pending}>
-              <SelectTrigger id="product" size="default" aria-label="Product">
+              <SelectTrigger
+                id="product"
+                size="default"
+                aria-invalid={isProductError || undefined}
+                aria-describedby={isProductError ? "product-error" : undefined}
+              >
                 <SelectValue placeholder="Choose a product…" />
               </SelectTrigger>
               <SelectContent>
@@ -143,6 +160,15 @@ export default function NewOrganisationPage() {
                 ))}
               </SelectContent>
             </Select>
+            {/* Same accessible-error shape `Input`'s `isInvalid`/`errorText`
+                give the name field above — Radix's `Select` has no such
+                props, so this mirrors them by hand: `role="alert"` plus the
+                `aria-describedby` wired on the trigger above. */}
+            {isProductError ? (
+              <p id="product-error" role="alert" className="mt-1.5 text-xs text-destructive">
+                {error}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="owner">Owner</Label>
@@ -150,7 +176,7 @@ export default function NewOrganisationPage() {
           </div>
         </fieldset>
 
-        {error ? (
+        {error && !isProductError ? (
           <Callout role="alert" variant="destructive">
             <CalloutDescription>{error}</CalloutDescription>
           </Callout>

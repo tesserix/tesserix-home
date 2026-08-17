@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { ESTATE } from "@tesserix/console-core";
 import { createOrganisation } from "@/lib/db/crm-writes";
+import { isSafeWebsiteUrl } from "@/lib/db/crm-url";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 
 export type { CrmActionResult };
@@ -30,6 +31,8 @@ function unknownProductMessage(value: string): string {
   return `"${value}" is not a product in the estate.`;
 }
 
+const UNSAFE_WEBSITE_URL_MESSAGE = "Website must be a web address starting with http:// or https://.";
+
 /**
  * Radix's `Select` cannot hold an empty-string item value (see
  * `components/kit/filter-bar.tsx`), so `page.tsx`'s "no product chosen yet"
@@ -39,12 +42,21 @@ function unknownProductMessage(value: string): string {
  */
 const NO_PRODUCT_VALUE = "__none__";
 
+// Generic: strips whitespace and empty-string, nothing else. The
+// `NO_PRODUCT_VALUE` sentinel is meaningful only to the product field, so it
+// is stripped there (`productField` below), not here — folding it into this
+// reader would silently reject a real organisation literally named
+// "__none__" and silently drop a `location` typed the same way.
 function optionalField(formData: FormData, key: string): string | undefined {
   const raw = formData.get(key);
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
-  if (trimmed === "" || trimmed === NO_PRODUCT_VALUE) return undefined;
-  return trimmed;
+  return trimmed === "" ? undefined : trimmed;
+}
+
+function productField(formData: FormData): string | undefined {
+  const value = optionalField(formData, "product");
+  return value === NO_PRODUCT_VALUE ? undefined : value;
 }
 
 /**
@@ -66,11 +78,21 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
   const contactName = optionalField(formData, "contactName");
   const contactEmail = optionalField(formData, "contactEmail");
   const contactInstagramHandle = optionalField(formData, "contactInstagramHandle");
-  const product = optionalField(formData, "product");
+  const product = productField(formData);
   const owner = optionalField(formData, "owner");
 
   if (product && !isEstateProduct(product)) {
     return { ok: false, message: unknownProductMessage(product) };
+  }
+
+  // `crm_organisations.website_url` is a plain `text` with no CHECK, and the
+  // stored value is rendered back as a clickable `<a href target="_blank">`
+  // on the organisation detail page — `type="url"` on the form input is a
+  // browser-side hint only, and this server action is directly invocable.
+  // Rejected before `withCrmWrite`, same as every other validation failure
+  // here: an invalid form is not an audited event.
+  if (websiteUrl && !isSafeWebsiteUrl(websiteUrl)) {
+    return { ok: false, message: UNSAFE_WEBSITE_URL_MESSAGE };
   }
 
   const hasContact = Boolean(contactName || contactEmail || contactInstagramHandle);

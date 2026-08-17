@@ -1,5 +1,6 @@
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { isSafeWebsiteUrl } from "./crm-url";
 import {
   isUsableImportRow,
   requiresProduct,
@@ -1263,13 +1264,29 @@ export async function commitImport(
       }
 
       const name = row.name?.trim() || row.email?.trim() || row.instagramHandle?.trim();
+      // A hostile `website_url` cell (`javascript:alert(1)`, `data:...`) is
+      // one bad field on an otherwise usable row — not a reason to reject
+      // the whole row, and certainly not a reason to throw mid-loop and roll
+      // back every row already committed in this batch (Ruling 23's
+      // same-transaction guarantee cuts both ways: one bad row must not cost
+      // the others). Stored as NULL instead, exactly like the column's
+      // existing "blank cell" handling one line below — an operator who
+      // needs the website back can re-add it by hand once the row exists.
+      // Not counted in `malformed`: that counter means "this row was not
+      // usable at all and no organisation was created for it" (see the
+      // `isUsableImportRow` check above); a row that lost only its website
+      // field is still fully created, so folding it into `malformed` would
+      // make that counter mean two different things.
+      const trimmedWebsiteUrl = row.websiteUrl?.trim();
+      const websiteUrl =
+        trimmedWebsiteUrl && isSafeWebsiteUrl(trimmedWebsiteUrl) ? trimmedWebsiteUrl : null;
       const orgRows = await query<{ id: string }>(
         `INSERT INTO crm_organisations (name, website_url, location, category, tags, import_id)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id`,
         [
           name,
-          row.websiteUrl?.trim() || null,
+          websiteUrl,
           row.location?.trim() || null,
           row.category ?? [],
           row.tags ?? [],
