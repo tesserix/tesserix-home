@@ -1,6 +1,18 @@
 #!/usr/bin/env node
 // migrate-leads-to-crm.mjs — one-shot migration of `leads` into the CRM
-// schema (migration 0019 + 0020).
+// schema (migrations 0019-0021).
+//
+// REQUIRED RUN ORDER — this is not optional, and getting it wrong fails
+// most of the migration silently (see 0021's header for the full hazard):
+//   1. apply migrations through 0020 (drops 0019's product-required CHECK
+//      on crm_opportunities so historical rows with no product can land)
+//   2. run this script with --commit
+//   3. apply 0021 (re-adds the CHECK, NOT VALID, so it grandfathers the
+//      rows this script just inserted while enforcing on everything after)
+// 0021 itself refuses to apply if step 2 hasn't run yet, but nothing stops
+// someone from running this script before 0020, or before 0021 in a
+// database where 0021 was somehow already applied without a backfill — so
+// don't rely on the guard alone, follow the order.
 //
 // Each `leads` row becomes one crm_organisations row + one crm_contacts row
 // + one crm_opportunities row. Deliberately does NOT infer shared
@@ -10,11 +22,9 @@
 //
 // `product` is left null on every migrated opportunity — a migrated lead
 // was never matched to a product, and inventing one at import fabricates
-// attribution the funnel would later report as fact. Migration 0020 tags
-// every migrated opportunity with `migrated_from_lead_id` and exempts only
-// those rows from the "product required from qualified onward" CHECK, so
-// the constraint stays meaningful for every opportunity created after
-// this script runs.
+// attribution the funnel would later report as fact. See 0020/0021 for how
+// the schema accommodates that without weakening the CHECK for anything
+// else.
 //
 // Idempotency: the brief's literal rule is "skip any lead whose email
 // already exists in crm_contacts". That check is a no-op for the leads
@@ -23,7 +33,9 @@
 // be re-inserted on every re-run and violate "re-running produces no
 // duplicates". Skipping is therefore keyed on `migrated_from_lead_id`
 // instead, which is a strict superset: exact per-lead identity that also
-// covers leads Task 1's schema doesn't require an email for.
+// covers leads Task 1's schema doesn't require an email for. It's also
+// enforced structurally by 0020's unique partial index, not just by this
+// script's in-memory check.
 //
 // Usage:
 //   TESSERIX_DB_HOST=... TESSERIX_DB_USER=... TESSERIX_DB_PASSWORD=... \
