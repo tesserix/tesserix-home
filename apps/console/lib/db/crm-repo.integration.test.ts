@@ -40,9 +40,8 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { dueOpportunities, driftingOpportunities, isSuppressed, addSuppression } = await import(
-  "./crm-repo"
-);
+const { dueOpportunities, driftingOpportunities, isSuppressed, addSuppression, listOrganisations } =
+  await import("./crm-repo");
 
 let db: PGlite;
 let orgId: string;
@@ -497,5 +496,84 @@ describe("migration 0022 refuses to normalise crm_suppressions when rows would c
     } finally {
       await cleanDb.close();
     }
+  });
+});
+
+describe("listOrganisations", () => {
+  let searchOrgA: string;
+  let searchOrgB: string;
+
+  beforeAll(async () => {
+    const a = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location) VALUES ($1, $2) RETURNING id`,
+      ["Glebe Flowers", "Sydney"],
+    );
+    searchOrgA = a.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, email, instagram_handle, is_primary)
+       VALUES ($1, $2, $3, $4, true)`,
+      [searchOrgA, "Priya Raman", "priya@glebeflowers.example", "glebeflowers"],
+    );
+    // Two opportunities: one open with a product, one lost. The count must
+    // be 1 (lost is excluded) and products must list only non-null values.
+    await db.query(
+      `INSERT INTO crm_opportunities (organisation_id, stage, product)
+       VALUES ($1, 'contacted', NULL), ($1, 'lost', 'mark8ly')`,
+      [searchOrgA],
+    );
+
+    const b = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Unrelated Cafe"],
+    );
+    searchOrgB = b.rows[0].id;
+  });
+
+  it("returns organisations with their primary contact and open count", async () => {
+    const rows = await listOrganisations({ search: "Glebe Flowers" }, 50);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(searchOrgA);
+    expect(rows[0].contactName).toBe("Priya Raman");
+    expect(rows[0].location).toBe("Sydney");
+    // The lost opportunity must not be counted — an operator browsing for
+    // work should not see a closed deal inflate the number.
+    expect(rows[0].openOpportunities).toBe(1);
+  });
+
+  it("finds an organisation by its contact's email, not just by name", async () => {
+    // The whole point of search: an imported lead is found by the handle or
+    // address that came in the CSV, which is rarely the business name.
+    const rows = await listOrganisations({ search: "priya@glebeflowers" }, 50);
+    expect(rows.map((r) => r.id)).toEqual([searchOrgA]);
+  });
+
+  it("finds an organisation by its contact's instagram handle", async () => {
+    const rows = await listOrganisations({ search: "glebeflowers" }, 50);
+    expect(rows.map((r) => r.id)).toContain(searchOrgA);
+  });
+
+  it("returns one row per organisation even when several contacts match", async () => {
+    // A join against contacts fans out. Without a DISTINCT/aggregate the
+    // same organisation appears once per matching contact, which reads as
+    // duplicate businesses.
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, email)
+       VALUES ($1, $2, $3)`,
+      [searchOrgA, "Sam Ng", "sam@glebeflowers.example"],
+    );
+    const rows = await listOrganisations({ search: "glebeflowers" }, 50);
+    expect(rows.filter((r) => r.id === searchOrgA)).toHaveLength(1);
+  });
+
+  it("treats % and _ in search as literal characters", async () => {
+    // Bound parameters stop injection but not LIKE wildcards: a bare "%"
+    // would otherwise match every organisation.
+    const rows = await listOrganisations({ search: "%" }, 50);
+    expect(rows).toHaveLength(0);
+  });
+
+  it("returns everything when no filter is given", async () => {
+    const rows = await listOrganisations({}, 50);
+    expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining([searchOrgA, searchOrgB]));
   });
 });

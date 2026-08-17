@@ -1635,3 +1635,127 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
     return { organisationId: row.id, organisationName: row.name, product, method };
   });
 }
+
+export interface OrganisationFilter {
+  /** Free-text: matches organisation name, contact name, contact email,
+   *  contact instagram handle. Case-insensitive substring. */
+  search?: string;
+  /** Only organisations created by this import batch. */
+  importId?: string;
+}
+
+export interface OrganisationListRow {
+  id: string;
+  name: string;
+  location: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  /** Open (non-won/lost) opportunity count. */
+  openOpportunities: number;
+  /** Distinct products across this org's opportunities, nulls dropped. */
+  products: readonly string[];
+  createdAt: string;
+}
+
+/**
+ * Browse and search. The reason this exists (#213): `commitImport` creates
+ * every opportunity at stage 'new' with a null `next_action_at` and null
+ * `last_contacted_at`, so a freshly imported lead is on neither queue for
+ * fourteen days — Due needs a next action, Drifting needs a quiet period.
+ * Without a list surface those rows are unreachable in the meantime.
+ *
+ * Search spans the organisation name AND its contacts' name/email/handle
+ * because an imported lead is almost never looked up by business name —
+ * the operator has the handle or the address the CSV carried.
+ *
+ * The contact columns are correlated subqueries rather than a LEFT JOIN:
+ * joining contacts fans a multi-contact organisation into one row per
+ * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
+ * every selected column) costs more than reading the primary contact
+ * directly. `is_primary DESC, created_at ASC` picks the flagged contact
+ * when there is one and is otherwise stable rather than arbitrary.
+ */
+export async function listOrganisations(
+  filter: OrganisationFilter,
+  limit: number,
+): Promise<OrganisationListRow[]> {
+  const params: unknown[] = [];
+  const clauses: string[] = [];
+
+  if (filter.search) {
+    // Escape backslash first so it doesn't double-escape what follows,
+    // then % and _ — same treatment as the owner filter in filterClause.
+    const escaped = filter.search
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
+    params.push(`%${escaped}%`);
+    const p = `$${params.length}`;
+    clauses.push(`(
+        g.name ILIKE ${p} ESCAPE '\\'
+        OR EXISTS (
+          SELECT 1 FROM crm_contacts c
+           WHERE c.organisation_id = g.id
+             AND (
+               c.name ILIKE ${p} ESCAPE '\\'
+               OR c.email ILIKE ${p} ESCAPE '\\'
+               OR c.instagram_handle ILIKE ${p} ESCAPE '\\'
+             )
+        )
+      )`);
+  }
+
+  if (filter.importId) {
+    params.push(filter.importId);
+    clauses.push(`g.import_id = $${params.length}`);
+  }
+
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+  const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
+
+  const rows = await tesserixQuery<{
+    id: string;
+    name: string;
+    location: string | null;
+    contact_name: string | null;
+    contact_email: string | null;
+    open_opportunities: string | number;
+    products: (string | null)[] | null;
+    created_at: unknown;
+  }>(
+    `SELECT g.id, g.name, g.location, g.created_at,
+            (SELECT c.name FROM crm_contacts c
+              WHERE c.organisation_id = g.id
+              ORDER BY c.is_primary DESC, c.created_at ASC
+              LIMIT 1) AS contact_name,
+            (SELECT c.email FROM crm_contacts c
+              WHERE c.organisation_id = g.id
+              ORDER BY c.is_primary DESC, c.created_at ASC
+              LIMIT 1) AS contact_email,
+            (SELECT count(*) FROM crm_opportunities o
+              WHERE o.organisation_id = g.id
+                AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
+            (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
+              WHERE o.organisation_id = g.id
+                AND o.product IS NOT NULL) AS products
+       FROM crm_organisations g
+       ${where}
+      ORDER BY g.created_at DESC
+      LIMIT ${limitParam}`,
+    params,
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    location: row.location,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    // count(*) comes back as a string from pg's bigint mapping.
+    openOpportunities: Number(row.open_opportunities),
+    // array_agg returns NULL (not an empty array) when nothing matches.
+    products: (row.products ?? []).filter((p): p is string => p !== null),
+    createdAt: toIsoRequired(row.created_at),
+  }));
+}
