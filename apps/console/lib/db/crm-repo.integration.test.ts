@@ -308,6 +308,16 @@ describe("suppressions match case-insensitively, and Instagram handles format-in
     expect(await isSuppressed({ email: "someoneelse@example.com" })).toBe(false);
   });
 
+  // Fix round 3: `addSuppression` (and migration 0022's trigger, for any row
+  // that reaches the table another way) trim the stored email. A lookup
+  // that didn't trim its own input would miss a real match against a value
+  // that differs only by leading/trailing whitespace — a CSV cell (Task 8's
+  // import) carries exactly that as a matter of course.
+  it("matches an email suppression against a lookup carrying leading/trailing whitespace", async () => {
+    expect(await isSuppressed({ email: "  ava@example.com  " })).toBe(true);
+    expect(await isSuppressed({ email: "\tAVA@EXAMPLE.COM\n" })).toBe(true);
+  });
+
   it("matches an instagram suppression regardless of case or a leading '@', in either direction", async () => {
     // Stored (after normalization) as "bondibaker" — matched here by a
     // lookup carrying the opposite case, and separately by one carrying the
@@ -366,5 +376,126 @@ describe("a raw INSERT that bypasses addSuppression is still normalised, by the 
         actor: "ops@tesserix.app",
       }),
     ).rejects.toThrow(/crm_suppressions_ig_uq/);
+  });
+});
+
+// Ruling 21: migration 0022 must never resolve a pre-existing collision by
+// dropping or merging a row — it must detect one and RAISE EXCEPTION,
+// naming the colliding rows, before the backfill UPDATE ever runs. This
+// needs its own fresh database, seeded with colliding raw rows BEFORE 0022
+// is applied — the shared `db` above already has 0022 applied and empty of
+// collisions, so it cannot exercise this path. Not run through the
+// `tesserixQuery` mock (`dbHolder`) at all: this is a direct assertion on
+// the migration SQL itself, not on anything crm-repo.ts calls.
+describe("migration 0022 refuses to normalise crm_suppressions when rows would collide (Ruling 21)", () => {
+  it("aborts, naming the colliding emails, instead of silently merging or dropping one", async () => {
+    const collisionDb = new PGlite();
+    try {
+      const schemaMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0019_crm_schema.sql"),
+        "utf-8",
+      );
+      await collisionDb.exec(schemaMigrationSql);
+
+      // Two rows that only collide AFTER normalisation — crm_suppressions_email_uq
+      // (on bare lower(email)) does not reject this insert, because
+      // 'Bob@Example.com' and ' bob@example.com ' are not equal under plain
+      // lower() (the second still carries its whitespace).
+      await collisionDb.query(
+        `INSERT INTO crm_suppressions (email, reason, created_by) VALUES ($1, $2, $3), ($4, $5, $6)`,
+        [
+          "Bob@Example.com",
+          "first entry",
+          "ops@tesserix.app",
+          " bob@example.com ",
+          "second entry, whitespace variant",
+          "ops@tesserix.app",
+        ],
+      );
+
+      const normalizeMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0022_crm_suppressions_normalize.sql"),
+        "utf-8",
+      );
+
+      let caught: unknown;
+      try {
+        await collisionDb.exec(normalizeMigrationSql);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toMatch(/refuses to normalise crm_suppressions\.email/);
+      // Named, not just flagged — an operator resolving this by hand needs
+      // to know WHICH rows, not just that some pair somewhere collides.
+      expect((caught as Error).message).toMatch(/Bob@Example\.com/);
+
+      // The two rows are untouched: still exactly as they were inserted,
+      // neither dropped nor silently merged into the other.
+      const rows = await collisionDb.query<{ email: string }>(
+        `SELECT email FROM crm_suppressions ORDER BY email`,
+      );
+      expect(rows.rows.map((r) => r.email)).toEqual([
+        " bob@example.com ",
+        "Bob@Example.com",
+      ]);
+    } finally {
+      await collisionDb.close();
+    }
+  });
+
+  it("aborts, naming the colliding Instagram handles", async () => {
+    const collisionDb = new PGlite();
+    try {
+      const schemaMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0019_crm_schema.sql"),
+        "utf-8",
+      );
+      await collisionDb.exec(schemaMigrationSql);
+
+      await collisionDb.query(
+        `INSERT INTO crm_suppressions (instagram_handle, reason, created_by) VALUES ($1, $2, $3), ($4, $5, $6)`,
+        ["@Bob", "first entry", "ops@tesserix.app", "bob", "second entry", "ops@tesserix.app"],
+      );
+
+      const normalizeMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0022_crm_suppressions_normalize.sql"),
+        "utf-8",
+      );
+
+      await expect(collisionDb.exec(normalizeMigrationSql)).rejects.toThrow(
+        /refuses to normalise crm_suppressions\.instagram_handle/,
+      );
+    } finally {
+      await collisionDb.close();
+    }
+  });
+
+  it("still applies cleanly when there is no collision — guards the guard", async () => {
+    const cleanDb = new PGlite();
+    try {
+      const schemaMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0019_crm_schema.sql"),
+        "utf-8",
+      );
+      await cleanDb.exec(schemaMigrationSql);
+      await cleanDb.query(
+        `INSERT INTO crm_suppressions (email, reason, created_by) VALUES ($1, $2, $3)`,
+        ["Ava@Example.com", "unsubscribed", "ops@tesserix.app"],
+      );
+
+      const normalizeMigrationSql = readFileSync(
+        path.resolve(__dirname, "../../../web/db/migrations/0022_crm_suppressions_normalize.sql"),
+        "utf-8",
+      );
+      await expect(cleanDb.exec(normalizeMigrationSql)).resolves.not.toThrow();
+
+      const rows = await cleanDb.query<{ email: string }>(
+        `SELECT email FROM crm_suppressions`,
+      );
+      expect(rows.rows[0].email).toBe("ava@example.com");
+    } finally {
+      await cleanDb.close();
+    }
   });
 });

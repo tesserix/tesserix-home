@@ -580,6 +580,18 @@ describe("suppressions", () => {
     expect(sql).toContain("lower(");
   });
 
+  // Fix round 3: `addSuppression` and migration 0022's trigger both trim the
+  // stored email, so an untrimmed lookup that still passed the raw value
+  // through would miss a real match on nothing but whitespace — exactly
+  // what a CSV cell (Task 8's import) carries as a matter of course.
+  it("trims whitespace from an email lookup before comparing", async () => {
+    query.mockResolvedValue([{ id: "s1" }]);
+    expect(await isSuppressed({ email: "  ava@example.com  " })).toBe(true);
+    const [, params] = query.mock.calls[0];
+    expect(params).toContain("ava@example.com");
+    expect(params).not.toContain("  ava@example.com  ");
+  });
+
   it("matches on instagram_handle too, case-insensitively", async () => {
     query.mockResolvedValue([{ id: "s1" }]);
     expect(await isSuppressed({ instagramHandle: "Bondi_Baker" })).toBe(true);

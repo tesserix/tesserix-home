@@ -748,7 +748,14 @@ export async function isSuppressed(input: SuppressionCheck): Promise<boolean> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (input.email) {
-    params.push(input.email);
+    // Trimmed to match the write path (`addSuppression`) and the database
+    // trigger (migration 0022), both of which store `trim(lower(email))`.
+    // Before Ruling 19 neither side trimmed, so an untrimmed lookup still
+    // matched an untrimmed stored value; now that the stored form is always
+    // canonical, a lookup that skips this trim can miss a real match on
+    // nothing but leading/trailing whitespace — exactly the input a CSV
+    // import (Task 8) carries as a matter of course.
+    params.push(input.email.trim());
     clauses.push(`lower(email) = lower($${params.length})`);
   }
   if (input.instagramHandle) {

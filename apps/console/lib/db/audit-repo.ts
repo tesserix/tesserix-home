@@ -372,7 +372,13 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
     // Ruling 20: `describe`'s target, when it supplies one, overrides the
     // upfront `spec.target` — the result is the only place some callers
     // (`removeSuppression`) ever learn the identifier worth recording.
-    target: target ?? spec.target,
+    // Falls back on an empty string too, not only `undefined`/`null`: a
+    // `describe` that computed `""` (e.g. a removal whose row had neither
+    // an email nor a handle, which the CHECK constraint should prevent but
+    // this function has no way to verify) has nothing worth recording
+    // either, and writing an empty target would be strictly less useful
+    // than the upfront fallback it was supposed to improve on.
+    target: target || spec.target,
     summary,
   });
 

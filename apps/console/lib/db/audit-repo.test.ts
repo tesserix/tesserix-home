@@ -358,6 +358,22 @@ describe("auditedOperation", () => {
     expect(entry.target).toBe("org-1");
   });
 
+  // Fix round 3, minor: an empty string is falsy but not `undefined`/`null`
+  // — `target ?? spec.target` would let it win and write an empty target.
+  // No caller does this today, but the fallback exists to guarantee a
+  // useful value reaches the row, not merely a defined one.
+  it("falls back to spec.target when describe supplies an empty string", async () => {
+    await auditedOperation({
+      actor: "op-1",
+      target: "org-1",
+      operation: async () => ({ ok: true }),
+      describe: () => ({ action: "crm.stage.change", summary: { transitions: 1 }, target: "" }),
+    });
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.target).toBe("org-1");
+  });
+
   it("writes the row when the operation returned nothing", async () => {
     // "Who searched for whom and found nothing" is the interesting case; a
     // zero-result lookup that leaves no trace is the failure this guards.
