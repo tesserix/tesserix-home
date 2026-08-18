@@ -53,9 +53,14 @@ type Database struct {
 }
 
 const (
-	defaultPort            = "8080"
-	defaultDBPort          = "5432"
-	defaultDBName          = "tesserix"
+	defaultPort   = "8080"
+	defaultDBPort = "5432"
+	// The estate's database is tesserix_admin, not tesserix. The console
+	// hard-codes the same fallback (apps/console/lib/db/tesserix.ts), and the
+	// chart sets TESSERIX_DB_NAME explicitly, so this default only bites
+	// locally — where a wrong default means connecting to a database that does
+	// not exist, or worse, one that does and is not this.
+	defaultDBName          = "tesserix_admin"
 	defaultSSLMode         = "require"
 	defaultMaxConns        = 2
 	defaultShutdownTimeout = 15 * time.Second

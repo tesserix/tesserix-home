@@ -76,7 +76,7 @@ that already exist.
 | `TESSERIX_DB_PORT` | `5432` | |
 | `TESSERIX_DB_USER` | — | required |
 | `TESSERIX_DB_PASSWORD` | — | required |
-| `TESSERIX_DB_NAME` | `tesserix` | |
+| `TESSERIX_DB_NAME` | `tesserix_admin` | matches the console
 | `TESSERIX_DB_SSLMODE` | `require` | |
 | `TESSERIX_DB_MAX_CONNS` | `2` | see below |
 
