@@ -1,0 +1,42 @@
+# The platform API (ADR-003 D2). Built from the repository root, like
+# Dockerfile.console, so the build context matches the other images here.
+#
+# NOTE ON BASE IMAGES: secret-service's Dockerfile builds FROM
+# ghcr.io/tesserix/base-go-builder and ghcr.io/tesserix/base-distroless-static.
+# Neither is published under the tesserix org (checked 2026-08-18), so this file
+# uses upstream images directly rather than inheriting a reference that may not
+# resolve. If those base images do exist somewhere and are the estate standard,
+# switching to them is a one-line change and worth making.
+
+FROM golang:1.26-alpine AS builder
+
+WORKDIR /src
+
+# Manifests first, so a source-only change does not re-download modules.
+# go.work is deliberately NOT copied: it points at ./platform-api relative to
+# the repository root, and inside this stage the module is the root. Copying it
+# makes the build fail with a confusing "directory prefix . does not contain
+# modules listed in go.work".
+COPY platform-api/go.mod platform-api/go.sum ./
+RUN go mod download
+
+COPY platform-api/ ./
+
+# -trimpath and an empty buildid so the image is reproducible: the same source
+# produces the same layer, which is what lets a rebuild be recognised as a
+# no-op rather than churning a new digest through Kargo.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w -buildid=" -o /out/server ./cmd/server
+
+# Static, non-root, no shell and no package manager. The service needs a TCP
+# socket and CA certificates and nothing else, and a distroless image means a
+# CVE in a utility this service never calls does not become this service's
+# problem.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /app
+COPY --from=builder --chown=nonroot:nonroot /out/server /app/server
+
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/app/server"]
