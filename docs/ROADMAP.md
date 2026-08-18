@@ -12,7 +12,13 @@ from it.
 
 ## The sequencing rule
 
-> **Do not build a console surface against `/api/admin/*`.**
+> **Do not build a console surface against `/api/admin/*`** — and, once its
+> module is scheduled, do not build one against the console's own connection
+> pool either.
+
+The second clause comes from [ADR-003 D7](./ADR-003-CONSOLE-TOPOLOGY.md): the
+console becomes a pure UI over the platform API, so `lib/db/*` retires alongside
+the admin endpoints rather than outliving them.
 
 The console consumes eight endpoints from `apps/web`'s admin API. Every new
 surface built against them is a surface that must be migrated twice, and
@@ -39,6 +45,8 @@ Work that unblocks other work. Nothing here waits on anything.
 | **#261** | M12 | Surface capabilities, and take every action off `read`. Blocking for all of M12, and the platform API must enforce the same vocabulary — so it is needed before the API's authorisation is designed, not after. |
 | **#269** | M13 | Design the platform API contract instead of porting the admin endpoints. Settle conventions on the tickets module, then write them down. |
 | **#272** | — | Legacy retirement tracking. Opened now so deletions land with their replacements rather than accumulating. |
+| **#277** | M13 | The service scaffold, with module-boundary enforcement landing empty. ADR-003 D2a is explicit that the modular monolith fails if this arrives with the third module instead of the first. |
+| **#278** | M13 | Zitadel authentication for both principals (ADR-003 D8). The *authentication* half is unblocked; the *authorisation* half waits on #261 for its vocabulary. The two Zitadel settings should be verified first regardless — their failure mode is a valid token carrying no roles, which reads as an application bug. |
 
 **Decisions blocking #261**, on #244: the surface list, whether `support`
 subsumes `respond`, roles versus raw capabilities in Zitadel, and what an
@@ -98,8 +106,9 @@ is the same honesty class as the CRM work already shipped.
 
 ## In parallel — M11 CRM
 
-Largely independent of the platform API, so it runs alongside rather than
-waiting. It splits cleanly:
+Independent of the platform API **for now**, so it runs alongside rather than
+waiting — but ADR-003 D7b puts an expiry date on that. The split it already had
+is the split that decides which side of the migration each half lands on:
 
 **Correctness** — buildable now, no decisions outstanding. #246 (Handoff still
 truncates at 100, the last silent cap), #247 (no contact edit — correcting a
@@ -108,10 +117,19 @@ migration), #249 (no export; won/lost unreachable), #251 (opportunities cannot
 be deleted), #252 (grouped smaller gaps), #250 (the funnel is recorded and
 nothing reads it).
 
+These stay on the direct-DB path. Several are nearly done, and holding a live
+defect — an erasure path used to correct a typo, a silent cap at 100 — behind an
+API that does not exist yet trades a real bug for an architectural one.
+
 **Structural** — needs product decisions first. #254 (the CRM can neither send
 nor receive), #255 (no ongoing lead source), #256 (one organisation cannot
 convert to two products — cheapest now, nothing has converted yet), #257
 (cadence), #258 (qualification), #259 (business reporting).
+
+These target the platform API. They are new surfaces, and building them twice is
+what the sequencing rule exists to prevent. Note this makes them dependent on the
+CRM module, which per D7a migrates together with audit — the `auditedOperation`
+transaction cannot be split across the boundary.
 
 #254 and #255 are upstream of almost everything else in that second group:
 cadence without sending is a to-do list, qualification prioritises a flow that
