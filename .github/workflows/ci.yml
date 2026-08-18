@@ -79,6 +79,18 @@ jobs:
       - name: Lint (workspace packages)
         run: pnpm --filter './packages/*' lint
 
+      # The same gap once more, for typecheck (#231). turbo.json declares a
+      # typecheck task, but nothing in this file runs turbo, so a package's
+      # `typecheck` script executes only if a step names it — and `pnpm
+      # --filter` skips a package that has no such script silently, exit 0.
+      # packages/tsconfig (JSON only) and packages/eslint-config (.mjs only)
+      # hold no TypeScript and are deliberately script-less; every other
+      # workspace package must declare the script, which
+      # apps/console/lib/workspace-typecheck.guard.test.ts enforces so the next
+      # one added is not skipped in silence the way crm-country was.
+      - name: Typecheck (workspace packages)
+        run: pnpm --filter './packages/*' typecheck
+
       # Same gap as the lint step above, for tests (#206). packages/* holds the
       # route table, the per-route capability declarations, the estate registry
       # and the audit repo — the files every renderer in the estate reads — and
@@ -94,11 +106,23 @@ jobs:
       - name: Lint (web)
         run: pnpm --filter web lint
 
+      # Enumerated per target for the same reason as the packages step above
+      # (#231): direct pnpm, not turbo, so the app is type-checked in CI only
+      # because this step names it.
+      - name: Typecheck (web)
+        run: pnpm --filter web typecheck
+
       - name: Unit tests (web)
         run: pnpm --filter web test:unit
 
       - name: Lint (console)
         run: pnpm --filter console lint
+
+      # Same as the web typecheck step above (#231). apps/mobile is absent on
+      # purpose: it has its own mobile-typecheck.yml, and apps/mobile/** is not
+      # in this workflow's paths: filter.
+      - name: Typecheck (console)
+        run: pnpm --filter console typecheck
 
       - name: Unit tests (console)
         run: pnpm --filter console test:unit
