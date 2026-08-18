@@ -72,6 +72,20 @@ export interface ImportRow {
   location?: string;
   category?: readonly string[];
   tags?: readonly string[];
+  /**
+   * The three scrape columns `crm_contacts` has carried since migration 0019
+   * (#235), plus the raw bag 0027 adds. All four are the RAW cell text, not a
+   * parsed value — exactly like `websiteUrl`, and for the same reason: the
+   * writer that refuses a bad cell is also the one that has to COUNT the
+   * refusal (`commitImport`'s `droppedCountCells` / `droppedMetadataCells`),
+   * and a value parsed here would arrive as `undefined`, indistinguishable
+   * from a column the operator never supplied.
+   */
+  biography?: string;
+  followersCount?: string;
+  postsCount?: string;
+  /** Raw JSON text for `crm_contacts.metadata`. See `parseMetadataCell`. */
+  metadata?: string;
 }
 
 export interface ParsedImport {
@@ -113,7 +127,61 @@ const IMPORT_COLUMN_MAP: Record<string, keyof ImportRow> = {
   location: "location",
   category: "category",
   tags: "tags",
+  followers: "followersCount",
+  followers_count: "followersCount",
+  posts: "postsCount",
+  posts_count: "postsCount",
+  bio: "biography",
+  biography: "biography",
+  metadata: "metadata",
 };
+
+/**
+ * Largest value Postgres's `integer` holds — the declared type of both
+ * `crm_contacts.followers_count` and `.posts_count`. Checked here rather
+ * than left to the INSERT: an out-of-range value raises at the database and
+ * would abort the whole batch, which is the one outcome a single bad cell
+ * must never cause.
+ */
+const MAX_COUNT_VALUE = 2_147_483_647;
+
+/**
+ * A follower/post count cell, or `null` if the cell is not a plain whole
+ * number in range.
+ *
+ * Deliberately strict. `1.2k` and `1,200` are refused rather than
+ * interpreted: `1.2k` is anywhere in 1,200–1,299 and `1,200` is a thousands
+ * separator in one locale and a decimal point in another. Once stored, a
+ * guessed count is indistinguishable from a scraped one, and these columns
+ * are a filter axis — a guess would put an organisation in a follower band
+ * it does not belong to. `commitImport` stores NULL for a refused cell and
+ * counts it, so the operator can correct the sheet and re-import; that is a
+ * recoverable outcome, and a silent `0` is not.
+ */
+export function parseCountCell(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return value <= MAX_COUNT_VALUE ? value : null;
+}
+
+/**
+ * A `crm_contacts.metadata` cell, or `null` if it is not a JSON object.
+ *
+ * Objects only — not arrays, not scalars. The bag exists so a key can later
+ * be promoted into its own column when it becomes a filter axis (migration
+ * 0027), and only an object has keys to promote. A refused cell is counted
+ * by `commitImport` for the same reason a refused count is.
+ */
+export function parseMetadataCell(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
 
 const LIST_FIELDS: ReadonlySet<keyof ImportRow> = new Set(["category", "tags"]);
 

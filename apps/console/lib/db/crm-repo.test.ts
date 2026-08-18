@@ -32,7 +32,7 @@ import {
   AlreadyLinkedError,
   SuppressedContactError,
 } from "./crm-repo";
-import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { UNASSIGNED_PRODUCT, UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "./crm-filters";
 import { encodeKeysetCursor } from "./keyset-cursor";
 
 beforeEach(() => {
@@ -559,6 +559,56 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     expect(sql).toContain("g.country = $4");
     expect(sql).toContain("c.followers_count >= $5");
     expect(params).toEqual(["mark8ly", "qualified", "%Asha%", "IN", 10000, 51]);
+  });
+
+  it("matches a NULL country for the unknown sentinel, not equality", async () => {
+    // 208 of 259 production organisations have no derived country. Without
+    // this branch every country option excludes them and nothing on the
+    // surface says so.
+    query.mockResolvedValue([]);
+    await dueOpportunities({ country: UNKNOWN_COUNTRY }, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql).toContain("g.country IS NULL");
+    expect(sql).not.toMatch(/g\.country\s*=/);
+    // The sentinel must never reach the database as a value — a country
+    // literally named "__unknown__" is not what the operator asked for.
+    expect(params).not.toContain(UNKNOWN_COUNTRY);
+    expect(params).toEqual([51]);
+  });
+
+  it("matches a primary contact with no follower count for the unknown sentinel", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ followers: UNKNOWN_FOLLOWERS }, 50);
+    const [sql, params] = queuePageCall();
+    // NOT EXISTS over the primary contact with a count — the exact
+    // complement of the numeric bands, so no organisation falls between the
+    // two and stays unreachable.
+    expect(sql).toContain("NOT EXISTS");
+    expect(sql).toContain("c.followers_count IS NOT NULL");
+    expect(sql).not.toContain("c.followers_count >=");
+    expect(sql).not.toContain("c.followers_count <=");
+    expect(params).not.toContain(UNKNOWN_FOLLOWERS);
+    expect(params).toEqual([51]);
+  });
+
+  it("resolves the unknown follower sentinel against the primary contact only", async () => {
+    // Same scoping as the numeric bands: a secondary contact's follower
+    // count must not make the row's follower state "known", or "Unknown"
+    // and the bands would disagree about which contact they describe.
+    query.mockResolvedValue([]);
+    await dueOpportunities({ followers: UNKNOWN_FOLLOWERS }, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("is_primary DESC");
+    expect(sql).toContain("c.organisation_id = g.id");
+  });
+
+  it("binds the unknown sentinels on the drifting query the same way", async () => {
+    query.mockResolvedValue([]);
+    await driftingOpportunities({ country: UNKNOWN_COUNTRY, followers: UNKNOWN_FOLLOWERS }, 14, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql).toContain("g.country IS NULL");
+    expect(sql).toContain("NOT EXISTS");
+    expect(params).toEqual([14, 51]);
   });
 
   it("binds country and followers on the drifting query the same way", async () => {

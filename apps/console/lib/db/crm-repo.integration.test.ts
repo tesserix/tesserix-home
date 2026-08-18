@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { UNASSIGNED_PRODUCT, UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "./crm-filters";
 
 /**
  * Integration coverage for the drifting-queue's NULL/COALESCE semantics.
@@ -84,6 +84,15 @@ beforeAll(async () => {
     "../../../web/db/migrations/0025_crm_organisations_country.sql",
   );
   await db.exec(readFileSync(countryMigrationPath, "utf-8"));
+  // 0027 adds `crm_contacts.metadata`. This suite only reads contacts, but
+  // it seeds them through the same schema the writers target — a fixture
+  // built against a table that is missing a live column stops being a
+  // fixture for the real one.
+  const metadataMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0027_crm_contacts_metadata.sql",
+  );
+  await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
   dbHolder.db = db;
 
   const orgResult = await db.query<{ id: string }>(
@@ -312,6 +321,8 @@ describe("country and follower-band filters against a real database", () => {
   let qqOrgId: string;
   let zzOrgId: string;
   let nullFollowersOrgId: string;
+  let noCountryOrgId: string;
+  let noContactsOrgId: string;
 
   const qqDueOppId = "cccccccc-1111-1111-1111-111111111111";
   const qqDriftingOppId = "cccccccc-1111-1111-1111-111111111112";
@@ -319,6 +330,10 @@ describe("country and follower-band filters against a real database", () => {
   const zzDriftingOppId = "cccccccc-2222-2222-2222-222222222222";
   const nullFollowersDueOppId = "cccccccc-3333-3333-3333-333333333331";
   const nullFollowersDriftingOppId = "cccccccc-3333-3333-3333-333333333332";
+  const noCountryDueOppId = "cccccccc-4444-4444-4444-444444444441";
+  const noCountryDriftingOppId = "cccccccc-4444-4444-4444-444444444442";
+  const noContactsDueOppId = "cccccccc-5555-5555-5555-555555555551";
+  const noContactsDriftingOppId = "cccccccc-5555-5555-5555-555555555552";
 
   beforeAll(async () => {
     const qqOrg = await db.query<{ id: string }>(
@@ -354,6 +369,27 @@ describe("country and follower-band filters against a real database", () => {
       [nullFollowersOrgId, "Unmeasured Contact"],
     );
 
+    // Country NULL, follower count present: the two "unknown" axes have to
+    // be separable, or a test could pass on the wrong one.
+    const noCountryOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, NULL) RETURNING id`,
+      ["Queue Filter Unplaceable Org", "Somewhere"],
+    );
+    noCountryOrgId = noCountryOrg.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+       VALUES ($1, $2, true, $3)`,
+      [noCountryOrgId, "Unplaceable Creator", 500],
+    );
+
+    // No contacts at all, and no country: the row an operator sees with both
+    // columns blank. It must be reachable through both unknown sentinels.
+    const noContactsOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Queue Filter Contactless Org"],
+    );
+    noContactsOrgId = noContactsOrg.rows[0].id;
+
     // One due row and one drifting row per organisation, so both queries can
     // be exercised against the same fixtures. `owner` is set on the QQ due
     // row only, to test country/followers composing with an existing filter.
@@ -366,7 +402,11 @@ describe("country and follower-band filters against a real database", () => {
          ($4, $5, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
          ($6, $5, 'new', NULL, NULL, NULL, $11::timestamptz),
          ($7, $8, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
-         ($12, $8, 'new', NULL, NULL, NULL, $11::timestamptz)`,
+         ($12, $8, 'new', NULL, NULL, NULL, $11::timestamptz),
+         ($13, $14, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
+         ($15, $14, 'new', NULL, NULL, NULL, $11::timestamptz),
+         ($16, $17, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
+         ($18, $17, 'new', NULL, NULL, NULL, $11::timestamptz)`,
       [
         qqDueOppId,
         qqOrgId,
@@ -380,6 +420,12 @@ describe("country and follower-band filters against a real database", () => {
         daysAgo(1),
         daysAgo(90),
         nullFollowersDriftingOppId,
+        noCountryDueOppId,
+        noCountryOrgId,
+        noCountryDriftingOppId,
+        noContactsDueOppId,
+        noContactsOrgId,
+        noContactsDriftingOppId,
       ],
     );
   });
@@ -422,6 +468,55 @@ describe("country and follower-band filters against a real database", () => {
     const driftingOver10k = (await driftingOpportunities({ followers: "over10k" }, 14, 50)).rows;
     expect(driftingUnder1k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
     expect(driftingOver10k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
+  });
+
+  it("reaches organisations with no derived country through the unknown sentinel, in both queues", async () => {
+    // 208 of 259 production organisations have a NULL country. Before this
+    // sentinel every option on the filter excluded them and nothing said so.
+    const due = (await dueOpportunities({ country: UNKNOWN_COUNTRY }, 50)).rows.map((r) => r.id);
+    expect(due).toContain(noCountryDueOppId);
+    expect(due).toContain(noContactsDueOppId);
+    expect(due).not.toContain(qqDueOppId);
+    expect(due).not.toContain(zzDueOppId);
+
+    const drifting = (await driftingOpportunities({ country: UNKNOWN_COUNTRY }, 14, 50)).rows.map(
+      (r) => r.id,
+    );
+    expect(drifting).toContain(noCountryDriftingOppId);
+    expect(drifting).not.toContain(qqDriftingOppId);
+  });
+
+  it("keeps unknown-country rows out of a named country, in both queues", async () => {
+    const due = (await dueOpportunities({ country: "QQ" }, 50)).rows.map((r) => r.id);
+    expect(due).not.toContain(noCountryDueOppId);
+    expect(due).not.toContain(noContactsDueOppId);
+    expect(due).toContain(qqDueOppId);
+  });
+
+  it("reaches a primary contact with no follower count through the unknown sentinel, in both queues", async () => {
+    const due = (await dueOpportunities({ followers: UNKNOWN_FOLLOWERS }, 50)).rows.map((r) => r.id);
+    expect(due).toContain(nullFollowersDueOppId);
+    // An organisation with no contacts at all has no follower count to show
+    // either — it belongs in "Unknown" or it is reachable from no follower
+    // option at all.
+    expect(due).toContain(noContactsDueOppId);
+    expect(due).not.toContain(qqDueOppId);
+    expect(due).not.toContain(zzDueOppId);
+    expect(due).not.toContain(noCountryDueOppId);
+
+    const drifting = (await driftingOpportunities({ followers: UNKNOWN_FOLLOWERS }, 14, 50)).rows.map(
+      (r) => r.id,
+    );
+    expect(drifting).toContain(nullFollowersDriftingOppId);
+    expect(drifting).toContain(noContactsDriftingOppId);
+    expect(drifting).not.toContain(zzDriftingOppId);
+  });
+
+  it("keeps a contactless organisation out of every numeric band", async () => {
+    for (const band of ["under1k", "k1to10k", "over10k"] as const) {
+      const due = (await dueOpportunities({ followers: band }, 50)).rows.map((r) => r.id);
+      expect(due).not.toContain(noContactsDueOppId);
+    }
   });
 
   it("composes country and followers with the existing owner filter", async () => {
@@ -935,6 +1030,7 @@ describe("listOrganisations", () => {
     let noLocationOrgId: string;
     let bigCreatorOrgId: string;
     let nullFollowersOrgId: string;
+    let nonPrimaryFollowersOrgId: string;
     let emailOrgId: string;
     let nonPrimaryEmailOrgId: string;
 
@@ -1009,6 +1105,26 @@ describe("listOrganisations", () => {
         `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
          VALUES ($1, $2, true, NULL)`,
         [nullFollowersOrgId, "Unmeasured Contact"],
+      );
+
+      // Primary contact has no follower count; a non-primary one has 15k.
+      // The bands read the primary contact only, so this row displays a
+      // blank follower cell — "Unknown" has to mean the same thing the bands
+      // do, or the row appears under a band its visible column contradicts.
+      const nonPrimaryFollowers = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Filter Test Non-Primary Followers Org"],
+      );
+      nonPrimaryFollowersOrgId = nonPrimaryFollowers.rows[0].id;
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+         VALUES ($1, $2, true, NULL)`,
+        [nonPrimaryFollowersOrgId, "Primary Unmeasured"],
+      );
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+         VALUES ($1, $2, false, $3)`,
+        [nonPrimaryFollowersOrgId, "Secondary Big Creator", 15000],
       );
 
       const emailOrg = await db.query<{ id: string }>(
@@ -1101,6 +1217,69 @@ describe("listOrganisations", () => {
       // lowest band and be read as a qualified-out lead.
       const page = await listOrganisations({ followers: "under1k" }, 50);
       expect(page.rows.map((r) => r.id)).not.toContain(nullFollowersOrgId);
+    });
+
+    it("reaches organisations with no derived country through the unknown sentinel", async () => {
+      // The production shape of this bug: 208 of 259 organisations have a
+      // NULL country, so every named country between them reaches at most a
+      // fifth of the CRM.
+      const page = await listOrganisations({ country: UNKNOWN_COUNTRY, search: "Filter Test" }, 50);
+      const ids = page.rows.map((r) => r.id);
+      expect(ids).toContain(noLocationOrgId);
+      expect(ids).not.toContain(chennaiOrgId);
+      expect(ids).not.toContain(australiaOrgId);
+      expect(page.total).toBe(page.rows.length);
+    });
+
+    it("partitions the filtered set across the country options, leaving no organisation unreachable", async () => {
+      // The bug is that rows go missing, so this counts rather than sampling:
+      // the named countries plus "Unknown" must add up to the unfiltered
+      // total for the same search scope. Any organisation reachable from no
+      // country option at all shows up here as a shortfall.
+      const scope = { search: "Filter Test" };
+      const all = (await listOrganisations(scope, 100)).total;
+      const india = (await listOrganisations({ ...scope, country: "IN" }, 100)).total;
+      const australia = (await listOrganisations({ ...scope, country: "AU" }, 100)).total;
+      const unknown = (await listOrganisations({ ...scope, country: UNKNOWN_COUNTRY }, 100)).total;
+      expect(unknown).toBeGreaterThan(0);
+      expect(india + australia + unknown).toBe(all);
+    });
+
+    it("reaches a primary contact with no follower count through the unknown sentinel", async () => {
+      const page = await listOrganisations(
+        { followers: UNKNOWN_FOLLOWERS, search: "Filter Test" },
+        100,
+      );
+      const ids = page.rows.map((r) => r.id);
+      expect(ids).toContain(nullFollowersOrgId);
+      // No contacts at all means no follower count to display — the same
+      // blank cell, and the same row that would otherwise be reachable from
+      // no follower option at all.
+      expect(ids).toContain(noLocationOrgId);
+      // Scoped to the primary contact, exactly as the bands are: a secondary
+      // contact's 15k does not make this row's follower state known.
+      expect(ids).toContain(nonPrimaryFollowersOrgId);
+      expect(ids).not.toContain(bigCreatorOrgId);
+    });
+
+    it("partitions the filtered set across the follower options, leaving no organisation unreachable", async () => {
+      const scope = { search: "Filter Test" };
+      const all = (await listOrganisations(scope, 100)).total;
+      const under1k = (await listOrganisations({ ...scope, followers: "under1k" }, 100)).total;
+      const k1to10k = (await listOrganisations({ ...scope, followers: "k1to10k" }, 100)).total;
+      const over10k = (await listOrganisations({ ...scope, followers: "over10k" }, 100)).total;
+      const unknown = (await listOrganisations({ ...scope, followers: UNKNOWN_FOLLOWERS }, 100)).total;
+      expect(over10k).toBe(1);
+      expect(unknown).toBeGreaterThan(0);
+      expect(under1k + k1to10k + over10k + unknown).toBe(all);
+    });
+
+    it("leaves the numeric bands unchanged for organisations that do have a follower count", async () => {
+      // No-regression guard: adding "Unknown" must not widen a band.
+      const page = await listOrganisations({ followers: "over10k", search: "Filter Test" }, 100);
+      // Not `nonPrimaryFollowersOrgId`, whose 15k sits on a secondary
+      // contact: the band still reads the primary contact only.
+      expect(page.rows.map((r) => r.id)).toEqual([bigCreatorOrgId]);
     });
 
     it("filters to organisations whose contact has an email", async () => {

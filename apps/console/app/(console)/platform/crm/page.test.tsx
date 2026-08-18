@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { QueuePage, QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
-import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
+import { UNASSIGNED_PRODUCT, UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 
 const dueOpportunities = vi.fn();
@@ -500,18 +500,49 @@ describe("readQueueFilters", () => {
     expect(readQueueFilters({ product: "banana" })).toEqual({});
   });
 
-  it("offers every country COUNTRY_LABELS declares", () => {
+  it("offers every country COUNTRY_LABELS declares, plus Unknown", () => {
     // Derived from COUNTRY_LABELS's own keys, not a hand-picked subset — a
     // `toContain`-only assertion would still pass if a code were dropped
     // from the options, which is exactly the regression this test exists to
-    // catch.
+    // catch. "Unknown" is last, like "Unassigned" on the product filter: it
+    // answers a different question than picking a market does, and without
+    // it the 208 organisations with no derived country are unreachable.
     const country = QUEUE_FILTERS.find((d) => d.key === "country");
-    expect(country?.options?.map((o) => o.value)).toEqual(Object.keys(COUNTRY_LABELS));
+    expect(country?.options?.map((o) => o.value)).toEqual([
+      ...Object.keys(COUNTRY_LABELS),
+      UNKNOWN_COUNTRY,
+    ]);
+    expect(country?.options?.at(-1)?.label).toBe("Unknown");
   });
 
-  it("offers every follower band FOLLOWER_BANDS declares", () => {
+  it("offers every follower band FOLLOWER_BANDS declares, plus Unknown", () => {
     const followers = QUEUE_FILTERS.find((d) => d.key === "followers");
-    expect(followers?.options?.map((o) => o.value)).toEqual(["under1k", "k1to10k", "over10k"]);
+    expect(followers?.options?.map((o) => o.value)).toEqual([
+      "under1k",
+      "k1to10k",
+      "over10k",
+      UNKNOWN_FOLLOWERS,
+    ]);
+    // A data state, never a value: "0" or "None" would read as a measured
+    // follower count of zero.
+    expect(followers?.options?.at(-1)?.label).toBe("Unknown");
+  });
+
+  it("reads the unknown sentinels even though they name no country or band", () => {
+    // Both fail their own recognised-value check by design (the sentinel is
+    // not a COUNTRY_LABELS key, and not a FOLLOWER_BANDS key), so each has
+    // to be admitted explicitly or the option silently does nothing.
+    expect(readQueueFilters({ country: UNKNOWN_COUNTRY })).toEqual({ country: UNKNOWN_COUNTRY });
+    expect(readQueueFilters({ followers: UNKNOWN_FOLLOWERS })).toEqual({
+      followers: UNKNOWN_FOLLOWERS,
+    });
+  });
+
+  it("carries the unknown sentinels back to the bar as applied values", () => {
+    expect(toFilterValues({ country: UNKNOWN_COUNTRY, followers: UNKNOWN_FOLLOWERS })).toEqual({
+      country: UNKNOWN_COUNTRY,
+      followers: UNKNOWN_FOLLOWERS,
+    });
   });
 
   it("reads a valid country", () => {

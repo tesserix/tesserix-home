@@ -11,6 +11,8 @@ import {
   MAX_IMPORT_ROWS,
   validateTotalRows,
   MAX_TOTAL_ROWS,
+  parseCountCell,
+  parseMetadataCell,
 } from "./crm";
 
 describe("crm vocabulary", () => {
@@ -252,5 +254,107 @@ describe("parseImportCsv and a quoted cell that spans lines", () => {
     const parsed = parseImportCsv('name\n"Bondi ""The"" Baker"');
     expect(parsed.rejected).toBeUndefined();
     expect(parsed.rows).toEqual([{ name: 'Bondi "The" Baker' }]);
+  });
+});
+
+/**
+ * The scrape columns (#235). `crm_contacts.followers_count`, `.posts_count`
+ * and `.biography` have existed since 0019 but no live writer maintained
+ * them — a spreadsheet's followers column was silently ignored here, because
+ * an unmapped header is dropped without comment. These cases pin that it is
+ * mapped now.
+ */
+describe("parseImportCsv and the scrape columns", () => {
+  it("maps followers, posts, biography and metadata headers", () => {
+    const { rows } = parseImportCsv(
+      "name,followers,posts,biography,metadata\n" +
+        'Bondi Baker,1200,340,Baker and owner,"{""category"":""bakery""}"',
+    );
+    expect(rows).toEqual([
+      {
+        name: "Bondi Baker",
+        followersCount: "1200",
+        postsCount: "340",
+        biography: "Baker and owner",
+        metadata: '{"category":"bakery"}',
+      },
+    ]);
+  });
+
+  it("accepts the underscored header spellings a scrape export tends to use", () => {
+    const { rows } = parseImportCsv("name,followers_count,posts_count,bio\nBondi Baker,12,3,Hi");
+    expect(rows).toEqual([
+      { name: "Bondi Baker", followersCount: "12", postsCount: "3", biography: "Hi" },
+    ]);
+  });
+
+  it("carries the count cells through as raw text, leaving validation to commitImport", () => {
+    // Same shape as `websiteUrl`: the cell reaches the writer unparsed so the
+    // writer can both refuse it and COUNT the refusal. Converting here would
+    // lose the fact that a cell was supplied at all.
+    const { rows } = parseImportCsv("name,followers\nBondi Baker,twelve hundred");
+    expect(rows).toEqual([{ name: "Bondi Baker", followersCount: "twelve hundred" }]);
+  });
+});
+
+describe("parseCountCell", () => {
+  it("reads a plain whole number", () => {
+    expect(parseCountCell("1200")).toBe(1200);
+  });
+
+  it("reads zero — a real account with no posts", () => {
+    expect(parseCountCell("0")).toBe(0);
+  });
+
+  it("refuses a non-numeric cell rather than reading it as zero", () => {
+    expect(parseCountCell("twelve hundred")).toBeNull();
+    expect(parseCountCell("n/a")).toBeNull();
+    expect(parseCountCell("")).toBeNull();
+  });
+
+  it("refuses a formatted or abbreviated count instead of guessing at it", () => {
+    // `1.2k` could be 1,200 or 1,250; `1,200` could be a European decimal.
+    // A guessed follower count is indistinguishable from a scraped one once
+    // stored, so both are refused and reported.
+    expect(parseCountCell("1.2k")).toBeNull();
+    expect(parseCountCell("1,200")).toBeNull();
+  });
+
+  it("refuses a fraction and a negative", () => {
+    expect(parseCountCell("12.5")).toBeNull();
+    expect(parseCountCell("-1")).toBeNull();
+  });
+
+  it("refuses a value beyond what the integer column can hold", () => {
+    // `followers_count` is `integer`; letting this through would abort the
+    // whole batch on an overflow error at INSERT time.
+    expect(parseCountCell("2147483648")).toBeNull();
+    expect(parseCountCell("2147483647")).toBe(2147483647);
+  });
+});
+
+describe("parseMetadataCell", () => {
+  it("reads a JSON object", () => {
+    expect(parseMetadataCell('{"category":"bakery","verified":true}')).toEqual({
+      category: "bakery",
+      verified: true,
+    });
+  });
+
+  it("reads an empty object", () => {
+    expect(parseMetadataCell("{}")).toEqual({});
+  });
+
+  it("refuses anything that is not a JSON object", () => {
+    // The column is a bag of keys. An array or a scalar has no keys to
+    // promote to a column later, which is the only reason the bag exists.
+    expect(parseMetadataCell("[1,2]")).toBeNull();
+    expect(parseMetadataCell('"a string"')).toBeNull();
+    expect(parseMetadataCell("null")).toBeNull();
+    expect(parseMetadataCell("12")).toBeNull();
+  });
+
+  it("refuses malformed JSON", () => {
+    expect(parseMetadataCell("{not json")).toBeNull();
   });
 });

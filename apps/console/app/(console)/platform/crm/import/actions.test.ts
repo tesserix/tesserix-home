@@ -75,6 +75,8 @@ const COMMIT_RESULT = {
   skippedSuppressed: 0,
   malformed: 0,
   droppedWebsiteUrls: 0,
+  droppedCountCells: 0,
+  droppedMetadataCells: 0,
   matchedRows: [],
 };
 

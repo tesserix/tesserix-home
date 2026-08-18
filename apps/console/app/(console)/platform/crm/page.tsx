@@ -24,7 +24,14 @@ import {
 } from "@/lib/db/crm-repo";
 import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversion";
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
-import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, isFollowerBand } from "@/lib/db/crm-filters";
+import {
+  FOLLOWER_BANDS,
+  UNASSIGNED_PRODUCT,
+  UNKNOWN_COUNTRY,
+  UNKNOWN_FOLLOWERS,
+  UNKNOWN_LABEL,
+  isFollowerFilter,
+} from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
 import { CrmQueueView } from "./queue-view";
@@ -194,8 +201,14 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
     label: "Country",
     type: "select",
     // The closed set the derived `crm_organisations.country` column can
-    // hold — same options as the browse surface's `country` filter.
-    options: Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+    // hold, plus "Unknown" — same options as the browse surface's `country`
+    // filter. "Unknown" is last rather than alphabetised in, like
+    // "Unassigned" above: it answers "show me the rows no market could be
+    // derived for" (208 of 259 today), not "show me a market".
+    options: [
+      ...Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+      { value: UNKNOWN_COUNTRY, label: UNKNOWN_LABEL },
+    ],
   },
   {
     key: "followers",
@@ -203,7 +216,12 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
     type: "select",
     // Same bands, in the same order, as the browse surface's `followers`
     // filter — this queue's own qualification signal (see the module doc).
-    options: Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+    // "Unknown" closes the set: a NULL follower count matches no band, so
+    // without it those rows are reachable from no value of this filter.
+    options: [
+      ...Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+      { value: UNKNOWN_FOLLOWERS, label: UNKNOWN_LABEL },
+    ],
   },
 ];
 
@@ -246,13 +264,18 @@ export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
   const rawCountry = searchParams.country;
   // `Object.hasOwn`, not `in` — `in` walks the prototype chain, so
   // `?country=__proto__` would read as a recognised code. Same guard the
-  // organisations page uses.
-  if (typeof rawCountry === "string" && rawCountry !== "" && Object.hasOwn(COUNTRY_LABELS, rawCountry)) {
+  // organisations page uses. The unknown sentinel is admitted alongside,
+  // because it is not a COUNTRY_LABELS key and would otherwise be dropped as
+  // an unrecognised code — the "Unknown" option would silently do nothing.
+  if (
+    typeof rawCountry === "string" &&
+    (rawCountry === UNKNOWN_COUNTRY || Object.hasOwn(COUNTRY_LABELS, rawCountry))
+  ) {
     filters.country = rawCountry;
   }
 
   const rawFollowers = searchParams.followers;
-  if (typeof rawFollowers === "string" && isFollowerBand(rawFollowers)) {
+  if (typeof rawFollowers === "string" && isFollowerFilter(rawFollowers)) {
     filters.followers = rawFollowers;
   }
 

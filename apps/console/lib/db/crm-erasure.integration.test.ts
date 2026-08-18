@@ -52,6 +52,9 @@ beforeAll(async () => {
     "0019_crm_schema.sql",
     "0022_crm_suppressions_normalize.sql",
     "0024_crm_contacts_erased_at.sql",
+    // 0027 adds `crm_contacts.metadata`, the raw-scrape bag. Loaded here
+    // because the erasure claim below is a claim about a real column.
+    "0027_crm_contacts_metadata.sql",
   ]) {
     const migrationPath = path.resolve(__dirname, "../../../web/db/migrations", migration);
     await db.exec(readFileSync(migrationPath, "utf-8"));
@@ -78,8 +81,8 @@ beforeEach(async () => {
   const contactRows = await db.query(
     `INSERT INTO crm_contacts
        (organisation_id, name, email, phone, instagram_handle, biography,
-        followers_count, posts_count, source, sourced_at, lawful_basis)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), $10)
+        followers_count, posts_count, metadata, source, sourced_at, lawful_basis)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, now(), $11)
      RETURNING id`,
     [
       orgId,
@@ -90,6 +93,15 @@ beforeEach(async () => {
       "Florist and owner",
       1200,
       340,
+      // Several keys, none of which the erasure code names. That is the
+      // point: the bag is unenumerated by design.
+      JSON.stringify({
+        full_name: "Priya Raman",
+        profile_pic_url: "https://cdn.example/priya.jpg",
+        external_url: "https://glebeflowers.example",
+        business_email: "priya@glebeflowers.example",
+        is_verified: false,
+      }),
       "instagram_scrape",
       "legitimate_interest",
     ],
@@ -133,6 +145,35 @@ describe("eraseContact", () => {
     expect(row.followers_count).toBeNull();
     expect(row.posts_count).toBeNull();
     expect(row.erased_at).not.toBeNull();
+  });
+
+  /**
+   * THE DPDP GUARD for the raw-scrape bag (#235).
+   *
+   * `metadata` is the one column on this table whose contents nobody has
+   * enumerated — its whole purpose is retaining scrape output as it came.
+   * So the assertion is about the WHOLE OBJECT, not about any named key: a
+   * test that checked `metadata.full_name` would pass while every other
+   * key the next scrape adds survived an erasure request.
+   *
+   * Cleared in the SAME statement that nulls the other personal columns, not
+   * by a follow-up write — a second statement is a second thing that can
+   * fail, be skipped by a future caller, or be reordered out of the
+   * transaction, and personal data surviving an erasure is not a failure
+   * mode worth leaving reachable.
+   */
+  it("leaves NO key in the raw-scrape metadata bag", async () => {
+    const before = await db.query(`SELECT metadata FROM crm_contacts WHERE id = $1`, [contactId]);
+    // Guards the guard: an empty bag before the erasure would make the
+    // assertion below pass for the wrong reason.
+    expect(Object.keys((before.rows[0] as { metadata: object }).metadata).length).toBeGreaterThan(0);
+
+    await eraseContact(contactId);
+
+    const after = await db.query(`SELECT metadata FROM crm_contacts WHERE id = $1`, [contactId]);
+    const metadata = (after.rows[0] as { metadata: Record<string, unknown> }).metadata;
+    expect(metadata).toEqual({});
+    expect(Object.keys(metadata)).toEqual([]);
   });
 
   it("leaves the organisation, its opportunities and its activities intact", async () => {

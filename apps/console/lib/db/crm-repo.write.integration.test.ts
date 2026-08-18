@@ -89,6 +89,14 @@ beforeAll(async () => {
   );
   await db.exec(readFileSync(countryMigrationPath, "utf-8"));
 
+  // 0027 adds `crm_contacts.metadata`, the raw-scrape bag `commitImport`
+  // now writes on every created row.
+  const metadataMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0027_crm_contacts_metadata.sql",
+  );
+  await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
+
   // Migration 0020 (not replayed here — its only job is backfilling
   // `leads`) drops the CHECK so grandfathered rows can be inserted; 0021
   // re-adds the identical CHECK as NOT VALID. Reproduced directly rather
@@ -660,5 +668,115 @@ describe("linkConversion clears a migrated won deal out of the handoff queue", (
     ).rejects.toBeInstanceOf(AlreadyLinkedError);
 
     expect(await queueIds()).not.toContain(migratedWonOppId);
+  });
+});
+
+/**
+ * The scrape columns (#235). Until now a spreadsheet's followers column was
+ * SILENTLY IGNORED: `IMPORT_COLUMN_MAP` didn't list it, and an unmapped
+ * header is dropped without comment. `followers_count` is a live filter axis
+ * on the follow-up queue, so a column nothing maintains is a filter that
+ * quietly stops matching new rows.
+ */
+describe("commitImport writes the scrape columns", () => {
+  it("populates followers, posts, biography and the raw bag from the CSV row", async () => {
+    const result = await commitImport(
+      [
+        {
+          name: "Scraped Co",
+          email: "scraped@example.com",
+          followersCount: "1200",
+          postsCount: "340",
+          biography: "Roaster and owner",
+          metadata: '{"profile_pic_url":"https://cdn.example/x.jpg","is_verified":true}',
+        },
+      ],
+      "ava@tesserix.app",
+    );
+    expect(result.created).toBe(1);
+
+    const rows = await db.query<{
+      followers_count: number | null;
+      posts_count: number | null;
+      biography: string | null;
+      metadata: Record<string, unknown>;
+    }>(
+      `SELECT c.followers_count, c.posts_count, c.biography, c.metadata
+         FROM crm_contacts c
+         JOIN crm_organisations o ON o.id = c.organisation_id
+        WHERE o.name = 'Scraped Co'`,
+    );
+    expect(rows.rows[0]).toEqual({
+      followers_count: 1200,
+      posts_count: 340,
+      biography: "Roaster and owner",
+      metadata: { profile_pic_url: "https://cdn.example/x.jpg", is_verified: true },
+    });
+    expect(result.droppedCountCells).toBe(0);
+    expect(result.droppedMetadataCells).toBe(0);
+  });
+
+  it("leaves the bag empty and the counts null when the CSV has no such columns", async () => {
+    await commitImport([{ name: "Plain Co", email: "plain@example.com" }], "ava@tesserix.app");
+    const rows = await db.query<{ metadata: Record<string, unknown>; followers_count: number | null }>(
+      `SELECT c.metadata, c.followers_count
+         FROM crm_contacts c
+         JOIN crm_organisations o ON o.id = c.organisation_id
+        WHERE o.name = 'Plain Co'`,
+    );
+    expect(rows.rows[0].metadata).toEqual({});
+    expect(rows.rows[0].followers_count).toBeNull();
+  });
+
+  it("stores NULL for a non-numeric count, counts it, and does not abort the batch or write a zero", async () => {
+    const result = await commitImport(
+      [
+        { name: "Junk Count Co", email: "junk@example.com", followersCount: "1.2k", postsCount: "n/a" },
+        { name: "Good Count Co", email: "good@example.com", followersCount: "50" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    // Not aborted: one bad cell must not cost the other rows in the batch.
+    expect(result.created).toBe(2);
+
+    const rows = await db.query<{ name: string; followers_count: number | null; posts_count: number | null }>(
+      `SELECT o.name, c.followers_count, c.posts_count
+         FROM crm_contacts c
+         JOIN crm_organisations o ON o.id = c.organisation_id
+        WHERE o.name IN ('Junk Count Co', 'Good Count Co')`,
+    );
+    const junk = rows.rows.find((row) => row.name === "Junk Count Co");
+    const good = rows.rows.find((row) => row.name === "Good Count Co");
+    // NULL, never 0. A stored 0 is indistinguishable from a real account
+    // with no followers and would file the organisation in the lowest band.
+    expect(junk?.followers_count).toBeNull();
+    expect(junk?.posts_count).toBeNull();
+    expect(good?.followers_count).toBe(50);
+
+    // Per CELL, not per row: both of this row's count cells were refused.
+    // Reported for the same reason `droppedWebsiteUrls` is — an operator who
+    // is never told cannot choose the only remedy, a corrected re-import.
+    expect(result.droppedCountCells).toBe(2);
+  });
+
+  it("stores an empty bag for a metadata cell that is not a JSON object, and counts it", async () => {
+    const result = await commitImport(
+      [
+        { name: "Bad Bag Co", email: "badbag@example.com", metadata: "{not json" },
+        { name: "Array Bag Co", email: "arraybag@example.com", metadata: "[1,2]" },
+      ],
+      "ava@tesserix.app",
+    );
+
+    expect(result.created).toBe(2);
+    const rows = await db.query<{ metadata: Record<string, unknown> }>(
+      `SELECT c.metadata
+         FROM crm_contacts c
+         JOIN crm_organisations o ON o.id = c.organisation_id
+        WHERE o.name IN ('Bad Bag Co', 'Array Bag Co')`,
+    );
+    expect(rows.rows.map((row) => row.metadata)).toEqual([{}, {}]);
+    expect(result.droppedMetadataCells).toBe(2);
   });
 });

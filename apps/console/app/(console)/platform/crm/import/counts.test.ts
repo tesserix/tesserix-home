@@ -16,6 +16,8 @@ const RESULT = {
   skippedSuppressed: 3,
   malformed: 4,
   droppedWebsiteUrls: 0,
+  droppedCountCells: 0,
+  droppedMetadataCells: 0,
   matchedRows: [],
 };
 
@@ -38,6 +40,8 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       skippedSuppressed: 3,
       malformed: 4,
       droppedWebsiteUrls: null,
+      droppedCountCells: null,
+      droppedMetadataCells: null,
     });
   });
 
@@ -48,7 +52,30 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       skippedSuppressed: 3,
       malformed: 4,
       droppedWebsiteUrls: 0,
+      droppedCountCells: 0,
+      droppedMetadataCells: 0,
     });
+  });
+});
+
+describe("the dropped-cell counts a preview cannot know", () => {
+  it("reports every drop counter as null on a preview", () => {
+    // `previewImport` writes nothing, so it drops nothing. Showing a zero
+    // beside a preview would assert a fact about an import that has not
+    // happened — the card renders these cells only when they are numbers.
+    const preview = previewDisplayCounts(PREVIEW, 0);
+    expect(preview.droppedWebsiteUrls).toBeNull();
+    expect(preview.droppedCountCells).toBeNull();
+    expect(preview.droppedMetadataCells).toBeNull();
+  });
+
+  it("carries the committed drop counters through unchanged", () => {
+    const committed = committedDisplayCounts(
+      { ...RESULT, droppedCountCells: 3, droppedMetadataCells: 2 },
+      0,
+    );
+    expect(committed.droppedCountCells).toBe(3);
+    expect(committed.droppedMetadataCells).toBe(2);
   });
 });
 
