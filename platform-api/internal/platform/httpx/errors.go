@@ -27,9 +27,11 @@
 //     on go-shared either.
 //
 // One reason that was raised and does NOT hold, recorded so it is not
-// rediscovered as fact: go-shared is not dormant. The remote was pushed
-// 2026-08-14 and carries tags through v1.8.3 — it is local checkouts of it in
-// this estate that go stale. The decision does not rest on that.
+// rediscovered as fact: go-shared is not dormant. Checked 2026-08-18 — the
+// remote was pushed 2026-08-14, and the local checkout is three commits AHEAD
+// of origin/main carrying three unpushed tags (v1.8.4, v1.9.0, v1.9.1) against
+// a remote that stops at v1.8.3. The quiet remote is unpushed work, not an
+// abandoned library. The decision does not rest on activity either way.
 //
 // The cost is duplication of about eighty lines that rarely change. The
 // alternative was a private-module credential in two build paths and an auth

@@ -34,9 +34,11 @@ modules, with its delivery path and boundary enforcement in place.
 
 ## Corrected during the work
 
-- I claimed go-shared was dormant on Mahesh's report. **It is not** — remote
-  pushed 2026-08-14, tagged to v1.8.3. The local checkout was stale. Recorded in
-  `httpx/errors.go` so the false reason is not rediscovered as fact.
+- I claimed go-shared was dormant on Mahesh's report. **It is not.** Then I
+  said the local checkout was stale — also wrong, and the opposite of the truth.
+  The local checkout is three commits AHEAD of origin/main with three unpushed
+  tags (v1.8.4, v1.9.0, v1.9.1) against a remote stopping at v1.8.3. The quiet
+  remote is unpushed work. Recorded accurately in `httpx/errors.go`.
 - Hand-rolled `replaceAll`/`indexOf` in `database.go` when `strings` has both.
   Replaced before commit.
 
@@ -47,6 +49,13 @@ modules, with its delivery path and boundary enforcement in place.
 but not automated. Stated rather than papered over.
 
 ## Findings worth acting on separately
+
+- **`go-shared` has unpushed work on this machine.** Three commits (AES-256-GCM
+  credential encryption, a per-tenant DEK manager, a mesh-auth fix) and three
+  tags exist only locally. Any service resolving `go get
+  github.com/tesserix/go-shared@v1.9.1` fails today, and the work is one disk
+  failure from gone. Unrelated to this PR, but it surfaced while verifying the
+  adoption decision.
 
 - **`secret-service`'s Dockerfile references base images that do not exist.**
   `ghcr.io/tesserix/base-go-builder` and `base-distroless-static` are not
