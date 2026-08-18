@@ -146,19 +146,19 @@ afterAll(async () => {
 
 describe("driftingOpportunities against a real database", () => {
   it("excludes a recently created, never-contacted lead", async () => {
-    const rows = await driftingOpportunities({}, 14, 50);
+    const { rows } = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("11111111-1111-1111-1111-111111111111");
   });
 
   it("excludes any row with a next_action_at set, however stale", async () => {
-    const rows = await driftingOpportunities({}, 14, 50);
+    const { rows } = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("44444444-4444-4444-4444-444444444444");
   });
 
   it("returns exactly the two stale rows, ordered most-overdue-first by quietSince", async () => {
-    const rows = await driftingOpportunities({}, 14, 50);
+    const { rows } = await driftingOpportunities({}, 14, 50);
     const ids = rows.map((r) => r.id);
     // Order pins the COALESCE-vs-bare-column regression: H (never
     // contacted, created 90 days ago) is more overdue than I (contacted 20
@@ -172,7 +172,7 @@ describe("driftingOpportunities against a real database", () => {
   });
 
   it("reports quietSince as the COALESCE value, not raw last_contacted_at", async () => {
-    const rows = await driftingOpportunities({}, 14, 50);
+    const { rows } = await driftingOpportunities({}, 14, 50);
     const h = rows.find(
       (r) => r.id === "22222222-2222-2222-2222-222222222222",
     );
@@ -197,7 +197,7 @@ describe("dueOpportunities against a real database", () => {
   // execution, this assertion (and the nested seed below) need to move to
   // the top-level `beforeAll`/a distinct org so they stop depending on it.
   it("returns only the overdue, non-terminal opportunity", async () => {
-    const rows = await dueOpportunities({}, 50);
+    const { rows } = await dueOpportunities({}, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toEqual(["55555555-5555-5555-5555-555555555555"]);
   });
@@ -244,19 +244,19 @@ describe("filtering runs in SQL ahead of ORDER BY/LIMIT (Ruling 11)", () => {
     // page and the kora row (created most recently, least overdue) is cut
     // off. Filtering that 2-row page for product=kora would return nothing —
     // the false negative Ruling 11 exists to prevent.
-    const unfiltered = await dueOpportunities({}, 2);
+    const unfiltered = (await dueOpportunities({}, 2)).rows;
     expect(unfiltered.map((r) => r.id)).not.toContain(
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     );
 
-    const filtered = await dueOpportunities({ product: "kora" }, 2);
+    const filtered = (await dueOpportunities({ product: "kora" }, 2)).rows;
     expect(filtered.map((r) => r.id)).toEqual([
       "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     ]);
   });
 
   it("binds product/stage/owner filters against driftingOpportunities the same way", async () => {
-    const rows = await driftingOpportunities({ product: "kora" }, 14, 50);
+    const { rows } = await driftingOpportunities({ product: "kora" }, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).not.toContain("22222222-2222-2222-2222-222222222222"); // H, no product
     expect(ids).not.toContain("33333333-3333-3333-3333-333333333333"); // I, no product
@@ -275,7 +275,7 @@ describe("owner filter escapes LIKE metacharacters against a real database", () 
   });
 
   it("does not treat a literal '%' owner value as 'match everything'", async () => {
-    const rows = await dueOpportunities({ owner: "%" }, 50);
+    const { rows } = await dueOpportunities({ owner: "%" }, 50);
     // The due set (top-level seed) has exactly one owned row ("Asha Rao"),
     // plus whatever the sibling describe above seeded with no owner set. An
     // unescaped "%" would return all of them; escaped, "%" has no literal
@@ -284,7 +284,7 @@ describe("owner filter escapes LIKE metacharacters against a real database", () 
   });
 
   it("still matches a literal substring once escaped", async () => {
-    const rows = await dueOpportunities({ owner: "Asha" }, 50);
+    const { rows } = await dueOpportunities({ owner: "Asha" }, 50);
     expect(rows.map((r) => r.id)).toEqual([
       "55555555-5555-5555-5555-555555555555",
     ]);
@@ -385,47 +385,47 @@ describe("country and follower-band filters against a real database", () => {
   });
 
   it("filters dueOpportunities by country", async () => {
-    const rows = await dueOpportunities({ country: "QQ" }, 50);
+    const { rows } = await dueOpportunities({ country: "QQ" }, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(qqDueOppId);
     expect(ids).not.toContain(zzDueOppId);
   });
 
   it("filters driftingOpportunities by country", async () => {
-    const rows = await driftingOpportunities({ country: "QQ" }, 14, 50);
+    const { rows } = await driftingOpportunities({ country: "QQ" }, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(qqDriftingOppId);
     expect(ids).not.toContain(zzDriftingOppId);
   });
 
   it("filters dueOpportunities by follower band on the primary contact", async () => {
-    const rows = await dueOpportunities({ followers: "over10k" }, 50);
+    const { rows } = await dueOpportunities({ followers: "over10k" }, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(qqDueOppId);
     expect(ids).not.toContain(zzDueOppId);
   });
 
   it("filters driftingOpportunities by follower band on the primary contact", async () => {
-    const rows = await driftingOpportunities({ followers: "under1k" }, 14, 50);
+    const { rows } = await driftingOpportunities({ followers: "under1k" }, 14, 50);
     const ids = rows.map((r) => r.id);
     expect(ids).toContain(zzDriftingOppId);
     expect(ids).not.toContain(qqDriftingOppId);
   });
 
   it("excludes a NULL followers_count from every band, in both due and drifting", async () => {
-    const dueUnder1k = await dueOpportunities({ followers: "under1k" }, 50);
-    const dueOver10k = await dueOpportunities({ followers: "over10k" }, 50);
+    const dueUnder1k = (await dueOpportunities({ followers: "under1k" }, 50)).rows;
+    const dueOver10k = (await dueOpportunities({ followers: "over10k" }, 50)).rows;
     expect(dueUnder1k.map((r) => r.id)).not.toContain(nullFollowersDueOppId);
     expect(dueOver10k.map((r) => r.id)).not.toContain(nullFollowersDueOppId);
 
-    const driftingUnder1k = await driftingOpportunities({ followers: "under1k" }, 14, 50);
-    const driftingOver10k = await driftingOpportunities({ followers: "over10k" }, 14, 50);
+    const driftingUnder1k = (await driftingOpportunities({ followers: "under1k" }, 14, 50)).rows;
+    const driftingOver10k = (await driftingOpportunities({ followers: "over10k" }, 14, 50)).rows;
     expect(driftingUnder1k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
     expect(driftingOver10k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
   });
 
   it("composes country and followers with the existing owner filter", async () => {
-    const rows = await dueOpportunities(
+    const { rows } = await dueOpportunities(
       { country: "QQ", followers: "over10k", owner: "Priya" },
       50,
     );
@@ -433,10 +433,12 @@ describe("country and follower-band filters against a real database", () => {
 
     // Same organisation's country/follower band, but the owner substring
     // doesn't match — composing must AND, not OR, the predicates together.
-    const nonMatching = await dueOpportunities(
-      { country: "QQ", followers: "over10k", owner: "Someone Else" },
-      50,
-    );
+    const nonMatching = (
+      await dueOpportunities(
+        { country: "QQ", followers: "over10k", owner: "Someone Else" },
+        50,
+      )
+    ).rows;
     expect(nonMatching.map((r) => r.id)).not.toContain(qqDueOppId);
   });
 });
@@ -1274,5 +1276,251 @@ describe("organisationDetail orders contacts is_primary, then created_at, then i
       "Oldest, id 2",
       "Middle",
     ]);
+  });
+});
+
+/**
+ * The ordering tiebreak, and the paginated shape built on top of it.
+ *
+ * Declared last in the file deliberately: its `beforeAll` seeds more queue
+ * rows, and several describes above assert an exact due/drifting set from
+ * the top-level seed alone. Vitest runs a file's describes — and their
+ * `beforeAll`s — in declaration order, so seeding here cannot disturb them.
+ * (That guarantee does not hold under `--sequence.shuffle`; see the note on
+ * the `dueOpportunities against a real database` describe.)
+ *
+ * Every row seeded here carries its own product so each assertion can filter
+ * to exactly its own fixture.
+ */
+describe("queue ordering breaks ties on id", () => {
+  let tieOrgId: string;
+
+  // Four rows sharing one identical sort timestamp, INSERTed in descending
+  // id order. Without `, o.id ASC` Postgres sorts on the tied key alone,
+  // finds the input already "sorted", and hands back insertion order — i.e.
+  // descending ids, the reverse of what the tiebreak specifies. That is what
+  // makes this test discriminate rather than merely restate the query.
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Tiebreak Queue Org"],
+    );
+    tieOrgId = org.rows[0].id;
+
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ('dddddddd-dddd-dddd-dddd-000000000004', $1, 'new', 'drift-tie', NULL, NULL, $2::timestamptz),
+         ('dddddddd-dddd-dddd-dddd-000000000003', $1, 'new', 'drift-tie', NULL, NULL, $2::timestamptz),
+         ('dddddddd-dddd-dddd-dddd-000000000002', $1, 'new', 'drift-tie', NULL, NULL, $2::timestamptz),
+         ('dddddddd-dddd-dddd-dddd-000000000001', $1, 'new', 'drift-tie', NULL, NULL, $2::timestamptz)`,
+      [tieOrgId, daysAgo(120)],
+    );
+
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ('eeeeeeee-eeee-eeee-eeee-000000000004', $1, 'new', 'due-tie', $2::timestamptz, NULL, $2::timestamptz),
+         ('eeeeeeee-eeee-eeee-eeee-000000000003', $1, 'new', 'due-tie', $2::timestamptz, NULL, $2::timestamptz),
+         ('eeeeeeee-eeee-eeee-eeee-000000000002', $1, 'new', 'due-tie', $2::timestamptz, NULL, $2::timestamptz),
+         ('eeeeeeee-eeee-eeee-eeee-000000000001', $1, 'new', 'due-tie', $2::timestamptz, NULL, $2::timestamptz)`,
+      [tieOrgId, daysAgo(120)],
+    );
+  });
+
+  it("orders drifting rows sharing a quiet_since by ascending id", async () => {
+    const { rows } = await driftingOpportunities({ product: "drift-tie" }, 14, 50);
+    expect(rows.map((r) => r.id)).toEqual([
+      "dddddddd-dddd-dddd-dddd-000000000001",
+      "dddddddd-dddd-dddd-dddd-000000000002",
+      "dddddddd-dddd-dddd-dddd-000000000003",
+      "dddddddd-dddd-dddd-dddd-000000000004",
+    ]);
+  });
+
+  it("orders due rows sharing a next_action_at by ascending id", async () => {
+    const { rows } = await dueOpportunities({ product: "due-tie" }, 50);
+    expect(rows.map((r) => r.id)).toEqual([
+      "eeeeeeee-eeee-eeee-eeee-000000000001",
+      "eeeeeeee-eeee-eeee-eeee-000000000002",
+      "eeeeeeee-eeee-eeee-eeee-000000000003",
+      "eeeeeeee-eeee-eeee-eeee-000000000004",
+    ]);
+  });
+});
+
+/**
+ * The defect this change exists for: a queue that returns a bare capped page
+ * tells the operator nothing about what it left behind. Production holds 259
+ * organisations, every one of them drifting, against a limit of 100 — 159
+ * rows silently absent with no count and no truncation notice.
+ *
+ * A three-row fixture cannot show that. These seed more rows than one page
+ * and page all the way through, with the timestamp spread production
+ * actually has: a handful of distinct values, five rows tied on each.
+ */
+describe("queue pagination over more rows than fit on a page", () => {
+  const DRIFT_ROWS = 25;
+  const DUE_ROWS = 12;
+  let pageOrgId: string;
+
+  const driftId = (n: number) =>
+    `cccccccc-cccc-cccc-cccc-${String(n).padStart(12, "0")}`;
+  const dueId = (n: number) =>
+    `bbbbbbbb-bbbb-bbbb-bbbb-${String(n).padStart(12, "0")}`;
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Paged Queue Org"],
+    );
+    pageOrgId = org.rows[0].id;
+
+    // Five distinct created_at values, five rows tied on each — the shape
+    // one migration batch leaves behind, and the shape a cursor without a
+    // tiebreak cannot page through correctly.
+    const driftValues = Array.from({ length: DRIFT_ROWS }, (_, i) => {
+      const bucket = Math.floor(i / 5);
+      return `('${driftId(i + 1)}', $1, 'new', 'drift-page', NULL, NULL, $${bucket + 2}::timestamptz)`;
+    }).join(",\n         ");
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ${driftValues}`,
+      [pageOrgId, daysAgo(60), daysAgo(59), daysAgo(58), daysAgo(57), daysAgo(56)],
+    );
+
+    // Four distinct next_action_at values, three rows tied on each.
+    const dueValues = Array.from({ length: DUE_ROWS }, (_, i) => {
+      const bucket = Math.floor(i / 3);
+      return `('${dueId(i + 1)}', $1, 'new', 'due-page', $${bucket + 2}::timestamptz, NULL, $2::timestamptz)`;
+    }).join(",\n         ");
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ${dueValues}`,
+      [pageOrgId, daysAgo(40), daysAgo(39), daysAgo(38), daysAgo(37)],
+    );
+  });
+
+  it("reports the whole matching set as total, not the page size", async () => {
+    // The number the operator is being told. Reporting 10 here is the bug:
+    // it reads as "that is all of them".
+    const page = await driftingOpportunities({ product: "drift-page" }, 14, 10);
+    expect(page.rows).toHaveLength(10);
+    expect(page.total).toBe(DRIFT_ROWS);
+  });
+
+  it("does not repeat the last row of page one on page two, nor skip between them", async () => {
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, 10);
+    const second = await driftingOpportunities(
+      { product: "drift-page" },
+      14,
+      10,
+      first.nextCursor ?? undefined,
+    );
+    const firstIds = first.rows.map((r) => r.id);
+    const secondIds = second.rows.map((r) => r.id);
+    expect(secondIds).not.toContain(firstIds[firstIds.length - 1]);
+    // Consecutive by the query's own order: page two starts exactly where
+    // page one stopped. A skipped row would leave a gap here.
+    expect([...firstIds, ...secondIds]).toEqual(
+      Array.from({ length: 20 }, (_, i) => driftId(i + 1)),
+    );
+  });
+
+  it("pages through to the end and yields exactly `total` distinct rows", async () => {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let total = 0;
+    // Bounded so a cursor that fails to advance fails the test instead of
+    // hanging the suite.
+    for (let guard = 0; guard < 10; guard += 1) {
+      const page: {
+        rows: { id: string }[];
+        total: number;
+        nextCursor: string | null;
+      } = await driftingOpportunities({ product: "drift-page" }, 14, 10, cursor);
+      total = page.total;
+      seen.push(...page.rows.map((r) => r.id));
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+    }
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toHaveLength(total);
+    expect(new Set(seen)).toEqual(
+      new Set(Array.from({ length: DRIFT_ROWS }, (_, i) => driftId(i + 1))),
+    );
+  });
+
+  it("reports nextCursor null only on the last page", async () => {
+    const partial = await driftingOpportunities({ product: "drift-page" }, 14, 10);
+    expect(partial.nextCursor).not.toBeNull();
+    const all = await driftingOpportunities({ product: "drift-page" }, 14, 100);
+    expect(all.nextCursor).toBeNull();
+    // limit + 1 must be dropped, not handed back as an extra row.
+    expect(all.rows).toHaveLength(DRIFT_ROWS);
+  });
+
+  it("counts the rows already paged past as precedingCount", async () => {
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, 10);
+    expect(first.precedingCount).toBe(0);
+    const second = await driftingOpportunities(
+      { product: "drift-page" },
+      14,
+      10,
+      first.nextCursor ?? undefined,
+    );
+    expect(second.precedingCount).toBe(10);
+    expect(second.total).toBe(DRIFT_ROWS);
+  });
+
+  it("pages the due queue the same way, with a total that ignores the limit", async () => {
+    const first = await dueOpportunities({ product: "due-page" }, 5);
+    expect(first.total).toBe(DUE_ROWS);
+    expect(first.rows).toHaveLength(5);
+
+    const seen: string[] = [...first.rows.map((r) => r.id)];
+    let cursor = first.nextCursor;
+    for (let guard = 0; guard < 10 && cursor !== null; guard += 1) {
+      const page = await dueOpportunities({ product: "due-page" }, 5, cursor);
+      seen.push(...page.rows.map((r) => r.id));
+      cursor = page.nextCursor;
+    }
+    expect(new Set(seen).size).toBe(DUE_ROWS);
+    expect(seen).toEqual(Array.from({ length: DUE_ROWS }, (_, i) => dueId(i + 1)));
+  });
+
+  it("counts the filtered set, not every drifting row in the table", async () => {
+    // A total ignoring the filter would tell the operator there is more
+    // behind a filter than the filter can ever return.
+    const page = await driftingOpportunities({ product: "drift-tie" }, 14, 10);
+    expect(page.total).toBe(4);
+  });
+
+  it("rejects a malformed cursor instead of silently returning page one", async () => {
+    // Silently falling back to page one is the same class of defect as the
+    // truncation this change fixes: the surface reports success while
+    // showing something other than what was asked for.
+    await expect(
+      driftingOpportunities({ product: "drift-page" }, 14, 10, "not-a-real-cursor"),
+    ).rejects.toThrow();
+    await expect(
+      dueOpportunities({ product: "due-page" }, 5, "not-a-real-cursor"),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a cursor whose id is not a uuid, even with a valid timestamp", async () => {
+    const forged = Buffer.from(
+      `${new Date().toISOString()}|1 OR 1=1`,
+      "utf-8",
+    ).toString("base64");
+    await expect(
+      driftingOpportunities({ product: "drift-page" }, 14, 10, forged),
+    ).rejects.toThrow();
   });
 });

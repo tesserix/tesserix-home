@@ -20,6 +20,7 @@ import {
   type FilterValues,
   type UrlFilters,
 } from "@/components/kit/filter-bar";
+import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
 
@@ -194,46 +195,6 @@ export interface OrganisationsViewProps {
   nextHref: string | null;
 }
 
-/**
- * The position of this page within the matching set, plus the next-page link.
- *
- * A range ("101–200 of 259"), not a bare count of the rows on screen: with
- * `rows.length` both page 1 and page 2 of a 259-row result read "100 of 259"
- * and an operator could not tell which page they were on.
- *
- * `aria-live="polite"` on the count: it changes both when the operator
- * types a search and when they page, and a screen reader user needs to
- * hear the new count without it stealing focus — WCAG 2.1 AA.
- *
- * The next control is an `<a href>`, not a button: a page of results is a
- * location, so it must be back-button-navigable and shareable, and it is
- * rendered only when `nextHref` is non-null — a dead "next" on the last
- * page promises a page that isn't there.
- */
-interface ResultCountProps {
-  rows: readonly OrganisationListRow[];
-  total: number;
-  precedingCount: number;
-  nextHref: string | null;
-}
-
-function ResultCount({ rows, total, precedingCount, nextHref }: ResultCountProps) {
-  const first = precedingCount + 1;
-  const last = precedingCount + rows.length;
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span aria-live="polite" className="text-sm text-muted-foreground">
-        {first}–{last} of {total}
-      </span>
-      {nextHref ? (
-        <Button asChild size="sm" variant="outline">
-          <Link href={nextHref}>Next</Link>
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 export function OrganisationsView({
   rows,
   state,
@@ -260,7 +221,13 @@ export function OrganisationsView({
 
       {state.kind === "ready" ? (
         <div className="flex flex-col gap-3">
-          <ResultCount rows={rows} total={total} precedingCount={precedingCount} nextHref={nextHref} />
+          <ResultPager
+            label="organisations"
+            count={rows.length}
+            total={total}
+            precedingCount={precedingCount}
+            nextHref={nextHref}
+          />
           <Table aria-label="Organisations">
             <TableHeader>
               <TableRow>

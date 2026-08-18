@@ -111,6 +111,77 @@ function toQueueRow(row: RawQueueRow): QueueRow {
   };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A keyset position: one timestamp plus the id that breaks its ties. */
+interface KeysetCursor {
+  timestamp: string;
+  id: string;
+}
+
+/**
+ * Opaque cursor = base64 of `<iso-timestamp>|<uuid>`. Encoded (not a raw
+ * pair the caller could construct) so a surface isn't tempted to build one
+ * by hand from URL params it half-trusts.
+ *
+ * Shared by the browse surface and both queues, but only this far. What is
+ * genuinely common is the *encoding* and its validation, and that much is
+ * direction-free — it says nothing about which way a surface sorts, so
+ * sharing it cannot make either surface lie about its order.
+ *
+ * The SQL is deliberately NOT shared: `listOrganisations` orders
+ * `created_at DESC, id DESC` and advances with `<`, while both queues order
+ * ascending on their own sort key and advance with `>`. So the queues share
+ * one ascending implementation (`queuePage`) and `listOrganisations` keeps
+ * its own descending one, rather than both routing through a helper taking
+ * a `direction` argument — under which no reader could tell what a page
+ * means without also finding the argument.
+ */
+function encodeKeysetCursor(timestamp: string, id: string): string {
+  return Buffer.from(`${timestamp}|${id}`, "utf-8").toString("base64");
+}
+
+/**
+ * Decode and validate a cursor. This arrives off a URL, so a malformed or
+ * unparseable value is rejected outright — never coerced into a query (which
+ * is how a garbage timestamp would end up bound straight into a keyset
+ * predicate), and never silently degraded to page one (which would show the
+ * operator something other than the page the URL asked for, reporting
+ * success while withholding the truth).
+ *
+ * `Buffer.from(cursor, "base64")` itself never throws — invalid base64 is
+ * decoded leniently, with invalid characters dropped, not rejected. The
+ * rejection this function promises comes entirely from the separator/date/
+ * UUID checks below, which is why there is no try/catch around the decode.
+ */
+function decodeKeysetCursor(cursor: string, label: string): KeysetCursor {
+  const decoded = Buffer.from(cursor, "base64").toString("utf-8");
+  const separatorIndex = decoded.indexOf("|");
+  if (separatorIndex === -1) {
+    throw new Error(`${label}: malformed cursor`);
+  }
+  const timestamp = decoded.slice(0, separatorIndex);
+  const id = decoded.slice(separatorIndex + 1);
+  if (Number.isNaN(Date.parse(timestamp)) || !UUID_RE.test(id)) {
+    throw new Error(`${label}: malformed cursor`);
+  }
+  return { timestamp, id };
+}
+
+/**
+ * Pushes a cursor tuple onto `params` and returns the two placeholders that
+ * reference it. The casts are written out rather than left to Postgres's
+ * inference because one side of the comparison is an expression (the
+ * drifting queue's COALESCE), not a bare column — stating the type is
+ * cheaper than depending on what the planner infers there.
+ */
+function cursorPlaceholders(cursor: KeysetCursor, params: unknown[]): [string, string] {
+  params.push(cursor.timestamp);
+  const timestampParam = `$${params.length}::timestamptz`;
+  params.push(cursor.id);
+  return [timestampParam, `$${params.length}::uuid`];
+}
+
 /**
  * `EXISTS` clause matching organisation `${orgAlias}.id`'s PRIMARY contact
  * into `band` — selected with `primaryContactOrder()`, the same ordering the
@@ -205,32 +276,158 @@ function filterClause(filter: QueueFilter, params: unknown[]): string {
   return clauses.length > 0 ? `\n        AND ${clauses.join("\n        AND ")}` : "";
 }
 
+/**
+ * A page of a queue, plus the counts that make the page honest.
+ *
+ * Same shape as `OrganisationPage`, for the same reason: a bare capped array
+ * cannot say how much it left behind. It is a separate interface because the
+ * rows differ, not because the pager does.
+ */
+export interface QueuePage {
+  rows: QueueRow[];
+  /** Every row matching this queue's predicate AND its filters, ignoring
+   *  the page limit — the number the operator is being told. */
+  total: number;
+  /** How many matching rows sort ahead of this page; 0 on the first page.
+   *  Counted in SQL, not inferred from a page number: pagination here is
+   *  keyset, so a cursor carries no position of its own. */
+  precedingCount: number;
+  /** Opaque cursor for the next page; null when this is the last page. */
+  nextCursor: string | null;
+}
+
+/** The columns every queue row is built from — one list, so `dueOpportunities`
+ *  and `driftingOpportunities` cannot drift apart on what a QueueRow is. */
+const QUEUE_COLUMNS = `o.id, o.organisation_id, g.name AS organisation_name,
+            o.product, o.stage, o.owner,
+            o.next_action_at, o.next_action_note, o.last_contacted_at,
+            COALESCE(o.last_contacted_at, o.created_at) AS quiet_since,
+            o.is_starred`;
+
+/** The drifting queue's sort key. Named once because the WHERE clause, the
+ *  ORDER BY and the cursor comparison all have to be the same expression —
+ *  three copies of a COALESCE is three chances to change two of them. */
+const DRIFTING_SORT_KEY = "COALESCE(o.last_contacted_at, o.created_at)";
+
+interface QueuePageQuery {
+  /** SQL expression this queue orders by. A module constant, never caller
+   *  input — it is spliced into the statement, not bound. */
+  sortKey: string;
+  /** Prefix for cursor-rejection messages, so a thrown error names the
+   *  queue that rejected it. */
+  label: string;
+  /** Builds this queue's WHERE body, pushing its own bound parameters onto
+   *  `params` in the order the returned SQL numbers them. Called once per
+   *  statement because the count and page queries bind separate lists. */
+  buildWhere: (params: unknown[]) => string;
+  /** The sort key's value on a returned row, for the next cursor. */
+  sortValue: (row: RawQueueRow) => unknown;
+  limit: number;
+  cursor?: string;
+}
+
+/**
+ * Runs one queue's count and page queries and assembles a `QueuePage`.
+ *
+ * Modelled on `listOrganisations`: concurrent count + page reads, `limit + 1`
+ * rows as self-contained proof that another page exists, and `precedingCount`
+ * aggregated into the count query rather than asked for separately.
+ *
+ * The ordering carries `o.id` as a tiebreak. Without it, rows sharing a sort
+ * timestamp come back in whatever order the plan produces — harmless for one
+ * capped page, fatal here, because a row could repeat on one page and never
+ * appear on another. Migration 0021 wrote 259 rows in one batch, so ties are
+ * the normal case on this data, not an edge one.
+ */
+async function queuePage({
+  sortKey,
+  label,
+  buildWhere,
+  sortValue,
+  limit,
+  cursor,
+}: QueuePageQuery): Promise<QueuePage> {
+  // Decoded (and validated) before either query runs, so a malformed cursor
+  // fails fast without spending a round trip on a count it would never use.
+  const decoded = cursor ? decodeKeysetCursor(cursor, label) : null;
+
+  const countParams: unknown[] = [];
+  const countWhere = buildWhere(countParams);
+  // Rows ahead of this page = matching rows at or before the cursor tuple in
+  // the queue's own ascending order. Inclusive: the cursor IS the last row of
+  // the previous page, which the page predicate below then excludes.
+  let precedingSelect = "0";
+  if (decoded) {
+    const [timestampParam, idParam] = cursorPlaceholders(decoded, countParams);
+    precedingSelect = `count(*) FILTER (WHERE (${sortKey}, o.id) <= (${timestampParam}, ${idParam}))`;
+  }
+
+  const params: unknown[] = [];
+  let where = buildWhere(params);
+  if (decoded) {
+    const [timestampParam, idParam] = cursorPlaceholders(decoded, params);
+    where += `\n        AND (${sortKey}, o.id) > (${timestampParam}, ${idParam})`;
+  }
+  params.push(limit + 1);
+  const limitParam = `$${params.length}`;
+
+  // Independent reads over two disjoint parameter lists — concurrent rather
+  // than two sequential round trips for every page view.
+  const [countRows, rawRows] = await Promise.all([
+    tesserixQuery<{ count: string | number; preceding: string | number }>(
+      `SELECT count(*) AS count, ${precedingSelect} AS preceding
+         FROM crm_opportunities o
+         JOIN crm_organisations g ON g.id = o.organisation_id
+        WHERE ${countWhere}`,
+      countParams,
+    ),
+    tesserixQuery<RawQueueRow>(
+      `SELECT ${QUEUE_COLUMNS}
+       FROM crm_opportunities o
+       JOIN crm_organisations g ON g.id = o.organisation_id
+      WHERE ${where}
+      ORDER BY ${sortKey} ASC, o.id ASC
+      LIMIT ${limitParam}`,
+      params,
+    ),
+  ]);
+
+  const hasNextPage = rawRows.length > limit;
+  const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
+  const lastRow = pageRawRows[pageRawRows.length - 1];
+  return {
+    rows: pageRawRows.map(toQueueRow),
+    // count(*) comes back as a string from pg's bigint mapping.
+    total: Number(countRows[0]?.count ?? 0),
+    precedingCount: Number(countRows[0]?.preceding ?? 0),
+    nextCursor:
+      hasNextPage && lastRow
+        ? encodeKeysetCursor(toIsoRequired(sortValue(lastRow)), lastRow.id)
+        : null,
+  };
+}
+
 /** Opportunities whose next action has arrived. Terminal deals (won/lost)
  *  are excluded — surfacing them would make the queue a to-do list of things
  *  already finished. Most-overdue-first. */
 export async function dueOpportunities(
   filter: QueueFilter,
   limit: number,
-): Promise<QueueRow[]> {
-  const params: unknown[] = [];
-  const filterSql = filterClause(filter, params);
-  params.push(limit);
-  const limitParam = params.length;
-  const rows = await tesserixQuery<RawQueueRow>(
-    `SELECT o.id, o.organisation_id, g.name AS organisation_name,
-            o.product, o.stage, o.owner,
-            o.next_action_at, o.next_action_note, o.last_contacted_at,
-            COALESCE(o.last_contacted_at, o.created_at) AS quiet_since,
-            o.is_starred
-       FROM crm_opportunities o
-       JOIN crm_organisations g ON g.id = o.organisation_id
-      WHERE o.next_action_at <= now()
-        AND o.stage NOT IN ('won', 'lost')${filterSql}
-      ORDER BY o.next_action_at ASC
-      LIMIT $${limitParam}`,
-    params,
-  );
-  return rows.map(toQueueRow);
+  cursor?: string,
+): Promise<QueuePage> {
+  return queuePage({
+    sortKey: "o.next_action_at",
+    label: "dueOpportunities",
+    // The queue's own predicates stay first, filters spliced after, so the
+    // partial index (crm_opp_due_idx) stays eligible.
+    buildWhere: (params) =>
+      `o.next_action_at <= now()
+        AND o.stage NOT IN ('won', 'lost')${filterClause(filter, params)}`,
+    // Non-null on every returned row: the predicate above requires it.
+    sortValue: (row) => row.next_action_at,
+    limit,
+    cursor,
+  });
 }
 
 /** Opportunities with no next action scheduled AND a stale last contact —
@@ -256,30 +453,25 @@ export async function driftingOpportunities(
   filter: QueueFilter,
   staleDays: number,
   limit: number,
-): Promise<QueueRow[]> {
-  const params: unknown[] = [];
-  const filterSql = filterClause(filter, params);
-  params.push(staleDays);
-  const staleDaysParam = params.length;
-  params.push(limit);
-  const limitParam = params.length;
-  const rows = await tesserixQuery<RawQueueRow>(
-    `SELECT o.id, o.organisation_id, g.name AS organisation_name,
-            o.product, o.stage, o.owner,
-            o.next_action_at, o.next_action_note, o.last_contacted_at,
-            COALESCE(o.last_contacted_at, o.created_at) AS quiet_since,
-            o.is_starred
-       FROM crm_opportunities o
-       JOIN crm_organisations g ON g.id = o.organisation_id
-      WHERE o.next_action_at IS NULL
+  cursor?: string,
+): Promise<QueuePage> {
+  return queuePage({
+    sortKey: DRIFTING_SORT_KEY,
+    label: "driftingOpportunities",
+    // Filter parameters are pushed before staleDays so the filter clauses
+    // keep the low placeholder numbers whether or not a filter is active.
+    buildWhere: (params) => {
+      const filterSql = filterClause(filter, params);
+      params.push(staleDays);
+      return `o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
-        AND COALESCE(o.last_contacted_at, o.created_at)
-              <= now() - make_interval(days => $${staleDaysParam}::int)${filterSql}
-      ORDER BY COALESCE(o.last_contacted_at, o.created_at) ASC
-      LIMIT $${limitParam}`,
-    params,
-  );
-  return rows.map(toQueueRow);
+        AND ${DRIFTING_SORT_KEY}
+              <= now() - make_interval(days => $${params.length}::int)${filterSql}`;
+    },
+    sortValue: (row) => row.quiet_since,
+    limit,
+    cursor,
+  });
 }
 
 /**
@@ -1937,45 +2129,6 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
   return clauses;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-interface OrganisationCursor {
-  createdAt: string;
-  id: string;
-}
-
-/** Opaque cursor = base64 of `<iso-created_at>|<uuid-id>`. Encoded (not a
- *  raw pair the caller could construct) so the surface isn't tempted to
- *  build one by hand from URL params it half-trusts. */
-function encodeOrganisationCursor(createdAt: string, id: string): string {
-  return Buffer.from(`${createdAt}|${id}`, "utf-8").toString("base64");
-}
-
-/**
- * Decode and validate a cursor. This arrives off a URL, so a malformed or
- * unparseable value is rejected outright — never coerced into a query, which
- * is how a garbage `created_at` would end up bound straight into the keyset
- * predicate below.
- *
- * `Buffer.from(cursor, "base64")` itself never throws — invalid base64 is
- * decoded leniently, with invalid characters dropped, not rejected. The
- * rejection this function promises comes entirely from the separator/date/
- * UUID checks below, which is why there is no try/catch around the decode.
- */
-function decodeOrganisationCursor(cursor: string): OrganisationCursor {
-  const decoded = Buffer.from(cursor, "base64").toString("utf-8");
-  const separatorIndex = decoded.indexOf("|");
-  if (separatorIndex === -1) {
-    throw new Error("listOrganisations: malformed cursor");
-  }
-  const createdAt = decoded.slice(0, separatorIndex);
-  const id = decoded.slice(separatorIndex + 1);
-  if (Number.isNaN(Date.parse(createdAt)) || !UUID_RE.test(id)) {
-    throw new Error("listOrganisations: malformed cursor");
-  }
-  return { createdAt, id };
-}
-
 interface RawOrganisationListRow {
   id: string;
   name: string;
@@ -2050,7 +2203,7 @@ export async function listOrganisations(
   // Decoded (and validated) before either query runs, so a malformed cursor
   // fails fast without spending a round trip on the count query it would
   // never get to use.
-  const decodedCursor = cursor ? decodeOrganisationCursor(cursor) : null;
+  const decodedCursor = cursor ? decodeKeysetCursor(cursor, "listOrganisations") : null;
 
   const countParams: unknown[] = [];
   const countClauses = organisationFilterClauses(filter, countParams);
@@ -2062,7 +2215,7 @@ export async function listOrganisations(
   // asked for separately: it is the same predicate over the same rows.
   let precedingSelect = "0";
   if (decodedCursor) {
-    countParams.push(decodedCursor.createdAt);
+    countParams.push(decodedCursor.timestamp);
     const createdAtParam = `$${countParams.length}`;
     countParams.push(decodedCursor.id);
     const idParam = `$${countParams.length}`;
@@ -2072,7 +2225,7 @@ export async function listOrganisations(
   const params: unknown[] = [];
   const clauses = organisationFilterClauses(filter, params);
   if (decodedCursor) {
-    params.push(decodedCursor.createdAt);
+    params.push(decodedCursor.timestamp);
     const createdAtParam = `$${params.length}`;
     params.push(decodedCursor.id);
     const idParam = `$${params.length}`;
@@ -2132,7 +2285,7 @@ export async function listOrganisations(
   const lastRow = pageRawRows[pageRawRows.length - 1];
   const nextCursor =
     hasNextPage && lastRow
-      ? encodeOrganisationCursor(toIsoRequired(lastRow.created_at), lastRow.id)
+      ? encodeKeysetCursor(toIsoRequired(lastRow.created_at), lastRow.id)
       : null;
 
   return { rows, total, precedingCount, nextCursor };

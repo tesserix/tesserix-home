@@ -45,11 +45,165 @@ beforeEach(() => {
   ]);
 });
 
+/**
+ * The queue's page query — the statement carrying the bound LIMIT. Both queue
+ * functions issue a count query alongside it, so a positional
+ * `query.mock.calls[0]` would assert against whichever of the two the
+ * implementation happens to start first. Selecting by shape says which
+ * statement is meant.
+ */
+const queuePageCall = (): [string, unknown[]] => {
+  // Keyed on the bound LIMIT placeholder: only the page query has one. A
+  // plain "ORDER BY" would also match the count query whenever a follower
+  // filter is active, because that filter's EXISTS subquery carries its own
+  // ORDER BY … LIMIT 1.
+  const call = query.mock.calls.find(([sql]) => String(sql).includes("LIMIT $"));
+  if (!call) throw new Error("crm-repo.test: no page query was issued");
+  return call as [string, unknown[]];
+};
+
+/** The queue's count query — the unlimited total the operator is told. */
+const queueCountCall = (): [string, unknown[]] => {
+  const call = query.mock.calls.find(([sql]) => String(sql).includes("count(*) AS count"));
+  if (!call) throw new Error("crm-repo.test: no count query was issued");
+  return call as [string, unknown[]];
+};
+
 describe("the queue", () => {
+  it("breaks an ordering tie on id, in both queues", async () => {
+    // Without a tiebreak, rows sharing a sort timestamp come back in
+    // whatever order the plan produces. That is harmless for a single
+    // capped page and fatal for the keyset cursor: a row can repeat on one
+    // page and never appear on another. Production's 259 rows were written
+    // by one migration batch and share a narrow timestamp range, so ties
+    // are the normal case here, not an edge one.
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50);
+    expect(queuePageCall()[0]).toContain("ORDER BY o.next_action_at ASC, o.id ASC");
+
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await driftingOpportunities({}, 14, 50);
+    expect(queuePageCall()[0]).toContain(
+      "ORDER BY COALESCE(o.last_contacted_at, o.created_at) ASC, o.id ASC",
+    );
+  });
+
+  it("returns a paginated shape, not a bare array", async () => {
+    // The defect: a bare capped array tells the operator nothing about what
+    // it left behind. 259 drifting rows against a limit of 100 rendered as
+    // 100 rows with no count and no truncation notice.
+    query.mockReset();
+    query.mockResolvedValue([]);
+    const page = await dueOpportunities({}, 50);
+    expect(page).toEqual({ rows: [], total: 0, precedingCount: 0, nextCursor: null });
+  });
+
+  it("counts the whole matching set in a query of its own, with no LIMIT", async () => {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count") ? [{ count: "259", preceding: "0" }] : [],
+    );
+    const page = await driftingOpportunities({ product: "mark8ly" }, 14, 100);
+    const [countSql, countParams] = queueCountCall();
+    // The unlimited count for this queue's own predicate AND its filters —
+    // the number the operator is told, so it must not silently mean
+    // "everything drifting" when a filter is active.
+    expect(countSql).toContain("o.next_action_at IS NULL");
+    expect(countSql).toContain("o.product = $1");
+    expect(countSql).not.toContain("LIMIT");
+    expect(countParams).toEqual(["mark8ly", 14]);
+    expect(page.total).toBe(259);
+  });
+
+  it("asks for limit + 1 rows, so a next page is proven rather than inferred", async () => {
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50);
+    expect(queuePageCall()[1]).toEqual([51]);
+  });
+
+  it("drops the proof row from the page it hands back", async () => {
+    const row = (id: string) => ({
+      id, organisation_id: "g1", organisation_name: "Bondi Baker",
+      product: null, stage: "contacted", owner: null,
+      next_action_at: new Date("2026-08-01T09:00:00Z"), next_action_note: null,
+      last_contacted_at: null, quiet_since: new Date("2026-07-20T00:00:00Z"),
+      is_starred: false,
+    });
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "3", preceding: "0" }]
+        : [row("11111111-1111-1111-1111-111111111111"), row("22222222-2222-2222-2222-222222222222")],
+    );
+    const page = await dueOpportunities({}, 1);
+    expect(page.rows.map((r) => r.id)).toEqual(["11111111-1111-1111-1111-111111111111"]);
+    expect(page.nextCursor).not.toBeNull();
+  });
+
+  it("advances past the cursor with a keyset predicate on (sort key, id), in both queues", async () => {
+    const cursor = Buffer.from(
+      "2026-07-20T00:00:00.000Z|11111111-1111-1111-1111-111111111111",
+      "utf-8",
+    ).toString("base64");
+
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50, cursor);
+    // Strictly greater than: the cursor is the last row of the previous
+    // page, so including it would repeat that row.
+    expect(queuePageCall()[0]).toContain("(o.next_action_at, o.id) > (");
+    // …and the rows behind the page are counted inclusively, because the
+    // cursor row itself has already been seen.
+    expect(queueCountCall()[0]).toContain("count(*) FILTER (WHERE (o.next_action_at, o.id) <= (");
+
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await driftingOpportunities({}, 14, 50, cursor);
+    expect(queuePageCall()[0]).toContain(
+      "(COALESCE(o.last_contacted_at, o.created_at), o.id) > (",
+    );
+  });
+
+  it("counts nothing as preceding when there is no cursor", async () => {
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50);
+    expect(queueCountCall()[0]).not.toContain("FILTER");
+  });
+
+  it("rejects a malformed cursor rather than falling back to page one", async () => {
+    // A silent fallback would show page one while the URL says otherwise —
+    // the same "reports success, withholds the truth" defect as truncation.
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await expect(dueOpportunities({}, 50, "not-a-cursor")).rejects.toThrow();
+    await expect(driftingOpportunities({}, 14, 50, "not-a-cursor")).rejects.toThrow();
+    // Rejected before any query runs, so a bad cursor never costs a round
+    // trip — and never reaches the database as a bound value.
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cursor carrying a non-uuid id or an unparseable timestamp", async () => {
+    query.mockReset();
+    query.mockResolvedValue([]);
+    const forge = (payload: string) => Buffer.from(payload, "utf-8").toString("base64");
+    await expect(
+      dueOpportunities({}, 50, forge("2026-07-20T00:00:00.000Z|1 OR 1=1")),
+    ).rejects.toThrow();
+    await expect(
+      dueOpportunities({}, 50, forge("not-a-date|11111111-1111-1111-1111-111111111111")),
+    ).rejects.toThrow();
+    await expect(
+      dueOpportunities({}, 50, forge("no-separator-at-all")),
+    ).rejects.toThrow();
+  });
+
   it("asks only for opportunities whose next action has arrived", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({}, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     expect(sql).toContain("next_action_at <= now()");
     // Terminal deals are done; surfacing them would make the queue a to-do
     // list of things already finished.
@@ -59,7 +213,7 @@ describe("the queue", () => {
   it("treats drifting as no next action AND stale contact, not either", async () => {
     query.mockResolvedValue([]);
     await driftingOpportunities({}, 14, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     expect(sql).toContain("next_action_at IS NULL");
     expect(sql).toContain("last_contacted_at");
     // Guards the guard: an OR here would surface every scheduled lead as
@@ -70,7 +224,7 @@ describe("the queue", () => {
   it("measures staleness from last contact, or from creation if never contacted", async () => {
     query.mockResolvedValue([]);
     await driftingOpportunities({}, 14, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     // NULL last_contacted_at means "never contacted", not "contacted at the
     // dawn of time". Without COALESCE(..., created_at), every freshly
     // imported lead (no next action, no contact yet) would be instantly
@@ -101,8 +255,8 @@ describe("the queue", () => {
     // rejects garbage at parse time rather than at the database.
     query.mockResolvedValue([]);
     await driftingOpportunities({}, 14, 50);
-    const [sql, params] = query.mock.calls[0];
-    expect(params).toEqual([14, 50]);
+    const [sql, params] = queuePageCall();
+    expect(params).toEqual([14, 51]);
     expect(sql).toMatch(
       /COALESCE\(o\.last_contacted_at, o\.created_at\)\s*\n?\s*<= now\(\) - make_interval\(days => \$1::int\)/,
     );
@@ -117,7 +271,8 @@ describe("the queue", () => {
       quiet_since: new Date("2026-07-20T00:00:00Z"),
       is_starred: false,
     }]);
-    const [row] = await dueOpportunities({}, 50);
+    const { rows } = await dueOpportunities({}, 50);
+    const [row] = rows;
     expect(row.nextActionAt).toBe("2026-08-01T09:00:00.000Z");
     expect(row.lastContactedAt).toBeNull();
     expect(row.quietSince).toBe("2026-07-20T00:00:00.000Z");
@@ -128,16 +283,18 @@ describe("the queue", () => {
     // COALESCE in TypeScript, putting the business rule in two places that
     // can disagree. The SQL must alias the COALESCE itself as quiet_since,
     // for both queries, so the rule stays in one place.
+    query.mockReset();
     query.mockResolvedValue([]);
     await dueOpportunities({}, 50);
-    const [dueSql] = query.mock.calls[0];
+    const [dueSql] = queuePageCall();
     expect(dueSql).toContain(
       "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
     );
 
+    query.mockReset();
     query.mockResolvedValue([]);
     await driftingOpportunities({}, 14, 50);
-    const [driftingSql] = query.mock.calls[1];
+    const [driftingSql] = queuePageCall();
     expect(driftingSql).toContain(
       "COALESCE(o.last_contacted_at, o.created_at) AS quiet_since",
     );
@@ -146,19 +303,19 @@ describe("the queue", () => {
   it("matches NULL product for the unassigned sentinel, not equality", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ product: UNASSIGNED_PRODUCT }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.product IS NULL");
     expect(sql).not.toMatch(/o\.product\s*=/);
     // The sentinel must never reach the database as a value — a product
     // literally named "__unassigned__" is not what the operator asked for.
     expect(params).not.toContain(UNASSIGNED_PRODUCT);
-    expect(params).toEqual([50]);
+    expect(params).toEqual([51]);
   });
 
   it("still uses equality for a real product", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ product: "mark8ly" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toMatch(/o\.product\s*=/);
     expect(params).toContain("mark8ly");
   });
@@ -168,40 +325,40 @@ describe("the queue's filters — bound parameters, not string interpolation", (
   it("adds no clause and no extra param when no filter is active", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({}, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     // `o.owner` legitimately appears in the SELECT list; only the WHERE-clause
     // forms (`o.product =`, `o.owner ILIKE`) indicate an active filter.
     expect(sql).not.toMatch(/o\.product\s*=/);
     expect(sql).not.toMatch(/o\.owner ILIKE/);
-    expect(params).toEqual([50]);
+    expect(params).toEqual([51]);
   });
 
   it("binds product as a parameter, not interpolated into the SQL text", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ product: "mark8ly" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.product = $1");
     expect(sql).not.toContain("mark8ly");
-    expect(params).toEqual(["mark8ly", 50]);
+    expect(params).toEqual(["mark8ly", 51]);
   });
 
   it("binds stage as a parameter", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ stage: "qualified" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.stage = $1");
     expect(sql).not.toContain("'qualified'");
-    expect(params).toEqual(["qualified", 50]);
+    expect(params).toEqual(["qualified", 51]);
   });
 
   it("binds owner as a parameter, matched case-insensitively", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ owner: "Asha" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.owner ILIKE $1");
     expect(sql).toContain("ESCAPE '\\'");
     expect(sql).not.toContain("Asha");
-    expect(params).toEqual(["%Asha%", 50]);
+    expect(params).toEqual(["%Asha%", 51]);
   });
 
   it("escapes LIKE metacharacters in the owner value rather than passing them through as wildcards", async () => {
@@ -213,38 +370,38 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     // substring search stays literal wildcards.
     query.mockResolvedValue([]);
     await dueOpportunities({ owner: "100%_done\\now" }, 50);
-    const [, params] = query.mock.calls[0];
-    expect(params).toEqual(["%100\\%\\_done\\\\now%", 50]);
+    const [, params] = queuePageCall();
+    expect(params).toEqual(["%100\\%\\_done\\\\now%", 51]);
   });
 
   it("combines all three filters, each its own bound parameter, before ORDER BY/LIMIT", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ product: "mark8ly", stage: "qualified", owner: "Asha" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.product = $1");
     expect(sql).toContain("o.stage = $2");
     expect(sql).toContain("o.owner ILIKE $3");
     expect(sql.indexOf("o.owner ILIKE")).toBeLessThan(sql.indexOf("ORDER BY"));
-    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", 50]);
+    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", 51]);
   });
 
   it("keeps the due predicate first so the partial index stays usable", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ product: "mark8ly" }, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     expect(sql.indexOf("next_action_at <= now()")).toBeLessThan(sql.indexOf("o.product ="));
   });
 
   it("binds product, stage, owner and staleDays as separate parameters on the drifting query", async () => {
     query.mockResolvedValue([]);
     await driftingOpportunities({ product: "mark8ly", stage: "new", owner: "Asha" }, 14, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.product = $1");
     expect(sql).toContain("o.stage = $2");
     expect(sql).toContain("o.owner ILIKE $3");
     expect(sql).toContain("make_interval(days => $4::int)");
     expect(sql).toContain("LIMIT $5");
-    expect(params).toEqual(["mark8ly", "new", "%Asha%", 14, 50]);
+    expect(params).toEqual(["mark8ly", "new", "%Asha%", 14, 51]);
   });
 
   it("keeps the drifting partial-index predicates first, filters appended after", async () => {
@@ -254,7 +411,7 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     // through the same `filterClause` — one assertion per clause pins that
     // none of them was spliced ahead of the partial-index predicates.
     await driftingOpportunities({ product: "mark8ly", country: "IN" }, 14, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("o.product ="));
     expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("o.product ="));
     expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("g.country ="));
@@ -264,26 +421,26 @@ describe("the queue's filters — bound parameters, not string interpolation", (
   it("binds country as an exact-match parameter against the organisation, not the raw location", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ country: "IN" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("g.country = $1");
     expect(sql).not.toContain("location");
-    expect(params).toEqual(["IN", 50]);
+    expect(params).toEqual(["IN", 51]);
   });
 
   it("binds the follower band's bounds as parameters, excluding a NULL followers_count explicitly", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ followers: "k1to10k" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("c.followers_count IS NOT NULL");
     expect(sql).toContain("c.followers_count >= $1");
     expect(sql).toContain("c.followers_count <= $2");
-    expect(params).toEqual([1000, 9999, 50]);
+    expect(params).toEqual([1000, 9999, 51]);
   });
 
   it("resolves the follower band against the primary contact, same ordering the row displays", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ followers: "over10k" }, 50);
-    const [sql] = query.mock.calls[0];
+    const [sql] = queuePageCall();
     expect(sql).toContain("is_primary DESC");
     expect(sql).toContain("c.organisation_id = g.id");
   });
@@ -291,9 +448,9 @@ describe("the queue's filters — bound parameters, not string interpolation", (
   it("omits the upper bound for the open-ended top band", async () => {
     query.mockResolvedValue([]);
     await dueOpportunities({ followers: "over10k" }, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).not.toContain("c.followers_count <=");
-    expect(params).toEqual([10000, 50]);
+    expect(params).toEqual([10000, 51]);
   });
 
   it("combines country and followers with product/stage/owner, each its own bound parameter", async () => {
@@ -302,24 +459,24 @@ describe("the queue's filters — bound parameters, not string interpolation", (
       { product: "mark8ly", stage: "qualified", owner: "Asha", country: "IN", followers: "over10k" },
       50,
     );
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("o.product = $1");
     expect(sql).toContain("o.stage = $2");
     expect(sql).toContain("o.owner ILIKE $3");
     expect(sql).toContain("g.country = $4");
     expect(sql).toContain("c.followers_count >= $5");
-    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", "IN", 10000, 50]);
+    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", "IN", 10000, 51]);
   });
 
   it("binds country and followers on the drifting query the same way", async () => {
     query.mockResolvedValue([]);
     await driftingOpportunities({ country: "IN", followers: "under1k" }, 14, 50);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = queuePageCall();
     expect(sql).toContain("g.country = $1");
     expect(sql).toContain("c.followers_count >= $2");
     expect(sql).toContain("c.followers_count <= $3");
     expect(sql).toContain("make_interval(days => $4::int)");
-    expect(params).toEqual(["IN", 0, 999, 14, 50]);
+    expect(params).toEqual(["IN", 0, 999, 14, 51]);
   });
 });
 

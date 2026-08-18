@@ -17,6 +17,7 @@ import {
   dueOpportunities,
   driftingOpportunities,
   wonWithoutConversion,
+  type QueuePage,
   type QueueRow,
   type QueueFilter,
   type HandoffRow,
@@ -25,6 +26,7 @@ import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversi
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
 import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, isFollowerBand } from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
+import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
 import { CrmQueueView } from "./queue-view";
 import { HandoffView, type HandoffItem } from "./handoff-view";
 
@@ -384,6 +386,49 @@ export function readTab(searchParams: QueueSearchParams): CrmTab {
   return searchParams.tab === "handoff" ? "handoff" : "work";
 }
 
+/** A queue's cursor as the repo wants it: the raw string, or `undefined` for
+ *  "start at the beginning". A repeated param arrives as an array and is
+ *  dropped, the same way `readQueueFilters` drops a repeated filter. An
+ *  otherwise malformed value is NOT screened here — the repo validates and
+ *  rejects it, and `renderWorkTab` surfaces that rejection as the queue's
+ *  own error state (see its `Promise.allSettled` comment). */
+function readCursor(searchParams: QueueSearchParams, key: string): string | undefined {
+  const raw = searchParams[key];
+  return typeof raw === "string" && raw !== "" ? raw : undefined;
+}
+
+/**
+ * One queue's next-page link: every param already on the URL, with only that
+ * queue's own cursor replaced.
+ *
+ * Copied rather than enumerated, for the reason `buildNextHref`
+ * (`organisations/page.tsx`) records — this page carries five filter params
+ * plus `tab` plus the OTHER queue's cursor, and a builder naming the ones it
+ * knows about drops whichever it forgot the moment an operator pages. The
+ * other queue's cursor is part of that: paging Due must leave Drifting on
+ * the page the operator left it on.
+ */
+export function buildQueueNextHref(
+  searchParams: QueueSearchParams,
+  cursorParam: string,
+  nextCursor: string | null,
+): string | null {
+  if (!nextCursor) return null;
+
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (key === cursorParam) continue;
+    if (typeof value === "string") {
+      params.set(key, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) params.append(key, entry);
+    }
+  }
+  params.set(cursorParam, nextCursor);
+
+  return `/platform/crm?${params.toString()}`;
+}
+
 /**
  * A tab's `href`, preserving every other search param (the Work tab's own
  * product/stage/owner filters survive a round trip through Handoff and
@@ -467,44 +512,68 @@ function CrmTabNav({
  * page before this change) awaits its data as a plain function call and
  * returns already-resolved JSX for exactly this reason.
  */
+/** The page a rejected read stands in for: no rows, and counts that claim
+ *  nothing. The group renders its error state, so these are never displayed
+ *  — they exist so the caller has one shape to read rather than a union. */
+const NO_PAGE: QueuePage = { rows: [], total: 0, precedingCount: 0, nextCursor: null };
+
+/** A settled queue read as a page plus the rejection, if any. */
+function settledPage(result: PromiseSettledResult<QueuePage>): {
+  page: QueuePage;
+  error: unknown;
+} {
+  return result.status === "fulfilled"
+    ? { page: result.value, error: null }
+    : { page: NO_PAGE, error: result.reason };
+}
+
 async function renderWorkTab({
+  searchParams,
   filters,
   filtered,
 }: {
+  searchParams: QueueSearchParams;
   filters: QueueFilter;
   filtered: boolean;
 }) {
   // `allSettled`, not `all`: a failure reading one group (due vs. drifting —
   // two independent queries) must not blank the other. `Promise.all` rejects
-  // the whole render on the first rejection.
+  // the whole render on the first rejection. This is also what contains a
+  // malformed cursor: the repo REJECTS one rather than quietly serving page
+  // one, and that rejection lands here as this group's error state — never
+  // as an unhandled 500 for the page, and never as the other queue going
+  // blank alongside it.
   //
   // `filters` is passed straight into both reads — the predicates run in
   // SQL, ahead of ORDER BY/LIMIT (Ruling 11). Filtering the returned page in
   // TypeScript instead would answer "rows matching the filter among the
   // first N overall", silently dropping a match ranked below the cut-off.
+  // The cursors are passed for the same reason: paging in SQL is the only
+  // way page two can contain rows page one never fetched.
   const [dueResult, driftingResult] = await Promise.allSettled([
-    dueOpportunities(filters, DUE_LIMIT),
-    driftingOpportunities(filters, DRIFT_DAYS, DRIFTING_LIMIT),
+    dueOpportunities(filters, DUE_LIMIT, readCursor(searchParams, DUE_CURSOR_PARAM)),
+    driftingOpportunities(
+      filters,
+      DRIFT_DAYS,
+      DRIFTING_LIMIT,
+      readCursor(searchParams, DRIFT_CURSOR_PARAM),
+    ),
   ]);
 
-  const dueRows: QueueRow[] = dueResult.status === "fulfilled" ? dueResult.value : [];
-  const dueError: unknown = dueResult.status === "rejected" ? dueResult.reason : null;
+  const due = settledPage(dueResult);
+  const drifting = settledPage(driftingResult);
 
-  const driftingRows: QueueRow[] =
-    driftingResult.status === "fulfilled" ? driftingResult.value : [];
-  const driftingError: unknown = driftingResult.status === "rejected" ? driftingResult.reason : null;
-
-  const dueItems = dueRows.map(toQueueItem);
-  const driftingItems = driftingRows.map(toQueueItem);
+  const dueItems = due.page.rows.map(toQueueItem);
+  const driftingItems = drifting.page.rows.map(toQueueItem);
 
   const dueState = queueGroupState({
-    error: dueError,
+    error: due.error,
     rows: dueItems,
     filtered,
     surface: "the Due queue",
   });
   const driftingState = queueGroupState({
-    error: driftingError,
+    error: drifting.error,
     rows: driftingItems,
     filtered,
     surface: "the Drifting queue",
@@ -514,12 +583,31 @@ async function renderWorkTab({
     <CrmQueueView
       descriptors={QUEUE_FILTERS}
       values={toFilterValues(filters)}
-      due={{ heading: "Due", items: dueItems, state: dueState, emptyMessage: DUE_EMPTY_MESSAGE }}
+      due={{
+        heading: "Due",
+        // Lower-case and read as a noun phrase: the pager builds
+        // "Next page of {label}" and "{label} pagination" out of it.
+        pagerLabel: "the due queue",
+        items: dueItems,
+        state: dueState,
+        emptyMessage: DUE_EMPTY_MESSAGE,
+        total: due.page.total,
+        precedingCount: due.page.precedingCount,
+        nextHref: buildQueueNextHref(searchParams, DUE_CURSOR_PARAM, due.page.nextCursor),
+      }}
       drifting={{
         heading: "Drifting",
+        pagerLabel: "the drifting queue",
         items: driftingItems,
         state: driftingState,
         emptyMessage: DRIFTING_EMPTY_MESSAGE,
+        total: drifting.page.total,
+        precedingCount: drifting.page.precedingCount,
+        nextHref: buildQueueNextHref(
+          searchParams,
+          DRIFT_CURSOR_PARAM,
+          drifting.page.nextCursor,
+        ),
       }}
     />
   );
@@ -583,7 +671,9 @@ export default async function CrmPage({
   // JSX below, not rendered as a nested `<Tab/>` async component: see
   // `renderWorkTab`'s doc comment for why.
   const content =
-    activeTab === "handoff" ? await renderHandoffTab() : await renderWorkTab({ filters, filtered });
+    activeTab === "handoff"
+      ? await renderHandoffTab()
+      : await renderWorkTab({ searchParams: resolvedSearchParams, filters, filtered });
 
   return (
     <div className="flex flex-col gap-6">
