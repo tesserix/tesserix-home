@@ -3,10 +3,12 @@ import { NOT_IMPLEMENTED, resolveState } from "@/components/kit/surface-state";
 import {
   MIGRATIONS_PENDING_TITLE,
   dbReadError,
+  invalidCursorMessage,
   isUndefinedTable,
   migrationsPendingMessage,
   readFailedMessage,
 } from "./db-read-error";
+import { MalformedCursorError } from "./db/keyset-cursor";
 
 const SURFACE = "the Due queue";
 
@@ -92,6 +94,47 @@ describe("dbReadError", () => {
     // A message can say "does not exist" in any language, and a hostile or
     // merely unlucky string must not be able to claim the calm state.
     expect(stateFor(new Error('relation "crm_opportunities" does not exist'))).toEqual({
+      kind: "error",
+      message: readFailedMessage(SURFACE),
+    });
+  });
+});
+
+describe("a malformed cursor", () => {
+  it("says the link is wrong instead of inviting a retry", () => {
+    // The defect: a hand-edited, truncated or stale `?cursor=` resolved to
+    // "Try again shortly", which is advice that can never work — the link
+    // will fail identically every time it is loaded.
+    expect(stateFor(new MalformedCursorError("listOrganisations"))).toEqual({
+      kind: "error",
+      message: invalidCursorMessage(SURFACE),
+    });
+  });
+
+  it("names the link as the problem and offers the surface without it", () => {
+    const copy = invalidCursorMessage(SURFACE);
+    expect(copy).not.toContain("Try again");
+    expect(copy).toContain("link");
+    expect(copy).toContain("first page");
+  });
+
+  it("never leaks the cursor's own label to the operator", () => {
+    // The rejection's message names the repository function that threw it.
+    const surfaced = dbReadError(new MalformedCursorError("listOrganisations"), SURFACE);
+    expect(surfaced?.message).not.toContain("listOrganisations");
+  });
+
+  it("is still recognised when a caller wrapped the rejection", () => {
+    const wrapped = new Error("reading the queue failed", {
+      cause: new MalformedCursorError("dueOpportunities"),
+    });
+    expect(stateFor(wrapped)).toEqual({ kind: "error", message: invalidCursorMessage(SURFACE) });
+  });
+
+  it("leaves every other failure on the generic copy", () => {
+    // Guards the guard: this must not become the message for a dead
+    // database, where retrying shortly is exactly the right advice.
+    expect(stateFor(new Error("ECONNREFUSED"))).toEqual({
       kind: "error",
       message: readFailedMessage(SURFACE),
     });

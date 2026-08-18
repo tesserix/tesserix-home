@@ -1,4 +1,5 @@
 import { NOT_IMPLEMENTED, type SurfaceError } from "@/components/kit/surface-state";
+import { isMalformedCursorError } from "./db/keyset-cursor";
 
 /**
  * The one mapping from a rejection caught off `tesserix-postgres` to something
@@ -66,6 +67,26 @@ export function migrationsPendingMessage(surface: string): string {
   );
 }
 
+/**
+ * Copy for a `?cursor=` that could not be read.
+ *
+ * The generic failure copy tells the operator to try again shortly, which is
+ * the right advice for a dropped connection and useless here: a truncated,
+ * hand-edited or stale cursor fails identically on every load, so "shortly"
+ * never arrives. This names the link as the thing that is wrong and points
+ * at the surface without it, which is the one action that does work.
+ *
+ * Only this case changes. Every other read failure keeps `readFailedMessage`,
+ * including the ones that look similar from the outside — a rewrite of the
+ * generic copy is not what this fixes.
+ */
+export function invalidCursorMessage(surface: string): string {
+  return (
+    `Could not load ${surface}: this link's page position is not valid. ` +
+    `Retrying will not help — open ${surface} without it to start from the first page.`
+  );
+}
+
 /** Copy for a genuine, possibly transient failure. */
 export function readFailedMessage(surface: string): string {
   return `Could not load ${surface}. Try again shortly.`;
@@ -115,6 +136,13 @@ export function dbReadError(caught: unknown, surface: string): SurfaceError | nu
         message: migrationsPendingMessage(surface),
       },
     };
+  }
+
+  if (isMalformedCursorError(caught)) {
+    // Checked before the 501 and after the missing-table case, both of which
+    // describe the data plane. This one describes the URL: nothing is broken
+    // and nothing is parked, so neither of their remedies applies.
+    return { status, message: invalidCursorMessage(surface) };
   }
 
   if (status === NOT_IMPLEMENTED) {

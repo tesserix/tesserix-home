@@ -1524,3 +1524,184 @@ describe("queue pagination over more rows than fit on a page", () => {
     ).rejects.toThrow();
   });
 });
+
+/**
+ * Paging BACKWARDS, against a real database.
+ *
+ * Everything here asserts a SEQUENCE of ids, never a set. A backward page is
+ * fetched with the ORDER BY flipped, so the rows arrive reversed and have to
+ * be re-reversed before they are returned; every set-equality assertion in
+ * this file would pass with that step missing. The fixtures keep the tied
+ * timestamps the forward tests use, because a tie-break that is wrong only in
+ * one direction is invisible until something pages back through it.
+ */
+describe("paging backwards through the queues", () => {
+  const DRIFT_PAGE = 10;
+  const driftIds = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) =>
+      `cccccccc-cccc-cccc-cccc-${String(from + i).padStart(12, "0")}`);
+
+  it("returns the previous page in display order, not in the order it was fetched", async () => {
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, DRIFT_PAGE);
+    const second = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, first.nextCursor ?? undefined);
+    const third = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, second.nextCursor ?? undefined);
+
+    const back = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, third.previousCursor ?? undefined);
+    // Page two, oldest-quiet first — exactly as paging forward rendered it.
+    expect(back.rows.map((r) => r.id)).toEqual(driftIds(11, 20));
+    expect(back.precedingCount).toBe(10);
+    expect(back.total).toBe(25);
+  });
+
+  it("round trips: forward to page three, back to page one, same rows in the same order", async () => {
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, DRIFT_PAGE);
+    const second = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, first.nextCursor ?? undefined);
+    const third = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, second.nextCursor ?? undefined);
+    const backToTwo = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, third.previousCursor ?? undefined);
+    const backToOne = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE, backToTwo.previousCursor ?? undefined);
+
+    expect(backToOne.rows.map((r) => r.id)).toEqual(first.rows.map((r) => r.id));
+    expect(backToOne.precedingCount).toBe(0);
+    // Back at the start, so there is nothing before it — and a page ahead.
+    expect(backToOne.previousCursor).toBeNull();
+    expect(backToOne.nextCursor).not.toBeNull();
+  });
+
+  it("offers no previous cursor on page one, and no next cursor on the last page", async () => {
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, DRIFT_PAGE);
+    expect(first.previousCursor).toBeNull();
+    expect(first.nextCursor).not.toBeNull();
+
+    const last = await driftingOpportunities(
+      { product: "drift-page" }, 14, DRIFT_PAGE,
+      (await driftingOpportunities(
+        { product: "drift-page" }, 14, DRIFT_PAGE,
+        first.nextCursor ?? undefined)).nextCursor ?? undefined);
+    expect(last.rows).toHaveLength(5);
+    expect(last.nextCursor).toBeNull();
+    expect(last.previousCursor).not.toBeNull();
+  });
+
+  it("offers neither cursor when the whole result fits on one page", async () => {
+    const all = await driftingOpportunities({ product: "drift-page" }, 14, 100);
+    expect(all.rows).toHaveLength(25);
+    expect(all.nextCursor).toBeNull();
+    expect(all.previousCursor).toBeNull();
+  });
+
+  it("pages the due queue back the same way", async () => {
+    const dueIdsFrom = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) =>
+        `bbbbbbbb-bbbb-bbbb-bbbb-${String(from + i).padStart(12, "0")}`);
+    const first = await dueOpportunities({ product: "due-page" }, 5);
+    const second = await dueOpportunities(
+      { product: "due-page" }, 5, first.nextCursor ?? undefined);
+    const back = await dueOpportunities(
+      { product: "due-page" }, 5, second.previousCursor ?? undefined);
+    expect(second.rows.map((r) => r.id)).toEqual(dueIdsFrom(6, 10));
+    expect(back.rows.map((r) => r.id)).toEqual(dueIdsFrom(1, 5));
+    expect(back.precedingCount).toBe(0);
+  });
+
+  it("crosses a tie in the same place going back as going forward", async () => {
+    // Five rows share each created_at, and the page boundary at 10 falls in
+    // the middle of the third tied group. Paging back across it must split
+    // the tie on `id` exactly where the forward read did, or a tied row is
+    // either shown twice or never shown at all.
+    const first = await driftingOpportunities({ product: "drift-page" }, 14, 12);
+    const second = await driftingOpportunities(
+      { product: "drift-page" }, 14, 12, first.nextCursor ?? undefined);
+    const back = await driftingOpportunities(
+      { product: "drift-page" }, 14, 12, second.previousCursor ?? undefined);
+    expect(first.rows.map((r) => r.id)).toEqual(driftIds(1, 12));
+    expect(second.rows.map((r) => r.id)).toEqual(driftIds(13, 24));
+    expect(back.rows.map((r) => r.id)).toEqual(driftIds(1, 12));
+  });
+});
+
+describe("paging backwards through listOrganisations", () => {
+  // Its own fixture: six rows, three pairs sharing a created_at, so every
+  // page boundary at an even limit falls inside a tie. The browse surface
+  // reads newest-first, so display order is the reverse of the insert order
+  // below.
+  let backIds: string[];
+
+  beforeAll(async () => {
+    const inserted = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, created_at)
+       VALUES ('Backward Org 1', $1::timestamptz),
+              ('Backward Org 2', $1::timestamptz),
+              ('Backward Org 3', $2::timestamptz),
+              ('Backward Org 4', $2::timestamptz),
+              ('Backward Org 5', $3::timestamptz),
+              ('Backward Org 6', $3::timestamptz)
+       RETURNING id`,
+      [daysAgo(30), daysAgo(29), daysAgo(28)],
+    );
+    backIds = inserted.rows.map((r) => r.id);
+  });
+
+  /** The six rows as the surface displays them: newest first. */
+  const displayed = async () =>
+    (await listOrganisations({ search: "Backward Org" }, 100)).rows.map((r) => r.id);
+
+  it("returns the previous page in display order, not in the order it was fetched", async () => {
+    const order = await displayed();
+    const first = await listOrganisations({ search: "Backward Org" }, 2);
+    const second = await listOrganisations(
+      { search: "Backward Org" }, 2, first.nextCursor ?? undefined);
+    const third = await listOrganisations(
+      { search: "Backward Org" }, 2, second.nextCursor ?? undefined);
+    const back = await listOrganisations(
+      { search: "Backward Org" }, 2, third.previousCursor ?? undefined);
+
+    expect(back.rows.map((r) => r.id)).toEqual(order.slice(2, 4));
+    expect(back.precedingCount).toBe(2);
+    expect(back.total).toBe(6);
+  });
+
+  it("round trips: forward to page three, back to page one, same rows in the same order", async () => {
+    const first = await listOrganisations({ search: "Backward Org" }, 2);
+    const second = await listOrganisations(
+      { search: "Backward Org" }, 2, first.nextCursor ?? undefined);
+    const third = await listOrganisations(
+      { search: "Backward Org" }, 2, second.nextCursor ?? undefined);
+    const backToTwo = await listOrganisations(
+      { search: "Backward Org" }, 2, third.previousCursor ?? undefined);
+    const backToOne = await listOrganisations(
+      { search: "Backward Org" }, 2, backToTwo.previousCursor ?? undefined);
+
+    expect(backToOne.rows.map((r) => r.id)).toEqual(first.rows.map((r) => r.id));
+    expect(backToOne.precedingCount).toBe(0);
+    expect(backToOne.previousCursor).toBeNull();
+  });
+
+  it("splits a tied created_at in the same place in both directions", async () => {
+    // Every pair shares a created_at, so a page of 3 cuts through the middle
+    // of a tie. Only `id` decides where — and it has to decide the same way
+    // backwards, or a tied row is repeated or lost.
+    const order = await displayed();
+    const first = await listOrganisations({ search: "Backward Org" }, 3);
+    const second = await listOrganisations(
+      { search: "Backward Org" }, 3, first.nextCursor ?? undefined);
+    const back = await listOrganisations(
+      { search: "Backward Org" }, 3, second.previousCursor ?? undefined);
+    expect(first.rows.map((r) => r.id)).toEqual(order.slice(0, 3));
+    expect(second.rows.map((r) => r.id)).toEqual(order.slice(3, 6));
+    expect(back.rows.map((r) => r.id)).toEqual(order.slice(0, 3));
+    expect(backIds).toHaveLength(6);
+  });
+
+  it("offers neither cursor when the whole result fits on one page", async () => {
+    const all = await listOrganisations({ search: "Backward Org" }, 100);
+    expect(all.nextCursor).toBeNull();
+    expect(all.previousCursor).toBeNull();
+  });
+});

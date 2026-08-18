@@ -22,9 +22,9 @@ export interface ResultPagerProps {
   /** Where the next page lives; `null` on the last page. */
   nextHref: string | null;
   /**
-   * Where the previous page lives. Optional because forward-only cursors
-   * cannot answer it yet — the bidirectional-cursor change supplies it and no
-   * caller's shape moves.
+   * Where the previous page lives; `null` on the first page. Optional so a
+   * surface with nothing behind its first page need not pass it at all — the
+   * control renders only when an href is given.
    */
   previousHref?: string | null;
 }

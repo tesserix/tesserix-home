@@ -3,6 +3,13 @@ import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, type FollowerBand } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
 import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  trimBackwardPage,
+  trimForwardPage,
+  type KeysetCursor,
+} from "./keyset-cursor";
+import {
   isUsableImportRow,
   requiresProduct,
   type CrmActivityKind,
@@ -109,63 +116,6 @@ function toQueueRow(row: RawQueueRow): QueueRow {
     quietSince,
     isStarred: row.is_starred,
   };
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** A keyset position: one timestamp plus the id that breaks its ties. */
-interface KeysetCursor {
-  timestamp: string;
-  id: string;
-}
-
-/**
- * Opaque cursor = base64 of `<iso-timestamp>|<uuid>`. Encoded (not a raw
- * pair the caller could construct) so a surface isn't tempted to build one
- * by hand from URL params it half-trusts.
- *
- * Shared by the browse surface and both queues, but only this far. What is
- * genuinely common is the *encoding* and its validation, and that much is
- * direction-free — it says nothing about which way a surface sorts, so
- * sharing it cannot make either surface lie about its order.
- *
- * The SQL is deliberately NOT shared: `listOrganisations` orders
- * `created_at DESC, id DESC` and advances with `<`, while both queues order
- * ascending on their own sort key and advance with `>`. So the queues share
- * one ascending implementation (`queuePage`) and `listOrganisations` keeps
- * its own descending one, rather than both routing through a helper taking
- * a `direction` argument — under which no reader could tell what a page
- * means without also finding the argument.
- */
-function encodeKeysetCursor(timestamp: string, id: string): string {
-  return Buffer.from(`${timestamp}|${id}`, "utf-8").toString("base64");
-}
-
-/**
- * Decode and validate a cursor. This arrives off a URL, so a malformed or
- * unparseable value is rejected outright — never coerced into a query (which
- * is how a garbage timestamp would end up bound straight into a keyset
- * predicate), and never silently degraded to page one (which would show the
- * operator something other than the page the URL asked for, reporting
- * success while withholding the truth).
- *
- * `Buffer.from(cursor, "base64")` itself never throws — invalid base64 is
- * decoded leniently, with invalid characters dropped, not rejected. The
- * rejection this function promises comes entirely from the separator/date/
- * UUID checks below, which is why there is no try/catch around the decode.
- */
-function decodeKeysetCursor(cursor: string, label: string): KeysetCursor {
-  const decoded = Buffer.from(cursor, "base64").toString("utf-8");
-  const separatorIndex = decoded.indexOf("|");
-  if (separatorIndex === -1) {
-    throw new Error(`${label}: malformed cursor`);
-  }
-  const timestamp = decoded.slice(0, separatorIndex);
-  const id = decoded.slice(separatorIndex + 1);
-  if (Number.isNaN(Date.parse(timestamp)) || !UUID_RE.test(id)) {
-    throw new Error(`${label}: malformed cursor`);
-  }
-  return { timestamp, id };
 }
 
 /**
@@ -294,6 +244,12 @@ export interface QueuePage {
   precedingCount: number;
   /** Opaque cursor for the next page; null when this is the last page. */
   nextCursor: string | null;
+  /** Opaque cursor for the previous page; null on the first page.
+   *
+   *  Non-null exactly when `precedingCount > 0` — the same SQL count the
+   *  displayed range is built from, so the Previous control and the range
+   *  can never disagree about whether anything sorts ahead of this page. */
+  previousCursor: string | null;
 }
 
 /** The columns every queue row is built from — one list, so `dueOpportunities`
@@ -337,7 +293,16 @@ interface QueuePageQuery {
  * timestamp come back in whatever order the plan produces — harmless for one
  * capped page, fatal here, because a row could repeat on one page and never
  * appear on another. Migration 0021 wrote 259 rows in one batch, so ties are
- * the normal case on this data, not an edge one.
+ * the normal case on this data, not an edge one. The tiebreak matters more
+ * going backwards than forwards: a queue whose forward paging looks correct
+ * can still repeat or lose a tied row on the way back, because the two
+ * directions only agree on where a tie splits if `id` decides it.
+ *
+ * Reading backwards mirrors every part of the forward read at once — anchor,
+ * comparison, ORDER BY and the preceding count — and the mirroring is
+ * deliberately kept in this one ascending implementation rather than shared
+ * with `listOrganisations`. See `keyset-cursor.ts` for why the SQL stays
+ * split even though the cursor itself does not.
  */
 async function queuePage({
   sortKey,
@@ -350,26 +315,40 @@ async function queuePage({
   // Decoded (and validated) before either query runs, so a malformed cursor
   // fails fast without spending a round trip on a count it would never use.
   const decoded = cursor ? decodeKeysetCursor(cursor, label) : null;
+  // "before" is the mirror of the forward read: anchor on the page's FIRST
+  // row rather than its last, flip the comparison, flip the ORDER BY, and
+  // re-reverse the rows afterwards (see `trimBackwardPage`).
+  const backwards = decoded?.direction === "before";
 
   const countParams: unknown[] = [];
   const countWhere = buildWhere(countParams);
-  // Rows ahead of this page = matching rows at or before the cursor tuple in
-  // the queue's own ascending order. Inclusive: the cursor IS the last row of
-  // the previous page, which the page predicate below then excludes.
+  // Rows ahead of this page, in the queue's own ascending order.
+  //
+  // Forward, the cursor IS the last row of the previous page, so it counts
+  // as preceding (`<=`) and the page predicate below excludes it. Backward,
+  // the cursor is the first row of the page being LEFT — it sorts after this
+  // page, so it must not be counted (`<`), and what the count then returns is
+  // this page plus everything ahead of it. The page's own length is
+  // subtracted once the rows are in hand.
   let precedingSelect = "0";
   if (decoded) {
     const [timestampParam, idParam] = cursorPlaceholders(decoded, countParams);
-    precedingSelect = `count(*) FILTER (WHERE (${sortKey}, o.id) <= (${timestampParam}, ${idParam}))`;
+    const comparison = backwards ? "<" : "<=";
+    precedingSelect = `count(*) FILTER (WHERE (${sortKey}, o.id) ${comparison} (${timestampParam}, ${idParam}))`;
   }
 
   const params: unknown[] = [];
   let where = buildWhere(params);
   if (decoded) {
     const [timestampParam, idParam] = cursorPlaceholders(decoded, params);
-    where += `\n        AND (${sortKey}, o.id) > (${timestampParam}, ${idParam})`;
+    where += `\n        AND (${sortKey}, o.id) ${backwards ? "<" : ">"} (${timestampParam}, ${idParam})`;
   }
   params.push(limit + 1);
   const limitParam = `$${params.length}`;
+  // Flipped with the comparison, or the LIMIT would keep the rows furthest
+  // from the anchor — the first page of the whole queue, not the one before
+  // this cursor.
+  const order = backwards ? "DESC" : "ASC";
 
   // Independent reads over two disjoint parameter lists — concurrent rather
   // than two sequential round trips for every page view.
@@ -386,23 +365,37 @@ async function queuePage({
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
       WHERE ${where}
-      ORDER BY ${sortKey} ASC, o.id ASC
+      ORDER BY ${sortKey} ${order}, o.id ${order}
       LIMIT ${limitParam}`,
       params,
     ),
   ]);
 
-  const hasNextPage = rawRows.length > limit;
-  const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
+  const { rows: pageRawRows, hasMore } = backwards
+    ? trimBackwardPage(rawRows, limit)
+    : trimForwardPage(rawRows, limit);
+
+  const counted = Number(countRows[0]?.preceding ?? 0);
+  // Backward, the count covers this page as well (see `precedingSelect`).
+  const precedingCount = backwards ? Math.max(0, counted - pageRawRows.length) : counted;
+
+  const firstRow = pageRawRows[0];
   const lastRow = pageRawRows[pageRawRows.length - 1];
+  // Backward, a next page is not something to prove: this page was reached
+  // from the one after it, so it exists whenever this page has rows.
+  const hasNextPage = backwards ? Boolean(lastRow) : hasMore;
   return {
     rows: pageRawRows.map(toQueueRow),
     // count(*) comes back as a string from pg's bigint mapping.
     total: Number(countRows[0]?.count ?? 0),
-    precedingCount: Number(countRows[0]?.preceding ?? 0),
+    precedingCount,
     nextCursor:
       hasNextPage && lastRow
-        ? encodeKeysetCursor(toIsoRequired(sortValue(lastRow)), lastRow.id)
+        ? encodeKeysetCursor(toIsoRequired(sortValue(lastRow)), lastRow.id, "after")
+        : null,
+    previousCursor:
+      precedingCount > 0 && firstRow
+        ? encodeKeysetCursor(toIsoRequired(sortValue(firstRow)), firstRow.id, "before")
         : null,
   };
 }
@@ -2025,6 +2018,10 @@ export interface OrganisationPage {
   precedingCount: number;
   /** Opaque cursor for the next page; null when this is the last page. */
   nextCursor: string | null;
+  /** Opaque cursor for the previous page; null on the first page. Non-null
+   *  exactly when `precedingCount > 0`, so the Previous control and the
+   *  displayed range are answering out of the same count. */
+  previousCursor: string | null;
 }
 
 /**
@@ -2194,6 +2191,11 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
  * stateless across calls and has no reliable notion of "how many rows the
  * operator has already seen" to compare against, whereas an extra row is
  * cheap and self-contained proof that another page exists.
+ *
+ * A cursor also carries the direction it points in, so the same `?cursor=`
+ * param serves Previous and Next and a shared link cannot lose which one it
+ * was. This function stays the descending implementation it always was;
+ * `queuePage` stays the ascending one. See `keyset-cursor.ts`.
  */
 export async function listOrganisations(
   filter: OrganisationFilter,
@@ -2204,22 +2206,33 @@ export async function listOrganisations(
   // fails fast without spending a round trip on the count query it would
   // never get to use.
   const decodedCursor = cursor ? decodeKeysetCursor(cursor, "listOrganisations") : null;
+  // Backwards is the mirror of every part of the forward read: the anchor is
+  // the page's FIRST row rather than its last, the comparison and the ORDER
+  // BY both flip, and the rows are re-reversed on the way out.
+  const backwards = decodedCursor?.direction === "before";
 
   const countParams: unknown[] = [];
   const countClauses = organisationFilterClauses(filter, countParams);
   const countWhere = countClauses.length > 0 ? `WHERE ${countClauses.join("\n        AND ")}` : "";
-  // Rows ahead of this page = matching rows at or beyond the cursor tuple in
-  // the list's own `created_at DESC, id DESC` order (the cursor is the last
-  // row of the previous page, and the page predicate below excludes it, so
-  // the comparison is inclusive). Aggregated in the count query rather than
-  // asked for separately: it is the same predicate over the same rows.
+  // Rows ahead of this page, in the list's own `created_at DESC, id DESC`
+  // order — so "ahead" means a GREATER tuple, not a smaller one.
+  //
+  // Forward, the cursor is the last row of the previous page and the page
+  // predicate below excludes it, so it counts as preceding (`>=`). Backward,
+  // the cursor is the first row of the page being left: it sorts after this
+  // page, so it is excluded (`>`), and the count then covers this page plus
+  // everything ahead of it — the page's own length is subtracted below.
+  //
+  // Aggregated in the count query rather than asked for separately: it is
+  // the same predicate over the same rows.
   let precedingSelect = "0";
   if (decodedCursor) {
     countParams.push(decodedCursor.timestamp);
     const createdAtParam = `$${countParams.length}`;
     countParams.push(decodedCursor.id);
     const idParam = `$${countParams.length}`;
-    precedingSelect = `count(*) FILTER (WHERE (g.created_at, g.id) >= (${createdAtParam}, ${idParam}))`;
+    const comparison = backwards ? ">" : ">=";
+    precedingSelect = `count(*) FILTER (WHERE (g.created_at, g.id) ${comparison} (${createdAtParam}, ${idParam}))`;
   }
 
   const params: unknown[] = [];
@@ -2229,13 +2242,19 @@ export async function listOrganisations(
     const createdAtParam = `$${params.length}`;
     params.push(decodedCursor.id);
     const idParam = `$${params.length}`;
-    clauses.push(`(g.created_at, g.id) < (${createdAtParam}, ${idParam})`);
+    clauses.push(
+      `(g.created_at, g.id) ${backwards ? ">" : "<"} (${createdAtParam}, ${idParam})`,
+    );
   }
   // limit + 1: see the doc comment above for why this, not a total
   // comparison, is what decides nextCursor.
   params.push(limit + 1);
   const limitParam = `$${params.length}`;
   const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
+  // Flipped with the comparison. Without this the LIMIT would keep the rows
+  // furthest from the anchor — the newest rows in the whole list, not the
+  // page immediately before this cursor.
+  const order = backwards ? "ASC" : "DESC";
 
   // Independent reads over two disjoint parameter lists (built above, never
   // touched again) — safe to run concurrently rather than paying two
@@ -2270,23 +2289,35 @@ export async function listOrganisations(
                   AND o.product IS NOT NULL) AS products
          FROM crm_organisations g
          ${where}
-        ORDER BY g.created_at DESC, g.id DESC
+        ORDER BY g.created_at ${order}, g.id ${order}
         LIMIT ${limitParam}`,
       params,
     ),
   ]);
   const total = Number(countRows[0]?.count ?? 0);
-  const precedingCount = Number(countRows[0]?.preceding ?? 0);
 
-  const hasNextPage = rawRows.length > limit;
-  const pageRawRows = hasNextPage ? rawRows.slice(0, limit) : rawRows;
+  const { rows: pageRawRows, hasMore } = backwards
+    ? trimBackwardPage(rawRows, limit)
+    : trimForwardPage(rawRows, limit);
   const rows = pageRawRows.map(toOrganisationListRow);
 
+  const counted = Number(countRows[0]?.preceding ?? 0);
+  // Backward, the count covers this page too (see `precedingSelect`).
+  const precedingCount = backwards ? Math.max(0, counted - pageRawRows.length) : counted;
+
+  const firstRow = pageRawRows[0];
   const lastRow = pageRawRows[pageRawRows.length - 1];
+  // Backward, a next page needs no proof: this page was reached from the one
+  // after it.
+  const hasNextPage = backwards ? Boolean(lastRow) : hasMore;
   const nextCursor =
     hasNextPage && lastRow
-      ? encodeKeysetCursor(toIsoRequired(lastRow.created_at), lastRow.id)
+      ? encodeKeysetCursor(toIsoRequired(lastRow.created_at), lastRow.id, "after")
+      : null;
+  const previousCursor =
+    precedingCount > 0 && firstRow
+      ? encodeKeysetCursor(toIsoRequired(firstRow.created_at), firstRow.id, "before")
       : null;
 
-  return { rows, total, precedingCount, nextCursor };
+  return { rows, total, precedingCount, nextCursor, previousCursor };
 }

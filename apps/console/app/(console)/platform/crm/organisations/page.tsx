@@ -158,16 +158,21 @@ export function toOrganisationFilterValues(filters: OrganisationFilter): FilterV
 const BASE_PATH = "/platform/crm/organisations";
 
 /**
- * Builds the `?cursor=` link for the next page by copying every param
- * already on the URL and replacing only `cursor` — never by naming the
- * params this page currently knows about. This surface now has five filter
- * params (`q`, `product`, `country`, `followers`, `email`) on top of
- * `import`; a builder that enumerated known params would silently drop
- * whichever ones it forgot the moment an operator pages, landing them on an
- * unfiltered (or differently filtered) page 2.
+ * Builds a `?cursor=` link by copying every param already on the URL and
+ * replacing only `cursor` — never by naming the params this page currently
+ * knows about. This surface has five filter params (`q`, `product`,
+ * `country`, `followers`, `email`) on top of `import`; a builder that
+ * enumerated known params would silently drop whichever ones it forgot the
+ * moment an operator pages, landing them on an unfiltered (or differently
+ * filtered) page 2.
+ *
+ * One builder serves both controls because the cursor itself carries the
+ * direction it points in (see `lib/db/keyset-cursor.ts`). A `?direction=`
+ * beside it would be one copy-paste away from being lost, and a link whose
+ * direction went missing renders the wrong page in silence.
  */
-export function buildNextHref(searchParams: OrganisationsSearchParams, nextCursor: string | null): string | null {
-  if (!nextCursor) return null;
+function buildCursorHref(searchParams: OrganisationsSearchParams, cursor: string | null): string | null {
+  if (!cursor) return null;
 
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
@@ -178,9 +183,24 @@ export function buildNextHref(searchParams: OrganisationsSearchParams, nextCurso
       for (const entry of value) params.append(key, entry);
     }
   }
-  params.set("cursor", nextCursor);
+  params.set("cursor", cursor);
 
   return `${BASE_PATH}?${params.toString()}`;
+}
+
+/** The next page's link, or null when this is the last page. */
+export function buildNextHref(searchParams: OrganisationsSearchParams, nextCursor: string | null): string | null {
+  return buildCursorHref(searchParams, nextCursor);
+}
+
+/** The previous page's link, or null on the first page. Named rather than
+ *  folded into one call site so a reader can see which control a link
+ *  belongs to without decoding the cursor it carries. */
+export function buildPreviousHref(
+  searchParams: OrganisationsSearchParams,
+  previousCursor: string | null,
+): string | null {
+  return buildCursorHref(searchParams, previousCursor);
 }
 
 export interface OrganisationsStateInput {
@@ -226,6 +246,7 @@ export default async function OrganisationsPage({
   let total = 0;
   let precedingCount = 0;
   let nextHref: string | null = null;
+  let previousHref: string | null = null;
   let error: unknown = null;
   try {
     const page = await listOrganisations(filters, PAGE_SIZE, cursor);
@@ -233,6 +254,7 @@ export default async function OrganisationsPage({
     total = page.total;
     precedingCount = page.precedingCount;
     nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
+    previousHref = buildPreviousHref(resolvedSearchParams, page.previousCursor);
   } catch (caught) {
     error = caught;
   }
@@ -256,6 +278,7 @@ export default async function OrganisationsPage({
         total={total}
         precedingCount={precedingCount}
         nextHref={nextHref}
+        previousHref={previousHref}
       />
     </div>
   );

@@ -91,6 +91,13 @@ export function mergeFiltersIntoQuery(
   return next.toString();
 }
 
+/** The default for `dropOnChange`. A module constant, not a fresh `[]` per
+ *  render: the array is a dependency of the memoised `push`, and a new
+ *  identity every render would rebuild every callback below it. Callers
+ *  passing their own list should hold it at module scope for the same
+ *  reason. */
+const DROP_NOTHING: readonly string[] = [];
+
 export interface UrlFilters {
   values: FilterValues;
   set(key: string, value: string): void;
@@ -100,8 +107,30 @@ export interface UrlFilters {
 /**
  * Filter state lives in the URL, not in component state: that is what makes
  * deep links and saved views work.
+ *
+ * `dropOnChange` names params a filter mutation must delete alongside the
+ * merge — the keyset cursors of surfaces that page by `?cursor=` rather than
+ * by the `?page=` param `mergeFiltersIntoQuery` already clears. Narrowing a
+ * filter while on page 3 otherwise lands the operator on an empty page 3 of
+ * a now-shorter list, which on screen is indistinguishable from "nothing
+ * matches" rather than "you are past the end".
+ *
+ * A list rather than a single key, and a parameter rather than two hooks:
+ * the browse surface drops its one `cursor`, and the CRM queues drop BOTH of
+ * theirs (one filter bar drives both queues, so a narrowed filter invalidates
+ * every position on the page at once). Those two surfaces each carried a
+ * near-verbatim copy of this hook differing in nothing else, and a race guard
+ * maintained in three places is a race guard that eventually only holds in
+ * one.
+ *
+ * The drop happens inside `push`, so the merge and the drop travel in one
+ * `router.replace` and a quick filter change can never race a separate
+ * cursor-clearing navigation into overwriting it.
  */
-export function useUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
+export function useUrlFilters(
+  descriptors: FilterDescriptor[],
+  dropOnChange: readonly string[] = DROP_NOTHING,
+): UrlFilters {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -127,11 +156,15 @@ export function useUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
     (update: (previous: FilterValues) => FilterValues) => {
       const current = new URLSearchParams(pendingRef.current ?? searchString);
       const previous = queryToFilters(current, descriptors);
-      const query = mergeFiltersIntoQuery(current, descriptors, update(previous));
+      const merged = new URLSearchParams(
+        mergeFiltersIntoQuery(current, descriptors, update(previous)),
+      );
+      for (const param of dropOnChange) merged.delete(param);
+      const query = merged.toString();
       pendingRef.current = query;
       router.replace(query ? `${pathname}?${query}` : pathname);
     },
-    [router, pathname, searchString, descriptors],
+    [router, pathname, searchString, descriptors, dropOnChange],
   );
 
   const set = useCallback(

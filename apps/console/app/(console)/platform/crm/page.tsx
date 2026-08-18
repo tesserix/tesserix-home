@@ -398,22 +398,26 @@ function readCursor(searchParams: QueueSearchParams, key: string): string | unde
 }
 
 /**
- * One queue's next-page link: every param already on the URL, with only that
+ * One queue's page link: every param already on the URL, with only that
  * queue's own cursor replaced.
  *
- * Copied rather than enumerated, for the reason `buildNextHref`
+ * Copied rather than enumerated, for the reason `buildCursorHref`
  * (`organisations/page.tsx`) records — this page carries five filter params
  * plus `tab` plus the OTHER queue's cursor, and a builder naming the ones it
  * knows about drops whichever it forgot the moment an operator pages. The
  * other queue's cursor is part of that: paging Due must leave Drifting on
- * the page the operator left it on.
+ * the page the operator left it on, backwards as well as forwards.
+ *
+ * One builder serves both controls because a cursor carries the direction it
+ * points in (see `lib/db/keyset-cursor.ts`), so a link never needs a second
+ * param that could go missing.
  */
-export function buildQueueNextHref(
+function buildQueueCursorHref(
   searchParams: QueueSearchParams,
   cursorParam: string,
-  nextCursor: string | null,
+  cursor: string | null,
 ): string | null {
-  if (!nextCursor) return null;
+  if (!cursor) return null;
 
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
@@ -424,9 +428,27 @@ export function buildQueueNextHref(
       for (const entry of value) params.append(key, entry);
     }
   }
-  params.set(cursorParam, nextCursor);
+  params.set(cursorParam, cursor);
 
   return `/platform/crm?${params.toString()}`;
+}
+
+/** One queue's next-page link, or null when it is on its last page. */
+export function buildQueueNextHref(
+  searchParams: QueueSearchParams,
+  cursorParam: string,
+  nextCursor: string | null,
+): string | null {
+  return buildQueueCursorHref(searchParams, cursorParam, nextCursor);
+}
+
+/** One queue's previous-page link, or null when it is on its first page. */
+export function buildQueuePreviousHref(
+  searchParams: QueueSearchParams,
+  cursorParam: string,
+  previousCursor: string | null,
+): string | null {
+  return buildQueueCursorHref(searchParams, cursorParam, previousCursor);
 }
 
 /**
@@ -515,7 +537,13 @@ function CrmTabNav({
 /** The page a rejected read stands in for: no rows, and counts that claim
  *  nothing. The group renders its error state, so these are never displayed
  *  — they exist so the caller has one shape to read rather than a union. */
-const NO_PAGE: QueuePage = { rows: [], total: 0, precedingCount: 0, nextCursor: null };
+const NO_PAGE: QueuePage = {
+  rows: [],
+  total: 0,
+  precedingCount: 0,
+  nextCursor: null,
+  previousCursor: null,
+};
 
 /** A settled queue read as a page plus the rejection, if any. */
 function settledPage(result: PromiseSettledResult<QueuePage>): {
@@ -594,6 +622,11 @@ async function renderWorkTab({
         total: due.page.total,
         precedingCount: due.page.precedingCount,
         nextHref: buildQueueNextHref(searchParams, DUE_CURSOR_PARAM, due.page.nextCursor),
+        previousHref: buildQueuePreviousHref(
+          searchParams,
+          DUE_CURSOR_PARAM,
+          due.page.previousCursor,
+        ),
       }}
       drifting={{
         heading: "Drifting",
@@ -607,6 +640,11 @@ async function renderWorkTab({
           searchParams,
           DRIFT_CURSOR_PARAM,
           drifting.page.nextCursor,
+        ),
+        previousHref: buildQueuePreviousHref(
+          searchParams,
+          DRIFT_CURSOR_PARAM,
+          drifting.page.previousCursor,
         ),
       }}
     />

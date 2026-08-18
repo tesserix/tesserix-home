@@ -55,7 +55,14 @@ afterEach(() => {
  * clearly only when the uninteresting fields are not restated beside them.
  */
 function queuePage(rows: QueueRow[], overrides: Partial<QueuePage> = {}): QueuePage {
-  return { rows, total: rows.length, precedingCount: 0, nextCursor: null, ...overrides };
+  return {
+    rows,
+    total: rows.length,
+    precedingCount: 0,
+    nextCursor: null,
+    previousCursor: null,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -307,6 +314,53 @@ describe("CrmPage queue pagination", () => {
     );
     expect(driftNext.get("driftCursor")).toBe("drift-2");
     expect(driftNext.has("dueCursor")).toBe(false);
+  });
+
+  it("gives each queue its own previous link, replacing only its own cursor", async () => {
+    dueOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "due"), {
+        total: 150,
+        precedingCount: 100,
+        previousCursor: "due-back-1",
+      }),
+    );
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), {
+        total: 259,
+        precedingCount: 100,
+        previousCursor: "drift-back-1",
+      }),
+    );
+
+    await renderCrmPage({ dueCursor: "due-2", driftCursor: "drift-2" });
+
+    // Paging Due backwards must leave Drifting exactly where the operator
+    // left it — the same rule the next links follow, in the direction
+    // nothing exercised before.
+    const duePrevious = hrefOf(
+      screen.getByRole("link", { name: "Previous page of the due queue" }),
+    );
+    expect(duePrevious.get("dueCursor")).toBe("due-back-1");
+    expect(duePrevious.get("driftCursor")).toBe("drift-2");
+
+    const driftPrevious = hrefOf(
+      screen.getByRole("link", { name: "Previous page of the drifting queue" }),
+    );
+    expect(driftPrevious.get("driftCursor")).toBe("drift-back-1");
+    expect(driftPrevious.get("dueCursor")).toBe("due-2");
+  });
+
+  it("offers no previous link on page one of either queue", async () => {
+    dueOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "due"), { total: 150, nextCursor: "due-2" }),
+    );
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), { total: 259, nextCursor: "drift-2" }),
+    );
+
+    await renderCrmPage();
+
+    expect(screen.queryByRole("link", { name: /Previous page of/ })).toBeNull();
   });
 
   it("reads each queue's cursor from its own param", async () => {

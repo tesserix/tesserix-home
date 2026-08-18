@@ -1,14 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   FilterBar,
-  mergeFiltersIntoQuery,
-  queryToFilters,
+  useUrlFilters,
   type FilterDescriptor,
   type FilterValues,
-  type UrlFilters,
 } from "@/components/kit/filter-bar";
 import { QueueList, type QueueItem } from "@/components/kit/queue-list";
 import { ResultPager } from "@/components/kit/result-pager";
@@ -16,74 +12,15 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
 
 /**
- * `useUrlFilters` (`filter-bar.tsx`) plus one rule: every filter mutation
- * also drops BOTH queue cursors.
+ * A filter mutation drops BOTH queue cursors, not just the one being paged:
+ * one filter bar drives both queues, so a narrowed filter invalidates every
+ * position on the page at once. Leaving either cursor behind lands that queue
+ * on a page of a result set that no longer has one — indistinguishable, on
+ * screen, from "nothing matches".
  *
- * Both, not the one being paged: one filter bar drives both queues, so a
- * narrowed filter invalidates every position on the page at once. Leaving
- * either cursor behind lands that queue on a page of a result set that no
- * longer has one — indistinguishable, on screen, from "nothing matches".
- *
- * The merge and the cursor drop happen inside one `push`, so a quick filter
- * change can never race a separate cursor-clearing navigation.
- *
- * `organisations-view.tsx` carries a near-identical hook for its single
- * `cursor` param. Not shared yet: this one clears a set of params rather
- * than one, and generalising it means changing the browse surface, which is
- * a refactor of code this change does not otherwise touch.
+ * A module constant so the hook's memoised `push` keeps a stable identity.
  */
-function useQueueUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  const searchString = searchParams.toString();
-
-  const values = useMemo(
-    () => queryToFilters(new URLSearchParams(searchString), descriptors),
-    [searchString, descriptors],
-  );
-
-  // Same race guard as `useUrlFilters`: `router.replace` is asynchronous, so
-  // `searchParams` still holds the old query for the rest of the tick.
-  const pendingRef = useRef<string | null>(null);
-  useEffect(() => {
-    pendingRef.current = null;
-  }, [searchString]);
-
-  const push = useCallback(
-    (update: (previous: FilterValues) => FilterValues) => {
-      const current = new URLSearchParams(pendingRef.current ?? searchString);
-      const previous = queryToFilters(current, descriptors);
-      const merged = new URLSearchParams(
-        mergeFiltersIntoQuery(current, descriptors, update(previous)),
-      );
-      merged.delete(DUE_CURSOR_PARAM);
-      merged.delete(DRIFT_CURSOR_PARAM);
-      const query = merged.toString();
-      pendingRef.current = query;
-      router.replace(query ? `${pathname}?${query}` : pathname);
-    },
-    [router, pathname, searchString, descriptors],
-  );
-
-  const set = useCallback(
-    (key: string, value: string) => {
-      push((previous) => {
-        const next = { ...previous, [key]: value };
-        if (value === "") {
-          delete next[key];
-        }
-        return next;
-      });
-    },
-    [push],
-  );
-
-  const clear = useCallback(() => push(() => ({})), [push]);
-
-  return { values, set, clear };
-}
+const QUEUE_CURSOR_PARAMS = [DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM] as const;
 
 export interface CrmQueueGroupProps {
   heading: string;
@@ -104,6 +41,11 @@ export interface CrmQueueGroupProps {
    *  every filter carried over by `buildQueueNextHref`; `null` on the last
    *  page. */
   nextHref: string | null;
+  /** The same for this queue's previous page, built by
+   *  `buildQueuePreviousHref`; `null` on the first page. Required for the
+   *  reason `OrganisationsViewProps.previousHref` records: a forgotten prop
+   *  and a genuine first page must not look the same. */
+  previousHref: string | null;
 }
 
 export interface CrmQueueViewProps {
@@ -138,6 +80,7 @@ function QueueSection({ group, onClearFilters }: { group: CrmQueueGroupProps; on
           total={group.total}
           precedingCount={group.precedingCount}
           nextHref={group.nextHref}
+          previousHref={group.previousHref}
         />
       ) : null}
       <QueueList
@@ -165,7 +108,7 @@ function QueueSection({ group, onClearFilters }: { group: CrmQueueGroupProps; on
  * belongs to is never a matter of proximity.
  */
 export function CrmQueueView({ descriptors, values, due, drifting }: CrmQueueViewProps) {
-  const { set, clear } = useQueueUrlFilters(descriptors);
+  const { set, clear } = useUrlFilters(descriptors, QUEUE_CURSOR_PARAMS);
 
   return (
     <div className="flex flex-col gap-6">
