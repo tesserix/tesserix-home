@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Analytics } from "./analytics";
 import { industryListPlain } from "./(marketing)/products/[slug]/products-data";
 import { team } from "./(marketing)/about/team";
-import { buildOrganizationSchema, buildWebSiteSchema } from "./seo/structured-data";
+import { buildOrganizationSchema, buildWebSiteSchema, SITE_URL } from "./seo/structured-data";
 import "./globals.css";
 
 const SITE_DESCRIPTION = `Tesserix is a small product studio building specialized SaaS — one industry at a time. ${industryListPlain()}.`;
@@ -26,17 +26,17 @@ export const metadata: Metadata = {
     "rental management software",
     "nutrition tracking",
   ],
-  authors: [{ name: "Tesserix", url: "https://tesserix.app" }],
+  authors: [{ name: "Tesserix", url: SITE_URL }],
   creator: "Tesserix",
   publisher: "Tesserix",
-  metadataBase: new URL("https://tesserix.app"),
+  metadataBase: new URL(SITE_URL),
   alternates: {
     canonical: "/",
   },
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://tesserix.app",
+    url: SITE_URL,
     siteName: "Tesserix",
     title: "Tesserix — Specialized SaaS, One Industry at a Time",
     description: SITE_DESCRIPTION,

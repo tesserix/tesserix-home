@@ -69,11 +69,11 @@ describe("GET /auth/callback redirect origin", () => {
     ).resolves.toBe("https://tesserix.app");
   });
 
-  it("tracks NEXT_PUBLIC_SITE_URL rather than hard-coding the production host", async () => {
+  it("tracks SITE_ORIGIN rather than hard-coding the production host", async () => {
     // Guards the guard: with a literal allowlist every assertion above would
     // still pass while the check read nothing. Move the site origin and both
     // the accept and the reject verdict must move with it.
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://staging.example.test");
+    vi.stubEnv("SITE_ORIGIN", "https://staging.example.test");
 
     await expect(
       redirectOrigin({ "x-forwarded-host": "staging.example.test" }),
@@ -97,13 +97,12 @@ describe("GET /auth/callback redirect origin", () => {
     ).resolves.toBe("https://tesserix.app");
   });
 
-  it("ignores a loopback NEXT_PUBLIC_SITE_URL in production", async () => {
-    // next.config.ts inlines this variable at build time with a localhost
-    // default and nothing in the deploy overrides it, so a production build can
-    // carry `http://localhost:3002`. Trusting that would redirect real users to
-    // their own machine and break login on the live domain.
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "http://localhost:3002");
+  it("falls back to the default when SITE_ORIGIN is not a URL", async () => {
+    // A config typo must not take login down, so an unparseable value is
+    // treated as unconfigured. (The old loopback special case is gone with the
+    // build-time inline that made it necessary — a SITE_ORIGIN set at runtime
+    // is a deliberate choice and is honoured.)
+    vi.stubEnv("SITE_ORIGIN", "not a url");
 
     await expect(
       redirectOrigin({ "x-forwarded-host": "tesserix.app" }),

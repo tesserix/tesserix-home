@@ -1,8 +1,10 @@
 import type { MetadataRoute } from "next";
+
+import { siteOrigin } from "@/lib/site-origin";
 import { productSlugs } from "./(marketing)/products/[slug]/products-data";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = "https://tesserix.app";
+  const baseUrl = siteOrigin();
 
   const productEntries: MetadataRoute.Sitemap = productSlugs.map((slug) => ({
     url: `${baseUrl}/products/${slug}`,

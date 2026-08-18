@@ -1,4 +1,5 @@
 import type { TeamMember } from "@/app/(marketing)/about/team";
+import { siteOrigin } from "@/lib/site-origin";
 
 /**
  * JSON-LD builders for the marketing site.
@@ -12,7 +13,8 @@ import type { TeamMember } from "@/app/(marketing)/about/team";
  * invented founding date, employee count, or award.
  */
 
-export const SITE_URL = "https://tesserix.app";
+/** Re-exported from lib/site-origin.ts — do not reintroduce a literal here. */
+export const SITE_URL = siteOrigin();
 
 /** Verified company facts — the single source for the Organization schema. */
 export const COMPANY = {
