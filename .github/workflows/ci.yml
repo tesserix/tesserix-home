@@ -18,6 +18,24 @@ on:
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
+    # Mirrors the push filter above. Without it every PR ran the full Node
+    # pipeline — including PRs that touch only platform-api/ or only docs —
+    # which is the clutter cost ADR-003 D1 names. Safe to filter because main
+    # carries no required status checks (verified 2026-08-18), so a PR that
+    # matches no path is not left waiting on a check that never starts.
+    paths:
+      - 'apps/web/**'
+      - 'apps/console/**'
+      - 'packages/**'
+      - 'pnpm-workspace.yaml'
+      - 'pnpm-lock.yaml'
+      - 'turbo.json'
+      - '.npmrc'
+      - 'Dockerfile'
+      - 'Dockerfile.console'
+      - '.dockerignore'
+      - 'package.json'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 concurrency:

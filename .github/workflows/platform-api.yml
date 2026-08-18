@@ -1,0 +1,201 @@
+name: Platform API
+
+# Deliberately a separate workflow from ci.yml rather than another job inside
+# it. ADR-003 D1 names CI path filters as "most of the day-to-day clutter cost",
+# and the console pipeline has no reason to run when only Go changed — nor this
+# one when only TypeScript did.
+#
+# ci.yml had filtered `push` but not `pull_request`, so every PR ran the whole
+# Node pipeline regardless of what changed. That is fixed in the same commit as
+# this file: both workflows now filter both triggers. Safe to do because main
+# carries no required status checks, so a PR matching neither filter is not left
+# waiting on a check that never starts.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'platform-api/**'
+      - 'go.work'
+      - 'Dockerfile.platform-api'
+      - '.github/workflows/platform-api.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'platform-api/**'
+      - 'go.work'
+      - 'Dockerfile.platform-api'
+      - '.github/workflows/platform-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: platform-api-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: tesserix-platform-api
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform-api
+
+    # A real Postgres, so the database integration tests actually run here.
+    # They skip when TESSERIX_TEST_DB_HOST is unset, which keeps `go test ./...`
+    # usable on a laptop without a database — but a suite that skips in CI too
+    # is a suite that does not exist, so CI supplies one.
+    #
+    # TESSERIX_TEST_DB_* deliberately, not the service's own TESSERIX_DB_*: a
+    # test run that picks up ambient production credentials is an accident
+    # worth designing out.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TESSERIX_TEST_DB_HOST: localhost
+      TESSERIX_TEST_DB_PORT: '5432'
+      TESSERIX_TEST_DB_USER: postgres
+      TESSERIX_TEST_DB_PASSWORD: testpass
+      TESSERIX_TEST_DB_NAME: postgres
+      TESSERIX_TEST_DB_SSLMODE: disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: platform-api/go.sum
+
+      - name: Verify formatting
+        # gofmt exits 0 whether or not it found anything, so the output is the
+        # signal. Without this check the -l listing scrolls past in a green run.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Verify go.mod is tidy
+        # A go.mod that drifts from the imports makes every later dependency
+        # change produce an unrelated diff, and hides an accidental dependency
+        # in the noise.
+        run: |
+          cp go.mod go.mod.bak && cp go.sum go.sum.bak
+          go mod tidy
+          if ! diff -q go.mod go.mod.bak >/dev/null || ! diff -q go.sum go.sum.bak >/dev/null; then
+            echo "::error::go.mod/go.sum are not tidy — run 'go mod tidy' in platform-api/"
+            diff go.mod.bak go.mod || true
+            exit 1
+          fi
+          rm go.mod.bak go.sum.bak
+
+      - name: Vet
+        run: go vet ./...
+
+      # This is the module boundary enforcement ADR-003 D2a requires, and it
+      # runs as an ordinary test — internal/architecture checks the import graph
+      # of the whole tree. Named as its own step so a boundary violation reads
+      # as a boundary violation in the run summary rather than as one red dot
+      # among the unit tests.
+      - name: Module boundaries
+        run: go test ./internal/architecture/... -v -run TestThisServiceHasNoCrossModuleImports
+
+      # Fail if the integration tests skipped. Without this, a broken service
+      # container turns into a quietly smaller test suite and a coverage drop
+      # nobody reads — `go test` reports ok either way.
+      - name: Confirm the database integration tests ran
+        run: |
+          output=$(go test -run TestOpenConnectsAndHealthAnswers -v ./internal/platform/database/... 2>&1)
+          echo "$output"
+          if echo "$output" | grep -q -- '--- SKIP'; then
+            echo "::error::database integration tests skipped — the postgres service is not reachable"
+            exit 1
+          fi
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+  image:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract metadata
+        id: meta
+        run: echo "tag=main-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      # Built on pull requests too, without pushing.
+      #
+      # ci.yml documents why this matters: for eight consecutive merges every PR
+      # went green while every main build failed on the same Dockerfile error,
+      # because nothing compiled a Dockerfile until after the merge. A local tag
+      # publishes nothing and cannot trigger a Kargo promotion.
+      - name: Build image (PR check, no push)
+        if: github.event_name == 'pull_request'
+        run: docker build --platform linux/amd64 -f Dockerfile.platform-api -t platform-api:pr-check .
+
+      - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push only from main, for the reason ci.yml gives: a main-<sha> image is
+      # auto-promoted to prod by Kargo, so pushing from any other branch is an
+      # unintended deploy.
+      - name: Build and push
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.platform-api \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }} \
+            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest \
+            .
+          docker push --all-tags ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+
+      - name: Security scan
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          format: sarif
+          output: trivy-platform-api.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+
+      - name: Upload scan results
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        # Code scanning needs GitHub Advanced Security, which is off while this
+        # repo is private — best-effort, exactly as ci.yml does.
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-platform-api.sarif
+          category: platform-api
