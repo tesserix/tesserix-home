@@ -1173,8 +1173,13 @@ function toSuppressionRow(row: RawSuppressionRow): SuppressionRow {
 }
 
 /** Strips a leading `@` and lowercases, so `@BondiBaker` and `bondibaker`
- *  are the same key on both the write and the read side (Ruling 18). */
-function normalizeInstagramHandle(handle: string): string {
+ *  are the same key on both the write and the read side (Ruling 18).
+ *
+ *  Exported for `crm-writes.ts`'s `insertContact` (#236): the manual-create
+ *  door checks the suppression list through `isSuppressed`, which normalises
+ *  here, so its INSERT has to hand over the same string this produces or the
+ *  two halves of one write disagree about what the handle is. */
+export function normalizeInstagramHandle(handle: string): string {
   return handle.trim().replace(/^@+/, "").toLowerCase();
 }
 

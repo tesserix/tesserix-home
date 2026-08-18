@@ -1,7 +1,7 @@
 import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { isSafeWebsiteUrl } from "./crm-url";
-import { isSuppressed, SuppressedContactError } from "./crm-repo";
+import { isSuppressed, normalizeInstagramHandle, SuppressedContactError } from "./crm-repo";
 
 /**
  * Manual create for the CRM: the only door into `crm_organisations` /
@@ -325,7 +325,13 @@ async function insertContact(
         input.name?.trim() || null,
         input.email ? input.email.trim().toLowerCase() : null,
         input.phone?.trim() || null,
-        input.instagramHandle?.trim() || null,
+        // #236: the same normalisation `isSuppressed` keyed its check on, so
+        // the string checked against the do-not-contact list is the string
+        // inserted. Migration 0023's `crm_contacts_normalize()` trigger also
+        // normalises on write and stays as the storage-layer guarantee; this
+        // is what stops that trigger being the only thing holding the two
+        // layers together.
+        input.instagramHandle ? normalizeInstagramHandle(input.instagramHandle) || null : null,
         input.isPrimary ?? false,
         input.biography?.trim() || null,
         countValue("followersCount", input.followersCount),

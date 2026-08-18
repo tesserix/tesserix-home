@@ -21,7 +21,9 @@ import { expect, test, type Page } from "@playwright/test";
  *   against a seeded database, or a stub upstream selected via
  *   WEB_INTERNAL_ORIGIN. The stub is the cheaper path and is the obvious
  *   next increment. The reply flow is the console's only write verb and it
- *   has no browser coverage today.
+ *   has no browser coverage today. (routes.spec.ts now opens the ticket
+ *   detail route, but only to assert it renders at all — the journey, and
+ *   everything about its content, is still uncovered.)
  * - Ticket results in the palette are stubbed empty here (see
  *   stubClientEndpoints below); the SQL in lib/db/search-repo.ts is
  *   exercised by no test and no local run.
