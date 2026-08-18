@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
+import type { QueuePage, QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
 import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
@@ -45,11 +45,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * A `QueuePage` around `rows`, defaulting to the single-page case: `total`
+ * is the row count and there is no next cursor.
+ *
+ * A helper rather than an object literal at every call site because the
+ * interesting cases are the ones that OVERRIDE these defaults — a `total`
+ * larger than the page is the whole bug this surface had — and those read
+ * clearly only when the uninteresting fields are not restated beside them.
+ */
+function queuePage(rows: QueueRow[], overrides: Partial<QueuePage> = {}): QueuePage {
+  return { rows, total: rows.length, precedingCount: 0, nextCursor: null, ...overrides };
+}
+
 beforeEach(() => {
   dueOpportunities.mockReset();
-  dueOpportunities.mockResolvedValue([]);
+  dueOpportunities.mockResolvedValue(queuePage([]));
   driftingOpportunities.mockReset();
-  driftingOpportunities.mockResolvedValue([]);
+  driftingOpportunities.mockResolvedValue(queuePage([]));
   wonWithoutConversion.mockReset();
   wonWithoutConversion.mockResolvedValue([]);
   fetchConversionSignal.mockReset();
@@ -90,8 +103,8 @@ async function renderCrmPage(searchParams: Record<string, string | string[] | un
 
 describe("CrmPage", () => {
   it("renders Due and Drifting as separate groups", async () => {
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     await renderCrmPage();
 
@@ -100,8 +113,8 @@ describe("CrmPage", () => {
   });
 
   it("renders empty, not ready, when nothing is due", async () => {
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     await renderCrmPage();
 
@@ -109,8 +122,8 @@ describe("CrmPage", () => {
   });
 
   it("renders drifting rows separately from due rows", async () => {
-    dueOpportunities.mockResolvedValue([DUE_ROW]);
-    driftingOpportunities.mockResolvedValue([DRIFTING_ROW]);
+    dueOpportunities.mockResolvedValue(queuePage([DUE_ROW]));
+    driftingOpportunities.mockResolvedValue(queuePage([DRIFTING_ROW]));
 
     await renderCrmPage();
 
@@ -122,7 +135,7 @@ describe("CrmPage", () => {
 
   it("does not blank the drifting group when the due read fails", async () => {
     dueOpportunities.mockRejectedValue(new Error("due query failed"));
-    driftingOpportunities.mockResolvedValue([DRIFTING_ROW]);
+    driftingOpportunities.mockResolvedValue(queuePage([DRIFTING_ROW]));
 
     await renderCrmPage();
 
@@ -130,7 +143,7 @@ describe("CrmPage", () => {
   });
 
   it("does not blank the due group when the drifting read fails", async () => {
-    dueOpportunities.mockResolvedValue([DUE_ROW]);
+    dueOpportunities.mockResolvedValue(queuePage([DUE_ROW]));
     driftingOpportunities.mockRejectedValue(new Error("drifting query failed"));
 
     await renderCrmPage();
@@ -147,7 +160,7 @@ describe("CrmPage", () => {
     dueOpportunities.mockRejectedValue(
       new Error('relation "crm_opportunities" does not exist'),
     );
-    driftingOpportunities.mockResolvedValue([DRIFTING_ROW]);
+    driftingOpportunities.mockResolvedValue(queuePage([DRIFTING_ROW]));
 
     await renderCrmPage();
 
@@ -156,8 +169,8 @@ describe("CrmPage", () => {
   });
 
   it("renders filtered-empty, not empty, when an active filter matches nothing", async () => {
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     await renderCrmPage({ product: "homechef" });
 
@@ -173,32 +186,217 @@ describe("CrmPage", () => {
     // the page forwards the filter into the read rather than reintroducing
     // a post-filter; `crm-repo.integration.test.ts` pins the SQL side of the
     // same guarantee against a real database.
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     await renderCrmPage({ product: "mark8ly", stage: "qualified", owner: "Asha" });
 
     expect(dueOpportunities).toHaveBeenCalledWith(
       { product: "mark8ly", stage: "qualified", owner: "Asha" },
       expect.any(Number),
+      undefined,
     );
     expect(driftingOpportunities).toHaveBeenCalledWith(
       { product: "mark8ly", stage: "qualified", owner: "Asha" },
       expect.any(Number),
       expect.any(Number),
+      undefined,
     );
   });
 
   it("does not forward an unrecognised stage from the URL to the reads", async () => {
     // A bad value in a hand-edited or bookmarked URL reads as "unfiltered",
     // never reaches SQL, and never renders a 500.
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     await renderCrmPage({ stage: "banana" });
 
-    expect(dueOpportunities).toHaveBeenCalledWith({}, expect.any(Number));
+    expect(dueOpportunities).toHaveBeenCalledWith({}, expect.any(Number), undefined);
     expect(screen.getByText(DUE_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Rows for a queue that fills a page. `count` is the page limit in the
+ * tests below, not a token 2 or 3: this surface's defect was invisible under
+ * the limit — it rendered a full page and said nothing about the rows past
+ * it — so a fixture smaller than a page cannot reproduce it.
+ */
+function queueRows(count: number, prefix: string): QueueRow[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...DRIFTING_ROW,
+    id: `${prefix}-${index}`,
+    organisationId: `org-${prefix}-${index}`,
+    organisationName: `${prefix} ${index}`,
+  }));
+}
+
+/** The page limit both queues are read with (`DUE_LIMIT`/`DRIFTING_LIMIT`). */
+const PAGE_LIMIT = 100;
+
+function duePager() {
+  return screen.getByRole("navigation", { name: "the due queue pagination" });
+}
+
+function driftingPager() {
+  return screen.getByRole("navigation", { name: "the drifting queue pagination" });
+}
+
+function hrefOf(link: HTMLElement): URLSearchParams {
+  return new URLSearchParams(link.getAttribute("href")!.split("?")[1]);
+}
+
+describe("CrmPage queue pagination", () => {
+  // The bug itself: production holds 259 drifting organisations and this
+  // surface rendered 100 of them with nothing on the page to say the other
+  // 159 existed. An operator working the queue to the bottom concluded they
+  // had seen everything.
+  it("reports the whole matching set, not the page size, when a queue exceeds one page", async () => {
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), { total: 259, nextCursor: "cursor-page-2" }),
+    );
+
+    await renderCrmPage();
+
+    expect(driftingPager()).toHaveTextContent("1–100 of 259");
+    const next = screen.getByRole("link", { name: "Next page of the drifting queue" });
+    expect(hrefOf(next).get("driftCursor")).toBe("cursor-page-2");
+  });
+
+  // Both queues, because each carries its own `precedingCount` through its
+  // own props: a page-two Due reading "1–100" would tell an operator they
+  // were at the top of a queue they had already worked halfway down.
+  it("reports the position of a later page, not just its size", async () => {
+    dueOpportunities.mockResolvedValue(
+      queuePage(queueRows(50, "due"), { total: 150, precedingCount: 100 }),
+    );
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), {
+        total: 259,
+        precedingCount: 100,
+        nextCursor: "cursor-page-3",
+      }),
+    );
+
+    await renderCrmPage({ dueCursor: "due-page-2", driftCursor: "cursor-page-2" });
+
+    expect(duePager()).toHaveTextContent("101–150 of 150");
+    expect(driftingPager()).toHaveTextContent("101–200 of 259");
+  });
+
+  it("gives each queue its own cursor param, so paging one leaves the other where it was", async () => {
+    dueOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "due"), { total: 150, nextCursor: "due-2" }),
+    );
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), { total: 259, nextCursor: "drift-2" }),
+    );
+
+    await renderCrmPage({ driftCursor: "drift-1" });
+
+    // Paging Due carries the Drifting cursor across untouched — a single
+    // shared `cursor` param would send Drifting back to page one (or, worse,
+    // resume it from a position that belongs to the other queue).
+    const dueNext = hrefOf(screen.getByRole("link", { name: "Next page of the due queue" }));
+    expect(dueNext.get("dueCursor")).toBe("due-2");
+    expect(dueNext.get("driftCursor")).toBe("drift-1");
+
+    const driftNext = hrefOf(
+      screen.getByRole("link", { name: "Next page of the drifting queue" }),
+    );
+    expect(driftNext.get("driftCursor")).toBe("drift-2");
+    expect(driftNext.has("dueCursor")).toBe(false);
+  });
+
+  it("reads each queue's cursor from its own param", async () => {
+    await renderCrmPage({ dueCursor: "due-abc", driftCursor: "drift-xyz" });
+
+    expect(dueOpportunities).toHaveBeenCalledWith({}, PAGE_LIMIT, "due-abc");
+    expect(driftingOpportunities).toHaveBeenCalledWith(
+      {},
+      expect.any(Number),
+      PAGE_LIMIT,
+      "drift-xyz",
+    );
+  });
+
+  it("carries the active filters into the next-page link", async () => {
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), { total: 259, nextCursor: "drift-2" }),
+    );
+
+    await renderCrmPage({ stage: "new", owner: "Asha" });
+
+    const next = hrefOf(screen.getByRole("link", { name: "Next page of the drifting queue" }));
+    expect(next.get("stage")).toBe("new");
+    expect(next.get("owner")).toBe("Asha");
+  });
+
+  it("offers no next link on the last page", async () => {
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(3, "drift"), { total: 203, precedingCount: 200 }),
+    );
+
+    await renderCrmPage({ driftCursor: "drift-3" });
+
+    expect(driftingPager()).toHaveTextContent("201–203 of 203");
+    expect(screen.queryByRole("link", { name: "Next page of the drifting queue" })).toBeNull();
+  });
+
+  // "0 of 0" beside a pager is worse than the empty copy: it reads as a
+  // surface that lost its rows rather than one with nothing waiting.
+  it("keeps the empty message and renders no pager when a queue is genuinely empty", async () => {
+    await renderCrmPage();
+
+    expect(screen.getByText(DUE_EMPTY_MESSAGE)).toBeInTheDocument();
+    expect(screen.getByText(DRIFTING_EMPTY_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: /pagination/ })).toBeNull();
+  });
+
+  it("renders no pager for a queue whose read failed", async () => {
+    dueOpportunities.mockRejectedValue(new Error("due query failed"));
+    driftingOpportunities.mockResolvedValue(
+      queuePage(queueRows(PAGE_LIMIT, "drift"), { total: 259, nextCursor: "drift-2" }),
+    );
+
+    await renderCrmPage();
+
+    expect(screen.queryByRole("navigation", { name: "the due queue pagination" })).toBeNull();
+    // ...and the queue that DID load still has its own pager.
+    expect(driftingPager()).toBeInTheDocument();
+  });
+
+  // The repo rejects a malformed cursor rather than silently serving page
+  // one, so a hand-edited `?dueCursor=` arrives here as a rejection. It is
+  // already isolated to its own group by `Promise.allSettled`, which is what
+  // keeps it from becoming an unhandled 500 for the whole page: the queue
+  // that could not be positioned shows the same operator-safe failure copy
+  // any other read failure does, and the other queue is untouched.
+  it("surfaces a malformed cursor as that queue's failure, never as a broken page", async () => {
+    dueOpportunities.mockRejectedValue(new Error("dueOpportunities: malformed cursor"));
+    driftingOpportunities.mockResolvedValue(queuePage([DRIFTING_ROW]));
+
+    await renderCrmPage({ dueCursor: "not-a-cursor" });
+
+    expect(screen.getByText(/could not load the due queue/i)).toBeInTheDocument();
+    expect(screen.queryByText(/malformed cursor/i)).toBeNull();
+    expect(screen.getByText("Never Contacted Co")).toBeInTheDocument();
+  });
+
+  // Two pagers on one page: without distinct accessible names a screen
+  // reader user listing links hears "Next, Next".
+  it("names each pager after its own queue", async () => {
+    dueOpportunities.mockResolvedValue(queuePage([DUE_ROW], { total: 4, nextCursor: "due-2" }));
+    driftingOpportunities.mockResolvedValue(
+      queuePage([DRIFTING_ROW], { total: 9, nextCursor: "drift-2" }),
+    );
+
+    await renderCrmPage();
+
+    expect(duePager()).toHaveTextContent("1–1 of 4");
+    expect(driftingPager()).toHaveTextContent("1–1 of 9");
+    expect(screen.getAllByRole("link", { name: /^Next page of/ })).toHaveLength(2);
   });
 });
 
@@ -436,8 +634,8 @@ describe("Handoff", () => {
   // the WORK queue, which has nothing to do with handoff. The Work tab must
   // never pay for a fan-out nobody is looking at.
   it("does not read the handoff queue or fan out any signal call when the Work tab is active", async () => {
-    dueOpportunities.mockResolvedValue([]);
-    driftingOpportunities.mockResolvedValue([]);
+    dueOpportunities.mockResolvedValue(queuePage([]));
+    driftingOpportunities.mockResolvedValue(queuePage([]));
 
     render(await CrmPage({ searchParams: Promise.resolve({}) }));
 
