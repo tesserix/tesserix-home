@@ -23,7 +23,8 @@ import {
 } from "@/lib/db/crm-repo";
 import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversion";
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
-import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
+import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, isFollowerBand } from "@/lib/db/crm-filters";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { CrmQueueView } from "./queue-view";
 import { HandoffView, type HandoffItem } from "./handoff-view";
 
@@ -186,6 +187,22 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
     label: "Owner",
     type: "search",
   },
+  {
+    key: "country",
+    label: "Country",
+    type: "select",
+    // The closed set the derived `crm_organisations.country` column can
+    // hold — same options as the browse surface's `country` filter.
+    options: Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+  },
+  {
+    key: "followers",
+    label: "Followers",
+    type: "select",
+    // Same bands, in the same order, as the browse surface's `followers`
+    // filter — this queue's own qualification signal (see the module doc).
+    options: Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+  },
 ];
 
 export type QueueSearchParams = Record<string, string | string[] | undefined>;
@@ -224,6 +241,19 @@ export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
     filters.owner = rawOwner;
   }
 
+  const rawCountry = searchParams.country;
+  // `Object.hasOwn`, not `in` — `in` walks the prototype chain, so
+  // `?country=__proto__` would read as a recognised code. Same guard the
+  // organisations page uses.
+  if (typeof rawCountry === "string" && rawCountry !== "" && Object.hasOwn(COUNTRY_LABELS, rawCountry)) {
+    filters.country = rawCountry;
+  }
+
+  const rawFollowers = searchParams.followers;
+  if (typeof rawFollowers === "string" && isFollowerBand(rawFollowers)) {
+    filters.followers = rawFollowers;
+  }
+
   return filters;
 }
 
@@ -233,6 +263,8 @@ export function toFilterValues(filters: QueueFilter): FilterValues {
   if (filters.product) values.product = filters.product;
   if (filters.stage) values.stage = filters.stage;
   if (filters.owner) values.owner = filters.owner;
+  if (filters.country) values.country = filters.country;
+  if (filters.followers) values.followers = filters.followers;
   return values;
 }
 

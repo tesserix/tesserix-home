@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
 import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 
 const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
@@ -246,11 +247,59 @@ describe("readQueueFilters", () => {
   it("still drops an unrecognised product that isn't the sentinel", () => {
     expect(readQueueFilters({ product: "banana" })).toEqual({});
   });
+
+  it("offers every country COUNTRY_LABELS declares", () => {
+    // Derived from COUNTRY_LABELS's own keys, not a hand-picked subset — a
+    // `toContain`-only assertion would still pass if a code were dropped
+    // from the options, which is exactly the regression this test exists to
+    // catch.
+    const country = QUEUE_FILTERS.find((d) => d.key === "country");
+    expect(country?.options?.map((o) => o.value)).toEqual(Object.keys(COUNTRY_LABELS));
+  });
+
+  it("offers every follower band FOLLOWER_BANDS declares", () => {
+    const followers = QUEUE_FILTERS.find((d) => d.key === "followers");
+    expect(followers?.options?.map((o) => o.value)).toEqual(["under1k", "k1to10k", "over10k"]);
+  });
+
+  it("reads a valid country", () => {
+    expect(readQueueFilters({ country: "IN" })).toEqual({ country: "IN" });
+  });
+
+  it("drops an unrecognised country rather than passing it to SQL", () => {
+    // Same contract as the organisations page: a code outside COUNTRY_LABELS
+    // reads as unfiltered, never reaches the repo's exact-match clause.
+    expect(readQueueFilters({ country: "ZZ" })).toEqual({});
+  });
+
+  it("drops an Object.prototype member name as a country", () => {
+    // `Object.hasOwn`, not `in` — `in` walks the prototype chain, so
+    // `?country=__proto__` (or `constructor`, `toString`) would otherwise
+    // read as a recognised code.
+    for (const key of ["__proto__", "constructor", "toString"]) {
+      expect(readQueueFilters({ country: key })).toEqual({});
+    }
+  });
+
+  it("reads a valid follower band", () => {
+    expect(readQueueFilters({ followers: "over10k" })).toEqual({ followers: "over10k" });
+  });
+
+  it("drops an unrecognised follower band rather than passing it to SQL", () => {
+    expect(readQueueFilters({ followers: "banana" })).toEqual({});
+  });
 });
 
 describe("toFilterValues", () => {
   it("shows the bar only what the server actually applied", () => {
     expect(toFilterValues({ stage: "contacted" })).toEqual({ stage: "contacted" });
+  });
+
+  it("includes country and followers when applied", () => {
+    expect(toFilterValues({ country: "IN", followers: "over10k" })).toEqual({
+      country: "IN",
+      followers: "over10k",
+    });
   });
 });
 
