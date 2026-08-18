@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import type { QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
 import { UNASSIGNED_PRODUCT } from "@/lib/db/crm-filters";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 
 const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
@@ -248,9 +249,12 @@ describe("readQueueFilters", () => {
   });
 
   it("offers every country COUNTRY_LABELS declares", () => {
+    // Derived from COUNTRY_LABELS's own keys, not a hand-picked subset — a
+    // `toContain`-only assertion would still pass if a code were dropped
+    // from the options, which is exactly the regression this test exists to
+    // catch.
     const country = QUEUE_FILTERS.find((d) => d.key === "country");
-    expect(country?.options?.map((o) => o.value)).toContain("IN");
-    expect(country?.options?.map((o) => o.value)).toContain("AU");
+    expect(country?.options?.map((o) => o.value)).toEqual(Object.keys(COUNTRY_LABELS));
   });
 
   it("offers every follower band FOLLOWER_BANDS declares", () => {

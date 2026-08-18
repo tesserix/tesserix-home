@@ -300,38 +300,47 @@ describe("owner filter escapes LIKE metacharacters against a real database", () 
 // distinguishing follower count and country per organisation, is what proves
 // the predicate resolves the right row.
 describe("country and follower-band filters against a real database", () => {
-  let inOrgId: string;
-  let auOrgId: string;
+  // Fixture ids name the seeded COUNTRY ("QQ"/"ZZ"), not the location text —
+  // the two deliberately disagree. "QQ"/"ZZ" are synthetic, not "IN"/"AU":
+  // real codes would collide with the country: "IN" fixtures the
+  // organisations-page `describe` blocks elsewhere in this file seed, and
+  // this suite shares one database across the whole file. Seeding a country
+  // that contradicts its own location ("Chennai" filed under "QQ") is also
+  // what makes a regression to matching on the raw `location` text
+  // observable at all — a correct-looking `location`-based match would still
+  // pass if the derived `country` column were silently ignored.
+  let qqOrgId: string;
+  let zzOrgId: string;
   let nullFollowersOrgId: string;
 
-  const inDueOppId = "cccccccc-1111-1111-1111-111111111111";
-  const inDriftingOppId = "cccccccc-1111-1111-1111-111111111112";
-  const auDueOppId = "cccccccc-2222-2222-2222-222222222221";
-  const auDriftingOppId = "cccccccc-2222-2222-2222-222222222222";
+  const qqDueOppId = "cccccccc-1111-1111-1111-111111111111";
+  const qqDriftingOppId = "cccccccc-1111-1111-1111-111111111112";
+  const zzDueOppId = "cccccccc-2222-2222-2222-222222222221";
+  const zzDriftingOppId = "cccccccc-2222-2222-2222-222222222222";
   const nullFollowersDueOppId = "cccccccc-3333-3333-3333-333333333331";
   const nullFollowersDriftingOppId = "cccccccc-3333-3333-3333-333333333332";
 
   beforeAll(async () => {
-    const inOrg = await db.query<{ id: string }>(
+    const qqOrg = await db.query<{ id: string }>(
       `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
       ["Queue Filter Chennai Org", "Chennai", "QQ"],
     );
-    inOrgId = inOrg.rows[0].id;
+    qqOrgId = qqOrg.rows[0].id;
     await db.query(
       `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
        VALUES ($1, $2, true, $3)`,
-      [inOrgId, "Chennai Creator", 15000],
+      [qqOrgId, "Chennai Creator", 15000],
     );
 
-    const auOrg = await db.query<{ id: string }>(
+    const zzOrg = await db.query<{ id: string }>(
       `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
       ["Queue Filter Sydney Org", "Sydney", "ZZ"],
     );
-    auOrgId = auOrg.rows[0].id;
+    zzOrgId = zzOrg.rows[0].id;
     await db.query(
       `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
        VALUES ($1, $2, true, $3)`,
-      [auOrgId, "Sydney Creator", 500],
+      [zzOrgId, "Sydney Creator", 500],
     );
 
     const nullOrg = await db.query<{ id: string }>(
@@ -346,7 +355,7 @@ describe("country and follower-band filters against a real database", () => {
     );
 
     // One due row and one drifting row per organisation, so both queries can
-    // be exercised against the same fixtures. `owner` is set on the IN due
+    // be exercised against the same fixtures. `owner` is set on the QQ due
     // row only, to test country/followers composing with an existing filter.
     await db.query(
       `INSERT INTO crm_opportunities
@@ -359,12 +368,12 @@ describe("country and follower-band filters against a real database", () => {
          ($7, $8, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
          ($12, $8, 'new', NULL, NULL, NULL, $11::timestamptz)`,
       [
-        inDueOppId,
-        inOrgId,
-        inDriftingOppId,
-        auDueOppId,
-        auOrgId,
-        auDriftingOppId,
+        qqDueOppId,
+        qqOrgId,
+        qqDriftingOppId,
+        zzDueOppId,
+        zzOrgId,
+        zzDriftingOppId,
         nullFollowersDueOppId,
         nullFollowersOrgId,
         daysAgo(1),
@@ -378,29 +387,29 @@ describe("country and follower-band filters against a real database", () => {
   it("filters dueOpportunities by country", async () => {
     const rows = await dueOpportunities({ country: "QQ" }, 50);
     const ids = rows.map((r) => r.id);
-    expect(ids).toContain(inDueOppId);
-    expect(ids).not.toContain(auDueOppId);
+    expect(ids).toContain(qqDueOppId);
+    expect(ids).not.toContain(zzDueOppId);
   });
 
   it("filters driftingOpportunities by country", async () => {
     const rows = await driftingOpportunities({ country: "QQ" }, 14, 50);
     const ids = rows.map((r) => r.id);
-    expect(ids).toContain(inDriftingOppId);
-    expect(ids).not.toContain(auDriftingOppId);
+    expect(ids).toContain(qqDriftingOppId);
+    expect(ids).not.toContain(zzDriftingOppId);
   });
 
   it("filters dueOpportunities by follower band on the primary contact", async () => {
     const rows = await dueOpportunities({ followers: "over10k" }, 50);
     const ids = rows.map((r) => r.id);
-    expect(ids).toContain(inDueOppId);
-    expect(ids).not.toContain(auDueOppId);
+    expect(ids).toContain(qqDueOppId);
+    expect(ids).not.toContain(zzDueOppId);
   });
 
   it("filters driftingOpportunities by follower band on the primary contact", async () => {
     const rows = await driftingOpportunities({ followers: "under1k" }, 14, 50);
     const ids = rows.map((r) => r.id);
-    expect(ids).toContain(auDriftingOppId);
-    expect(ids).not.toContain(inDriftingOppId);
+    expect(ids).toContain(zzDriftingOppId);
+    expect(ids).not.toContain(qqDriftingOppId);
   });
 
   it("excludes a NULL followers_count from every band, in both due and drifting", async () => {
@@ -420,7 +429,7 @@ describe("country and follower-band filters against a real database", () => {
       { country: "QQ", followers: "over10k", owner: "Priya" },
       50,
     );
-    expect(rows.map((r) => r.id)).toEqual([inDueOppId]);
+    expect(rows.map((r) => r.id)).toEqual([qqDueOppId]);
 
     // Same organisation's country/follower band, but the owner substring
     // doesn't match — composing must AND, not OR, the predicates together.
@@ -428,7 +437,7 @@ describe("country and follower-band filters against a real database", () => {
       { country: "QQ", followers: "over10k", owner: "Someone Else" },
       50,
     );
-    expect(nonMatching.map((r) => r.id)).not.toContain(inDueOppId);
+    expect(nonMatching.map((r) => r.id)).not.toContain(qqDueOppId);
   });
 });
 

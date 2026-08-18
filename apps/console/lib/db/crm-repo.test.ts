@@ -249,10 +249,16 @@ describe("the queue's filters — bound parameters, not string interpolation", (
 
   it("keeps the drifting partial-index predicates first, filters appended after", async () => {
     query.mockResolvedValue([]);
-    await driftingOpportunities({ product: "mark8ly" }, 14, 50);
+    // `country` is included alongside `product`: the splice now carries four
+    // filter clauses (product/stage/owner, and country/followers below), all
+    // through the same `filterClause` — one assertion per clause pins that
+    // none of them was spliced ahead of the partial-index predicates.
+    await driftingOpportunities({ product: "mark8ly", country: "IN" }, 14, 50);
     const [sql] = query.mock.calls[0];
     expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("o.product ="));
     expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("o.product ="));
+    expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("g.country ="));
+    expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("g.country ="));
   });
 
   it("binds country as an exact-match parameter against the organisation, not the raw location", async () => {

@@ -153,9 +153,17 @@ function primaryContactFollowerClause(orgAlias: string, band: FollowerBand, para
  * filter, pushing each present value onto `params` as a bound parameter
  * (never interpolated into the SQL string) and returning the clause fragment
  * to splice after the query's own predicates. An absent filter key adds no
- * clause at all — the partial indexes' own predicates stay first and
- * untouched, so `crm_opp_due_idx`/`crm_opp_drifting_idx` remain usable
- * regardless of which filters are active.
+ * clause at all — the queue's own predicates stay first and unmodified by
+ * this splice, whatever filters are active.
+ *
+ * That is a property of the splice, not a guarantee about the query plan.
+ * `crm_opp_due_idx`/`crm_opp_drifting_idx` stay eligible, but eligible is
+ * not chosen: `g.country` has its own index (`crm_org_country_idx`) and the
+ * follower clause is a correlated `EXISTS` on `crm_contacts`, so a selective
+ * country or follower filter can legitimately lead the planner to drive
+ * from `crm_organisations` instead and never touch the partial index. Which
+ * index runs is Postgres's call, made per-query from statistics and
+ * selectivity — not something this function controls or promises.
  */
 function filterClause(filter: QueueFilter, params: unknown[]): string {
   const clauses: string[] = [];
