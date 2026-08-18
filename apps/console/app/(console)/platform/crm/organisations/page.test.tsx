@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
+import { UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "@/lib/db/crm-filters";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 
 const listOrganisations = vi.fn();
 
@@ -14,7 +16,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import Page from "./page";
+import Page, { ORGANISATION_FILTERS } from "./page";
 
 beforeEach(() => {
   listOrganisations.mockReset();
@@ -269,6 +271,60 @@ describe("OrganisationsPage", () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ followers: "banana" }) }));
       expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+    });
+
+    it("passes the unknown country and follower sentinels through to the repo", async () => {
+      // Each sentinel fails the recognised-value check its filter applies to
+      // real values (COUNTRY_LABELS / FOLLOWER_BANDS), so both have to be
+      // admitted explicitly — otherwise picking "Unknown" reads as no filter
+      // at all and the surface silently ignores the option it just offered.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(
+        await Page({
+          searchParams: Promise.resolve({
+            country: UNKNOWN_COUNTRY,
+            followers: UNKNOWN_FOLLOWERS,
+          }),
+        }),
+      );
+      expect(listOrganisations).toHaveBeenCalledWith(
+        { country: UNKNOWN_COUNTRY, followers: UNKNOWN_FOLLOWERS },
+        expect.any(Number),
+        undefined,
+      );
+    });
+
+    it("offers Unknown on both the country and follower filters", async () => {
+      // 208 of 259 organisations have no derived country and 51 no follower
+      // count; without these options the filters hide them with nothing said.
+      //
+      // Asserted per descriptor rather than by opening both `Select`s and
+      // counting "Unknown" in the DOM: Radix portals each open select's
+      // content, and a rendered-text assertion passed even with the follower
+      // option deleted, because the country select's own "Unknown" was still
+      // mounted. The exact-value assertion below cannot confuse the two.
+      const options = (key: string) =>
+        ORGANISATION_FILTERS.find((d) => d.key === key)?.options?.map((o) => o.value);
+      expect(options("country")).toEqual([...Object.keys(COUNTRY_LABELS), UNKNOWN_COUNTRY]);
+      expect(options("followers")).toEqual([
+        "under1k",
+        "k1to10k",
+        "over10k",
+        UNKNOWN_FOLLOWERS,
+      ]);
+      // A data state, never a value: "0" or "None" would read as a measured
+      // follower count of zero.
+      for (const key of ["country", "followers"]) {
+        const descriptor = ORGANISATION_FILTERS.find((d) => d.key === key);
+        expect(descriptor?.options?.at(-1)?.label).toBe("Unknown");
+      }
+
+      // And it reaches the operator: the option lives inside a Radix
+      // `Select`, which portals its content only once opened.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      fireEvent.click(screen.getByLabelText("Followers"));
+      expect(screen.getByText("Unknown")).toBeInTheDocument();
     });
 
     it("resolves filtered-empty, not empty, when a filter matches nothing", async () => {

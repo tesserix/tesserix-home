@@ -140,6 +140,20 @@ export interface CreateContactInput {
   phone?: string;
   instagramHandle?: string;
   isPrimary?: boolean;
+  /**
+   * The scrape fields (#235): the three typed columns 0019 shipped and the
+   * raw bag 0027 added. All optional — `createOrganisation`'s inline contact
+   * and the manual-add form supply none of them, and an absent bag lands as
+   * the column's `'{}'` default rather than null.
+   *
+   * `metadata` is an object the CALLER has already parsed (import does so
+   * via `parseMetadataCell`); there is no free-form JSON entry on any manual
+   * form, deliberately — the bag holds scrape output, not typed-in text.
+   */
+  biography?: string;
+  followersCount?: number;
+  postsCount?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreateOpportunityInput {
@@ -265,6 +279,32 @@ export async function createContact(input: CreateContactInput): Promise<{ contac
   });
 }
 
+/**
+ * Largest value Postgres's `integer` holds — the declared type of both
+ * `crm_contacts.followers_count` and `.posts_count`.
+ */
+const MAX_COUNT_VALUE = 2_147_483_647;
+
+/**
+ * A follower/post count on its way into an `integer` column, or null when
+ * the caller supplied none.
+ *
+ * Throws on a value the column cannot hold. Unlike the CSV import — where a
+ * bad cell is operator input, stored as NULL and counted so the sheet can be
+ * corrected (`commitImport`) — a caller of this function has already been
+ * typed as passing a `number`, so anything fractional, negative or
+ * out-of-range is a programming error. Letting it reach the INSERT would
+ * raise a Postgres error the caller cannot act on; silently clamping it
+ * would store a count nobody scraped.
+ */
+function countValue(field: "followersCount" | "postsCount", value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_COUNT_VALUE) {
+    throw new Error(`insertContact: ${field} must be a whole number between 0 and ${MAX_COUNT_VALUE}`);
+  }
+  return value;
+}
+
 // Both manual-create doors insert their contact here, so translating the
 // collision at this one statement is what makes `createOrganisation` and
 // `createContact` refuse identically. Anything that is not one of the two
@@ -275,8 +315,10 @@ async function insertContact(
 ): Promise<string> {
   try {
     const rows = await query<{ id: string }>(
-      `INSERT INTO crm_contacts (organisation_id, name, email, phone, instagram_handle, is_primary)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO crm_contacts
+         (organisation_id, name, email, phone, instagram_handle, is_primary,
+          biography, followers_count, posts_count, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
        RETURNING id`,
       [
         input.organisationId,
@@ -285,6 +327,13 @@ async function insertContact(
         input.phone?.trim() || null,
         input.instagramHandle?.trim() || null,
         input.isPrimary ?? false,
+        input.biography?.trim() || null,
+        countValue("followersCount", input.followersCount),
+        countValue("postsCount", input.postsCount),
+        // `'{}'` for an absent bag, matching the column's own default — the
+        // column is NOT NULL, and one spelling of "nothing retained" is the
+        // whole reason it is.
+        JSON.stringify(input.metadata ?? {}),
       ],
     );
     return rows[0].id;

@@ -31,6 +31,16 @@ export interface DisplayCounts {
    * is a number.
    */
   droppedWebsiteUrls: number | null;
+  /**
+   * Follower/post count CELLS stored as NULL because they were not a plain
+   * whole number, and `metadata` cells dropped to `{}` because they were not
+   * a JSON object (#235). `null` on a preview for the same reason
+   * `droppedWebsiteUrls` is: `previewImport` writes nothing, so it drops
+   * nothing, and a zero beside a preview would assert a fact about an import
+   * that has not happened.
+   */
+  droppedCountCells: number | null;
+  droppedMetadataCells: number | null;
 }
 
 export function previewDisplayCounts(preview: ImportPreview, parseMalformed: number): DisplayCounts {
@@ -40,6 +50,8 @@ export function previewDisplayCounts(preview: ImportPreview, parseMalformed: num
     skippedSuppressed: preview.skippedSuppressed,
     malformed: preview.malformed + parseMalformed,
     droppedWebsiteUrls: null,
+    droppedCountCells: null,
+    droppedMetadataCells: null,
   };
 }
 
@@ -50,6 +62,8 @@ export function committedDisplayCounts(result: ImportResult, parseMalformed: num
     skippedSuppressed: result.skippedSuppressed,
     malformed: result.malformed + parseMalformed,
     droppedWebsiteUrls: result.droppedWebsiteUrls,
+    droppedCountCells: result.droppedCountCells,
+    droppedMetadataCells: result.droppedMetadataCells,
   };
 }
 

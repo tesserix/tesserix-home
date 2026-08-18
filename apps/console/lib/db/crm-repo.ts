@@ -1,6 +1,12 @@
 import { countryFromLocation } from "@tesserix/crm-country";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
-import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, type FollowerBand } from "./crm-filters";
+import {
+  FOLLOWER_BANDS,
+  UNASSIGNED_PRODUCT,
+  UNKNOWN_COUNTRY,
+  UNKNOWN_FOLLOWERS,
+  type FollowerFilter,
+} from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
 import {
   decodeKeysetCursor,
@@ -11,6 +17,8 @@ import {
 } from "./keyset-cursor";
 import {
   isUsableImportRow,
+  parseCountCell,
+  parseMetadataCell,
   requiresProduct,
   type CrmActivityKind,
   type CrmStage,
@@ -43,12 +51,14 @@ export interface QueueFilter {
   stage?: CrmStage;
   owner?: string;
   /** ISO 3166-1 alpha-2, exact match on the derived `crm_organisations.country`
-   *  column — never a pattern over the raw `location`. Same contract as
+   *  column — never a pattern over the raw `location`. `UNKNOWN_COUNTRY`
+   *  selects the rows where that column is NULL. Same contract as
    *  `OrganisationFilter.country` below. */
   country?: string;
   /** Follower-count band of the organisation's primary contact — the same
-   *  contact a row displays, selected with `primaryContactOrder()`. */
-  followers?: FollowerBand;
+   *  contact a row displays, selected with `primaryContactOrder()` — or
+   *  `UNKNOWN_FOLLOWERS` for rows that have no such count to show. */
+  followers?: FollowerFilter;
 }
 
 export interface QueueRow {
@@ -146,7 +156,14 @@ function cursorPlaceholders(cursor: KeysetCursor, params: unknown[]): [string, s
  * SQL, so the exclusion holds either way — but leaving it implicit would
  * make that reliance invisible to the next reader.
  */
-function primaryContactFollowerClause(orgAlias: string, band: FollowerBand, params: unknown[]): string {
+function primaryContactFollowerClause(
+  orgAlias: string,
+  band: FollowerFilter,
+  params: unknown[],
+): string {
+  if (band === UNKNOWN_FOLLOWERS) {
+    return primaryContactFollowerUnknownClause(orgAlias);
+  }
   const bounds = FOLLOWER_BANDS[band];
   params.push(bounds.min);
   const minParam = `$${params.length}`;
@@ -166,6 +183,38 @@ function primaryContactFollowerClause(orgAlias: string, band: FollowerBand, para
            )
            AND c.followers_count IS NOT NULL
            AND c.followers_count >= ${minParam}${upperBound}
+      )`;
+}
+
+/**
+ * The complement of every band: organisation `${orgAlias}` has no primary
+ * contact carrying a follower count.
+ *
+ * `NOT EXISTS`, scoped to the primary contact the same way the bands are, so
+ * an organisation whose SECONDARY contact has 50k followers is still
+ * "Unknown" — the bands describe the contact the row displays, and an
+ * option that disagreed with them about which contact it means would put the
+ * same organisation in two answers, or in neither.
+ *
+ * An organisation with no contacts at all satisfies this clause vacuously,
+ * which is deliberate: it has no follower count to show either, its cell is
+ * as blank as an unmeasured contact's, and excluding it would leave it
+ * reachable from no follower option at all — the very defect this option
+ * exists to fix. Band ∪ band ∪ band ∪ unknown therefore covers every row.
+ *
+ * Takes no `params`: this is a NULL/absence test, with nothing to bind.
+ */
+function primaryContactFollowerUnknownClause(orgAlias: string): string {
+  return `NOT EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = ${orgAlias}.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = ${orgAlias}.id
+              ORDER BY ${primaryContactOrder("c2")}
+              LIMIT 1
+           )
+           AND c.followers_count IS NOT NULL
       )`;
 }
 
@@ -212,7 +261,12 @@ function filterClause(filter: QueueFilter, params: unknown[]): string {
     params.push(`%${escaped}%`);
     clauses.push(`o.owner ILIKE $${params.length} ESCAPE '\\'`);
   }
-  if (filter.country) {
+  if (filter.country === UNKNOWN_COUNTRY) {
+    // No bound parameter: a NULL test, not a comparison — same shape as the
+    // unassigned-product branch above, and for the same reason (`= NULL` is
+    // never true). 208 of 259 organisations sit here.
+    clauses.push(`g.country IS NULL`);
+  } else if (filter.country) {
     // Exact match on the derived column, never a pattern over raw
     // `location` — same as `organisationFilterClauses`. `g` is the
     // organisation both `dueOpportunities` and `driftingOpportunities` join
@@ -1472,7 +1526,50 @@ export interface ImportResult {
    * case and reads as such.
    */
   droppedWebsiteUrls: number;
+  /**
+   * Count CELLS (not rows) whose `followers`/`posts` value was not a plain
+   * whole number and was stored as NULL — `1.2k`, `n/a`, a blank-but-present
+   * `-`. One row with both cells bad counts twice.
+   *
+   * Same contract as `droppedWebsiteUrls` and separate from `malformed` for
+   * the same reason: the row WAS created, so folding it into a counter that
+   * means "no organisation was created for this row" would make that counter
+   * mean two things. The two count columns share one counter because they
+   * share one remedy — correct the sheet, import again — and splitting them
+   * would put two numbers on the summary card that an operator can only ever
+   * act on together.
+   */
+  droppedCountCells: number;
+  /** Rows created with their `metadata` cell dropped to `{}` because it was
+   *  not a JSON object. Counted for the same reason as the above: nothing
+   *  else would tell the operator the retained scrape output was lost. */
+  droppedMetadataCells: number;
   matchedRows: readonly ImportRow[];
+}
+
+/**
+ * What a scrape cell became, and whether anything was lost turning it into
+ * that. The `dropped` half is why these return a pair rather than a bare
+ * value: a refused cell and an absent cell both store nothing, and only the
+ * refused one is worth reporting to the operator.
+ */
+interface CellOutcome<T> {
+  value: T;
+  dropped: number;
+}
+
+function countCell(raw: string | undefined): CellOutcome<number | null> {
+  const trimmed = raw?.trim();
+  if (!trimmed) return { value: null, dropped: 0 };
+  const value = parseCountCell(trimmed);
+  return { value, dropped: value === null ? 1 : 0 };
+}
+
+function metadataCell(raw: string | undefined): CellOutcome<Record<string, unknown>> {
+  const trimmed = raw?.trim();
+  if (!trimmed) return { value: {}, dropped: 0 };
+  const value = parseMetadataCell(trimmed);
+  return { value: value ?? {}, dropped: value === null ? 1 : 0 };
 }
 
 /**
@@ -1513,6 +1610,8 @@ export async function commitImport(
     let skippedSuppressed = 0;
     let malformed = 0;
     let droppedWebsiteUrls = 0;
+    let droppedCountCells = 0;
+    let droppedMetadataCells = 0;
     const matchedRows: ImportRow[] = [];
 
     const importRows = await query<{ id: string }>(
@@ -1601,15 +1700,31 @@ export async function commitImport(
       );
       const organisationId = orgRows[0].id;
 
+      // The scrape columns (#235). Each bad cell is stored as NULL (or `{}`
+      // for the bag) and counted, exactly as `website_url` above: one
+      // unusable cell must neither abort the batch nor silently become a
+      // `0` that files the organisation in a follower band it is not in.
+      const followersCount = countCell(row.followersCount);
+      const postsCount = countCell(row.postsCount);
+      droppedCountCells += followersCount.dropped + postsCount.dropped;
+      const metadata = metadataCell(row.metadata);
+      droppedMetadataCells += metadata.dropped;
+
       await query(
-        `INSERT INTO crm_contacts (organisation_id, name, email, phone, instagram_handle, is_primary)
-         VALUES ($1, $2, $3, $4, $5, true)`,
+        `INSERT INTO crm_contacts
+           (organisation_id, name, email, phone, instagram_handle, is_primary,
+            biography, followers_count, posts_count, metadata)
+         VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9::jsonb)`,
         [
           organisationId,
           row.name?.trim() || null,
           row.email ? row.email.trim().toLowerCase() : null,
           row.phone?.trim() || null,
           row.instagramHandle ? normalizeInstagramHandle(row.instagramHandle) : null,
+          row.biography?.trim() || null,
+          followersCount.value,
+          postsCount.value,
+          JSON.stringify(metadata.value),
         ],
       );
 
@@ -1642,6 +1757,8 @@ export async function commitImport(
       skippedSuppressed,
       malformed,
       droppedWebsiteUrls,
+      droppedCountCells,
+      droppedMetadataCells,
       matchedRows,
     };
   });
@@ -1978,10 +2095,12 @@ export interface OrganisationFilter {
    *  matched with EXISTS since one organisation can have several. */
   product?: string;
   /** ISO 3166-1 alpha-2, exact match on the derived `crm_organisations.country`
-   *  column (Task 3/4). Never a pattern over the raw `location`. */
+   *  column (Task 3/4), or `UNKNOWN_COUNTRY` for the rows where it is NULL.
+   *  Never a pattern over the raw `location`. */
   country?: string;
-  /** Follower-count band of the organisation's primary contact. */
-  followers?: FollowerBand;
+  /** Follower-count band of the organisation's primary contact, or
+   *  `UNKNOWN_FOLLOWERS` for rows that have no such count to show. */
+  followers?: FollowerFilter;
   /** True to require the primary contact to have an email on file. */
   hasEmail?: boolean;
 }
@@ -2088,7 +2207,15 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
     }
   }
 
-  if (filter.country) {
+  if (filter.country === UNKNOWN_COUNTRY) {
+    // The rows a named country cannot reach: an underivable or absent
+    // location is not evidence of any market, so they stay out of every
+    // real code — but they are the majority of the table (208 of 259), and
+    // an operator has to be able to ask for them. `crm_org_country_idx` is
+    // partial (`WHERE country IS NOT NULL`), so this predicate does not use
+    // it; at this table's size that is a scan either way.
+    clauses.push(`g.country IS NULL`);
+  } else if (filter.country) {
     // Exact match on the derived column (crm_org_country_idx), not a
     // pattern over the raw location — a NULL country matches no filter
     // value, which is correct: an underivable location is not evidence of

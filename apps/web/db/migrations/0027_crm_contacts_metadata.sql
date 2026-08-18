@@ -1,0 +1,45 @@
+-- 0027_crm_contacts_metadata.sql
+--
+-- A raw-scrape bag on `crm_contacts`, alongside the three typed scrape
+-- columns 0019 already shipped (`followers_count`, `posts_count`,
+-- `biography`).
+--
+-- THE STANDING RULE, which is the reason this column exists at all:
+--
+--     Promote a key out of the bag into a column when it becomes a
+--     filter axis.
+--
+-- Typed columns are for anything filtered, sorted or counted; the bag is for
+-- raw scrape output worth retaining but not querying. A key that starts
+-- appearing in a WHERE clause has stopped being raw retention and become
+-- part of the schema, and it gets its own column — with the index, the type
+-- and the NULL semantics a filter needs. `followers_count` is exactly that
+-- story already told once: it is a filter axis (the follower bands on the
+-- follow-up queue), so it is a column, not a key in here. Nothing in this
+-- migration enforces the rule — it is a rule about what the NEXT change
+-- does, written here because this is the file anyone adding to the bag will
+-- read first.
+--
+-- NOT NULL WITH A DEFAULT, deliberately. `'{}'` and NULL would both mean
+-- "nothing retained", and two spellings of one fact is two branches in every
+-- reader, one of which is always the one nobody tested. Matches
+-- `crm_activities.metadata` and `crm_organisations.category`/`tags`, which
+-- made the same choice.
+--
+-- DPDP — READ BEFORE ADDING ANYTHING THAT WRITES HERE. `crm_contacts` holds,
+-- in 0019's own words, "scraped social profiles about people who never
+-- filled in a form", and `eraseContact` (apps/console/lib/db/crm-erasure.ts)
+-- exists to satisfy erasure requests. This column is the one place on the
+-- table whose contents are unenumerated by design, so it is the one place
+-- personal data could hide from that erasure. `eraseContact` therefore sets
+-- `metadata = '{}'::jsonb` in the SAME statement that nulls the other
+-- personal columns, and crm-erasure.integration.test.ts asserts the whole
+-- object is empty afterwards rather than naming keys — an assertion about
+-- named keys would pass while everything the next scrape adds survived. A
+-- writer added here without that guarantee holding is a compliance defect,
+-- not a feature.
+--
+-- NO INDEX. Nothing queries into the bag, and a GIN index would invite
+-- exactly the filtering the promote rule above says to solve with a column.
+ALTER TABLE crm_contacts
+  ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;

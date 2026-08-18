@@ -86,11 +86,43 @@ function CountsSummary({
             <dd className="mt-1 text-lg">{counts.droppedWebsiteUrls}</dd>
           </div>
         ) : null}
+        {counts.droppedCountCells !== null ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+              Counts dropped
+            </dt>
+            <dd className="mt-1 text-lg">{counts.droppedCountCells}</dd>
+          </div>
+        ) : null}
+        {counts.droppedMetadataCells !== null ? (
+          <div>
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">
+              Metadata dropped
+            </dt>
+            <dd className="mt-1 text-lg">{counts.droppedMetadataCells}</dd>
+          </div>
+        ) : null}
       </dl>
       {counts.droppedWebsiteUrls ? (
         <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
           These rows were created, but their website cell was not a http:// or https:// address and
           was left blank. Correct the CSV and import again to add it.
+        </p>
+      ) : null}
+      {/* Stored as NULL, never 0: a zero is indistinguishable from a real
+       *  account with no followers and would file the organisation in the
+       *  lowest follower band. A corrected re-import is the only remedy, so
+       *  the count is what makes it a choice the operator can make. */}
+      {counts.droppedCountCells ? (
+        <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          These rows were created, but a follower or post count cell was not a whole number and was
+          left blank rather than read as zero. Correct the CSV and import again to add it.
+        </p>
+      ) : null}
+      {counts.droppedMetadataCells ? (
+        <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          These rows were created, but their metadata cell was not a JSON object and was stored
+          empty. Correct the CSV and import again to retain it.
         </p>
       ) : null}
       {matchedRows.length > 0 ? (

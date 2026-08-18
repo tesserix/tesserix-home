@@ -32,6 +32,8 @@ function committedResult(overrides: Partial<ImportResult> = {}): ImportResult {
     skippedSuppressed: 1,
     malformed: 0,
     droppedWebsiteUrls: 0,
+    droppedCountCells: 0,
+    droppedMetadataCells: 0,
     matchedRows: [],
     ...overrides,
   };
@@ -105,6 +107,33 @@ describe("ImportView committed result", () => {
 
     expect(screen.getByText("Website dropped")).toBeInTheDocument();
     expect(screen.queryByText(/website cell was not a http/i)).toBeNull();
+  });
+
+  // #235: a followers/posts cell that was not a whole number is stored as
+  // NULL, and the row is still created. Same remedy as a dropped website
+  // url — correct the sheet and import again — so it needs the same telling.
+  it("reports count cells the import dropped", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ droppedCountCells: 3 }));
+
+    expect(screen.getByText("Counts dropped")).toBeInTheDocument();
+    expect(screen.getByText(/follower or post count/i)).toBeInTheDocument();
+  });
+
+  it("offers no dropped-count explanation when every count cell was a whole number", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ droppedCountCells: 0 }));
+
+    expect(screen.getByText("Counts dropped")).toBeInTheDocument();
+    expect(screen.queryByText(/follower or post count/i)).toBeNull();
+  });
+
+  it("reports metadata cells the import dropped", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ droppedMetadataCells: 1 }));
+
+    expect(screen.getByText("Metadata dropped")).toBeInTheDocument();
+    expect(screen.getByText(/was not a JSON object/i)).toBeInTheDocument();
   });
 
   it("offers no link when the import created nothing", async () => {

@@ -11,7 +11,14 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 import { dbReadError } from "@/lib/db-read-error";
 import { listOrganisations, type OrganisationFilter, type OrganisationListRow } from "@/lib/db/crm-repo";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
-import { FOLLOWER_BANDS, UNASSIGNED_PRODUCT, isFollowerBand } from "@/lib/db/crm-filters";
+import {
+  FOLLOWER_BANDS,
+  UNASSIGNED_PRODUCT,
+  UNKNOWN_COUNTRY,
+  UNKNOWN_FOLLOWERS,
+  UNKNOWN_LABEL,
+  isFollowerFilter,
+} from "@/lib/db/crm-filters";
 import type { FilterDescriptor, FilterValues } from "@/components/kit/filter-bar";
 import { OrganisationsView } from "./organisations-view";
 
@@ -67,13 +74,24 @@ export const ORGANISATION_FILTERS: FilterDescriptor[] = [
     key: "country",
     label: "Country",
     type: "select",
-    options: Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+    // "Unknown" closes the set, last for the same reason "Unassigned" is:
+    // 208 of the 259 organisations have no derived country, so the named
+    // codes between them reach under a fifth of the table.
+    options: [
+      ...Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label })),
+      { value: UNKNOWN_COUNTRY, label: UNKNOWN_LABEL },
+    ],
   },
   {
     key: "followers",
     label: "Followers",
     type: "select",
-    options: Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+    // Likewise: 51 organisations have no follower count on their primary
+    // contact and match no band, so "Unknown" is the only way to see them.
+    options: [
+      ...Object.entries(FOLLOWER_BANDS).map(([value, band]) => ({ value, label: band.label })),
+      { value: UNKNOWN_FOLLOWERS, label: UNKNOWN_LABEL },
+    ],
   },
   {
     key: "email",
@@ -126,13 +144,18 @@ export function readOrganisationFilters(searchParams: OrganisationsSearchParams)
   // `Object.hasOwn`, not `in`: `in` walks the prototype chain, so
   // `?country=__proto__` (or `constructor`, `toString`) passed as a
   // recognised code and reached the repo's exact-match clause. Same guard
-  // `isFollowerBand` uses.
-  if (typeof rawCountry === "string" && rawCountry !== "" && Object.hasOwn(COUNTRY_LABELS, rawCountry)) {
+  // `isFollowerFilter` uses. The unknown sentinel names no country, so it is
+  // admitted explicitly ahead of that check — otherwise picking "Unknown"
+  // reads as an unrecognised code and silently unfilters the surface.
+  if (
+    typeof rawCountry === "string" &&
+    (rawCountry === UNKNOWN_COUNTRY || Object.hasOwn(COUNTRY_LABELS, rawCountry))
+  ) {
     filters.country = rawCountry;
   }
 
   const rawFollowers = searchParams.followers;
-  if (typeof rawFollowers === "string" && isFollowerBand(rawFollowers)) {
+  if (typeof rawFollowers === "string" && isFollowerFilter(rawFollowers)) {
     filters.followers = rawFollowers;
   }
 

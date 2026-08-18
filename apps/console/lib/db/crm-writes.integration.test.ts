@@ -90,6 +90,15 @@ beforeAll(async () => {
     "../../../web/db/migrations/0025_crm_organisations_country.sql",
   );
   await db.exec(readFileSync(countryMigrationPath, "utf-8"));
+
+  // 0027 adds `crm_contacts.metadata`, the raw-scrape bag `createContact`
+  // now writes — without it here, the contact inserts below fail on an
+  // unknown column.
+  const metadataMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0027_crm_contacts_metadata.sql",
+  );
+  await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
 });
 
 afterAll(async () => {
@@ -585,5 +594,74 @@ describe("createContact writes and the contact unique indexes", () => {
     expect(cause).toBeInstanceOf(DuplicateContactError);
     expect((cause as Error).message).toMatch(/instagram handle/i);
     expect((cause as Error).message).not.toMatch(/Handle Holder/);
+  });
+});
+
+/**
+ * The scrape fields (#235). `followers_count`, `posts_count` and
+ * `biography` have been on `crm_contacts` since 0019 with no live writer;
+ * `metadata` is 0027's bag for the raw scrape output around them.
+ */
+describe("createContact and the scrape fields", () => {
+  it("writes all four — the three typed columns and the raw bag", async () => {
+    const { organisationId } = await createOrganisation({ name: "Scrape Co" });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "Ravi Menon",
+      email: "ravi@scrape.example",
+      biography: "Roaster and owner",
+      followersCount: 1200,
+      postsCount: 340,
+      metadata: { profile_pic_url: "https://cdn.example/ravi.jpg", is_verified: true },
+    });
+
+    const rows = await db.query<{
+      biography: string | null;
+      followers_count: number | null;
+      posts_count: number | null;
+      metadata: Record<string, unknown>;
+    }>(
+      `SELECT biography, followers_count, posts_count, metadata
+         FROM crm_contacts WHERE id = $1`,
+      [contactId],
+    );
+    expect(rows.rows[0]).toEqual({
+      biography: "Roaster and owner",
+      followers_count: 1200,
+      posts_count: 340,
+      // Round-trips as an object, not a string: the column is jsonb and the
+      // bag is only useful if what comes back out is what went in.
+      metadata: { profile_pic_url: "https://cdn.example/ravi.jpg", is_verified: true },
+    });
+  });
+
+  it("defaults the bag to an empty object when the caller supplies none", async () => {
+    const { organisationId } = await createOrganisation({ name: "Bagless Co" });
+    const { contactId } = await createContact({ organisationId, name: "No Bag" });
+    const rows = await db.query<{ metadata: Record<string, unknown>; biography: string | null }>(
+      `SELECT metadata, biography FROM crm_contacts WHERE id = $1`,
+      [contactId],
+    );
+    // NOT NULL DEFAULT '{}' — never null, so no reader has to distinguish
+    // "no bag" from "empty bag".
+    expect(rows.rows[0].metadata).toEqual({});
+    expect(rows.rows[0].biography).toBeNull();
+  });
+
+  it("refuses a count that the integer column cannot hold, rather than letting the INSERT raise", async () => {
+    const { organisationId } = await createOrganisation({ name: "Overflow Co" });
+    await expect(
+      createContact({ organisationId, name: "Too Many", followersCount: 2_147_483_648 }),
+    ).rejects.toThrow(/followersCount/);
+  });
+
+  it("refuses a fractional or negative count", async () => {
+    const { organisationId } = await createOrganisation({ name: "Fraction Co" });
+    await expect(
+      createContact({ organisationId, name: "Half", postsCount: 12.5 }),
+    ).rejects.toThrow(/postsCount/);
+    await expect(
+      createContact({ organisationId, name: "Negative", followersCount: -1 }),
+    ).rejects.toThrow(/followersCount/);
   });
 });

@@ -62,6 +62,17 @@ export interface ErasedContact {
  * the same business can use it; a tombstone string would squat the index and
  * block them.
  *
+ * `metadata` — the raw-scrape bag added by migration 0027 — is emptied in
+ * THIS statement, not by a follow-up write. It is the one column on the
+ * table whose contents nobody has enumerated (that is what it is for), so it
+ * is the one place personal data could survive an erasure request unnoticed:
+ * a scrape's `full_name`, `profile_pic_url` or `business_email` are as
+ * identifying as the columns above them. A second statement would be a
+ * second thing that can fail, be skipped, or be dropped out of the
+ * transaction by a future caller. Emptied rather than nulled, because the
+ * column is `NOT NULL DEFAULT '{}'`: one spelling of "nothing retained", so
+ * no reader has to distinguish two.
+ *
  * `source`, `sourced_at` and `lawful_basis` are left untouched: they record
  * *why we held the data*, are not identifying on their own, and are the
  * evidence that the erasure was owed. Erasing them would destroy the audit
@@ -99,6 +110,7 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
               biography = NULL,
               followers_count = NULL,
               posts_count = NULL,
+              metadata = '{}'::jsonb,
               erased_at = COALESCE(c.erased_at, now()),
               updated_at = now()
          FROM old

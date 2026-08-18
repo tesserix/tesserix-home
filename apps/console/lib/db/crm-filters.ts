@@ -57,3 +57,56 @@ export type FollowerBand = keyof typeof FOLLOWER_BANDS;
 export function isFollowerBand(value: string): value is FollowerBand {
   return Object.hasOwn(FOLLOWER_BANDS, value);
 }
+
+/**
+ * The Followers filter's "the primary contact has no follower count" option.
+ *
+ * A sentinel beside `FOLLOWER_BANDS` rather than a fourth entry in it: the
+ * bands are numeric bounds the repo turns into a `BETWEEN`-style predicate,
+ * and "absent" is a data state, not a range — encoding it as `min: null`
+ * would put a value that isn't a bound where every reader expects one. Same
+ * shape as `UNASSIGNED_PRODUCT`: a distinct value the URL reader admits
+ * explicitly and the repo turns into a NULL test.
+ *
+ * It is needed because a NULL `followers_count` matches no band, so before
+ * this option 51 production organisations were reachable from no follower
+ * filter value at all, with nothing on the surface saying so.
+ */
+export const UNKNOWN_FOLLOWERS = "__unknown__";
+
+/**
+ * The Country filter's "no country could be derived" option.
+ *
+ * Deliberately the same literal as `UNKNOWN_FOLLOWERS` but a separate
+ * constant: the two live on different filter keys and are never compared to
+ * each other, and naming them apart keeps each filter's own doc comment and
+ * call sites honest about which axis they describe.
+ *
+ * 208 of the 259 production organisations have a NULL `country` (an
+ * unmappable or absent `location` — see migration 0025), so without this
+ * option an operator filtering by country reaches at most a fifth of the CRM.
+ */
+export const UNKNOWN_COUNTRY = "__unknown__";
+
+/**
+ * The label both unknown options render with, in one place so the two
+ * surfaces and the two filters cannot drift apart on the wording.
+ *
+ * "Unknown", never "0" or "None": the rows behind it have no recorded value,
+ * which is not the same claim as a measured zero, and an operator reading
+ * "0 followers" would qualify a lead out on a number nobody ever collected.
+ */
+export const UNKNOWN_LABEL = "Unknown";
+
+/** A follower filter value: one of the numeric bands, or "unknown". */
+export type FollowerFilter = FollowerBand | typeof UNKNOWN_FOLLOWERS;
+
+/**
+ * Whether `value` is something the followers filter accepts — a band or the
+ * unknown sentinel. The URL readers use this rather than `isFollowerBand`,
+ * which stays narrow so the repo's band-bounds lookup keeps a type that
+ * cannot be handed a sentinel it has no bounds for.
+ */
+export function isFollowerFilter(value: string): value is FollowerFilter {
+  return value === UNKNOWN_FOLLOWERS || isFollowerBand(value);
+}
