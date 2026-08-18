@@ -45,6 +45,12 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if cfg.Database.SSLMode != "require" {
 		t.Errorf("sslmode must default to require, got %q", cfg.Database.SSLMode)
 	}
+	// Must match the console's fallback. The estate's database is
+	// tesserix_admin; defaulting to "tesserix" points local development at a
+	// database that does not exist.
+	if cfg.Database.Name != "tesserix_admin" {
+		t.Errorf("want the estate's database tesserix_admin, got %q", cfg.Database.Name)
+	}
 	// ADR-003 D2a: the pool constraint is measured. A default that quietly
 	// grew would undo the argument the modular monolith was chosen on.
 	if cfg.Database.MaxConns != 2 {
