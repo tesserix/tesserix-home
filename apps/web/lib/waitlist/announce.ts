@@ -22,13 +22,13 @@ import {
   recordAnnouncementRecipients,
 } from "@/lib/db/product-waitlist";
 import { logger } from "@/lib/logger";
+import { siteOrigin } from "@/lib/site-origin";
 import { sendViaSendGrid } from "@/lib/sendgrid/send";
 import {
   launchedProductSlugs,
   productTitle,
 } from "@/app/(marketing)/products/[slug]/products-data";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tesserix.app";
 const FROM =
   process.env.WAITLIST_FROM_EMAIL ?? "hello@tesserix.app";
 
@@ -51,11 +51,11 @@ export interface AnnounceRunResult {
 }
 
 function unsubscribeUrl(token: string): string {
-  return `${SITE_URL}/api/waitlist/unsubscribe?token=${encodeURIComponent(token)}`;
+  return `${siteOrigin()}/api/waitlist/unsubscribe?token=${encodeURIComponent(token)}`;
 }
 
 function productUrl(slug: string): string {
-  return `${SITE_URL}/products/${slug}`;
+  return `${siteOrigin()}/products/${slug}`;
 }
 
 /** Plain-text body. Every marketing mail needs one — some clients show only this. */

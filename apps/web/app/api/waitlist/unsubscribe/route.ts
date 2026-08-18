@@ -12,6 +12,7 @@ import { type NextRequest } from "next/server";
 
 import { unsubscribeByToken } from "@/lib/db/product-waitlist";
 import { logger } from "@/lib/logger";
+import { siteOrigin } from "@/lib/site-origin";
 
 function page(title: string, message: string, status: number): Response {
   const html = `<!doctype html>
@@ -43,7 +44,7 @@ function page(title: string, message: string, status: number): Response {
   <main>
     <h1>${title}</h1>
     <p>${message}</p>
-    <a href="https://tesserix.app/">Back to Tesserix</a>
+    <a href="${siteOrigin()}/">Back to Tesserix</a>
   </main>
 </body>
 </html>`;

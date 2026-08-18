@@ -20,34 +20,9 @@ import {
   signSession,
 } from "@tesserix/platform-auth";
 import { logger } from "@/lib/logger";
+import { siteOrigin } from "@/lib/site-origin";
 
 const STATE_COOKIE_NAME = "tx_oauth_state";
-
-const DEFAULT_SITE_ORIGIN = "https://tesserix.app";
-
-/**
- * This site's own origin.
- *
- * next.config.ts inlines `NEXT_PUBLIC_SITE_URL` at build time with a
- * `http://localhost:3002` default, and nothing in the deploy sets it — so in
- * production the variable can carry a loopback value. Honouring that here
- * would redirect real users to their own machine, so a loopback value is
- * treated as "unconfigured" in production.
- */
-function siteOrigin(): string {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL;
-  if (!configured) return DEFAULT_SITE_ORIGIN;
-  try {
-    const host = new URL(configured).host;
-    if (process.env.NODE_ENV === "production" && isLoopback(host)) {
-      return DEFAULT_SITE_ORIGIN;
-    }
-    // Return the configured string, not `URL.origin`, which would rewrite it.
-    return configured;
-  } catch {
-    return DEFAULT_SITE_ORIGIN;
-  }
-}
 
 /** Loopback with or without a port. `[::1]:3002` keeps its brackets. */
 function isLoopback(host: string): boolean {
@@ -71,6 +46,10 @@ function isLoopback(host: string): boolean {
 // `http` can no longer produce a downgraded URL. A host that fails the check is
 // not an error — we fall back to our own origin, because rejecting the request
 // would turn a header no legitimate client sends into a DoS knob.
+//
+// The origin it checks against comes from lib/site-origin.ts — see there for
+// why it is a runtime `SITE_ORIGIN` and no longer an inlined
+// `NEXT_PUBLIC_SITE_URL`.
 //
 // Mirrors apps/console/lib/public-origin.ts, which has the same helper (and
 // had the same hole) against CONSOLE_PUBLIC_ORIGIN.

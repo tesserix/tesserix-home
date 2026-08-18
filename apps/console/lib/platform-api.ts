@@ -206,7 +206,8 @@ export async function fetchTickets(
 // The origin apps/web's CSRF gate checks writes against. A server-to-server
 // fetch carries no Origin of its own, and evaluateCsrf treats "cookie-bearing
 // mutation, no Origin" as a forgery — so the console names itself explicitly.
-// Must stay in lockstep with CSRF_ALLOWED_DOMAINS in the company chart.
+// Must stay in lockstep with DEFAULT_CSRF_HOSTNAMES in @tesserix/platform-auth
+// (plus any CSRF_ALLOWED_DOMAINS the company deployment adds on top).
 const CONSOLE_ORIGIN =
   process.env.CONSOLE_PUBLIC_ORIGIN ?? "https://console.tesserix.app";
 

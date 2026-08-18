@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
 
+import { siteOrigin } from "@/lib/site-origin";
+
 // Every rule shares the same disallow list — non-public surfaces stay
 // non-public for every crawler, not just the default one.
 const DISALLOW = ["/api/", "/admin/", "/login", "/auth/"];
@@ -31,7 +33,7 @@ const AI_CRAWLER_USER_AGENTS = [
 ] as const;
 
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = "https://tesserix.app";
+  const baseUrl = siteOrigin();
 
   return {
     rules: [

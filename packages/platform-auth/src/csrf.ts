@@ -11,7 +11,71 @@ export interface CsrfRequest {
   headers: { get(name: string): string | null };
 }
 
-export function evaluateCsrf(request: CsrfRequest): CsrfDecision {
+/**
+ * The hostnames this platform is actually served on.
+ *
+ * Sourced from the Istio VirtualServices in the `tesserix` namespace:
+ * `company-vs` serves exactly `tesserix.app` and `console-vs` serves exactly
+ * `console.tesserix.app`. Nothing else routes to an app that mounts this
+ * middleware. **If that routing changes, this list must change with it.**
+ *
+ * This lives in code rather than only in `CSRF_ALLOWED_DOMAINS` because the
+ * allowlist used to be derived from the request's own `Host` /
+ * `X-Forwarded-Host` headers — i.e. the request nominated the hostname its
+ * `Origin` was then checked against, which is no check at all. Both derived
+ * sources are gone. `Host` in particular was only load-bearing because the
+ * console deployment sets no `CSRF_ALLOWED_DOMAINS` at all; this default now
+ * covers that case, so the control no longer depends on deploy config being
+ * right.
+ */
+export const DEFAULT_CSRF_HOSTNAMES: readonly string[] = [
+  "tesserix.app",
+  "console.tesserix.app",
+];
+
+/**
+ * The origins a browser sends when the apps are run locally (`next dev` on
+ * localhost). Without these, dropping the `Host` derivation would block every
+ * mutation in local development — including login, since a browser POST to
+ * `/api/auth/*` does carry an `Origin` and so never reaches the no-Origin
+ * carve-out. Seeded in code rather than left to `.env.example`, because a
+ * control that only works for developers who remembered to set a variable is
+ * broken for the next person who clones the repo.
+ */
+const DEV_CSRF_HOSTNAMES: readonly string[] = ["localhost", "127.0.0.1", "[::1]"];
+
+/**
+ * Defaults plus anything in `CSRF_ALLOWED_DOMAINS`. The env var is purely
+ * additive: a new host can be allowed without a release, but a missing or
+ * misconfigured value cannot shrink the set.
+ */
+function allowedCsrfHostnames(): Set<string> {
+  const allowed = new Set<string>(DEFAULT_CSRF_HOSTNAMES);
+  // Deliberately `=== "development"` and NOT `!== "production"`: an
+  // environment that forgot to set NODE_ENV must fall through to production
+  // behaviour, not silently acquire localhost in its CSRF allowlist. The
+  // positive test is the point, however odd it looks next to the usual idiom.
+  if (process.env.NODE_ENV === "development") {
+    for (const hostname of DEV_CSRF_HOSTNAMES) allowed.add(hostname);
+  }
+  const configured = process.env.CSRF_ALLOWED_DOMAINS;
+  if (configured) {
+    for (const domain of configured.split(",")) {
+      const trimmed = domain.trim();
+      if (trimmed) allowed.add(trimmed);
+    }
+  }
+  return allowed;
+}
+
+/**
+ * `allowedHostnames` exists so the fail-closed branch below is reachable from a
+ * test; production callers pass nothing and get the defaults plus the env var.
+ */
+export function evaluateCsrf(
+  request: CsrfRequest,
+  allowedHostnames: ReadonlySet<string> = allowedCsrfHostnames(),
+): CsrfDecision {
   const isApiRoute = request.nextUrl.pathname.startsWith("/api/");
   const isMutating = ["POST", "PUT", "DELETE", "PATCH"].includes(request.method);
   if (!isApiRoute || !isMutating) {
@@ -38,17 +102,11 @@ export function evaluateCsrf(request: CsrfRequest): CsrfDecision {
   const origin = request.headers.get("origin");
   const referer = request.headers.get("referer");
 
-  const allowedHostnames = new Set<string>();
-  const host = request.headers.get("host");
-  if (host) allowedHostnames.add(host.split(":")[0]);
-  const fwdHost = request.headers.get("x-forwarded-host");
-  if (fwdHost) allowedHostnames.add(fwdHost.split(",")[0].trim().split(":")[0]);
-  const csrfDomains = process.env.CSRF_ALLOWED_DOMAINS;
-  if (csrfDomains) {
-    csrfDomains.split(",").forEach((d) => allowedHostnames.add(d.trim()));
-  }
   if (allowedHostnames.size === 0) {
-    return { blocked: false };
+    // Fail closed. DEFAULT_CSRF_HOSTNAMES is non-empty, so a default caller
+    // cannot land here — which is the point. Empty used to mean "allow
+    // everything", the one outcome a CSRF check must never silently produce.
+    return { blocked: true, message: "CSRF check failed" };
   }
 
   const matches = (raw: string | null): boolean => {
