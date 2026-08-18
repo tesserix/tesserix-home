@@ -2,6 +2,8 @@
 
 **Status**: Proposed
 **Date**: 2026-08-18
+**Amended**: 2026-08-18 — D7 (the console retires its direct database access)
+and D8 (both principals authenticate through Zitadel).
 **Related**: [ADR-002: Delivery visibility on ArgoCD + Kargo](./ADR-002-DELIVERY-VISIBILITY.md)
 
 ## Context
@@ -280,6 +282,118 @@ work:
 Days of work, independent of every other decision here, and it also unblocks e2e
 coverage for surfaces that cannot be tested today (#243's unfinished half).
 
+### D7 — The console becomes a pure UI over the platform API
+
+D1 commits the console to dropping `/api/admin/*`. This goes further: the
+console stops reading the database directly as well. Every read and write it
+performs eventually crosses the platform API, and `apps/console/lib/db/*` — the
+CRM repository, audit, notifications, search — retires module by module as the
+API absorbs each domain.
+
+**Why the eight endpoints are not enough.** D1's target is `tesserix-home`
+becoming the marketing site, and its stated blocker is the console consuming
+`apps/web`. But the console also holds its own `pg.Pool` against
+`tesserix-postgres`, and `lib/db/tesserix.ts` says in its own header that it
+mirrors `apps/web/lib/db/tesserix.ts` and reads *"the same database with the
+same credentials."* Two Node processes and, shortly, a Go service all writing
+the same tables is not an end state anybody chose — it is what remains if only
+D1 is executed.
+
+**This ADR was silent on it, which is not the same as deciding it.** The comment
+in `tesserix.ts` calls this "the console reading its OWN store — tesserix-postgres
+is platform-owned, not a product database", and that reasoning is sound for what
+it addressed: it argues the console is not coupling a product to the platform's
+availability. It was never an argument that the console should hold a connection
+pool once a platform API exists. Recorded here so the silence stops reading as
+permission.
+
+**What this costs, stated plainly.** The console pays a network hop where it
+currently pays a query, and its route handlers become composition over HTTP
+rather than over SQL. That is the same cost D1 already accepted for the eight
+endpoints, extended to the rest.
+
+**What it buys** is the thing D1 is actually for. A domain whose only writer is
+the platform API has one place to enforce capabilities, one audit trail, and one
+contract for products to consume. A domain with two writers has none of those,
+and the console's capability checks stay decoration — the same failure #269
+names for the API itself.
+
+#### D7a — CRM and audit migrate together, in one module
+
+Not a sequencing preference. `auditedOperation` guarantees that an unauditable
+operation does not proceed, and it does so by sharing one transaction. #245's
+contact clock advances an opportunity in the same transaction as the activity
+insert, precisely so a write cannot half-land.
+
+Migrate the CRM to the API while audit stays in the console — or the reverse —
+and that guarantee becomes a distributed transaction or is quietly lost. They
+move as one module, in one migration. This is D2a's transaction-boundary
+argument applied to the migration order rather than to the service split.
+
+#### D7b — What this does to M11
+
+The roadmap runs M11 CRM in parallel on the stated grounds that it is "largely
+independent of the platform API." Under D7 that independence has an expiry date,
+and the sequencing rule — *do not build a console surface against `/api/admin/*`*
+— acquires a second clause: **do not build a new CRM surface against the
+console's own pool either**, once the CRM module is scheduled.
+
+The split that follows:
+
+- **M11 correctness** (#246–#252) continues on the direct-DB path. These are
+  small, several are nearly done, and holding live bugs — an erasure path used
+  to fix a typo, a silent cap at 100 — behind an API that does not exist yet
+  would be trading a real defect for an architectural one.
+- **M11 structural** (#254–#259) targets the platform API. These are new
+  surfaces; building them twice is exactly what the sequencing rule exists to
+  prevent.
+
+### D8 — The platform API authenticates both principals through Zitadel
+
+The API takes Zitadel access tokens. Two principal types, one issuer:
+
+- **An operator**, acting through the console.
+- **A service** — a product calling the platform API directly. Filing a platform
+  ticket on a merchant's behalf is the concrete case, and it is what
+  `/api/internal/*` does today.
+
+Validation is the same on both paths: verify against Zitadel's JWKS, check the
+issuer and the platform API's audience, then read
+`urn:zitadel:iam:org:project:roles` and map it to the capability vocabulary
+#261 defines. The principals differ in which roles they hold, not in how they
+are proven.
+
+**The cheaper option, and why it is declined.** `tx_session` is a JWE — `alg:
+"dir"`, `enc: "A256GCM"`, off a symmetric `SESSION_ENCRYPT_KEY`. A Go service
+could decrypt it in a few lines and ship the tickets module without touching
+Zitadel. It is rejected because it answers only the operator half: a product has
+no `tx_session` and never will, so the service principal would need a second
+mechanism anyway — which is how an estate acquires the fourth auth path #165
+exists to unpick. It also spreads a symmetric secret across two deployables in
+two languages, to authenticate a principal an asymmetric issuer already attests.
+
+**This answers #161.** `INTERNAL_API_TOKEN` is one shared bearer for every
+caller of `/api/internal/*`. Its replacement is a Zitadel machine user per
+calling product, holding only the roles that product needs. Scoping stops being
+a policy nobody can enforce and becomes a role grant that either exists or does
+not.
+
+**The wiring the console already half-has.** `lib/auth/oidc.ts` requests
+`offline_access` and the project audience scope, and `app/auth/callback/route.ts`
+then discards `access_token` and `refresh_token`, keeping only ID-token claims.
+So the console must retain the refresh token and add the platform API's project
+to its login scopes. Sessions live 7 days and access tokens do not, which is why
+the refresh token is required rather than convenient.
+
+**Two Zitadel settings are prerequisites, not implementation detail.** The
+console's application must issue **JWT** access tokens rather than opaque ones,
+or every API request costs an introspection round-trip. And roles must be
+asserted on the **access** token, not only the ID token. Both are checkboxes in
+Zitadel's UI, and `oidc.ts` already documents this estate hitting the adjacent
+version of this trap: the failure mode is a perfectly valid token carrying no
+roles at all, *"which presents as an application bug rather than a configuration
+gap."* Verify both before the first module's authorisation is written.
+
 ## Consequences
 
 **Accepted:**
@@ -299,6 +413,17 @@ coverage for surfaces that cannot be tested today (#243's unfinished half).
 - A documented, exercised break-glass runbook becomes a prerequisite for removing
   the Google login, not a follow-up.
 - A repository rename at the end is optional and cheap; nothing depends on it.
+- The console pays a network hop where it pays a query today, and its route
+  handlers compose over HTTP rather than SQL (D7). Accepted as the cost of a
+  single writer per domain.
+- The console's connection pool retires with its last direct-DB module, which
+  returns two connections to a shared small Postgres — a modest gain against
+  D2a's measured constraint, in the opposite direction from adding a service.
+- M11 CRM stops being independent of the platform API for new surfaces (D7b).
+  Correctness work continues on the direct-DB path; structural work targets the
+  API.
+- Two Zitadel configuration settings become prerequisites for the first module's
+  authorisation (D8), with a failure mode that presents as an application bug.
 
 **Required before M4 work starts:**
 
@@ -318,10 +443,16 @@ coverage for surfaces that cannot be tested today (#243's unfinished half).
    two-person integrity.
 
 **Sequencing.** Build the platform API with boundary enforcement, and point every
-new console surface at it. Sever the two existing `/api/admin/*` dependencies.
-Fix and redesign the secrets flow in place (1–2), then absorb its UI. Stand up the
-new mobile app. Delete each legacy surface as its replacement ships. D6 happens in
-parallel and immediately.
+new console surface at it. Sever the `/api/admin/*` dependencies, then — per D7 —
+the console's own database access, CRM and audit together. Fix and redesign the
+secrets flow in place (1–2), then absorb its UI. Stand up the new mobile app.
+Delete each legacy surface as its replacement ships. D6 happens in parallel and
+immediately.
+
+Tickets is the first module (#269): it exercises reads, a write, a status
+transition and pagination, and settles the conventions against real requirements.
+D8's two Zitadel settings are verified before its authorisation is written, and
+#261's vocabulary is what that authorisation enforces.
 
 ## What would change this decision
 
@@ -340,3 +471,11 @@ parallel and immediately.
   from prerequisite to good practice.
 - **D5**: if mobile parity turns out to be wanted rather than a subset, the route
   contract inversion should be reconsidered before it is built, not after.
+- **D7**: a measured latency or availability cost that the composition layer
+  cannot absorb would justify keeping a read path on the pool. A *preference*
+  for the query would not — that is the argument the ADR is answering. D7a is
+  firmer: it only relaxes if `auditedOperation`'s single-transaction guarantee
+  is deliberately given up, which is a separate decision.
+- **D8**: if Zitadel cannot assert roles on access tokens for machine users, the
+  service principal needs another design — and that should be settled before the
+  tickets module ships, not discovered by it.
