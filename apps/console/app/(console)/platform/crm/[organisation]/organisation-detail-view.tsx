@@ -769,13 +769,12 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
+  // Gates the only submitter below, which is the only way `submit` runs —
+  // Enter in a field implicitly clicks that button, and a disabled button
+  // submits nothing. So `submit` does not re-check; `addContactAction` does.
   const hasField = [name, email, phone, instagramHandle].some((value) => value.trim().length > 0);
 
   const submit = () => {
-    if (!hasField) {
-      setError("Enter at least a name, email, phone, or Instagram handle.");
-      return;
-    }
     setError(null);
     startTransition(async () => {
       const result = await addContactAction({

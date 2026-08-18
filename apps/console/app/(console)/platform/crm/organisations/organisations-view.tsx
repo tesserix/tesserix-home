@@ -84,9 +84,43 @@ function useOrganisationUrlFilters(descriptors: FilterDescriptor[]): UrlFilters 
   return { values, set, clear };
 }
 
+/**
+ * How many products a row names before the rest collapse into "+N more".
+ *
+ * Three, because products come from `ESTATE` — seven contexts today — so an
+ * unbounded join can put seven comma-separated names into one cell of a
+ * five-column table and push the columns an operator actually scans (name,
+ * location, contact) off to the side. Three names sit within the widths the
+ * other cells already occupy, and cover a row's whole product set for the
+ * single- and dual-product cases without any "+N more" at all.
+ */
+const PRODUCTS_SHOWN = 3;
+
+/**
+ * The row's products, capped at `PRODUCTS_SHOWN` with a muted "+N more" tail
+ * — the same muted-secondary idiom the contact cell and the em-dash empty
+ * states in this file already use, no new colour.
+ *
+ * Nothing becomes unreachable: the overflowing names are rendered as
+ * `sr-only` text (so they are in the cell's accessible name and findable by
+ * assistive tech) as well as in `title` (so a sighted mouse user can hover).
+ * `title` alone would satisfy neither keyboard nor screen-reader users, which
+ * is why it is the secondary affordance rather than the only one.
+ */
 function ProductsCell({ products }: { products: readonly string[] }) {
   if (products.length === 0) return <span className="text-muted-foreground">—</span>;
-  return <span>{products.join(", ")}</span>;
+
+  const shown = products.slice(0, PRODUCTS_SHOWN);
+  const hidden = products.slice(PRODUCTS_SHOWN);
+  if (hidden.length === 0) return <span>{shown.join(", ")}</span>;
+
+  return (
+    <span title={products.join(", ")}>
+      {shown.join(", ")}
+      <span className="text-muted-foreground"> +{hidden.length} more</span>
+      <span className="sr-only">: {hidden.join(", ")}</span>
+    </span>
+  );
 }
 
 /**

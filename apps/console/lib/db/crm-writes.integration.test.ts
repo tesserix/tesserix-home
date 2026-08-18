@@ -44,8 +44,13 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { createOrganisation, createContact, createOpportunity, updateOrganisation } =
-  await import("./crm-writes");
+const {
+  createOrganisation,
+  createContact,
+  createOpportunity,
+  updateOrganisation,
+  DuplicateContactError,
+} = await import("./crm-writes");
 const { addSuppression, SuppressedContactError, linkConversion } = await import("./crm-repo");
 
 let db: PGlite;
@@ -65,6 +70,17 @@ beforeAll(async () => {
     "../../../web/db/migrations/0022_crm_suppressions_normalize.sql",
   );
   await db.exec(readFileSync(normalizeMigrationPath, "utf-8"));
+
+  // 0023 makes `lower(instagram_handle)` unique (0019 shipped it plain —
+  // issue #215) and adds the normalising trigger that makes that index
+  // total rather than partial. Loaded here because the duplicate-contact
+  // refusal below is a claim about what the REAL indexes enforce, and
+  // `crm_contacts_instagram_lower_uq` does not exist without it.
+  const instagramUniqueMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0023_crm_contacts_instagram_unique.sql",
+  );
+  await db.exec(readFileSync(instagramUniqueMigrationPath, "utf-8"));
 
   // 0025 adds `crm_organisations.country`, which `createOrganisation` now
   // writes — without it here, this fixture's inserts would fail on an
@@ -437,5 +453,137 @@ describe("updateOrganisation", () => {
         name: "Ghost Co",
       }),
     ).rejects.toThrow(/not found/i);
+  });
+});
+
+/**
+ * `createContact`'s own path — the door for a second phone number on an
+ * organisation already in the CRM.
+ *
+ * The suppression tests above prove what it REFUSES. These prove what it
+ * writes when it accepts, and what the database refuses underneath it.
+ */
+describe("createContact writes and the contact unique indexes", () => {
+  async function contactRow(id: string) {
+    const rows = await db.query(
+      `SELECT name, email, phone, instagram_handle, is_primary
+         FROM crm_contacts WHERE id = $1`,
+      [id],
+    );
+    return rows.rows[0] as {
+      name: string | null;
+      email: string | null;
+      phone: string | null;
+      instagram_handle: string | null;
+      is_primary: boolean;
+    };
+  }
+
+  it("persists every field it was given, trimmed, with the email lowercased", async () => {
+    const { organisationId } = await createOrganisation({ name: "Contents Co" });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "  Ada Vale  ",
+      email: "  Ada@Contents.Example  ",
+      phone: "  0400 000 000  ",
+    });
+
+    const row = await contactRow(contactId);
+    expect(row.name).toBe("Ada Vale");
+    // Lowercased on the way in, so `crm_contacts_email_lower_uq` and every
+    // `lower(email) = lower($1)` lookup agree about the stored form.
+    expect(row.email).toBe("ada@contents.example");
+    expect(row.phone).toBe("0400 000 000");
+  });
+
+  it("stores a blank optional field as NULL, not an empty string", async () => {
+    const { organisationId } = await createOrganisation({ name: "Blanks Co" });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "Solo",
+      phone: "   ",
+    });
+
+    const row = await contactRow(contactId);
+    expect(row.phone).toBeNull();
+    expect(row.email).toBeNull();
+    expect(row.instagram_handle).toBeNull();
+  });
+
+  it("does not make a later contact primary — the first one keeps that", async () => {
+    // `listOrganisations` orders "primary first, created_at second". A
+    // second contact silently claiming primary would move which person the
+    // organisation row and the detail view lead with.
+    const { organisationId } = await createOrganisation({
+      name: "Two Contacts Co",
+      contact: { name: "First", email: "first@example.com" },
+    });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "Second",
+      email: "second@example.com",
+    });
+
+    expect((await contactRow(contactId)).is_primary).toBe(false);
+  });
+
+  it("marks the contact primary when the caller asks for it", async () => {
+    const { organisationId } = await createOrganisation({ name: "Primary Co" });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "Lead",
+      email: "lead@example.com",
+      isPrimary: true,
+    });
+
+    expect((await contactRow(contactId)).is_primary).toBe(true);
+  });
+
+  it("refuses a duplicate email and names that key, without naming the holder", async () => {
+    const first = await createOrganisation({ name: "Email Holder" });
+    await createContact({ organisationId: first.organisationId, email: "taken@example.com" });
+    const second = await createOrganisation({ name: "Email Latecomer" });
+
+    const cause = await createContact({
+      organisationId: second.organisationId,
+      email: "TAKEN@example.com",
+    }).then(
+      () => {
+        throw new Error("expected createContact to reject");
+      },
+      (error: unknown) => error,
+    );
+
+    expect(cause).toBeInstanceOf(DuplicateContactError);
+    expect((cause as Error).message).toMatch(/email/i);
+    // The holder is another business's record; the operator learns the key
+    // is taken and nothing else.
+    expect((cause as Error).message).not.toMatch(/Email Holder/);
+    expect((cause as Error).message).not.toMatch(new RegExp(first.organisationId));
+
+    const rows = await db.query(`SELECT id FROM crm_contacts WHERE organisation_id = $1`, [
+      second.organisationId,
+    ]);
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it("refuses a duplicate Instagram handle and names that key", async () => {
+    const first = await createOrganisation({ name: "Handle Holder" });
+    await createContact({ organisationId: first.organisationId, instagramHandle: "takenshop" });
+    const second = await createOrganisation({ name: "Handle Latecomer" });
+
+    const cause = await createContact({
+      organisationId: second.organisationId,
+      instagramHandle: "TakenShop",
+    }).then(
+      () => {
+        throw new Error("expected createContact to reject");
+      },
+      (error: unknown) => error,
+    );
+
+    expect(cause).toBeInstanceOf(DuplicateContactError);
+    expect((cause as Error).message).toMatch(/instagram handle/i);
+    expect((cause as Error).message).not.toMatch(/Handle Holder/);
   });
 });

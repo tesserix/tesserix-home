@@ -59,6 +59,7 @@ import {
   createContact,
   createOpportunity as createOpportunityRow,
   updateOrganisation,
+  DuplicateContactError,
 } from "@/lib/db/crm-writes";
 import { eraseContact, deleteOrganisation } from "@/lib/db/crm-erasure";
 import { withCrmWrite } from "@/lib/crm-write";
@@ -607,6 +608,42 @@ describe("addActivity and the do-not-contact list", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Item 6: the other half of the same refusal. A `23505` on either
+ * contact-identity index arrived as `withCrmWrite`'s generic "That change was
+ * not saved." — indistinguishable, to an operator, from a transport failure
+ * worth retrying. The import path already resolves this exact condition
+ * informatively (`matchedExisting`, crm-repo.ts); the manual door now does too.
+ */
+describe("addContactAction and the contact unique indexes", () => {
+  it("names the email when that key is already taken", async () => {
+    signIn(["read"]);
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("email"));
+
+    const result = await addContactAction({ organisationId: ORG_ID, email: "taken@example.com" });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/already/i);
+    expect(result.ok === false && result.message).toMatch(/email/i);
+    // Which organisation holds it is another business's record.
+    expect(result.ok === false && result.message).not.toContain(ORG_ID);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("names the Instagram handle when that is the key that collided", async () => {
+    signIn(["read"]);
+    vi.mocked(isDatabaseConfigured).mockReturnValue(true);
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("instagramHandle"));
+
+    const result = await addContactAction({ organisationId: ORG_ID, instagramHandle: "takenshop" });
+
+    expect(result.ok === false && result.message).toMatch(/instagram handle/i);
   });
 });
 

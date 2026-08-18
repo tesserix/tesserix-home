@@ -20,7 +20,8 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { updateOrganisation } = await import("./crm-writes");
+const { updateOrganisation, createContact, createOrganisation, DuplicateContactError } =
+  await import("./crm-writes");
 
 /** The current row `SELECT ... FOR UPDATE` returns, unless a test overrides. */
 const CURRENT = {
@@ -172,5 +173,106 @@ describe("updateOrganisation", () => {
       name: { from: "Bondi Baker", to: "Bondi Bakery" },
       location: { from: "Sydney", to: "Delhi" },
     });
+  });
+});
+
+/**
+ * A duplicate contact must say so.
+ *
+ * `crm_contacts_email_lower_uq` / `crm_contacts_instagram_lower_uq` are the
+ * two indexes an everyday second attempt trips. Detection is on the Postgres
+ * error's `code` and `constraint` fields, never its message: the message is
+ * wording, not contract, and a driver or server that phrases it differently
+ * would silently turn this into the generic failure again.
+ */
+function uniqueViolation(constraint: string, code = "23505"): Error {
+  return Object.assign(
+    new Error(`duplicate key value violates unique constraint "${constraint}"`),
+    { code, constraint },
+  );
+}
+
+describe("createContact and the contact unique indexes", () => {
+  const INPUT = { organisationId: "g1", email: "ada@example.com" };
+
+  beforeEach(() => {
+    query.mockReset();
+    // First statement of the transaction is the suppression check; an empty
+    // result means "not on the list", so the INSERT is reached.
+    query.mockResolvedValueOnce([]);
+  });
+
+  /** Resolves with whatever `createContact` threw. */
+  async function rejection(error: Error): Promise<unknown> {
+    query.mockRejectedValueOnce(error);
+    return createContact(INPUT).then(
+      () => {
+        throw new Error("expected createContact to reject");
+      },
+      (cause: unknown) => cause,
+    );
+  }
+
+  it("names the email when crm_contacts_email_lower_uq rejects the insert", async () => {
+    const cause = await rejection(uniqueViolation("crm_contacts_email_lower_uq"));
+    expect(cause).toBeInstanceOf(DuplicateContactError);
+    expect((cause as InstanceType<typeof DuplicateContactError>).key).toBe("email");
+    expect((cause as Error).message).toMatch(/already/i);
+    expect((cause as Error).message).toMatch(/email/i);
+  });
+
+  it("names the handle when crm_contacts_instagram_lower_uq rejects the insert", async () => {
+    const cause = await rejection(uniqueViolation("crm_contacts_instagram_lower_uq"));
+    expect(cause).toBeInstanceOf(DuplicateContactError);
+    expect((cause as InstanceType<typeof DuplicateContactError>).key).toBe("instagramHandle");
+    expect((cause as Error).message).toMatch(/already/i);
+    expect((cause as Error).message).toMatch(/instagram handle/i);
+  });
+
+  it("never says which organisation already holds the contact", async () => {
+    // A different tenant's record. The operator learns that the key is taken
+    // and nothing else — naming the holder is disclosure, not help.
+    const cause = await rejection(uniqueViolation("crm_contacts_email_lower_uq"));
+    expect(cause).toBeInstanceOf(DuplicateContactError);
+    expect((cause as Error).message).not.toMatch(/g1/);
+  });
+
+  it("leaves a 23505 on any other constraint alone", async () => {
+    // Only the two contact-identity indexes mean "this contact already
+    // exists". Translating every unique violation would put that sentence in
+    // front of an operator who hit something else entirely.
+    const cause = await rejection(uniqueViolation("crm_opportunities_pkey"));
+    expect(cause).not.toBeInstanceOf(DuplicateContactError);
+  });
+
+  it("leaves a non-23505 error alone even when it names one of the indexes", async () => {
+    // 23503 is a foreign-key violation — a bad `organisation_id`, not a
+    // duplicate. The code is what decides; the constraint name only narrows.
+    const cause = await rejection(uniqueViolation("crm_contacts_email_lower_uq", "23503"));
+    expect(cause).not.toBeInstanceOf(DuplicateContactError);
+  });
+
+  it("survives a thrown non-object and re-throws it unchanged", async () => {
+    // The inspection reads `code`/`constraint` off the cause. A rejection
+    // that is not an object at all must pass straight through, not become a
+    // TypeError raised inside the error path itself.
+    query.mockRejectedValueOnce(null);
+    const cause = await createContact(INPUT).then(
+      () => {
+        throw new Error("expected createContact to reject");
+      },
+      (error: unknown) => error,
+    );
+    expect(cause).toBeNull();
+  });
+
+  it("translates the same collision on the new-organisation path", async () => {
+    // `createOrganisation`'s first contact goes through the same insert, so
+    // both manual-create doors get the same sentence.
+    query.mockResolvedValueOnce([{ id: "org-1" }]);
+    query.mockRejectedValueOnce(uniqueViolation("crm_contacts_email_lower_uq"));
+    await expect(
+      createOrganisation({ name: "Dup Co", contact: { email: "ada@example.com" } }),
+    ).rejects.toBeInstanceOf(DuplicateContactError);
   });
 });

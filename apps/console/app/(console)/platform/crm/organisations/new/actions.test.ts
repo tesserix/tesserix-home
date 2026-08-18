@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/lib/db/crm-writes", () => ({
+vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/crm-writes")>()),
   createOrganisation: vi.fn(),
 }));
 // Ruling 17: every CRM write goes through the one wrapper — session check,
@@ -17,7 +18,7 @@ vi.mock("@/lib/crm-write", async (importOriginal) => ({
 
 import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { revalidatePath } from "next/cache";
-import { createOrganisation } from "@/lib/db/crm-writes";
+import { createOrganisation, DuplicateContactError } from "@/lib/db/crm-writes";
 import { withCrmWrite } from "@/lib/crm-write";
 import { createOrganisationAction } from "./actions";
 
@@ -188,5 +189,38 @@ describe("createOrganisationAction", () => {
     const result = await createOrganisationAction(form);
 
     expect(result).toEqual({ ok: false, message: "on the list" });
+  });
+  // Item 6: a `23505` on either contact-identity index used to arrive as the
+  // generic "That change was not saved.", which reads as a bug and invites a
+  // retry that can never succeed. The same condition the IMPORT path already
+  // resolves informatively (`matchedExisting`) has to be as legible here.
+  it("names a duplicate contact rather than reporting a generic failure", async () => {
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+      const mapped = map?.(new DuplicateContactError("email"));
+      return mapped ?? { ok: false, message: "That change was not saved." };
+    });
+    const form = new FormData();
+    form.set("name", "Latecomer Co");
+    form.set("contactEmail", "taken@example.com");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/already/i);
+    expect(result.ok === false && result.message).toMatch(/email/i);
+  });
+
+  it("names the Instagram handle when that is the key that collided", async () => {
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+      const mapped = map?.(new DuplicateContactError("instagramHandle"));
+      return mapped ?? { ok: false, message: "That change was not saved." };
+    });
+    const form = new FormData();
+    form.set("name", "Latecomer Co");
+    form.set("contactInstagramHandle", "takenshop");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result.ok === false && result.message).toMatch(/instagram handle/i);
   });
 });
