@@ -291,6 +291,147 @@ describe("owner filter escapes LIKE metacharacters against a real database", () 
   });
 });
 
+// The queue's own qualification signal (see the module doc on
+// dueOpportunities/driftingOpportunities): country and follower band. Both
+// predicates are shared with the organisations browse surface via
+// `primaryContactFollowerClause`/`g.country = $n`, but that sharing is exactly
+// what a shape-only unit test can't confirm applies correctly to the
+// opportunity-joined queue query — a real database, seeded with a
+// distinguishing follower count and country per organisation, is what proves
+// the predicate resolves the right row.
+describe("country and follower-band filters against a real database", () => {
+  let inOrgId: string;
+  let auOrgId: string;
+  let nullFollowersOrgId: string;
+
+  const inDueOppId = "cccccccc-1111-1111-1111-111111111111";
+  const inDriftingOppId = "cccccccc-1111-1111-1111-111111111112";
+  const auDueOppId = "cccccccc-2222-2222-2222-222222222221";
+  const auDriftingOppId = "cccccccc-2222-2222-2222-222222222222";
+  const nullFollowersDueOppId = "cccccccc-3333-3333-3333-333333333331";
+  const nullFollowersDriftingOppId = "cccccccc-3333-3333-3333-333333333332";
+
+  beforeAll(async () => {
+    const inOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Queue Filter Chennai Org", "Chennai", "QQ"],
+    );
+    inOrgId = inOrg.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+       VALUES ($1, $2, true, $3)`,
+      [inOrgId, "Chennai Creator", 15000],
+    );
+
+    const auOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Queue Filter Sydney Org", "Sydney", "ZZ"],
+    );
+    auOrgId = auOrg.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+       VALUES ($1, $2, true, $3)`,
+      [auOrgId, "Sydney Creator", 500],
+    );
+
+    const nullOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Queue Filter Null Followers Org", "Chennai", "QQ"],
+    );
+    nullFollowersOrgId = nullOrg.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+       VALUES ($1, $2, true, NULL)`,
+      [nullFollowersOrgId, "Unmeasured Contact"],
+    );
+
+    // One due row and one drifting row per organisation, so both queries can
+    // be exercised against the same fixtures. `owner` is set on the IN due
+    // row only, to test country/followers composing with an existing filter.
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, owner, next_action_at, last_contacted_at, created_at)
+       VALUES
+         ($1, $2, 'new', 'Priya K', $9::timestamptz, NULL, $10::timestamptz),
+         ($3, $2, 'new', NULL, NULL, NULL, $11::timestamptz),
+         ($4, $5, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
+         ($6, $5, 'new', NULL, NULL, NULL, $11::timestamptz),
+         ($7, $8, 'new', NULL, $9::timestamptz, NULL, $10::timestamptz),
+         ($12, $8, 'new', NULL, NULL, NULL, $11::timestamptz)`,
+      [
+        inDueOppId,
+        inOrgId,
+        inDriftingOppId,
+        auDueOppId,
+        auOrgId,
+        auDriftingOppId,
+        nullFollowersDueOppId,
+        nullFollowersOrgId,
+        daysAgo(1),
+        daysAgo(1),
+        daysAgo(90),
+        nullFollowersDriftingOppId,
+      ],
+    );
+  });
+
+  it("filters dueOpportunities by country", async () => {
+    const rows = await dueOpportunities({ country: "QQ" }, 50);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain(inDueOppId);
+    expect(ids).not.toContain(auDueOppId);
+  });
+
+  it("filters driftingOpportunities by country", async () => {
+    const rows = await driftingOpportunities({ country: "QQ" }, 14, 50);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain(inDriftingOppId);
+    expect(ids).not.toContain(auDriftingOppId);
+  });
+
+  it("filters dueOpportunities by follower band on the primary contact", async () => {
+    const rows = await dueOpportunities({ followers: "over10k" }, 50);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain(inDueOppId);
+    expect(ids).not.toContain(auDueOppId);
+  });
+
+  it("filters driftingOpportunities by follower band on the primary contact", async () => {
+    const rows = await driftingOpportunities({ followers: "under1k" }, 14, 50);
+    const ids = rows.map((r) => r.id);
+    expect(ids).toContain(auDriftingOppId);
+    expect(ids).not.toContain(inDriftingOppId);
+  });
+
+  it("excludes a NULL followers_count from every band, in both due and drifting", async () => {
+    const dueUnder1k = await dueOpportunities({ followers: "under1k" }, 50);
+    const dueOver10k = await dueOpportunities({ followers: "over10k" }, 50);
+    expect(dueUnder1k.map((r) => r.id)).not.toContain(nullFollowersDueOppId);
+    expect(dueOver10k.map((r) => r.id)).not.toContain(nullFollowersDueOppId);
+
+    const driftingUnder1k = await driftingOpportunities({ followers: "under1k" }, 14, 50);
+    const driftingOver10k = await driftingOpportunities({ followers: "over10k" }, 14, 50);
+    expect(driftingUnder1k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
+    expect(driftingOver10k.map((r) => r.id)).not.toContain(nullFollowersDriftingOppId);
+  });
+
+  it("composes country and followers with the existing owner filter", async () => {
+    const rows = await dueOpportunities(
+      { country: "QQ", followers: "over10k", owner: "Priya" },
+      50,
+    );
+    expect(rows.map((r) => r.id)).toEqual([inDueOppId]);
+
+    // Same organisation's country/follower band, but the owner substring
+    // doesn't match — composing must AND, not OR, the predicates together.
+    const nonMatching = await dueOpportunities(
+      { country: "QQ", followers: "over10k", owner: "Someone Else" },
+      50,
+    );
+    expect(nonMatching.map((r) => r.id)).not.toContain(inDueOppId);
+  });
+});
+
 // Important 7: the mocked unit tests in crm-repo.test.ts assert only that
 // the SQL text contains `lower(` and that the raw value reaches `params` —
 // an implementation of `lower(email) = $1` (`lower()` on the column only,
@@ -935,7 +1076,12 @@ describe("listOrganisations", () => {
     });
 
     it("filters by follower band on the primary contact", async () => {
-      const page = await listOrganisations({ followers: "over10k" }, 50);
+      // Scoped with `search`, like the hasEmail tests below: an unscoped
+      // over10k query also matches fixtures other describe blocks in this
+      // file seed (the queue's own country/follower-band coverage), and
+      // this test's `toEqual` is only meaningful against this block's own
+      // fixtures.
+      const page = await listOrganisations({ followers: "over10k", search: "Filter Test" }, 50);
       expect(page.rows.map((r) => r.id)).toEqual([bigCreatorOrgId]);
     });
 

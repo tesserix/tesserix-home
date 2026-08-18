@@ -35,6 +35,13 @@ export interface QueueFilter {
   product?: string;
   stage?: CrmStage;
   owner?: string;
+  /** ISO 3166-1 alpha-2, exact match on the derived `crm_organisations.country`
+   *  column — never a pattern over the raw `location`. Same contract as
+   *  `OrganisationFilter.country` below. */
+  country?: string;
+  /** Follower-count band of the organisation's primary contact — the same
+   *  contact a row displays, selected with `primaryContactOrder()`. */
+  followers?: FollowerBand;
 }
 
 export interface QueueRow {
@@ -105,13 +112,50 @@ function toQueueRow(row: RawQueueRow): QueueRow {
 }
 
 /**
- * Builds `AND …` clauses for an optional product/stage/owner filter, pushing
- * each present value onto `params` as a bound parameter (never interpolated
- * into the SQL string) and returning the clause fragment to splice after the
- * query's own predicates. An absent filter key adds no clause at all — the
- * partial indexes' own predicates stay first and untouched, so
- * `crm_opp_due_idx`/`crm_opp_drifting_idx` remain usable regardless of which
- * filters are active.
+ * `EXISTS` clause matching organisation `${orgAlias}.id`'s PRIMARY contact
+ * into `band` — selected with `primaryContactOrder()`, the same ordering the
+ * row itself is displayed with, so a filter can never resolve a different
+ * contact than the one on screen (see that function's doc comment for why
+ * that has been a defect twice already). Shared by the queue's `filterClause`
+ * and the browse surface's `organisationFilterClauses` so the two can never
+ * drift apart on what "the primary contact's follower band" means.
+ *
+ * A NULL `followers_count` is excluded explicitly (`IS NOT NULL`), not left
+ * to fail the upper bound implicitly: `NULL <= 999` is NULL, not true, in
+ * SQL, so the exclusion holds either way — but leaving it implicit would
+ * make that reliance invisible to the next reader.
+ */
+function primaryContactFollowerClause(orgAlias: string, band: FollowerBand, params: unknown[]): string {
+  const bounds = FOLLOWER_BANDS[band];
+  params.push(bounds.min);
+  const minParam = `$${params.length}`;
+  let upperBound = "";
+  if (bounds.max !== null) {
+    params.push(bounds.max);
+    upperBound = ` AND c.followers_count <= $${params.length}`;
+  }
+  return `EXISTS (
+        SELECT 1 FROM crm_contacts c
+         WHERE c.organisation_id = ${orgAlias}.id
+           AND c.id = (
+             SELECT c2.id FROM crm_contacts c2
+              WHERE c2.organisation_id = ${orgAlias}.id
+              ORDER BY ${primaryContactOrder("c2")}
+              LIMIT 1
+           )
+           AND c.followers_count IS NOT NULL
+           AND c.followers_count >= ${minParam}${upperBound}
+      )`;
+}
+
+/**
+ * Builds `AND …` clauses for an optional product/stage/owner/country/followers
+ * filter, pushing each present value onto `params` as a bound parameter
+ * (never interpolated into the SQL string) and returning the clause fragment
+ * to splice after the query's own predicates. An absent filter key adds no
+ * clause at all — the partial indexes' own predicates stay first and
+ * untouched, so `crm_opp_due_idx`/`crm_opp_drifting_idx` remain usable
+ * regardless of which filters are active.
  */
 function filterClause(filter: QueueFilter, params: unknown[]): string {
   const clauses: string[] = [];
@@ -138,6 +182,17 @@ function filterClause(filter: QueueFilter, params: unknown[]): string {
     const escaped = filter.owner.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     params.push(`%${escaped}%`);
     clauses.push(`o.owner ILIKE $${params.length} ESCAPE '\\'`);
+  }
+  if (filter.country) {
+    // Exact match on the derived column, never a pattern over raw
+    // `location` — same as `organisationFilterClauses`. `g` is the
+    // organisation both `dueOpportunities` and `driftingOpportunities` join
+    // in for `organisation_name`, so it's already in scope here.
+    params.push(filter.country);
+    clauses.push(`g.country = $${params.length}`);
+  }
+  if (filter.followers) {
+    clauses.push(primaryContactFollowerClause("g", filter.followers, params));
   }
   return clauses.length > 0 ? `\n        AND ${clauses.join("\n        AND ")}` : "";
 }
@@ -1848,30 +1903,10 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
   if (filter.followers) {
     // Bounded on the primary contact, selected the same way the page query
     // selects the displayed contact — otherwise a row could appear under a
-    // band its visible follower count contradicts.
-    const band = FOLLOWER_BANDS[filter.followers];
-    params.push(band.min);
-    const minParam = `$${params.length}`;
-    let upperBound = "";
-    if (band.max !== null) {
-      params.push(band.max);
-      upperBound = ` AND c.followers_count <= $${params.length}`;
-    }
-    clauses.push(`EXISTS (
-        SELECT 1 FROM crm_contacts c
-         WHERE c.organisation_id = g.id
-           AND c.id = (
-             SELECT c2.id FROM crm_contacts c2
-              WHERE c2.organisation_id = g.id
-              ORDER BY ${primaryContactOrder("c2")}
-              LIMIT 1
-           )
-           -- Explicit: a NULL followers_count must never fall into the
-           -- lowest band by satisfying the upper bound on an unmeasured
-           -- contact.
-           AND c.followers_count IS NOT NULL
-           AND c.followers_count >= ${minParam}${upperBound}
-      )`);
+    // band its visible follower count contradicts. Shared with the queue's
+    // `filterClause` via `primaryContactFollowerClause` so the two surfaces
+    // can't drift apart on what "primary contact" or "NULL excluded" means.
+    clauses.push(primaryContactFollowerClause("g", filter.followers, params));
   }
 
   if (filter.hasEmail) {

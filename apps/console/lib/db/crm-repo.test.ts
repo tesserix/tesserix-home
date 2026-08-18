@@ -254,6 +254,67 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     expect(sql.indexOf("next_action_at IS NULL")).toBeLessThan(sql.indexOf("o.product ="));
     expect(sql.indexOf("stage NOT IN")).toBeLessThan(sql.indexOf("o.product ="));
   });
+
+  it("binds country as an exact-match parameter against the organisation, not the raw location", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ country: "IN" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("g.country = $1");
+    expect(sql).not.toContain("location");
+    expect(params).toEqual(["IN", 50]);
+  });
+
+  it("binds the follower band's bounds as parameters, excluding a NULL followers_count explicitly", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ followers: "k1to10k" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("c.followers_count IS NOT NULL");
+    expect(sql).toContain("c.followers_count >= $1");
+    expect(sql).toContain("c.followers_count <= $2");
+    expect(params).toEqual([1000, 9999, 50]);
+  });
+
+  it("resolves the follower band against the primary contact, same ordering the row displays", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ followers: "over10k" }, 50);
+    const [sql] = query.mock.calls[0];
+    expect(sql).toContain("is_primary DESC");
+    expect(sql).toContain("c.organisation_id = g.id");
+  });
+
+  it("omits the upper bound for the open-ended top band", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities({ followers: "over10k" }, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).not.toContain("c.followers_count <=");
+    expect(params).toEqual([10000, 50]);
+  });
+
+  it("combines country and followers with product/stage/owner, each its own bound parameter", async () => {
+    query.mockResolvedValue([]);
+    await dueOpportunities(
+      { product: "mark8ly", stage: "qualified", owner: "Asha", country: "IN", followers: "over10k" },
+      50,
+    );
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("o.product = $1");
+    expect(sql).toContain("o.stage = $2");
+    expect(sql).toContain("o.owner ILIKE $3");
+    expect(sql).toContain("g.country = $4");
+    expect(sql).toContain("c.followers_count >= $5");
+    expect(params).toEqual(["mark8ly", "qualified", "%Asha%", "IN", 10000, 50]);
+  });
+
+  it("binds country and followers on the drifting query the same way", async () => {
+    query.mockResolvedValue([]);
+    await driftingOpportunities({ country: "IN", followers: "under1k" }, 14, 50);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("g.country = $1");
+    expect(sql).toContain("c.followers_count >= $2");
+    expect(sql).toContain("c.followers_count <= $3");
+    expect(sql).toContain("make_interval(days => $4::int)");
+    expect(params).toEqual(["IN", 0, 999, 14, 50]);
+  });
 });
 
 describe("advanceStage", () => {
