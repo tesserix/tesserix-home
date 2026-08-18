@@ -16,6 +16,7 @@ import {
   createContact,
   createOpportunity as createOpportunityRow,
   updateOrganisation,
+  DuplicateContactError,
   type ChangedField,
   type OrganisationField,
 } from "@/lib/db/crm-writes";
@@ -187,6 +188,31 @@ function mapSuppressedContact(cause: unknown): { ok: false; message: string } | 
   return undefined;
 }
 
+/**
+ * The second allowlisted exception on the manual-create path.
+ *
+ * A `23505` on `crm_contacts_email_lower_uq` or
+ * `crm_contacts_instagram_lower_uq` is an operator-facing fact with a clear
+ * next step — that contact is already in the CRM — not a caught database
+ * error. `createContact`/`createOrganisation` raise it typed
+ * (`DuplicateContactError`, crm-writes.ts) precisely so this mapper can pass
+ * the message through without inspecting a database error string here. The
+ * import path resolves the same condition informatively as `matchedExisting`
+ * (crm-repo.ts); the manual door was where it degraded to the generic
+ * "That change was not saved."
+ */
+function mapDuplicateContact(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof DuplicateContactError) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
+/** Both refusals a hand-typed contact can produce, in one allowlist. */
+function mapContactRefusal(cause: unknown): { ok: false; message: string } | undefined {
+  return mapSuppressedContact(cause) ?? mapDuplicateContact(cause);
+}
+
 export async function addActivity(input: AddActivityInput): Promise<CrmActionResult> {
   if (!isHumanActivityKind(input.kind)) {
     return { ok: false, message: `"${input.kind}" is not an activity kind an operator can log directly.` };
@@ -336,11 +362,11 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
         instagramHandle,
       }),
     () => ({ action: "crm.contact.create", summary: { contacts: 1 } }),
-    // `createContact` now refuses a suppressed contact at the data layer
-    // (crm-writes.ts). Allowlisted to the same operator-facing exception
-    // `addActivity` maps: without it the refusal would surface as the
+    // `createContact` refuses a suppressed contact, and one whose email or
+    // handle is already taken, at the data layer (crm-writes.ts). Both
+    // allowlisted here: without them either refusal would surface as the
     // generic "That change was not saved." and read as a bug.
-    mapSuppressedContact,
+    mapContactRefusal,
   );
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);

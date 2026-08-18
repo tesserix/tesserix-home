@@ -39,9 +39,22 @@ const SUPPRESSED_ON_CREATE_MESSAGE =
  * Refuse the write if either identifying key is suppressed.
  *
  * Runs on the caller's own `query` — the transaction's scoped client, not a
- * second pooled connection — for Ruling 23's reason: the check and the insert
- * must not straddle a concurrent suppression being added, and the pool is
- * `max: 2`.
+ * second pooled connection. Of Ruling 23's two reasons for that, only the
+ * second applies here: neither caller has written a suppression this
+ * transaction could need to see, but both are holding a client already, and
+ * a check on its own connection would take the other half of a `max: 2`
+ * pool for the length of the write.
+ *
+ * What the shared client does NOT do is close the window between this check
+ * and the INSERT that follows. Under READ COMMITTED a suppression committed
+ * after this SELECT is invisible to the rest of the transaction, so a
+ * suppression added mid-write is still missed. Closing it would take
+ * SERIALIZABLE, a `FOR SHARE` lock on the matching suppression rows, or a
+ * database constraint — and no unique index can be that constraint, because
+ * the condition spans two tables (`crm_contacts` against
+ * `crm_suppressions`) and an index only sees one. The window is left open
+ * knowingly: it is narrow, and its outcome is a single contact row an
+ * operator can erase, not a lost suppression.
  */
 async function assertNotSuppressed(
   query: TxQuery,
@@ -50,6 +63,64 @@ async function assertNotSuppressed(
   if (await isSuppressed(keys, query)) {
     throw new SuppressedContactError(undefined, SUPPRESSED_ON_CREATE_MESSAGE);
   }
+}
+
+/**
+ * Which identifying key an operator has already used. Not free text: the
+ * message an operator reads is chosen from this, and the action layer has no
+ * business re-deriving it from a database error string.
+ */
+export type DuplicateContactKey = "email" | "instagramHandle";
+
+/**
+ * Thrown when one of the two contact-identity indexes refuses the insert.
+ *
+ * Same shape and same job as `SuppressedContactError` (crm-repo.ts): an
+ * allowlisted, operator-facing exception rather than a generic failure.
+ * Without it a `23505` reaches the operator as `withCrmWrite`'s "That change
+ * was not saved.", which reads as a transport fault and invites a retry that
+ * can never succeed. The import path already resolves the same condition
+ * informatively — `findMatchingOrganisationId` feeding `matchedExisting`
+ * (crm-repo.ts) — so the manual door was the one place this fact was lost.
+ *
+ * The message names the key and stops there. Which organisation holds the
+ * existing contact is another business's record, and this refusal is not the
+ * place to disclose it.
+ */
+const DUPLICATE_CONTACT_MESSAGES: Readonly<Record<DuplicateContactKey, string>> = {
+  email:
+    "A contact with that email address is already in the CRM. Search for it rather than adding a second one.",
+  instagramHandle:
+    "A contact with that Instagram handle is already in the CRM. Search for it rather than adding a second one.",
+};
+
+export class DuplicateContactError extends Error {
+  constructor(readonly key: DuplicateContactKey) {
+    super(DUPLICATE_CONTACT_MESSAGES[key]);
+    this.name = "DuplicateContactError";
+  }
+}
+
+/**
+ * The only two constraints that mean "this contact already exists". Matched
+ * on the Postgres error's `code` and `constraint` fields, never on its
+ * message: the message is wording a server or driver may phrase differently,
+ * while `23505` and the index name are contract. A `23505` on anything else
+ * — a primary key, a constraint added later — is a different fact and must
+ * not borrow this sentence.
+ */
+const UNIQUE_VIOLATION = "23505";
+
+const CONTACT_KEY_CONSTRAINTS: ReadonlyMap<string, DuplicateContactKey> = new Map([
+  ["crm_contacts_email_lower_uq", "email" as DuplicateContactKey],
+  ["crm_contacts_instagram_lower_uq", "instagramHandle" as DuplicateContactKey],
+]);
+
+function duplicateContactKey(cause: unknown): DuplicateContactKey | undefined {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  const { code, constraint } = cause as { code?: unknown; constraint?: unknown };
+  if (code !== UNIQUE_VIOLATION || typeof constraint !== "string") return undefined;
+  return CONTACT_KEY_CONSTRAINTS.get(constraint);
 }
 
 export interface CreateOrganisationInput {
@@ -176,9 +247,12 @@ async function insertOrganisation(
 /**
  * Create a contact against an existing organisation.
  *
- * Transactional despite being a single INSERT: the suppression check and the
- * insert have to see the same client, or a suppression added between them is
- * simply missed — the same reasoning `logActivity` applies to outreach.
+ * Transactional despite being a single INSERT, for Ruling 23's connection
+ * argument rather than a race argument: the check and the insert share one
+ * client, so this write costs one connection out of a `max: 2` pool instead
+ * of two. It does not make the pair atomic against a suppression added
+ * between them — see `assertNotSuppressed` above for why that window stays
+ * open and what would actually close it.
  */
 export async function createContact(input: CreateContactInput): Promise<{ contactId: string }> {
   return tesserixTx(async (query) => {
@@ -191,24 +265,34 @@ export async function createContact(input: CreateContactInput): Promise<{ contac
   });
 }
 
+// Both manual-create doors insert their contact here, so translating the
+// collision at this one statement is what makes `createOrganisation` and
+// `createContact` refuse identically. Anything that is not one of the two
+// contact-identity constraints is re-thrown untouched.
 async function insertContact(
   query: TxQuery,
   input: CreateContactInput,
 ): Promise<string> {
-  const rows = await query<{ id: string }>(
-    `INSERT INTO crm_contacts (organisation_id, name, email, phone, instagram_handle, is_primary)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id`,
-    [
-      input.organisationId,
-      input.name?.trim() || null,
-      input.email ? input.email.trim().toLowerCase() : null,
-      input.phone?.trim() || null,
-      input.instagramHandle?.trim() || null,
-      input.isPrimary ?? false,
-    ],
-  );
-  return rows[0].id;
+  try {
+    const rows = await query<{ id: string }>(
+      `INSERT INTO crm_contacts (organisation_id, name, email, phone, instagram_handle, is_primary)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [
+        input.organisationId,
+        input.name?.trim() || null,
+        input.email ? input.email.trim().toLowerCase() : null,
+        input.phone?.trim() || null,
+        input.instagramHandle?.trim() || null,
+        input.isPrimary ?? false,
+      ],
+    );
+    return rows[0].id;
+  } catch (cause) {
+    const key = duplicateContactKey(cause);
+    if (key) throw new DuplicateContactError(key);
+    throw cause;
+  }
 }
 
 /**

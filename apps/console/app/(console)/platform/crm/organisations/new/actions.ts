@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { ESTATE } from "@tesserix/console-core";
-import { createOrganisation } from "@/lib/db/crm-writes";
+import { createOrganisation, DuplicateContactError } from "@/lib/db/crm-writes";
 // One definition, three comparers — see `crm-filters.ts`. A `"use server"`
 // file may only export async functions, which is why this module imports the
 // sentinel rather than owning it.
@@ -41,6 +41,31 @@ function mapSuppressedContact(cause: unknown): { ok: false; message: string } | 
     return { ok: false, message: cause.message };
   }
   return undefined;
+}
+
+/**
+ * The second allowlisted exception on the manual-create path.
+ *
+ * A `23505` on `crm_contacts_email_lower_uq` or
+ * `crm_contacts_instagram_lower_uq` is an operator-facing fact with a clear
+ * next step — that contact is already in the CRM — not a caught database
+ * error. `createContact`/`createOrganisation` raise it typed
+ * (`DuplicateContactError`, crm-writes.ts) precisely so this mapper can pass
+ * the message through without inspecting a database error string here. The
+ * import path resolves the same condition informatively as `matchedExisting`
+ * (crm-repo.ts); the manual door was where it degraded to the generic
+ * "That change was not saved."
+ */
+function mapDuplicateContact(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof DuplicateContactError) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
+/** Both refusals a hand-typed contact can produce, in one allowlist. */
+function mapContactRefusal(cause: unknown): { ok: false; message: string } | undefined {
+  return mapSuppressedContact(cause) ?? mapDuplicateContact(cause);
 }
 
 // Generic: strips whitespace and empty-string, nothing else. The
@@ -121,11 +146,12 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
       // display name is neither unique nor stable.
       target: `${name} (${outcome.organisationId})`,
     }),
-    // `createOrganisation` refuses a suppressed first contact at the data
-    // layer (crm-writes.ts). Allowlisted here, same discipline as the
-    // `[organisation]/actions.ts` mappers: it is an operator-facing fact
-    // with a clear next step, not a caught database error.
-    mapSuppressedContact,
+    // `createOrganisation` refuses a suppressed first contact, and refuses
+    // one whose email or handle is already taken, at the data layer
+    // (crm-writes.ts). Both allowlisted here, same discipline as the
+    // `[organisation]/actions.ts` mappers: they are operator-facing facts
+    // with a clear next step, not caught database errors.
+    mapContactRefusal,
   );
   if (!result.ok) return result;
   revalidatePath("/platform/crm/organisations");
