@@ -11,7 +11,6 @@ import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
 import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 
-export type { CrmActionResult };
 
 /**
  * The manual-create door into the CRM (#213): a lead phoned in has no CSV

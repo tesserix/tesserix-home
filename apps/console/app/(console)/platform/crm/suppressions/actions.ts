@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { addSuppression, removeSuppression } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 
-export type { CrmActionResult };
 
 /**
  * The do-not-contact list's two writes, both through `withCrmWrite`
