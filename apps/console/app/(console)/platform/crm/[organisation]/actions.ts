@@ -29,7 +29,6 @@ import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
 
-export type { CrmActionResult };
 
 /**
  * `crm_opportunities.product` and `crm_organisations.converted_product` are
