@@ -505,6 +505,22 @@ describe("createContact writes and the contact unique indexes", () => {
     expect(row.phone).toBe("0400 000 000");
   });
 
+  it("stores an @-prefixed handle in its canonical form", async () => {
+    // #236. Companion to the unit test, which asserts the parameter
+    // `insertContact` passes: 0023's `crm_contacts_normalize()` trigger
+    // normalises on write too, so this test alone could not tell the
+    // application layer and the storage layer apart. What it does pin is
+    // that the two agree on the canonical form.
+    const { organisationId } = await createOrganisation({ name: "Handle Co" });
+    const { contactId } = await createContact({
+      organisationId,
+      name: "Bondi Baker",
+      instagramHandle: "  @BondiBaker  ",
+    });
+
+    expect((await contactRow(contactId)).instagram_handle).toBe("bondibaker");
+  });
+
   it("stores a blank optional field as NULL, not an empty string", async () => {
     const { organisationId } = await createOrganisation({ name: "Blanks Co" });
     const { contactId } = await createContact({

@@ -276,3 +276,45 @@ describe("createContact and the contact unique indexes", () => {
     ).rejects.toBeInstanceOf(DuplicateContactError);
   });
 });
+
+/**
+ * #236: the handle the application checks against the do-not-contact list
+ * and the handle it hands to the INSERT have to be the same string.
+ *
+ * Asserted on the parameters `insertContact` passes, not on a row read back:
+ * migration 0023's `crm_contacts_normalize()` trigger already normalises on
+ * write, so a read-back assertion would pass whether or not the application
+ * normalises — it would be testing the trigger. Pinning the parameter is
+ * what stops the trigger being load-bearing.
+ */
+describe("createContact and the instagram handle it hands to the INSERT", () => {
+  /** Parameters of the INSERT — call 0 is the suppression check. */
+  async function insertParams(instagramHandle: string): Promise<unknown[]> {
+    query.mockReset();
+    query.mockResolvedValueOnce([]);
+    query.mockResolvedValueOnce([{ id: "c1" }]);
+    await createContact({ organisationId: "g1", instagramHandle });
+    const [sql, params] = query.mock.calls[1];
+    expect(sql).toMatch(/INSERT INTO crm_contacts/);
+    return params as unknown[];
+  }
+
+  it("strips a leading @ and lowercases before the insert", async () => {
+    expect((await insertParams("@BondiBaker"))[4]).toBe("bondibaker");
+  });
+
+  it("hands the insert the same string the suppression check used", async () => {
+    query.mockReset();
+    query.mockResolvedValueOnce([]);
+    query.mockResolvedValueOnce([{ id: "c1" }]);
+    await createContact({ organisationId: "g1", instagramHandle: " @@BondiBaker " });
+    const checkParams = query.mock.calls[0][1] as unknown[];
+    const insertedHandle = (query.mock.calls[1][1] as unknown[])[4];
+    // Whatever form the check keyed on is the form that gets stored.
+    expect(checkParams).toContain(insertedHandle);
+  });
+
+  it("still stores null for an absent or blank handle", async () => {
+    expect((await insertParams("   "))[4]).toBeNull();
+  });
+});
