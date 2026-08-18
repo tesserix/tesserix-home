@@ -36,6 +36,32 @@ export function isDatabaseConfigured(): boolean {
   );
 }
 
+/**
+ * How to negotiate TLS with tesserix-postgres.
+ *
+ * CNPG self-signs and rotates internally, so the connection is encrypted but
+ * NOT verified — pinning the CA would force a rebuild on every rotation, and
+ * this is an in-cluster connection with no MITM exposure.
+ *
+ * `TESSERIX_DB_SSLMODE=disable` turns TLS off entirely, for local development
+ * only: a plain Postgres speaks no TLS and REFUSES the negotiation, so without
+ * this the console cannot reach the dev database at all and every CRM surface
+ * renders "Could not load organisations" — the exact failure #271 exists to
+ * end.
+ *
+ * OPT-OUT ONLY, AND NEVER THE DEFAULT. Any other value — unset, mistyped,
+ * empty, `require` — leaves TLS on, so a misconfiguration cannot silently
+ * downgrade a deployed connection to plaintext. The Helm charts set `require`,
+ * which is treated exactly as unset.
+ *
+ * Exported so that property is a test rather than a comment.
+ */
+export function sslOption(): false | { rejectUnauthorized: boolean } {
+  return env("TESSERIX_DB_SSLMODE") === "disable"
+    ? false
+    : { rejectUnauthorized: false };
+}
+
 let pool: Pool | undefined;
 
 function getPool(): Pool {
@@ -51,9 +77,7 @@ function getPool(): Pool {
     database: env("TESSERIX_DB_NAME") ?? "tesserix_admin",
     user: env("TESSERIX_DB_USER"),
     password: env("TESSERIX_DB_PASSWORD"),
-    // CNPG self-signs and rotates internally; pinning the CA would force
-    // rebuilds on every rotation. In-cluster connection, no MITM exposure.
-    ssl: { rejectUnauthorized: false },
+    ssl: sslOption(),
     // The console polls; it does not batch. Two connections is plenty and
     // leaves headroom on a single-instance database shared with apps/web.
     max: 2,

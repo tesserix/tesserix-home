@@ -26,7 +26,18 @@ export default defineConfig({
           ...SHARED,
           name: "node",
           environment: "node",
-          include: ["lib/**/*.test.ts", "app/**/*.test.ts", "components/**/*.test.ts"],
+          // `dev/` holds the local admin-API stub (#271) and the test that
+          // verifies it against the console's own parsers. It is node-env like
+          // the rest of this project, and it must run in CI: a stub that has
+          // drifted from the contract is worse than no stub, because local
+          // development and e2e both keep passing against a shape production
+          // no longer serves.
+          include: [
+            "lib/**/*.test.ts",
+            "app/**/*.test.ts",
+            "components/**/*.test.ts",
+            "dev/**/*.test.ts",
+          ],
         },
       },
       {
