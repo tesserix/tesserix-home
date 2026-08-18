@@ -45,19 +45,25 @@ function orgRows(count: number): OrganisationListRow[] {
   }));
 }
 
-/** `listOrganisations` returns `{ rows, total, precedingCount, nextCursor }`.
- *  Defaults `total` to `rows.length`, `precedingCount` to 0 and `nextCursor`
- *  to `null` — the first-page case for these tests, which are about the
- *  page's own read of the rows/total it's handed. */
+/** `listOrganisations` returns `{ rows, total, precedingCount, nextCursor,
+ *  previousCursor }`. Defaults `total` to `rows.length`, `precedingCount` to
+ *  0 and both cursors to `null` — the first-page case for these tests, which
+ *  are about the page's own read of the rows/total it's handed. */
 function orgPage(
   rows: OrganisationListRow[],
-  overrides: { total?: number; precedingCount?: number; nextCursor?: string | null } = {},
+  overrides: {
+    total?: number;
+    precedingCount?: number;
+    nextCursor?: string | null;
+    previousCursor?: string | null;
+  } = {},
 ) {
   return {
     rows,
     total: overrides.total ?? rows.length,
     precedingCount: overrides.precedingCount ?? 0,
     nextCursor: overrides.nextCursor ?? null,
+    previousCursor: overrides.previousCursor ?? null,
   };
 }
 
@@ -169,6 +175,41 @@ describe("OrganisationsPage", () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
       expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), "abc");
+    });
+
+    it("offers a previous control only when there is a page behind this one", async () => {
+      listOrganisations.mockResolvedValue(
+        orgPage(orgRows(100), { total: 259, precedingCount: 100, nextCursor: "n", previousCursor: "p" }),
+      );
+      render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
+      const previous = screen.getByRole("link", { name: /previous page of organisations/i });
+      expect(new URLSearchParams((previous.getAttribute("href") ?? "").split("?")[1]).get("cursor")).toBe("p");
+    });
+
+    it("offers no previous control on page one", async () => {
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259, nextCursor: "abc" }));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryByRole("link", { name: /previous/i })).toBeNull();
+    });
+
+    it("carries every other param onto the previous link too", async () => {
+      // Same defect as the next link: a builder that named the params it
+      // knew about would drop an operator's filters the moment they paged
+      // BACK, which is the direction nothing exercised until now.
+      listOrganisations.mockResolvedValue(
+        orgPage(orgRows(100), { total: 259, precedingCount: 100, previousCursor: "p" }),
+      );
+      render(
+        await Page({
+          searchParams: Promise.resolve({ q: "priya", someFutureFilter: "x", cursor: "abc" }),
+        }),
+      );
+      const previous = screen.getByRole("link", { name: /previous/i });
+      const params = new URLSearchParams((previous.getAttribute("href") ?? "").split("?")[1]);
+      expect(params.get("q")).toBe("priya");
+      expect(params.get("someFutureFilter")).toBe("x");
+      // The stale cursor is replaced, never appended alongside the new one.
+      expect(params.getAll("cursor")).toEqual(["p"]);
     });
 
     // Not in the brief — a ruling. A later task adds four more filter params

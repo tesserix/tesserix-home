@@ -1,7 +1,5 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Button,
@@ -14,76 +12,20 @@ import {
 } from "@tesserix/web";
 import {
   FilterBar,
-  mergeFiltersIntoQuery,
-  queryToFilters,
+  useUrlFilters,
   type FilterDescriptor,
   type FilterValues,
-  type UrlFilters,
 } from "@/components/kit/filter-bar";
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
 
 /**
- * Same URL-round-trip contract as `useUrlFilters` (`filter-bar.tsx`), with
- * one addition: every filter mutation also drops `?cursor=`. This surface
- * paginates by cursor, not by the `page` param `mergeFiltersIntoQuery`
- * already knows to clear on a filter change, so without this it would be
- * possible to narrow a filter while on page 3 and land on an empty page 3 of
- * a now-shorter list — indistinguishable from "no results" rather than
- * "you're past the end". Both the merge and the cursor drop happen inside
- * one `push`, in one `router.replace`, so a quick filter change can never
- * race a separate cursor-clearing navigation into overwriting it.
+ * Every filter mutation on this surface also drops `?cursor=`: it paginates
+ * by cursor, not by the `page` param `mergeFiltersIntoQuery` already clears.
+ * A module constant so the hook's memoised `push` keeps a stable identity.
  */
-function useOrganisationUrlFilters(descriptors: FilterDescriptor[]): UrlFilters {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  const searchString = searchParams.toString();
-
-  const values = useMemo(
-    () => queryToFilters(new URLSearchParams(searchString), descriptors),
-    [searchString, descriptors],
-  );
-
-  // Same race guard as `useUrlFilters`: `router.replace` is asynchronous, so
-  // `searchParams` still holds the old query for the rest of the tick.
-  const pendingRef = useRef<string | null>(null);
-  useEffect(() => {
-    pendingRef.current = null;
-  }, [searchString]);
-
-  const push = useCallback(
-    (update: (previous: FilterValues) => FilterValues) => {
-      const current = new URLSearchParams(pendingRef.current ?? searchString);
-      const previous = queryToFilters(current, descriptors);
-      const merged = new URLSearchParams(mergeFiltersIntoQuery(current, descriptors, update(previous)));
-      merged.delete("cursor");
-      const query = merged.toString();
-      pendingRef.current = query;
-      router.replace(query ? `${pathname}?${query}` : pathname);
-    },
-    [router, pathname, searchString, descriptors],
-  );
-
-  const set = useCallback(
-    (key: string, value: string) => {
-      push((previous) => {
-        const next = { ...previous, [key]: value };
-        if (value === "") {
-          delete next[key];
-        }
-        return next;
-      });
-    },
-    [push],
-  );
-
-  const clear = useCallback(() => push(() => ({})), [push]);
-
-  return { values, set, clear };
-}
+const CURSOR_PARAMS = ["cursor"] as const;
 
 /**
  * How many products a row names before the rest collapse into "+N more".
@@ -193,6 +135,11 @@ export interface OrganisationsViewProps {
    *  param carried over by `page.tsx`'s `buildNextHref`; `null` on the last
    *  page. */
   nextHref: string | null;
+  /** The same for the previous page, built by `buildPreviousHref`; `null` on
+   *  the first page. Required, not optional: `null` is the first-page answer,
+   *  and a surface that simply forgot the prop would look identical to one
+   *  that is genuinely on page one. */
+  previousHref: string | null;
 }
 
 export function OrganisationsView({
@@ -204,8 +151,9 @@ export function OrganisationsView({
   total,
   precedingCount,
   nextHref,
+  previousHref,
 }: OrganisationsViewProps) {
-  const { set, clear } = useOrganisationUrlFilters(descriptors);
+  const { set, clear } = useUrlFilters(descriptors, CURSOR_PARAMS);
 
   return (
     <div className="flex flex-col gap-6">
@@ -227,6 +175,7 @@ export function OrganisationsView({
             total={total}
             precedingCount={precedingCount}
             nextHref={nextHref}
+            previousHref={previousHref}
           />
           <Table aria-label="Organisations">
             <TableHeader>

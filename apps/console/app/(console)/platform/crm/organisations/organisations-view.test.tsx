@@ -39,6 +39,7 @@ function renderView() {
       total={0}
       precedingCount={0}
       nextHref={null}
+      previousHref={null}
     />,
   );
 }
@@ -110,6 +111,7 @@ function renderRowWithProducts(products: readonly string[]) {
       total={1}
       precedingCount={0}
       nextHref={null}
+      previousHref={null}
     />,
   );
   // The body row (index 0 is the header row); Products is the last column.

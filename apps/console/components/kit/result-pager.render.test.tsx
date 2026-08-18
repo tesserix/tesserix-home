@@ -59,8 +59,9 @@ describe("ResultPager controls", () => {
   });
 
   it("omits Previous when none is supplied", () => {
-    // Nothing passes previousHref yet; the prop exists so the bidirectional
-    // cursor PR changes no caller's shape.
+    // Page one: the repo reports no previous cursor, so the surface passes
+    // no href and the control must not appear — a dead "Previous" promises a
+    // page that is not there.
     renderPager();
     expect(screen.queryByRole("link", { name: /Previous page/ })).toBeNull();
   });

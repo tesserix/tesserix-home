@@ -39,6 +39,7 @@ function group(overrides: Partial<CrmQueueGroupProps> = {}): CrmQueueGroupProps 
     total: 0,
     precedingCount: 0,
     nextHref: null,
+    previousHref: null,
     ...overrides,
   };
 }

@@ -33,6 +33,7 @@ import {
   SuppressedContactError,
 } from "./crm-repo";
 import { UNASSIGNED_PRODUCT } from "./crm-filters";
+import { encodeKeysetCursor } from "./keyset-cursor";
 
 beforeEach(() => {
   query.mockReset();
@@ -69,6 +70,18 @@ const queueCountCall = (): [string, unknown[]] => {
   return call as [string, unknown[]];
 };
 
+const CURSOR_TIMESTAMP = "2026-07-20T00:00:00.000Z";
+const CURSOR_ID = "11111111-1111-1111-1111-111111111111";
+
+/** A cursor pointing at the page AFTER the row it names — what a "Next"
+ *  link carries. Built through the codec, not by hand, so these tests cannot
+ *  quietly encode a shape the repo no longer accepts. */
+const forwardCursor = () => encodeKeysetCursor(CURSOR_TIMESTAMP, CURSOR_ID, "after");
+
+/** A cursor pointing at the page BEFORE the row it names — what a "Previous"
+ *  link carries, anchored on the FIRST row of the page it was built from. */
+const backwardCursor = () => encodeKeysetCursor(CURSOR_TIMESTAMP, CURSOR_ID, "before");
+
 describe("the queue", () => {
   it("breaks an ordering tie on id, in both queues", async () => {
     // Without a tiebreak, rows sharing a sort timestamp come back in
@@ -96,7 +109,13 @@ describe("the queue", () => {
     query.mockReset();
     query.mockResolvedValue([]);
     const page = await dueOpportunities({}, 50);
-    expect(page).toEqual({ rows: [], total: 0, precedingCount: 0, nextCursor: null });
+    expect(page).toEqual({
+      rows: [],
+      total: 0,
+      precedingCount: 0,
+      nextCursor: null,
+      previousCursor: null,
+    });
   });
 
   it("counts the whole matching set in a query of its own, with no LIMIT", async () => {
@@ -123,6 +142,44 @@ describe("the queue", () => {
     expect(queuePageCall()[1]).toEqual([51]);
   });
 
+  it("hands a backward page back in display order, not in the order it was fetched", async () => {
+    // The re-reverse. A backward fetch runs `ORDER BY … DESC`, so the driver
+    // returns the page's LAST row first. Returning that as-is renders the
+    // page upside down with every count and cursor still correct — invisible
+    // to any assertion over the SET of ids, which is why this asserts the
+    // sequence.
+    const row = (id: string, at: string) => ({
+      id, organisation_id: "g1", organisation_name: "Bondi Baker",
+      product: null, stage: "contacted", owner: null,
+      next_action_at: new Date(at), next_action_note: null,
+      last_contacted_at: null, quiet_since: new Date(at),
+      is_starred: false,
+    });
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "9", preceding: "6" }]
+        : [
+            // Nearest the anchor first: this is what SQL returns for a
+            // backward fetch, plus the proof row at the far end.
+            row("33333333-3333-3333-3333-333333333333", "2026-08-03T09:00:00Z"),
+            row("22222222-2222-2222-2222-222222222222", "2026-08-02T09:00:00Z"),
+            row("11111111-1111-1111-1111-111111111111", "2026-08-01T09:00:00Z"),
+          ],
+    );
+    const page = await dueOpportunities({}, 2, backwardCursor());
+    expect(page.rows.map((r) => r.id)).toEqual([
+      "22222222-2222-2222-2222-222222222222",
+      "33333333-3333-3333-3333-333333333333",
+    ]);
+    // Six rows sit before the anchor, two of them are on this page, so four
+    // sort ahead of it.
+    expect(page.precedingCount).toBe(4);
+    // Paged backwards from somewhere, so there is always a page ahead.
+    expect(page.nextCursor).not.toBeNull();
+    expect(page.previousCursor).not.toBeNull();
+  });
+
   it("drops the proof row from the page it hands back", async () => {
     const row = (id: string) => ({
       id, organisation_id: "g1", organisation_name: "Bondi Baker",
@@ -143,10 +200,7 @@ describe("the queue", () => {
   });
 
   it("advances past the cursor with a keyset predicate on (sort key, id), in both queues", async () => {
-    const cursor = Buffer.from(
-      "2026-07-20T00:00:00.000Z|11111111-1111-1111-1111-111111111111",
-      "utf-8",
-    ).toString("base64");
+    const cursor = forwardCursor();
 
     query.mockReset();
     query.mockResolvedValue([]);
@@ -190,14 +244,53 @@ describe("the queue", () => {
     query.mockResolvedValue([]);
     const forge = (payload: string) => Buffer.from(payload, "utf-8").toString("base64");
     await expect(
-      dueOpportunities({}, 50, forge("2026-07-20T00:00:00.000Z|1 OR 1=1")),
+      dueOpportunities({}, 50, forge("after|2026-07-20T00:00:00.000Z|1 OR 1=1")),
     ).rejects.toThrow();
     await expect(
-      dueOpportunities({}, 50, forge("not-a-date|11111111-1111-1111-1111-111111111111")),
+      dueOpportunities({}, 50, forge("after|not-a-date|11111111-1111-1111-1111-111111111111")),
     ).rejects.toThrow();
     await expect(
       dueOpportunities({}, 50, forge("no-separator-at-all")),
     ).rejects.toThrow();
+    // A cursor from before the direction existed. Rejected rather than read
+    // as "after": a link built to page one way must never silently page the
+    // other.
+    await expect(
+      dueOpportunities({}, 50, forge(`${CURSOR_TIMESTAMP}|${CURSOR_ID}`)),
+    ).rejects.toThrow();
+  });
+
+  it("flips the comparison and the ORDER BY for a backward cursor, in both queues", async () => {
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50, backwardCursor());
+    const [sql] = queuePageCall();
+    // Strictly less than: the cursor is the FIRST row of the page being left,
+    // which stays on that page.
+    expect(sql).toContain("(o.next_action_at, o.id) < (");
+    // …and the fetch runs against the queue's display order, so the page
+    // adjacent to the anchor is the one the LIMIT keeps.
+    expect(sql).toContain("ORDER BY o.next_action_at DESC, o.id DESC");
+
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await driftingOpportunities({}, 14, 50, backwardCursor());
+    const [driftSql] = queuePageCall();
+    expect(driftSql).toContain("(COALESCE(o.last_contacted_at, o.created_at), o.id) < (");
+    expect(driftSql).toContain(
+      "ORDER BY COALESCE(o.last_contacted_at, o.created_at) DESC, o.id DESC",
+    );
+  });
+
+  it("counts rows before a backward anchor exclusively, since the anchor is not on this page", async () => {
+    // Forward, the anchor IS the last row of the previous page and counts as
+    // preceding (`<=`). Backward, it is the first row of the page being left
+    // — it sorts AFTER this page, so counting it would push the range one
+    // row along.
+    query.mockReset();
+    query.mockResolvedValue([]);
+    await dueOpportunities({}, 50, backwardCursor());
+    expect(queueCountCall()[0]).toContain("count(*) FILTER (WHERE (o.next_action_at, o.id) < (");
   });
 
   it("asks only for opportunities whose next action has arrived", async () => {
