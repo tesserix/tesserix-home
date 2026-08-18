@@ -60,13 +60,26 @@ async function main() {
     ? Number.parseInt(process.env.TESSERIX_DB_PORT, 10)
     : 5432;
 
+  // TLS is on by default and unverified, because tesserix-postgres is CNPG:
+  // it self-signs and rotates internally, so pinning a CA would break on every
+  // rotation. A plain local Postgres speaks no TLS at all and REFUSES the
+  // negotiation, so local development needs a way to turn it off — without
+  // that, every developer's first run of this script fails on a connection
+  // error that reads like bad credentials.
+  //
+  // Opt-out only, and never the default: a mistyped value must leave TLS on.
+  const ssl =
+    process.env.TESSERIX_DB_SSLMODE === "disable"
+      ? false
+      : { rejectUnauthorized: false };
+
   const client = new pg.Client({
     host,
     port,
     user,
     password,
     database,
-    ssl: { rejectUnauthorized: false },
+    ssl,
     statement_timeout: 60_000,
   });
 

@@ -1,0 +1,45 @@
+# Local development database for the console.
+#
+# Implements part 1 of #271 (ADR-003 D6). The console reads tesserix-postgres
+# directly, and until this existed there was no local Postgres to read — so
+# every CRM surface rendered its error state by design, Playwright asserted
+# only that they failed gracefully, and #245 had to be proved with pglite
+# integration tests because e2e could not reach the behaviour at all.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   npm run dev:db:reset      # migrate + seed
+#   npm run dev:console       # console + admin stub together
+#
+# NOT a production artifact. Nothing here is deployed: prod runs CNPG in
+# cluster, provisioned by tesserix-k8s.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tesserix-dev-postgres
+    environment:
+      # Matches the estate: apps/console/lib/db/tesserix.ts and the Helm charts
+      # all use tesserix_admin. A different local name is a difference that
+      # eventually gets hard-coded somewhere.
+      POSTGRES_DB: tesserix_admin
+      POSTGRES_USER: tesserix
+      # trust: this container listens on localhost, is created and destroyed by
+      # this file, and holds nothing but generated fixtures — so a password
+      # would protect nothing while being one more credential-shaped literal in
+      # the repository. CI's service container is configured the same way, so
+      # local and CI behave identically.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      # 55432, not 5432, so this cannot collide with a Postgres already running
+      # on the machine — or, worse, quietly connect to one.
+      - "55432:5432"
+    volumes:
+      - tesserix-dev-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tesserix -d tesserix_admin"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tesserix-dev-pgdata:

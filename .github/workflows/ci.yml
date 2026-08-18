@@ -282,6 +282,48 @@ jobs:
   console-e2e:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+
+    # A real Postgres for the console to read (#271).
+    #
+    # Before this, the suite ran with TESSERIX_DB_* unset, so EVERY CRM surface
+    # rendered its error state by design. It passed 17/17 and proved only that
+    # the console fails gracefully — which is why #245, a live drift-clock bug,
+    # had to be caught by pglite integration tests instead.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: tesserix_admin
+          POSTGRES_USER: tesserix
+          # trust, so there is no password literal in this file at all. A
+          # workflow file is exactly where a real key could land, so it stays
+          # under secret scanning — see .gitguardian.yaml. The container is
+          # reachable only from inside this job and lives for its duration.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TESSERIX_DB_HOST: localhost
+      # 5432 here, not the 55432 docker-compose.dev.yml uses locally — the
+      # service container has the port to itself, and the local offset exists
+      # only to avoid colliding with a developer's own Postgres.
+      TESSERIX_DB_PORT: '5432'
+      TESSERIX_DB_NAME: tesserix_admin
+      TESSERIX_DB_USER: tesserix
+      # Irrelevant under trust auth, and said out loud rather than hidden: the
+      # server accepts any password. A value is still needed because the
+      # console's isDatabaseConfigured() and db-migrate both require one, and
+      # weakening those production guards to suit CI would be the wrong trade.
+      TESSERIX_DB_PASSWORD: ${{ github.run_id }}
+      # The service container speaks no TLS; the cluster requires it.
+      TESSERIX_DB_SSLMODE: disable
+
     steps:
       - uses: actions/checkout@v4
 
@@ -307,9 +349,22 @@ jobs:
       - name: Build workspace packages
         run: pnpm --filter './packages/*' build
 
+      # Same migrations as production, then the same seed a developer runs.
+      # Deriving the schema from the migrations rather than a fixture is what
+      # keeps this from drifting: a migration that breaks the console breaks
+      # this job.
+      - name: Migrate the test database
+        run: node apps/web/scripts/db-migrate.mjs
+
+      - name: Seed the test database
+        run: node apps/console/scripts/seed-dev.mjs
+
       - name: Install Playwright (Chromium only)
         run: npx playwright install --with-deps chromium
 
+      # Playwright starts BOTH servers itself (playwright.config.ts): the
+      # admin-API stub on 3002 and the console on 3003. No step is needed here
+      # to launch them, and adding one would fight with reuseExistingServer.
       - name: Console browser tests
         run: pnpm --filter console e2e
 

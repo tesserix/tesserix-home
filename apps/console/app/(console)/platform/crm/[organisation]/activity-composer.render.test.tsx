@@ -87,9 +87,17 @@ async function log(user: ReturnType<typeof userEvent.setup>) {
 /** The composer survived whatever just happened. React unmounts the whole
  *  root when a child throws while rendering, so a still-present submit
  *  button is what tells "the prompt was correctly withheld" apart from "the
- *  prompt exploded and took the form with it". */
-function expectComposerStillUsable() {
-  expect(screen.getByRole("button", { name: /log activity/i })).toBeInTheDocument();
+ *  prompt exploded and took the form with it".
+ *
+ *  ASYNC, and that is load-bearing (#283). The submit button reads "Saving…"
+ *  while `pending` is true and only returns to "Log activity" once the action
+ *  settles. `getByRole` does not retry, so under a loaded CI runner this
+ *  asserted against a composer that was still mid-submit and failed with
+ *  "Unable to find ... /log activity/i" — a timing artefact reported as a
+ *  product failure. `findByRole` waits for the settled state, which is also
+ *  the only state in which "still usable" means anything. */
+async function expectComposerStillUsable() {
+  expect(await screen.findByRole("button", { name: /log activity/i })).toBeInTheDocument();
   expect(screen.getByLabelText(/what happened/i)).toBeInTheDocument();
 }
 
@@ -230,8 +238,11 @@ describe("ActivityComposer", () => {
       await log(user);
 
       await waitFor(() => expect(addActivity).toHaveBeenCalled());
+      // Settle FIRST, then assert the absence. `addActivity` having been
+      // called is not the same as the resulting render having landed, and a
+      // negative assertion taken mid-flight passes for the wrong reason.
+      await expectComposerStillUsable();
       expect(screen.queryByRole("group", { name: /follow-up/i })).toBeNull();
-      expectComposerStillUsable();
     });
 
     // `setNextAction` refuses a grandfathered deal (migration 0021) with
@@ -250,8 +261,11 @@ describe("ActivityComposer", () => {
       await log(user);
 
       await waitFor(() => expect(addActivity).toHaveBeenCalled());
+      // Settle FIRST, then assert the absence. `addActivity` having been
+      // called is not the same as the resulting render having landed, and a
+      // negative assertion taken mid-flight passes for the wrong reason.
+      await expectComposerStillUsable();
       expect(screen.queryByRole("group", { name: /follow-up/i })).toBeNull();
-      expectComposerStillUsable();
     });
   });
 });
