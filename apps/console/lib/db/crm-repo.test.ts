@@ -923,6 +923,46 @@ describe("logActivity", () => {
     expect(statements.some((sql) => sql.includes("crm_suppressions"))).toBe(false);
     expect(statements.some((sql) => sql.includes("INSERT INTO crm_activities"))).toBe(true);
   });
+
+  // #245. A contact event that names no deal is still contact with the
+  // business, so it moves the clock on every deal still in play. The SQL
+  // shape is asserted here; that the predicate selects the right rows is
+  // proved against a real database in crm-activity-clock.integration.test.ts.
+  it("advances every open opportunity when the contact names no deal", async () => {
+    query.mockResolvedValue([]);
+    await logActivity({ organisationId: "g1", kind: "call", actor: "ava" });
+
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    const update = statements.find((sql) => sql.includes("UPDATE crm_opportunities"));
+    expect(update).toBeDefined();
+    expect(update).toContain("last_contacted_at = now()");
+    expect(update).toContain("updated_at = now()");
+    expect(update).toContain("organisation_id = $1");
+    // Terminal deals are done being worked; a clock they no longer answer to
+    // must not move.
+    expect(update).toContain("stage NOT IN ('won', 'lost')");
+    const updateCall = query.mock.calls.find(([sql]) =>
+      (sql as string).includes("UPDATE crm_opportunities"),
+    );
+    expect(updateCall?.[1]).toEqual(["g1"]);
+  });
+
+  it("advances nothing for an organisation-level note", async () => {
+    query.mockResolvedValue([]);
+    await logActivity({ organisationId: "g1", kind: "note", actor: "ava", body: "a thought" });
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    expect(statements.some((sql) => sql.includes("UPDATE crm_opportunities"))).toBe(false);
+  });
+
+  // The organisation-level bump must not take the activity row down with it
+  // when migration 0021's CHECK would reject one of the deals it touches.
+  it("skips deals the product CHECK would reject, rather than failing the log", async () => {
+    query.mockResolvedValue([]);
+    await logActivity({ organisationId: "g1", kind: "call", actor: "ava" });
+    const statements = query.mock.calls.map(([sql]) => sql as string);
+    const update = statements.find((sql) => sql.includes("UPDATE crm_opportunities"));
+    expect(update).toContain("product IS NOT NULL");
+  });
 });
 
 describe("organisationDetail", () => {

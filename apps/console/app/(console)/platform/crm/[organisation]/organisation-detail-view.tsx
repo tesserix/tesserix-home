@@ -20,7 +20,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
 } from "@tesserix/web";
 import { CRM_STAGES, requiresProduct, type CrmStage } from "@/lib/crm";
 import type {
@@ -29,8 +28,9 @@ import type {
   OpportunityRow,
 } from "@/lib/db/crm-repo";
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
+import { ActivityComposer } from "./activity-composer";
+import { ErrorNote } from "./error-note";
 import {
-  addActivity,
   addContactAction,
   changeStage,
   createOpportunityAction,
@@ -63,15 +63,6 @@ interface ProductOption {
 function displayContactName(name: string | null): string {
   if (name === "[erased]") return "Erased contact";
   return name ?? "Unnamed contact";
-}
-
-function ErrorNote({ message }: { message: string | null }) {
-  if (!message) return null;
-  return (
-    <Callout role="alert" variant="destructive" className="mt-2">
-      <CalloutDescription>{message}</CalloutDescription>
-    </Callout>
-  );
 }
 
 /**
@@ -561,71 +552,20 @@ function OpportunityCard({
   );
 }
 
-function ActivityComposer({
-  organisationId,
-  opportunityId,
-}: {
-  organisationId: string;
-  opportunityId?: string;
-}) {
-  const router = useRouter();
-  const [body, setBody] = useState("");
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <form
-      className="flex flex-col gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        setError(null);
-        startTransition(async () => {
-          const result = await addActivity({
-            organisationId,
-            opportunityId,
-            kind: "note",
-            body,
-          });
-          if (result.ok) {
-            setBody("");
-          } else {
-            setError(result.message);
-          }
-          router.refresh();
-        });
-      }}
-    >
-      <label htmlFor="activity-note" className="text-sm font-medium">
-        Add a note
-      </label>
-      <Textarea
-        id="activity-note"
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        rows={3}
-        placeholder="What happened?"
-        disabled={pending}
-      />
-      <ErrorNote message={error} />
-      <div>
-        <Button type="submit" size="sm" disabled={pending || body.trim().length === 0}>
-          {pending ? "Saving…" : "Add note"}
-        </Button>
-      </div>
-    </form>
-  );
-}
-
 export function ActivityTab({
   organisationId,
   activities,
+  opportunities,
 }: {
   organisationId: string;
   activities: readonly ActivityRow[];
+  /** Passed only so the composer can offer a follow-up against a real deal
+   *  once contact is logged (#245) — the timeline itself does not use them. */
+  opportunities: readonly OpportunityRow[];
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <ActivityComposer organisationId={organisationId} />
+      <ActivityComposer organisationId={organisationId} opportunities={opportunities} />
       {activities.length === 0 ? (
         <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
       ) : (

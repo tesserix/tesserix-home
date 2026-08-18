@@ -24,6 +24,36 @@ export const HUMAN_ACTIVITY_KINDS = [
 ] as const satisfies readonly CrmActivityKind[];
 export type HumanActivityKind = (typeof HUMAN_ACTIVITY_KINDS)[number];
 
+/**
+ * Activity kinds that record a real touch between us and the business —
+ * outbound or inbound. Logging one of these means contact happened, so it is
+ * what `last_contacted_at` (the drift clock the queue reads) must move for,
+ * and it is what the composer offers a follow-up after.
+ *
+ * `note`, `stage_change` and `assigned` are deliberately absent: they are
+ * things WE did to our own record, not contact with anyone. Counting an
+ * internal note as contact would silently reset the drift clock on an
+ * organisation nobody has actually spoken to — the exact false "recently
+ * contacted" the drift rule exists to expose.
+ *
+ * Here rather than in `crm-repo.ts` because both ends need the same answer:
+ * the repo decides whether to move the clock, the composer decides whether
+ * to prompt for a next action, and two copies of this list are two chances
+ * for the UI to promise something the write path does not do.
+ */
+export const CONTACT_ACTIVITY_KINDS = [
+  "dm_sent", "dm_received", "email_sent", "email_received", "call",
+] as const satisfies readonly CrmActivityKind[];
+
+export function isContactActivityKind(value: string): boolean {
+  return (CONTACT_ACTIVITY_KINDS as readonly string[]).includes(value);
+}
+
+/** `won`/`lost` are terminal — the deal is not being worked any more. */
+export function isOpenStage(stage: CrmStage): boolean {
+  return stage !== "won" && stage !== "lost";
+}
+
 export function isCrmStage(value: string): value is CrmStage {
   return (CRM_STAGES as readonly string[]).includes(value);
 }
