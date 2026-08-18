@@ -34,12 +34,30 @@ export const DEFAULT_CSRF_HOSTNAMES: readonly string[] = [
 ];
 
 /**
+ * The origins a browser sends when the apps are run locally (`next dev` on
+ * localhost). Without these, dropping the `Host` derivation would block every
+ * mutation in local development — including login, since a browser POST to
+ * `/api/auth/*` does carry an `Origin` and so never reaches the no-Origin
+ * carve-out. Seeded in code rather than left to `.env.example`, because a
+ * control that only works for developers who remembered to set a variable is
+ * broken for the next person who clones the repo.
+ */
+const DEV_CSRF_HOSTNAMES: readonly string[] = ["localhost", "127.0.0.1", "[::1]"];
+
+/**
  * Defaults plus anything in `CSRF_ALLOWED_DOMAINS`. The env var is purely
  * additive: a new host can be allowed without a release, but a missing or
  * misconfigured value cannot shrink the set.
  */
 function allowedCsrfHostnames(): Set<string> {
   const allowed = new Set<string>(DEFAULT_CSRF_HOSTNAMES);
+  // Deliberately `=== "development"` and NOT `!== "production"`: an
+  // environment that forgot to set NODE_ENV must fall through to production
+  // behaviour, not silently acquire localhost in its CSRF allowlist. The
+  // positive test is the point, however odd it looks next to the usual idiom.
+  if (process.env.NODE_ENV === "development") {
+    for (const hostname of DEV_CSRF_HOSTNAMES) allowed.add(hostname);
+  }
   const configured = process.env.CSRF_ALLOWED_DOMAINS;
   if (configured) {
     for (const domain of configured.split(",")) {

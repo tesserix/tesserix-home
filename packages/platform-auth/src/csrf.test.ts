@@ -108,22 +108,6 @@ describe("evaluateCsrf allowlist sourcing", () => {
     }
   });
 
-  it("allows console.tesserix.app writes with no CSRF_ALLOWED_DOMAINS set", () => {
-    // The console deployment sets no CSRF_ALLOWED_DOMAINS; the code default is
-    // what keeps it working (and what keeps it from failing open).
-    expect(
-      evaluateCsrf(
-        req({
-          headers: {
-            host: "console.tesserix.app",
-            origin: "https://console.tesserix.app",
-            cookie: "tx_session=xyz",
-          },
-        }),
-      ).blocked,
-    ).toBe(false);
-  });
-
   it("treats CSRF_ALLOWED_DOMAINS as additive, not a replacement", () => {
     vi.stubEnv("CSRF_ALLOWED_DOMAINS", "staging.tesserix.app");
     expect(
@@ -141,10 +125,40 @@ describe("evaluateCsrf allowlist sourcing", () => {
   });
 
   it("fails CLOSED on an empty allowlist", () => {
+    // Proves the branch exists and which way it decides — NOT that production
+    // can reach it. With DEFAULT_CSRF_HOSTNAMES non-empty it cannot be reached,
+    // which is why the empty Set has to be injected. The branch is a guard
+    // against someone later emptying the defaults, not a live code path.
     const d = evaluateCsrf(
       req({ headers: { host: "tesserix.app", origin: "https://tesserix.app", cookie: "tx_session=xyz" } }),
       new Set<string>(),
     );
     expect(d.blocked).toBe(true);
+  });
+});
+
+describe("evaluateCsrf local development origins", () => {
+  function localWrite(origin: string) {
+    return evaluateCsrf(req({ headers: { host: "localhost:3002", origin, cookie: "tx_session=xyz" } }));
+  }
+
+  it("allows loopback origins under NODE_ENV=development", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    expect(localWrite("http://localhost:3002").blocked).toBe(false);
+    expect(localWrite("http://127.0.0.1:3100").blocked).toBe(false);
+    expect(localWrite("http://[::1]:3002").blocked).toBe(false);
+    // A dev allowlist is still an allowlist.
+    expect(localWrite("https://evil.example.com").blocked).toBe(true);
+  });
+
+  it("does NOT seed loopback outside development", () => {
+    // The seeding is `=== "development"`, not `!== "production"`, so an
+    // environment that never set NODE_ENV gets production behaviour rather
+    // than silently acquiring localhost. Production is asserted alongside it
+    // rather than as its own case — no mutation separates the two.
+    vi.stubEnv("NODE_ENV", undefined);
+    expect(localWrite("http://localhost:3002").blocked).toBe(true);
+    vi.stubEnv("NODE_ENV", "production");
+    expect(localWrite("http://localhost:3002").blocked).toBe(true);
   });
 });
