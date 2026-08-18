@@ -143,6 +143,59 @@ Reasons, in order of weight:
 without enforcement is a monolith within two quarters, and the enforcement is
 cheap only before the modules exist.
 
+#### D2a — Why core-plus-secrets, and not a service per domain
+
+The alternative considered was one service per domain — `platform-core`,
+`platform-secrets`, `platform-crm`, `platform-tickets`, and so on. The shape
+decided here is **`platform-core` as a modular monolith plus `platform-secrets`
+as a separate deployable** (D3), with further extraction when a module earns it.
+
+Note that "core plus secrets" *is* the two-service split; the disagreement is
+only about splitting the core further.
+
+**Two properties currently relied upon argue against splitting the core:**
+
+1. **The pool constraint is measured, not theoretical.** `max: 2` per service
+   against a shared small Postgres, written into the code as the reason a
+   suppression check shares its caller's transaction rather than opening a
+   second connection. Four platform services is eight connections before
+   anything else runs.
+2. **Transaction boundaries would break.** `auditedOperation` guarantees that an
+   unauditable operation does not proceed — one transaction today. Split CRM
+   from audit and that becomes a distributed transaction or a lost guarantee.
+   The same holds inside the CRM: #245's contact clock advances opportunities in
+   the same transaction as the activity insert, precisely so a write cannot
+   half-land.
+
+**The estate's own history is a caution, not an endorsement.** ~30 Go services
+suggests a house style, but #159 is "Decide the fate of seven dormant undeployed
+services" — the estate has already demonstrated it creates more services than it
+operates.
+
+**The decisive argument is reversibility.** With boundaries enforced —
+`internal/` visibility plus an import-graph lint — extracting a module later is
+mechanical, because the seams already exist. Starting distributed and merging
+back is not. So being wrong in this direction costs an extraction; being wrong
+in the other costs distributed transactions, pool exhaustion, and N services to
+run locally, which is the condition D6 exists to remove.
+
+**A module is extracted when it has a forcing reason, not a structural
+preference:**
+
+| Trigger | Status |
+|---|---|
+| **Different privileges** | Already met by secrets — hence D3. |
+| **Different scaling profile** — sustained CPU, a long-running worker, read-heavy enough to want its own replicas | Not met today. Telemetry is the plausible future candidate. |
+| **Different lifecycle** — a second team deploying independently | Not met today. |
+
+CRM, tickets and audit meet none of them: all three are request-scoped,
+operator-driven, and share both the session and the capability model.
+
+**This decision depends entirely on the enforcement landing with the first
+module, not the third.** Without it, the modules erode, extraction stops being
+cheap, and the service-per-domain instinct becomes retroactively correct. The
+enforcement is the thing that keeps the option open.
+
 ### D3 — The console absorbs secrets; `secret-service` retires as a product
 
 This is the governing requirement applied: one console, in the manner of the GCP
@@ -277,7 +330,9 @@ parallel and immediately.
   structure. The trigger is coupling, not calendar.
 - **D2**: a module whose scaling profile genuinely diverges — sustained CPU or a
   long-running workload — earns extraction. Sharing a process is the default,
-  not a rule.
+  not a rule. The full trigger list is in D2a; the one that would invalidate the
+  decision rather than refine it is boundary enforcement failing to land with
+  the first module.
 - **D3**: if the secrets backend's privileges narrow enough that its compromise
   is no worse than the API's, the separate deployable stops paying for itself.
 - **D4**: Zitadel becoming HA with its bootstrap secrets stored outside the store
