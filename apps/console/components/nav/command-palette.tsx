@@ -138,9 +138,22 @@ export function ConsoleCommandPalette({
     };
   }, [query]);
 
+  // Tickets go through `visibleTo` like routes and tools, even though
+  // `ticketEntry` always carries `read` and every operator inside the console
+  // holds it — so today this filters nothing. It is here for the case
+  // `visibleTo` exists to cover: it fails closed, and a bug that drops the
+  // claims list must not silently turn into full access. Without this call the
+  // failure is uneven — routes and tools would vanish while ticket rows kept
+  // rendering, and ticket rows are the only entries carrying customer data
+  // (subject, submitter name, submitter email) rather than just a route label.
+  const visibleTickets = useMemo(
+    () => visibleTo(tickets, capabilities, enforceCapabilities),
+    [tickets, capabilities, enforceCapabilities],
+  );
+
   const allEntries = useMemo(
-    () => [...tickets, ...routes, ...tools],
-    [tickets, routes, tools],
+    () => [...visibleTickets, ...routes, ...tools],
+    [visibleTickets, routes, tools],
   );
 
   // Keyed by the same `paletteValue` used on each `CommandItem`, so lookup
@@ -231,7 +244,7 @@ export function ConsoleCommandPalette({
               Nothing matching that in routes, tools or tickets.
             </CommandEmpty>
 
-            {loadingTickets || tickets.length > 0 ? (
+            {loadingTickets || visibleTickets.length > 0 ? (
               <CommandGroup>
                 <GroupHeading>Tickets</GroupHeading>
                 {loadingTickets ? (
@@ -244,7 +257,7 @@ export function ConsoleCommandPalette({
                     Searching tickets…
                   </CommandItem>
                 ) : (
-                  tickets.map((entry) => <PaletteItem key={entry.id} entry={entry} />)
+                  visibleTickets.map((entry) => <PaletteItem key={entry.id} entry={entry} />)
                 )}
               </CommandGroup>
             ) : null}

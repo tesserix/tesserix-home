@@ -14,6 +14,21 @@ const PROPS = {
   toolsBaseDomain: "tesserix.app",
 };
 
+// `/api/search` returns entries already built by `ticketEntry` server-side —
+// the client takes `items` as `SearchEntry[]` and does not re-derive them from
+// raw ticket rows. A fixture shaped like a `TicketSearchRow` renders nothing.
+const TICKET_ROW = {
+  id: "ticket:11111111-1111-1111-1111-111111111111",
+  kind: "ticket",
+  label: "TKT-1042 — Payout missing",
+  hint: "Priya Raman · open",
+  href: "/platform/tickets/11111111-1111-1111-1111-111111111111",
+  external: false,
+  disabled: false,
+  keywords: ["TKT-1042", "Payout missing", "Priya Raman", "priya@example.com", "mark8ly"],
+  capability: "read",
+};
+
 function mockSearch(items: unknown[], status = 200) {
   vi.stubGlobal(
     "fetch",
@@ -120,6 +135,54 @@ describe("ConsoleCommandPalette", () => {
     await waitFor(() =>
       expect(screen.queryByRole("option", { name: /Break Glass/i })).not.toBeInTheDocument(),
     );
+  });
+
+  // Nothing else in this file renders a ticket ROW — the "ticket queue" test
+  // above matches the *route* of that name. So this positive control exists to
+  // give the fail-closed test below something to actually be the absence of.
+  // Without it, that test passes whether or not the filter is wired, because a
+  // negative `waitFor` is satisfied on the first tick, long before the 250ms
+  // debounce has fired.
+  it("renders a matching ticket row", async () => {
+    mockSearch([TICKET_ROW]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "payout",
+    );
+    expect(
+      await screen.findByRole("option", { name: /TKT-1042/ }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides ticket rows too when the claims list is empty", async () => {
+    // `visibleTo` fails closed on purpose: a bug that drops the claims list
+    // must not turn into full access. That posture used to be uneven — routes
+    // and tools went through it, ticket rows did not — so dropped claims would
+    // have emptied the palette of route labels while still rendering customer
+    // data. Ticket rows are the only entries carrying any: subject, submitter
+    // name, submitter email.
+    //
+    // Every operator inside the console holds `read`, so this filters nothing
+    // in normal use; it matters only in the failure the guard exists for.
+    mockSearch([TICKET_ROW]);
+    const user = userEvent.setup();
+    render(<ConsoleCommandPalette {...PROPS} capabilities={[]} />);
+    await user.click(screen.getByRole("button", { name: /search/i }));
+    await user.type(
+      await screen.findByPlaceholderText(/search routes, tools and tickets/i),
+      "payout",
+    );
+    // Wait for the debounced fetch to have actually happened, so absence below
+    // means "filtered out" rather than "not requested yet".
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled(), { timeout: 3000 });
+    await waitFor(() =>
+      expect(screen.queryByText(/Searching tickets/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("option", { name: /TKT-1042/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/priya@example.com/)).not.toBeInTheDocument();
   });
 
   it("offers it to an operator who holds that capability", async () => {
