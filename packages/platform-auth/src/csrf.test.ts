@@ -64,3 +64,87 @@ describe("evaluateCsrf", () => {
     ).toBe(false);
   });
 });
+
+describe("evaluateCsrf allowlist sourcing", () => {
+  // The vulnerability: the allowlist used to be built from the request's own
+  // headers, so a request nominated the hostname its Origin was checked
+  // against. Both of these pass trivially if either derived source comes back.
+  it("BLOCKS an attacker host nominated via x-forwarded-host", () => {
+    const d = evaluateCsrf(
+      req({
+        headers: {
+          host: "tesserix.app",
+          "x-forwarded-host": "evil.example.com",
+          origin: "https://evil.example.com",
+          cookie: "tx_session=xyz",
+        },
+      }),
+    );
+    expect(d.blocked).toBe(true);
+  });
+
+  it("BLOCKS an attacker host nominated via host", () => {
+    const d = evaluateCsrf(
+      req({
+        headers: {
+          host: "evil.example.com",
+          origin: "https://evil.example.com",
+          cookie: "tx_session=xyz",
+        },
+      }),
+    );
+    expect(d.blocked).toBe(true);
+  });
+
+  it("allows genuine same-origin writes from both deployed hosts", () => {
+    // Literals, not a loop over DEFAULT_CSRF_HOSTNAMES: iterating the list
+    // under test would still pass if a host were dropped from it.
+    for (const hostname of ["tesserix.app", "console.tesserix.app"]) {
+      expect(
+        evaluateCsrf(
+          req({ headers: { host: hostname, origin: `https://${hostname}`, cookie: "tx_session=xyz" } }),
+        ).blocked,
+      ).toBe(false);
+    }
+  });
+
+  it("allows console.tesserix.app writes with no CSRF_ALLOWED_DOMAINS set", () => {
+    // The console deployment sets no CSRF_ALLOWED_DOMAINS; the code default is
+    // what keeps it working (and what keeps it from failing open).
+    expect(
+      evaluateCsrf(
+        req({
+          headers: {
+            host: "console.tesserix.app",
+            origin: "https://console.tesserix.app",
+            cookie: "tx_session=xyz",
+          },
+        }),
+      ).blocked,
+    ).toBe(false);
+  });
+
+  it("treats CSRF_ALLOWED_DOMAINS as additive, not a replacement", () => {
+    vi.stubEnv("CSRF_ALLOWED_DOMAINS", "staging.tesserix.app");
+    expect(
+      evaluateCsrf(req({ headers: { origin: "https://staging.tesserix.app", cookie: "tx_session=xyz" } }))
+        .blocked,
+    ).toBe(false);
+    // The defaults survive the override.
+    expect(
+      evaluateCsrf(req({ headers: { origin: "https://tesserix.app", cookie: "tx_session=xyz" } })).blocked,
+    ).toBe(false);
+    expect(
+      evaluateCsrf(req({ headers: { origin: "https://evil.example.com", cookie: "tx_session=xyz" } }))
+        .blocked,
+    ).toBe(true);
+  });
+
+  it("fails CLOSED on an empty allowlist", () => {
+    const d = evaluateCsrf(
+      req({ headers: { host: "tesserix.app", origin: "https://tesserix.app", cookie: "tx_session=xyz" } }),
+      new Set<string>(),
+    );
+    expect(d.blocked).toBe(true);
+  });
+});
