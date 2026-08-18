@@ -15,7 +15,11 @@ import {
 import {
   createContact,
   createOpportunity as createOpportunityRow,
+  updateOrganisation,
+  type ChangedField,
+  type OrganisationField,
 } from "@/lib/db/crm-writes";
+import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
 import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
@@ -532,6 +536,131 @@ export async function deleteOrganisationAction(
   revalidatePath("/platform/crm");
   // Not just the queue: a deleted organisation that is still listed on the
   // browse surface links to a detail page that no longer exists.
+  revalidatePath("/platform/crm/organisations");
+  return { ok: true };
+}
+
+/**
+ * Reads one scalar form field: trimmed, with empty-string collapsed to
+ * `undefined`. A copy of `organisations/new/actions.ts`'s reader of the same
+ * name rather than a shared import, because a `"use server"` module may only
+ * export async functions.
+ */
+function optionalField(formData: FormData, key: string): string | undefined {
+  const raw = formData.get(key);
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Reads a field submitted zero or more times (`category`, `tags`) as a list,
+ * applying the same trim-and-drop-empty rule `optionalField` applies to a
+ * scalar — an untouched text input submits `""`, which is form noise rather
+ * than a category. `updateOrganisation` normalises again, and additionally
+ * de-duplicates; this is the form reader, not that contract.
+ */
+function listField(formData: FormData, key: string): string[] {
+  return formData
+    .getAll(key)
+    .filter((raw): raw is string => typeof raw === "string")
+    .map((raw) => raw.trim())
+    .filter((raw) => raw !== "");
+}
+
+/**
+ * `AuditSummary` is `Readonly<Record<string, number>>` — counts only — so
+ * "which fields changed" is carried as one key per changed field rather than
+ * as a list of names. The keys are the column names, since that is what an
+ * auditor reading the row alongside the table will recognise.
+ */
+const SUMMARY_KEYS: Readonly<Record<OrganisationField, string>> = {
+  name: "name",
+  location: "location",
+  websiteUrl: "website_url",
+  category: "category",
+  tags: "tags",
+};
+
+/**
+ * A no-op save is reported as `{ fields: 0 }`, under the same
+ * `crm.organisation.update` action as any other save — not a separate action
+ * name, and not a suppressed audit row. An operator opening the form and
+ * pressing save IS the event being accounted for; whether it happened to
+ * change anything is the count's job to say, exactly as `changeStage` above
+ * reports `{ transitions: 0 }`. The `fields` key is why the count is stated
+ * rather than left implicit in an empty object: `{}` reads as a summariser
+ * that failed to fill itself in, and cannot be told apart from one.
+ *
+ * (The data layer writes no UPDATE and no timeline row for a no-op — see
+ * `updateOrganisation` in crm-writes.ts. This audit row is the console's own
+ * record that an operator acted, which is a different question.)
+ */
+function summariseChanges(changed: readonly ChangedField[]): Record<string, number> {
+  return changed.reduce<Record<string, number>>(
+    (summary, { field }) => ({ ...summary, [SUMMARY_KEYS[field]]: 1 }),
+    { fields: changed.length },
+  );
+}
+
+/**
+ * Correct an organisation's own fields — name, location, website, category,
+ * tags — from the detail page (#227). Until this existed the only way to fix
+ * a typo or an import-dropped URL was to delete the organisation, cascading
+ * away its opportunities and its whole timeline.
+ *
+ * `updateOrganisation` is a FULL REPLACEMENT of those five fields, so the
+ * form must submit every one of them on every save: a field this action does
+ * not read is a field the writer clears.
+ *
+ * `name` and `websiteUrl` are validated here, before any session or database
+ * work, so an invalid form never reaches `checkOperatorCapability` or the
+ * audit trail — an invalid form is not an audited event. Both are checked
+ * again in the data layer, which is where the guarantee lives; these two
+ * exist to produce field-level messages on the form.
+ *
+ * No `capability` option: an edit sits with create at `withCrmWrite`'s
+ * default gate, not on delete's `hard-delete`.
+ */
+export async function updateOrganisationAction(
+  organisationId: string,
+  formData: FormData,
+): Promise<CrmActionResult> {
+  const name = optionalField(formData, "name");
+  if (!name) {
+    return { ok: false, message: "Enter an organisation name." };
+  }
+
+  const websiteUrl = optionalField(formData, "websiteUrl");
+  if (websiteUrl && !isSafeWebsiteUrl(websiteUrl)) {
+    return { ok: false, message: UNSAFE_WEBSITE_URL_MESSAGE };
+  }
+
+  const result = await withCrmWrite(
+    // Ruling 20-style: the id alongside the name. The name here is the one
+    // being saved, so the audit row names the organisation as this edit left
+    // it — the display name it had before is in the timeline diff, which is
+    // the record that exists to answer "what was it called yesterday".
+    `${name} (${organisationId})`,
+    (actor) =>
+      updateOrganisation({
+        organisationId,
+        actor: actor.email,
+        name,
+        location: optionalField(formData, "location"),
+        websiteUrl,
+        category: listField(formData, "category"),
+        tags: listField(formData, "tags"),
+      }),
+    (outcome) => ({
+      action: "crm.organisation.update",
+      summary: summariseChanges(outcome.changed),
+    }),
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${organisationId}`);
+  // The browse surface renders each organisation's name and location, so an
+  // edit to either leaves a stale row there without this.
   revalidatePath("/platform/crm/organisations");
   return { ok: true };
 }
