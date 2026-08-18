@@ -17,6 +17,7 @@ import {
   DeleteOrganisationButton,
   OpportunitiesTab,
 } from "./organisation-detail-view";
+import { OrganisationEditForm } from "./organisation-edit-form";
 
 /**
  * One organisation: its identity facts in the summary rail, and its
@@ -113,12 +114,18 @@ export default async function OrganisationDetailPage({
         { label: organisation.name },
       ]}
       actions={
-        canHardDelete ? (
-          <DeleteOrganisationButton
-            organisationId={organisation.id}
-            organisationName={organisation.name}
-          />
-        ) : undefined
+        <div className="flex flex-wrap gap-2">
+          {/* Editing is not gated on `hard-delete`: a correction to a name or
+              a website is the ordinary CRM write, and `updateOrganisationAction`
+              sits at `withCrmWrite`'s default capability alongside create. */}
+          <OrganisationEditForm organisation={organisation} />
+          {canHardDelete ? (
+            <DeleteOrganisationButton
+              organisationId={organisation.id}
+              organisationName={organisation.name}
+            />
+          ) : null}
+        </div>
       }
       summary={[
         {
