@@ -44,8 +44,9 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { createOrganisation, createContact, createOpportunity } = await import("./crm-writes");
-const { addSuppression, SuppressedContactError } = await import("./crm-repo");
+const { createOrganisation, createContact, createOpportunity, updateOrganisation } =
+  await import("./crm-writes");
+const { addSuppression, SuppressedContactError, linkConversion } = await import("./crm-repo");
 
 let db: PGlite;
 
@@ -264,5 +265,177 @@ describe("manual create honours the do-not-contact list", () => {
     const { organisationId } = await createOrganisation({ name: "Welcome Co" });
     const { contactId } = await createContact({ organisationId, email: "fine@example.com" });
     expect(contactId).toBeTruthy();
+  });
+});
+
+/**
+ * `updateOrganisation` — the correction path (#227).
+ *
+ * Against a real database because the guarantees that matter here are about
+ * what is and is not persisted: the derived `country`, the `text[] NOT NULL`
+ * columns, and the fact that a no-op save leaves no activity row behind.
+ */
+describe("updateOrganisation", () => {
+  async function orgRow(id: string) {
+    const rows = await db.query(
+      `SELECT name, location, country, website_url, category, tags, updated_at
+         FROM crm_organisations WHERE id = $1`,
+      [id],
+    );
+    return rows.rows[0] as {
+      name: string;
+      location: string | null;
+      country: string | null;
+      website_url: string | null;
+      category: string[];
+      tags: string[];
+      updated_at: Date;
+    };
+  }
+
+  async function activities(id: string) {
+    const rows = await db.query(
+      `SELECT kind, actor, body, metadata FROM crm_activities
+        WHERE organisation_id = $1 ORDER BY occurred_at`,
+      [id],
+    );
+    return rows.rows as Array<{
+      kind: string;
+      actor: string;
+      body: string | null;
+      metadata: Record<string, { from: unknown; to: unknown }>;
+    }>;
+  }
+
+  it("re-derives country when the location changes", async () => {
+    // The same mapper `createOrganisation` and `commitImport` use — #232
+    // filters the follow-up queue by country, so a stale one mis-files the
+    // organisation into another country's queue.
+    const { organisationId } = await createOrganisation({
+      name: "Moving Co",
+      location: "Sydney",
+    });
+    await updateOrganisation({
+      organisationId,
+      actor: "ops@tesserix.app",
+      name: "Moving Co",
+      location: "Delhi",
+    });
+    const row = await orgRow(organisationId);
+    expect(row.location).toBe("Delhi");
+    expect(row.country).toBe("IN");
+  });
+
+  it("normalises category and tags, and stores empty arrays rather than nulls", async () => {
+    // Both columns are `text[] NOT NULL DEFAULT '{}'` — a null would be
+    // rejected outright, and duplicates would show twice on the detail view.
+    const { organisationId } = await createOrganisation({ name: "Tagged Co" });
+    const { changed } = await updateOrganisation({
+      organisationId,
+      actor: "ops@tesserix.app",
+      name: "Tagged Co",
+      category: [" cafe ", "bakery", "cafe", "   "],
+      tags: [],
+    });
+    const row = await orgRow(organisationId);
+    expect(row.category).toEqual(["cafe", "bakery"]);
+    expect(row.tags).toEqual([]);
+    expect(changed.map((c) => c.field)).toEqual(["category"]);
+  });
+
+  it("writes exactly one activity row recording the diff", async () => {
+    const { organisationId } = await createOrganisation({
+      name: "Typo Co",
+      location: "Sydney",
+    });
+    await updateOrganisation({
+      organisationId,
+      actor: "ops@tesserix.app",
+      name: "Typo Co Pty",
+      location: "Sydney",
+      websiteUrl: "https://typo.example",
+    });
+    const acts = await activities(organisationId);
+    expect(acts).toHaveLength(1);
+    expect(acts[0].kind).toBe("note");
+    expect(acts[0].actor).toBe("ops@tesserix.app");
+    expect(acts[0].metadata).toEqual({
+      name: { from: "Typo Co", to: "Typo Co Pty" },
+      websiteUrl: { from: null, to: "https://typo.example" },
+    });
+  });
+
+  it("writes neither an update nor an activity row when nothing changed", async () => {
+    const { organisationId } = await createOrganisation({
+      name: "Steady Co",
+      location: "Sydney",
+    });
+    const before = await orgRow(organisationId);
+    const { changed } = await updateOrganisation({
+      organisationId,
+      actor: "ops@tesserix.app",
+      name: "  Steady Co  ",
+      location: "Sydney",
+    });
+    expect(changed).toEqual([]);
+    const after = await orgRow(organisationId);
+    // `updated_at` is stamped by hand in the UPDATE, so an unchanged
+    // timestamp is proof no UPDATE ran at all.
+    expect(after.updated_at).toEqual(before.updated_at);
+    expect(await activities(organisationId)).toHaveLength(0);
+  });
+
+  // The scheme check has to hold at THIS layer: `updateOrganisation` is
+  // exported, and a future caller that forgets the action-layer check would
+  // put a `javascript:` href back on the organisation detail page.
+  it("refuses a javascript: website url and changes nothing", async () => {
+    const { organisationId } = await createOrganisation({
+      name: "Guarded Co",
+      websiteUrl: "https://guarded.example",
+    });
+    await expect(
+      updateOrganisation({
+        organisationId,
+        actor: "ops@tesserix.app",
+        name: "Guarded Co",
+        websiteUrl: "javascript:alert(1)",
+      }),
+    ).rejects.toThrow(/websiteUrl/);
+    const row = await orgRow(organisationId);
+    expect(row.website_url).toBe("https://guarded.example");
+    expect(await activities(organisationId)).toHaveLength(0);
+  });
+
+  it("leaves converted_* untouched — linkConversion stays their single writer", async () => {
+    const { organisationId } = await createOrganisation({ name: "Linked Co" });
+    await linkConversion({
+      organisationId,
+      product: "mark8ly",
+      ref: "tenant-1",
+      method: "manual",
+      actor: "ops@tesserix.app",
+    });
+    await updateOrganisation({
+      organisationId,
+      actor: "ops@tesserix.app",
+      name: "Linked Co Renamed",
+    });
+    const rows = await db.query(
+      `SELECT converted_product, converted_ref FROM crm_organisations WHERE id = $1`,
+      [organisationId],
+    );
+    const row = rows.rows[0] as { converted_product: string; converted_ref: string };
+    expect(row.converted_product).toBe("mark8ly");
+    expect(row.converted_ref).toBe("tenant-1");
+  });
+
+  it("rejects an unknown organisation", async () => {
+    await expect(
+      updateOrganisation({
+        organisationId: "00000000-0000-0000-0000-000000000000",
+        actor: "ops@tesserix.app",
+        name: "Ghost Co",
+      }),
+    ).rejects.toThrow(/not found/i);
   });
 });

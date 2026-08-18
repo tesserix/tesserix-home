@@ -37,3 +37,13 @@ export function isSafeWebsiteUrl(value: string): boolean {
     return false;
   }
 }
+
+/**
+ * The field-level message shown when `isSafeWebsiteUrl` refuses a value.
+ *
+ * It lives beside the check rather than in either action because both the
+ * create and the edit action need it, and neither can export it to the
+ * other: a `"use server"` module may only export async functions.
+ */
+export const UNSAFE_WEBSITE_URL_MESSAGE =
+  "Website must be a web address starting with http:// or https://.";

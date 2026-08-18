@@ -7,7 +7,7 @@ import { createOrganisation } from "@/lib/db/crm-writes";
 // file may only export async functions, which is why this module imports the
 // sentinel rather than owning it.
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
-import { isSafeWebsiteUrl } from "@/lib/db/crm-url";
+import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
 import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 
@@ -35,8 +35,6 @@ function isEstateProduct(value: string): boolean {
 function unknownProductMessage(value: string): string {
   return `"${value}" is not a product in the estate.`;
 }
-
-const UNSAFE_WEBSITE_URL_MESSAGE = "Website must be a web address starting with http:// or https://.";
 
 function mapSuppressedContact(cause: unknown): { ok: false; message: string } | undefined {
   if (cause instanceof SuppressedContactError) {

@@ -16,6 +16,7 @@ vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-writes")>()),
   createContact: vi.fn(),
   createOpportunity: vi.fn(),
+  updateOrganisation: vi.fn(),
 }));
 vi.mock("@/lib/db/crm-erasure", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-erasure")>()),
@@ -54,7 +55,11 @@ import {
   AlreadyLinkedError,
   SuppressedContactError,
 } from "@/lib/db/crm-repo";
-import { createContact, createOpportunity as createOpportunityRow } from "@/lib/db/crm-writes";
+import {
+  createContact,
+  createOpportunity as createOpportunityRow,
+  updateOrganisation,
+} from "@/lib/db/crm-writes";
 import { eraseContact, deleteOrganisation } from "@/lib/db/crm-erasure";
 import { withCrmWrite } from "@/lib/crm-write";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -67,6 +72,7 @@ import {
   createOpportunityAction,
   eraseContactAction,
   deleteOrganisationAction,
+  updateOrganisationAction,
 } from "./actions";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
@@ -1015,5 +1021,174 @@ describe("deleteOrganisationAction", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(deleteOrganisation).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateOrganisationAction", () => {
+  const NAME = "Glebe Florist";
+
+  /** The edit form submits an uncontrolled `<form>` as `new FormData(...)`,
+   *  the same way `organisations/new` does. An array value here stands for a
+   *  field submitted more than once (a multi-select), which is how
+   *  `category`/`tags` arrive. */
+  function editForm(fields: Readonly<Record<string, string | readonly string[]>>): FormData {
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      for (const entry of typeof value === "string" ? [value] : value) {
+        formData.append(key, entry);
+      }
+    }
+    return formData;
+  }
+
+  it("updates the organisation, audits the changed field names, and revalidates both surfaces", async () => {
+    signIn(["read"]);
+    vi.mocked(updateOrganisation).mockResolvedValue({
+      changed: [
+        { field: "name", from: "Glebe Flowers", to: NAME },
+        { field: "websiteUrl", from: null, to: "https://glebe.example" },
+      ],
+    });
+
+    const result = await updateOrganisationAction(
+      ORG_ID,
+      editForm({
+        name: NAME,
+        location: "Sydney",
+        websiteUrl: "https://glebe.example",
+        category: ["florist", "retail"],
+        tags: "import-2026",
+      }),
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(updateOrganisation).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      actor: "ava@tesserix.app",
+      name: NAME,
+      location: "Sydney",
+      websiteUrl: "https://glebe.example",
+      category: ["florist", "retail"],
+      tags: ["import-2026"],
+    });
+    // `AuditSummary` is counts-only, so the changed fields are carried as one
+    // key each rather than as a list of names.
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.organisation.update",
+      target: `${NAME} (${ORG_ID})`,
+      summary: { fields: 2, name: 1, website_url: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+    // The browse surface renders name and location.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm/organisations");
+  });
+
+  // `updateOrganisation` is a full replacement, not a patch: a field the form
+  // leaves out is cleared. The action must pass the omission through rather
+  // than quietly dropping the key, or the writer's contract stops holding.
+  it("passes an omitted field through as absent rather than dropping it", async () => {
+    signIn(["read"]);
+    vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
+
+    await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
+
+    expect(updateOrganisation).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      actor: "ava@tesserix.app",
+      name: NAME,
+      location: undefined,
+      websiteUrl: undefined,
+      category: [],
+      tags: [],
+    });
+  });
+
+  it("trims every field and drops blank list entries", async () => {
+    signIn(["read"]);
+    vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
+
+    await updateOrganisationAction(
+      ORG_ID,
+      editForm({
+        name: `  ${NAME}  `,
+        location: "  Sydney  ",
+        category: ["  florist  ", "   ", "retail"],
+        tags: "   ",
+      }),
+    );
+
+    expect(updateOrganisation).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      actor: "ava@tesserix.app",
+      name: NAME,
+      location: "Sydney",
+      websiteUrl: undefined,
+      category: ["florist", "retail"],
+      tags: [],
+    });
+  });
+
+  // A save that changed nothing still succeeded, and still gets an audit row
+  // — `{ fields: 0 }`, the same honest zero `changeStage` writes for a
+  // no-op transition. Not an empty summary, which would read as a summariser
+  // that forgot to fill itself in.
+  it("records a save that changed nothing as fields: 0", async () => {
+    signIn(["read"]);
+    vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
+
+    const result = await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
+
+    expect(result).toEqual({ ok: true });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.organisation.update",
+      target: `${NAME} (${ORG_ID})`,
+      summary: { fields: 0 },
+    });
+  });
+
+  it("refuses a blank name before any session or database work", async () => {
+    const result = await updateOrganisationAction(ORG_ID, editForm({ name: "   " }));
+
+    expect(result).toEqual({ ok: false, message: "Enter an organisation name." });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(updateOrganisation).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unsafe website scheme before any session or database work", async () => {
+    const result = await updateOrganisationAction(
+      ORG_ID,
+      editForm({ name: NAME, websiteUrl: "javascript:alert(1)" }),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      message: "Website must be a web address starting with http:// or https://.",
+    });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(updateOrganisation).not.toHaveBeenCalled();
+  });
+
+  // An edit is not a deletion: it sits with create at `withCrmWrite`'s
+  // default gate, not on `hard-delete`.
+  it("sits at the default capability", async () => {
+    signIn(["read"]);
+    vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
+
+    await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
+
+    expect(vi.mocked(withCrmWrite).mock.calls[0][4]).toBeUndefined();
+  });
+
+  it("refuses without console entry", async () => {
+    signIn(undefined);
+
+    const result = await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(updateOrganisation).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });

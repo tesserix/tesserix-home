@@ -242,3 +242,222 @@ async function insertOpportunity(
   );
   return rows[0].id;
 }
+
+/** A field of the organisation an operator may correct. `converted_*` is not
+ *  among them: `crm_org_conversion_complete` requires `converted_ref` and
+ *  `converted_product` travel together, and `linkConversion` (crm-repo.ts) is
+ *  the deliberate single writer of that pair. */
+export type OrganisationField = "name" | "location" | "websiteUrl" | "category" | "tags";
+
+export interface ChangedField {
+  field: OrganisationField;
+  from: string | string[] | null;
+  to: string | string[] | null;
+}
+
+export interface UpdateOrganisationInput {
+  organisationId: string;
+  /** Who is making the correction. Supplied by the caller — the action passes
+   *  `withCrmWrite`'s actor — and never defaulted here: `crm_activities.actor`
+   *  is the record of who did it, and a writer that invents a fallback would
+   *  attribute a real edit to a name nobody signed in as. */
+  actor: string;
+  name: string;
+  location?: string;
+  websiteUrl?: string;
+  category?: string[];
+  tags?: string[];
+}
+
+/** Every editable field, after trimming. Omitted optional fields normalise to
+ *  the empty value — this is a full replacement of the row's editable fields,
+ *  not a patch, so an omitted `location` clears it. */
+interface NormalisedOrganisation {
+  name: string;
+  location: string | null;
+  websiteUrl: string | null;
+  category: string[];
+  tags: string[];
+}
+
+/**
+ * Trim each entry, drop the blanks, keep the first occurrence of each.
+ *
+ * Returns a new array; the caller's is never touched. `category` and `tags`
+ * are `text[] NOT NULL DEFAULT '{}'`, so the empty case is `[]`, never null.
+ */
+function normaliseList(values: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  return (values ?? []).reduce<string[]>((acc, raw) => {
+    const value = raw.trim();
+    if (!value || seen.has(value)) return acc;
+    seen.add(value);
+    return [...acc, value];
+  }, []);
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
+function diffOrganisation(
+  current: NormalisedOrganisation,
+  next: NormalisedOrganisation,
+): ChangedField[] {
+  const scalars: readonly OrganisationField[] = ["name", "location", "websiteUrl"];
+  const lists: readonly OrganisationField[] = ["category", "tags"];
+  return [
+    ...scalars
+      .filter((field) => current[field] !== next[field])
+      .map((field) => ({ field, from: current[field], to: next[field] }) as ChangedField),
+    ...lists
+      .filter((field) => !sameList(current[field] as string[], next[field] as string[]))
+      .map((field) => ({ field, from: current[field], to: next[field] }) as ChangedField),
+  ];
+}
+
+/**
+ * Correct an organisation's own fields.
+ *
+ * The only `UPDATE crm_organisations` besides `linkConversion`, and the only
+ * way to fix a typed name or an import-dropped website without deleting the
+ * row — which would cascade away its opportunities and its whole timeline.
+ *
+ * `name` is rejected blank and `websiteUrl` scheme-checked here, before the
+ * transaction, for the reasons `createOrganisation` above states: the column
+ * accepts `""` but an unnamed organisation is unfindable, and `website_url`
+ * renders back as a clickable `<a href target="_blank">`.
+ *
+ * The row is locked (`FOR UPDATE`) and diffed inside the transaction, so the
+ * diff recorded on the timeline is against the state this UPDATE actually
+ * replaced, not one a concurrent edit had already moved on from.
+ *
+ * An edit that changes nothing writes nothing — no UPDATE, no activity row.
+ * The timeline is read as the record of what happened to this business, and
+ * opening the form and pressing save did not happen to it.
+ *
+ * The activity row is inlined here rather than delegated to `logActivity`
+ * (crm-repo.ts), which bumps `last_contacted_at` and runs the suppression
+ * check: a field correction is neither an outbound message nor contact.
+ */
+export async function updateOrganisation(
+  input: UpdateOrganisationInput,
+): Promise<{ changed: ChangedField[] }> {
+  const next = normaliseInput(input);
+  if (!next.name) {
+    throw new Error("updateOrganisation: name is required");
+  }
+  if (next.websiteUrl && !isSafeWebsiteUrl(next.websiteUrl)) {
+    throw new Error("updateOrganisation: websiteUrl must be an http(s) address");
+  }
+
+  return tesserixTx(async (query) => {
+    const current = await selectForUpdate(query, input.organisationId);
+    const changed = diffOrganisation(current, next);
+    if (changed.length === 0) return { changed };
+
+    await writeOrganisation(query, input.organisationId, next);
+    await writeEditActivity(query, input.organisationId, input.actor, changed);
+    return { changed };
+  });
+}
+
+function normaliseInput(input: UpdateOrganisationInput): NormalisedOrganisation {
+  return {
+    name: input.name.trim(),
+    location: input.location?.trim() || null,
+    websiteUrl: input.websiteUrl?.trim() || null,
+    category: normaliseList(input.category),
+    tags: normaliseList(input.tags),
+  };
+}
+
+async function selectForUpdate(
+  query: TxQuery,
+  organisationId: string,
+): Promise<NormalisedOrganisation> {
+  const rows = await query<{
+    name: string;
+    location: string | null;
+    website_url: string | null;
+    category: string[];
+    tags: string[];
+  }>(
+    `SELECT name, location, website_url, category, tags
+       FROM crm_organisations
+      WHERE id = $1
+        FOR UPDATE`,
+    [organisationId],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`updateOrganisation: organisation ${organisationId} not found`);
+  }
+  return {
+    name: row.name,
+    location: row.location,
+    websiteUrl: row.website_url,
+    category: row.category ?? [],
+    tags: row.tags ?? [],
+  };
+}
+
+async function writeOrganisation(
+  query: TxQuery,
+  organisationId: string,
+  next: NormalisedOrganisation,
+): Promise<void> {
+  // `country` is re-derived from the new location with the same mapper
+  // `createOrganisation` and `commitImport` use — it is a derived read of
+  // `location`, so leaving it behind would mis-file the organisation in the
+  // country-filtered follow-up queue (#232).
+  //
+  // `updated_at` is stamped by hand: there are no triggers on `crm_*`.
+  await query(
+    `UPDATE crm_organisations
+        SET name = $2,
+            location = $3,
+            country = $4,
+            website_url = $5,
+            category = $6,
+            tags = $7,
+            updated_at = now()
+      WHERE id = $1`,
+    [
+      organisationId,
+      next.name,
+      next.location,
+      countryFromLocation(next.location),
+      next.websiteUrl,
+      next.category,
+      next.tags,
+    ],
+  );
+}
+
+async function writeEditActivity(
+  query: TxQuery,
+  organisationId: string,
+  actor: string,
+  changed: readonly ChangedField[],
+): Promise<void> {
+  // Same transaction as the UPDATE (Ruling 31, as `linkConversion` does):
+  // an edit that landed with no note on the timeline would be a name change
+  // under a live deal that the next rep reading the record cannot see.
+  //
+  // No `opportunity_id` — a change to the business's own fields belongs to
+  // the organisation, not to any one of its deals.
+  const metadata = Object.fromEntries(
+    changed.map(({ field, from, to }) => [field, { from, to }]),
+  );
+  await query(
+    `INSERT INTO crm_activities (organisation_id, kind, actor, body, metadata)
+     VALUES ($1, 'note', $2, $3, $4::jsonb)`,
+    [
+      organisationId,
+      actor,
+      `Edited ${changed.map((c) => c.field).join(", ")}`,
+      JSON.stringify(metadata),
+    ],
+  );
+}
