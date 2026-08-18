@@ -172,7 +172,13 @@ export default async function OrganisationDetailPage({
         {
           id: "activity",
           label: "Activity",
-          content: <ActivityTab organisationId={organisation.id} activities={activities} />,
+          content: (
+            <ActivityTab
+              organisationId={organisation.id}
+              activities={activities}
+              opportunities={opportunities}
+            />
+          ),
         },
         {
           id: "contacts",

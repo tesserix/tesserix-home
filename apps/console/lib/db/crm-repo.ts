@@ -20,6 +20,7 @@ import {
   parseCountCell,
   parseMetadataCell,
   requiresProduct,
+  CONTACT_ACTIVITY_KINDS,
   type CrmActivityKind,
   type CrmStage,
   type ImportRow,
@@ -763,26 +764,12 @@ export interface LogActivityInput {
   body?: string;
 }
 
-/**
- * Activity kinds that record a real touch between us and the business —
- * outbound or inbound. Logging one of these means contact happened, so it is
- * what `last_contacted_at` (the drift clock the queue reads) must move for.
- *
- * `note`, `stage_change` and `assigned` are deliberately absent: they are
- * things WE did to our own record, not contact with anyone. Counting an
- * internal note as contact would silently reset the drift clock on an
- * organisation nobody has actually spoken to — the exact false "recently
- * contacted" the drift rule exists to expose.
- */
-const CONTACT_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
-  "dm_sent",
-  "dm_received",
-  "email_sent",
-  "email_received",
-  "call",
-]);
+/** The kinds that count as contact, and why those — `lib/crm.ts`, which
+ *  holds the list so the composer and this write path can never disagree
+ *  about what "contact" means. A Set only for the membership test below. */
+const CONTACT_KIND_SET: ReadonlySet<CrmActivityKind> = new Set(CONTACT_ACTIVITY_KINDS);
 
-/** The subset of the above that is US reaching OUT. Only these are gated on
+/** The subset of the contact kinds that is US reaching OUT. Only these are gated on
  *  the do-not-contact list: recording that someone emailed *us*, or that we
  *  took their call, is not outreach and must stay loggable — refusing to
  *  record an inbound message from a suppressed person would destroy the
@@ -838,29 +825,16 @@ export class SuppressedContactError extends Error {
  *     left the queue still reporting the organisation as quiet since
  *     whenever the backfill said. The activity row and the timestamp it
  *     implies must land together or not at all; a logged call with a stale
- *     "quiet since" is worse than either alone.
+ *     "quiet since" is worse than either alone. Which deals that timestamp
+ *     moves for — and why an activity naming no deal moves it for all of
+ *     the open ones — is `advanceContactClock` below.
  *
  * `updated_at` is set explicitly. There are no triggers on these tables.
  */
 export async function logActivity(input: LogActivityInput): Promise<void> {
   await tesserixTx(async (query) => {
     if (OUTBOUND_ACTIVITY_KINDS.has(input.kind)) {
-      const contacts = await query<{ email: string | null; instagram_handle: string | null }>(
-        `SELECT email, instagram_handle FROM crm_contacts WHERE organisation_id = $1`,
-        [input.organisationId],
-      );
-      for (const contact of contacts) {
-        const suppressed = await isSuppressed(
-          {
-            email: contact.email ?? undefined,
-            instagramHandle: contact.instagram_handle ?? undefined,
-          },
-          query,
-        );
-        if (suppressed) {
-          throw new SuppressedContactError(input.organisationId);
-        }
-      }
+      await assertNoSuppressedContact(input.organisationId, query);
     }
 
     await query(
@@ -875,18 +849,88 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
       ],
     );
 
-    // Only when the activity is attached to a deal: `last_contacted_at`
-    // lives on `crm_opportunities`, and an organisation-level activity has
-    // no one deal whose clock it would be honest to reset.
-    if (input.opportunityId && CONTACT_ACTIVITY_KINDS.has(input.kind)) {
-      await query(
-        `UPDATE crm_opportunities
-            SET last_contacted_at = now(), updated_at = now()
-          WHERE id = $1`,
-        [input.opportunityId],
-      );
+    if (CONTACT_KIND_SET.has(input.kind)) {
+      await advanceContactClock(input, query);
     }
   });
+}
+
+/**
+ * Refuse an outbound kind if anyone at this organisation is on the
+ * do-not-contact list. Read on the transaction's own client so the check and
+ * the insert cannot straddle a concurrent suppression being added.
+ */
+async function assertNoSuppressedContact(
+  organisationId: string,
+  query: TxQuery,
+): Promise<void> {
+  const contacts = await query<{ email: string | null; instagram_handle: string | null }>(
+    `SELECT email, instagram_handle FROM crm_contacts WHERE organisation_id = $1`,
+    [organisationId],
+  );
+  for (const contact of contacts) {
+    const suppressed = await isSuppressed(
+      {
+        email: contact.email ?? undefined,
+        instagramHandle: contact.instagram_handle ?? undefined,
+      },
+      query,
+    );
+    if (suppressed) {
+      throw new SuppressedContactError(organisationId);
+    }
+  }
+}
+
+/**
+ * Move `last_contacted_at` — the clock the drifting queue reads — for the
+ * deals this contact event actually touched.
+ *
+ * WHICH DEALS, AND WHY THIS REVERSES WHAT THIS FUNCTION USED TO SAY (#245).
+ * The previous comment here reasoned that an organisation-level activity
+ * "has no one deal whose clock it would be honest to reset", and so reset
+ * none. The premise is right and the conclusion was wrong: there is no
+ * single deal, but the honest answer is that the event touched ALL of the
+ * ones still in play, not none of them. A call to the business is contact
+ * with the business, whichever deal the operator had in mind. Resetting
+ * none made the console physically unable to write this column — the
+ * composer names no deal — so every imported organisation entered Drifting
+ * 14 days after import and stayed there for ever, and the queue came to
+ * mean "imported a while ago" rather than "needs attention".
+ *
+ * Terminal deals are excluded: a won or lost deal is not being worked, so a
+ * clock that exists to say "nobody has touched this lately" has nothing to
+ * say about it.
+ *
+ * Grandfathered deals (migration 0021: qualified/won/lost with a null
+ * `product`) are excluded too, and that exclusion is not cosmetic. The
+ * CHECK is evaluated on the new row version of every UPDATE, including a
+ * bare clock bump, so including such a row would abort this transaction and
+ * take the activity row down with it — the operator would be told their
+ * call could not be recorded because an unrelated deal is missing a
+ * product. Those rows keep drifting until someone supplies the product
+ * `setNextAction` already asks for, which is the visible, fixable state;
+ * losing the record of the contact is not.
+ */
+async function advanceContactClock(input: LogActivityInput, query: TxQuery): Promise<void> {
+  if (input.opportunityId) {
+    await query(
+      `UPDATE crm_opportunities
+          SET last_contacted_at = now(), updated_at = now()
+        WHERE id = $1`,
+      [input.opportunityId],
+    );
+    return;
+  }
+
+  await query(
+    `UPDATE crm_opportunities
+        SET last_contacted_at = now(), updated_at = now()
+      WHERE organisation_id = $1
+        AND stage NOT IN ('won', 'lost')
+        AND (stage IN ('new', 'contacted') OR product IS NOT NULL)`,
+    [input.organisationId],
+  );
 }
 
 /**

@@ -396,6 +396,33 @@ describe("addActivity", () => {
     expect(tesserixQuery).not.toHaveBeenCalled();
   });
 
+  // #245. The composer logs at organisation level and names no deal, so this
+  // is the shape every contact event from the console now arrives in. The
+  // action layer needed no change to accept it — `opportunityId` was already
+  // optional and `isHumanActivityKind` already admitted all six kinds — and
+  // this test is what keeps that true: a later `opportunityId` requirement
+  // here would re-break the drift clock from above.
+  it("forwards a contact kind that names no deal, and audits it against the organisation", async () => {
+    signIn(["read"]);
+    vi.mocked(logActivity).mockResolvedValue(undefined);
+
+    const result = await addActivity({
+      organisationId: ORG_ID,
+      kind: "call",
+      body: "spoke to Ana",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(logActivity).toHaveBeenCalledWith({
+      organisationId: ORG_ID,
+      opportunityId: undefined,
+      kind: "call",
+      actor: "ava@tesserix.app",
+      body: "spoke to Ana",
+    });
+    expect(lastAuditInsert().target).toBe(ORG_ID);
+  });
+
   it("rejects an attempt to log an assigned activity directly", async () => {
     const result = await addActivity({
       organisationId: ORG_ID,
