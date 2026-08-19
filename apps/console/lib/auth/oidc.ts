@@ -232,27 +232,89 @@ export async function refreshAccessToken(
 }
 
 /**
+ * Marks a login that is ALREADY the automatic second attempt.
+ *
+ * A single character, and the only thing standing between the callback's
+ * self-healing retry and an infinite redirect loop — so it is worth saying why
+ * it lives in `state` rather than anywhere more obvious.
+ *
+ * The retry exists because a callback with no `cx_oauth_state` cookie is often
+ * just a browser that never started at `/auth/login`, which one more trip
+ * through `/auth/login` fixes. But it MUST fire at most once: the bug it is
+ * being shipped alongside already produces ERR_TOO_MANY_REDIRECTS, and an
+ * unguarded retry would turn a dead end into a spin.
+ *
+ * That rules out the two natural places to keep the marker:
+ *
+ *   A COOKIE cannot hold it. The precondition for retrying is "no cookie
+ *   arrived" — a retry cookie would be missing on exactly the requests that
+ *   need to read it, the guard would fail open, and the loop would be infinite.
+ *   This is the trap, and it looks like the obvious design until you say it out
+ *   loud.
+ *
+ *   THE CALLBACK URL cannot hold it either. `redirect_uri` has to match what is
+ *   registered on the Zitadel application byte for byte; appending `?retry=1`
+ *   earns `redirect_uri_mismatch` on every login.
+ *
+ * `state` is the one value that makes the whole round trip — console to
+ * Zitadel and back — carried by the protocol itself and independent of the
+ * cookie jar whose failure is the thing being worked around.
+ */
+const RETRY_FLAG = "r";
+
+/**
  * Pack a CSRF nonce and a return path into the `state` parameter.
  *
  * The nonce half is compared against an httpOnly cookie on the way back; the
  * path half is where the operator was heading before being bounced to login.
+ * A third segment, present only on an automatic retry, is the one-shot guard.
+ *
+ * The encoding stays backward compatible on purpose: a login started against
+ * the previous revision can land on this one mid-rollout, and a `state` it
+ * cannot parse is a `bad_state` failure for a login that was proceeding
+ * normally. Two segments still mean exactly what they meant before. The split
+ * is unambiguous because neither half can contain a `.` — the nonce is hex and
+ * the path is base64url.
  */
-export function encodeState(nonce: string, returnTo: string): string {
-  return `${nonce}.${Buffer.from(returnTo).toString("base64url")}`;
+export function encodeState(
+  nonce: string,
+  returnTo: string,
+  options: { readonly retried?: boolean } = {},
+): string {
+  const encoded = `${nonce}.${Buffer.from(returnTo).toString("base64url")}`;
+  return options.retried ? `${encoded}.${RETRY_FLAG}` : encoded;
+}
+
+/** A `state` parameter that survived decoding, with its one-shot retry guard. */
+export interface DecodedState {
+  readonly nonce: string;
+  readonly returnTo: string;
+  readonly retried: boolean;
 }
 
 export function decodeState(
   state: string | null | undefined,
-): { nonce: string; returnTo: string } | null {
+): DecodedState | null {
   if (!state) return null;
-  const dot = state.indexOf(".");
-  if (dot <= 0) return null;
-  const nonce = state.slice(0, dot);
+
+  const parts = state.split(".");
+  if (parts.length < 2 || parts.length > 3) return null;
+
+  const [nonce, encoded, flag] = parts;
+  if (!nonce || !encoded) return null;
+  // An unrecognised third segment is rejected rather than ignored. Treating it
+  // as "not a retry" would let anyone who can hand the browser a `state` strip
+  // the guard and re-arm the retry indefinitely, which is the loop this is
+  // here to prevent.
+  if (parts.length === 3 && flag !== RETRY_FLAG) return null;
+
   try {
-    const returnTo = Buffer.from(state.slice(dot + 1), "base64url").toString(
-      "utf8",
-    );
-    return { nonce, returnTo: safeReturnPath(returnTo) };
+    const returnTo = Buffer.from(encoded, "base64url").toString("utf8");
+    return {
+      nonce,
+      returnTo: safeReturnPath(returnTo),
+      retried: flag === RETRY_FLAG,
+    };
   } catch {
     return null;
   }

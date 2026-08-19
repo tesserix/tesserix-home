@@ -97,6 +97,7 @@ describe("state round trip", () => {
     expect(decodeState(state)).toEqual({
       nonce: "abc123",
       returnTo: "/platform/tickets?status=open",
+      retried: false,
     });
   });
 
@@ -105,8 +106,38 @@ describe("state round trip", () => {
     ["empty", ""],
     ["no separator", "abc123"],
     ["empty nonce", ".Zm9v"],
+    ["empty path", "abc123."],
+    ["too many segments", "abc123.Zm9v.r.r"],
+    ["an unrecognised flag", "abc123.Zm9v.x"],
   ])("rejects malformed state: %s", (_label, state) => {
     expect(decodeState(state)).toBeNull();
+  });
+
+  it("carries the one-shot retry flag through a round trip", () => {
+    const state = encodeState("abc123", "/platform", { retried: true });
+    expect(decodeState(state)).toEqual({
+      nonce: "abc123",
+      returnTo: "/platform",
+      retried: true,
+    });
+  });
+
+  it("still reads a state minted by the previous revision", () => {
+    // Mid-rollout a login started on the old code lands on the new code. A
+    // `state` this cannot parse is a bad_state failure for a login that was
+    // going fine, so the two-segment form has to keep working verbatim.
+    const legacy = `abc123.${Buffer.from("/platform").toString("base64url")}`;
+    expect(decodeState(legacy)).toEqual({
+      nonce: "abc123",
+      returnTo: "/platform",
+      retried: false,
+    });
+  });
+
+  it("cannot have the retry guard stripped by a forged state", () => {
+    // If an unrecognised third segment decoded as "not a retry", anyone able to
+    // hand the browser a state could re-arm the retry forever.
+    expect(decodeState("abc123.Zm9v.retried=false")).toBeNull();
   });
 });
 
