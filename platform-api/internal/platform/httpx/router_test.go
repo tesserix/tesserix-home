@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 )
 
@@ -24,7 +26,7 @@ func discardLogger() *slog.Logger {
 func get(t *testing.T, deps httpx.Checker, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	httpx.Router(deps, discardLogger()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	httpx.Router(deps, nil, discardLogger()).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec
 }
 
@@ -118,5 +120,45 @@ func TestUnknownRouteIs404(t *testing.T) {
 	rec := get(t, stubChecker{}, "/tickets")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("want 404 for an unregistered route, got %d", rec.Code)
+	}
+}
+
+// The guard that keeps "authentication disabled" from outliving its purpose.
+//
+// A nil verifier is legitimate only while this router serves probes alone.
+// Registering a domain module without one would mean an unauthenticated API,
+// and a checklist item would be forgotten exactly once — silently.
+func TestRegisteringAModuleWithoutAVerifierPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("registering a module with authentication disabled must panic")
+		}
+		msg, _ := r.(string)
+		// The message has to say what to do; a bare panic at wiring time is a
+		// stack trace with no instruction in it.
+		if !strings.Contains(msg, "PLATFORM_API_AUTH_ENABLED") {
+			t.Errorf("the panic should name the variable to set, got %q", msg)
+		}
+		if !strings.Contains(msg, "tickets") {
+			t.Errorf("the panic should name the module, got %q", msg)
+		}
+	}()
+
+	httpx.RegisterModule(http.NewServeMux(), nil, "tickets", func(*http.ServeMux) {
+		t.Error("the module must not be registered")
+	})
+}
+
+// The other half: with a verifier it registers normally.
+func TestRegisteringAModuleWithAVerifierWorks(t *testing.T) {
+	registered := false
+
+	httpx.RegisterModule(http.NewServeMux(), &auth.Verifier{}, "tickets", func(*http.ServeMux) {
+		registered = true
+	})
+
+	if !registered {
+		t.Error("a module should register when authentication is on")
 	}
 }

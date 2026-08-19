@@ -15,7 +15,26 @@ type Config struct {
 	Port            string
 	Env             string
 	Database        Database
+	Auth            Auth
 	ShutdownTimeout time.Duration
+}
+
+// Auth is the Zitadel wiring (ADR-003 D8).
+//
+// DEFAULTS TO DISABLED, and that is a deliberate, temporary state.
+//
+// The service serves /health and /ready and composes no domain modules, so
+// there is nothing yet to protect. Defaulting to enabled would mean the
+// currently deployed pod — whose chart supplies no ZITADEL_* variables — fails
+// to start on the next promotion, trading no security for a broken rollout.
+//
+// It must flip when the first module lands (#269). The router refuses to
+// register a module route while this is off, so that is enforced rather than
+// remembered.
+type Auth struct {
+	Enabled   bool
+	Issuer    string
+	ProjectID string
 }
 
 // Database describes the connection to tesserix-postgres.
@@ -84,6 +103,17 @@ func Load() (Config, error) {
 		Port:            env("PORT", defaultPort),
 		Env:             env("APP_ENV", "development"),
 		ShutdownTimeout: defaultShutdownTimeout,
+		Auth: Auth{
+			// Opt-IN while there is nothing to protect; the router guard is
+			// what stops that outliving its purpose.
+			Enabled: env("PLATFORM_API_AUTH_ENABLED", "") == "true",
+			Issuer:  env("ZITADEL_ISSUER", ""),
+			// The Platform Console project: both the audience this API requires
+			// and the project whose roles it reads. The console already requests
+			// `urn:zitadel:iam:org:project:id:{projectId}:aud`, so its tokens
+			// carry it and no new Zitadel application is needed.
+			ProjectID: env("ZITADEL_PROJECT_ID", ""),
+		},
 		Database: Database{
 			Host:     env("TESSERIX_DB_HOST", ""),
 			Port:     env("TESSERIX_DB_PORT", defaultDBPort),
@@ -103,6 +133,20 @@ func Load() (Config, error) {
 				"TESSERIX_DB_MAX_CONNS must be a positive integer, got %q", v)
 		}
 		cfg.Database.MaxConns = int32(n)
+	}
+
+	if cfg.Auth.Enabled {
+		var authMissing []string
+		if cfg.Auth.Issuer == "" {
+			authMissing = append(authMissing, "ZITADEL_ISSUER")
+		}
+		if cfg.Auth.ProjectID == "" {
+			authMissing = append(authMissing, "ZITADEL_PROJECT_ID")
+		}
+		if len(authMissing) > 0 {
+			return Config{}, fmt.Errorf(
+				"PLATFORM_API_AUTH_ENABLED is true but %s are unset", strings.Join(authMissing, ", "))
+		}
 	}
 
 	var missing []string

@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
@@ -57,9 +58,35 @@ func run(log *slog.Logger) error {
 		slog.String("env", cfg.Env),
 	)
 
+	// Discovery happens here, at startup, so an unreachable Zitadel refuses to
+	// boot rather than failing every request. A service that starts unable to
+	// verify tokens can only fail closed, which is a harder outage to read.
+	verifier, err := auth.NewVerifierFromConfig(ctx, auth.Config{
+		Enabled:   cfg.Auth.Enabled,
+		Issuer:    cfg.Auth.Issuer,
+		ProjectID: cfg.Auth.ProjectID,
+	})
+	if err != nil {
+		return err
+	}
+
+	if verifier == nil {
+		// Loud on purpose. This is legitimate only while the service composes
+		// no modules; the router refuses to register one without a verifier, so
+		// the state cannot outlive its justification silently.
+		log.Warn("authentication is DISABLED — legitimate only while no module is served",
+			slog.String("enable_with", "PLATFORM_API_AUTH_ENABLED=true"),
+		)
+	} else {
+		log.Info("authentication enabled",
+			slog.String("issuer", cfg.Auth.Issuer),
+			slog.String("audience", cfg.Auth.ProjectID),
+		)
+	}
+
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: httpx.Router(pool, log),
+		Handler: httpx.Router(pool, verifier, log),
 		// A request that has not sent its headers in this long is not a
 		// request. Without these an idle connection holds a goroutine
 		// indefinitely, which is a slow way to run out of them.

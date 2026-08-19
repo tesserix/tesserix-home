@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 )
 
 // Checker reports whether a dependency is usable right now.
@@ -31,8 +33,16 @@ type Checker interface {
 // turns out to be awkward, moving to Gin is mechanical — handlers here take
 // (http.ResponseWriter, *http.Request), which Gin adapts. Worth revisiting when
 // the first middleware lands rather than pre-empting it now.
-func Router(deps Checker, log *slog.Logger) *http.ServeMux {
+func Router(deps Checker, verifier *auth.Verifier, log *slog.Logger) *http.ServeMux {
 	mux := http.NewServeMux()
+
+	// The guard that stops "authentication disabled" outliving its purpose.
+	//
+	// A nil verifier is legitimate ONLY while this router serves probes alone.
+	// The moment a module is registered here, a nil verifier means an
+	// unauthenticated domain API — so registering one must go through
+	// `module()` below, which refuses.
+	_ = verifier
 
 	// Liveness: is the process running and able to serve?
 	//
@@ -92,4 +102,23 @@ func WriteJSON(w http.ResponseWriter, status int, body any, log *slog.Logger) {
 func WriteError(w http.ResponseWriter, err error, log *slog.Logger) {
 	envelope := From(err)
 	WriteJSON(w, envelope.StatusCode, envelope, log)
+}
+
+// RegisterModule registers a domain module's routes, refusing to do so without a
+// verifier.
+//
+// This is the enforcement behind config.Auth's comment that authentication
+// "must flip when the first module lands". Left to a checklist it would be
+// forgotten exactly once, and the failure — a domain API serving anyone who can
+// reach the port — is silent.
+//
+// It panics rather than returning an error because there is no recovery: a
+// service that cannot authenticate the module it is about to serve should not
+// start, and this runs at wiring time, not per request.
+func RegisterModule(mux *http.ServeMux, verifier *auth.Verifier, name string, register func(*http.ServeMux)) {
+	if verifier == nil {
+		panic("refusing to register module " + name +
+			" with authentication disabled — set PLATFORM_API_AUTH_ENABLED=true")
+	}
+	register(mux)
 }
