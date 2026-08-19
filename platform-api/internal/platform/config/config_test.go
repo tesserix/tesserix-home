@@ -16,6 +16,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"TESSERIX_DB_HOST", "TESSERIX_DB_PORT", "TESSERIX_DB_USER",
 		"TESSERIX_DB_PASSWORD", "TESSERIX_DB_NAME", "TESSERIX_DB_SSLMODE",
 		"TESSERIX_DB_MAX_CONNS",
+		"PLATFORM_API_AUTH_ENABLED", "ZITADEL_ISSUER", "ZITADEL_PROJECT_ID",
 	} {
 		t.Setenv(k, "")
 	}
@@ -164,5 +165,86 @@ func TestDSNCarriesThePassword(t *testing.T) {
 	// legitimately appears, and it must never be logged.
 	if !strings.Contains(cfg.Database.DSN(), "password=hunter2") {
 		t.Errorf("DSN must carry the password: %s", cfg.Database.DSN())
+	}
+}
+
+func TestAuthIsDisabledByDefault(t *testing.T) {
+	setEnv(t, validEnv())
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Deliberate and temporary. The deployed chart supplies no ZITADEL_*
+	// variables, so defaulting to enabled would fail the next rollout of a
+	// service that currently protects nothing.
+	if cfg.Auth.Enabled {
+		t.Error("auth must default to disabled while there is no module to protect")
+	}
+}
+
+func TestAuthRequiresItsConfigurationWhenEnabled(t *testing.T) {
+	cases := []struct {
+		name    string
+		extra   map[string]string
+		wantVar string
+	}{
+		{"no issuer", map[string]string{"ZITADEL_PROJECT_ID": "p"}, "ZITADEL_ISSUER"},
+		{"no project", map[string]string{"ZITADEL_ISSUER": "https://auth.test"}, "ZITADEL_PROJECT_ID"},
+		{"neither", map[string]string{}, "ZITADEL_ISSUER"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := validEnv()
+			e["PLATFORM_API_AUTH_ENABLED"] = "true"
+			for k, v := range tc.extra {
+				e[k] = v
+			}
+			setEnv(t, e)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatal("enabling auth without its configuration must fail at startup")
+			}
+			if !strings.Contains(err.Error(), tc.wantVar) {
+				t.Errorf("error must name %s, got %q", tc.wantVar, err)
+			}
+		})
+	}
+}
+
+func TestAuthLoadsWhenFullyConfigured(t *testing.T) {
+	e := validEnv()
+	e["PLATFORM_API_AUTH_ENABLED"] = "true"
+	e["ZITADEL_ISSUER"] = "https://auth.tesserix.app"
+	e["ZITADEL_PROJECT_ID"] = "386377618200461939"
+	setEnv(t, e)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.Auth.Enabled || cfg.Auth.ProjectID != "386377618200461939" {
+		t.Errorf("auth not loaded: %+v", cfg.Auth)
+	}
+}
+
+// Only the exact string enables it. A mistyped value must leave authentication
+// in its default state rather than half-configuring it.
+func TestOnlyTrueEnablesAuth(t *testing.T) {
+	for _, v := range []string{"1", "yes", "True", "TRUE", "enabled", ""} {
+		e := validEnv()
+		e["PLATFORM_API_AUTH_ENABLED"] = v
+		setEnv(t, e)
+
+		cfg, err := config.Load()
+		if err != nil {
+			t.Fatalf("PLATFORM_API_AUTH_ENABLED=%q: %v", v, err)
+		}
+		if cfg.Auth.Enabled {
+			t.Errorf("PLATFORM_API_AUTH_ENABLED=%q must not enable auth", v)
+		}
 	}
 }
