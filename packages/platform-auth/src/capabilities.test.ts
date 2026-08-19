@@ -135,7 +135,7 @@ describe("the surface/verb split (#261)", () => {
       ...RISK_CAPABILITIES,
     ]);
 
-    expect([...CAPABILITIES].sort()).toEqual([...classified].sort());
+    expect([...CAPABILITIES].sort()).toEqual(Array.from(classified).sort());
   });
 
   it("keeps surfaces and verbs disjoint", () => {
