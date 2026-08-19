@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "FORBIDDEN",
+    "message": "you do not hold the capability this action requires"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

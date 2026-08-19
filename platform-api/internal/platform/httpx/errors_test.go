@@ -1,37 +1,30 @@
 package httpx_test
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 )
 
-func TestStatusCodeIsNotSerialised(t *testing.T) {
-	body, err := json.Marshal(httpx.NotFound("no such ticket"))
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if _, present := decoded["StatusCode"]; present {
-		t.Error("StatusCode leaked into the body; the response carries it already")
-	}
-	if decoded["code"] != httpx.CodeNotFound {
-		t.Errorf("want code %q, got %v", httpx.CodeNotFound, decoded["code"])
-	}
-}
-
-func TestEmptyDetailsAreOmitted(t *testing.T) {
-	body, _ := json.Marshal(httpx.BadRequest("bad"))
-	if strings.Contains(string(body), "details") {
-		t.Errorf("absent details must be omitted, got %s", body)
+// Error is a return type, not a wire type. WriteError projects it into
+// ErrorDetails; see response_test.go for the shape a client receives.
+//
+// This asserts the absence directly, because the property is easy to undo by
+// accident: adding a json tag to one field is a one-line change that would
+// give this service a second, subtly different error shape the first time a
+// handler reached for json.Marshal.
+func TestErrorCarriesNoJSONTags(t *testing.T) {
+	typ := reflect.TypeOf(httpx.Error{})
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		if tag, present := field.Tag.Lookup("json"); present {
+			t.Errorf("Error.%s carries a json tag (%q); this type must not serialise itself", field.Name, tag)
+		}
 	}
 }
 
@@ -121,19 +114,30 @@ func TestErrorSatisfiesTheErrorInterface(t *testing.T) {
 // module is not imported. If these names drift, the justification on #277
 // stops being true and a client written against another Tesserix service
 // breaks silently.
-func TestEnvelopeMatchesTheEstateShape(t *testing.T) {
-	body, _ := json.Marshal(httpx.Validation("invalid", map[string]any{"field": "status"}))
+//
+// Asserted on the STRUCT rather than on a marshalled body, now that Error does
+// not marshal itself. The three exported fields plus the status are AppError's
+// shape; response.go projects the first three onto the wire.
+func TestErrorMatchesTheEstateShape(t *testing.T) {
+	typ := reflect.TypeOf(httpx.Error{})
 
-	var decoded map[string]any
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	want := map[string]reflect.Kind{
+		"Code":       reflect.String,
+		"Message":    reflect.String,
+		"StatusCode": reflect.Int,
+		"Details":    reflect.Map,
 	}
-	for _, key := range []string{"code", "message", "details"} {
-		if _, present := decoded[key]; !present {
-			t.Errorf("envelope is missing %q; go-shared's AppError has it", key)
+	if typ.NumField() != len(want) {
+		t.Errorf("Error has %d fields, want %d — go-shared's AppError shape", typ.NumField(), len(want))
+	}
+	for name, kind := range want {
+		field, ok := typ.FieldByName(name)
+		if !ok {
+			t.Errorf("Error is missing %q; go-shared's AppError has it", name)
+			continue
 		}
-	}
-	if len(decoded) != 3 {
-		t.Errorf("envelope gained a field go-shared does not have: %v", decoded)
+		if field.Type.Kind() != kind {
+			t.Errorf("Error.%s is %s, want %s", name, field.Type.Kind(), kind)
+		}
 	}
 }

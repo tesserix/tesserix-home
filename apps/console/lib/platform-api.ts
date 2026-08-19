@@ -125,6 +125,131 @@ export async function fetchDashboard(
 }
 
 /**
+ * The platform API's origin, when the console is pointed at it.
+ *
+ * # Why this is a switch and not a replacement
+ *
+ * #269 migrates the four ticket call sites off `/api/admin/*`. Doing that as a
+ * straight swap would break the deployed console the moment it shipped, for a
+ * reason that has nothing to do with the module: the platform API takes a
+ * Zitadel access token (ADR-003 D8) and this console does not have one yet —
+ * `app/auth/callback/route.ts` keeps the ID token and discards the rest. See
+ * `lib/auth/platform-token.ts`.
+ *
+ * So the client learns to speak both, and the environment decides. Unset — the
+ * deployed state today — is byte-for-byte the current behaviour. Set, with a
+ * token available, and tickets come from the Go module. Flipping it is then a
+ * one-line environment change made when login and token retention are ready,
+ * rather than a code change made under pressure.
+ *
+ * The alternative was to hold the migration on a branch until login is fixed.
+ * That trades a reviewable switch for a long-lived branch that rots against a
+ * moving console, which is the worse of the two.
+ */
+export function platformApiOrigin(): string | null {
+  const origin = process.env.PLATFORM_API_ORIGIN?.trim();
+  return origin ? origin.replace(/\/+$/, "") : null;
+}
+
+/**
+ * Unwrap go-shared's StandardResponse.
+ *
+ * `{ success, data, error, meta }` — the estate's envelope, which the platform
+ * API adopts field for field. A failure is turned into a `PlatformApiError`
+ * carrying the API's own code and message, because those are the strings an
+ * operator can act on: "no such ticket" and "you do not hold the capability
+ * this action requires" say different things and the console renders them
+ * differently.
+ */
+function unwrap(label: string, status: number, body: unknown): unknown {
+  if (typeof body !== "object" || body === null) {
+    throw new PlatformApiError(`${label}: response was not an object`, status);
+  }
+  const envelope = body as {
+    success?: unknown;
+    data?: unknown;
+    error?: { code?: unknown; message?: unknown };
+  };
+  if (envelope.success === true) {
+    return envelope.data;
+  }
+  const code = typeof envelope.error?.code === "string" ? envelope.error.code : "UNKNOWN";
+  const message =
+    typeof envelope.error?.message === "string" ? envelope.error.message : "request failed";
+  throw new PlatformApiError(`${label}: ${code} — ${message}`, status);
+}
+
+/**
+ * Call the platform API as the current operator.
+ *
+ * Throws when there is no token rather than sending the request unauthenticated:
+ * a 401 with no body a human wrote is a worse answer than saying plainly that
+ * this console cannot yet authenticate to that API.
+ *
+ * `cache: "no-store"` for the same reason every other read here sets it — an
+ * operator acting on a queue must not be shown a cached one.
+ */
+async function platformRequest(
+  label: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<unknown> {
+  const origin = platformApiOrigin();
+  if (!origin) {
+    throw new PlatformApiError(`${label}: the platform API origin is not configured`);
+  }
+  const { getPlatformApiToken } = await import("./auth/platform-token");
+  const token = await getPlatformApiToken();
+  if (!token) {
+    throw new PlatformApiError(
+      `${label}: this session carries no platform API access token (ADR-003 D8)`,
+    );
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${origin}${path}`, {
+      cache: "no-store",
+      ...init,
+      headers: {
+        ...init.headers,
+        authorization: `Bearer ${token}`,
+      },
+    });
+  } catch (cause) {
+    throw new PlatformApiError(`${label}: request failed (${describe(cause)})`, undefined, {
+      cause,
+    });
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    throw new PlatformApiError(
+      `${label}: response was not JSON (${describe(cause)})`,
+      response.status,
+      { cause },
+    );
+  }
+  // Unwrapped even on a non-2xx: the envelope is the same shape either way, and
+  // its `error.code` is more useful than the status alone.
+  return unwrap(label, response.status, body);
+}
+
+/**
+ * A fresh idempotency key for one write.
+ *
+ * Minted per attempt rather than per retry, which is the right way round: the
+ * key identifies the REQUEST the operator made, so a genuine second reply gets
+ * its own key and a transport-level retry of the same request reuses this one.
+ * Server actions run once per submission, so this is that boundary.
+ */
+function idempotencyKey(): string {
+  return crypto.randomUUID();
+}
+
+/**
  * Narrowing applied to the queue. Every key is optional; an omitted key means
  * "no filter", which is why a blank value is dropped rather than sent — web
  * reads `?status=` as the empty string and would filter on it.
@@ -165,6 +290,10 @@ export async function fetchTickets(
   cookieHeader: string,
   filters: TicketFilters = {},
 ): Promise<import("./tickets").TicketsPage> {
+  if (platformApiOrigin()) {
+    return fetchTicketsFromPlatformApi(filters);
+  }
+
   const { parseTickets } = await import("./tickets");
 
   const query = ticketsQuery(filters);
@@ -201,6 +330,48 @@ export async function fetchTickets(
     });
   }
   return parseTickets(body);
+}
+
+/**
+ * The queue, composed from the platform API's two resources.
+ *
+ * **This function is #269's answer, and the whole reason the API refused to
+ * serve `{summary, rows}` itself.** The listing and the standing count are two
+ * different questions — one is a filtered page, the other is a property of the
+ * queue — and welding them into one payload is what made the old endpoint
+ * screen-shaped. The API serves domain resources; the composition belongs
+ * wherever a screen is being drawn, which is here.
+ *
+ * `Promise.all`, not sequential: they are independent reads and a queue screen
+ * should not pay two round trips in series. `Promise.all` and not `allSettled`
+ * because both halves are required — a queue with no counts, or counts with no
+ * queue, is a half-rendered screen and the surface's error state says more than
+ * a blank panel does.
+ *
+ * The summary is deliberately NOT filtered. It cannot be: the API offers no way
+ * to narrow it, which is what keeps the headline numbers still while an
+ * operator narrows the list.
+ */
+async function fetchTicketsFromPlatformApi(
+  filters: TicketFilters,
+): Promise<import("./tickets").TicketsPage> {
+  const { parseTicketList, parseTicketsSummary } = await import("./tickets");
+
+  const query = new URLSearchParams(ticketsQuery(filters));
+  // The page size the console asks for. Matches what apps/web served, so the
+  // surface behaves as it does today; the difference is that this one is a
+  // page with a cursor behind it rather than a silent cap.
+  query.set("limit", "200");
+
+  const [list, summary] = await Promise.all([
+    platformRequest("tickets", `/v1/tickets?${query.toString()}`),
+    platformRequest("tickets summary", "/v1/tickets/summary"),
+  ]);
+
+  return {
+    summary: parseTicketsSummary(summary),
+    rows: parseTicketList(list),
+  };
 }
 
 // The origin apps/web's CSRF gate checks writes against. A server-to-server
@@ -252,6 +423,16 @@ export async function fetchTicketDetail(
   cookieHeader: string,
 ): Promise<import("./tickets").TicketDetail> {
   const { parseTicketDetail } = await import("./tickets");
+
+  if (platformApiOrigin()) {
+    // parseTicketDetail is used UNCHANGED against the module's payload — the
+    // envelope is stripped by platformRequest and what is left is
+    // `{ticket, replies}`, the shape this parser already reads. Verified
+    // against the module's committed golden files.
+    const data = await platformRequest("ticket", `/v1/tickets/${encodeURIComponent(id)}`);
+    return parseTicketDetail(data);
+  }
+
   const response = await request(
     "ticket",
     `/api/admin/platform-tickets/${encodeURIComponent(id)}`,
@@ -265,6 +446,21 @@ export async function postTicketReply(
   input: { content: string; newStatus?: import("./tickets").TicketStatus },
   cookieHeader: string,
 ): Promise<void> {
+  if (platformApiOrigin()) {
+    await platformRequest("ticket reply", `/v1/tickets/${encodeURIComponent(id)}/replies`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // Makes a retried submission land once. The API records the key in the
+        // same transaction as the reply, so a key that exists always
+        // corresponds to a reply that committed.
+        "idempotency-key": idempotencyKey(),
+      },
+      body: JSON.stringify(input),
+    });
+    return;
+  }
+
   await request(
     "ticket reply",
     `/api/admin/platform-tickets/${encodeURIComponent(id)}/replies`,
@@ -285,6 +481,18 @@ export async function patchTicketStatus(
   status: import("./tickets").TicketStatus,
   cookieHeader: string,
 ): Promise<void> {
+  if (platformApiOrigin()) {
+    await platformRequest("ticket status", `/v1/tickets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": idempotencyKey(),
+      },
+      body: JSON.stringify({ status }),
+    });
+    return;
+  }
+
   await request(
     "ticket status",
     `/api/admin/platform-tickets/${encodeURIComponent(id)}`,

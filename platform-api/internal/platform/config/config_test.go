@@ -25,11 +25,19 @@ func setEnv(t *testing.T, kv map[string]string) {
 	}
 }
 
+// validEnv is a complete, loadable environment.
+//
+// It carries the Zitadel variables because authentication is required by
+// default since #269 — a "valid environment" that omitted them would be one
+// this service refuses to start on, which is not what the name promises. The
+// tests that are ABOUT the auth variables set or clear them explicitly.
 func validEnv() map[string]string {
 	return map[string]string{
 		"TESSERIX_DB_HOST":     "10.0.0.1",
 		"TESSERIX_DB_USER":     "platform_api",
 		"TESSERIX_DB_PASSWORD": "hunter2",
+		"ZITADEL_ISSUER":       "https://auth.tesserix.app",
+		"ZITADEL_PROJECT_ID":   "386377618200461939",
 	}
 }
 
@@ -168,7 +176,13 @@ func TestDSNCarriesThePassword(t *testing.T) {
 	}
 }
 
-func TestAuthIsDisabledByDefault(t *testing.T) {
+func TestAuthIsEnabledByDefault(t *testing.T) {
+	// The flip #269 was waiting for. While the service composed no modules
+	// this defaulted to DISABLED, on the stated grounds that the deployed
+	// chart supplied no ZITADEL_* variables and there was nothing to protect.
+	// The tickets module is the event that made both halves untrue —
+	// tesserix-k8s#446 supplied the variables, and there is now something to
+	// protect.
 	setEnv(t, validEnv())
 
 	cfg, err := config.Load()
@@ -176,11 +190,43 @@ func TestAuthIsDisabledByDefault(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	// Deliberate and temporary. The deployed chart supplies no ZITADEL_*
-	// variables, so defaulting to enabled would fail the next rollout of a
-	// service that currently protects nothing.
+	if !cfg.Auth.Enabled {
+		t.Error("auth must default to enabled now that a module is served")
+	}
+}
+
+// Turning it off is still possible and no longer opens onto anything: a
+// service serving a domain module without a verifier is refused at wiring time
+// by httpx.RegisterModule, which names this variable in its panic.
+func TestAuthCanStillBeTurnedOffExplicitly(t *testing.T) {
+	e := validEnv()
+	e["PLATFORM_API_AUTH_ENABLED"] = "false"
+	setEnv(t, e)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
 	if cfg.Auth.Enabled {
-		t.Error("auth must default to disabled while there is no module to protect")
+		t.Error("an explicit false must be honoured by config; the router is what refuses it")
+	}
+}
+
+// The Zitadel variables are missing far more often than they are wrong, and
+// they are now required by default — so a deployment missing both them and a
+// database credential must be told everything at once rather than over two
+// rollouts.
+func TestEveryMissingVariableIsNamedTogetherAcrossBothGroups(t *testing.T) {
+	setEnv(t, map[string]string{"TESSERIX_DB_HOST": "localhost", "TESSERIX_DB_USER": "u"})
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("Load must fail")
+	}
+	for _, want := range []string{"ZITADEL_ISSUER", "ZITADEL_PROJECT_ID", "TESSERIX_DB_PASSWORD"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must name %s; got %q", want, err)
+		}
 	}
 }
 
@@ -190,15 +236,18 @@ func TestAuthRequiresItsConfigurationWhenEnabled(t *testing.T) {
 		extra   map[string]string
 		wantVar string
 	}{
-		{"no issuer", map[string]string{"ZITADEL_PROJECT_ID": "p"}, "ZITADEL_ISSUER"},
-		{"no project", map[string]string{"ZITADEL_ISSUER": "https://auth.test"}, "ZITADEL_PROJECT_ID"},
-		{"neither", map[string]string{}, "ZITADEL_ISSUER"},
+		{"no issuer", map[string]string{"ZITADEL_ISSUER": ""}, "ZITADEL_ISSUER"},
+		{"no project", map[string]string{"ZITADEL_PROJECT_ID": ""}, "ZITADEL_PROJECT_ID"},
+		{"neither", map[string]string{"ZITADEL_ISSUER": "", "ZITADEL_PROJECT_ID": ""}, "ZITADEL_ISSUER"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e := validEnv()
-			e["PLATFORM_API_AUTH_ENABLED"] = "true"
 			for k, v := range tc.extra {
+				if v == "" {
+					delete(e, k)
+					continue
+				}
 				e[k] = v
 			}
 			setEnv(t, e)
@@ -217,8 +266,6 @@ func TestAuthRequiresItsConfigurationWhenEnabled(t *testing.T) {
 func TestAuthLoadsWhenFullyConfigured(t *testing.T) {
 	e := validEnv()
 	e["PLATFORM_API_AUTH_ENABLED"] = "true"
-	e["ZITADEL_ISSUER"] = "https://auth.tesserix.app"
-	e["ZITADEL_PROJECT_ID"] = "386377618200461939"
 	setEnv(t, e)
 
 	cfg, err := config.Load()
@@ -231,10 +278,16 @@ func TestAuthLoadsWhenFullyConfigured(t *testing.T) {
 	}
 }
 
-// Only the exact string enables it. A mistyped value must leave authentication
-// in its default state rather than half-configuring it.
-func TestOnlyTrueEnablesAuth(t *testing.T) {
-	for _, v := range []string{"1", "yes", "True", "TRUE", "enabled", ""} {
+// Only the exact string "false" disables it.
+//
+// The asymmetry is deliberate and it changed direction with the default. When
+// the flag was opt-in, a typo left authentication OFF — the safe side of a
+// mistake then, because nothing was being protected. Now that it is opt-out, a
+// typo must leave it ON: "flase", "0" and "no" are all attempts to turn it off
+// that this service declines to guess at, and guessing wrong would serve a
+// domain module unauthenticated.
+func TestOnlyAnExactFalseDisablesAuth(t *testing.T) {
+	for _, v := range []string{"flase", "0", "no", "False", "FALSE", "off", ""} {
 		e := validEnv()
 		e["PLATFORM_API_AUTH_ENABLED"] = v
 		setEnv(t, e)
@@ -243,8 +296,8 @@ func TestOnlyTrueEnablesAuth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PLATFORM_API_AUTH_ENABLED=%q: %v", v, err)
 		}
-		if cfg.Auth.Enabled {
-			t.Errorf("PLATFORM_API_AUTH_ENABLED=%q must not enable auth", v)
+		if !cfg.Auth.Enabled {
+			t.Errorf("PLATFORM_API_AUTH_ENABLED=%q must not disable auth", v)
 		}
 	}
 }

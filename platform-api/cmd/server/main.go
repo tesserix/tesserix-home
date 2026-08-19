@@ -20,16 +20,27 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	// Wrapped in reqid.LogHandler so every line logged with a request's context
+	// carries its id.
+	//
+	// Not decoration. Two log lines in this service exist precisely because the
+	// client is told deliberately less than the log knows — auth's "token
+	// rejected", which answers one 401 for four different failures, and the
+	// modules' "request failed", which hides a driver error behind a generic
+	// 500. The request id is the only thing joining what the caller saw to what
+	// actually happened, and without this wrapper it reached neither line.
+	log := slog.New(reqid.LogHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	}))
+	})))
 	slog.SetDefault(log)
 
 	if err := run(log); err != nil {
@@ -84,9 +95,25 @@ func run(log *slog.Logger) error {
 		)
 	}
 
+	mux := httpx.Router(pool, verifier, log)
+
+	// Modules register here, on the bare mux. This is the one file allowed to
+	// import every module — internal/modules/doc.go explains why the boundary
+	// rule applies to modules/ and not to cmd/.
+	//
+	// Through RegisterModule rather than by calling tickets.Register directly:
+	// that is what refuses to serve a domain module without a verifier, and
+	// the refusal is worth more than the one line it costs.
+	httpx.RegisterModule(mux, verifier, "tickets", func(m *http.ServeMux) {
+		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+	})
+
 	server := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: httpx.Router(pool, verifier, log),
+		Addr: ":" + cfg.Port,
+		// Wrapped after registration, not before: WithMiddleware takes a
+		// finished handler, and a mux that had already been wrapped could not
+		// have had modules added to it.
+		Handler: httpx.WithMiddleware(mux),
 		// A request that has not sent its headers in this long is not a
 		// request. Without these an idle connection holds a goroutine
 		// indefinitely, which is a slow way to run out of them.

@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "ticket is already resolved"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

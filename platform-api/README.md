@@ -4,9 +4,14 @@ The Tesserix platform API — one deployable, internally modularised by domain.
 Decided in [ADR-003](../docs/ADR-003-CONSOLE-TOPOLOGY.md) D2; scaffolded by
 [#277](https://github.com/tesserix/tesserix-home/issues/277).
 
-**It currently serves two probes and composes no domain modules.** That is
-deliberate: the scaffold proves the delivery path end to end while the only
-thing at risk is a health check.
+**It serves two probes and the tickets module.** The scaffold ([#277](https://github.com/tesserix/tesserix-home/issues/277)) proved the delivery
+path end to end while the only thing at risk was a health check; the tickets
+module ([#269](https://github.com/tesserix/tesserix-home/issues/269)) is the
+first domain on it, and the conventions every later module copies were derived
+from building it.
+
+**Read [docs/PLATFORM-API-CONVENTIONS.md](../docs/PLATFORM-API-CONVENTIONS.md)
+before writing the second module.**
 
 ## Why it exists
 
@@ -25,6 +30,7 @@ internal/
     database/        the tesserix-postgres pool
     httpx/           the error envelope, the probes, JSON conventions
   modules/           domain modules. See doc.go for the rule.
+    tickets/         the cross-product support queue (#269)
   architecture/      the import-graph check that enforces that rule
 ```
 
@@ -49,7 +55,8 @@ Both were verified against a deliberate violation before this landed:
 
 ADR-003 D2a makes the whole modular-monolith decision contingent on this
 enforcement landing with the *first* module, not the third — which is why it
-ships against an empty `modules/` directory.
+shipped against an empty `modules/` directory, one commit before there was
+anything to enforce it on.
 
 Read `internal/modules/doc.go` before adding a module.
 
@@ -79,6 +86,21 @@ that already exist.
 | `TESSERIX_DB_NAME` | `tesserix_admin` | matches the console
 | `TESSERIX_DB_SSLMODE` | `require` | |
 | `TESSERIX_DB_MAX_CONNS` | `2` | see below |
+| `PLATFORM_API_AUTH_ENABLED` | `true` | opt-**out** since #269; see below |
+| `ZITADEL_ISSUER` | — | required unless auth is off |
+| `ZITADEL_PROJECT_ID` | — | required unless auth is off |
+
+### Authentication is on by default
+
+It was opt-in while the service composed no modules and there was nothing to
+protect. The tickets module is the event that comment was waiting for, so the
+default flipped.
+
+Setting `PLATFORM_API_AUTH_ENABLED=false` is now a request to serve a domain
+module unauthenticated, which `httpx.RegisterModule` refuses by panicking at
+wiring time — the escape hatch still exists and no longer opens onto anything.
+The Zitadel values come from
+[tesserix-k8s#446](https://github.com/tesserix/tesserix-k8s/pull/446).
 
 Startup fails loudly and names every missing variable at once, rather than
 booting half-configured and failing on the first request.
@@ -104,10 +126,22 @@ Raising it should be a deliberate act with a reason.
 
 ## Conventions
 
-**Error envelope** — `{code, message, details?}`, field-compatible with
-`go-shared`'s `AppError` so a client written against another Tesserix service is
-not surprised. The module itself is **not** imported; see the reasoning in
-`internal/platform/httpx/errors.go`.
+**Response envelope** — `go-shared`'s `StandardResponse`:
+`{success, data|error, meta?, timestamp, request_id}`. The module itself is
+**not** imported; see the reasoning in `internal/platform/httpx/errors.go`, and
+the reversal of the scaffold's flatter shape in `response.go`.
+
+**Keyset pagination** — cursors, honest totals, no page numbers (#240, #241).
+A malformed cursor is a 400, never a silent first page.
+
+**Idempotency** — `Idempotency-Key` on writes, recorded in the same transaction
+as the write.
+
+**Auditing** — the writer audits, in the operation's transaction, into
+`console_audit_log`.
+
+All four are argued at length in
+[docs/PLATFORM-API-CONVENTIONS.md](../docs/PLATFORM-API-CONVENTIONS.md).
 
 **No ORM.** pgx directly. The data layer this service is absorbing is
 hand-written SQL — keyset pagination (#240, #241) and a contact clock that must
@@ -120,17 +154,46 @@ through a query builder turns a mechanical translation into a re-derivation.
 ## Tests
 
 ```sh
-go test ./...                                  # everything
+go test ./...                                  # everything the laptop can run
 go test ./internal/architecture/...            # the boundary rule
 ```
 
-CI runs `gofmt`, a tidy check, `go vet`, the boundary check as its own step, and
-`go test -race`.
+**Most of what matters needs a database.** Every test that touches SQL goes
+through `internal/platform/testdb`, which applies `apps/web/db/migrations` to a
+fresh database per test — so a query is tested against the schema it will
+actually run on. They **skip** without `TESSERIX_TEST_DB_HOST`, which keeps
+`go test ./...` usable on a laptop, and CI fails if anything skipped there.
+
+```sh
+docker run -d --name pg -e POSTGRES_PASSWORD=testpass -p 55432:5432 postgres:15-alpine
+
+TESSERIX_TEST_DB_HOST=localhost \
+TESSERIX_TEST_DB_PORT=55432 \
+TESSERIX_TEST_DB_PASSWORD=testpass \
+go test -race ./...
+```
+
+`TESSERIX_TEST_DB_*`, never the service's own `TESSERIX_DB_*` — a suite that
+picks up ambient production credentials and then truncates something is a
+category of accident worth designing out.
+
+Golden response files live in
+`internal/modules/tickets/internal/handler/testdata/`. Regenerate with
+`-update-golden` and read the diff: they are the contract the console's parsers
+are written against.
+
+CI runs `gofmt`, a tidy check, `go vet`, the boundary check as its own step, a
+no-test-skipped check, and `go test -race`.
 
 ## Not done yet
 
-Authentication ([#278](https://github.com/tesserix/tesserix-home/issues/278) —
-Zitadel, both principals), the conventions document and the first module
-([#269](https://github.com/tesserix/tesserix-home/issues/269) — tickets), and
-the Helm chart, ArgoCD Application and Kargo stage, which live in `tesserix-k8s`
-and `kargo-manifests`.
+The console can call this service and does not yet. `apps/console` speaks both
+backends and `PLATFORM_API_ORIGIN` chooses; unset — the deployed state — is the
+current behaviour exactly. The blocker is not this module: the console keeps
+only the ID token at login and has no Zitadel access token to present
+(ADR-003 D8). §10 of the [conventions](../docs/PLATFORM-API-CONVENTIONS.md)
+lists what turning it on needs, in order.
+
+Beyond tickets: the CRM and audit module (ADR-003 D7a — they move together, or
+`auditedOperation`'s guarantee becomes a distributed transaction), secrets
+(D3), and telemetry.

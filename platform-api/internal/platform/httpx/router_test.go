@@ -52,12 +52,16 @@ func TestReadyFailsWhenTheDatabaseIsUnreachable(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("readiness failure must still be JSON: %v (%s)", err, rec.Body)
 	}
+	details, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("the failure is not the estate envelope: %s", rec.Body.String())
+	}
 	// #198's distinction, from day one: unreachable is not broken.
-	if body["code"] != httpx.CodeUnavailable {
-		t.Errorf("want %s, got %v", httpx.CodeUnavailable, body["code"])
+	if details["code"] != httpx.CodeUnavailable {
+		t.Errorf("want %s, got %v", httpx.CodeUnavailable, details["code"])
 	}
 	// The driver's message must not reach the client.
-	if msg, _ := body["message"].(string); msg == "connection refused" {
+	if msg, _ := details["message"].(string); msg == "connection refused" {
 		t.Error("the underlying driver error leaked into the response")
 	}
 }
@@ -79,40 +83,48 @@ func TestProbesAnswerJSON(t *testing.T) {
 	}
 }
 
-// Encoding into a buffer first is what stops a marshalling failure from
-// producing a 200 with a truncated body — a corrupt success is worse than an
-// honest 500.
-func TestWriteJSONFailsHonestlyOnUnencodableValues(t *testing.T) {
-	rec := httptest.NewRecorder()
+// The probes go through the same envelope as everything else.
+//
+// Kubernetes reads only the status code, so this buys nothing operationally —
+// it buys the rule. "Every response from this service is a StandardResponse"
+// is a statement a client can rely on; "every response except the two probes"
+// is a statement someone has to look up.
+func TestProbesUseTheEnvelope(t *testing.T) {
+	for _, path := range []string{"/health", "/ready"} {
+		rec := get(t, stubChecker{}, path)
 
-	httpx.WriteJSON(rec, http.StatusOK, map[string]any{"fn": func() {}}, discardLogger())
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("want 500 for an unencodable body, got %d", rec.Code)
-	}
-	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("the fallback body must be valid JSON: %v (%s)", err, rec.Body)
-	}
-	if body["code"] != httpx.CodeInternal {
-		t.Errorf("want %s, got %v", httpx.CodeInternal, body["code"])
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if body["success"] != true {
+			t.Errorf("%s: success = %v, want true", path, body["success"])
+		}
+		data, ok := body["data"].(map[string]any)
+		if !ok || data["status"] == "" {
+			t.Errorf("%s: the probe payload did not land under data: %v", path, body["data"])
+		}
 	}
 }
 
-func TestWriteErrorUsesTheEnvelopeStatus(t *testing.T) {
-	rec := httptest.NewRecorder()
+// A readiness failure is SERVICE_UNAVAILABLE, not an internal error — the
+// distinction #198 exists for. Nothing is broken; a dependency is unreachable.
+func TestReadyRefusesThroughTheErrorEnvelope(t *testing.T) {
+	rec := get(t, stubChecker{err: errors.New("connection refused")}, "/ready")
 
-	httpx.WriteError(rec, httpx.NotFound("no such ticket"), discardLogger())
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("want 404, got %d", rec.Code)
-	}
-	var body httpx.Error
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if body.Message != "no such ticket" {
-		t.Errorf("want the message, got %q", body.Message)
+	if body["success"] != false {
+		t.Errorf("success = %v, want false", body["success"])
+	}
+	details, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("error is missing: %s", rec.Body.String())
+	}
+	if details["code"] != httpx.CodeUnavailable {
+		t.Errorf("error.code = %v, want %q", details["code"], httpx.CodeUnavailable)
 	}
 }
 

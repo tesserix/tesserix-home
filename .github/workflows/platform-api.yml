@@ -120,15 +120,24 @@ jobs:
       - name: Module boundaries
         run: go test ./internal/architecture/... -v -run TestThisServiceHasNoCrossModuleImports
 
-      # Fail if the integration tests skipped. Without this, a broken service
-      # container turns into a quietly smaller test suite and a coverage drop
-      # nobody reads — `go test` reports ok either way.
-      - name: Confirm the database integration tests ran
+      # Fail if ANY test skipped. Without this, a broken service container turns
+      # into a quietly smaller test suite and a coverage drop nobody reads —
+      # `go test` reports ok either way.
+      #
+      # Widened from one named test to the whole tree when the tickets module
+      # landed (#269). Every test that touches SQL now goes through
+      # internal/platform/testdb, which skips without TESSERIX_TEST_DB_HOST — so
+      # a check naming one test in one package would have gone on passing while
+      # the repository, handler, audit and idempotency suites all vanished.
+      #
+      # `-count=1` because a cached PASS from an earlier run reports no skips
+      # and would satisfy this check without running anything.
+      - name: Confirm nothing skipped for want of a database
         run: |
-          output=$(go test -run TestOpenConnectsAndHealthAnswers -v ./internal/platform/database/... 2>&1)
-          echo "$output"
+          output=$(go test -count=1 -v ./... 2>&1) || { echo "$output"; exit 1; }
           if echo "$output" | grep -q -- '--- SKIP'; then
-            echo "::error::database integration tests skipped — the postgres service is not reachable"
+            echo "::error::tests skipped — the postgres service is not reachable"
+            echo "$output" | grep -B2 -- '--- SKIP'
             exit 1
           fi
 

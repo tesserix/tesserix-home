@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the cursor could not be read; start from the first page"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
