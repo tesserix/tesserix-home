@@ -78,8 +78,36 @@ export async function GET(request: NextRequest): Promise<Response> {
   // CSRF: the nonce in `state` must match the httpOnly cookie set at /auth/login.
   // Without this an attacker can feed the browser a code of their choosing and
   // have the console mint a session for THEIR identity.
+  // The CSRF check: the nonce inside `state` must match the httpOnly cookie
+  // /auth/login set. Without it an attacker can feed the browser a code of
+  // their choosing and have the console mint a session for THEIR identity.
+  //
+  // The two ways this fails are logged apart, because they have completely
+  // different fixes and the single "state_mismatch" that used to cover both
+  // cost an afternoon:
+  //
+  //   ABSENT  — this browser never visited /auth/login, or did so more than
+  //             STATE_MAX_AGE ago. Landing straight on an authorize URL (a
+  //             bookmark, a pasted link, a stale tab) does exactly this.
+  //   DIFFERS — a login was started more than once and an OLDER tab was
+  //             completed: each /auth/login overwrites the cookie, so the
+  //             newest one no longer matches the state the old tab carries.
+  //
+  // Only the log distinguishes them; the response deliberately does not, so a
+  // probe cannot learn whether a given browser has a live login in flight.
   const stateCookie = request.cookies.get(STATE_COOKIE)?.value;
-  if (!stateCookie || stateCookie !== state.nonce) {
+  if (!stateCookie) {
+    console.warn("[auth/callback] no state cookie", {
+      reason: "absent",
+      hint: "this browser did not start at /auth/login, or the cookie expired",
+    });
+    return failure("state_mismatch");
+  }
+  if (stateCookie !== state.nonce) {
+    console.warn("[auth/callback] state cookie does not match", {
+      reason: "differs",
+      hint: "an older login tab was completed after a newer one was started",
+    });
     return failure("state_mismatch");
   }
 
