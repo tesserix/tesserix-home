@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { EncryptJWT } from "jose";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { measureSessionCookie } from "./session-cookie-size";
 import { signSession, verifySession } from "./session-jwt";
 
 beforeAll(() => {
@@ -73,10 +74,15 @@ describe("getCurrentSession", () => {
 
 // ---- the platform API's access token (ADR-003 D8) -----------------------
 //
-// The console kept only the ID token and dropped `access_token` and
-// `refresh_token` on the floor. The platform API takes a Zitadel access token,
-// so until the session carries one the console cannot call it at all — which is
-// why the tickets module ships behind PLATFORM_API_ORIGIN.
+// These fields are DECODED but no longer WRITTEN. `/auth/callback` briefly put
+// the Zitadel tokens here for D8 and it took the cookie over the browser's
+// 4096-byte limit, which a browser enforces by silently discarding the whole
+// `Set-Cookie` — so nobody could sign in at all. The tokens are moving to a
+// server-side store keyed by a `sid` claim.
+//
+// The round-trip tests below therefore guard BACKWARD COMPATIBILITY, not a
+// live path: sessions live 7 days, so sessions carrying these fields outlive
+// the deploy that stopped writing them and must keep decoding.
 
 describe("platform API tokens in the session", () => {
   it("carries an access token, its expiry and a refresh token through a round trip", async () => {
@@ -136,32 +142,68 @@ describe("platform API tokens in the session", () => {
   });
 
   it("keeps the encoded session inside a browser's per-cookie budget", async () => {
-    // The failure this guards is silent and total: a cookie over ~4KB is
+    // The failure this guards is silent and total: a cookie over 4096 bytes is
     // DROPPED by the browser, so the operator lands back on the login page with
     // no error and no session — indistinguishable from a rejected credential.
     //
-    // A Zitadel access token carrying eleven role keys is the realistic worst
-    // case here, so it is what this measures.
+    // THIS TEST USED TO PASS WHILE PRODUCTION WAS BROKEN, and that is the
+    // lesson worth keeping. It measured a HAND-BUILT access token, ~1.7KB,
+    // "the realistic worst case". The real Zitadel access token was far
+    // bigger, the real cookie cleared 4096, and Chrome discarded every
+    // `Set-Cookie` the callback sent — seven logins in ten seconds, no session,
+    // ERR_TOO_MANY_REDIRECTS. A budget test whose input is a guess measures the
+    // guess. See `.planning/debug/console-login-state-mismatch.md`.
+    //
+    // So this now measures only what the callback ACTUALLY mints: identity.
+    // No token material, nothing whose size is somebody's estimate. The
+    // remaining variables — an email, a display name, one string per
+    // capability — are all bounded and all here.
     const roles = [
       "read", "crm", "support", "billing", "platform", "respond",
       "rotate-credentials", "adjust-balance", "execute-refund", "mass-send", "hard-delete",
     ];
-    const fatAccessToken = `${"h".repeat(64)}.${Buffer.from(
-      JSON.stringify({ sub: "operator-1", roles, aud: ["386377618200461939"] }),
-    ).toString("base64url")}${"p".repeat(1200)}.${"s".repeat(342)}`;
 
     const token = await signSession({
-      sub: "operator-1",
-      email: "operator@tesserix.test",
+      sub: "386888878927118733", // a real Zitadel subject: 18 digits
+      email: "an.operator.with.a.long.address@tesserix.example",
       name: "An Operator With A Reasonably Long Name",
       roles,
-      accessToken: fatAccessToken,
-      refreshToken: "r".repeat(96),
-      accessTokenExpiresAt: 1_800_000_000,
     });
 
-    // 4096 is the per-cookie limit browsers converge on, and the name and
-    // attributes count against it too — hence the margin.
-    expect(token.length).toBeLessThan(3800);
+    const measurement = measureSessionCookie("tx_session", token);
+    expect(measurement.exceedsLimit).toBe(false);
+    expect(measurement.nearLimit).toBe(false);
+    // Asserted as headroom rather than as a magic ceiling: the number that
+    // matters is how much room is left for whatever gets added next, and a
+    // regression that eats it should fail here rather than in a browser.
+    expect(measurement.headroom).toBeGreaterThan(3000);
+  });
+
+  it("does not grow with a role list unless the roles themselves grow", async () => {
+    // The prod failure was on an operator with ten roles while the deploy was
+    // tested with fewer, so the sensitivity of the size to the role count is
+    // worth pinning rather than assuming.
+    const one = await signSession({
+      sub: "operator-1",
+      email: "operator@tesserix.test",
+      roles: ["read"],
+    });
+    const all = await signSession({
+      sub: "operator-1",
+      email: "operator@tesserix.test",
+      roles: [
+        "read", "crm", "support", "billing", "platform", "respond",
+        "rotate-credentials", "adjust-balance", "execute-refund", "mass-send", "hard-delete",
+      ],
+    });
+
+    const grew =
+      measureSessionCookie("tx_session", all).bytes -
+      measureSessionCookie("tx_session", one).bytes;
+
+    // Every capability key in the model, added, costs well under a tenth of
+    // the budget. Identity in the cookie is affordable; credentials were not.
+    expect(grew).toBeGreaterThan(0);
+    expect(grew).toBeLessThan(400);
   });
 });

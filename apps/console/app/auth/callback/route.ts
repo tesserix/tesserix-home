@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
+  measureSessionCookie,
   signSession,
   sessionCookieName,
   sessionCookieOptions,
@@ -33,33 +34,6 @@ function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
   // not need to know which check failed; whoever reads the logs does.
   return NextResponse.json({ error: reason }, { status });
-}
-
-/**
- * Reduce a token response to the session fields, dropping anything absent.
- *
- * `expires_in` is turned into an absolute instant here, at the only moment the
- * relative value means anything. Carried as seconds since the epoch to match
- * `iat`/`exp` in the same cookie — two time units in one payload is how an
- * off-by-1000 gets written.
- *
- * A missing `expires_in` yields no expiry rather than a guessed one. The
- * refresh path treats an unknown expiry as "refresh on the next opportunity",
- * which is the safe direction: a token refreshed too eagerly costs a request,
- * one refreshed too late costs a failed operator action.
- */
-function tokensFor(tokens: TokenResponse): {
-  accessToken?: string;
-  accessTokenExpiresAt?: number;
-  refreshToken?: string;
-} {
-  return {
-    ...(tokens.access_token ? { accessToken: tokens.access_token } : {}),
-    ...(tokens.expires_in
-      ? { accessTokenExpiresAt: Math.floor(Date.now() / 1000) + tokens.expires_in }
-      : {}),
-    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
-  };
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
@@ -240,33 +214,75 @@ export async function GET(request: NextRequest): Promise<Response> {
     // unrecognised role cannot be checked meaningfully, and carrying it invites
     // code elsewhere to match on a string the capability model never sanctioned.
     roles: toCapabilities(identity.roles),
-    // The platform API's credentials, retained rather than dropped.
+    // THE ZITADEL ACCESS AND REFRESH TOKENS ARE DELIBERATELY NOT HERE.
     //
-    // This is the change ADR-003 D8 asked for and the reason the tickets
-    // module shipped switched off: the API takes a Zitadel ACCESS token, and
-    // until now this handler destructured `id_token` and let the rest fall on
-    // the floor. `lib/auth/platform-token.ts` reads what lands here.
+    // They were, for ADR-003 D8, and it broke console login outright. The
+    // browser enforces a 4096-byte per-cookie limit by DISCARDING the whole
+    // `Set-Cookie` without telling the origin; with ten roles the encrypted
+    // payload cleared it. This handler logged `session minted` seven times in
+    // ten seconds while the browser kept none of them, and the operator got
+    // ERR_TOO_MANY_REDIRECTS. See
+    // `.planning/debug/console-login-state-mismatch.md`.
     //
-    // Absent is tolerated at every layer below, deliberately. Zitadel issues a
-    // refresh token only when the application has the Refresh Token grant
-    // enabled; `console-web` does not have it today, so this ships knowing the
-    // refresh half may be missing. A session with an access token and no
-    // refresh token still works — it just stops being able to call the
-    // platform API when that token expires, rather than for the whole 7 days
-    // the session lives.
-    ...tokensFor(tokens),
+    // So the cookie carries IDENTITY only, and the credentials move to a
+    // server-side store keyed by a `sid` claim, read on the requests that
+    // actually call the platform API rather than on every request. That store
+    // is step 2 and is not built yet; until it lands
+    // `getPlatformApiToken()` returns null, which every caller already
+    // handles — see `lib/auth/platform-token.ts`.
+    //
+    // Do not put a token back in here to "just make the tickets module work".
+    // The guard below will refuse to mint it and login will fail loudly, which
+    // is the improvement.
   });
+
+  // The browser's silent 4096-byte drop is what made this bug invisible for a
+  // day: the server saw seven successful logins and the browser had no cookie.
+  // Measure before handing it over, so the failure can never be silent again.
+  const fit = measureSessionCookie(sessionCookieName(), token);
+  if (fit.exceedsLimit) {
+    // REFUSE rather than mint. Setting it anyway reproduces the original bug
+    // exactly — the browser discards it, middleware bounces back to
+    // /auth/login, and the loop ends in ERR_TOO_MANY_REDIRECTS with every
+    // server-side signal green. A 500 with this line in the log is a bug an
+    // operator can report and an engineer can act on in a minute.
+    console.error("[auth/callback] session cookie exceeds the browser limit", {
+      sub: identity.sub,
+      roleCount: identity.roles.length,
+      bytes: fit.bytes,
+      limit: fit.limit,
+      overBy: -fit.headroom,
+      hint: "the browser would discard this Set-Cookie silently; the session was not issued",
+    });
+    return failure("session_too_large", 500);
+  }
+  if (fit.nearLimit) {
+    // Still works, for this operator. The next one with more roles is the one
+    // it stops working for, and by then nobody is looking. error, not warn:
+    // this is a countdown to an outage, not a curiosity.
+    console.error("[auth/callback] session cookie is close to the browser limit", {
+      sub: identity.sub,
+      roleCount: identity.roles.length,
+      bytes: fit.bytes,
+      warnAt: fit.warnAt,
+      limit: fit.limit,
+      headroom: fit.headroom,
+      hint: "an operator with more roles will exceed 4096 bytes and be unable to sign in",
+    });
+  }
 
   // The success line, so the logs can tell "no callback ever completed" apart
   // from "one completed and a later one failed". Without it, the absence of a
   // failure is the only evidence a login worked, and that is not evidence.
-  // `sub` identifies the operator; no token, no cookie value, no code.
+  // `sub` identifies the operator; no token, no cookie value, no code. The
+  // byte count is here too — a size that creeps up release by release is only
+  // visible if it is recorded when nothing is wrong.
   console.info("[auth/callback] session minted", {
     sub: identity.sub,
     retried: state.retried,
     roleCount: identity.roles.length,
-    hasAccessToken: Boolean(tokens.access_token),
-    hasRefreshToken: Boolean(tokens.refresh_token),
+    cookieBytes: fit.bytes,
+    cookieLimit: fit.limit,
   });
 
   // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's

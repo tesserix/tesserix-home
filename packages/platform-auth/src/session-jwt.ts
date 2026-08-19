@@ -43,12 +43,22 @@ export interface SessionClaims {
    * no `tx_session` and never will, so teaching it one would mean a second
    * mechanism for the service principal anyway.
    *
-   * The console used to discard this at callback and keep only the ID token,
-   * which is why the tickets module shipped behind `PLATFORM_API_ORIGIN`.
+   * # NOTHING WRITES THIS ANY MORE — READ ONLY, AND ON ITS WAY OUT
    *
-   * Optional, and it must stay optional. Every session minted before this
-   * shipped, and every mobile session, carries none — and a console that
-   * refused those would sign everyone out on deploy.
+   * `/auth/callback` stopped putting the Zitadel tokens in this cookie: with
+   * ten roles the encrypted payload cleared the browser's 4096-byte per-cookie
+   * limit, so Chrome discarded the whole `Set-Cookie` in silence and every
+   * login became a redirect loop. See
+   * `.planning/debug/console-login-state-mismatch.md`, and
+   * `session-cookie-size.ts` for the guard that now makes that failure loud.
+   *
+   * The tokens are moving to a server-side store keyed by a `sid` claim, read
+   * only on the requests that actually call the platform API — so the cookie
+   * carries identity and the store carries credentials. This field stays here
+   * so that sessions minted BEFORE that change keep decoding for the 7 days
+   * they live; a console that refused them would sign everyone out on deploy.
+   * It also stays optional for mobile sessions, which never went through the
+   * OIDC callback at all.
    */
   accessToken?: string;
 
@@ -59,6 +69,9 @@ export interface SessionClaims {
    * endpoint's `expires_in` at the moment of exchange. Sessions live 7 days and
    * access tokens do not — D8 calls the refresh token required rather than
    * convenient for exactly this reason.
+   *
+   * Read-only for the same reason as `accessToken`: it is only ever present on
+   * a session minted before the tokens left this cookie.
    */
   accessTokenExpiresAt?: number;
 
@@ -66,12 +79,20 @@ export interface SessionClaims {
    * The Zitadel REFRESH token, used to mint a new access token before this
    * session ends.
    *
-   * Held in the same encrypted cookie as everything else here. That is a real
-   * concentration of value and it is deliberate: the alternative is a second
-   * server-side store for one string per operator, which ADR-003 D2a's
-   * argument about not adding infrastructure applies to as much as anything
-   * else. The cookie is a JWE — encrypted, not merely signed — httpOnly, and
-   * scoped to `.tesserix.app`.
+   * This used to live in the cookie on the argument that a server-side store
+   * for one string per operator was infrastructure ADR-003 D2a told us not to
+   * add. Two things retired that argument. First, it did not fit: the cookie
+   * is a fixed 4096-byte budget shared with identity, and a refresh token is
+   * not small. Second, the console already connects to Postgres, so a table in
+   * a database it owns is not new infrastructure — the D2a objection lands
+   * against Redis, not against this.
+   *
+   * There is also a correctness reason the cookie was never the right home:
+   * Zitadel ROTATES refresh tokens on use, and a refresh that happens during a
+   * server component render has no response to set a cookie on, so the rotated
+   * token is dropped and every later refresh fails. Only a store fixes that.
+   *
+   * Read-only, like the two fields above: still decoded, no longer written.
    */
   refreshToken?: string;
 }
@@ -126,9 +147,12 @@ export async function signSession(claims: SessionClaims): Promise<string> {
     // Omitted entirely when undefined, so a legacy session stays byte-identical
     // to what the Google flow minted before this field existed.
     ...(claims.roles ? { roles: [...claims.roles] } : {}),
-    // The same treatment for the platform API's tokens: present only when the
-    // login that minted this session actually retained them. A mobile session
-    // and every session predating ADR-003 D8 carry none, and must stay valid.
+    // The same treatment for the platform API's tokens. No caller passes these
+    // any more — `/auth/callback` stopped, because they are what pushed the
+    // cookie past the browser's 4096-byte limit — but the encoding stays so a
+    // session minted before that change round-trips unchanged, and so the one
+    // caller that might legitimately want them back (a test, or a future mint
+    // path) does not get a silently different payload shape.
     ...(claims.accessToken ? { accessToken: claims.accessToken } : {}),
     ...(claims.accessTokenExpiresAt !== undefined
       ? { accessTokenExpiresAt: claims.accessTokenExpiresAt }

@@ -12,21 +12,41 @@ import { getOidcConfig, refreshAccessToken } from "./oidc";
  * calling that API has no `tx_session` and never will, so the service
  * principal would need a second mechanism anyway.
  *
- * The console used to drop `access_token` and `refresh_token` at callback and
- * keep only the ID token, which is why the tickets module shipped behind
- * `PLATFORM_API_ORIGIN`. The callback now retains them; this reads them back.
+ * # WHERE THE TOKENS ARE RIGHT NOW: NOWHERE, AND THAT IS DELIBERATE
  *
- * # Why it can still return null
+ * The callback briefly kept `access_token` and `refresh_token` in the session
+ * cookie. That broke console login outright: with ten roles the encrypted
+ * cookie cleared the browser's 4096-byte per-cookie limit, and a browser over
+ * that limit DISCARDS the `Set-Cookie` without telling the origin. Every login
+ * succeeded server-side and left the browser with no session, so middleware
+ * bounced it back to `/auth/login` until Chrome gave up with
+ * ERR_TOO_MANY_REDIRECTS. See
+ * `.planning/debug/console-login-state-mismatch.md`.
  *
- * Three legitimate cases, and every caller must survive all of them:
+ * So `/auth/callback` no longer writes them anywhere, and this function
+ * returns null for every current session. The tokens are going into a
+ * server-side store keyed by a new `sid` claim on the cookie — identity in the
+ * cookie so middleware stays zero-I/O on every request, credentials in a table
+ * read only by the requests that call the platform API. That is step 2 and it
+ * is not built yet.
  *
- *  1. **A session minted before this shipped.** Sessions live 7 days, so they
- *     outlive the deploy that started retaining tokens.
+ * Returning null in the meantime is not a regression that needs hiding: no
+ * operator could sign in at all while the tokens were in the cookie, so
+ * nothing was reaching the platform API either way.
+ *
+ * # Why it can still return null once the store exists
+ *
+ * Four legitimate cases, and every caller must survive all of them:
+ *
+ *  1. **No token is stored for this session at all.** Today that is every
+ *     session; after step 2 it is the sessions minted before it, which live 7
+ *     days and outlive the deploy.
  *  2. **A mobile session.** It never went through the OIDC callback.
  *  3. **An expired access token with no way to renew it.** Zitadel issues a
  *     refresh token only when the application has the Refresh Token grant
  *     enabled, and `console-web` currently has `grantTypes:
  *     [AUTHORIZATION_CODE]` only.
+ *  4. **Zitadel is not configured on this deployment.**
  *
  * `lib/platform-api.ts` treats null as "the platform API is not reachable as
  * this operator" and says so, rather than sending an unauthenticated request
@@ -95,19 +115,21 @@ function isExpiring(expiresAt: number | undefined): boolean {
 }
 
 /**
- * # A refreshed token is not written back to the session, and that is known
+ * # A refreshed token is not written back, and the store is the fix
  *
  * Persisting it needs a response to set a cookie on, and this runs in server
- * components where there is none. The consequence is bounded: a render that
- * needs the platform API after the access token has expired pays one refresh,
- * memoised across that request.
+ * components where there is none. That is worse than it sounds: Zitadel
+ * ROTATES refresh tokens on use, so the first refresh discards the replacement
+ * and every later refresh fails with the token it kept.
  *
- * The obvious home for persistence is `middleware.ts`, which does hold a
- * response — and it is deliberately not there yet. Middleware runs on the
- * critical path of every request including the login flow, which is the part
- * of this system currently being repaired (tesserix-home#290). Adding a token
- * exchange to it while that is in flight would be putting a second unknown
- * next to the first. It belongs there once login is stable and the Refresh
- * Token grant is actually enabled on the application, at which point this
- * comment is the note to act on.
+ * `middleware.ts` does hold a response, and persisting there is still the
+ * wrong answer — it would put a token exchange on the critical path of every
+ * request, including the login flow. The right answer is the server-side store
+ * (step 2): a write needs no response, so a rotated refresh token can simply
+ * be saved, under a lock on `sid` because two replicas and parallel RSC
+ * renders will otherwise race to spend the same one-use token. React `cache`
+ * only dedupes within a single request.
+ *
+ * Until that lands this function short-circuits at "no token stored", so none
+ * of the above executes.
  */
