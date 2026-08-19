@@ -167,6 +167,71 @@ export async function exchangeCode(
 }
 
 /**
+ * Trade a refresh token for a new access token.
+ *
+ * # Why this exists
+ *
+ * ADR-003 D8: "Sessions live 7 days and access tokens do not, which is why the
+ * refresh token is required rather than convenient." Without this, an operator
+ * signed in yesterday holds a session the console still honours and a platform
+ * API token that expired hours ago — and the tickets surface would fail for a
+ * reason no part of the UI could explain.
+ *
+ * # It can legitimately fail, and the caller must survive that
+ *
+ * Zitadel issues a refresh token only when the application has the Refresh
+ * Token grant enabled. `console-web` currently has `grantTypes:
+ * [AUTHORIZATION_CODE]` only, so today there is usually nothing to refresh
+ * WITH. Returning null rather than throwing is what lets the session keep
+ * working for everything that is not the platform API.
+ *
+ * A refresh token can also be revoked, rotated out from under us, or simply
+ * expire. All of those are "this operator needs to sign in again", not "the
+ * console is broken".
+ */
+export async function refreshAccessToken(
+  config: ConsoleOidcConfig,
+  refreshToken: string,
+): Promise<TokenResponse | null> {
+  const basic = Buffer.from(
+    `${encodeURIComponent(config.clientId)}:${encodeURIComponent(config.clientSecret)}`,
+  ).toString("base64");
+
+  let res: Response;
+  try {
+    res = await fetch(`${config.issuer}/oauth/v2/token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Basic ${basic}`,
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+      cache: "no-store",
+    });
+  } catch (err) {
+    // A network failure to the IdP must not take the console down. The caller
+    // keeps the session it has.
+    console.error("[auth] refresh request failed", err);
+    return null;
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    // Logged, never thrown, and never shown: the body can name the grant type
+    // the application is missing, which is operator information rather than
+    // caller information.
+    console.warn(
+      `[auth] refresh rejected status=${res.status} client_id=${config.clientId} body=${text.slice(0, 300)}`,
+    );
+    return null;
+  }
+  return (await res.json()) as TokenResponse;
+}
+
+/**
  * Pack a CSRF nonce and a return path into the `state` parameter.
  *
  * The nonce half is compared against an httpOnly cookie on the way back; the

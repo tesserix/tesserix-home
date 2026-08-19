@@ -9,7 +9,12 @@ import {
   toCapabilities,
 } from "@tesserix/platform-auth";
 
-import { decodeState, exchangeCode, getOidcConfig } from "@/lib/auth/oidc";
+import {
+  decodeState,
+  exchangeCode,
+  getOidcConfig,
+  type TokenResponse,
+} from "@/lib/auth/oidc";
 import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
@@ -23,6 +28,33 @@ function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
   // not need to know which check failed; whoever reads the logs does.
   return NextResponse.json({ error: reason }, { status });
+}
+
+/**
+ * Reduce a token response to the session fields, dropping anything absent.
+ *
+ * `expires_in` is turned into an absolute instant here, at the only moment the
+ * relative value means anything. Carried as seconds since the epoch to match
+ * `iat`/`exp` in the same cookie — two time units in one payload is how an
+ * off-by-1000 gets written.
+ *
+ * A missing `expires_in` yields no expiry rather than a guessed one. The
+ * refresh path treats an unknown expiry as "refresh on the next opportunity",
+ * which is the safe direction: a token refreshed too eagerly costs a request,
+ * one refreshed too late costs a failed operator action.
+ */
+function tokensFor(tokens: TokenResponse): {
+  accessToken?: string;
+  accessTokenExpiresAt?: number;
+  refreshToken?: string;
+} {
+  return {
+    ...(tokens.access_token ? { accessToken: tokens.access_token } : {}),
+    ...(tokens.expires_in
+      ? { accessTokenExpiresAt: Math.floor(Date.now() / 1000) + tokens.expires_in }
+      : {}),
+    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  };
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
@@ -59,13 +91,14 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("auth_misconfigured", 500);
   }
 
-  let idToken: string | undefined;
+  let tokens: TokenResponse;
   try {
-    ({ id_token: idToken } = await exchangeCode(config, code));
+    tokens = await exchangeCode(config, code);
   } catch (err) {
     console.error("[auth/callback] token exchange failed", err);
     return failure("token_exchange_failed");
   }
+  const idToken = tokens.id_token;
   if (!idToken) return failure("no_id_token");
 
   // Replay protection: the nonce we generated at /auth/login must come back
@@ -112,6 +145,21 @@ export async function GET(request: NextRequest): Promise<Response> {
     // unrecognised role cannot be checked meaningfully, and carrying it invites
     // code elsewhere to match on a string the capability model never sanctioned.
     roles: toCapabilities(identity.roles),
+    // The platform API's credentials, retained rather than dropped.
+    //
+    // This is the change ADR-003 D8 asked for and the reason the tickets
+    // module shipped switched off: the API takes a Zitadel ACCESS token, and
+    // until now this handler destructured `id_token` and let the rest fall on
+    // the floor. `lib/auth/platform-token.ts` reads what lands here.
+    //
+    // Absent is tolerated at every layer below, deliberately. Zitadel issues a
+    // refresh token only when the application has the Refresh Token grant
+    // enabled; `console-web` does not have it today, so this ships knowing the
+    // refresh half may be missing. A session with an access token and no
+    // refresh token still works — it just stops being able to call the
+    // platform API when that token expires, rather than for the whole 7 days
+    // the session lives.
+    ...tokensFor(tokens),
   });
 
   // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's
