@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SessionClaims } from "@tesserix/platform-auth";
 
 // What this file is about: the session cookie the callback hands the browser.
 //
@@ -16,8 +17,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // so the size assertions are measuring what production measures.
 
 const state = vi.hoisted(() => ({
-  /** Claims the route passed to signSession on the last run. */
-  claims: null as Record<string, unknown> | null,
+  /**
+   * Claims the route passed to signSession on the last run.
+   *
+   * Typed as the real `SessionClaims` (not a loose `Record<string, unknown>`)
+   * so that reading `.sid` off it is checked against the actual optional
+   * field a later task relies on, rather than an index signature that would
+   * silently accept anything.
+   */
+  claims: null as SessionClaims | null,
   /** What signSession pretends the encrypted cookie value is. */
   sessionValue: "session-token",
 }));
@@ -36,7 +44,7 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => {
     }),
     isInternal: () => true,
     toCapabilities: (roles: readonly string[]) => roles,
-    signSession: async (claims: Record<string, unknown>) => {
+    signSession: async (claims: SessionClaims) => {
       state.claims = claims;
       return state.sessionValue;
     },
@@ -123,12 +131,17 @@ describe("the claims the callback mints", () => {
   });
 
   it("mints a different sid on each call", async () => {
+    // Deliberately does NOT reset `state.claims` to `null` between calls:
+    // `signSession` (mocked above) overwrites it on every call anyway, and an
+    // explicit `state.claims = null` here would let TypeScript narrow the
+    // property to the literal `null` at that point in the control flow —
+    // the compiler then refuses `.sid` on the "never" left over once `null`
+    // is excluded, even though the mock reassigns it moments later.
     const { GET } = await import("./route");
 
     await GET(callbackRequest());
     const first = state.claims?.sid;
 
-    state.claims = null;
     await GET(callbackRequest());
     const second = state.claims?.sid;
 
