@@ -28,6 +28,14 @@ export interface ConsoleOidcConfig {
   readonly internalOrgId?: string;
   /** Platform Console project — its audience scope carries the role claim. */
   readonly projectId: string;
+  /**
+   * Organization the operators live in, scoped at login.
+   *
+   * DISTINCT from `internalOrgId`, which is checked on the way back. This one
+   * says WHERE to authenticate; that one says which org a token is accepted
+   * from. Conflating them is what the long comment on `scopesFor` is about.
+   */
+  readonly orgId?: string;
 }
 
 function required(name: string): string {
@@ -44,6 +52,7 @@ export function getOidcConfig(): ConsoleOidcConfig {
     redirectUri: required("ZITADEL_REDIRECT_URI"),
     internalOrgId: process.env.ZITADEL_INTERNAL_ORG_ID || undefined,
     projectId: required("ZITADEL_PROJECT_ID"),
+    orgId: process.env.ZITADEL_ORG_ID || undefined,
   };
 }
 
@@ -57,28 +66,42 @@ export function getOidcConfig(): ConsoleOidcConfig {
  * and the failure mode when they are wrong is a perfectly valid token carrying
  * no roles, which reads as an application bug.
  *
- * NO ORG SCOPE. An earlier version pinned login to the organization that owns
- * the project (`urn:zitadel:iam:org:id:...`), on the assumption that operators
- * would live there. They do not: the project sits in one org and every human
- * account in another. Scoping login to the project's org made Zitadel try to
- * authenticate people as members of an org they do not belong to, find nothing,
- * fall through to auto-creation, and fail with `409 User already exists`
- * against the globally-unique username they already hold elsewhere. Auto-linking
- * cannot rescue that, because it searches within the org being signed into.
+ * ORG SCOPE, when `ZITADEL_ORG_ID` is set. This was removed once and is back
+ * deliberately, so the history matters.
  *
- * Without the scope, people authenticate in their home organization and the
- * project's roles resolve regardless — role grants are project-scoped, not
- * org-scoped. Which org a token came from is then checked separately, against
- * `internalOrgId`, on the way back.
+ * It was dropped because pinning login to the project's org made Zitadel try to
+ * authenticate operators as members of an org they did not belong to, fall
+ * through to auto-creation, and fail with `409 User already exists` against a
+ * globally-unique username they already held elsewhere. That reasoning was
+ * sound, and it had a precondition: THE SAME PERSON EXISTED IN TWO ORGS.
+ *
+ * That precondition is gone — the duplicate users were removed on 2026-08-19 —
+ * and its absence broke login in the opposite direction. Without an org scope
+ * Zitadel resolves the login name in the INSTANCE DEFAULT org. The operators
+ * now exist only in the Tesserix org, so an unscoped login searched the wrong
+ * org, found nobody, and reported `Username or Password is invalid` — the same
+ * message it gives for a wrong password, which is what made it expensive to
+ * diagnose.
+ *
+ * Naming the org makes the console independent of an instance-wide default
+ * that anything else on the instance could change, and that is the real reason
+ * to keep it rather than relying on the default being right.
+ *
+ * OPTIONAL, and unset means the previous behaviour. A wrong org id here refuses
+ * every login, so it is a value to change deliberately.
  */
 export function scopesFor(config: ConsoleOidcConfig): string {
-  return [
+  const scopes = [
     "openid",
     "profile",
     "email",
     "offline_access",
     `urn:zitadel:iam:org:project:id:${config.projectId}:aud`,
-  ].join(" ");
+  ];
+  if (config.orgId) {
+    scopes.push(`urn:zitadel:iam:org:id:${config.orgId}`);
+  }
+  return scopes.join(" ");
 }
 
 export function buildAuthorizationUrl(
