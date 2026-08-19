@@ -104,9 +104,16 @@ func Load() (Config, error) {
 		Env:             env("APP_ENV", "development"),
 		ShutdownTimeout: defaultShutdownTimeout,
 		Auth: Auth{
-			// Opt-IN while there is nothing to protect; the router guard is
-			// what stops that outliving its purpose.
-			Enabled: env("PLATFORM_API_AUTH_ENABLED", "") == "true",
+			// Opt-OUT, since #269. This was opt-IN while the service composed
+			// no modules and there was nothing to protect; the tickets module
+			// is the event that comment was waiting for.
+			//
+			// Flipped rather than removed. Setting it to false is now a
+			// request to serve a domain module unauthenticated, which
+			// httpx.RegisterModule refuses by panicking at wiring time with a
+			// message naming this variable — so the escape hatch still exists
+			// and no longer opens onto anything.
+			Enabled: env("PLATFORM_API_AUTH_ENABLED", "true") != "false",
 			Issuer:  env("ZITADEL_ISSUER", ""),
 			// The Platform Console project: both the audience this API requires
 			// and the project whose roles it reads. The console already requests
@@ -135,21 +142,25 @@ func Load() (Config, error) {
 		cfg.Database.MaxConns = int32(n)
 	}
 
+	// One list, checked once, so a half-configured service is told everything
+	// that is wrong with it in a single message.
+	//
+	// The auth variables used to be checked in their own block, ahead of this
+	// one, and returned on their own. That was invisible while authentication
+	// was opt-in and nothing set the flag; the moment it became opt-out, a
+	// deployment missing BOTH its Zitadel settings and its database password
+	// was told only about Zitadel, fixed that, and was told about the password
+	// on the next attempt. Two rollouts to learn two facts is exactly what
+	// this function's doc comment promises not to do.
+	var missing []string
 	if cfg.Auth.Enabled {
-		var authMissing []string
 		if cfg.Auth.Issuer == "" {
-			authMissing = append(authMissing, "ZITADEL_ISSUER")
+			missing = append(missing, "ZITADEL_ISSUER")
 		}
 		if cfg.Auth.ProjectID == "" {
-			authMissing = append(authMissing, "ZITADEL_PROJECT_ID")
-		}
-		if len(authMissing) > 0 {
-			return Config{}, fmt.Errorf(
-				"PLATFORM_API_AUTH_ENABLED is true but %s are unset", strings.Join(authMissing, ", "))
+			missing = append(missing, "ZITADEL_PROJECT_ID")
 		}
 	}
-
-	var missing []string
 	if cfg.Database.Host == "" {
 		missing = append(missing, "TESSERIX_DB_HOST")
 	}

@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
@@ -84,9 +85,25 @@ func run(log *slog.Logger) error {
 		)
 	}
 
+	mux := httpx.Router(pool, verifier, log)
+
+	// Modules register here, on the bare mux. This is the one file allowed to
+	// import every module — internal/modules/doc.go explains why the boundary
+	// rule applies to modules/ and not to cmd/.
+	//
+	// Through RegisterModule rather than by calling tickets.Register directly:
+	// that is what refuses to serve a domain module without a verifier, and
+	// the refusal is worth more than the one line it costs.
+	httpx.RegisterModule(mux, verifier, "tickets", func(m *http.ServeMux) {
+		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+	})
+
 	server := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: httpx.Router(pool, verifier, log),
+		Addr: ":" + cfg.Port,
+		// Wrapped after registration, not before: WithMiddleware takes a
+		// finished handler, and a mux that had already been wrapped could not
+		// have had modules added to it.
+		Handler: httpx.WithMiddleware(mux),
 		// A request that has not sent its headers in this long is not a
 		// request. Without these an idle connection holds a goroutine
 		// indefinitely, which is a slow way to run out of them.
