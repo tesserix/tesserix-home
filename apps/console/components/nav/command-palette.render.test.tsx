@@ -9,7 +9,12 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 import { ConsoleCommandPalette } from "./command-palette";
 
 const PROPS = {
-  capabilities: ["read"],
+  // A full-access operator, so these tests exercise the palette rather than the
+  // capability filter. #261 reduced `read` to console entry, so a `read`-only
+  // fixture now legitimately sees no routes at all — which would make every
+  // assertion below fail for a reason that has nothing to do with the palette.
+  // `visibleTo`'s own behaviour is covered in lib/search.test.ts.
+  capabilities: ["read", "crm", "support", "platform"],
   enforceCapabilities: true,
   toolsBaseDomain: "tesserix.app",
 };

@@ -28,24 +28,42 @@ describe("route identity", () => {
 });
 
 describe("route capability", () => {
-  it("defaults to the console entry ticket", () => {
-    // Undeclared routes must resolve to `read`, never `undefined`: a renderer
-    // filtering with `heldSet.has(capability)` would drop every one of them.
-    expect(routeCapability("platform.dashboard")).toBe("read");
-    expect(routeCapability("kora.foods")).toBe("read");
+  it("has no default — every route names its own capability", () => {
+    // #261 removed the `read` default. It was doing the opposite of its stated
+    // job: 26 of 30 routes declared nothing, so "unspecified" quietly meant
+    // "anyone who can reach the console". A default that is also the weakest
+    // capability in the system is an opt-out nobody has to take deliberately.
+    //
+    // The type makes this unskippable, so what is left to assert is that no
+    // route resolves to the entry ticket by accident.
+    expect(routeCapability("platform.dashboard")).toBe("platform");
+    expect(routeCapability("kora.foods")).toBe("platform");
   });
 
-  it("keeps the identity lookup at read, on purpose", () => {
-    // #134. Recorded as a decision so it is not read as an omission, and so a
-    // later "surely a people-search needs more than read" gets the argument
-    // rather than a silent bump: every capability above `read` names a
-    // mutation, and the lookup performs none of them. Its accountability comes
-    // from an audit row per query, which no capability value can express —
-    // this field gates whether the route is OFFERED, not what it logs.
-    expect(routeCapability("platform.identityLookup")).toBe("read");
+  it("puts no route on the console entry ticket", () => {
+    // The property #261 exists for, stated as an invariant rather than a list:
+    // `read` means "may enter the console" and nothing else, so a route
+    // resolving to it would be a surface gated on the ticket every operator
+    // already holds.
+    const onEntry = ROUTE_IDS.filter((id) => routeCapability(id) === "read");
+
+    expect(onEntry).toEqual([]);
   });
 
-  it("gives every route a capability, declared or defaulted", () => {
+  it("gives the identity lookup a surface, now that one exists", () => {
+    // #134 recorded this staying at `read` because none of the seven
+    // capabilities described "may look people up" — every one above `read`
+    // named a MUTATION, and borrowing one would have implied the surface could
+    // do the thing that capability names.
+    //
+    // #261 answers it: `platform` is a SURFACE, not a verb, so it says where
+    // the lookup lives without claiming it deletes anything. The original
+    // reasoning is honoured rather than overridden — it was waiting for a
+    // capability of this shape to exist.
+    expect(routeCapability("platform.identityLookup")).toBe("platform");
+  });
+
+  it("gives every route a capability", () => {
     for (const id of ROUTE_IDS) {
       expect(routeCapability(id)).toBeTypeOf("string");
       expect(routeCapability(id)).not.toBe("");

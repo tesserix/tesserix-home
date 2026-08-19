@@ -13,7 +13,7 @@ import {
 
 /**
  * The one wrapper every CRM write goes through: session check +
- * `checkOperatorCapability(session, options?.capability ?? "read")` +
+ * `checkOperatorCapability(session, options.capability)` +
  * `auditedOperation` + error mapping. Defaults to `"read"` because that is
  * the only gate an edit can be checked against today — see the comment on
  * `withCrmWrite` for the one exception (erasure, gated on `hard-delete`)
@@ -52,27 +52,34 @@ const NOT_SAVED_MESSAGE = "That change was not saved.";
 
 /**
  * See the module comment for why this is a Zitadel-role gap rather than a
- * missing capability check: none of the seven `Capability` values fits "edit
- * the CRM pipeline" today, so every CRM write is gated on `read` (console
- * entry — every operator already holds it) and made accountable through
- * `auditedOperation` instead. Closing this properly is one Zitadel role
- * change that covers every CRM surface, not one per surface.
+ * capability check. #261 closed it: `crm` is the surface capability every CRM
+ * write now requires, and `read` is back to meaning console entry alone.
  *
- * Erasure is the one exception: `hard-delete` fits exactly what it does, so
- * a caller that erases a contact passes `{ capability: "hard-delete" }`
- * rather than sharing the `read` gate every edit is stuck with. `options`
- * defaults `capability` to `"read"`, so every existing caller is unchanged.
+ * `capability` is REQUIRED, with no default. It used to default to `read`,
+ * which meant a new caller inherited the weakest gate in the system by saying
+ * nothing — the exact mechanism that put 11 of 14 mutating actions on the
+ * console entry ticket. Making it required turns "which capability does this
+ * write need?" into a question the compiler asks.
+ *
+ * Verbs remain orthogonal: erasure passes `hard-delete`, and it does so IN
+ * ADDITION to the caller already living on a CRM surface. Holding `crm` does
+ * not confer the right to erase.
  */
 export async function withCrmWrite<T>(
   target: string,
+  // Second, not last, and required. The gate belongs beside the thing being
+  // written — before the work, where a reader meets it — rather than trailing
+  // after two callbacks where it reads as configuration. A required parameter
+  // also cannot follow the optional `mapError`, which is the compiler making
+  // the same point.
+  options: { capability: Capability },
   run: (actor: { sub: string; email: string }) => Promise<T>,
   describe: (result: T) => AuditDescription,
   mapError?: (cause: unknown) => { ok: false; message: string } | undefined,
-  options?: { capability?: Capability },
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, options?.capability ?? "read");
+    checkOperatorCapability(session, options.capability);
     const actor = {
       sub: session?.sub ?? "unknown",
       email: session?.email ?? session?.sub ?? "unknown",

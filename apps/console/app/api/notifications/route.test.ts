@@ -46,7 +46,7 @@ beforeEach(() => {
 
 describe("GET /api/notifications", () => {
   it("returns the merged feed with a derived unread count", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(readLastSeenAt).mockResolvedValue("2026-08-15T00:00:00.000Z");
     vi.mocked(recentTicketRows).mockResolvedValue([
       {
@@ -70,7 +70,7 @@ describe("GET /api/notifications", () => {
   it("answers 501 when the database is not wired up yet", async () => {
     // The window before the chart change deploys. 501 is the estate's
     // "data plane parked" signal, distinct from a real failure.
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
     const res = await GET();
     expect(res.status).toBe(501);
@@ -85,7 +85,7 @@ describe("GET /api/notifications", () => {
   });
 
   it("answers 500 without leaking the driver error when a query fails", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(recentTicketRows).mockRejectedValue(
       new Error("password authentication failed for user tesserix_admin"),
     );
@@ -108,7 +108,7 @@ describe("GET /api/notifications", () => {
 
 describe("POST /api/notifications", () => {
   it("writes last-seen and returns it", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     const res = await POST();
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -124,7 +124,7 @@ describe("POST /api/notifications", () => {
   });
 
   it("answers 501 rather than writing when the database is not wired up", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
     const res = await POST();
     expect(res.status).toBe(501);

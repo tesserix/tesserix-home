@@ -63,10 +63,10 @@ export async function addSuppressionAction(
 
   const result = await withCrmWrite(
     email ?? instagramHandle ?? "unknown",
+    { capability: "crm" },
     (actor) => addSuppression({ email, instagramHandle, reason, actor: actor.email }),
     () => ({ action: "crm.suppression.add", summary: { added: 1 } }),
-    mapDuplicateSuppression,
-  );
+    mapDuplicateSuppression);
   if (!result.ok) return result;
   revalidatePath("/platform/crm/suppressions");
   return { ok: true };
@@ -78,6 +78,7 @@ export async function removeSuppressionAction(id: string): Promise<CrmActionResu
     // is in hand. Used verbatim only if nothing matched and there is no
     // email/handle to report instead (Ruling 20).
     id,
+    { capability: "crm" },
     () => removeSuppression(id),
     (rows) => {
       const removed = rows[0];
@@ -95,8 +96,7 @@ export async function removeSuppressionAction(id: string): Promise<CrmActionResu
         // moment an auditor needs it.
         target: removed?.email ?? removed?.instagramHandle ?? id,
       };
-    },
-  );
+    });
   if (!result.ok) return result;
   revalidatePath("/platform/crm/suppressions");
   return { ok: true };

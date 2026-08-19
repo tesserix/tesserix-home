@@ -128,6 +128,7 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
     // below overrides it with the id once one exists — same pattern as
     // `linkConversion` in `[organisation]/actions.ts`.
     name,
+    { capability: "crm" },
     () =>
       createOrganisation({
         name,
@@ -150,8 +151,7 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
     // (crm-writes.ts). Both allowlisted here, same discipline as the
     // `[organisation]/actions.ts` mappers: they are operator-facing facts
     // with a clear next step, not caught database errors.
-    mapContactRefusal,
-  );
+    mapContactRefusal);
   if (!result.ok) return result;
   revalidatePath("/platform/crm/organisations");
   return { ok: true };

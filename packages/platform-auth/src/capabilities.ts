@@ -19,9 +19,69 @@
  */
 
 export const CAPABILITIES = [
-  /** Entry ticket. Every internal operator holds this; nobody else does. */
+  // ---------------------------------------------------------------------
+  // ENTRY
+  // ---------------------------------------------------------------------
+  /**
+   * Console entry, and NOTHING else.
+   *
+   * Reduced to this by #261. It used to mean two things — "may enter the
+   * console" and, in practice, "may do almost anything": 11 of 14 mutating
+   * server actions were gated on it, including a 500-contact bulk import.
+   * `read` now grants the shell and home; every feature surface needs its own
+   * surface capability below.
+   */
   "read",
-  /** Reply to tickets and chats, transition their status. */
+
+  // ---------------------------------------------------------------------
+  // SURFACES — which part of the console an operator works in.
+  //
+  // These say WHERE, never WHAT. Holding `crm` grants the CRM; deleting an
+  // organisation still additionally requires `hard-delete`. Seeing a surface
+  // and being trusted with its destructive verb are different questions, and
+  // keeping them separate is what stops a surface grant quietly carrying a
+  // blast radius nobody weighed.
+  // ---------------------------------------------------------------------
+  /** The CRM: organisations, contacts, opportunities, imports, suppressions. */
+  "crm",
+  /** Support: the ticket queue, live chat, support analytics. */
+  "support",
+  /**
+   * Billing surfaces: wallets, refunds, payouts, subscription state.
+   *
+   * RESERVED — the console has no billing surface today (0 of 28 routes), so
+   * nothing checks this yet. Declared now so the vocabulary is complete and the
+   * Zitadel role exists before a surface needs it, because renaming a
+   * capability later silently breaks every assignment while adding one does
+   * not. A grant of this currently confers nothing; treat it as a placeholder
+   * rather than evidence that a billing surface is gated.
+   */
+  "billing",
+  /**
+   * Platform operations: the estate dashboard, apps, health and observability,
+   * governance surfaces (audit log, outbox, GDPR queue, break-glass, settings),
+   * custom domains and databases.
+   *
+   * The broadest surface, and deliberately so for now — the risk verbs are what
+   * separate reading the uptime board from rotating a live credential. If the
+   * governance and health halves ever want different people, this is the one to
+   * split first.
+   */
+  "platform",
+
+  // ---------------------------------------------------------------------
+  // VERBS — what may be DONE, orthogonal to surface.
+  // ---------------------------------------------------------------------
+  /**
+   * Reply to tickets and chats, transition their status.
+   *
+   * A VERB, deliberately kept beside `support` rather than folded into it
+   * (#261). The route table already behaves this way: `platform.tickets`
+   * carries no `respond` because the queue is genuinely readable, while
+   * `platform.liveChat` does because it is opened to reply. Collapsing the two
+   * would make "can see the ticket queue" and "can answer a merchant" the same
+   * permission.
+   */
   "respond",
   /** Payment-gateway keys, Stripe settings, break-glass rotation. */
   "rotate-credentials",
@@ -39,6 +99,37 @@ export type Capability = (typeof CAPABILITIES)[number];
 
 /** The capability every internal user must hold to reach the console at all. */
 export const CONSOLE_ENTRY_CAPABILITY: Capability = "read";
+
+/**
+ * The surface capabilities, in declaration order.
+ *
+ * Exported so a test can assert that no server action or route gates on `read`
+ * alone, and so a renderer can reason about surfaces without hard-coding the
+ * list. Membership here is what makes a capability a "where" rather than a
+ * "what".
+ */
+export const SURFACE_CAPABILITIES = [
+  "crm",
+  "support",
+  "billing",
+  "platform",
+] as const satisfies readonly Capability[];
+
+/**
+ * The risk verbs, in declaration order.
+ *
+ * Orthogonal to surfaces by design: a verb layers ON TOP of surface access
+ * rather than replacing it. `hard-delete` plus `crm` erases a contact; either
+ * alone does not.
+ */
+export const RISK_CAPABILITIES = [
+  "respond",
+  "rotate-credentials",
+  "adjust-balance",
+  "execute-refund",
+  "mass-send",
+  "hard-delete",
+] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {
   return (CAPABILITIES as readonly string[]).includes(value);

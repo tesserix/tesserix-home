@@ -40,7 +40,9 @@ async function authorize(): Promise<{ sub: string } | NextResponse> {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   try {
-    checkOperatorCapability(session, "read");
+    // The bell's feed is ticket and reply rows, so it carries support data and
+    // gates on the support surface rather than console entry.
+    checkOperatorCapability(session, "support");
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
