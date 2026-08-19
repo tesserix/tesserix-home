@@ -48,12 +48,17 @@ import { isDatabaseConfigured, tesserixQuery } from "../db/tesserix";
  * length, which is enough to debug a store problem and useless to anyone who
  * scrapes the logs.
  *
- * # Nothing here throws at its caller
+ * # Nothing here throws at its caller — with one deliberate exception
  *
  * The console must keep serving every surface that does not need the platform
  * API when the database is unreachable, the key is unset, or a row is
  * corrupt. Reads return null, writes do nothing. A throw out of this module
  * would take down the whole page for want of a token the page never wanted.
+ *
+ * The exception is a caller that supplies its own `query` — it is inside a
+ * transaction, so it NEEDS the failure in order to roll back, and it has its
+ * own boundary to catch at. See {@link TokenStoreOptions}; that is the only
+ * path on which anything here rethrows.
  */
 
 /** GCM's standard nonce length. 12 bytes is what the mode is specified for;
@@ -66,7 +71,9 @@ const IV_BYTES = 12;
 const TAG_BYTES = 16;
 
 /** The shortest possible valid envelope: iv + tag + at least one byte of
- *  ciphertext. Anything at or below this is truncated or not ours. */
+ *  ciphertext. Anything SHORTER than this is truncated or not ours; exactly
+ *  this length is a valid one-character token and is accepted, which is why
+ *  the guard below is `<` and must not be tidied into `<=`. */
 const MIN_ENVELOPE_BYTES = IV_BYTES + TAG_BYTES + 1;
 
 /** What a caller gets back for a session that has tokens stored. */
@@ -121,11 +128,20 @@ export interface ReadTokensOptions extends TokenStoreOptions {
  * SEPARATE from `SESSION_ENCRYPT_KEY` on purpose: rotating the token key must
  * not sign every operator out, and a leak of either must not open the other.
  *
- * Derived exactly the way `getSecretKey()` in
- * `packages/platform-auth/src/session-jwt.ts` derives its own — SHA-256 over
- * the raw env value — so any key length lands at the 32 bytes AES-256 needs
- * and the two modules share one convention. The chart provisions 32 ASCII
- * characters.
+ * ALWAYS SHA-256 over the raw env value, for every key length.
+ *
+ * That is deliberately NOT what `getSecretKey()` in
+ * `packages/platform-auth/src/session-jwt.ts` does: it returns the raw bytes
+ * when the value is exactly 32 ASCII characters and only falls back to SHA-256
+ * otherwise — and since the chart provisions exactly 32 characters, raw is its
+ * production branch. Hashing unconditionally means the derivation does not
+ * change shape if the provisioned key length ever does; under `getSecretKey`'s
+ * rule, going from 32 characters to 33 silently switches derivation branch.
+ *
+ * Do not "harmonise" this with `getSecretKey()`. Adding the length-32 shortcut
+ * would change the effective key for the key currently provisioned, and every
+ * row already in `operator_api_tokens` would silently fail its auth tag —
+ * every operator's platform-API access gone until they sign in again.
  *
  * Read at call time, not at import: like `isDatabaseConfigured`, this must be
  * able to answer "not configured" truthfully during the window before the
@@ -337,7 +353,25 @@ export async function saveTokens(
   // cost them the row they came to store. Piggy-backing on writes is what
   // migration 0029 records instead of a scheduled job — the sweep is one
   // indexed statement and needs no infrastructure to carry it.
-  await pruneExpired(options);
+  //
+  // NEVER INSIDE A TRANSACTION, AND DO NOT PUT IT BACK. Two reasons, both of
+  // which cost a session:
+  //
+  //  1. On the transaction path this function rethrows, so a prune that fails
+  //     after a successful INSERT rolls the INSERT back with it. Zitadel
+  //     ROTATES refresh tokens on use, so the refreshed token would be lost and
+  //     the caller's next attempt would spend an already-spent one — exactly
+  //     the "must not cost them the row they came to store" the line above
+  //     promises, inverted.
+  //  2. The refresh path is BEGIN -> SELECT ... FOR UPDATE (one sid) -> save ->
+  //     COMMIT. A table-wide `DELETE ... WHERE session_expires_at < now()`
+  //     inside that lock takes row locks in whatever order the scan finds them,
+  //     so two concurrent refreshes of sessions near their expiry can lock in
+  //     opposite orders and deadlock.
+  //
+  // Skipping it here fixes both: the transaction does one row's work and
+  // nothing else, and the sweep still happens on every non-transactional write.
+  if (!options.query) await pruneExpired(options);
 }
 
 /**
