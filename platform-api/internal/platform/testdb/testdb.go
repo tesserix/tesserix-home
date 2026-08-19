@@ -32,10 +32,12 @@ package testdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -44,8 +46,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// migrationsDir is relative to this file's package directory.
-const migrationsDir = "../../../../apps/web/db/migrations"
+// migrationsPath locates the migrations relative to THIS SOURCE FILE, not to
+// the working directory.
+//
+// `go test` runs each package in its own directory, so a plain relative path
+// resolves differently for every caller — it worked from testdb's own test and
+// failed from the tickets repository's, three directories deeper. runtime.Caller
+// gives the one fixed point that does not depend on who is asking.
+func migrationsPath() (string, error) {
+	_, self, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", errors.New("cannot locate the testdb package on disk")
+	}
+	return filepath.Join(filepath.Dir(self), "..", "..", "..", "..", "apps", "web", "db", "migrations"), nil
+}
 
 var migrationFile = regexp.MustCompile(`^(\d{4})_.+\.sql$`)
 
@@ -155,6 +169,10 @@ func dsn(database string) string {
 // their own BEGIN/COMMIT and multi-statement bodies, and splitting on
 // semicolons would break the first function definition that contains one.
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	migrationsDir, err := migrationsPath()
+	if err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", migrationsDir, err)

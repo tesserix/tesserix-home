@@ -101,7 +101,30 @@ type Reply struct {
 	AuthorEmail string
 	Content     string
 	CreatedAt   time.Time
+
+	// AuthorUserID is the author's identifier at their own issuer — a Zitadel
+	// `sub` for an operator, a Firebase UID for a merchant forwarded from a
+	// product's admin app.
+	//
+	// Written but never read back into a response. It is attribution the
+	// database keeps, and the console renders a name and an email; putting a
+	// third-party identifier on the wire would publish a join key to every
+	// caller for no reader's benefit.
+	//
+	// The column is TEXT, not uuid. Migration 0003 relaxed it for exactly this
+	// reason: Firebase UIDs are 28-character base62, and storing a foreign
+	// identifier as uuid fails the implicit cast and lies about its shape.
+	AuthorUserID string
 }
+
+// MaxReplyLength bounds one message.
+//
+// 10,000 characters, matching apps/web's replySchema and the console's
+// MAX_REPLY_LENGTH. Three copies of one number is two too many, and the
+// alternative — the console importing it from here — does not exist across the
+// language boundary. It is asserted rather than assumed: a reply the console
+// accepts and this rejects would fail after the operator has typed it.
+const MaxReplyLength = 10_000
 
 // Summary is the standing count of the queue.
 //
