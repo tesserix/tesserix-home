@@ -103,3 +103,76 @@ export function describeCallbackRequest(
     purpose: header("purpose"),
   };
 }
+
+/**
+ * Master switch for the callback's self-healing retry. DEFAULT OFF.
+ *
+ * # Why a flag, and why off
+ *
+ * The retry has a reader (`/auth/callback`, which bounces to
+ * `/auth/login?retry=1`) and a writer (`/auth/login`, which folds that into
+ * `state` so the guard comes back). They ship in the same commit but they do
+ * NOT start running in the same instant: during a rolling update some pods
+ * serve the new image while others still serve the old one. A new callback
+ * talking to an OLD login pod gets a two-segment `state` back with no retry
+ * flag, so the guard reads "not yet retried" on every trip and the retry stops
+ * being one-shot. Zitadel already has a session by then, so the bounce is
+ * instant and the browser spins — the ERR_TOO_MANY_REDIRECTS this whole
+ * investigation started from.
+ *
+ * Default-off closes that. The first deploy is instrumentation only: the
+ * reader is present but inert, so no rollout ordering can produce a loop.
+ *
+ * # Ordering requirement for turning it on
+ *
+ * Enable this ONLY once the live system is in this state: EVERY pod behind
+ * `deploy/console` is running the image that contains the writer — i.e.
+ * `kubectl -n tesserix get pods -l app=console` shows a single image across
+ * all Running pods and zero old-revision pods still terminating. That is the
+ * precondition, not "the PR merged" and not "Kargo reported success": a merge
+ * says nothing about which pods are serving traffic right now.
+ */
+const RETRY_ENV = "CONSOLE_CALLBACK_RETRY";
+
+/** True only for an explicit opt-in. Anything else, including unset, is off. */
+export function callbackRetryEnabled(
+  raw: string | undefined = process.env[RETRY_ENV],
+): boolean {
+  const value = raw?.trim().toLowerCase();
+  return value === "1" || value === "true";
+}
+
+/** Why a cookieless callback was NOT retried, or null when it should be. */
+export type RetryRefusal =
+  | "disabled"
+  | "already_retried"
+  | "not_a_navigation"
+  | "speculative";
+
+/**
+ * Decide whether a cookieless callback may be bounced back through
+ * `/auth/login` once.
+ *
+ * Every refusal is named rather than folded into a bare `false`, because the
+ * refusal is itself the diagnostic: "speculative" would confirm the leading
+ * hypothesis (an uncredentialed prefetch, which is cookieless BY DESIGN and
+ * must never be healed — following it would re-run `/auth/login`, overwrite
+ * `cx_oauth_state`/`cx_oidc_nonce`, and turn a working login in another tab
+ * into the `differs` failure).
+ *
+ * Returns null when the retry is allowed.
+ */
+export function retryRefusal(
+  shape: CallbackRequestShape,
+  options: { readonly enabled: boolean; readonly retried: boolean },
+): RetryRefusal | null {
+  if (!options.enabled) return "disabled";
+  if (options.retried) return "already_retried";
+  // A prefetch/prerender announces itself in one of two headers depending on
+  // the browser's vintage. Either one present means: observe, do not heal.
+  if (shape.secPurpose || shape.purpose) return "speculative";
+  // Anything that is not a top-level navigation cannot be the login the
+  // operator is sitting in front of, so redirecting it fixes nothing.
+  if (shape.secFetchMode !== "navigate") return "not_a_navigation";
+  return null;
+}

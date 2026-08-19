@@ -9,7 +9,11 @@ import {
   toCapabilities,
 } from "@tesserix/platform-auth";
 
-import { describeCallbackRequest } from "@/lib/auth/callback-diagnostics";
+import {
+  callbackRetryEnabled,
+  describeCallbackRequest,
+  retryRefusal,
+} from "@/lib/auth/callback-diagnostics";
 import {
   decodeState,
   exchangeCode,
@@ -99,19 +103,32 @@ export async function GET(request: NextRequest): Promise<Response> {
   const stateCookie = request.cookies.get(STATE_COOKIE)?.value;
   if (!stateCookie) {
     const origin = publicOrigin(request);
+    // Held in a const rather than spread inline: the same description both
+    // goes in the log and decides whether this request may be retried, and
+    // reading the headers twice could disagree with itself. It is frozen by
+    // construction — nothing here writes to it.
+    const shape = describeCallbackRequest(request, {
+      sessionCookie: sessionCookieName(),
+      origin,
+    });
+    const refusal = retryRefusal(shape, {
+      enabled: callbackRetryEnabled(),
+      retried: state.retried,
+    });
+
     console.warn("[auth/callback] no state cookie", {
       reason: "absent",
       hint: "this browser did not start at /auth/login, or the cookie expired",
       retried: state.retried,
+      // Why this request was not healed — "speculative" and "not_a_navigation"
+      // are findings, not mere refusals. See callback-diagnostics.ts.
+      retryRefusal: refusal,
       // Names and presence only — never a cookie VALUE. See
       // lib/auth/callback-diagnostics.ts for what each field is asking.
-      ...describeCallbackRequest(request, {
-        sessionCookie: sessionCookieName(),
-        origin,
-      }),
+      ...shape,
     });
 
-    // Self-healing, exactly once.
+    // Self-healing, exactly once, and only when explicitly switched on.
     //
     // The common cause of `absent` is benign: a browser that arrived on an
     // authorize URL without ever visiting /auth/login — a bookmark, a pasted
@@ -119,25 +136,38 @@ export async function GET(request: NextRequest): Promise<Response> {
     // an operator nothing and leaves them stuck; one more trip through
     // /auth/login fixes it silently.
     //
-    // The guard is the whole design, not a precaution. `state.retried` came
-    // back from Zitadel inside `state`, so it is readable even on the requests
-    // where no cookie arrives — which is precisely the condition being
-    // recovered from. A cookie-based marker would be missing on those same
-    // requests, fail open, and spin forever. This can add at most ONE extra
-    // round trip before falling through to the error below.
-    if (!state.retried) {
+    // Three things have to hold before that bounce is safe, and all three live
+    // in retryRefusal():
+    //
+    //   ENABLED       — CONSOLE_CALLBACK_RETRY is opt-in, default off, because
+    //                   the writer of the guard (/auth/login) may not be on
+    //                   every pod yet during a rollout.
+    //   NOT RETRIED   — `state.retried` came back from Zitadel inside `state`,
+    //                   so it is readable even on the requests where no cookie
+    //                   arrives, which is precisely the condition being
+    //                   recovered from. A cookie-based marker would be missing
+    //                   on those same requests, fail open, and spin forever.
+    //   A NAVIGATION  — a speculative prefetch is cookieless by design;
+    //                   bouncing one would re-run /auth/login behind the
+    //                   operator's back and overwrite the cookies of a login
+    //                   that was working.
+    //
+    // At most ONE extra round trip, then the error below.
+    if (refusal === null) {
       const retry = new URL("/auth/login", origin);
       retry.searchParams.set("returnTo", state.returnTo);
       retry.searchParams.set("retry", "1");
       return NextResponse.redirect(retry);
     }
 
-    // Second time. A retry that came back just as cookieless is not a stale
-    // tab — it is the open bug, and looping on it would only make it harder to
-    // see. Fail the way this always failed.
-    console.error("[auth/callback] retry also arrived without a state cookie", {
-      reason: "absent_after_retry",
-    });
+    // A retry that came back just as cookieless is not a stale tab — it is the
+    // open bug, and looping on it would only make it harder to see.
+    if (refusal === "already_retried") {
+      console.error(
+        "[auth/callback] retry also arrived without a state cookie",
+        { reason: "absent_after_retry" },
+      );
+    }
     return failure("state_mismatch");
   }
   if (stateCookie !== state.nonce) {

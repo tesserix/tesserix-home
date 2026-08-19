@@ -285,9 +285,16 @@ export function encodeState(
   return options.retried ? `${encoded}.${RETRY_FLAG}` : encoded;
 }
 
+/** A `state` parameter that survived decoding, with its one-shot retry guard. */
+export interface DecodedState {
+  readonly nonce: string;
+  readonly returnTo: string;
+  readonly retried: boolean;
+}
+
 export function decodeState(
   state: string | null | undefined,
-): { nonce: string; returnTo: string; retried: boolean } | null {
+): DecodedState | null {
   if (!state) return null;
 
   const parts = state.split(".");
