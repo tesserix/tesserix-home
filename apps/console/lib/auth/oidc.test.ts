@@ -18,16 +18,37 @@ const CONFIG: ConsoleOidcConfig = {
 };
 
 describe("scopes", () => {
-  it("does NOT pin login to an organization", () => {
-    // Regression guard. Pinning login to the project's org made Zitadel try to
-    // authenticate operators as members of an org none of them belong to —
-    // every human account lives in a different org from the project — so it
-    // fell through to auto-creation and failed with `409 User already exists`
-    // against the globally-unique username they already held. Auto-linking
-    // could not rescue it: that search is scoped to the org being signed into.
-    //
-    // Role grants are project-scoped, so roles resolve wherever the user lives.
+  it("does not pin login to an organization when none is configured", () => {
+    // Unset keeps the previous behaviour, so this change cannot alter an
+    // environment that has not opted in.
     expect(scopesFor(CONFIG)).not.toContain("urn:zitadel:iam:org:id:");
+  });
+
+  it("pins login to the configured organization", () => {
+    // The scope was removed once, for a reason with a precondition that no
+    // longer holds: the same person existed in two orgs, so scoping made
+    // Zitadel auto-create and fail with `409 User already exists`. The
+    // duplicates were removed on 2026-08-19, and their absence broke login the
+    // other way — an unscoped login resolves in the INSTANCE DEFAULT org, which
+    // is not where the operators live.
+    //
+    // Naming the org is what makes the console independent of an instance-wide
+    // default that anything else could change.
+    const scopes = scopesFor({ ...CONFIG, orgId: "386377229942128837" });
+
+    expect(scopes).toContain("urn:zitadel:iam:org:id:386377229942128837");
+  });
+
+  it("keeps the org scope distinct from the project audience", () => {
+    // Two different urn prefixes doing two different jobs. Confusing them
+    // yields a token with no roles or a login that refuses everyone, and both
+    // read as application bugs.
+    const scopes = scopesFor({ ...CONFIG, orgId: "999" }).split(" ");
+
+    expect(scopes).toContain("urn:zitadel:iam:org:id:999");
+    expect(scopes).toContain(
+      "urn:zitadel:iam:org:project:id:386377618200461939:aud",
+    );
   });
 
   it("requests the project audience so roles appear in the token", () => {
