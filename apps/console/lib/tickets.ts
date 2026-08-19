@@ -75,27 +75,69 @@ export function parseTickets(json: unknown): TicketsPage {
       resolvedThisWeek: num(s.resolvedThisWeek, "summary.resolvedThisWeek"),
       urgentOpen: num(s.urgentOpen, "summary.urgentOpen"),
     },
-    rows: asArray(root.rows, "rows").map((raw, i) => {
-      const r = obj(raw, `rows[${i}]`);
-      return {
-        id: str(r.id, `rows[${i}].id`),
-        productId: str(r.product_id ?? r.productId, `rows[${i}].product_id`),
-        tenantId: String(r.tenant_id ?? r.tenantId ?? ""),
-        ticketNumber: str(
-          r.ticket_number ?? r.ticketNumber,
-          `rows[${i}].ticket_number`,
-        ),
-        subject: str(r.subject, `rows[${i}].subject`),
-        status: str(r.status, `rows[${i}].status`),
-        priority: str(r.priority, `rows[${i}].priority`),
-        submittedByName: String(r.submitted_by_name ?? r.submittedByName ?? ""),
-        submittedByEmail: String(
-          r.submitted_by_email ?? r.submittedByEmail ?? "",
-        ),
-        createdAt: str(r.created_at ?? r.createdAt, `rows[${i}].created_at`),
-        updatedAt: String(r.updated_at ?? r.updatedAt ?? ""),
-      };
-    }),
+    rows: asArray(root.rows, "rows").map((raw, i) => parseTicketRow(raw, `rows[${i}]`)),
+  };
+}
+
+/**
+ * Parse the platform API's ticket listing — `{ tickets: [...] }`.
+ *
+ * The counterpart to `parseTickets`, and the reason there are two.
+ *
+ * `apps/web` answers one screen-shaped payload: a standing count of the whole
+ * queue welded to a filtered page of it, because this component wanted both.
+ * The platform API refuses that shape (#269) and serves two domain resources,
+ * leaving the composition to whoever is drawing a screen — which is this
+ * application, in `fetchTickets`.
+ *
+ * Both parsers exist while both backends do. `parseTickets` retires with the
+ * last call site that reads `/api/admin/*`.
+ */
+export function parseTicketList(json: unknown): readonly Ticket[] {
+  const root = obj(json, "response");
+  return asArray(root.tickets, "tickets").map((raw, i) => parseTicketRow(raw, `tickets[${i}]`));
+}
+
+/**
+ * Parse the platform API's summary — `{ summary: { ... } }`.
+ *
+ * The keys are snake_case, which is the estate's spelling and what the module
+ * serves. Mapped to the camelCase `TicketsSummary` here rather than renamed on
+ * either side: the wire format belongs to the API and the field names belong to
+ * this codebase, and a parser is exactly the place those two meet.
+ */
+export function parseTicketsSummary(json: unknown): TicketsSummary {
+  const root = obj(json, "response");
+  const s = obj(root.summary, "summary");
+  return {
+    open: num(s.open, "summary.open"),
+    inProgress: num(s.in_progress, "summary.in_progress"),
+    resolvedThisWeek: num(s.resolved_this_week, "summary.resolved_this_week"),
+    urgentOpen: num(s.urgent_open, "summary.urgent_open"),
+  };
+}
+
+/**
+ * One row, from either backend.
+ *
+ * Extracted from `parseTickets` rather than duplicated, so the two listings
+ * cannot disagree about what a ticket is — the failure this whole file exists
+ * to prevent is a payload that renders as a plausible-looking blank row.
+ */
+function parseTicketRow(raw: unknown, path: string): Ticket {
+  const r = obj(raw, path);
+  return {
+    id: str(r.id, `${path}.id`),
+    productId: str(r.product_id ?? r.productId, `${path}.product_id`),
+    tenantId: String(r.tenant_id ?? r.tenantId ?? ""),
+    ticketNumber: str(r.ticket_number ?? r.ticketNumber, `${path}.ticket_number`),
+    subject: str(r.subject, `${path}.subject`),
+    status: str(r.status, `${path}.status`),
+    priority: str(r.priority, `${path}.priority`),
+    submittedByName: String(r.submitted_by_name ?? r.submittedByName ?? ""),
+    submittedByEmail: String(r.submitted_by_email ?? r.submittedByEmail ?? ""),
+    createdAt: str(r.created_at ?? r.createdAt, `${path}.created_at`),
+    updatedAt: String(r.updated_at ?? r.updatedAt ?? ""),
   };
 }
 

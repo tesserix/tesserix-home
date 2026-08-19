@@ -9,6 +9,8 @@ import {
   ticketStatusLabel,
   ticketStatusTone,
   isTerminalStatus,
+  parseTicketList,
+  parseTicketsSummary,
 } from "./tickets";
 
 const PAYLOAD = {
@@ -237,5 +239,97 @@ describe("ticketStatusTone", () => {
 
   it("ignores casing, like every other status reader here", () => {
     expect(ticketStatusTone("In_Progress")).toBe("warning");
+  });
+});
+
+// ---- the platform API's shape (#269) -----------------------------------
+
+const MODULE_ROW = {
+  id: "3f2a1c94-0000-4000-8000-000000000001",
+  product_id: "mark8ly",
+  tenant_id: "3f2a1c94-0000-4000-8000-0000000000aa",
+  ticket_number: "M8-0001",
+  subject: "Payouts delayed again",
+  description: "Third week running.",
+  status: "open",
+  priority: "urgent",
+  submitted_by_name: "Amber Rowe",
+  submitted_by_email: "amber@amber.test",
+  resolved_at: null,
+  created_at: "2026-08-19T06:00:00Z",
+  updated_at: "2026-08-19T06:30:00Z",
+};
+
+describe("parseTicketList", () => {
+  it("accepts the module's listing", () => {
+    const rows = parseTicketList({ tickets: [MODULE_ROW] });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ticketNumber).toBe("M8-0001");
+    expect(rows[0].productId).toBe("mark8ly");
+    expect(rows[0].submittedByEmail).toBe("amber@amber.test");
+  });
+
+  it("accepts an empty queue as an empty list, not a failure", () => {
+    expect(parseTicketList({ tickets: [] })).toEqual([]);
+  });
+
+  it("rejects a payload with no tickets key rather than rendering nothing", () => {
+    // An empty queue and a broken contract look identical on screen. Only one
+    // of them should be silent.
+    expect(() => parseTicketList({ rows: [] })).toThrow(PlatformApiError);
+  });
+
+  it("rejects a row missing its identity", () => {
+    const { ticket_number: _dropped, ...withoutNumber } = MODULE_ROW;
+    expect(() => parseTicketList({ tickets: [withoutNumber] })).toThrow(
+      PlatformApiError,
+    );
+  });
+
+  it("reads the same row parser as the legacy listing", () => {
+    // Both backends exist at once, so the one thing that must not differ is
+    // what a ticket IS. Asserted by parsing the same row through both.
+    const viaModule = parseTicketList({ tickets: [MODULE_ROW] })[0];
+    const viaWeb = parseTickets({
+      summary: { open: 1, inProgress: 0, resolvedThisWeek: 0, urgentOpen: 0 },
+      rows: [MODULE_ROW],
+    }).rows[0];
+
+    expect(viaModule).toEqual(viaWeb);
+  });
+});
+
+describe("parseTicketsSummary", () => {
+  it("maps the module's snake_case onto the console's names", () => {
+    const summary = parseTicketsSummary({
+      summary: { open: 3, in_progress: 1, resolved_this_week: 2, urgent_open: 1 },
+    });
+
+    expect(summary).toEqual({
+      open: 3,
+      inProgress: 1,
+      resolvedThisWeek: 2,
+      urgentOpen: 1,
+    });
+  });
+
+  it("rejects a missing count rather than defaulting it to zero", () => {
+    // A headline number that silently reads zero is worse than a visible
+    // failure: an empty queue and a broken read look the same to an operator.
+    expect(() =>
+      parseTicketsSummary({ summary: { open: 3, in_progress: 1, resolved_this_week: 2 } }),
+    ).toThrow(PlatformApiError);
+  });
+
+  it("rejects camelCase, which is the legacy endpoint's spelling", () => {
+    // Guards the direction of the mapping. If this ever silently accepted
+    // both, a wiring mistake that pointed the module parser at apps/web's
+    // payload would go unnoticed.
+    expect(() =>
+      parseTicketsSummary({
+        summary: { open: 3, inProgress: 1, resolvedThisWeek: 2, urgentOpen: 1 },
+      }),
+    ).toThrow(PlatformApiError);
   });
 });

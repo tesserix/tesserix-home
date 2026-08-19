@@ -187,10 +187,12 @@ no-test-skipped check, and `go test -race`.
 
 ## Not done yet
 
-The console still calls `apps/web` for tickets. Migrating its four call sites is
-the follow-up to #269 and is spelled out in §10 of the conventions document —
-it needs the console to retain its Zitadel refresh token (ADR-003 D8), which is
-why it is a separate change rather than the same one.
+The console can call this service and does not yet. `apps/console` speaks both
+backends and `PLATFORM_API_ORIGIN` chooses; unset — the deployed state — is the
+current behaviour exactly. The blocker is not this module: the console keeps
+only the ID token at login and has no Zitadel access token to present
+(ADR-003 D8). §10 of the [conventions](../docs/PLATFORM-API-CONVENTIONS.md)
+lists what turning it on needs, in order.
 
 Beyond tickets: the CRM and audit module (ADR-003 D7a — they move together, or
 `auditedOperation`'s guarantee becomes a distributed transaction), secrets

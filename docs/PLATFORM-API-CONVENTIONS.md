@@ -362,21 +362,42 @@ seam is where it looks.
 
 ---
 
-## 10. What the console must change
+## 10. The console's migration
 
-Verified by running the console's own parsers over the committed golden files:
+Done, and **switched off**. `apps/console/lib/platform-api.ts` speaks both
+backends; `PLATFORM_API_ORIGIN` decides which.
 
-| Call site | Change |
+| Call site | Against the platform API |
 |---|---|
-| `fetchTicketDetail` | Point at `GET /v1/tickets/{id}`; pass `body.data` to `parseTicketDetail`. **The parser itself needs no change** — it accepts the module's payload unchanged, `author_type` validation included. |
-| `fetchTickets` | Becomes two calls — `GET /v1/tickets` and `GET /v1/tickets/summary` — composed into `TicketsPage`. `parseTickets` must split accordingly; it correctly rejects the new listing today, because the summary is no longer part of it. |
-| `postTicketReply` | `POST /v1/tickets/{id}/replies`. Same body. Send an `Idempotency-Key`. |
-| `patchTicketStatus` | `PATCH /v1/tickets/{id}`. Same body. Send an `Idempotency-Key`. |
+| `fetchTicketDetail` | `GET /v1/tickets/{id}`. The envelope is stripped by the transport and `parseTicketDetail` reads the result **unchanged** — `author_type` validation included. |
+| `fetchTickets` | Two calls, `GET /v1/tickets` and `GET /v1/tickets/summary`, composed in `fetchTicketsFromPlatformApi`. That composition is what §2 is for: the API serves domain resources, the console draws the screen. |
+| `postTicketReply` | `POST /v1/tickets/{id}/replies`, same body, plus an `Idempotency-Key`. |
+| `patchTicketStatus` | `PATCH /v1/tickets/{id}`, same body, plus an `Idempotency-Key`. |
 
-All four move from cookie replay against `apps/web` to a Zitadel bearer token,
-which is why ADR-003 D8's note about the console retaining its refresh token is
-a prerequisite rather than a detail.
+**Unset — the deployed state — is byte-for-byte the current behaviour.** That
+is deliberate, and it is the only reason this could merge:
 
-The listing also gains paging. `admin-stub.mjs` shrinks by the four ticket
-endpoints once the migration lands — #271 says it should, and that it is
-scaffolding with a known end.
+> The platform API takes a Zitadel access token (ADR-003 D8). The console does
+> not have one. `app/auth/callback/route.ts` destructures `id_token` out of the
+> token exchange and drops `access_token` and `refresh_token`, and
+> `SessionClaims` has nowhere to put one.
+
+`lib/auth/platform-token.ts` is the seam that closes. It returns null today,
+and the transport refuses to call the API without a token rather than sending
+an unauthenticated request that comes back 401 saying nothing useful.
+
+**To turn it on**, in order:
+
+1. Retain `access_token` and `refresh_token` at callback; widen `SessionClaims`;
+   refresh before expiry (sessions live 7 days, access tokens do not).
+2. Add the platform API's project to the console's login scopes —
+   `urn:zitadel:iam:org:project:id:{projectId}:aud`.
+3. Confirm the two Zitadel checkboxes D8 calls prerequisites: **JWT** access
+   tokens rather than opaque, and roles asserted on the **access** token, not
+   only the ID token. The failure mode is a perfectly valid token carrying no
+   roles, which presents as an application bug rather than a configuration gap.
+4. Set `PLATFORM_API_ORIGIN` on the console deployment.
+
+Until step 4, `apps/console/dev/admin-stub.mjs` keeps its four ticket routes.
+It sheds them when the switch is on by default — #271 is explicit that the stub
+shrinks as the platform API replaces these endpoints.
