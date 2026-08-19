@@ -55,7 +55,10 @@ describe("routeEntries", () => {
     const breakGlass = entries.find((e) => e.id === "route:platform.breakGlass");
     const dashboard = entries.find((e) => e.id === "route:platform.dashboard");
     expect(breakGlass?.capability).toBe("rotate-credentials");
-    expect(dashboard?.capability).toBe("read");
+    // `platform`, not `read`. Under #261 an ordinary route carries its SURFACE;
+    // if this ever reads `read` again the constant-filter bug is back, because
+    // `read` is the ticket every operator holds.
+    expect(dashboard?.capability).toBe("platform");
   });
 
   it("surfaces the identity lookup but refuses to navigate to it", () => {
@@ -97,14 +100,31 @@ describe("routeEntries", () => {
 
 describe("routeEntries under capability enforcement", () => {
   it("hides a route whose capability the operator does not hold", () => {
-    const readOnly = visibleTo(routeEntries(), ["read"], true);
-    expect(readOnly.some((e) => e.id === "route:platform.breakGlass")).toBe(false);
-    // and the ordinary routes are still there — this is not "hide everything"
-    expect(readOnly.some((e) => e.id === "route:platform.tickets")).toBe(true);
+    // A support operator: holds the surface, not the destructive verb.
+    const support = visibleTo(routeEntries(), ["read", "support"], true);
+    expect(support.some((e) => e.id === "route:platform.breakGlass")).toBe(false);
+    // and their own surface is still there — this is not "hide everything"
+    expect(support.some((e) => e.id === "route:platform.tickets")).toBe(true);
+  });
+
+  it("shows an operator holding only console entry nothing at all", () => {
+    // #261's point, made visible. `read` is now entry and nothing else, so a
+    // `read`-only session reaches the shell and no feature surface. Before, it
+    // saw every route, because 26 of 30 defaulted to exactly this capability.
+    const entryOnly = visibleTo(routeEntries(), ["read"], true);
+
+    expect(entryOnly).toEqual([]);
+  });
+
+  it("shows a CRM operator the CRM and not the ticket queue", () => {
+    const crm = visibleTo(routeEntries(), ["read", "crm"], true);
+
+    expect(crm.some((e) => e.id === "route:platform.crmOrganisations")).toBe(true);
+    expect(crm.some((e) => e.id === "route:platform.tickets")).toBe(false);
   });
 
   it("shows it to an operator who holds that capability", () => {
-    const rotator = visibleTo(routeEntries(), ["read", "rotate-credentials"], true);
+    const rotator = visibleTo(routeEntries(), ["read", "platform", "rotate-credentials"], true);
     expect(rotator.some((e) => e.id === "route:platform.breakGlass")).toBe(true);
   });
 });

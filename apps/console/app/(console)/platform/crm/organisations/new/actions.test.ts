@@ -55,7 +55,7 @@ describe("createOrganisationAction", () => {
 
     await createOrganisationAction(form);
 
-    const describe = vi.mocked(withCrmWrite).mock.calls[0][2];
+    const describe = vi.mocked(withCrmWrite).mock.calls[0][3];
     const description = describe({ organisationId: "org-1" });
     expect(description.action).toBe("crm.organisation.create");
     // AuditSummary is Readonly<Record<string, number>> — counts, never names.
@@ -73,7 +73,7 @@ describe("createOrganisationAction", () => {
 
     await createOrganisationAction(form);
 
-    const run = vi.mocked(withCrmWrite).mock.calls[0][1];
+    const run = vi.mocked(withCrmWrite).mock.calls[0][2];
     await run({ sub: "sub-1", email: "ava@tesserix.app" });
 
     expect(createOrganisation).toHaveBeenCalledWith({
@@ -165,7 +165,7 @@ describe("createOrganisationAction", () => {
 
     await createOrganisationAction(form);
 
-    const run = vi.mocked(withCrmWrite).mock.calls[0][1];
+    const run = vi.mocked(withCrmWrite).mock.calls[0][2];
     await run({ sub: "sub-1", email: "ava@tesserix.app" });
 
     expect(createOrganisation).toHaveBeenCalledWith(
@@ -179,7 +179,7 @@ describe("createOrganisationAction", () => {
   // bug and invites a retry that can never succeed.
   it("surfaces the do-not-contact refusal as its own message, not the generic one", async () => {
     const mapError = () => undefined;
-    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _options, _run, _describe, map) => {
       const mapped = (map ?? mapError)(new SuppressedContactError(undefined, "on the list"));
       return mapped ?? { ok: false, message: "That change was not saved." };
     });
@@ -195,7 +195,7 @@ describe("createOrganisationAction", () => {
   // retry that can never succeed. The same condition the IMPORT path already
   // resolves informatively (`matchedExisting`) has to be as legible here.
   it("names a duplicate contact rather than reporting a generic failure", async () => {
-    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _options, _run, _describe, map) => {
       const mapped = map?.(new DuplicateContactError("email"));
       return mapped ?? { ok: false, message: "That change was not saved." };
     });
@@ -211,7 +211,7 @@ describe("createOrganisationAction", () => {
   });
 
   it("names the Instagram handle when that is the key that collided", async () => {
-    vi.mocked(withCrmWrite).mockImplementation(async (_target, _run, _describe, map) => {
+    vi.mocked(withCrmWrite).mockImplementation(async (_target, _options, _run, _describe, map) => {
       const mapped = map?.(new DuplicateContactError("instagramHandle"));
       return mapped ?? { ok: false, message: "That change was not saved." };
     });

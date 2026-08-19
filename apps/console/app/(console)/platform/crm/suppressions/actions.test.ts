@@ -75,7 +75,7 @@ const SUPPRESSION_ROW = {
 
 describe("addSuppressionAction", () => {
   it("adds a suppression, audits crm.suppression.add under the actor's sub, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(addSuppression).mockResolvedValue(SUPPRESSION_ROW);
 
     const result = await addSuppressionAction({ email: "ava@example.com", reason: "unsubscribed" });
@@ -101,7 +101,7 @@ describe("addSuppressionAction", () => {
   // Minor 9: trimmed here, not only by the client form — a server action is
   // a network-reachable endpoint, and whitespace can arrive directly.
   it("trims email, instagram handle and reason server-side", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(addSuppression).mockResolvedValue(SUPPRESSION_ROW);
 
     await addSuppressionAction({
@@ -146,7 +146,7 @@ describe("addSuppressionAction", () => {
   // `crm_suppressions_email_uq` on the very next everyday add. The raw
   // Postgres message must never reach the operator verbatim.
   it("maps a duplicate-key violation to an operator-facing message, not the raw database error", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(addSuppression).mockRejectedValue(
       new Error(
         'duplicate key value violates unique constraint "crm_suppressions_email_uq"',
@@ -164,7 +164,7 @@ describe("addSuppressionAction", () => {
   // Guards the guard: an unrelated database error must still fall through to
   // the generic message, not leak either.
   it("maps any other database error to the generic message, not the raw text", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(addSuppression).mockRejectedValue(new Error("connection terminated"));
 
     const result = await addSuppressionAction({ email: "ava@example.com", reason: "unsubscribed" });
@@ -175,7 +175,7 @@ describe("addSuppressionAction", () => {
 
 describe("removeSuppressionAction", () => {
   it("removes a suppression, audits the real row count, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(removeSuppression).mockResolvedValue([
       { id: "s1", email: "ava@example.com", instagramHandle: null },
     ]);
@@ -198,7 +198,7 @@ describe("removeSuppressionAction", () => {
   // is looked up by; it must not be what gets audited once the row's real
   // key is known.
   it("audits the suppression's email as the target, not the uuid it was looked up by", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(removeSuppression).mockResolvedValue([
       { id: "s1", email: "ava@example.com", instagramHandle: null },
     ]);
@@ -211,7 +211,7 @@ describe("removeSuppressionAction", () => {
   });
 
   it("audits the instagram handle as the target when there is no email", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(removeSuppression).mockResolvedValue([
       { id: "s1", email: null, instagramHandle: "bondibaker" },
     ]);
@@ -224,7 +224,7 @@ describe("removeSuppressionAction", () => {
   // Important 3: a DELETE that matched nothing must not be recorded as a
   // removal that happened.
   it("audits removed: 0 when the id no longer matches anything, rather than assuming success", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(removeSuppression).mockResolvedValue([]);
 
     const result = await removeSuppressionAction("missing");
@@ -249,7 +249,7 @@ describe("removeSuppressionAction", () => {
   });
 
   it("maps a database-unavailable failure to a generic message, and writes no audit row", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
 
     const result = await removeSuppressionAction("s1");
@@ -262,7 +262,7 @@ describe("removeSuppressionAction", () => {
   // Same property `[organisation]/actions.test.ts` pins for `changeStage`: a
   // failed audit write must discard the result rather than report success.
   it("discards the result when the audit write fails, and does not report success", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(removeSuppression).mockResolvedValue([
       { id: "s1", email: "ava@example.com", instagramHandle: null },
     ]);

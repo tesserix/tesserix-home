@@ -164,10 +164,14 @@ export function toolEntries(baseDomain: string): SearchEntry[] {
  * Links by `id` (a stable uuid), never by `ticket_number` — ticket numbers
  * are scoped per product and are not guaranteed unique across the queue.
  *
- * `read` is deliberate and matches `platform.tickets`: a ticket is readable by
- * anyone who can read the queue it came from. Replying to it needs `respond`,
- * but that is asserted at the action on the detail surface, not at the search
- * result — an operator who can read a ticket should be able to find it.
+ * `support` matches `platform.tickets`: a ticket is readable by anyone who can
+ * read the queue it came from. That used to be `read`, the console entry
+ * ticket; #261 moved the queue itself to the `support` surface, and this moves
+ * with it — the reasoning is unchanged, the surface it points at is not.
+ *
+ * Replying still needs `respond`, asserted at the action on the detail surface
+ * rather than at the search result: an operator who can read a ticket should be
+ * able to find it.
  */
 export function ticketEntry(row: TicketSearchRow): SearchEntry {
   return {
@@ -185,8 +189,7 @@ export function ticketEntry(row: TicketSearchRow): SearchEntry {
       row.submitted_by_email,
       row.product_id,
     ],
-    capability: "read", // deliberate — see the doc comment above
-
+    capability: "support",
   };
 }
 

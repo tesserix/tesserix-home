@@ -119,7 +119,7 @@ afterEach(() => {
 
 describe("changeStage", () => {
   it("advances the stage, audits crm.stage.change with a real transition count, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(advanceStage).mockResolvedValue({ stageChanged: true, productChanged: true });
 
     const result = await changeStage({
@@ -151,7 +151,7 @@ describe("changeStage", () => {
   // "something went wrong" and not fabricated as `{transitions: 1}` just
   // because a transition was asked for.
   it("records a no-op write as transitions: 0, not a fabricated transition", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(advanceStage).mockResolvedValue({ stageChanged: false, productChanged: false });
 
     const result = await changeStage({
@@ -173,7 +173,7 @@ describe("changeStage", () => {
   // transition — an audit reader could not otherwise tell "the deal moved"
   // from "someone changed its product without moving it" apart.
   it("audits a stage-unchanged product fix as crm.product.set, not crm.stage.change", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(advanceStage).mockResolvedValue({ stageChanged: false, productChanged: true });
 
     const result = await changeStage({
@@ -241,7 +241,7 @@ describe("changeStage", () => {
   });
 
   it("maps a database-unavailable failure to a generic message, not the raw error, and writes no audit row", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
 
     const result = await changeStage({
@@ -262,7 +262,7 @@ describe("changeStage", () => {
   // is mocked, to make the INSERT itself fail) rather than a mock of
   // `auditedOperation` standing in for that guarantee.
   it("discards the result when the audit write fails, and does not report success", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(advanceStage).mockResolvedValue({ stageChanged: true, productChanged: true });
     vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
 
@@ -292,7 +292,7 @@ describe("changeStage", () => {
 
 describe("scheduleNextAction", () => {
   it("schedules the next action, audits it, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(setNextAction).mockResolvedValue(undefined);
 
     const result = await scheduleNextAction({
@@ -322,7 +322,7 @@ describe("scheduleNextAction", () => {
   // does — so mocking it here exercises a rejection this code path can
   // really produce.
   it("refuses a grandfathered row with the repo's own message", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(setNextAction).mockRejectedValue(new MissingProductError(OPP_ID));
 
     const result = await scheduleNextAction({
@@ -340,7 +340,7 @@ describe("scheduleNextAction", () => {
 
 describe("addActivity", () => {
   it("logs an activity, audits it, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(logActivity).mockResolvedValue(undefined);
 
     const result = await addActivity({
@@ -403,7 +403,7 @@ describe("addActivity", () => {
   // this test is what keeps that true: a later `opportunityId` requirement
   // here would re-break the drift clock from above.
   it("forwards a contact kind that names no deal, and audits it against the organisation", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(logActivity).mockResolvedValue(undefined);
 
     const result = await addActivity({
@@ -435,7 +435,7 @@ describe("addActivity", () => {
 
 describe("linkConversion", () => {
   it("links, audits crm.conversion.link with the organisation name, and revalidates both surfaces", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(linkConversionRow).mockResolvedValue({
       organisationId: ORG_ID,
       organisationName: "Bondi Baker",
@@ -477,7 +477,7 @@ describe("linkConversion", () => {
   // second operator) must read as a clear, distinct fact — not the generic
   // "not saved" every other caught error falls back to.
   it("maps AlreadyLinkedError to a distinct, operator-facing message", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(linkConversionRow).mockRejectedValue(new AlreadyLinkedError(ORG_ID));
 
     const result = await linkConversion({
@@ -552,7 +552,7 @@ describe("linkConversion", () => {
  */
 describe("product validation against the estate", () => {
   beforeEach(() => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(true);
     vi.mocked(tesserixQuery).mockResolvedValue([]);
   });
@@ -598,7 +598,7 @@ describe("product validation against the estate", () => {
 // so it must reach them verbatim rather than as the generic "not saved".
 describe("addActivity and the do-not-contact list", () => {
   it("surfaces the suppression refusal to the operator", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(true);
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(logActivity).mockRejectedValue(new SuppressedContactError(ORG_ID));
@@ -620,7 +620,7 @@ describe("addActivity and the do-not-contact list", () => {
   // `createContact` (crm-writes.ts); this asserts the refusal reaches the
   // operator intact rather than as the generic "That change was not saved."
   it("surfaces the suppression refusal when a suppressed contact is added by hand", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(true);
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(createContact).mockRejectedValue(
@@ -647,7 +647,7 @@ describe("addActivity and the do-not-contact list", () => {
  */
 describe("addContactAction and the contact unique indexes", () => {
   it("names the email when that key is already taken", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(true);
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("email"));
@@ -663,7 +663,7 @@ describe("addContactAction and the contact unique indexes", () => {
   });
 
   it("names the Instagram handle when that is the key that collided", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(true);
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("instagramHandle"));
@@ -676,7 +676,7 @@ describe("addContactAction and the contact unique indexes", () => {
 
 describe("addContactAction", () => {
   it("adds a contact, audits crm.contact.create, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });
 
     const result = await addContactAction({
@@ -702,7 +702,7 @@ describe("addContactAction", () => {
   });
 
   it("trims every field server-side", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(createContact).mockResolvedValue({ contactId: "contact-1" });
 
     await addContactAction({
@@ -745,7 +745,7 @@ describe("addContactAction", () => {
 
 describe("createOpportunityAction", () => {
   it("opens an opportunity, audits crm.opportunity.create, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(createOpportunityRow).mockResolvedValue({ opportunityId: "opp-2" });
 
     const result = await createOpportunityAction({
@@ -772,7 +772,7 @@ describe("createOpportunityAction", () => {
   // March that returns in November is a new opportunity, not a resurrection
   // of the old row — a bare organisationId, no product yet, is legal.
   it("opens an opportunity with no product", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(createOpportunityRow).mockResolvedValue({ opportunityId: "opp-3" });
 
     const result = await createOpportunityAction({ organisationId: ORG_ID });
@@ -810,7 +810,7 @@ describe("eraseContactAction", () => {
   it("gates contact erasure on hard-delete, not read", async () => {
     signIn(undefined);
     await eraseContactAction(CONTACT_ID);
-    const options = vi.mocked(withCrmWrite).mock.calls[0][4];
+    const options = vi.mocked(withCrmWrite).mock.calls[0][1];
     expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
   });
 
@@ -952,7 +952,7 @@ describe("eraseContactAction", () => {
   });
 
   it("refuses an operator who holds read but not hard-delete", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
 
     const result = await eraseContactAction(CONTACT_ID);
 
@@ -968,13 +968,13 @@ describe("deleteOrganisationAction", () => {
   it("gates organisation delete on hard-delete", async () => {
     signIn(undefined);
     await deleteOrganisationAction(ORG_ID);
-    const options = vi.mocked(withCrmWrite).mock.calls[0][4];
+    const options = vi.mocked(withCrmWrite).mock.calls[0][1];
     expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
   });
 
   it("counts what was deleted, and identifies it in target not summary", async () => {
     await deleteOrganisationAction(ORG_ID);
-    const describe = vi.mocked(withCrmWrite).mock.calls[0][2];
+    const describe = vi.mocked(withCrmWrite).mock.calls[0][3];
 
     const description = describe({
       organisationId: ORG_ID,
@@ -1076,7 +1076,7 @@ describe("deleteOrganisationAction", () => {
   });
 
   it("refuses an operator who holds read but not hard-delete", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
 
     const result = await deleteOrganisationAction(ORG_ID);
 
@@ -1106,7 +1106,7 @@ describe("updateOrganisationAction", () => {
   }
 
   it("updates the organisation, audits the changed field names, and revalidates both surfaces", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(updateOrganisation).mockResolvedValue({
       changed: [
         { field: "name", from: "Glebe Flowers", to: NAME },
@@ -1151,7 +1151,7 @@ describe("updateOrganisationAction", () => {
   // leaves out is cleared. The action must pass the omission through rather
   // than quietly dropping the key, or the writer's contract stops holding.
   it("passes an omitted field through as absent rather than dropping it", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
 
     await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
@@ -1168,7 +1168,7 @@ describe("updateOrganisationAction", () => {
   });
 
   it("trims every field and drops blank list entries", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
 
     await updateOrganisationAction(
@@ -1197,7 +1197,7 @@ describe("updateOrganisationAction", () => {
   // no-op transition. Not an empty summary, which would read as a summariser
   // that forgot to fill itself in.
   it("records a save that changed nothing as fields: 0", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
 
     const result = await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
@@ -1233,14 +1233,18 @@ describe("updateOrganisationAction", () => {
   });
 
   // An edit is not a deletion: it sits with create at `withCrmWrite`'s
-  // default gate, not on `hard-delete`.
-  it("sits at the default capability", async () => {
-    signIn(["read"]);
+  // CRM surface gate, not `hard-delete`.
+  it("gates an ordinary edit on the crm surface, not on read", async () => {
+    signIn(["crm"]);
     vi.mocked(updateOrganisation).mockResolvedValue({ changed: [] });
 
     await updateOrganisationAction(ORG_ID, editForm({ name: NAME }));
 
-    expect(vi.mocked(withCrmWrite).mock.calls[0][4]).toBeUndefined();
+    // #261 inverted this assertion, and the inversion IS the change. It used to
+    // read `toBeUndefined()` — an ordinary edit passed no capability and so
+    // inherited the `read` default, the console entry ticket every operator
+    // holds. Editing the pipeline now requires the CRM surface explicitly.
+    expect(vi.mocked(withCrmWrite).mock.calls[0][1]).toEqual({ capability: "crm" });
   });
 
   it("refuses without console entry", async () => {

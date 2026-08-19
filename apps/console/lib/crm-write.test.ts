@@ -39,15 +39,21 @@ beforeEach(() => {
 });
 
 describe("withCrmWrite", () => {
-  it("gates on read by default, so existing callers are unchanged", async () => {
-    await withCrmWrite("crm:org", async () => "ok", () => description);
-    expect(checkOperatorCapability).toHaveBeenCalledWith(expect.anything(), "read");
+  // #261 removed the default. This used to read "gates on read by default, so
+  // existing callers are unchanged" — and that default is exactly how 11 of 14
+  // mutating actions ended up on the console entry ticket: a caller inherited
+  // the weakest gate in the system by saying nothing. There is no default left
+  // to test, so the property is that the caller names one, which the compiler
+  // now enforces.
+  it("gates on the capability the caller names", async () => {
+    await withCrmWrite("crm:org", { capability: "crm" }, async () => "ok", () => description);
+    expect(checkOperatorCapability).toHaveBeenCalledWith(expect.anything(), "crm");
   });
 
-  it("gates on the capability the caller names", async () => {
-    await withCrmWrite("crm:org", async () => "ok", () => description, undefined, {
-      capability: "hard-delete",
-    });
+  it("gates a verb on the verb, not on the surface it is reached from", async () => {
+    // Orthogonality: erasure happens from a CRM surface but gates on
+    // `hard-delete`. Holding `crm` must not carry the right to erase.
+    await withCrmWrite("crm:org", { capability: "hard-delete" }, async () => "ok", () => description);
     expect(checkOperatorCapability).toHaveBeenCalledWith(expect.anything(), "hard-delete");
   });
 
@@ -56,9 +62,7 @@ describe("withCrmWrite", () => {
       throw new CapabilityError("hard-delete");
     });
     const run = vi.fn();
-    const result = await withCrmWrite("crm:org", run, () => description, undefined, {
-      capability: "hard-delete",
-    });
+    const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
     expect(run).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, message: "You don't have permission to edit the CRM." });
   });

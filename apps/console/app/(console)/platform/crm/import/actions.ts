@@ -55,7 +55,9 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
   }
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "read");
+    // A preview of up to 500 contacts is CRM data. It sat on `read` — the
+    // console entry ticket — which is the case #261 opens with.
+    checkOperatorCapability(session, "crm");
     const preview = await previewImport(rows);
     return { ok: true, preview };
   } catch (cause) {
@@ -133,6 +135,7 @@ export async function commitImportAction(
   const parseMalformed = totalRows - rows.length;
   const result = await withCrmWrite(
     bounded ?? "import",
+    { capability: "crm" },
     (actor) => commitImport(rows, actor.email, bounded, totalRows),
     (outcome: ImportResult) => {
       // Minor (review round 2): routed through the SAME `committedDisplayCounts`
@@ -151,8 +154,7 @@ export async function commitImportAction(
         },
       };
     },
-    mapUnrecordedCommit,
-  );
+    mapUnrecordedCommit);
   if (!result.ok) return result;
   revalidatePath("/platform/crm/import");
   return { ok: true, result: result.value };

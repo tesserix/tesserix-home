@@ -82,7 +82,7 @@ const COMMIT_RESULT = {
 
 describe("previewImportAction", () => {
   it("previews under console entry and returns the counts", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(previewImport).mockResolvedValue(PREVIEW);
 
     const result = await previewImportAction([{ email: "ava@example.com" }]);
@@ -107,7 +107,7 @@ describe("previewImportAction", () => {
   // `auditedOperation` — no audit row, no tesserixQuery call at all, for a
   // dry run an operator can trigger repeatedly while adjusting a CSV.
   it("never touches tesserixQuery — a preview is not an audited write", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(previewImport).mockResolvedValue(PREVIEW);
 
     await previewImportAction([{ email: "ava@example.com" }]);
@@ -116,7 +116,7 @@ describe("previewImportAction", () => {
   });
 
   it("maps a database error to a generic message, not the raw text", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(previewImport).mockRejectedValue(new Error("connection terminated"));
 
     const result = await previewImportAction([{ email: "ava@example.com" }]);
@@ -135,7 +135,7 @@ describe("previewImportAction", () => {
   });
 
   it("accepts a file at exactly MAX_IMPORT_ROWS", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(previewImport).mockResolvedValue(PREVIEW);
 
     const result = await previewImportAction(manyRows(MAX_IMPORT_ROWS));
@@ -147,7 +147,7 @@ describe("previewImportAction", () => {
 
 describe("commitImportAction", () => {
   it("commits, audits crm.import under the actor's sub, and revalidates", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv");
@@ -180,7 +180,7 @@ describe("commitImportAction", () => {
   });
 
   it("discards the result when the audit write fails, and does not report success", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
     vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
 
@@ -209,7 +209,7 @@ describe("commitImportAction", () => {
   // network-reachable action, same as any CSV cell — bounded before it
   // becomes the audit target or crm_imports.filename.
   it("trims and truncates the filename before it reaches commitImport or the audit target", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
     const long = "  " + "a".repeat(400) + ".csv  ";
 
@@ -227,7 +227,7 @@ describe("commitImportAction", () => {
   // forwarded through so crm_imports.row_count reflects the whole file, not
   // just the parsed survivors.
   it("forwards an explicit totalRows to commitImport, not just rows.length", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 5);
@@ -250,7 +250,7 @@ describe("commitImportAction", () => {
   // `row_count: 10000, skipped_count: 9999` and audit `malformed: 9999` for
   // a genuinely one-row import.
   it("rejects an absurd totalRows instead of forwarding it to an integer column, and writes nothing", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 1e10);
@@ -273,7 +273,7 @@ describe("commitImportAction", () => {
   });
 
   it("rejects a negative or fractional totalRows, and writes nothing", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", -3.7);
@@ -283,7 +283,7 @@ describe("commitImportAction", () => {
   });
 
   it("rejects a totalRows smaller than the committed row count", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     const result = await commitImportAction(
@@ -301,7 +301,7 @@ describe("commitImportAction", () => {
   // import-view.tsx) — it must fold in the same parseMalformed-derived
   // count as the other two, not report `outcome.malformed` bare.
   it("folds the parse-time malformed count (encoded in totalRows) into the audited malformed count", async () => {
-    signIn(["read"]);
+    signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
     // 1 row committed, totalRows 4: 3 rows were dropped client-side before

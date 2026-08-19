@@ -34,7 +34,7 @@ beforeEach(() => {
 
 describe("GET /api/search", () => {
   it("returns ticket entries for a matching query", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(searchTicketRows).mockResolvedValue([
       {
         id: "5f0b2c34-0000-0000-0000-000000000000",
@@ -58,14 +58,14 @@ describe("GET /api/search", () => {
   });
 
   it("refuses a query shorter than the minimum without touching the database", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     const res = await GET(request("p"));
     expect(res.status).toBe(400);
     expect(searchTicketRows).not.toHaveBeenCalled();
   });
 
   it("trims before measuring, so whitespace is not a query", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     const res = await GET(request("   "));
     expect(res.status).toBe(400);
     expect(searchTicketRows).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe("GET /api/search", () => {
   });
 
   it("answers 501 when the database is not wired up", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
     const res = await GET(request("payout"));
     expect(res.status).toBe(501);
@@ -94,7 +94,7 @@ describe("GET /api/search", () => {
   });
 
   it("answers 500 without leaking the driver error", async () => {
-    signIn(["read"]);
+    signIn(["support"]);
     vi.mocked(searchTicketRows).mockRejectedValue(
       new Error("password authentication failed for user tesserix_admin"),
     );

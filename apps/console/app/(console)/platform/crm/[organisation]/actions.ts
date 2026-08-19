@@ -98,6 +98,7 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
   const to = input.to;
   const result = await withCrmWrite(
     input.opportunityId,
+    { capability: "crm" },
     (actor) =>
       advanceStage({
         opportunityId: input.opportunityId,
@@ -122,8 +123,7 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
       // not a sentinel meaning "something went wrong".
       return { action: "crm.stage.change", summary: { transitions: 0 } };
     },
-    mapMissingProduct,
-  );
+    mapMissingProduct);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -141,6 +141,7 @@ export async function scheduleNextAction(
 ): Promise<CrmActionResult> {
   const result = await withCrmWrite(
     input.opportunityId,
+    { capability: "crm" },
     (actor) =>
       setNextAction({
         opportunityId: input.opportunityId,
@@ -149,8 +150,7 @@ export async function scheduleNextAction(
         actor: actor.email,
       }),
     () => ({ action: "crm.next_action.set", summary: { scheduled: 1 } }),
-    mapMissingProduct,
-  );
+    mapMissingProduct);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -220,6 +220,7 @@ export async function addActivity(input: AddActivityInput): Promise<CrmActionRes
   const kind = input.kind;
   const result = await withCrmWrite(
     input.opportunityId ?? input.organisationId,
+    { capability: "crm" },
     (actor) =>
       logActivity({
         organisationId: input.organisationId,
@@ -229,8 +230,7 @@ export async function addActivity(input: AddActivityInput): Promise<CrmActionRes
         body: input.body,
       }),
     () => ({ action: "crm.activity.log", summary: { logged: 1 } }),
-    mapSuppressedContact,
-  );
+    mapSuppressedContact);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -296,6 +296,7 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
   const method = input.method;
   const result = await withCrmWrite(
     input.organisationId,
+    { capability: "crm" },
     (actor) =>
       linkConversionRow({
         organisationId: input.organisationId,
@@ -313,8 +314,7 @@ export async function linkConversion(input: LinkConversionInput): Promise<CrmAct
       // audit row an operator can't join back to a real record.
       target: `${outcome.organisationName} (${outcome.organisationId})`,
     }),
-    mapAlreadyLinked,
-  );
+    mapAlreadyLinked);
   if (!result.ok) return result;
   revalidatePath("/platform/crm");
   revalidatePath(`/platform/crm/${input.organisationId}`);
@@ -352,6 +352,7 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
 
   const result = await withCrmWrite(
     input.organisationId,
+    { capability: "crm" },
     () =>
       createContact({
         organisationId: input.organisationId,
@@ -365,8 +366,7 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
     // handle is already taken, at the data layer (crm-writes.ts). Both
     // allowlisted here: without them either refusal would surface as the
     // generic "That change was not saved." and read as a bug.
-    mapContactRefusal,
-  );
+    mapContactRefusal);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -400,14 +400,14 @@ export async function createOpportunityAction(
 
   const result = await withCrmWrite(
     input.organisationId,
+    { capability: "crm" },
     () =>
       createOpportunityRow({
         organisationId: input.organisationId,
         product,
         owner,
       }),
-    () => ({ action: "crm.opportunity.create", summary: { opportunities: 1 } }),
-  );
+    () => ({ action: "crm.opportunity.create", summary: { opportunities: 1 } }));
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -458,6 +458,7 @@ function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | 
 export async function eraseContactAction(contactId: string): Promise<CrmActionResult> {
   const result = await withCrmWrite(
     contactId,
+    { capability: "hard-delete" },
     () => eraseContactRow(contactId),
     (outcome) => {
       // `outcome.erasedAt` is the PRE-image: non-null means the contact was
@@ -479,9 +480,7 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
           : contactId,
       };
     },
-    mapEraseAuditFailure,
-    { capability: "hard-delete" },
-  );
+    mapEraseAuditFailure);
   if (!result.ok) return result;
   if (result.value) {
     revalidatePath(`/platform/crm/${result.value.organisationId}`);
@@ -544,6 +543,7 @@ export async function deleteOrganisationAction(
 ): Promise<CrmActionResult> {
   const result = await withCrmWrite(
     organisationId,
+    { capability: "hard-delete" },
     () => deleteOrganisationRow(organisationId),
     (outcome) => ({
       action: "crm.organisation.delete",
@@ -554,9 +554,7 @@ export async function deleteOrganisationAction(
       // for an org that no longer exists can still be joined back to it.
       target: outcome ? `${outcome.name} (${outcome.organisationId})` : organisationId,
     }),
-    mapDeleteAuditFailure,
-    { capability: "hard-delete" },
-  );
+    mapDeleteAuditFailure);
   if (!result.ok) return result;
   revalidatePath("/platform/crm");
   // Not just the queue: a deleted organisation that is still listed on the
@@ -667,6 +665,7 @@ export async function updateOrganisationAction(
     // it — the display name it had before is in the timeline diff, which is
     // the record that exists to answer "what was it called yesterday".
     `${name} (${organisationId})`,
+    { capability: "crm" },
     (actor) =>
       updateOrganisation({
         organisationId,
@@ -680,8 +679,7 @@ export async function updateOrganisationAction(
     (outcome) => ({
       action: "crm.organisation.update",
       summary: summariseChanges(outcome.changed),
-    }),
-  );
+    }));
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${organisationId}`);
   // The browse surface renders each organisation's name and location, so an

@@ -78,23 +78,24 @@ interface RouteEntry {
    * operator holds, so the filter ran against a constant and could only ever
    * hide everything or nothing.
    *
-   * Optional, defaulting to `read`. The default is the honest one: a route
-   * with no declaration is readable by anyone who can reach the console at
-   * all, which is true of the great majority of them, and it means adding a
-   * route cannot accidentally hide it from everyone.
+   * REQUIRED. It used to be optional, defaulting to `read` — and #261 found
+   * what that cost: 26 of 30 routes declared nothing, so "unspecified" quietly
+   * meant "everyone who can reach the console". A default that is also the
+   * weakest capability in the system is not a safe default; it is an opt-out
+   * nobody has to take deliberately.
    *
-   * Declare it only where the route's surface is unambiguously a
-   * higher-blast-radius action (break-glass rotation, GDPR erasure). Where a
-   * route's real capability is undecided because the surface is still
-   * `pending`, leave the default and say so rather than guessing — a wrong
-   * declaration hides a page from operators who should see it, and that is a
-   * quieter failure than the one this field fixes.
+   * Making it required means adding a route asks the question. The answer is
+   * usually the surface the route belongs to (`crm`, `support`, `platform`);
+   * where the route exists only to perform one high-blast-radius act, name the
+   * verb instead, because offering a page whose only purpose the operator
+   * cannot carry out is a dead end — `platform.announcements` is `mass-send`
+   * for exactly that reason.
    *
    * Lives here beside `pending`/`retired` because it is a property of route
    * IDENTITY. A lookup table in one app would drift from this one, which is
    * the whole reason this package exists.
    */
-  capability?: Capability;
+  capability: Capability;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -105,8 +106,8 @@ interface RouteEntry {
 const ROUTES = {
   // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
   // `pending` the rail links to in-app routes that are not there — five 404s.
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true },
-  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true },
+  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true, capability: "platform" },
+  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true, capability: "platform" },
   // RETIRED, not pending (#139). Kora's audit trail is one source in the
   // console's estate-wide `platform.auditLog`, and there is no Kora-scoped audit
   // page coming to the console — `pending` would promise one. `/admin/apps/kora/audit`
@@ -116,24 +117,24 @@ const ROUTES = {
   //
   // `mobile` also stays: retirement is per-renderer, and expo-router still
   // serves that screen standalone.
-  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true },
-  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true },
+  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true, capability: "platform" },
+  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true, capability: "platform" },
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until
   // it is built — staff scoping is blocked on #134.
-  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", pending: true },
+  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", pending: true, capability: "platform" },
 
   // Platform rail. The console owns their identity so the rail can be built
   // from one source; none of the surfaces is built here yet.
   // Served at the console root: the estate map plus the internal tools
   // directory already live there, and it is the only way back to the
   // console home once a rail link has navigated away from it.
-  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/" },
-  "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true },
+  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/", capability: "platform" },
+  "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true, capability: "platform" },
   // First surface built in the console — hence no `pending`. Served at
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
   // is deleted.
-  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets" },
+  "platform.tickets": { web: "/admin/platform-tickets", mobile: "/platform/tickets", capability: "support" },
   // Retired on web and in the console (#133): the eight KPIs and the three
   // breakdowns are a tab on `platform.tickets` now, and `/admin/analytics/support`
   // is a redirect to it. Not `pending` — nothing is coming.
@@ -144,7 +145,7 @@ const ROUTES = {
   // "/platform/analytics-support", and (tabs)/platform.tsx links exactly that.
   // Recording the wrong path is the drift this package exists to prevent, and
   // it survived because nothing consumes this id's mobile path yet.
-  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/analytics-support", retired: true },
+  "platform.supportAnalytics": { web: "/admin/analytics/support", mobile: "/platform/analytics-support", retired: true, capability: "support" },
   // A live-chat console is not a reading surface: it is opened to reply, and
   // `respond` is documented as "reply to tickets and chats". `platform.tickets`
   // is deliberately NOT `respond` — the queue is genuinely readable, and
@@ -211,7 +212,7 @@ const ROUTES = {
   // Revisit if the surface ever grows an action beyond reading, per the
   // `capability` doc above: where a route's real capability is undecided
   // because the surface is pending, take the default and say so.
-  "platform.identityLookup": { web: "/admin/search", mobile: "/platform/identity-lookup", pending: true },
+  "platform.identityLookup": { web: "/admin/search", mobile: "/platform/identity-lookup", pending: true, capability: "platform" },
 
   // The estate's audit timeline (#139): every product's audit trail plus the
   // console's own operator log, in one surface, newest first.
@@ -246,23 +247,23 @@ const ROUTES = {
   // accountability. Reading it is also itself audited (the console's own
   // `console_audit_log` is one of the sources on this very page), which is the
   // control that actually applies here; no capability value can express it.
-  "platform.auditLog": { mobile: "/platform/audit-log" },
+  "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
 
-  "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true },
-  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true },
-  "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true },
-  "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true },
+  "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true, capability: "platform" },
+  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true, capability: "platform" },
+  "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true, capability: "platform" },
+  "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true, capability: "platform" },
   // Left at `read`: none of CAPABILITIES covers DNS mutation, and inventing a
   // mapping onto one that nearly fits would be worse than the default.
-  "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true },
+  "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true, capability: "platform" },
   // Left at `read`: the outbox is a log. Whether it also offers a re-send
   // (which would be `mass-send`) is undecided until the surface is built.
-  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", pending: true },
-  "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true },
+  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", pending: true, capability: "platform" },
+  "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true, capability: "platform" },
   // Left at `read`, though `mass-send` names "template test-sends": authoring a
   // template is not sending one, and the test-send action must assert
   // `mass-send` itself rather than the whole page being gated on it.
-  "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", pending: true },
+  "platform.leadTemplates": { web: "/admin/notifications/lead-templates", mobile: "/platform/lead-templates", pending: true, capability: "crm" },
   // The erasure queue exists to execute irreversible deletions — `hard-delete`
   // names leads, users and tenant archival.
   "platform.gdprQueue": { web: "/admin/erasure-requests", mobile: "/platform/gdpr", pending: true, capability: "hard-delete" },
@@ -274,7 +275,7 @@ const ROUTES = {
   // gating the whole page on credential rotation would hide benign settings
   // from every operator who cannot rotate keys. Gate the Stripe section, not
   // the route, once the surface exists.
-  "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true },
+  "platform.settings": { web: "/admin/settings", mobile: "/platform/settings", pending: true, capability: "platform" },
 
   // The CRM: a sales queue for inbound leads, replacing apps/web's
   // Mark8ly-scoped leads page with an estate-native surface.
@@ -289,7 +290,7 @@ const ROUTES = {
   //
   // NOT `pending`: the queue is this task's reason for existing, and later
   // tasks build the surface this id points at.
-  "platform.crm": { web: "/admin/apps/mark8ly/leads", mobile: "/platform/crm", capability: "read" },
+  "platform.crm": { web: "/admin/apps/mark8ly/leads", mobile: "/platform/crm", capability: "crm" },
   // No `web`: the import flow was never a distinct page in apps/web — it
   // lived inside the leads page itself, under `platform.crm`. There is no
   // separate predecessor to record.
@@ -297,7 +298,7 @@ const ROUTES = {
   // NOT `pending`: Task 8 builds the CSV import flow this id points at.
   "platform.crmImport": {
     mobile: "/platform/crm/import",
-    capability: "read",
+    capability: "crm",
   },
   // No `web`: a suppression list never existed in apps/web at all. This is
   // genuinely console-native, not a migrated surface.
@@ -305,7 +306,7 @@ const ROUTES = {
   // NOT `pending`: Task 7 builds the do-not-contact list this id points at.
   "platform.crmSuppressions": {
     mobile: "/platform/crm/suppressions",
-    capability: "read",
+    capability: "crm",
   },
   // No `web`: an organisation browse surface never existed in apps/web. The
   // old leads page was a single flat list of lead rows with no concept of a
@@ -315,7 +316,7 @@ const ROUTES = {
   // NOT `pending`: this plan's Task 3 builds the surface this id points at.
   "platform.crmOrganisations": {
     mobile: "/platform/crm/organisations",
-    capability: "read",
+    capability: "crm",
   },
 } as const satisfies Record<string, RouteEntry>;
 

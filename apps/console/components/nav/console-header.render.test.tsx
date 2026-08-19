@@ -22,7 +22,7 @@ afterEach(() => {
 const PROPS = {
   name: "Mahesh Sangawar",
   email: "mahesh.sangawar@tesserix.app",
-  capabilities: ["read"],
+  capabilities: ["read", "crm", "support", "platform"],
   showCapabilities: true,
 };
 

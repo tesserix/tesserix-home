@@ -3,6 +3,8 @@ import {
   CAPABILITIES,
   CONSOLE_ENTRY_CAPABILITY,
   CapabilityError,
+  RISK_CAPABILITIES,
+  SURFACE_CAPABILITIES,
   assertCapability,
   hasCapability,
   toCapabilities,
@@ -90,8 +92,24 @@ describe("the capability set is a contract with Zitadel", () => {
     // These strings are the project's role keys. Changing one here without
     // changing it in Zitadel silently revokes access: the token keeps carrying
     // the old key, and every check for the new one denies.
+    //
+    // #261 ADDS FOUR. This list may only be updated once the roles exist in
+    // Zitadel AND are granted, because enforcement is already live —
+    // `AUTH_PROVIDER=zitadel` is set on the console deployment, so
+    // `requiresCapability()` returns true and `checkOperatorCapability` denies
+    // for real. A capability named here but ungranted there is not a pending
+    // migration; it is a locked-out operator.
+    //
+    // There is a second step people forget: roles are copied into the
+    // `tx_session` JWE AT LOGIN and sessions last 7 days, so granting in
+    // Zitadel does not reach a live session. Operators must sign out and back
+    // in before a new capability takes effect.
     expect([...CAPABILITIES]).toEqual([
       "read",
+      "crm",
+      "support",
+      "billing",
+      "platform",
       "respond",
       "rotate-credentials",
       "adjust-balance",
@@ -103,5 +121,60 @@ describe("the capability set is a contract with Zitadel", () => {
 
   it("uses read as the console entry ticket", () => {
     expect(CONSOLE_ENTRY_CAPABILITY).toBe("read");
+  });
+});
+
+describe("the surface/verb split (#261)", () => {
+  it("accounts for every capability as either entry, a surface, or a verb", () => {
+    // A capability in none of the three buckets is one nobody has decided the
+    // shape of — and an undecided capability is one that gets gated on by
+    // guesswork.
+    const classified = new Set<string>([
+      CONSOLE_ENTRY_CAPABILITY,
+      ...SURFACE_CAPABILITIES,
+      ...RISK_CAPABILITIES,
+    ]);
+
+    expect([...CAPABILITIES].sort()).toEqual(Array.from(classified).sort());
+  });
+
+  it("keeps surfaces and verbs disjoint", () => {
+    // The orthogonality rule: a capability says WHERE or WHAT, never both.
+    // `respond` was the one at risk of being both, which is why #261 split it
+    // from `support`.
+    const overlap = SURFACE_CAPABILITIES.filter((s) =>
+      (RISK_CAPABILITIES as readonly string[]).includes(s),
+    );
+
+    expect(overlap).toEqual([]);
+  });
+
+  it("keeps `read` out of both buckets — it is entry, not a surface", () => {
+    expect(SURFACE_CAPABILITIES).not.toContain(CONSOLE_ENTRY_CAPABILITY);
+    expect(RISK_CAPABILITIES).not.toContain(CONSOLE_ENTRY_CAPABILITY);
+  });
+
+  it("keeps `support` and `respond` separate", () => {
+    // Collapsing them would make "can see the ticket queue" and "can answer a
+    // merchant" the same permission. routes.ts already relies on the split:
+    // platform.tickets carries no `respond`, platform.liveChat does.
+    expect(SURFACE_CAPABILITIES).toContain("support");
+    expect(RISK_CAPABILITIES).toContain("respond");
+  });
+
+  it("still grants nothing on an unknown role", () => {
+    // The new capabilities must not have widened the boundary: anything not in
+    // CAPABILITIES is still dropped rather than carried through.
+    expect(toCapabilities(["crm", "not-a-capability", "support"])).toEqual([
+      "crm",
+      "support",
+    ]);
+  });
+
+  it("does not let a surface capability satisfy a verb, or the reverse", () => {
+    // The property the whole split exists for. Holding `crm` must not confer
+    // `hard-delete`, and holding `hard-delete` must not confer `crm`.
+    expect(hasCapability(["crm"], "hard-delete")).toBe(false);
+    expect(hasCapability(["hard-delete"], "crm")).toBe(false);
   });
 });

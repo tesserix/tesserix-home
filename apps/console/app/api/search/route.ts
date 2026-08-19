@@ -27,7 +27,15 @@ async function authorize(): Promise<{ sub: string } | NextResponse> {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   try {
-    checkOperatorCapability(session, "read");
+    // `support`, not `read`, and the distinction is load-bearing.
+    //
+    // This endpoint returns ticket subjects, submitter names and emails. The
+    // command palette filters entries through `visibleTo` — but that runs in
+    // the BROWSER, so it is discoverability, not access control. Gating here on
+    // the console entry ticket would hand ticket contents to any operator who
+    // can reach the console, with the only protection being a client-side
+    // filter they could skip by calling the route directly.
+    checkOperatorCapability(session, "support");
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
