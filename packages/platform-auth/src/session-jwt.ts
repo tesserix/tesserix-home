@@ -34,6 +34,46 @@ export interface SessionClaims {
    * decide how to read absence, gated on `AUTH_PROVIDER`.
    */
   roles?: readonly string[];
+
+  /**
+   * The Zitadel ACCESS token, for calling the platform API.
+   *
+   * ADR-003 D8: the platform API authenticates operators with a Zitadel access
+   * token, and declined to read `tx_session` — a product calling that API has
+   * no `tx_session` and never will, so teaching it one would mean a second
+   * mechanism for the service principal anyway.
+   *
+   * The console used to discard this at callback and keep only the ID token,
+   * which is why the tickets module shipped behind `PLATFORM_API_ORIGIN`.
+   *
+   * Optional, and it must stay optional. Every session minted before this
+   * shipped, and every mobile session, carries none — and a console that
+   * refused those would sign everyone out on deploy.
+   */
+  accessToken?: string;
+
+  /**
+   * Seconds since the epoch at which `accessToken` stops being accepted.
+   *
+   * Stored rather than derived, because the only honest source is the token
+   * endpoint's `expires_in` at the moment of exchange. Sessions live 7 days and
+   * access tokens do not — D8 calls the refresh token required rather than
+   * convenient for exactly this reason.
+   */
+  accessTokenExpiresAt?: number;
+
+  /**
+   * The Zitadel REFRESH token, used to mint a new access token before this
+   * session ends.
+   *
+   * Held in the same encrypted cookie as everything else here. That is a real
+   * concentration of value and it is deliberate: the alternative is a second
+   * server-side store for one string per operator, which ADR-003 D2a's
+   * argument about not adding infrastructure applies to as much as anything
+   * else. The cookie is a JWE — encrypted, not merely signed — httpOnly, and
+   * scoped to `.tesserix.app`.
+   */
+  refreshToken?: string;
 }
 
 interface VerifiedSession extends SessionClaims {
@@ -86,6 +126,14 @@ export async function signSession(claims: SessionClaims): Promise<string> {
     // Omitted entirely when undefined, so a legacy session stays byte-identical
     // to what the Google flow minted before this field existed.
     ...(claims.roles ? { roles: [...claims.roles] } : {}),
+    // The same treatment for the platform API's tokens: present only when the
+    // login that minted this session actually retained them. A mobile session
+    // and every session predating ADR-003 D8 carry none, and must stay valid.
+    ...(claims.accessToken ? { accessToken: claims.accessToken } : {}),
+    ...(claims.accessTokenExpiresAt !== undefined
+      ? { accessTokenExpiresAt: claims.accessTokenExpiresAt }
+      : {}),
+    ...(claims.refreshToken ? { refreshToken: claims.refreshToken } : {}),
   })
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setIssuedAt()
@@ -121,6 +169,13 @@ export async function verifySession(
       // legacy-session policy. Denial on corruption belongs to the consumer,
       // which knows whether roles are expected at all.
       roles: readRoles(payload.roles),
+      // Same policy as `roles`: a malformed value is treated as ABSENT rather
+      // than coerced. A non-string forced into place here would be sent to the
+      // platform API as a bearer credential and come back 401 with nothing in
+      // it an operator could act on.
+      accessToken: readString(payload.accessToken),
+      accessTokenExpiresAt: readNumber(payload.accessTokenExpiresAt),
+      refreshToken: readString(payload.refreshToken),
       iat: payload.iat,
       exp: payload.exp,
     };
@@ -134,6 +189,14 @@ export async function verifySession(
 // reply to author_email + author_name). Middleware already gates the
 // route so the session is guaranteed valid by the time we get here —
 // this is just for reading the claims.
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 export async function getCurrentSession(): Promise<VerifiedSession | null> {
   // Lazy import keeps this usable only inside RSC / route-handler contexts,
   // where cookies() and headers() are available.

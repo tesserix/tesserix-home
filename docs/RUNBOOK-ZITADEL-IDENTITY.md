@@ -15,7 +15,7 @@ second login was removed first. This is the write-down; the exercise is #288.
 |---|---|
 | Issuer | `https://auth.tesserix.app` |
 | Operators' organization | `386377229942128837` (Tesserix) |
-| Instance default organization | `386261254651576970` |
+| Instance default organization | `386261254651576970` (**ZITADEL**, enforced by `zitadel-bootstrap`) |
 | `platform-console` project | `386377618200461939` |
 | Console OIDC application | `386382971877196703` |
 
@@ -105,11 +105,64 @@ login failed.
 
 Fixed by `ZITADEL_ORG_ID` (tesserix-home#287, tesserix-k8s#448), which pins the
 console to `386377229942128837` and makes it independent of an instance-wide
-setting anything else could change.
+setting anything else could change. Reverted in tesserix-k8s#451 and re-applied
+in #489 — see below for why the revert was on a real symptom and the wrong
+cause.
+
+**The default org is `ZITADEL`, and it is held there on purpose.**
+`charts/apps/zitadel-bootstrap` sets `defaultOrg: ZITADEL` and its reconciler
+PUTs it back if anything changes it, so "change the default org to TESSERIX" is
+not an available fix — the next bootstrap run undoes it. Its comment gives the
+reason as an unscoped login resolving the default org's IdP, which was written
+while Google was still an IdP. Google was removed on 2026-08-19, so that
+justification is worth revisiting; the setting has not been.
 
 **This is distinct from `ZITADEL_INTERNAL_ORG_ID`**, which stays unset.
 `ZITADEL_ORG_ID` says where to authenticate; `ZITADEL_INTERNAL_ORG_ID` is a
 check applied to the returned token. Conflating them broke the first cutover.
+
+### Login V1 resolves the org differently from Login V2
+
+This is the one that made helivanta look like proof the console needed no org
+scope. It is not.
+
+| | |
+|---|---|
+| `console-web` | `loginVersion: loginV1` → resolves in the **instance default org** |
+| `helivanta-web` | `loginVersion: loginV2` (baseUri `https://helivanta.app`) → resolves from the **application's own project** |
+
+Both projects are in TESSERIX. The same operator, with the same password, signs
+into helivanta and not into the console — not because of OpenFGA, and not
+because of `offline_access` or the project audience scope (all four scope shapes
+are accepted at `/oauth/v2/authorize`), but because one of them looks for the
+user where the user actually is.
+
+So: **an app on Login V1 needs an explicit org scope. An app on Login V2 does
+not.** Before concluding that one application's configuration proves anything
+about another's, check which login it is on.
+
+### A missing password looks exactly like a rejected org scope
+
+`ZITADEL_ORG_ID` was set, tested, and reverted on 2026-08-19 because login
+accepted the password and returned silently to the password screen. That symptom
+was real. The cause was not the scope.
+
+Read off the live instance afterwards:
+
+- Exactly **one** user exists for the operator's email, in TESSERIX. Not a
+  duplicate, not in the default org.
+- It holds **all eleven** `platform-console` roles, so the project's
+  "Only authorized users can authenticate" check passes.
+- It has **no passkey, no IdP link and no MFA factor** — a password is its only
+  credential — and `passwordChanged` is **05:10:42Z**.
+
+The scope was tested *before* that timestamp. The account had no usable password
+at the moment of the test. This is the first trap on this page, landing on the
+diagnosis rather than on the login.
+
+**Before concluding a configuration change broke login, confirm the account you
+are testing with can authenticate at all** — ideally against a surface that
+change does not touch.
 
 ## Break-glass: locked out of the console
 
@@ -124,7 +177,15 @@ this document exists is that it was, accidentally.
    that administers those credentials is itself gated on Zitadel. The
    non-console path is `kubectl` plus the OpenBao CLI, by an operator with
    cluster access.
-3. **This path has never been exercised.** #288 tracks doing so.
+3. **The read half has now been exercised**, on 2026-08-19, to diagnose the
+   login failure above: the `iam-admin-pat` secret in the `zitadel` namespace
+   was read with `kubectl` and used for GET-only Management API calls (user
+   search, grants, project and application configuration). It works, and it is
+   the fastest way to answer "what does Zitadel actually think" — every
+   correction on this page came from it rather than from the UI.
+
+   **The write half — actually restoring access while locked out — is still
+   untested**, and it is the half that matters. #288 tracks it.
 
 ## What changed on 2026-08-19
 

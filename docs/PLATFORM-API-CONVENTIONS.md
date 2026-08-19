@@ -386,17 +386,34 @@ is deliberate, and it is the only reason this could merge:
 and the transport refuses to call the API without a token rather than sending
 an unauthenticated request that comes back 401 saying nothing useful.
 
-**To turn it on**, in order:
+**To turn it on**, in order — the code half is now done:
 
-1. Retain `access_token` and `refresh_token` at callback; widen `SessionClaims`;
-   refresh before expiry (sessions live 7 days, access tokens do not).
-2. Add the platform API's project to the console's login scopes —
-   `urn:zitadel:iam:org:project:id:{projectId}:aud`.
-3. Confirm the two Zitadel checkboxes D8 calls prerequisites: **JWT** access
-   tokens rather than opaque, and roles asserted on the **access** token, not
-   only the ID token. The failure mode is a perfectly valid token carrying no
-   roles, which presents as an application bug rather than a configuration gap.
-4. Set `PLATFORM_API_ORIGIN` on the console deployment.
+1. ~~Retain `access_token` and `refresh_token` at callback; widen
+   `SessionClaims`; refresh before expiry.~~ **Done.** `app/auth/callback/route.ts`
+   keeps all three, `SessionClaims` carries them as optional fields (a session
+   minted before this, or on mobile, stays valid), and
+   `lib/auth/platform-token.ts` renews 60s ahead of expiry through the refresh
+   grant. A refreshed token is not written back to the session — that needs a
+   response to set a cookie on, and it is deliberately **not** in `middleware.ts`
+   while login is being repaired; the module comment carries the note.
+2. **Enable the Refresh Token grant on `console-web`.** Verified against the
+   live instance: its grant types are `[AUTHORIZATION_CODE]` only, so Zitadel
+   issues no refresh token however loudly the console asks. Until this lands,
+   an operator can reach the platform API until the access token expires and
+   not after — the code handles that, it just cannot fix it.
+3. Add the platform API's project to the console's login scopes —
+   `urn:zitadel:iam:org:project:id:{projectId}:aud`. **Already sent**; kept in
+   the list because it is a prerequisite somebody will otherwise re-derive.
+4. The two Zitadel checkboxes D8 calls prerequisites. **Both already correct**,
+   verified on the live application: `accessTokenType: JWT` and
+   `accessTokenRoleAssertion: true`. The failure mode they prevent is a
+   perfectly valid token carrying no roles, which presents as an application
+   bug rather than a configuration gap.
+5. Set `PLATFORM_API_ORIGIN` on the console deployment.
+
+Steps 2 and 5 are the ones left, and both are configuration rather than code.
+Login must work first (tesserix-home#290, tesserix-k8s#489): a console nobody
+can sign in to has no session to carry a token.
 
 Until step 4, `apps/console/dev/admin-stub.mjs` keeps its four ticket routes.
 It sheds them when the switch is on by default — #271 is explicit that the stub

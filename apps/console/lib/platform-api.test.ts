@@ -354,7 +354,16 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
   getCurrentSession: async () =>
     tokenState.value === null
       ? { sub: "operator-1", email: "operator@tesserix.test" }
-      : { sub: "operator-1", email: "operator@tesserix.test", accessToken: tokenState.value },
+      : {
+          sub: "operator-1",
+          email: "operator@tesserix.test",
+          accessToken: tokenState.value,
+          // An expiry an hour out, so these exercise the transport rather than
+          // the renewal path. A session with no expiry is treated as expiring
+          // and would send getPlatformApiToken to Zitadel — see
+          // lib/auth/platform-token.test.ts, which covers that decision.
+          accessTokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        },
 }));
 
 /** Stub the token so these test the transport, not the session. */
