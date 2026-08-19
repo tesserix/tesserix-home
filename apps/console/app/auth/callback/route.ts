@@ -9,6 +9,7 @@ import {
   toCapabilities,
 } from "@tesserix/platform-auth";
 
+import { describeCallbackRequest } from "@/lib/auth/callback-diagnostics";
 import {
   decodeState,
   exchangeCode,
@@ -97,9 +98,45 @@ export async function GET(request: NextRequest): Promise<Response> {
   // probe cannot learn whether a given browser has a live login in flight.
   const stateCookie = request.cookies.get(STATE_COOKIE)?.value;
   if (!stateCookie) {
+    const origin = publicOrigin(request);
     console.warn("[auth/callback] no state cookie", {
       reason: "absent",
       hint: "this browser did not start at /auth/login, or the cookie expired",
+      retried: state.retried,
+      // Names and presence only — never a cookie VALUE. See
+      // lib/auth/callback-diagnostics.ts for what each field is asking.
+      ...describeCallbackRequest(request, {
+        sessionCookie: sessionCookieName(),
+        origin,
+      }),
+    });
+
+    // Self-healing, exactly once.
+    //
+    // The common cause of `absent` is benign: a browser that arrived on an
+    // authorize URL without ever visiting /auth/login — a bookmark, a pasted
+    // link, a tab left open past STATE_MAX_AGE. Dead-ending that on JSON tells
+    // an operator nothing and leaves them stuck; one more trip through
+    // /auth/login fixes it silently.
+    //
+    // The guard is the whole design, not a precaution. `state.retried` came
+    // back from Zitadel inside `state`, so it is readable even on the requests
+    // where no cookie arrives — which is precisely the condition being
+    // recovered from. A cookie-based marker would be missing on those same
+    // requests, fail open, and spin forever. This can add at most ONE extra
+    // round trip before falling through to the error below.
+    if (!state.retried) {
+      const retry = new URL("/auth/login", origin);
+      retry.searchParams.set("returnTo", state.returnTo);
+      retry.searchParams.set("retry", "1");
+      return NextResponse.redirect(retry);
+    }
+
+    // Second time. A retry that came back just as cookieless is not a stale
+    // tab — it is the open bug, and looping on it would only make it harder to
+    // see. Fail the way this always failed.
+    console.error("[auth/callback] retry also arrived without a state cookie", {
+      reason: "absent_after_retry",
     });
     return failure("state_mismatch");
   }
@@ -188,6 +225,18 @@ export async function GET(request: NextRequest): Promise<Response> {
     // platform API when that token expires, rather than for the whole 7 days
     // the session lives.
     ...tokensFor(tokens),
+  });
+
+  // The success line, so the logs can tell "no callback ever completed" apart
+  // from "one completed and a later one failed". Without it, the absence of a
+  // failure is the only evidence a login worked, and that is not evidence.
+  // `sub` identifies the operator; no token, no cookie value, no code.
+  console.info("[auth/callback] session minted", {
+    sub: identity.sub,
+    retried: state.retried,
+    roleCount: identity.roles.length,
+    hasAccessToken: Boolean(tokens.access_token),
+    hasRefreshToken: Boolean(tokens.refresh_token),
   });
 
   // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's

@@ -37,10 +37,17 @@ const NONCE_COOKIE = "cx_oidc_nonce";
 // owns and measures in seconds.
 const STATE_MAX_AGE = 30 * 60;
 
+// Set by /auth/callback when it bounces a cookieless callback back through
+// here, and by nothing else. Folded into `state` so it survives the trip to
+// Zitadel and returns on the next callback, which is what makes the retry
+// one-shot rather than a loop. See RETRY_FLAG in lib/auth/oidc.ts.
+const RETRY_PARAM = "retry";
+
 export async function GET(request: NextRequest): Promise<Response> {
   const returnTo = safeReturnPath(
     request.nextUrl.searchParams.get("returnTo"),
   );
+  const retried = request.nextUrl.searchParams.get(RETRY_PARAM) === "1";
 
   let config;
   try {
@@ -55,7 +62,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   const stateNonce = randomBytes(16).toString("hex");
   const idNonce = randomBytes(16).toString("hex");
   const url = buildAuthorizationUrl(config, {
-    state: encodeState(stateNonce, returnTo),
+    state: encodeState(stateNonce, returnTo, { retried }),
     nonce: idNonce,
   });
 
