@@ -26,6 +26,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 )
 
@@ -106,4 +107,120 @@ func generate() string {
 	// error, so there is no failure branch to write here.
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// LogHandler adds the request id to every log record made with a context.
+//
+// # Why a handler rather than an attribute at each call site
+//
+// This was written the other way first, and running the service showed why
+// that fails. Every `log.WarnContext(ctx, …)` call in the service passed a
+// context carrying an id, and not one log line contained it — slog's handlers
+// do not read context values, so the id was available at every call site and
+// present at none of them.
+//
+// The two lines that mattered most were the ones with the least: the auth
+// package's "token rejected" and the tickets handler's "request failed". Both
+// exist precisely because the client is told deliberately less than the log
+// knows — a 401 says nothing about which check failed, a 500 says nothing
+// about the driver error behind it — and the request id is the ONLY thing
+// joining what the caller saw to what actually happened. Without it the
+// distinct error values that package works so hard to keep separate are
+// unreachable in practice: an operator holding a request id has no line to
+// find.
+//
+// Adding the attribute by hand at each site would have fixed those two and
+// silently missed the next one. Doing it in the handler means a log call
+// cannot forget.
+func LogHandler(inner slog.Handler) slog.Handler { return handler{inner: inner} }
+
+// handler keeps its own record of the groups opened on it rather than passing
+// them to the wrapped handler.
+//
+// That is the whole trick, and the first version did not do it: delegating
+// WithGroup means the request id is added INSIDE whatever group is open, and an
+// id nested three keys deep is one a log query will not find. Holding the
+// groups here lets the id stay at the top level while the caller's attributes
+// are nested where they asked for them.
+type handler struct {
+	inner  slog.Handler
+	groups []string
+	// attrs are those added AFTER a group was opened, which therefore belong
+	// inside it. Attributes added before any group are passed straight to the
+	// wrapped handler, where they already sit at the top level.
+	attrs []slog.Attr
+}
+
+func (h handler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.inner.Enabled(ctx, level)
+}
+
+func (h handler) Handle(ctx context.Context, record slog.Record) error {
+	id := FromContext(ctx)
+
+	if len(h.groups) == 0 {
+		if id == "" {
+			return h.inner.Handle(ctx, record)
+		}
+		// Cloned, not mutated: Handle must not modify the record it is given,
+		// and a chained handler downstream may hold a reference to it.
+		record = record.Clone()
+		record.AddAttrs(slog.String("request_id", id))
+		return h.inner.Handle(ctx, record)
+	}
+
+	// A group is open, so the caller's attributes are nested and the id is not.
+	nested := make([]any, 0, len(h.attrs)+record.NumAttrs())
+	for _, attr := range h.attrs {
+		nested = append(nested, attr)
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		nested = append(nested, attr)
+		return true
+	})
+	// Innermost group first, wrapping outwards.
+	grouped := slog.Group(h.groups[len(h.groups)-1], nested...)
+	for i := len(h.groups) - 2; i >= 0; i-- {
+		grouped = slog.Group(h.groups[i], grouped)
+	}
+
+	out := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	if id != "" {
+		out.AddAttrs(slog.String("request_id", id))
+	}
+	out.AddAttrs(grouped)
+	return h.inner.Handle(ctx, out)
+}
+
+func (h handler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(h.groups) == 0 {
+		// No group open, so these belong at the top level — which is exactly
+		// where the wrapped handler will put them.
+		return handler{inner: h.inner.WithAttrs(attrs), groups: h.groups, attrs: h.attrs}
+	}
+	return handler{
+		inner:  h.inner,
+		groups: h.groups,
+		attrs:  append(append([]slog.Attr(nil), h.attrs...), attrs...),
+	}
+}
+
+// WithGroup records the group instead of opening it on the wrapped handler.
+//
+// One imprecision, stated rather than hidden: attributes added between two
+// WithGroup calls end up in the innermost group rather than the one that was
+// open when they were added. Correcting it needs a tree of interleaved steps,
+// and nothing in this service opens a group at all — the logger is one JSON
+// handler built in cmd/server. Worth fixing if that changes; not worth the
+// machinery before it does.
+func (h handler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		// slog requires an empty group name to be a no-op.
+		return h
+	}
+	return handler{
+		inner:  h.inner,
+		groups: append(append([]string(nil), h.groups...), name),
+		attrs:  h.attrs,
+	}
 }

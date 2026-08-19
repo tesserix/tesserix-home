@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -784,6 +785,35 @@ func TestEveryResponseCarriesTheEnvelopeAndARequestID(t *testing.T) {
 		}
 		if id, _ := got.body["request_id"].(string); id == "" {
 			t.Errorf("%s: no request_id — a failure nobody can correlate: %s", path, got.raw)
+		}
+	}
+}
+
+func TestWireTimestampsAreUTCWhereverTheProcessRuns(t *testing.T) {
+	// pgx returns timestamptz in the connection's session timezone, so this
+	// same row serialises differently on a laptop in +10:00 and in a UTC
+	// container. Both are valid RFC 3339 and both parse, so nothing breaks
+	// loudly — which is why it is pinned rather than left to the environment.
+	//
+	// The golden files mask the timestamp value, which masked its offset too;
+	// this was found by running the service.
+	a := serve(t, tokenFor("read", "support", "respond"))
+	id := a.seedTicket("s1", "open", "high")
+	a.do(http.MethodPost, "/v1/tickets/"+id+"/replies", `{"content":"noted"}`, nil)
+	a.do(http.MethodPatch, "/v1/tickets/"+id, `{"status":"resolved"}`, nil)
+
+	stamps := regexp.MustCompile(`"(created_at|updated_at|resolved_at|timestamp)":"([^"]+)"`)
+	for _, path := range []string{"/v1/tickets", "/v1/tickets/" + id} {
+		body := a.get(path).raw
+		found := stamps.FindAllStringSubmatch(body, -1)
+		if len(found) == 0 {
+			t.Fatalf("%s carried no timestamps to check: %s", path, body)
+		}
+		for _, match := range found {
+			if !strings.HasSuffix(match[2], "Z") {
+				t.Errorf("%s: %s = %q — not UTC, so these bytes depend on where the process runs",
+					path, match[1], match[2])
+			}
 		}
 	}
 }

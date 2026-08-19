@@ -43,7 +43,12 @@ var updateGolden = flag.Bool("update-golden", false,
 	"rewrite the golden response files; read the diff before committing")
 
 // Values that change every run, replaced so a diff shows contract changes
-// rather than clock ticks. Everything replaced here is a value whose SHAPE is
+// rather than clock ticks.
+//
+// The masking has a cost worth naming: replacing a timestamp wholesale also
+// hides its OFFSET, so these files would not have caught the day the wire
+// carried +10:00 on a laptop and Z in a container.
+// TestWireTimestampsAreUTCWhereverTheProcessRuns covers that instead. Everything replaced here is a value whose SHAPE is
 // asserted elsewhere — the envelope tests check the timestamp parses and the
 // request id is echoed; these files are about field names and nesting.
 var volatile = []struct {

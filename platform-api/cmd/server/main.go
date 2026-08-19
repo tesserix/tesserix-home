@@ -25,12 +25,22 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	// Wrapped in reqid.LogHandler so every line logged with a request's context
+	// carries its id.
+	//
+	// Not decoration. Two log lines in this service exist precisely because the
+	// client is told deliberately less than the log knows — auth's "token
+	// rejected", which answers one 401 for four different failures, and the
+	// modules' "request failed", which hides a driver error behind a generic
+	// 500. The request id is the only thing joining what the caller saw to what
+	// actually happened, and without this wrapper it reached neither line.
+	log := slog.New(reqid.LogHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
-	}))
+	})))
 	slog.SetDefault(log)
 
 	if err := run(log); err != nil {

@@ -116,6 +116,31 @@ type (
 	}
 )
 
+// utc normalises a timestamp for the wire.
+//
+// # Why this is not cosmetic
+//
+// pgx returns timestamptz in the connection's session timezone, so a laptop in
+// +10:00 and a container in UTC serialise the SAME ROW differently:
+// "2026-08-19T16:58:57.3+10:00" against "2026-08-19T06:58:57.3Z". Both are
+// valid RFC 3339 and both parse, so nothing breaks loudly — which is exactly
+// why it is worth pinning. A contract products pin to should not have bytes
+// that depend on where the process happens to run, and the envelope's own
+// `timestamp` is already UTC, so without this one response carries two
+// conventions.
+//
+// Found by running the service, not by the tests: the golden files mask the
+// timestamp VALUE, which also masked its offset.
+func utc(t time.Time) time.Time { return t.UTC() }
+
+func utcPtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	normalised := t.UTC()
+	return &normalised
+}
+
 func toTicket(t domain.Ticket) Ticket {
 	return Ticket{
 		ID:               t.ID,
@@ -128,9 +153,9 @@ func toTicket(t domain.Ticket) Ticket {
 		Priority:         string(t.Priority),
 		SubmittedByName:  t.SubmittedByName,
 		SubmittedByEmail: t.SubmittedByEmail,
-		ResolvedAt:       t.ResolvedAt,
-		CreatedAt:        t.CreatedAt,
-		UpdatedAt:        t.UpdatedAt,
+		ResolvedAt:       utcPtr(t.ResolvedAt),
+		CreatedAt:        utc(t.CreatedAt),
+		UpdatedAt:        utc(t.UpdatedAt),
 	}
 }
 
@@ -153,7 +178,7 @@ func toReply(r domain.Reply) Reply {
 		AuthorName:  r.AuthorName,
 		AuthorEmail: r.AuthorEmail,
 		Content:     r.Content,
-		CreatedAt:   r.CreatedAt,
+		CreatedAt:   utc(r.CreatedAt),
 	}
 }
 
