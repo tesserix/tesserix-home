@@ -1,4 +1,5 @@
 export * from "./session-jwt";
+export * from "./session-cookie-size";
 export * from "./bearer";
 export * from "./config";
 export * from "./csrf";
