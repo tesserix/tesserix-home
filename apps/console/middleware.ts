@@ -32,7 +32,12 @@ const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === "true";
 // The one exception is its own OIDC flow: /auth/login starts the redirect to
 // Zitadel and /auth/callback receives the code, and neither can require the
 // session they exist to create.
-const PUBLIC_PATHS: ReadonlyArray<string> = ["/auth"];
+// `/login` is the console's OWN sign-in page, which Zitadel routes to when
+// `console-web` is on Login V2 with this origin as its base URI. It is public
+// for the same reason `/auth` is: it cannot require the session it exists to
+// create. Zitadel appends `/login` to the configured base URI, which is why
+// the path is this and not something under `/auth`.
+const PUBLIC_PATHS: ReadonlyArray<string> = ["/auth", "/login"];
 
 // `/_next` is handled by the caller, before this is ever reached — it is not a
 // public path, it is not a page at all. Keeping it out of here means the check
@@ -57,9 +62,17 @@ function unauthorized(request: NextRequest): NextResponse {
     own.searchParams.set("returnTo", `${pathname}${search}`);
     return NextResponse.redirect(own);
   }
-  // The console has no /login route of its own (PUBLIC_PATHS is empty by
-  // design), so redirecting to a same-origin /login would just re-trigger
-  // this same gate and loop. Send anonymous visitors to web's /login instead.
+  // The legacy path, reached only when AUTH_PROVIDER is not zitadel.
+  //
+  // This used to say the console had no /login route of its own and that
+  // PUBLIC_PATHS was empty by design. Both stopped being true when the console
+  // grew its own sign-in page — but note that page is NOT a substitute here:
+  // /login is where ZITADEL routes a browser mid-flow, with an auth request id
+  // it alone can mint. Sending an anonymous visitor there would land them on a
+  // page that can only tell them to start somewhere else.
+  //
+  // So anonymous visitors still go to web's /login under the legacy provider,
+  // and to the console's own /auth/login under Zitadel (above).
   //
   // KNOWN LIMITATION: web's safeReturnPath (apps/web/lib/auth/oauth.ts) only
   // accepts same-origin relative paths, as an open-redirect guard — it is
