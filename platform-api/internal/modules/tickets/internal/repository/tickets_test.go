@@ -17,12 +17,16 @@ import (
 
 // seed inserts tickets with controlled status, priority and updated_at.
 //
-// updated_at is set explicitly, and after the insert, because the table has a
-// BEFORE UPDATE trigger that stamps it — so the value has to be written by an
-// UPDATE that the trigger then overwrites, and then forced. Doing it in two
-// statements is the only way to pin the column the queue sorts on, and pinning
-// it is what makes the paging assertions deterministic rather than
-// dependent on how fast the test machine inserts rows.
+// updated_at is written in the INSERT, and that is the only way it can be
+// pinned. `pt_set_updated_at` is a BEFORE **UPDATE** trigger that assigns
+// `NEW.updated_at := now()` unconditionally, so any attempt to set the column
+// with an UPDATE is overwritten — an earlier version of this helper did
+// exactly that, and every ticket silently ended up stamped with the moment of
+// its own seeding. The ordering assertions still passed, because reverse
+// insertion order happened to match the dates the fixture intended, which is
+// precisely the kind of agreement that makes an ordering test worthless.
+//
+// An INSERT does not fire a BEFORE UPDATE trigger, so the value survives.
 func seed(t *testing.T, pool *pgxpool.Pool, specs []spec) []string {
 	t.Helper()
 	ctx := context.Background()
@@ -35,27 +39,27 @@ func seed(t *testing.T, pool *pgxpool.Pool, specs []spec) []string {
 			product = "mark8ly"
 		}
 		var id string
+		var stamped time.Time
 		err := pool.QueryRow(ctx,
 			`INSERT INTO platform_tickets
 			   (product_id, tenant_id, ticket_number, subject, description,
-			    status, priority, submitted_by_name, submitted_by_email)
-			 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9)
-			 RETURNING id::text`,
+			    status, priority, submitted_by_name, submitted_by_email, updated_at)
+			 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10)
+			 RETURNING id::text, updated_at`,
 			product, tenant, fmt.Sprintf("M8-%04d", i+1),
 			s.subject, "description of "+s.subject,
 			string(s.status), string(s.priority),
-			"Merchant "+s.subject, "merchant@example.test",
-		).Scan(&id)
+			"Merchant "+s.subject, "merchant@example.test", s.updatedAt,
+		).Scan(&id, &stamped)
 		if err != nil {
 			t.Fatalf("seeding %q: %v", s.subject, err)
 		}
-		// ALTER … DISABLE TRIGGER would need table ownership; setting the
-		// column directly after the trigger has fired is simpler and needs no
-		// privileges the test connection may not have.
-		if _, err := pool.Exec(ctx,
-			`UPDATE platform_tickets SET updated_at = $2 WHERE id = $1::uuid`, id, s.updatedAt,
-		); err != nil {
-			t.Fatalf("pinning updated_at for %q: %v", s.subject, err)
+		// Asserted, not assumed. This helper's whole value is that the column
+		// the queue sorts on holds what the fixture said, and it silently did
+		// not for the first version of this file.
+		if !stamped.Equal(s.updatedAt) {
+			t.Fatalf("seeding %q: updated_at = %s, want %s — the fixture is not pinning the sort column",
+				s.subject, stamped, s.updatedAt)
 		}
 		ids = append(ids, id)
 	}
@@ -579,3 +583,78 @@ func TestResolvedThisWeekIsAWindowAndNotACount(t *testing.T) {
 // numbers do not move as an operator narrows the list, and the cheapest way to
 // keep that true is to give a caller no way to ask for anything else.
 var _ = repository.Summary
+
+func TestPagingAFilteredQueueKeepsTheFilterOnEveryPage(t *testing.T) {
+	// The path where the filter clause and the keyset clause combine. Nothing
+	// above reached it: the filter tests fit on one page and the paging tests
+	// were unfiltered, so a bug that dropped the filter on page two — or one
+	// that mis-numbered a parameter when both clauses are present — would have
+	// passed everything.
+	//
+	// The failure it guards is specific and quiet: page one honours the filter,
+	// page two silently widens to the whole queue.
+	pool := testdb.New(t)
+	specs := queue()
+	specs = append(specs,
+		spec{subject: "open-urgent-2", status: domain.StatusOpen, priority: domain.PriorityUrgent, updatedAt: at(3)},
+		spec{subject: "open-urgent-3", status: domain.StatusOpen, priority: domain.PriorityUrgent, updatedAt: at(2)},
+	)
+	seed(t, pool, specs)
+	ctx := context.Background()
+
+	var walked []string
+	cursor := ""
+	filter := repository.Filter{Status: string(domain.StatusOpen), Priority: string(domain.PriorityUrgent)}
+	for range 10 {
+		page, err := repository.List(ctx, pool, filter, 1, cursor)
+		if err != nil {
+			t.Fatalf("List(cursor=%q): %v", cursor, err)
+		}
+		if page.Total != 3 {
+			t.Errorf("total = %d, want the filtered total on every page", page.Total)
+		}
+		walked = append(walked, subjects(page.Tickets)...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+
+	want := []string{"open-urgent-2", "open-urgent-3", "open-urgent-old"}
+	if !equal(walked, want) {
+		t.Errorf("walking a filtered queue gave\n  %v\nwant\n  %v", walked, want)
+	}
+}
+
+func TestPagingBackwardThroughAFilteredQueue(t *testing.T) {
+	// The same combination in the other direction, where the parameter
+	// numbering differs again because the comparison flips.
+	pool := testdb.New(t)
+	specs := queue()
+	specs = append(specs,
+		spec{subject: "open-urgent-2", status: domain.StatusOpen, priority: domain.PriorityUrgent, updatedAt: at(3)},
+	)
+	seed(t, pool, specs)
+	ctx := context.Background()
+	filter := repository.Filter{Status: string(domain.StatusOpen), Priority: string(domain.PriorityUrgent)}
+
+	first, err := repository.List(ctx, pool, filter, 1, "")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	second, err := repository.List(ctx, pool, filter, 1, first.NextCursor)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	back, err := repository.List(ctx, pool, filter, 1, second.PreviousCursor)
+	if err != nil {
+		t.Fatalf("List(before): %v", err)
+	}
+
+	if !equal(subjects(back.Tickets), subjects(first.Tickets)) {
+		t.Errorf("paging back gave %v, want page one %v", subjects(back.Tickets), subjects(first.Tickets))
+	}
+	if back.Total != 2 {
+		t.Errorf("total = %d, want the filtered total when paging backward", back.Total)
+	}
+}

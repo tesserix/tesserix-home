@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "data": {
+    "ticket": {
+      "id": "<uuid>",
+      "product_id": "mark8ly",
+      "tenant_id": "<uuid>",
+      "ticket_number": "M8-s1",
+      "subject": "s1",
+      "description": "the description",
+      "status": "resolved",
+      "priority": "urgent",
+      "submitted_by_name": "A Merchant",
+      "submitted_by_email": "merchant@example.test",
+      "resolved_at": "<timestamp>",
+      "created_at": "<timestamp>",
+      "updated_at": "<timestamp>"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

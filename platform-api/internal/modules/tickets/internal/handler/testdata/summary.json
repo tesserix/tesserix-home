@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "data": {
+    "summary": {
+      "open": 1,
+      "in_progress": 0,
+      "resolved_this_week": 0,
+      "urgent_open": 1
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

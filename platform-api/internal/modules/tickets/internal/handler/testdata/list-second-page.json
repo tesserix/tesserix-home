@@ -1,0 +1,30 @@
+{
+  "success": true,
+  "data": {
+    "tickets": [
+      {
+        "id": "<uuid>",
+        "product_id": "mark8ly",
+        "tenant_id": "<uuid>",
+        "ticket_number": "M8-s2",
+        "subject": "s2",
+        "description": "the description",
+        "status": "closed",
+        "priority": "low",
+        "submitted_by_name": "A Merchant",
+        "submitted_by_email": "merchant@example.test",
+        "resolved_at": null,
+        "created_at": "<timestamp>",
+        "updated_at": "<timestamp>"
+      }
+    ]
+  },
+  "meta": {
+    "previous_cursor": "<cursor>",
+    "preceding_count": 1,
+    "total": 2,
+    "limit": 1
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
