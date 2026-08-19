@@ -2,9 +2,13 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
 
 type contextKey struct{}
@@ -34,7 +38,7 @@ func Authenticate(v *Verifier, log *slog.Logger, next http.Handler) http.Handler
 		if !ok {
 			// No token at all is not a misconfiguration worth a loud log — it is
 			// an unauthenticated request, which is routine on a public port.
-			unauthorized(w)
+			unauthorized(w, r)
 			return
 		}
 
@@ -51,7 +55,7 @@ func Authenticate(v *Verifier, log *slog.Logger, next http.Handler) http.Handler
 				slog.String("error", err.Error()),
 				slog.String("path", r.URL.Path),
 			)
-			unauthorized(w)
+			unauthorized(w, r)
 			return
 		}
 
@@ -77,7 +81,7 @@ func RequireCapability(required Capability, log *slog.Logger, next http.Handler)
 				slog.String("path", r.URL.Path),
 				slog.String("required", string(required)),
 			)
-			forbidden(w)
+			forbidden(w, r)
 			return
 		}
 
@@ -88,7 +92,7 @@ func RequireCapability(required Capability, log *slog.Logger, next http.Handler)
 				slog.String("required", string(required)),
 				slog.String("path", r.URL.Path),
 			)
-			forbidden(w)
+			forbidden(w, r)
 			return
 		}
 
@@ -114,21 +118,59 @@ func bearerToken(r *http.Request) (string, bool) {
 }
 
 // The two refusals are written here rather than through httpx to keep this
-// package free of a dependency on it — auth is the more fundamental of the two,
-// and a cycle between kernel packages is the kind of thing that only shows up
-// once a third one needs both.
-func unauthorized(w http.ResponseWriter) {
-	writeRefusal(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+// package free of a dependency on it — httpx builds the router and therefore
+// imports auth, so the reverse edge would be a cycle.
+//
+// They still have to produce the SAME envelope httpx does. A 401 shaped
+// differently from every other failure is the response a client is least able
+// to anticipate, because it is the one it meets before it has parsed anything
+// else. httpx.TestRefusalsMatchTheAuthPackage asserts the two agree, from the
+// side that can see both.
+func unauthorized(w http.ResponseWriter, r *http.Request) {
+	writeRefusal(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 }
 
-func forbidden(w http.ResponseWriter) {
-	writeRefusal(w, http.StatusForbidden, "FORBIDDEN", "you do not hold the capability this action requires")
+func forbidden(w http.ResponseWriter, r *http.Request) {
+	writeRefusal(w, r, http.StatusForbidden, "FORBIDDEN", "you do not hold the capability this action requires")
 }
 
-func writeRefusal(w http.ResponseWriter, status int, code, message string) {
+// refusal mirrors httpx.StandardResponse for the two bodies this package
+// writes. Declared rather than hand-concatenated: the envelope now nests, and
+// a hand-built nested JSON string is a quoting bug waiting for the first
+// message that contains one.
+//
+// Marshalled through encoding/json for the same reason. Neither the code nor
+// the message is caller-controlled, but the request id IS — reqid bounds and
+// screens it, and marshalling means this code does not have to trust that.
+type refusal struct {
+	Success   bool           `json:"success"`
+	Error     refusalDetails `json:"error"`
+	Timestamp time.Time      `json:"timestamp"`
+	RequestID string         `json:"request_id,omitempty"`
+}
+
+type refusalDetails struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func writeRefusal(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	body, err := json.Marshal(refusal{
+		Success:   false,
+		Error:     refusalDetails{Code: code, Message: message},
+		Timestamp: time.Now().UTC(),
+		RequestID: reqid.FromContext(r.Context()),
+	})
+	if err != nil {
+		// Unreachable: every field is a string, a bool or a time. Handled
+		// anyway because the alternative is writing a 200 with an empty body
+		// on a path whose entire job is to refuse.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"success":false,"error":{"code":"` + code + `","message":"` + message + `"}}`))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	// Hand-written rather than marshalled: neither value is caller-controlled,
-	// so there is nothing to escape and nothing that can fail mid-write.
-	_, _ = w.Write([]byte(`{"code":"` + code + `","message":"` + message + `"}`))
+	_, _ = w.Write(body)
 }

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -109,8 +111,15 @@ func TestTheClientNeverLearnsWhichCheckFailed(t *testing.T) {
 	rec := request(t, Authenticate(verifierFor(validClaims()), discard(), okHandler()), "Bearer opaque-token")
 	bodies = append(bodies, rec.Body.String())
 
+	// Compared on the DISCRIMINATING fields rather than byte for byte. The
+	// envelope carries a timestamp and a request id, both of which differ
+	// between two identical refusals by design — a byte comparison would fail
+	// on those and stop testing the property it is named for.
+	//
+	// What must not vary is anything derived from WHY the token was refused:
+	// the status, the code and the message.
 	for i, b := range bodies {
-		if b != bodies[0] {
+		if discriminating(t, b) != discriminating(t, bodies[0]) {
 			t.Errorf("response %d differs from the first (%q vs %q) — the body distinguishes failure modes", i, b, bodies[0])
 		}
 		for _, leak := range []string{"audience", "roles", "expired", "JWT", "project"} {
@@ -137,18 +146,68 @@ func TestTheLogDoesLearnWhichCheckFailed(t *testing.T) {
 	}
 }
 
+// discriminating reduces a refusal to the part that must be identical across
+// every reason for it: the error code and message. The timestamp and request
+// id are excluded because they vary between any two responses.
+func discriminating(t *testing.T, body string) string {
+	t.Helper()
+	var decoded struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &decoded); err != nil {
+		t.Fatalf("refusal is not JSON: %v (%s)", err, body)
+	}
+	return decoded.Error.Code + "|" + decoded.Error.Message
+}
+
 func TestRefusalsAreJSON(t *testing.T) {
 	rec := request(t, Authenticate(verifierFor(validClaims()), discard(), okHandler()), "")
 
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Errorf("want application/json, got %q", ct)
 	}
-	var body map[string]string
+	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("refusal must be valid JSON: %v (%s)", err, rec.Body)
 	}
-	if body["code"] != "UNAUTHORIZED" {
-		t.Errorf("want UNAUTHORIZED, got %q", body["code"])
+	if body["success"] != false {
+		t.Errorf("a refusal must be the estate envelope, got %s", rec.Body.String())
+	}
+	details, ok := body["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("error is missing or not an object: %s", rec.Body.String())
+	}
+	if details["code"] != "UNAUTHORIZED" {
+		t.Errorf("want UNAUTHORIZED, got %v", details["code"])
+	}
+}
+
+// A refusal correlates with the log line explaining it.
+//
+// This is the whole operational value of the distinct error variables above:
+// the client is told nothing, the log is told everything, and the request id
+// is the only thing joining the two. Without it an operator holding a 401 has
+// no way to find the line that says which Zitadel setting is wrong.
+func TestRefusalsCarryTheRequestID(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
+	req.Header.Set(reqid.Header, "console-7f3a")
+
+	reqid.Middleware(Authenticate(verifierFor(validClaims()), discard(), okHandler())).
+		ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body["request_id"] != "console-7f3a" {
+		t.Errorf("request_id = %v, want it echoed onto the refusal", body["request_id"])
 	}
 }
 

@@ -1,14 +1,21 @@
-// Package httpx holds the platform API's HTTP conventions: the error envelope
-// and the helpers that write it. It is kernel, not a module — every module
-// depends on it and it depends on no module.
+// Package httpx holds the platform API's HTTP conventions: the response
+// envelope, the error type, and the helpers that write both. It is kernel, not
+// a module — every module depends on it and it depends on no module.
 //
 // # Why this mirrors go-shared rather than importing it
 //
 // #269 argues the platform API "should look like the other ~30 services rather
-// than invent a house style", and the estate's shape is go-shared's AppError:
-// a stable string Code, a human Message, an HTTP status that is not serialised,
-// and optional Details. That shape is reproduced here field for field, so a
-// client written against another Tesserix service is not surprised.
+// than invent a house style", and the estate's shapes are go-shared's AppError
+// and StandardResponse. Both are reproduced here field for field — AppError as
+// Error below, StandardResponse in response.go — so a client written against
+// another Tesserix service is not surprised.
+//
+// Error is the type a handler RETURNS. It is not the wire format: like every
+// other service in the estate, this one nests it under `error` inside
+// StandardResponse on the way out. The scaffold originally serialised Error
+// flat at the top level, which matched AppError and contradicted every actual
+// Tesserix response; response.go records the reversal and why it was made at
+// the first module rather than after.
 //
 // The module itself is not imported. Decided by Mahesh on 2026-08-18, and it
 // holds up on its own for three reasons recorded on #277:
@@ -46,16 +53,22 @@ import (
 	"net/http"
 )
 
-// Error is the platform API's error envelope. Field-compatible with
-// go-shared's AppError, deliberately — see the package comment.
+// Error is what a handler returns to say what went wrong. Field-compatible
+// with go-shared's AppError, deliberately — see the package comment.
 //
-// StatusCode is not serialised: it is carried by the HTTP response itself, and
-// a body that restates it invites the two to disagree.
+// It carries no JSON tags. That is not an oversight: WriteError projects it
+// into ErrorDetails, and a type that could serialise itself would eventually be
+// handed to json.Marshal directly by a handler in a hurry, producing one
+// response in this service that does not match the others. Removing the tags
+// makes that a compile-time absence rather than a review comment.
+//
+// StatusCode never reaches the wire in any form: it is carried by the HTTP
+// response itself, and a body that restates it invites the two to disagree.
 type Error struct {
-	Code       string         `json:"code"`
-	Message    string         `json:"message"`
-	StatusCode int            `json:"-"`
-	Details    map[string]any `json:"details,omitempty"`
+	Code       string
+	Message    string
+	StatusCode int
+	Details    map[string]any
 }
 
 func (e Error) Error() string { return e.Message }

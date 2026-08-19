@@ -2,11 +2,11 @@ package httpx
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
 
 // Checker reports whether a dependency is usable right now.
@@ -52,7 +52,7 @@ func Router(deps Checker, verifier *auth.Verifier, log *slog.Logger) *http.Serve
 	// it just removes the pod that could have served the requests not needing
 	// the database, and adds restart churn to an incident.
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"}, log)
+		WriteData(w, r, http.StatusOK, map[string]string{"status": "ok"}, log)
 	})
 
 	// Readiness: should this pod receive traffic?
@@ -65,43 +65,13 @@ func Router(deps Checker, verifier *auth.Verifier, log *slog.Logger) *http.Serve
 			log.ErrorContext(r.Context(), "readiness check failed", slog.Any("error", err))
 			// Unavailable, not Internal — the same distinction #198 exists
 			// for. Nothing is broken; a dependency is unreachable.
-			WriteError(w, Unavailable("database is not reachable"), log)
+			WriteError(w, r, Unavailable("database is not reachable"), log)
 			return
 		}
-		WriteJSON(w, http.StatusOK, map[string]string{"status": "ready"}, log)
+		WriteData(w, r, http.StatusOK, map[string]string{"status": "ready"}, log)
 	})
 
 	return mux
-}
-
-// WriteJSON writes a value as JSON.
-//
-// The encode happens into a buffer first. Encoding straight to the
-// ResponseWriter commits the status code before it can fail, so a marshalling
-// error mid-write produces a 200 with a truncated body — a corrupt success,
-// which is worse than an honest 500.
-func WriteJSON(w http.ResponseWriter, status int, body any, log *slog.Logger) {
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		log.Error("encoding response failed", slog.Any("error", err))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"code":"INTERNAL_SERVER_ERROR","message":"request failed"}`))
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write(encoded); err != nil {
-		// The client is gone. Nothing to do but record it — the status is
-		// already sent, so there is no error to return.
-		log.Debug("writing response failed", slog.Any("error", err))
-	}
-}
-
-// WriteError writes the envelope for err at its own status.
-func WriteError(w http.ResponseWriter, err error, log *slog.Logger) {
-	envelope := From(err)
-	WriteJSON(w, envelope.StatusCode, envelope, log)
 }
 
 // RegisterModule registers a domain module's routes, refusing to do so without a
@@ -121,4 +91,20 @@ func RegisterModule(mux *http.ServeMux, verifier *auth.Verifier, name string, re
 			" with authentication disabled — set PLATFORM_API_AUTH_ENABLED=true")
 	}
 	register(mux)
+}
+
+// WithMiddleware puts the service-wide middleware around a fully-registered router.
+//
+// Called in cmd/server AFTER every module has registered, because it wraps a
+// finished handler rather than a mux still being built. Kept separate from
+// Router for exactly that reason: Router hands back a *http.ServeMux so
+// modules can register onto it, and a mux that had already been wrapped could
+// not be.
+//
+// Request-id first, and outermost. A request refused by authentication still
+// needs an id — a 401 an operator cannot correlate with a log line is the
+// request someone will ask about — so the id must be attached before any
+// middleware that can refuse.
+func WithMiddleware(handler http.Handler) http.Handler {
+	return reqid.Middleware(handler)
 }
