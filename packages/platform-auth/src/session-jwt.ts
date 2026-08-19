@@ -95,6 +95,24 @@ export interface SessionClaims {
    * Read-only, like the two fields above: still decoded, no longer written.
    */
   refreshToken?: string;
+
+  /**
+   * Identifier for the server-side row holding this session's Zitadel
+   * access and refresh tokens.
+   *
+   * Optional, and it must stay optional: every session minted before this
+   * field existed carries none, and a console that refused those would sign
+   * every operator out on deploy. Absence means "this session predates the
+   * token store" — NOT "this operator has no tokens". Consumers that need a
+   * token look it up by `sid` and get nothing back if it is missing, the same
+   * null path they already handle for `accessToken`/`refreshToken` being
+   * absent.
+   *
+   * Minted by `/auth/callback` with `randomBytes(16).toString("hex")` — a
+   * CSPRNG value, never derived from `sub` or anything else guessable, since
+   * it will key a table of bearer credentials.
+   */
+  sid?: string;
 }
 
 interface VerifiedSession extends SessionClaims {
@@ -158,6 +176,9 @@ export async function signSession(claims: SessionClaims): Promise<string> {
       ? { accessTokenExpiresAt: claims.accessTokenExpiresAt }
       : {}),
     ...(claims.refreshToken ? { refreshToken: claims.refreshToken } : {}),
+    // Same treatment: omitted entirely when absent, so a session minted
+    // before the token store existed stays byte-identical.
+    ...(claims.sid ? { sid: claims.sid } : {}),
   })
     .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
     .setIssuedAt()
@@ -200,6 +221,11 @@ export async function verifySession(
       accessToken: readString(payload.accessToken),
       accessTokenExpiresAt: readNumber(payload.accessTokenExpiresAt),
       refreshToken: readString(payload.refreshToken),
+      // Malformed is absent, not coerced — same policy as the fields above.
+      // A non-string `sid` forced into place would be used to look up a
+      // token-store row and would simply miss, which is the absent-`sid`
+      // behavior already; better to be honest that it never decoded.
+      sid: readString(payload.sid),
       iat: payload.iat,
       exp: payload.exp,
     };

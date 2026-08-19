@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -225,7 +226,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     // `.planning/debug/console-login-state-mismatch.md`.
     //
     // So the cookie carries IDENTITY only, and the credentials move to a
-    // server-side store keyed by a `sid` claim, read on the requests that
+    // server-side store keyed by `sid` below, read on the requests that
     // actually call the platform API rather than on every request. That store
     // is step 2 and is not built yet; until it lands
     // `getPlatformApiToken()` returns null, which every caller already
@@ -234,6 +235,13 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Do not put a token back in here to "just make the tickets module work".
     // The guard below will refuse to mint it and login will fail loudly, which
     // is the improvement.
+    //
+    // `sid` is minted here even though nothing reads it yet: it is the key
+    // the token-store row will be found by, the same CSPRNG pattern
+    // /auth/login already uses for its state/nonce cookies. Adds ~40 bytes to
+    // a cookie currently measuring 499 — the size guard below still applies
+    // and is the thing that would catch it if that ever stopped being true.
+    sid: randomBytes(16).toString("hex"),
   });
 
   // The browser's silent 4096-byte drop is what made this bug invisible for a

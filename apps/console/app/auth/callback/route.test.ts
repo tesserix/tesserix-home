@@ -115,6 +115,28 @@ describe("the claims the callback mints", () => {
     expect(state.claims?.roles).toHaveLength(10);
   });
 
+  it("mints a sid", async () => {
+    await runCallback();
+
+    expect(typeof state.claims?.sid).toBe("string");
+    expect((state.claims?.sid as string).length).toBeGreaterThan(0);
+  });
+
+  it("mints a different sid on each call", async () => {
+    const { GET } = await import("./route");
+
+    await GET(callbackRequest());
+    const first = state.claims?.sid;
+
+    state.claims = null;
+    await GET(callbackRequest());
+    const second = state.claims?.sid;
+
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first).not.toBe(second);
+  });
+
   it("sets the session cookie and redirects on success", async () => {
     const res = await runCallback();
 
