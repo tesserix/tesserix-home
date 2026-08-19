@@ -1,5 +1,5 @@
 ---
-status: investigating
+status: resolved
 trigger: |
   Console login fails with {"error":"state_mismatch"} — /auth/callback logs reason:'absent'
   (no cx_oauth_state cookie) even on a fresh incognito run, preceded by an
@@ -279,16 +279,99 @@ STATUS: BOTH DELIVERED on `feat/console-login-page` (committed, NOT pushed).
 
 ## Resolution
 
-root_cause: NOT YET CONFIRMED. Narrowed to the two candidates in Current Focus;
-  the shipped instrumentation is the experiment that separates them.
-fix: Not yet — nothing shipped here claims to fix the root cause. The retry is
-  a mitigation for the benign stale-tab case and must not be mistaken for one.
-verification: Pending deploy + one reproduction.
+root_cause: CONFIRMED — `tx_session` EXCEEDED THE BROWSER'S 4096-BYTE PER-COOKIE
+  LIMIT, so Chrome discarded the whole `Set-Cookie` without telling the origin.
+  Chrome's Issues panel states it verbatim: "This attempt to set a cookie via a
+  Set-Cookie header was blocked because the cookie was too large. The combined
+  size of the name and value must be less than or equal to 4096 characters."
+
+  The cookie was oversized because the session JWE carried the Zitadel ACCESS
+  and REFRESH tokens, retained at callback for ADR-003 D8. With `roleCount: 10`
+  the encrypted payload cleared 4096.
+
+  THE LOGIN WAS NEVER FAILING. The callback succeeded every time — seven
+  `session minted` in ten seconds for the same `sub`. The loop was:
+
+      /  -> middleware: no session -> /auth/login (sets cx_oauth_state)
+         -> Zitadel: already signed in, instant redirect back
+         -> /auth/callback: SUCCESS, mints tx_session (DISCARDED by the
+            browser), DELETES cx_oauth_state + cx_oidc_nonce
+         -> redirect to / -> middleware: still no session -> /auth/login ...
+
+  until Chrome gave up with ERR_TOO_MANY_REDIRECTS on console.tesserix.app.
+
+  EVERY SYMPTOM FOLLOWS FROM THIS, including the one that named this session:
+  `reason: 'absent'` was the WRECKAGE of the loop, not its cause — a SUCCESSFUL
+  callback deletes the state cookies on its way out, so the next iteration
+  arrived without them. The jar-vs-request contradiction that consumed most of
+  the investigation was two different loop iterations being compared.
+
+  Nine hypotheses were eliminated before this one (see Eliminated). The common
+  error: every one of them assumed the callback was FAILING. It was succeeding.
+
+fix: Step 1, shipped and verified — `dec6eb5`, PR #297.
+
+  `/auth/callback` no longer writes `accessToken`, `accessTokenExpiresAt` or
+  `refreshToken` into the cookie. A mint-time guard measures the encoded cookie
+  and REFUSES to mint over 4096 bytes (500 `session_too_large`) rather than
+  handing the browser one it will silently drop; `cookieBytes` is logged on
+  every mint. The three claims remain on `SessionClaims` so sessions minted
+  before this still decode.
+
+  Why the existing guard did not catch it: `session-jwt.test.ts` already had a
+  cookie-budget test, and it PASSED throughout the outage because it measured a
+  hand-built ~1.7KB token it called "the realistic worst case" — never what the
+  callback actually mints. Now rewritten to measure the real thing.
+
+verification: CONFIRMED 2026-08-20 in production.
+
+  `main-dec6eb5` on every pod, then one fresh incognito login by the user:
+  signed in successfully, NO redirect loop, and exactly ONE mint:
+
+      [auth/callback] session minted {
+        sub: '386888878927118733', retried: false, roleCount: 10,
+        cookieBytes: 499, cookieLimit: 4096
+      }
+
+  One `session minted` where there were seven, 499 bytes against a 4096 limit,
+  and no `no state cookie` line at all.
+
+follow_ups:
+  - STEP 2 (agreed, not built): hybrid token store. Cookie keeps identity plus a
+    new random `sid` claim so `middleware.ts` stays zero-I/O on every request;
+    tokens move to `operator_api_tokens` keyed by `sid` in `tesserix_admin`,
+    encrypted under a key separate from SESSION_ENCRYPT_KEY, read only on
+    requests that call the platform API. Migration `0029`, applied to prod
+    BEFORE merging. Until it lands `getPlatformApiToken()` returns null and
+    tickets reports unreachable — the agreed trade, not a regression.
+  - Step 2 also fixes a SECOND live bug documented in platform-token.ts: a
+    refreshed token is never written back (persisting needs a response to set a
+    cookie on, and the refresh runs in server components). Zitadel rotates
+    refresh tokens on use, so the first refresh discards the new one and every
+    later refresh fails. A DB row can be written from anywhere.
+  - ADR-003 D2a cites "do not add infrastructure" as the reason the refresh
+    token lives in the cookie. That holds against Redis, not here — the console
+    already connects to Postgres. Worth writing into the ADR so the cookie
+    decision is not re-derived later.
+  - CONSOLE_CALLBACK_RETRY is still default-off and now has no known job. Decide
+    whether to keep or delete it.
+  - The `/auth/login` 307 still carries no `Cache-Control` header at all.
+  - `console-e2e` hung 54 minutes on "Install Playwright (Chromium only)" on
+    PR #297 and was merged past. That check currently protects nothing.
+
 files_changed:
-  - apps/console/lib/auth/callback-diagnostics.ts (new; also the
-    CONSOLE_CALLBACK_RETRY flag and the retryRefusal gate)
+  Diagnosis (#296, 5f302db):
+  - apps/console/lib/auth/callback-diagnostics.ts (new; CONSOLE_CALLBACK_RETRY
+    flag and the retryRefusal gate)
   - apps/console/lib/auth/callback-diagnostics.test.ts (new, 22 cases)
-  - apps/console/lib/auth/oidc.ts (state carries the one-shot retry flag)
-  - apps/console/lib/auth/oidc.test.ts (6 new cases)
+  - apps/console/lib/auth/oidc.ts + oidc.test.ts (state carries the retry flag)
   - apps/console/app/auth/login/route.ts (accepts ?retry=1)
   - apps/console/app/auth/callback/route.ts (instrumentation + guarded retry)
+  Fix (#297, dec6eb5):
+  - packages/platform-auth/src/session-cookie-size.ts + .test.ts (new, 10 cases)
+  - packages/platform-auth/src/session-jwt.ts (comments; claims now read-only)
+  - packages/platform-auth/src/session-jwt.test.ts (budget test rewritten)
+  - packages/platform-auth/src/index.ts (export)
+  - apps/console/app/auth/callback/route.ts (tokensFor deleted; size guard)
+  - apps/console/app/auth/callback/route.test.ts (new, 8 cases)
+  - apps/console/lib/auth/platform-token.ts (comments)
