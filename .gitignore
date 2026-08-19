@@ -75,7 +75,19 @@ next-env.d.ts
 !apps/console/public/**/*.png
 !apps/console/app/*.png
 
-.claude/
+# Claude Code. `.claude/*` (contents), NOT `.claude/` (the directory) — git
+# cannot re-include anything inside an excluded DIRECTORY, so the negations
+# below would silently do nothing under the old rule. That is not theoretical:
+# `git add .claude` exits 1 and stages zero files against it.
+#
+# Shared, because a teammate needs all three for graft to work: the skill, the
+# hooks/statusline it wires up, and the settings that wire them.
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/helpers/
+# NOT shared: settings.local.json is a personal permission allowlist, and
+# worktrees/ is local scratch. Both stay ignored by the rule above.
 
 # Monorepo workspaces
 **/node_modules
@@ -87,3 +99,12 @@ packages/*/dist
 
 # Superpowers SDD scratch
 .superpowers/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+#
+# LEADING SLASH IS LOAD-BEARING. A bare `graft/` matches at ANY depth, so it
+# also swallowed `.claude/skills/graft/` — the skill that teaches this repo how
+# to use graft was ignored by the rule meant to ignore graft's output, and
+# `git add` reported nothing wrong. Anchored to the repo root, it means only the
+# top-level cache.
+/graft/
