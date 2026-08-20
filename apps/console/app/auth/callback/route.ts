@@ -22,6 +22,7 @@ import {
   getOidcConfig,
   type TokenResponse,
 } from "@/lib/auth/oidc";
+import { saveTokens } from "@/lib/auth/operator-token-store";
 import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
@@ -30,6 +31,26 @@ export const runtime = "nodejs";
 
 const STATE_COOKIE = "cx_oauth_state";
 const NONCE_COOKIE = "cx_oidc_nonce";
+
+/**
+ * When the access token Zitadel just issued stops being accepted.
+ *
+ * The only honest source is `expires_in` on the token response AT THE MOMENT
+ * OF EXCHANGE — `Math.floor(Date.now() / 1000) + expires_in`, converted here
+ * to the `Date` `saveTokens` takes. A missing or non-positive `expires_in`
+ * becomes "already expired" rather than a guessed lifetime: costs one extra
+ * refresh in a case Zitadel effectively never produces, and is never wrong
+ * about a credential the way inventing a lifetime would be. Mirrors
+ * `expiryFrom` in `lib/auth/platform-token.ts`, which is out of scope for this
+ * change and not imported from, to keep this route's edit surface to the
+ * files it owns.
+ */
+function accessTokenExpiresAt(expiresIn: number | undefined): Date {
+  if (!expiresIn || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return new Date();
+  }
+  return new Date(Date.now() + expiresIn * 1000);
+}
 
 function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
@@ -207,6 +228,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("not_internal", 403);
   }
 
+  // Minted once, held in a variable, and used twice: as the session's `sid`
+  // claim below, and as the key `saveTokens` writes the Zitadel tokens under
+  // further down. Generating it twice would mint a cookie whose `sid` names a
+  // row that was never written.
+  const sid = randomBytes(16).toString("hex");
+
   const token = await signSession({
     sub: identity.sub,
     email: identity.email,
@@ -241,7 +268,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     // /auth/login already uses for its state/nonce cookies. Adds ~40 bytes to
     // a cookie currently measuring 499 — the size guard below still applies
     // and is the thing that would catch it if that ever stopped being true.
-    sid: randomBytes(16).toString("hex"),
+    sid,
   });
 
   // The browser's silent 4096-byte drop is what made this bug invisible for a
@@ -293,13 +320,72 @@ export async function GET(request: NextRequest): Promise<Response> {
     cookieLimit: fit.limit,
   });
 
+  // Computed here — rather than where it is used below, on the redirect
+  // response — because `saveTokens` needs `maxAge` too: `session_expires_at`
+  // is supposed to mirror the session cookie's own lifetime, and reading it
+  // from the one call site that already exists keeps that true by
+  // construction instead of by two numbers agreeing on trust.
+  const cookie = sessionCookieOptions();
+
+  // Write the platform-API tokens the exchange just returned into the store,
+  // keyed by the `sid` already minted into the session above.
+  //
+  // THE ASYMMETRY THAT MATTERS: the size guard above REFUSES to mint a
+  // session when the cookie would break login, because breaking login is not
+  // an option. This call is the mirror image and must resolve the opposite
+  // way — it must never be allowed to refuse a login. Reaching the platform
+  // API is an optional capability layered on top of a session that already
+  // exists; the database being down, the encryption key being unset, or this
+  // INSERT failing outright must degrade to "no platform API this session"
+  // (which every reader of `getPlatformApiToken()` already treats as a normal
+  // outcome), not to "no login". Coupling the two would turn an ordinary
+  // database blip into an outage of the entire console over a capability most
+  // pages never touch.
+  //
+  // `saveTokens` already swallows pool-path errors internally and returns
+  // rather than throwing (see its JSDoc) — but this call site does not lean on
+  // that alone. The try/catch below keeps the guarantee explicit and true even
+  // if the store's contract changes later, and it is what stands between a
+  // thrown error here and a login that never redirects.
+  if (tokens.access_token) {
+    try {
+      await saveTokens(
+        sid,
+        identity.sub,
+        {
+          accessToken: tokens.access_token,
+          accessExpiresAt: accessTokenExpiresAt(tokens.expires_in),
+          // `?? null`, not `?? ""`: Zitadel omitting a refresh token must be
+          // stored as "no refresh token" (`OperatorTokensInput.refreshToken`
+          // is `string | null | undefined`), never as an empty string that
+          // would later decrypt to a token nothing issued.
+          refreshToken: tokens.refresh_token ?? null,
+        },
+        new Date(Date.now() + cookie.maxAge * 1000),
+      );
+    } catch {
+      console.error("[auth/callback] failed to store platform API tokens", {
+        sub: identity.sub,
+        sid,
+      });
+    }
+  } else {
+    // Zitadel can return an id_token without an access_token depending on
+    // grant configuration. Not fatal — the session is still minted below —
+    // but worth a line, since it means this operator's session cannot reach
+    // the platform API until they sign in again with it fixed.
+    console.warn(
+      "[auth/callback] token exchange returned no access token; platform API unreachable this session",
+      { sub: identity.sub, sid },
+    );
+  }
+
   // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's
   // own bind address, so this redirect shipped the browser to
   // http://0.0.0.0:3000 — the third time this codebase has made that mistake.
   const res = NextResponse.redirect(
     new URL(state.returnTo, publicOrigin(request)),
   );
-  const cookie = sessionCookieOptions();
   res.cookies.set(sessionCookieName(), token, {
     httpOnly: true,
     secure: new URL(config.redirectUri).protocol === "https:",

@@ -6,6 +6,7 @@ import {
   sessionCookieOptions,
 } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
+import { deleteTokens } from "@/lib/auth/operator-token-store";
 import { publicOrigin } from "@/lib/public-origin";
 
 /**
@@ -52,6 +53,33 @@ async function signOut(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
     throw cause;
+  }
+
+  // Revoke platform API access for this session. Best-effort, and it must
+  // stay that way: signing out has to succeed locally no matter what happens
+  // here, or a database blip would leave an operator unable to sign out at
+  // all. Today, without this, logout revokes nothing and the row survives
+  // until `session_expires_at` — reachable by anyone who still holds the
+  // (encrypted) row's key, i.e. nobody once the cookie naming it is gone, but
+  // it should not sit there a moment longer than it has to.
+  //
+  // `session?.sid` — not `session.sid` — because a session minted before this
+  // shipped, or minted by `apps/web` (which shares the `tx_session` cookie),
+  // carries no `sid` at all. That is not an error: there is simply no row to
+  // delete, and `deleteTokens` is never called.
+  if (session?.sid) {
+    try {
+      await deleteTokens(session.sid);
+    } catch {
+      // `deleteTokens` already swallows pool-path errors internally (see its
+      // JSDoc) and this branch should be unreachable in production — but the
+      // catch stays so this call site's guarantee ("logout never fails on
+      // this") is explicit and does not silently evaporate if the store's
+      // contract changes later.
+      console.error("[auth/logout] failed to delete operator API tokens", {
+        sid: session.sid,
+      });
+    }
   }
 
   const destination = idpLogoutUrl() ?? `${publicOrigin(request)}/auth/login`;

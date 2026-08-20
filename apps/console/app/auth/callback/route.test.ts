@@ -28,6 +28,54 @@ const state = vi.hoisted(() => ({
   claims: null as SessionClaims | null,
   /** What signSession pretends the encrypted cookie value is. */
   sessionValue: "session-token",
+  /** Every call `saveTokens` received, in order. */
+  saveTokensCalls: [] as Array<{
+    sid: string;
+    sub: string;
+    tokens: {
+      accessToken: string;
+      accessExpiresAt: Date;
+      refreshToken?: string | null;
+    };
+    sessionExpiresAt: Date;
+  }>,
+  /** Swap in a throwing implementation to test the store-failure path. */
+  saveTokensShouldThrow: false,
+  /** What `exchangeCode` returns. Overridable per test. */
+  exchangeCodeResponse: {
+    id_token: "id-token",
+    access_token: "A".repeat(1200),
+    refresh_token: "R".repeat(1200),
+    expires_in: 3600,
+  } as {
+    id_token?: string;
+    access_token?: string;
+    refresh_token?: string;
+    expires_in?: number;
+  },
+}));
+
+// A plain async function, deliberately not `vi.fn(...)`: this module's
+// `beforeEach` calls `vi.restoreAllMocks()`, which replaces a `vi.fn`'s
+// implementation with a no-op the first time it runs — silently discarding
+// the behavior below after the first test. Reading `state` at call time gets
+// the same per-test control without that trap.
+vi.mock("@/lib/auth/operator-token-store", () => ({
+  saveTokens: async (
+    sid: string,
+    sub: string,
+    tokens: {
+      accessToken: string;
+      accessExpiresAt: Date;
+      refreshToken?: string | null;
+    },
+    sessionExpiresAt: Date,
+  ) => {
+    if (state.saveTokensShouldThrow) {
+      throw new Error("store unavailable");
+    }
+    state.saveTokensCalls.push({ sid, sub, tokens, sessionExpiresAt });
+  },
 }));
 
 vi.mock("@tesserix/platform-auth", async (importOriginal) => {
@@ -62,12 +110,7 @@ vi.mock("@/lib/auth/oidc", async (importOriginal) => {
       redirectUri: "https://console.tesserix.app/auth/callback",
       projectId: "p-1",
     }),
-    exchangeCode: async () => ({
-      id_token: "id-token",
-      access_token: "A".repeat(1200),
-      refresh_token: "R".repeat(1200),
-      expires_in: 3600,
-    }),
+    exchangeCode: async () => state.exchangeCodeResponse,
   };
 });
 
@@ -94,6 +137,14 @@ async function runCallback(): Promise<Response> {
 beforeEach(() => {
   state.claims = null;
   state.sessionValue = "session-token";
+  state.saveTokensCalls = [];
+  state.saveTokensShouldThrow = false;
+  state.exchangeCodeResponse = {
+    id_token: "id-token",
+    access_token: "A".repeat(1200),
+    refresh_token: "R".repeat(1200),
+    expires_in: 3600,
+  };
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -228,6 +279,105 @@ describe("the size guard", () => {
         cookieBytes: "session-token".length + "tx_session".length,
         cookieLimit: 4096,
       }),
+    );
+  });
+});
+
+describe("writing the platform API tokens to the store", () => {
+  it("saves the row with the sid minted into the session, the sub, and the expiry", async () => {
+    const before = Date.now();
+    await runCallback();
+    const after = Date.now();
+
+    expect(state.saveTokensCalls).toHaveLength(1);
+    const call = state.saveTokensCalls[0]!;
+
+    // The exact sid the cookie's claims carry — not merely "a string" — so a
+    // regression that mints two different sids (one for the cookie, one for
+    // the row) is caught rather than passing on shape alone.
+    expect(call.sid).toBe(state.claims?.sid);
+    expect(call.sub).toBe("operator-1");
+    expect(call.tokens.accessToken).toBe("A".repeat(1200));
+
+    // expires_in: 3600 from the mocked exchange, computed at the moment of
+    // exchange — bounded rather than pinned to a single millisecond so the
+    // test is not flaky.
+    const expiresAtMs = call.tokens.accessExpiresAt.getTime();
+    expect(expiresAtMs).toBeGreaterThanOrEqual(before + 3600 * 1000);
+    expect(expiresAtMs).toBeLessThanOrEqual(after + 3600 * 1000);
+  });
+
+  it("mirrors the session cookie's own lifetime in session_expires_at", async () => {
+    const before = Date.now();
+    await runCallback();
+    const after = Date.now();
+
+    const call = state.saveTokensCalls[0]!;
+    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+    const sessionExpiresMs = call.sessionExpiresAt.getTime();
+    expect(sessionExpiresMs).toBeGreaterThanOrEqual(before + sevenDaysMs);
+    expect(sessionExpiresMs).toBeLessThanOrEqual(after + sevenDaysMs);
+  });
+
+  it("stores the refresh token returned by the exchange", async () => {
+    await runCallback();
+
+    expect(state.saveTokensCalls[0]?.tokens.refreshToken).toBe(
+      "R".repeat(1200),
+    );
+  });
+
+  it("stores a missing refresh token as absent, not as an empty string", async () => {
+    state.exchangeCodeResponse = {
+      id_token: "id-token",
+      access_token: "A".repeat(1200),
+      // No refresh_token at all — the case Zitadel produces when the
+      // application has no Refresh Token grant configured.
+      expires_in: 3600,
+    };
+
+    await runCallback();
+
+    const stored = state.saveTokensCalls[0]?.tokens.refreshToken;
+    expect(stored).not.toBe("");
+    expect(stored == null).toBe(true);
+  });
+
+  it("still mints the session and redirects when the store throws", async () => {
+    // The one rule that matters most: a database blip must never turn into a
+    // failed login. Assert the actual observable outcome for the browser —
+    // the redirect and the Set-Cookie — not merely that the call didn't
+    // throw.
+    state.saveTokensShouldThrow = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await runCallback();
+
+    expect(res.status).toBe(307);
+    expect(res.headers.get("set-cookie")).toContain(
+      "tx_session=session-token",
+    );
+    expect(res.headers.get("location")).toBe("https://console.tesserix.app/");
+    expect(error).toHaveBeenCalledWith(
+      "[auth/callback] failed to store platform API tokens",
+      expect.objectContaining({ sub: "operator-1" }),
+    );
+  });
+
+  it("does not store anything when the exchange returns no access token", async () => {
+    state.exchangeCodeResponse = {
+      id_token: "id-token",
+      expires_in: 3600,
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const res = await runCallback();
+
+    expect(res.status).toBe(307);
+    expect(state.saveTokensCalls).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("no access token"),
+      expect.objectContaining({ sub: "operator-1" }),
     );
   });
 });
