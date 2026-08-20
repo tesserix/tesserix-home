@@ -557,32 +557,66 @@ backends; `PLATFORM_API_ORIGIN` decides which.
 | `patchTicketStatus` | `PATCH /v1/tickets/{id}`, same body, plus an `Idempotency-Key`. |
 
 **Unset — the deployed state — is byte-for-byte the current behaviour.** That
-is deliberate, and it is the only reason this could merge:
+is deliberate, and it is the only reason this could merge. The constraint that
+forced it, as it stood when this section was written:
 
 > The platform API takes a Zitadel access token (ADR-003 D8). The console does
 > not have one. `app/auth/callback/route.ts` destructures `id_token` out of the
 > token exchange and drops `access_token` and `refresh_token`, and
 > `SessionClaims` has nowhere to put one.
 
-`lib/auth/platform-token.ts` is the seam that closes. It returns null today,
-and the transport refuses to call the API without a token rather than sending
-an unauthenticated request that comes back 401 saying nothing useful.
+**That paragraph is history, not the present state** — #297/#298 closed it, and
+what replaced it is not where it was going. The tokens do not live on the
+session at all: they are in `operator_api_tokens` (migration 0029), keyed by a
+random `sid` claim on the cookie, AES-256-GCM at rest, behind
+`lib/auth/operator-token-store.ts`. They were moved out of the cookie because
+putting them in it broke login outright — with ten roles the encrypted
+`tx_session` cleared the browser's hard 4096-byte per-cookie limit and Chrome
+DISCARDED the whole `Set-Cookie` silently. See
+`.planning/debug/resolved/console-login-state-mismatch.md`.
+
+`lib/auth/platform-token.ts` is the seam that closes, and it now returns a real
+token. When one is absent the transport still refuses to call the API rather
+than sending an unauthenticated request that comes back 401 saying nothing
+useful.
 
 **To turn it on**, in order — the code half is now done:
 
 1. ~~Retain `access_token` and `refresh_token` at callback; widen
-   `SessionClaims`; refresh before expiry.~~ **Done.** `app/auth/callback/route.ts`
-   keeps all three, `SessionClaims` carries them as optional fields (a session
-   minted before this, or on mobile, stays valid), and
-   `lib/auth/platform-token.ts` renews 60s ahead of expiry through the refresh
-   grant. A refreshed token is not written back to the session — that needs a
-   response to set a cookie on, and it is deliberately **not** in `middleware.ts`
-   while login is being repaired; the module comment carries the note.
-2. **Enable the Refresh Token grant on `console-web`.** Verified against the
-   live instance: its grant types are `[AUTHORIZATION_CODE]` only, so Zitadel
-   issues no refresh token however loudly the console asks. Until this lands,
-   an operator can reach the platform API until the access token expires and
-   not after — the code handles that, it just cannot fix it.
+   `SessionClaims`; refresh before expiry.~~ **Done, but not as described.**
+   The credentials went to `operator_api_tokens` rather than onto
+   `SessionClaims`, for the cookie-size reason above; the claims still decode
+   for sessions minted before the store, and `platform-token.ts` deliberately
+   does **not** read them. `getPlatformApiToken()` renews 60s ahead of expiry
+   under `SELECT ... FOR UPDATE` on the session's row, because Zitadel ROTATES
+   refresh tokens on use and two concurrent refreshes would otherwise both
+   spend the same one.
+
+   **A refreshed token IS written back** — the earlier note here saying it is
+   not, and that doing so would need a response to set a cookie on, described
+   the cookie design that was abandoned. A server-side row needs no response:
+   the new access token AND the rotated refresh token are UPDATEd inside the
+   same transaction that authorised spending the old one. Dropping the rotated
+   replacement is the specific bug the store exists to prevent.
+2. ~~**Enable the Refresh Token grant on `console-web`.**~~ **Done**
+   (2026-08-20, #304).
+
+   The reasoning previously recorded here was wrong in a way worth keeping,
+   because it is the trap: it said the missing grant meant "Zitadel issues no
+   refresh token however loudly the console asks". Zitadel **issues** one
+   regardless — a real login logged `hasRefreshToken: true` while the grant
+   list was still `[AUTHORIZATION_CODE]` only. **Issuing and redeeming are
+   separate permissions.** The console therefore stored a credential it was not
+   allowed to spend, and the failure surfaced only about an hour in, when the
+   first refresh was attempted, as every platform-API surface going unreachable
+   for the rest of the 7-day session with nothing telling the operator that
+   signing in again would fix it.
+
+   Confirmed by probing the token endpoint with a deliberately invalid refresh
+   token, which distinguishes a grant-level refusal from a token-level one
+   without spending a live token: before, `unauthorized_client` /
+   `grant_type "refresh_token" not allowed`; after, a token-level
+   `Errors.User.RefreshToken.Invalid`.
 3. Add the platform API's project to the console's login scopes —
    `urn:zitadel:iam:org:project:id:{projectId}:aud`. **Already sent**; kept in
    the list because it is a prerequisite somebody will otherwise re-derive.
@@ -593,10 +627,8 @@ an unauthenticated request that comes back 401 saying nothing useful.
    bug rather than a configuration gap.
 5. Set `PLATFORM_API_ORIGIN` on the console deployment.
 
-Steps 2 and 5 are the ones left, and both are configuration rather than code.
-Login must work first (tesserix-home#290, tesserix-k8s#489): a console nobody
-can sign in to has no session to carry a token.
+**Step 5 is the only one left**, and it is configuration rather than code.
 
-Until step 4, `apps/console/dev/admin-stub.mjs` keeps its four ticket routes.
+Until step 5, `apps/console/dev/admin-stub.mjs` keeps its four ticket routes.
 It sheds them when the switch is on by default — #271 is explicit that the stub
 shrinks as the platform API replaces these endpoints.
