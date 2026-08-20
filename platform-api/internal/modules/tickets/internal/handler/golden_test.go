@@ -134,6 +134,9 @@ func TestGoldenResponses(t *testing.T) {
 	assertGolden(t, "error-not-found", a.get("/v1/tickets/3f2a1c94-0000-4000-8000-000000000999").raw)
 	assertGolden(t, "error-bad-cursor", a.get("/v1/tickets?cursor=nonsense").raw)
 	assertGolden(t, "error-refused", a.do(http.MethodPatch, "/v1/tickets/"+first, `{"status":"resolved"}`, nil).raw)
+	// #302: a misspelled query parameter, on both routes that read one.
+	assertGolden(t, "error-unknown-parameter", a.get("/v1/tickets?stge=new").raw)
+	assertGolden(t, "error-unknown-summary-parameter", a.get("/v1/tickets/summary?anything=x").raw)
 }
 
 func TestGoldenRefusals(t *testing.T) {

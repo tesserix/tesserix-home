@@ -394,6 +394,66 @@ func TestAnUnknownFilterValueIsRefusedRatherThanReturningNothing(t *testing.T) {
 	}
 }
 
+// The read-side equivalent of DisallowUnknownFields, and issue #302's exact
+// case: `?stge=new` would otherwise fall through to the filter unset and
+// return the WHOLE queue with a 200 — a filter that silently does nothing,
+// indistinguishable from success until someone notices the numbers are
+// wrong.
+func TestAnUnknownQueryParameterIsRefused(t *testing.T) {
+	a := serve(t, tokenFor("read", "support"))
+
+	got := a.get("/v1/tickets?stge=new")
+
+	if got.status != http.StatusBadRequest {
+		t.Fatalf("stge=new = %d, want 400: %s", got.status, got.raw)
+	}
+	if !strings.Contains(got.raw, `"stge":"new"`) {
+		t.Errorf("the message does not key the unknown parameter to its value: %s", got.raw)
+	}
+	for _, accepted := range []string{"cursor", "limit", "priority", "product", "status", "tenant"} {
+		if !strings.Contains(got.raw, accepted) {
+			t.Errorf("the accepted set is missing %q: %s", accepted, got.raw)
+		}
+	}
+}
+
+// Every parameter the route actually reads, asserted together so narrowing
+// the allowed set in the future fails loudly here rather than being
+// discovered by a caller.
+func TestEveryLegitimateListParameterIsStillAccepted(t *testing.T) {
+	a := serve(t, tokenFor("read", "support"))
+	a.seedTicket("s1", "open", "high")
+
+	got := a.get("/v1/tickets?status=open&priority=high&product=mark8ly&tenant=3f2a1c94-0000-4000-8000-0000000000aa&limit=10&cursor=")
+
+	if got.status != http.StatusOK {
+		t.Errorf("all six accepted parameters together = %d, want 200: %s", got.status, got.raw)
+	}
+}
+
+// The summary reads no query parameters at all — verified against the
+// console's caller, which calls it with no query string — so its allowed set
+// is empty and ANY parameter is unknown.
+func TestSummaryRejectsAnyQueryParameter(t *testing.T) {
+	a := serve(t, tokenFor("read", "support"))
+
+	got := a.get("/v1/tickets/summary?anything=x")
+
+	if got.status != http.StatusBadRequest {
+		t.Errorf("summary?anything=x = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
+func TestSummaryWithNoQueryStillWorks(t *testing.T) {
+	a := serve(t, tokenFor("read", "support"))
+
+	got := a.get("/v1/tickets/summary")
+
+	if got.status != http.StatusOK {
+		t.Errorf("summary with no query = %d, want 200: %s", got.status, got.raw)
+	}
+}
+
 func TestAnAbsentTicketIs404(t *testing.T) {
 	a := serve(t, tokenFor("read", "support"))
 

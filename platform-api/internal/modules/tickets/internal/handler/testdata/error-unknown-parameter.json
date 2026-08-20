@@ -1,0 +1,20 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the request carries query parameters this endpoint does not read",
+    "details": {
+      "accepted": [
+        "cursor",
+        "limit",
+        "priority",
+        "product",
+        "status",
+        "tenant"
+      ],
+      "stge": "new"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
