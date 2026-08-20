@@ -1,3 +1,7 @@
+// `server-only`: this module reads and writes operator API tokens. A client
+// component that reaches it must fail the build loudly, not get bundled.
+import "server-only";
+
 import {
   createCipheriv,
   createDecipheriv,

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
@@ -8,6 +9,20 @@ import tsconfigPaths from "vite-tsconfig-paths";
 // while the kit's render/interaction tests need a DOM. The split is by file
 // extension — `*.test.ts` is node, `*.test.tsx` is jsdom — so neither suite
 // can accidentally acquire the other's environment.
+/**
+ * `server-only` guards `lib/db/tesserix.ts` and the two operator-token modules:
+ * it makes a `"use client"` component reaching them a build error that names
+ * the import chain, rather than `Module not found: Can't resolve 'net'` from
+ * inside `pg`.
+ *
+ * Outside a bundler there is no `react-server` condition, so Node resolves the
+ * package's `default` entry — which throws on import by design — and every
+ * server module under test fails to load. See `test/server-only-stub.ts` for
+ * why this is a stub and not an alias to the package's own `empty.js`. The
+ * guard is unaffected in `next build`, which is the only place it has to work.
+ */
+const SERVER_ONLY_ALIAS = { "server-only": join(import.meta.dirname, "test/server-only-stub.ts") };
+
 const SHARED = {
   // @tesserix/web's ESM barrel re-exports via bare directory specifiers,
   // which Node's ESM resolver rejects when a dependency is externalised.
@@ -22,6 +37,7 @@ export default defineConfig({
     projects: [
       {
         plugins: [tsconfigPaths()],
+        resolve: { alias: SERVER_ONLY_ALIAS },
         test: {
           ...SHARED,
           name: "node",
@@ -50,7 +66,7 @@ export default defineConfig({
         // `render()` silently returns an empty container. The root
         // package.json pins react/react-dom to the one version every app
         // declares; this is the belt to those braces.
-        resolve: { dedupe: ["react", "react-dom"] },
+        resolve: { dedupe: ["react", "react-dom"], alias: SERVER_ONLY_ALIAS },
         test: {
           ...SHARED,
           name: "dom",

@@ -1,5 +1,10 @@
 import { ESTATE } from "@tesserix/console-core";
-import { PlatformApiError } from "./platform-api";
+// Imported from `./platform-api-error`, NOT from `./platform-api`. This module
+// is reached from `"use client"` components, and `PlatformApiError` is a value
+// (thrown, and narrowed with `instanceof`), so a value import of it from
+// `./platform-api` is what dragged `pg` into the browser bundle and broke the
+// production build. Point it back at `./platform-api` and it breaks again.
+import { PlatformApiError } from "./platform-api-error";
 // The console's own row shape, re-exported as THE shape of this surface.
 //
 // `import type` + `export type`, so nothing here pulls `pg` into a module that

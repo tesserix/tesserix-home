@@ -60,7 +60,7 @@
  * `ConversionSignal` for a caller to read; it has no write path at all.
  */
 
-import { PlatformApiError } from "./platform-api";
+import { PlatformApiError } from "./platform-api-error";
 
 /**
  * `"unknown"` is a fourth state the wire contract does not have — it exists

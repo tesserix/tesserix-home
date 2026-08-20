@@ -1,3 +1,9 @@
+// `server-only` makes a client component's reach into this module a BUILD
+// ERROR that names the offending import chain, instead of `Module not found:
+// Can't resolve 'net'` from deep inside `node_modules/pg`. That is exactly how
+// this file ended up in the browser bundle once already.
+import "server-only";
+
 import { Pool } from "pg";
 import type { QueryResultRow } from "pg";
 
