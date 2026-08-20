@@ -62,21 +62,43 @@ import (
 // the day the "which contact is primary" rule changes, every consumer of the
 // queue is affected rather than the organisations resource alone.
 //
-// The console composes them from the organisations resource, which is the
+// The organisation's `country` is absent for the plainer version of the same
+// reason: it is a column of `crm_organisations`, it fails the identification
+// test `organisation_name` passes — an opportunity is perfectly identifiable
+// without it — and a caller that wants it is asking a question about the
+// ORGANISATION. That it is one of the five FILTER axes does not make it a
+// field: a filter narrows which rows come back, and there is no rule saying
+// every axis must also be echoed on each row. `followers` is the same case,
+// and between them they are two of the five axes that are deliberately not
+// resource fields.
+//
+// The console composes both from the organisations resource, which is the
 // layer it already has (apps/console/lib/platform-api.ts). The cost is one
 // extra request on the queue screen; the same cost §2 accepted for the ticket
 // summary, and for the same reason.
 //
-// # quiet_since IS on the resource, and it is derived
+// # quiet_since IS on the resource, and it is defined by its MEANING
 //
-// COALESCE(last_contacted_at, created_at). Derived, and it stays for a reason
-// that has nothing to do with convenience: it is the expression the DRIFTING
-// queue ORDERS BY, so it is the meaning of the sequence the caller is holding.
-// A caller that recomputed it would hold a second copy of a rule that decides
-// row order, and the two copies would disagree the first time either changed.
-// The domain type records the same argument, and the console's `QueueRow`
-// records it a third time — it was reasoned to independently on both sides,
-// which is about as good a signal as this kind of judgement gets.
+// `quiet_since` is the instant this opportunity last showed signs of life —
+// and, equivalently, the value the DRIFTING queue orders by. That is the
+// contract. It stays on the resource because it is the meaning of the sequence
+// the caller is holding: a caller that derived it itself would hold a second
+// copy of a rule that decides row order, and the two copies would disagree the
+// first time either changed.
+//
+// TODAY it is derived as COALESCE(last_contacted_at, created_at). That is the
+// current derivation, NOT the definition, and the distinction is the whole
+// point of writing it this way round.
+//
+// Documenting the SQL as the contract would publish an implementation. The two
+// are only accidentally identical: if the drift rule ever widens — a
+// `last_activity_at` from a later migration, say, or taking `next_action_at`
+// into account — then a service that kept the documented SQL would break the
+// ordering guarantee callers actually rely on, while a service that kept the
+// guarantee would silently change the field's documented meaning. Both are
+// bad, and the choice only exists if the comment names the mechanism. Defined
+// by its meaning, the same widening is an additive change: the field still
+// answers the question it always answered.
 //
 // Note it is present on DUE rows too, where it orders nothing. Uniformity of
 // the resource beats minimality of each response: one shape, one parser.
@@ -102,8 +124,10 @@ type Opportunity struct {
 	NextActionAt     *time.Time `json:"next_action_at"`
 	NextActionNote   *string    `json:"next_action_note"`
 	LastContactedAt  *time.Time `json:"last_contacted_at"`
-	// QuietSince is COALESCE(last_contacted_at, created_at) — see above. NOT
-	// NULL, because created_at is.
+	// QuietSince is the instant this opportunity last showed signs of life —
+	// the value the drifting queue orders by. Derived TODAY as
+	// COALESCE(last_contacted_at, created_at); see the package comment for why
+	// the derivation is not the definition. Never null.
 	QuietSince time.Time `json:"quiet_since"`
 	IsStarred  bool      `json:"is_starred"`
 }

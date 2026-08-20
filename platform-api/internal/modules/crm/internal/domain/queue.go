@@ -33,6 +33,45 @@ const (
 
 var stages = []Stage{StageNew, StageContacted, StageQualified, StageWon, StageLost}
 
+// queueStages are the stages a QUEUE FILTER may name — every stage that is not
+// terminal.
+//
+// It is deliberately NOT `stages`. ParseStage mirrors the `crm_stage` enum and
+// must keep accepting all five, because a stage read back OUT of the database
+// can legitimately be won or lost. A filter is the other direction, and there
+// `won` can never match: both queues exclude terminal deals by their own
+// predicate, ahead of any filter.
+//
+// So `?stage=won` is a request that cannot succeed, and it is REFUSED rather
+// than answered with an empty page. That is the same rule this module applies
+// to a misspelled parameter, a sentinel band and a negative staleness window,
+// and for the same reason — a silent success hides a caller bug, and an empty
+// queue is indistinguishable from "nothing to do". The console never sends one
+// either: crm/page.tsx:162 builds its filter bar from
+// `CRM_STAGES.filter(s => s !== "won" && s !== "lost")`.
+//
+// Settled here rather than left as a 200, because turning it into a refusal
+// LATER would break anyone who had shipped a stage dropdown including them.
+var queueStages = []Stage{StageNew, StageContacted, StageQualified}
+
+// parseQueueStage narrows a stage a caller wants to FILTER by.
+//
+// Its messages enumerate `queueStages`, not `stages`. An error that offered
+// `won` as an accepted value while the queue refuses it would be the service
+// contradicting itself in the one place a caller is already confused.
+func parseQueueStage(raw string) (Stage, error) {
+	parsed, err := ParseStage(raw)
+	if err != nil {
+		return "", fmt.Errorf("unknown stage %q (want one of %v)", raw, queueStages)
+	}
+	if parsed.Terminal() {
+		return "", fmt.Errorf(
+			"%q is terminal; neither queue contains a won or lost opportunity (want one of %v)",
+			raw, queueStages)
+	}
+	return parsed, nil
+}
+
 // ParseStage narrows a caller-supplied string.
 //
 // Returns an error rather than a bool so the caller cannot forget to check: a
@@ -212,7 +251,9 @@ type Filter struct {
 	// lands with a null product, so Unset is the busiest option on this axis,
 	// not an edge case.
 	Product Match
-	// Stage matches `crm_opportunities.stage` exactly. Zero value: no filter.
+	// Stage matches `crm_opportunities.stage` exactly, and may name only a
+	// NON-TERMINAL stage — `won` and `lost` are refused rather than answered
+	// with an empty page. Zero value: no filter.
 	Stage Stage
 	// Owner is a case-insensitive SUBSTRING match on `crm_opportunities.owner`,
 	// matching the console. Zero value: no filter.
@@ -246,7 +287,9 @@ func (f Filter) Validate() error {
 		return err
 	}
 	if f.Stage != "" {
-		if _, err := ParseStage(string(f.Stage)); err != nil {
+		// parseQueueStage, not ParseStage: a queue filter may not name a
+		// terminal stage. See the comment on queueStages.
+		if _, err := parseQueueStage(string(f.Stage)); err != nil {
 			return fmt.Errorf("stage: %w", err)
 		}
 	}

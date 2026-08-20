@@ -4,7 +4,7 @@
     "code": "VALIDATION_FAILED",
     "message": "the filter is not valid",
     "details": {
-      "filter": "stage: unknown stage \"archived\" (want one of [new contacted qualified])"
+      "filter": "stage: \"won\" is terminal; neither queue contains a won or lost opportunity (want one of [new contacted qualified])"
     }
   },
   "timestamp": "<timestamp>",

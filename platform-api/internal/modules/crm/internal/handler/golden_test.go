@@ -27,7 +27,11 @@ import (
 // makes a contract change VISIBLE IN A DIFF, which is the whole point for a
 // contract products pin to. Regenerate deliberately:
 //
-//	go test ./internal/modules/crm/... -update-golden
+//	go test ./internal/modules/crm/internal/handler/... -update-golden
+//
+// Scoped to THIS package, not ./internal/modules/crm/.... The domain and
+// repository packages build their own test binaries, which do not define this
+// flag, so the wider path fails with `flag provided but not defined`.
 //
 // and read the diff before committing it. A golden file that changed without
 // anybody meaning it to is the failure this guards.
@@ -125,6 +129,9 @@ func TestGoldenResponses(t *testing.T) {
 	// go unnoticed.
 	assertGolden(t, "error-bad-cursor", a.get("/v1/crm/queues/due?cursor=nonsense").raw)
 	assertGolden(t, "error-bad-filter", a.get("/v1/crm/queues/due?stage=archived").raw)
+	// A terminal stage is its own shape of refusal: the value is a real stage,
+	// so the message has to say why rather than just list the accepted set.
+	assertGolden(t, "error-terminal-stage", a.get("/v1/crm/queues/due?stage=won").raw)
 	assertGolden(t, "error-conflicting-axis", a.get("/v1/crm/queues/due?product=mark8ly&product_unset=true").raw)
 	assertGolden(t, "error-unknown-parameter", a.get("/v1/crm/queues/due?stge=new").raw)
 	assertGolden(t, "error-bad-limit", a.get("/v1/crm/queues/due?limit=0").raw)

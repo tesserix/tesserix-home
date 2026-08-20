@@ -11,7 +11,7 @@
 //
 //	product          exact match on the opportunity's product
 //	product_unset    true  → only rows with NO product assigned
-//	stage            one of new | contacted | qualified (won/lost never appear)
+//	stage            one of new | contacted | qualified
 //	owner            case-insensitive substring match on the owner
 //	country          exact match, upper-case ISO 3166-1 alpha-2
 //	country_unset    true  → only rows whose organisation has no derived country
@@ -37,6 +37,19 @@
 // one function beside crm-filters.ts — sentinel in, `_unset=true` out — and
 // the band NAMES are byte-identical on both sides precisely so that ONLY
 // absence needs translating.
+//
+// # `stage` names OPEN stages only, and a terminal one is refused
+//
+// `won` and `lost` are stages of an opportunity, but they are not values this
+// filter accepts: both queues exclude terminal deals by their own predicate,
+// so `?stage=won` is a request that can never match. It answers 422 rather
+// than an empty page — the same rule as a misspelled parameter, a sentinel
+// band or a negative staleness window, and for the same reason, that a silent
+// success hides a caller bug. The console never sends one either; its filter
+// bar is built from `CRM_STAGES.filter(s => s !== "won" && s !== "lost")`
+// (apps/console/.../crm/page.tsx:162). domain.queueStages carries the argument
+// and owns the accepted list, so the error enumerates exactly the three
+// spellings this comment does.
 //
 // # The grammar is asymmetric, and the asymmetry is the schema's
 //

@@ -3,10 +3,12 @@ package handler_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -69,6 +71,58 @@ type api struct {
 	// than base by however long the fixture took.
 	base time.Time
 	orgs map[string]string
+}
+
+// processTimeZone is forced onto the TEST PROCESS, and it is deliberately not
+// UTC.
+//
+// # What actually decides the offset, established by experiment
+//
+// The first attempt at this guard set the DATABASE SESSION's timezone
+// (`SET TIME ZONE`) and asserted it had taken. It proved nothing: pgx decodes
+// a timestamptz into `time.Local`, so the session zone never reaches the
+// rendered bytes. Demonstrated rather than reasoned — with the session pinned
+// to Australia/Sydney, `utc()`/`utcPtr()` deleted from wire.go, and the
+// process run under `TZ=UTC`, this test PASSED. The lever is time.Local and
+// nothing else.
+//
+// # Why the guard needs one at all
+//
+// Without it, the test only ever saw the zone of whatever machine ran it: it
+// went red on a laptop in +10:00 and green in a UTC container, which is to say
+// it was green in CI with the normalisation removed. A guard that passes when
+// the thing it guards is deleted is not a guard — and the golden files mask a
+// timestamp's VALUE, which also masks its OFFSET, so nothing else in this
+// package can see the difference. The tickets module already paid for this
+// defect once, by finding it in a running service rather than in a test.
+//
+// # Why TestMain rather than a per-test override
+//
+// time.Local is process-global, and a pool has background goroutines. Setting
+// it once before any test — and before any pool exists — keeps it a
+// constant of the run rather than a value being written while something might
+// read it.
+//
+// A zone with a DST shift rather than a fixed offset, so a normalisation that
+// happened to work on a constant offset and not on a changing one would still
+// be caught.
+const processTimeZone = "Australia/Sydney"
+
+func TestMain(m *testing.M) {
+	zone, err := time.LoadLocation(processTimeZone)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "loading %s: %v\n", processTimeZone, err)
+		os.Exit(1)
+	}
+	time.Local = zone
+	// Asserted, because the whole value of this package's UTC guard rests on
+	// it. If a future toolchain stopped honouring the assignment, the guard
+	// would silently go back to proving nothing.
+	if time.Now().Format(time.RFC3339) == time.Now().UTC().Format(time.RFC3339) {
+		fmt.Fprintf(os.Stderr, "the test process is still rendering UTC; the timestamp guard would prove nothing\n")
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
 }
 
 func serve(t *testing.T) *api {
@@ -443,25 +497,58 @@ func TestAValueOutsideAnAxisVocabularyIsRefusedRatherThanIgnored(t *testing.T) {
 	a := filterWorld(t)
 
 	for _, query := range []string{
-		"?stage=archived",     // not a crm_stage
-		"?stage=won",          // a stage, but never in a queue — still a valid filter value
+		"?stage=archived",     // not a crm_stage at all
 		"?country=in",         // lower case; the derived column is upper
 		"?country=India",      // not alpha-2
 		"?followers=under10k", // not a band
 	} {
-		got := a.get("/v1/crm/queues/due" + query)
-		switch query {
-		case "?stage=won":
-			// Legal, and answers an empty queue: terminal deals are excluded
-			// by the queue's own predicate, not by the filter.
-			if got.status != http.StatusOK {
-				t.Errorf("%s = %d, want 200: %s", query, got.status, got.raw)
-			}
-		default:
+		if got := a.get("/v1/crm/queues/due" + query); got.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s = %d, want 422 — a filter that matched nothing silently is the failure this prevents",
+				query, got.status)
+		}
+	}
+}
+
+// A terminal stage is a REFUSAL, not an empty page.
+//
+// `won` and `lost` are real stages, so this is not a spelling mistake — it is a
+// request that can never match, because both queues exclude terminal deals by
+// their own predicate ahead of any filter. Answering 200 with `[]` would put it
+// in the one category this module refuses everywhere else: a caller bug
+// reported as a success, indistinguishable from "nothing to do".
+//
+// Settled now rather than later. Turning it into a 422 after the fact would
+// break anyone who had shipped a stage dropdown that included them — and the
+// console never sends one, since its filter bar is built from
+// `CRM_STAGES.filter(s => s !== "won" && s !== "lost")`.
+func TestATerminalStageIsRefusedRatherThanAnsweredWithAnEmptyPage(t *testing.T) {
+	a := filterWorld(t)
+
+	for _, queue := range []string{"due", "drifting"} {
+		for _, stage := range []string{"won", "lost"} {
+			got := a.get("/v1/crm/queues/" + queue + "?stage=" + stage)
 			if got.status != http.StatusUnprocessableEntity {
-				t.Errorf("%s = %d, want 422 — a filter that matched nothing silently is the failure this prevents",
-					query, got.status)
+				t.Errorf("%s?stage=%s = %d, want 422: %s", queue, stage, got.status, got.raw)
 			}
+			// The message must say WHY, and must not offer the value it just
+			// refused as an accepted one.
+			if !strings.Contains(got.raw, "terminal") {
+				t.Errorf("%s?stage=%s does not say why it was refused: %s", queue, stage, got.raw)
+			}
+		}
+	}
+
+	// The open stages still work, and the unknown-stage error enumerates
+	// exactly them.
+	for _, stage := range []string{"new", "contacted", "qualified"} {
+		if got := a.get("/v1/crm/queues/due?stage=" + stage); got.status != http.StatusOK {
+			t.Errorf("stage=%s = %d, want 200", stage, got.status)
+		}
+	}
+	unknown := a.get("/v1/crm/queues/due?stage=archived").raw
+	for _, terminal := range []string{"won", "lost"} {
+		if strings.Contains(unknown, terminal) {
+			t.Errorf("the unknown-stage error offers %q as an accepted value: %s", terminal, unknown)
 		}
 	}
 }
@@ -471,17 +558,15 @@ func TestAValueOutsideAnAxisVocabularyIsRefusedRatherThanIgnored(t *testing.T) {
 func TestAMalformedCursorIsRefusedRatherThanServedAsPageOne(t *testing.T) {
 	a := filterWorld(t)
 
-	for _, name := range []string{"cursor"} {
-		for _, raw := range []string{
-			"nonsense",   // not base64url
-			"eyJ2IjoxfQ", // decodes, but has no direction and no key
-			"eyJ2IjoxLCJkIjoiYWZ0ZXIiLCJrIjpbImhlbGxvIiwid29ybGQiXX0", // right shape, wrong CONTENT
-		} {
-			got := a.get("/v1/crm/queues/due?" + name + "=" + raw)
-			if got.status != http.StatusBadRequest {
-				t.Errorf("%s=%s = %d, want 400 — a bad link, not a flaky read: %s",
-					name, raw, got.status, got.raw)
-			}
+	for _, raw := range []string{
+		"nonsense",   // not base64url
+		"eyJ2IjoxfQ", // decodes, but has no direction and no key
+		"eyJ2IjoxLCJkIjoiYWZ0ZXIiLCJrIjpbImhlbGxvIiwid29ybGQiXX0", // right shape, wrong CONTENT
+	} {
+		got := a.get("/v1/crm/queues/due?cursor=" + raw)
+		if got.status != http.StatusBadRequest {
+			t.Errorf("cursor=%s = %d, want 400 — a bad link, not a flaky read: %s",
+				raw, got.status, got.raw)
 		}
 	}
 }
@@ -684,7 +769,14 @@ func TestTheDriftingQueueTakesTheSameFilterGrammar(t *testing.T) {
 
 // The golden files mask a timestamp's VALUE, which also masks its OFFSET — so
 // they would not catch the day the wire carried +10:00 on a laptop and Z in a
-// container. This does.
+// container. This does, and it only does because TestMain pins the process's
+// time.Local to a non-UTC zone — see processTimeZone, which records the
+// experiment that established time.Local, not the database session, as the
+// thing that decides the offset.
+//
+// Verified the way a guard has to be: with `utc()`/`utcPtr()` removed from
+// wire.go this test FAILS, reporting +10:00 values, and it fails under
+// `TZ=UTC` too — which is the case that matters, because that is CI.
 func TestWireTimestampsAreUTCWhereverTheProcessRuns(t *testing.T) {
 	a := filterWorld(t)
 
