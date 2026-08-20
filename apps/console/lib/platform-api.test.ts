@@ -345,10 +345,14 @@ const PLATFORM_ORIGIN = "http://platform-api.platform.svc.cluster.local";
 const tokenState = vi.hoisted(() => ({ value: null as string | null }));
 
 // Mocked at the PACKAGE boundary rather than on lib/auth/platform-token, so
-// `getPlatformApiToken` itself runs for real — including its defensive read of
-// a field SessionClaims does not carry yet. Mocking the local module instead
+// `getPlatformApiToken` itself runs for real. Mocking the local module instead
 // left the real one loaded, and it called next/headers' `cookies()` outside a
 // request scope, failing for a reason unrelated to the test.
+//
+// The session carries a `sid` and NOT an access token: the tokens live in
+// `operator_api_tokens` now, and `getPlatformApiToken` deliberately does not
+// fall back to the cookie claims. A session with no `sid` is the "no token at
+// all" case these tests use for the refusal path.
 vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getCurrentSession: async () =>
@@ -357,13 +361,24 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
       : {
           sub: "operator-1",
           email: "operator@tesserix.test",
-          accessToken: tokenState.value,
-          // An expiry an hour out, so these exercise the transport rather than
-          // the renewal path. A session with no expiry is treated as expiring
-          // and would send getPlatformApiToken to Zitadel — see
-          // lib/auth/platform-token.test.ts, which covers that decision.
-          accessTokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+          sid: "sid-1",
+          exp: Math.floor(Date.now() / 1000) + 7 * 24 * 3600,
         },
+}));
+
+// The store, doubled at its own boundary so no database is needed. The expiry
+// is an hour out, so these exercise the transport rather than the renewal path
+// — which has its own coverage in lib/auth/platform-token.test.ts.
+vi.mock("./auth/operator-token-store", () => ({
+  readTokens: async () =>
+    tokenState.value === null
+      ? null
+      : {
+          accessToken: tokenState.value,
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          refreshToken: null,
+        },
+  saveTokens: async () => {},
 }));
 
 /** Stub the token so these test the transport, not the session. */
