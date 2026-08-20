@@ -1,4 +1,13 @@
 import { SurfaceStateView } from "@/components/kit/states";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@tesserix/web";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import {
   costFormatter,
@@ -65,58 +74,58 @@ export function EventsTable({ events, state, emptyMessage }: EventsTableProps) {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Recent gateway requests</caption>
-        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-          <tr>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+    <div className="rounded-lg border">
+      <Table>
+        <TableCaption className="sr-only">Recent gateway requests</TableCaption>
+        <TableHeader className="bg-muted/50 text-xs uppercase">
+          <TableRow>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Time (UTC)
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Product
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Model
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-right font-medium">
               Tokens
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-right font-medium">
               Cost
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-right font-medium">
               Latency
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Outcome
-            </th>
-          </tr>
-        </thead>
-        <tbody>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {events.map((event) => (
-            <tr key={event.spanId} className="border-t align-top">
-              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
+            <TableRow key={event.spanId} className="border-t align-top">
+              <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
                 {eventTimeLabel(event.occurredAt)}
-              </td>
-              <td className="px-3 py-2">
+              </TableCell>
+              <TableCell className="px-3 py-2">
                 <div>{event.product}</div>
                 {event.capability ? (
                   <div className="text-xs text-muted-foreground">{event.capability}</div>
                 ) : null}
-              </td>
-              <td className="px-3 py-2">
+              </TableCell>
+              <TableCell className="px-3 py-2">
                 <div>{event.responseModel ?? event.requestModel}</div>
                 <div className="text-xs text-muted-foreground">{event.provider}</div>
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              </TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums">
                 {`${tokenFormatter(event.tokens.input)} / ${tokenFormatter(event.tokens.output)}`}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">{eventCostLabel(event)}</td>
-              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+              </TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums">{eventCostLabel(event)}</TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                 {event.latencyMs === null ? "—" : `${event.latencyMs.toLocaleString()} ms`}
-              </td>
-              <td className="px-3 py-2">
+              </TableCell>
+              <TableCell className="px-3 py-2">
                 <span className={OUTCOME_TONES[event.outcome]}>
                   {outcomeLabel(event.outcome)}
                 </span>
@@ -125,11 +134,11 @@ export function EventsTable({ events, state, emptyMessage }: EventsTableProps) {
                     {`${event.guardrailRule} (${event.guardrailAction ?? "reject"})`}
                   </div>
                 ) : null}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }

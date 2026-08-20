@@ -1,4 +1,13 @@
 import { SurfaceStateView } from "@/components/kit/states";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@tesserix/web";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { GuardrailRule } from "@/lib/ai-usage";
 import { eventTimeLabel } from "./events-table";
@@ -28,46 +37,46 @@ export function GuardrailRules({ rules, state, emptyMessage }: GuardrailRulesPro
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full text-sm">
-        <caption className="sr-only">Guardrail rules that fired</caption>
-        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-          <tr>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+    <div className="rounded-lg border">
+      <Table>
+        <TableCaption className="sr-only">Guardrail rules that fired</TableCaption>
+        <TableHeader className="bg-muted/50 text-xs uppercase">
+          <TableRow>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Rule
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Action
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Product
-            </th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-right font-medium">
               Requests
-            </th>
-            <th scope="col" className="px-3 py-2 text-left font-medium">
+            </TableHead>
+            <TableHead scope="col" className="h-9 px-3 py-2 text-left font-medium">
               Last seen (UTC)
-            </th>
-          </tr>
-        </thead>
-        <tbody>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rules.map((rule) => (
-            <tr key={`${rule.rule}:${rule.action}:${rule.product}`} className="border-t">
-              <td className="px-3 py-2">{rule.rule}</td>
-              <td className={`px-3 py-2 ${ACTION_COPY[rule.action].tone}`}>
+            <TableRow key={`${rule.rule}:${rule.action}:${rule.product}`} className="border-t">
+              <TableCell className="px-3 py-2">{rule.rule}</TableCell>
+              <TableCell className={`px-3 py-2 ${ACTION_COPY[rule.action].tone}`}>
                 {ACTION_COPY[rule.action].label}
-              </td>
-              <td className="px-3 py-2">{rule.product}</td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              </TableCell>
+              <TableCell className="px-3 py-2">{rule.product}</TableCell>
+              <TableCell className="px-3 py-2 text-right tabular-nums">
                 {rule.requests.toLocaleString()}
-              </td>
-              <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
+              </TableCell>
+              <TableCell className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
                 {eventTimeLabel(rule.lastSeen)}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
