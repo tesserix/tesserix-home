@@ -1,4 +1,4 @@
-import { PlatformApiError } from "./platform-api";
+import { PlatformApiError } from "./platform-api-error";
 
 /**
  * Platform-wide support analytics — otto's cross-tenant rollup, read through

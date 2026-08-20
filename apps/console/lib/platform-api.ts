@@ -1,3 +1,5 @@
+import { PlatformApiError } from "./platform-api-error";
+
 const LEAD_STATUSES = [
   "new",
   "contacted",
@@ -16,18 +18,18 @@ export interface PlatformDashboard {
   generated_at: string;
 }
 
-/** Carries the HTTP status when there was one. A 501 means the endpoint is
- *  parked; anything else is a real failure. Losing the status here collapses
- *  that distinction and a parked plane starts reading as broken. */
-export class PlatformApiError extends Error {
-  readonly status?: number;
-
-  constructor(message: string, status?: number, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "PlatformApiError";
-    this.status = status;
-  }
-}
+/**
+ * Declared in `./platform-api-error` and re-exported here so the many existing
+ * `from "@/lib/platform-api"` imports keep working. This is a re-export of the
+ * SAME binding, not a copy — one class identity, so `instanceof` holds
+ * everywhere.
+ *
+ * It was moved out because it is a value import, and a `"use client"` component
+ * importing it from this module pulled this module — and through it
+ * `auth/platform-token` -> `db/tesserix` -> `pg` — into the browser bundle. See
+ * the header of `./platform-api-error`.
+ */
+export { PlatformApiError } from "./platform-api-error";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. */

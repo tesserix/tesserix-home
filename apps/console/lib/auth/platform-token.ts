@@ -1,3 +1,8 @@
+// `server-only`: this module reads Postgres. It used to read only the session
+// cookie, which is why a client component could import it transitively without
+// anyone noticing until `pg` failed to resolve in the browser bundle.
+import "server-only";
+
 import { cache } from "react";
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { tesserixTx } from "../db/tesserix";

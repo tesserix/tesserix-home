@@ -1,5 +1,5 @@
 import type { SurfaceState } from "@/components/kit/states";
-import { PlatformApiError } from "./platform-api";
+import { PlatformApiError } from "./platform-api-error";
 
 /**
  * The platform dashboard's triage signals, read from `apps/web`'s admin API.
