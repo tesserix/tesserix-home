@@ -6,6 +6,7 @@ import {
   sessionCookieOptions,
 } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
+import { withDeadline } from "@/lib/auth/deadline";
 import { deleteTokens } from "@/lib/auth/operator-token-store";
 import { publicOrigin } from "@/lib/public-origin";
 
@@ -19,6 +20,31 @@ import { publicOrigin } from "@/lib/public-origin";
  */
 
 export const dynamic = "force-dynamic";
+
+/**
+ * How long the token-store delete may run before sign-out stops waiting on it.
+ *
+ * THIS IS THE POINT OF THE WHOLE THING. Before the token store, logout did no
+ * I/O at all and could not hang. Now it awaits a DELETE, and nothing in this
+ * stack bounds a query that has already started: `connectionTimeoutMillis` in
+ * `lib/db/tesserix.ts` bounds pool ACQUISITION only, and there is no
+ * `statement_timeout` anywhere. A DELETE stuck behind a lock would therefore
+ * hang this response — and the cookie is expired on the response, so a response
+ * that never returns leaves `tx_session` intact. The operator stays
+ * AUTHENTICATED, on a cookie shared across `.tesserix.app`, on the one surface
+ * whose entire purpose is ending that session.
+ *
+ * `withDeadline` REJECTS past this rather than resolving, which drops the hang
+ * into the same `catch` a thrown store error already falls into: logged, cookie
+ * still expired, still redirected. 2000ms to match `SAVE_TOKENS_DEADLINE_MS` in
+ * `/auth/callback` — the same store, the same pool, the same reasoning.
+ *
+ * ACCEPTED COST: a slow-but-alive database leaves the row behind. It is
+ * unreachable without the `sid` claim the cleared cookie carried, and
+ * `pruneExpired` sweeps it at `session_expires_at`. That is strictly better
+ * than a sign-out that does not sign anyone out.
+ */
+const DELETE_TOKENS_DEADLINE_MS = 2_000;
 
 /**
  * Ending the Zitadel session as well, when configured.
@@ -69,13 +95,19 @@ async function signOut(request: NextRequest): Promise<NextResponse> {
   // delete, and `deleteTokens` is never called.
   if (session?.sid) {
     try {
-      await deleteTokens(session.sid);
+      await withDeadline(
+        deleteTokens(session.sid),
+        DELETE_TOKENS_DEADLINE_MS,
+        "operator token store delete timed out",
+      );
     } catch {
-      // `deleteTokens` already swallows pool-path errors internally (see its
-      // JSDoc) and this branch should be unreachable in production — but the
-      // catch stays so this call site's guarantee ("logout never fails on
-      // this") is explicit and does not silently evaporate if the store's
-      // contract changes later.
+      // Two ways in. `deleteTokens` already swallows pool-path errors
+      // internally (see its JSDoc), so a throw from it should be unreachable in
+      // production — but the catch stays so this call site's guarantee ("logout
+      // never fails on this") is explicit and does not silently evaporate if
+      // the store's contract changes later. The deadline above is the reachable
+      // one, and it lands here deliberately: a hang must degrade exactly like a
+      // failure, not worse than one.
       console.error("[auth/logout] failed to delete operator API tokens", {
         sid: session.sid,
       });

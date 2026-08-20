@@ -146,6 +146,10 @@ describe("encryptToken / decryptToken", () => {
 describe("degrades when the key is missing", () => {
   beforeEach(() => {
     delete process.env.OPERATOR_TOKEN_ENCRYPT_KEY;
+    // The store now says so out loud (once per process). Silenced here so the
+    // suite output stays readable; the warning itself is asserted below,
+    // against a freshly imported module so the once-flag is unset.
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   it("readTokens returns null and issues no query", async () => {
@@ -165,9 +169,16 @@ describe("degrades when the key is missing", () => {
     expect(queries.calls).toHaveLength(0);
   });
 
-  it("deleteTokens does nothing and issues no query", async () => {
+  it("deleteTokens STILL RUNS — deleting a row needs no key", async () => {
+    // Deliberately the opposite of what this pinned before. Removing a
+    // credential must not depend on being able to read it: gated on the key,
+    // the first key rotation would silently stop logout revoking anything, and
+    // every signed-out operator's tokens would sit in the table until the
+    // sweep. Same rule as `pruneExpired` below.
     await expect(deleteTokens("sid-1")).resolves.toBeUndefined();
-    expect(queries.calls).toHaveLength(0);
+    expect(queries.calls).toHaveLength(1);
+    expect(queries.calls[0]!.sql).toContain("DELETE FROM operator_api_tokens");
+    expect(queries.calls[0]!.params).toEqual(["sid-1"]);
   });
 
   it("pruneExpired still runs — deleting a row needs no key", async () => {
@@ -357,5 +368,56 @@ describe("the SQL the store issues", () => {
       new Date(),
     );
     expect((queries.calls[0].params as unknown[])[4]).toBeNull();
+  });
+});
+
+describe("says so when the key is missing but the database is not", () => {
+  /**
+   * The silent-no-op case is the whole reason this warning exists: database
+   * configured, key absent, nothing throws, login succeeds, table stays empty
+   * forever, and every platform-API call reports "unreachable" with nothing
+   * connecting the two. That is the same invisibility as the outage the table
+   * was built to fix.
+   *
+   * Imported fresh per test because the warning is once-per-process by design
+   * (`isStoreUsable` runs on every render); the module-level flag has to start
+   * unset for the assertion to mean anything.
+   */
+  async function freshStore() {
+    vi.resetModules();
+    return import("./operator-token-store");
+  }
+
+  beforeEach(() => {
+    delete process.env.OPERATOR_TOKEN_ENCRYPT_KEY;
+  });
+
+  it("warns once, no matter how many calls a render makes", async () => {
+    const store = await freshStore();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await store.readTokens("sid-1");
+    await store.readTokens("sid-2");
+    await store.readTokens("sid-3");
+
+    const warnings = error.mock.calls.filter((call) =>
+      String(call[0]).includes("OPERATOR_TOKEN_ENCRYPT_KEY"),
+    );
+    expect(warnings).toHaveLength(1);
+    // Never the key, never a fragment of it, never its length.
+    expect(String(warnings[0]![0])).not.toContain(KEY);
+  });
+
+  it("stays quiet when the database is not configured either", async () => {
+    // A console with neither is simply not running the store — the ordinary
+    // local-dev state. Warning about it would train everyone to ignore the
+    // line that matters.
+    dbConfigured.value = false;
+    const store = await freshStore();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await store.readTokens("sid-1");
+
+    expect(error).not.toHaveBeenCalled();
   });
 });

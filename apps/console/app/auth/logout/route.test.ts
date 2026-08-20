@@ -161,4 +161,41 @@ describe("revoking platform API access on sign-out", () => {
       expect.objectContaining({ sid: "sid-456" }),
     );
   });
+
+  it(
+    "still signs the operator out locally when the delete HANGS",
+    async () => {
+      // The failure mode this branch introduced: before the token store,
+      // logout did no I/O and could not hang. The cookie is expired on the
+      // RESPONSE, so a response that never returns leaves `tx_session` intact
+      // and the operator authenticated across `.tesserix.app` — on the surface
+      // whose whole purpose is ending that session. The rejected-promise test
+      // above does not cover it: nothing throws here, the DELETE simply never
+      // comes back. `DELETE_TOKENS_DEADLINE_MS` (2000ms in route.ts), not the
+      // store, has to end the wait.
+      //
+      // Real timers, deliberately: `withDeadline`'s `setTimeout` and this
+      // test's wall clock must be the same clock for "the deadline fired" to
+      // be a fact about the code rather than an artifact of fake-time
+      // advancement.
+      signIn(["read"], "sid-789");
+      deleteTokensMock.mockReturnValue(new Promise(() => {}));
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await GET(request());
+
+      // The observable outcome, not "nothing threw": redirected, and signed
+      // out. A broken implementation never reaches these lines at all.
+      expect(res.status).toBe(307);
+      expect((res.headers.get("set-cookie") ?? "").toLowerCase()).toContain(
+        "max-age=0",
+      );
+      expect(res.headers.get("set-cookie")).toContain("tx_session=");
+      expect(error).toHaveBeenCalledWith(
+        "[auth/logout] failed to delete operator API tokens",
+        expect.objectContaining({ sid: "sid-789" }),
+      );
+    },
+    { timeout: 6_000 },
+  );
 });

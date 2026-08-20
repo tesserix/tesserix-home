@@ -26,7 +26,7 @@ import {
   accessTokenExpiresAt,
   saveTokens,
 } from "@/lib/auth/operator-token-store";
-import { withDeadline } from "@/lib/auth/platform-token";
+import { withDeadline } from "@/lib/auth/deadline";
 import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
@@ -51,7 +51,7 @@ const NONCE_COOKIE = "cx_oidc_nonce";
  * guarding two statements on the login critical path, not one.
  *
  * `withDeadline` REJECTS past this many milliseconds rather than resolving —
- * see its JSDoc in `lib/auth/platform-token.ts` — which is exactly what lets
+ * see its JSDoc in `lib/auth/deadline.ts` — which is exactly what lets
  * the timeout fall into the same `catch` a thrown store error falls into
  * below: a hang degrades identically to a throw, not differently from one.
  *
@@ -63,6 +63,19 @@ const NONCE_COOKIE = "cx_oidc_nonce";
  * operator a hung login is indistinguishable from that outage.
  */
 const SAVE_TOKENS_DEADLINE_MS = 2_000;
+
+/**
+ * What the deadline above rejects with, and the only way to tell a hang apart
+ * from a failure at the catch below.
+ *
+ * The distinction is not cosmetic. `saveTokens` runs an opportunistic
+ * table-wide `pruneExpired()` DELETE AFTER its INSERT has already committed
+ * (see its JSDoc), so a deadline that fires during the prune means the row is
+ * almost certainly there. Logging both cases as "failed to store" tells the
+ * 2am reader the tokens are missing when they are probably fine — a false
+ * negative that sends them looking for the wrong outage.
+ */
+const SAVE_TOKENS_TIMEOUT_MESSAGE = "operator token store save timed out";
 
 function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
@@ -376,18 +389,27 @@ export async function GET(request: NextRequest): Promise<Response> {
           new Date(Date.now() + cookie.maxAge * 1000),
         ),
         SAVE_TOKENS_DEADLINE_MS,
-        "operator token store save timed out",
+        SAVE_TOKENS_TIMEOUT_MESSAGE,
       );
-    } catch {
+    } catch (cause) {
       // Either a thrown error (see `saveTokens`'s JSDoc — it already
       // swallows pool-path errors and returns, but this call site does not
       // lean on that alone) or the deadline above rejecting a hang. Both mean
-      // the same thing to this caller: the login proceeds exactly as if the
+      // the same thing to THIS CALLER: the login proceeds exactly as if the
       // store did not exist.
-      console.error("[auth/callback] failed to store platform API tokens", {
-        sub: identity.sub,
-        sid,
-      });
+      //
+      // They do not mean the same thing to whoever reads the log, so they do
+      // not share a line. A timeout leaves the row's fate genuinely unknown —
+      // and, because the prune runs after the INSERT commits, more likely
+      // written than not.
+      const timedOut =
+        cause instanceof Error && cause.message === SAVE_TOKENS_TIMEOUT_MESSAGE;
+      console.error(
+        timedOut
+          ? "[auth/callback] platform API token store timed out; the row may or may not have been written"
+          : "[auth/callback] failed to store platform API tokens",
+        { sub: identity.sub, sid },
+      );
     }
   } else {
     // Zitadel can return an id_token without an access_token depending on

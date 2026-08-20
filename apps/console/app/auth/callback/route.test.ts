@@ -60,8 +60,9 @@ const state = vi.hoisted(() => ({
 // `importOriginal` keeps every real export (`accessTokenExpiresAt`,
 // `readTokens`, `deleteTokens`, ...) intact and overrides only `saveTokens` —
 // so `route.ts`'s own call to `accessTokenExpiresAt` runs the real arithmetic,
-// and `lib/auth/platform-token.ts` (pulled in transitively via the real
-// `withDeadline` import) still sees a working module.
+// and any module that imports it still sees a working one. (`withDeadline`
+// itself lives in `lib/auth/deadline.ts` and is never mocked here — the
+// deadline test below needs the real timer.)
 //
 // `saveTokens` below is typed as `typeof actual.saveTokens`: a future
 // reordering of its parameters now fails to typecheck here instead of
@@ -403,8 +404,12 @@ describe("writing the platform API tokens to the store", () => {
       expect(res.headers.get("set-cookie")).toContain(
         "tx_session=session-token",
       );
+      // A DISTINCT line from the throw case above. `saveTokens` prunes after
+      // its INSERT has committed, so a deadline that fires may well have left
+      // the row written — telling the reader it "failed to store" would send
+      // them after the wrong outage.
       expect(error).toHaveBeenCalledWith(
-        "[auth/callback] failed to store platform API tokens",
+        expect.stringContaining("timed out"),
         expect.objectContaining({ sub: "operator-1" }),
       );
     },

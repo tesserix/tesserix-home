@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { tesserixTx } from "../db/tesserix";
+import { withDeadline } from "./deadline";
 import {
   accessTokenExpiresAt,
   readTokens,
@@ -297,44 +298,6 @@ async function renewUnderLock(
     // worth throwing into a page render. The store has already reported the
     // detail without logging anything a scraper could use.
     return null;
-  }
-}
-
-/**
- * Bound an awaited promise, rejecting past the deadline.
- *
- * Rejecting rather than resolving null is deliberate: it unwinds
- * `runTesserixTx` through its ROLLBACK, which is what actually releases the row
- * lock and the pooled connection. Resolving null would COMMIT a transaction
- * that did nothing, which is harmless today and would quietly stop being so if
- * anything were ever added after this call.
- *
- * The timer is always cleared, so a fast refresh does not hold the event loop
- * open for the remainder of the deadline.
- *
- * Exported: `/auth/callback` reuses this for the same reason it exists here —
- * `saveTokens` is awaited with no deadline of its own, and neither
- * `connectionTimeoutMillis` (pool ACQUISITION only) nor anything in
- * `lib/db/tesserix.ts` bounds a query that has already started. A hung INSERT
- * would otherwise hang the login with it. `message` defaults to this
- * module's own wording so the one existing call site is unaffected; a caller
- * bounding a different operation should pass one that says what timed out.
- */
-export async function withDeadline<T>(
-  promise: Promise<T>,
-  ms: number,
-  message = "zitadel refresh timed out",
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

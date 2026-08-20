@@ -255,14 +255,56 @@ export function decryptToken(
   }
 }
 
+/**
+ * Whether a misconfiguration has already been reported.
+ *
+ * Module-level, not per request: `isStoreUsable` runs on every render that
+ * touches the store, so a per-call warning would bury the log it is meant to
+ * make visible. One line per process is enough — the condition it reports is a
+ * deployment fact, not a request outcome, and it cannot change without a
+ * restart.
+ */
+let warnedMissingKey = false;
+
+/**
+ * Say once, out loud, that the store is configured everywhere except the one
+ * place that matters.
+ *
+ * WHY THIS EXISTS: with a database configured and `OPERATOR_TOKEN_ENCRYPT_KEY`
+ * unset, every call here is a SILENT no-op. Nothing throws, so `/auth/callback`'s
+ * catch never fires; the log says `session minted`, the login works, the table
+ * stays empty forever, and every platform-API call reports "unreachable" with
+ * nothing anywhere connecting the two. That is the same invisibility as the
+ * outage this whole table exists to fix, and it is worth one log line.
+ *
+ * ONLY for "database yes, key no". A console with neither is simply not running
+ * the store — the ordinary local-dev state — and warning about it would train
+ * everyone to ignore this line.
+ *
+ * Names nothing about the key: not its value, not its length, not whether some
+ * other variable is set. Only that it is absent.
+ */
+function warnMissingKeyOnce(): void {
+  if (warnedMissingKey) return;
+  warnedMissingKey = true;
+  console.error(
+    "[auth] operator token store: OPERATOR_TOKEN_ENCRYPT_KEY is not set but the database is configured; " +
+      "operator tokens will NOT be stored and the platform API will be unreachable for every session",
+  );
+}
+
 /** True when this module can do anything at all: a reachable database AND a
  *  key to encrypt with. Both are required — a store that can write but not
  *  encrypt is worse than a store that does nothing. */
 function isStoreUsable(options: TokenStoreOptions): boolean {
-  if (!getEncryptionKey()) return false;
   // A caller-supplied query brings its own connection; the pool's env check
   // does not apply to it.
-  return Boolean(options.query) || isDatabaseConfigured();
+  const haveDatabase = Boolean(options.query) || isDatabaseConfigured();
+  if (!getEncryptionKey()) {
+    if (haveDatabase) warnMissingKeyOnce();
+    return false;
+  }
+  return haveDatabase;
 }
 
 function runner(options: TokenStoreOptions): TokenStoreQuery {
@@ -416,12 +458,19 @@ export async function saveTokens(
  * recoverable — the row is unreachable without the `sid` claim and gets swept
  * by {@link pruneExpired} — whereas a logout that throws leaves the operator
  * signed in.
+ *
+ * NEEDS THE DATABASE, NOT THE KEY — the same rule as {@link pruneExpired}, and
+ * for the same reason: deleting a row never looks inside it. Gating this on
+ * `isStoreUsable` would mean that the moment the key is rotated or unset,
+ * logout silently stops revoking anything, leaving live tokens in the table for
+ * every operator who signs out until the sweep catches them. The one operation
+ * that removes a credential must not depend on being able to read it.
  */
 export async function deleteTokens(
   sid: string,
   options: TokenStoreOptions = {},
 ): Promise<void> {
-  if (!isStoreUsable(options)) return;
+  if (!options.query && !isDatabaseConfigured()) return;
   try {
     await runner(options)(`DELETE FROM operator_api_tokens WHERE sid = $1`, [
       sid,
