@@ -22,36 +22,60 @@
 // and the transaction have nothing to do with idempotency, and a write with no
 // key still needs all of this.
 //
-// # What the second module showed
+// # What the second example shows
 //
-// The guess held, with one detail promoted from incidental to load-bearing.
+// The CRM queues module is that second example. Its Go implementation follows;
+// at the time of the extraction this package has exactly one caller, and the
+// shape was checked against the console's EXISTING CRM writes rather than
+// against a Go module that does not exist yet. Those writes are real and
+// checkable — that is the evidence below, and it is deliberately not stated as
+// a Go module having needed this, because the compiler does not back that.
 //
-// CRM's simplest write — a single-column UPDATE on crm_opportunities, audited,
-// with an optional key — is strictly less than either ticket write. It has no
-// multi-statement operation and no payload derived from anything but the row
-// it touched, and it needed no part of this that tickets had not already
-// exercised. So the seam is not in the wrong place, and it is not too narrow.
+// So: a guess re-examined against a second, independently-written example,
+// not a shape a second compiler-checked caller has yet exercised. Read the
+// confidence accordingly.
+//
+// On that evidence the shape holds, with one detail promoted from incidental
+// to load-bearing.
+//
+// CRM's simplest write — a single-column UPDATE on crm_opportunities, audited
+// as "crm.next_action.set", with an optional key — is strictly less than
+// either ticket write. It has no multi-statement operation and no payload
+// derived from anything but the row it touched, and it asks for no part of
+// this that tickets had not already exercised. So the seam is not in the wrong
+// place, and it is not too narrow.
 //
 // The load-bearing detail is that Operation returns its audit.Entry AFTER
 // doing the work, rather than the caller declaring the entry up front. In
 // tickets that looks like an accident of layout: only "tickets.reopen" versus
 // "tickets.status" depends on anything read inside the transaction, and even
-// that is decided before the UPDATE. CRM leans on it properly — some of its
-// verbs choose between "crm.stage.change" and "crm.product.set" according to
-// what the write actually changed. The ordering is therefore a requirement,
-// not a style: a refactor that asks for the entry before the operation runs
-// makes those verbs inexpressible.
+// that is decided before the UPDATE. The console's advanceStage
+// (apps/console/app/(console)/platform/crm/[organisation]/actions.ts) leans on
+// it properly — it passes an outcome -> {action, summary} function that
+// chooses "crm.stage.change" or "crm.product.set" by what the write actually
+// changed. A signature demanding the entry up front cannot express that, so
+// the ordering here is a requirement rather than a style.
 //
-// Two further CRM behaviours were checked against this shape and needed no
-// change to it, which is recorded here because the next person will ask:
+// Two further behaviours of those same console writes were checked against
+// this shape and need no change to it, which is recorded here because the next
+// person will ask:
 //
 //   - A verb with a legitimate no-op outcome that still writes an audit row
 //     returns a nil error, a payload describing the no-op, and its entry. The
 //     audit row lands and the transaction commits, because only an error rolls
 //     back. "Nothing changed" is an outcome here, not a refusal — a module
-//     signals a refusal with an error of its own.
+//     signals a refusal with an error of its own. advanceStage's third branch
+//     is exactly this: a real audit row with {transitions: 0}.
 //   - The status is per-operation rather than per-package, so a verb answering
 //     200 sits beside one answering 201 without either knowing about the other.
+//
+// # More than one audit row in a transaction
+//
+// Undocumented until now, and safe: the Operation holds the transaction, so a
+// verb needing a second audit row calls audit.Write(ctx, tx, ...) itself for
+// the extras and returns the principal one. They share the transaction, so the
+// same all-or-nothing guarantee covers them. Perform writes exactly the entry
+// it is returned; it does not assume that is the only one.
 package write
 
 import (
@@ -61,11 +85,27 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
 )
+
+// Pool is what Perform needs from a connection pool: the two replay lookups,
+// which run outside the transaction, and the ability to open one.
+//
+// Declared here rather than taking *pgxpool.Pool, because that is what the
+// neighbouring kernel packages do — idempotency.Querier and audit.Execer are
+// both locally-declared subsets — and what §8 means by declaring the interface
+// where it is consumed. *pgxpool.Pool satisfies it, and so does a fake, which
+// is what makes the racing-peer branches below testable without inventing a
+// race.
+//
+// The method signatures are pgx's own. Go matches interface methods exactly,
+// so a locally-declared stand-in for pgx.Tx would be satisfied by nothing.
+type Pool interface {
+	idempotency.Querier
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // Result is what a write produced: the status and body to answer with.
 //
@@ -94,9 +134,9 @@ type Operation func(ctx context.Context, tx pgx.Tx) (payload any, entry audit.En
 // transaction.
 //
 // The pool is the module's own — this package holds no state and no
-// connection. It is a *pgxpool.Pool rather than an interface because Perform
-// needs both Begin and the pool itself for the two replay lookups, and pgx
-// offers no interface spanning them.
+// connection. Its type is the locally-declared Pool, matching what audit and
+// idempotency already do and what module boundaries §8 asks for: declare the
+// interface where it is consumed.
 //
 // # Why all three are in the same transaction
 //
@@ -110,7 +150,7 @@ type Operation func(ctx context.Context, tx pgx.Tx) (payload any, entry audit.En
 // committed write. Recording outside the transaction would refuse the retry of
 // a request that never landed, which is worse than not having the feature at
 // all — the caller would be told their write was already applied.
-func Perform(ctx context.Context, pool *pgxpool.Pool, key *idempotency.Key, op Operation) (Result, error) {
+func Perform(ctx context.Context, pool Pool, key *idempotency.Key, op Operation) (Result, error) {
 	// The replay check runs OUTSIDE the transaction and before the work. A
 	// retry should cost a single indexed lookup, not a transaction that does
 	// the whole operation and then discards it.

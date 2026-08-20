@@ -353,18 +353,28 @@ two modules will both want belongs here — but see §9 on when to move it.
   `-update-golden` and read the diff: a contract change should be visible in a
   pull request, which is the point for a contract products pin to.
 
-**The one deferred extraction has happened.** `service.perform` — the
-transaction script binding a write, its audit row and its idempotency record —
-was held inside the tickets module until a *second* module needed it, because a
-shape extracted from one example is a guess. The CRM queues module is that
-second example, and the shape held: it is now `internal/platform/write`,
-`write.Perform`. The seam was where it looked, with one detail promoted from
-incidental to load-bearing — the operation returns its audit entry *after*
-doing the work, which tickets barely used and CRM depends on, because some CRM
-verbs pick their action from what the write actually changed. The package
-comment carries the full judgement, including the two CRM behaviours (a
-result-derived action, and a no-op that still audits) that were checked against
-the shape and needed no change to it.
+**Extractions happen on the second example, not the first.** `service.perform`
+— the transaction script binding a write, its audit row and its idempotency
+record — was held inside the tickets module until there was a second example,
+because a shape extracted from one example is a guess. It is now
+`internal/platform/write`, `write.Perform`.
+
+The second example is the CRM queues module. Its Go implementation follows;
+`write` has one caller today, and the shape was re-examined against the
+console's **existing** CRM writes rather than against a Go module the compiler
+can see. That is real, checkable evidence — `advanceStage` in
+`apps/console/app/(console)/platform/crm/[organisation]/actions.ts` already
+passes an outcome → `{action, summary}` function choosing `crm.stage.change`
+or `crm.product.set` — but it is a second *example*, not a second consumer, and
+the confidence should be read that way.
+
+On that evidence the seam was where it looked, with one detail promoted from
+incidental to load-bearing: the operation returns its audit entry *after* doing
+the work. Tickets barely uses that; a signature demanding the entry up front
+cannot express `advanceStage` at all. `write`'s package comment carries the
+full judgement, including the two behaviours (a result-derived action, and a
+no-op that still audits) that were checked against the shape and needed no
+change to it.
 
 ---
 
