@@ -376,6 +376,18 @@ full judgement, including the two behaviours (a result-derived action, and a
 no-op that still audits) that were checked against the shape and needed no
 change to it.
 
+The same rule moved the second seam. `paging.Page[T]` was rows and `HasMore`;
+tickets carried `Total`, `Preceding` and both cursors in a page type of its own,
+and every CRM listing needs the same. The kernel now has
+`paging.CountedPage[T]` and `paging.Resolve`, which own the forward/backward
+asymmetry — the backward `Preceding` adjustment, and which edge row anchors
+which cursor. What did **not** move: the counts stay SQL-counted by the caller,
+and the caller supplies the cursor `Key`, because which columns a key is made of
+is an `ORDER BY` the kernel never sees. Counts are optional (`nil` opts out), so
+a cheap "is there more" listing is not made to run a `COUNT`. Tickets adopted it
+with no change to its tests and none to its golden files — for an extraction,
+that is the acceptance criterion.
+
 ---
 
 ## 10. The console's migration

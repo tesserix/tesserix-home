@@ -9,7 +9,7 @@
 // would move when a second module needed it — because a shape extracted from
 // one example is a guess, and the second module is what shows whether the seam
 // is where it looks. The CRM queues module is that second example. See
-// "What the second module showed" below for the answer, which is the part
+// "What the second example shows" below for the answer, which is the part
 // worth reading; the note itself has served its purpose and is gone.
 //
 // # The name

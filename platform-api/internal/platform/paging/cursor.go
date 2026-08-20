@@ -35,6 +35,28 @@
 // invisible to the caller — the cursor is opaque in either format — and the
 // contract the console established (opaque, self-describing direction,
 // rejected when malformed) is unchanged.
+//
+// # What the second example added: counts, and where they stop
+//
+// This package began as the codec plus Page[T] — rows and HasMore, the honest
+// result of a limit+1 fetch. Everything a listing needs BEYOND that (an
+// SQL-counted total, an SQL-counted position, and the two edge cursors) lived
+// in the tickets module, correctly, because a shape extracted from one example
+// is a guess. §9's rule is that extractions happen on the second example, and
+// the CRM queues module is it: every CRM listing reports the same two counts,
+// and left alone it would have written a third page type.
+//
+// The seam chosen is a SECOND type — CountedPage[T], assembled by Resolve —
+// rather than a wider Page[T]. counted.go argues that at length; the short
+// version is that a listing which only wants "is there more" must not be made
+// to run a COUNT query, and that HasMore and NextCursor mean different things
+// on a backward read, so a struct holding both invites the wrong reading.
+//
+// What did NOT move is which columns a cursor's key is made of. The encoding
+// is uniform across listings and belongs here; the key is an ORDER BY this
+// package never sees — two of the ticket queue's four components are derived
+// expressions — so the caller passes a Key function and the kernel does the
+// rest.
 package paging
 
 import (

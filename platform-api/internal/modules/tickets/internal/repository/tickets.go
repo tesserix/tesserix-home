@@ -120,27 +120,23 @@ type Filter struct {
 
 // Page is one page of the queue plus the counts a caller needs to describe it
 // honestly.
+//
+// The counts and the cursors are the kernel's own types, embedded rather than
+// redeclared, so the fields a caller reads (Total, Preceding, NextCursor,
+// PreviousCursor) are paging's and cannot drift from what paging.Resolve
+// produced. Only the rows are named for the domain, which is what §2 asks of a
+// resource: `page.Tickets` at a call site, not `page.Rows`.
 type Page struct {
 	Tickets []domain.Ticket
-	// Total is every row matching the filter, ignoring the limit.
-	Total int64
-	// Preceding is how many matching rows sort ahead of this page; 0 on the
-	// first. Counted in SQL rather than inferred, because a cursor carries no
-	// position of its own.
-	Preceding int
-	// NextCursor and PreviousCursor are empty when there is no such page.
-	NextCursor     string
-	PreviousCursor string
+	paging.Counts
+	paging.Cursors
 }
 
 // List reads one page of the queue.
 //
 // The count and the rows are two queries over two disjoint parameter lists,
-// run sequentially rather than concurrently. The console runs its equivalent
-// pair with Promise.all; this service does not, because the pool is capped at
-// two connections (ADR-003 D2a) and a concurrent pair would take both for one
-// request — turning the second concurrent listing into a wait for a
-// connection rather than a wait for a query.
+// run sequentially rather than concurrently — paging.Counts carries the
+// reasoning, since it now owns the pair.
 func List(ctx context.Context, db Querier, filter Filter, limit int, rawCursor string) (Page, error) {
 	var cursor *paging.Cursor
 	if rawCursor != "" {
@@ -226,51 +222,24 @@ func List(ctx context.Context, db Querier, filter Filter, limit int, rawCursor s
 		return Page{}, err
 	}
 
-	page := paging.TrimForward(fetched, limit)
-	if backwards {
-		page = paging.TrimBackward(fetched, limit)
-		// The count above covered this page plus everything ahead of it.
-		preceding -= len(page.Rows)
-		if preceding < 0 {
-			// Only reachable if rows were deleted between the two queries.
-			// Clamped rather than reported: a negative position is a nonsense
-			// a caller would have to handle, and the honest answer to "how far
-			// in are we" after a concurrent delete is "near the start".
-			preceding = 0
-		}
+	// The trimming, the backward adjustment of Preceding, and both cursors are
+	// the kernel's: paging.Resolve owns the forward/backward asymmetry so that
+	// the next module does not re-derive it. This module supplies only what
+	// the kernel cannot know — the counts its own SQL produced, and the key
+	// its own ORDER BY sorts on.
+	resolved, err := paging.Resolve(fetched, limit, cursor,
+		&paging.Counts{Total: total, Preceding: preceding}, cursorKey)
+	if err != nil {
+		return Page{}, err
 	}
-
-	result := Page{Tickets: page.Rows, Total: total, Preceding: preceding}
-	if len(page.Rows) == 0 {
-		return result, nil
-	}
-
-	// Both cursors are minted from the page's own edges, so paging back from
-	// page two lands exactly on page one.
-	//
-	// Forward: another page exists iff the fetch returned its proof row.
-	// Backward: another page BACKWARDS is what the fetch proved, and the
-	// forward promise comes from the fact that we arrived here from somewhere.
-	hasNext, hasPrevious := page.HasMore, preceding > 0
-	if backwards {
-		hasNext, hasPrevious = true, page.HasMore
-	}
-	if hasNext {
-		result.NextCursor, err = cursorFor(page.Rows[len(page.Rows)-1], paging.After)
-		if err != nil {
-			return Page{}, err
-		}
-	}
-	if hasPrevious {
-		result.PreviousCursor, err = cursorFor(page.Rows[0], paging.Before)
-		if err != nil {
-			return Page{}, err
-		}
-	}
-	return result, nil
+	// Non-nil because counts were passed above; this listing always reports
+	// them. A listing that did not would leave the embedded Counts zero, and
+	// its handler would leave httpx.Meta's pointers nil.
+	return Page{Tickets: resolved.Rows, Counts: *resolved.Counts, Cursors: resolved.Cursors}, nil
 }
 
-// cursorFor mints a cursor anchored on one row.
+// cursorKey renders the anchor for one row: this listing's four ORDER BY
+// components, in declaration order, as text.
 //
 // The two derived components are recomputed in Go from the row's own status
 // and priority rather than selected back out of the CTE. They are pure
@@ -278,16 +247,13 @@ func List(ctx context.Context, db Querier, filter Filter, limit int, rawCursor s
 // projection would be a value that could disagree with the ORDER BY that
 // produced the row — and the disagreement would show as a page boundary that
 // skips or repeats a ticket.
-func cursorFor(t domain.Ticket, direction paging.Direction) (string, error) {
-	return paging.Encode(paging.Cursor{
-		Direction: direction,
-		Key: []string{
-			fmt.Sprintf("%d", sortBucket(t.Status)),
-			fmt.Sprintf("%d", sortRank(t.Priority)),
-			t.UpdatedAt.UTC().Format(time.RFC3339Nano),
-			t.ID,
-		},
-	})
+func cursorKey(t domain.Ticket) []string {
+	return []string{
+		fmt.Sprintf("%d", sortBucket(t.Status)),
+		fmt.Sprintf("%d", sortRank(t.Priority)),
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		t.ID,
+	}
 }
 
 // sortBucket and sortRank mirror sortColumns. They are the one place this
