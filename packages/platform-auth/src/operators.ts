@@ -7,9 +7,9 @@
  * operator whose grant is missing, which is a state the estate can reach by an
  * ordinary IdP mistake and cannot recover from through the console itself.
  *
- * So the estate's own operators are named here rather than only in Zitadel.
- * The list is small, exhaustive, and an ALLOWLIST: everyone else is still
- * governed entirely by their granted roles.
+ * So the estate's own operators are named here rather than only in Zitadel,
+ * and since 2026-08-20 this list is the whole door: it admits on email alone
+ * and nothing else admits at all, so a stray grant cannot let anyone else in.
  */
 
 import { CAPABILITIES, toCapabilities, type Capability } from "./capabilities";
