@@ -76,20 +76,54 @@ import { getOidcConfig, refreshAccessToken } from "./oidc";
 const RENEW_WITHIN_SECONDS = 60;
 
 /**
- * How long the refresh may hold the row lock waiting on Zitadel.
+ * How long the refresh may hold the row lock — and the pooled connection —
+ * waiting on Zitadel.
  *
- * The refresh runs INSIDE the transaction (it has to — see below), which means
- * a network call to the IdP holds `SELECT ... FOR UPDATE` on this session's row
- * for its whole duration. `refreshAccessToken` has no timeout of its own and
- * `fetch` will wait a very long time, so a hung Zitadel would otherwise pin one
- * of the pool's TWO connections and one row lock indefinitely, and every other
- * request for this session would queue behind it.
+ * The refresh runs INSIDE the transaction (it has to — see `renewUnderLock`),
+ * which means a network call to the IdP holds `SELECT ... FOR UPDATE` on this
+ * session's row for its whole duration. `refreshAccessToken` has no timeout of
+ * its own and `fetch` will wait a very long time.
+ *
+ * # THE BLAST RADIUS IS THE WHOLE CONSOLE, NOT THIS SESSION
+ *
+ * `lib/db/tesserix.ts` runs ONE pool with `max: 2`, shared by everything the
+ * console reads: CRM, tickets, audit, the sidebar. A transaction holds its
+ * connection from `BEGIN` to `COMMIT`, so an unbounded refresh does not merely
+ * queue other readers of this session's row — it takes one of the two
+ * connections out of circulation for every query in the process. Two
+ * simultaneous hanging refreshes take both, and the next caller — "a save, or
+ * an unrelated read anywhere else in the console", as `tesserixTx`'s own
+ * comment puts it — waits out `connectionTimeoutMillis` and then fails.
+ *
+ * # WHY 3 SECONDS, AND WHY IT MUST STAY BELOW connectionTimeoutMillis
+ *
+ * `connectionTimeoutMillis` in `lib/db/tesserix.ts` is 5s. THESE TWO NUMBERS
+ * ARE COUPLED, and the coupling is the reason this one is not also 5s: the
+ * connection is held for `BEGIN` + `SELECT ... FOR UPDATE` + the fetch + the
+ * `INSERT` + `COMMIT`, which is strictly LONGER than the fetch deadline. At 5s
+ * a query arriving 50ms into two simultaneous hangs would wait past its own 5s
+ * timeout and fail — the bound would be honest but untrue. 3s leaves real
+ * headroom for the surrounding statements, so the claim "a hung IdP cannot
+ * outlast a connection wait" actually holds.
+ *
+ * If either number changes, change it against the other. Raising this to meet
+ * `connectionTimeoutMillis`, or lowering `connectionTimeoutMillis` to meet
+ * this, silently reinstates the starvation.
+ *
+ * ACCEPTED, not discovered: the worst case is still a few seconds of
+ * console-wide database starvation during an IdP hang. At a refresh volume of
+ * roughly once per session per hour that is a price worth paying for a single
+ * shared pool, and it is bounded rather than open-ended.
+ *
+ * Also accepted: a slow-but-alive Zitadel answering between 3s and 5s now
+ * fails a refresh that would once have succeeded. It degrades to "the platform
+ * API is not reachable as this operator" for one render, which every caller
+ * already handles, and the next request tries again.
  *
  * IF ZITADEL IS SLOW: the wait is abandoned at this deadline, the transaction
  * ROLLS BACK (releasing the lock and the connection), the stored row is left
- * exactly as it was, and the caller gets null — "the platform API is not
- * reachable as this operator", which every caller already renders. The next
- * request retries from a clean state.
+ * exactly as it was, and the caller gets null. The next request retries from a
+ * clean state.
  *
  * The residual risk is accepted and worth naming: the abandoned request may
  * still complete at Zitadel and rotate the refresh token, in which case the
@@ -97,7 +131,7 @@ const RENEW_WITHIN_SECONDS = 60;
  * "this operator signs in again", which is strictly better than a lock held
  * until the pod is restarted.
  */
-const REFRESH_TIMEOUT_MS = 5_000;
+const REFRESH_TIMEOUT_MS = 3_000;
 
 /**
  * Memoised per request.
@@ -162,6 +196,24 @@ export const getPlatformApiToken = cache(async (): Promise<string | null> => {
  *     SELECT ... FROM operator_api_tokens WHERE sid = $1 FOR UPDATE
  *       -- re-check expiry, then refresh, then persist BOTH tokens
  *     COMMIT
+ *
+ * # The cheaper shape, and why it was rejected
+ *
+ * The obvious alternative is to refresh OUTSIDE the transaction and persist
+ * with a compare-and-set — no connection held across a network call, and none
+ * of the starvation `REFRESH_TIMEOUT_MS` is sized against. It does not work,
+ * because a CAS on the WRITE is too late: both callers have already presented
+ * the same one-use refresh token to Zitadel by the time either tries to store
+ * anything. The loser is not merely wasted — Zitadel treats a reused refresh
+ * token as theft and can revoke the ENTIRE grant, signing the operator out
+ * everywhere. That is worse than the bug being fixed.
+ *
+ * The shape that does work is claim-then-refresh-then-CAS: win a claim on the
+ * row first, refresh outside the lock, then write only if the claim still
+ * holds. It needs a `refresh_started_at`-style column migration 0029 does not
+ * have, plus a lease-expiry policy so a claimant that crashes mid-refresh does
+ * not strand the session until its access token dies. Deferred deliberately,
+ * not overlooked; the column is the cheap part and the lease policy is not.
  *
  * # The re-check is not optional
  *

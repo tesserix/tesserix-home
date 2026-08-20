@@ -423,12 +423,14 @@ describe("getPlatformApiToken", () => {
   });
 
   it("gives up on a hung Zitadel rather than holding the row lock", async () => {
-    // A network call inside an open transaction holds the row lock for its
-    // whole duration, and `fetch` waits a very long time. The deadline unwinds
-    // through ROLLBACK, so the lock and the pooled connection come back.
+    // A network call inside an open transaction holds the row lock AND one of
+    // the pool's two connections for its whole duration, and `fetch` waits a
+    // very long time — so an unbounded refresh starves every query in the
+    // console, not just this session. The deadline unwinds through ROLLBACK,
+    // so both come back.
     seedRow({ accessExpiresAt: new Date(Date.now() - 10_000) });
     state.refreshResponses = [{ access_token: "too-late", expires_in: 3_600 }];
-    // Longer than the module's 5s deadline.
+    // Comfortably longer than the module's 3s deadline.
     state.refreshDelayMs = 60_000;
 
     // The module is loaded BEFORE the clock is faked: vitest resolves a
