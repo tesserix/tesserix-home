@@ -57,6 +57,14 @@
 // package never sees — two of the ticket queue's four components are derived
 // expressions — so the caller passes a Key function and the kernel does the
 // rest.
+//
+// The second module also found the hole in "rejected when malformed": the
+// envelope was checked and the CONTENTS were not, so a two-component cursor
+// carrying ["hello","world"] decoded, reached a ::timestamptz cast, and
+// answered a bad link with a 500. Decode now takes a Shape — one Component per
+// ORDER BY component — for the same reason the count is checked and for the
+// same reason it is checked HERE: every listing binds its key positionally
+// into casts, so a module-local fix is the same check written once per module.
 package paging
 
 import (
@@ -64,6 +72,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
+	"time"
 )
 
 // Direction is which way a page lies relative to the row its cursor names, in
@@ -140,14 +151,88 @@ func Encode(c Cursor) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(body), nil
 }
 
+// Component checks ONE key component's CONTENT. It returns an error describing
+// what the value is not; Decode wraps that in ErrMalformedCursor.
+//
+// # Why content is checked here and not by the query
+//
+// This package validated a cursor's ENVELOPE — base64, version, direction,
+// component COUNT — and nothing about what the components said. So a
+// well-formed two-component cursor carrying ["hello","world"] decoded
+// perfectly, reached `$1::timestamptz`, and came back as `invalid input syntax
+// for type timestamp with time zone`: a 500 on a bad LINK. §3 is explicit that
+// a malformed cursor is a 400, and the console's own codec parses the
+// timestamp and matches the id against a UUID pattern before it queries
+// anything (apps/console/lib/db/keyset-cursor.ts).
+//
+// It lives in the kernel rather than in a module because EVERY listing binds
+// its key positionally into casts — tickets does it four components at a time,
+// the CRM queues two — so a module-local fix would be the same check written
+// twice, with the second listing to adopt it deciding whether it bothered.
+type Component func(value string) error
+
+// Shape is a listing's key: one Component per ORDER BY component, in
+// declaration order.
+//
+// It replaces the bare component COUNT this function used to take, and the
+// replacement is deliberate rather than additive: a listing that declares its
+// key's shape has, by construction, declared its length too, and a second
+// parameter for the length would be a number that could disagree with the
+// shape beside it.
+//
+// A nil or empty Shape therefore rejects every cursor Encode can mint, which
+// is the right failure for a listing that forgot to declare one.
+type Shape []Component
+
+// Text accepts anything. For a component read back into a text column, where
+// there is no shape to check and pretending otherwise would reject values the
+// query handles perfectly well.
+func Text(string) error { return nil }
+
+// Integer accepts a decimal integer — a derived sort rank, typically, bound
+// into an ::int cast.
+func Integer(value string) error {
+	if _, err := strconv.Atoi(value); err != nil {
+		return fmt.Errorf("%q is not an integer", value)
+	}
+	return nil
+}
+
+// Timestamp accepts RFC 3339, with or without fractional seconds — what every
+// cursor key in this service renders a timestamptz as.
+func Timestamp(value string) error {
+	if _, err := time.Parse(time.RFC3339Nano, value); err != nil {
+		return fmt.Errorf("%q is not an RFC 3339 timestamp", value)
+	}
+	return nil
+}
+
+// uuidPattern is the canonical 8-4-4-4-12 hex form.
+//
+// A pattern rather than a dependency: the check is "would Postgres accept this
+// into ::uuid", the answer is a shape, and this package holds nothing beyond
+// the standard library on purpose. Version and variant bits are NOT checked —
+// Postgres does not check them either, so rejecting a uuid it would have
+// accepted would be this package inventing a stricter contract than the column.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// UUID accepts the canonical hex form of a uuid.
+func UUID(value string) error {
+	if !uuidPattern.MatchString(value) {
+		return fmt.Errorf("%q is not a uuid", value)
+	}
+	return nil
+}
+
 // Decode reads a cursor from a caller-supplied string.
 //
-// `want` is the number of components the caller's ORDER BY has. Checked here
-// rather than left to the query, because binding a key of the wrong length
-// positionally is the exact misread `version` exists to prevent — and a cursor
-// minted by a different endpoint of this same service would pass every other
-// check.
-func Decode(raw string, want int) (Cursor, error) {
+// `shape` is the caller's ORDER BY, component by component. Its LENGTH is
+// checked here rather than left to the query, because binding a key of the
+// wrong length positionally is the exact misread `version` exists to prevent —
+// a cursor minted by a different endpoint of this same service would pass
+// every other check. Its COMPONENTS are checked here for the reason Component
+// records: the alternative is a bad link answered with a 500.
+func Decode(raw string, shape Shape) (Cursor, error) {
 	body, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
 		return Cursor{}, fmt.Errorf("%w: not base64url (%s)", ErrMalformedCursor, err)
@@ -165,9 +250,17 @@ func Decode(raw string, want int) (Cursor, error) {
 		// ahead instead.
 		return Cursor{}, fmt.Errorf("%w: direction %q", ErrMalformedCursor, decoded.Direction)
 	}
-	if len(decoded.Key) != want {
+	if len(decoded.Key) != len(shape) {
 		return Cursor{}, fmt.Errorf("%w: key has %d components, this listing sorts on %d",
-			ErrMalformedCursor, len(decoded.Key), want)
+			ErrMalformedCursor, len(decoded.Key), len(shape))
+	}
+	for i, check := range shape {
+		if err := check(decoded.Key[i]); err != nil {
+			// Numbered from one, and the value is named, because the only
+			// person who ever reads this is looking at a link that does not
+			// work and needs to know which part of it is wrong.
+			return Cursor{}, fmt.Errorf("%w: key component %d: %s", ErrMalformedCursor, i+1, err)
+		}
 	}
 	return Cursor{Key: decoded.Key, Direction: decoded.Direction}, nil
 }

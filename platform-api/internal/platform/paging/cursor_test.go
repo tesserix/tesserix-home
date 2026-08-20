@@ -21,7 +21,7 @@ func TestACursorSurvivesARoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	got, err := paging.Decode(encoded, len(want.Key))
+	got, err := paging.Decode(encoded, paging.Shape{paging.Integer, paging.Integer, paging.Timestamp, paging.UUID})
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestTheDirectionTravelsInsideTheCursor(t *testing.T) {
 	if forward == backward {
 		t.Fatal("two cursors differing only in direction encoded identically")
 	}
-	back, err := paging.Decode(backward, 1)
+	back, err := paging.Decode(backward, paging.Shape{paging.Text})
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestAComponentContainingTheConsolesSeparatorSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	got, err := paging.Decode(encoded, len(want))
+	got, err := paging.Decode(encoded, shapeOf(want))
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestGarbageIsRejectedRatherThanDegradedToPageOne(t *testing.T) {
 		base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"d":"sideways","k":["a"]}`)),
 		base64.RawURLEncoding.EncodeToString([]byte(`{"v":1,"k":["a"]}`)),
 	} {
-		got, err := paging.Decode(raw, 1)
+		got, err := paging.Decode(raw, paging.Shape{paging.Text})
 		if err == nil {
 			t.Errorf("Decode(%q) = %+v, nil error — want a rejection", raw, got)
 			continue
@@ -114,7 +114,7 @@ func TestACursorFromAnotherVersionIsRejected(t *testing.T) {
 	// wrong anchor, reported as a success.
 	stale := base64.RawURLEncoding.EncodeToString([]byte(`{"v":0,"d":"after","k":["a"]}`))
 
-	if _, err := paging.Decode(stale, 1); !errors.Is(err, paging.ErrMalformedCursor) {
+	if _, err := paging.Decode(stale, paging.Shape{paging.Text}); !errors.Is(err, paging.ErrMalformedCursor) {
 		t.Errorf("a cursor from another version was accepted: %v", err)
 	}
 }
@@ -128,7 +128,7 @@ func TestAKeyOfTheWrongLengthIsRejected(t *testing.T) {
 		Direction: paging.After,
 	})
 
-	if _, err := paging.Decode(fromAnotherListing, 4); !errors.Is(err, paging.ErrMalformedCursor) {
+	if _, err := paging.Decode(fromAnotherListing, paging.Shape{paging.Text, paging.Text, paging.Text, paging.Text}); !errors.Is(err, paging.ErrMalformedCursor) {
 		t.Errorf("a two-component cursor was accepted by a four-component listing: %v", err)
 	}
 }
@@ -240,5 +240,110 @@ func TestTrimmingAnEmptyFetch(t *testing.T) {
 		if len(page.Rows) != 0 {
 			t.Errorf("%s: rows = %v, want none", name, page.Rows)
 		}
+	}
+}
+
+// shapeOf is a Shape that checks only the length — for the tests whose subject
+// is the ENCODING rather than what a component says.
+func shapeOf(key []string) paging.Shape {
+	shape := make(paging.Shape, len(key))
+	for i := range shape {
+		shape[i] = paging.Text
+	}
+	return shape
+}
+
+func TestAKeyOfTheRightLengthCarryingNonsenseIsRejected(t *testing.T) {
+	// The 500 this Shape exists to prevent. Before it, a two-component cursor
+	// carrying ["hello","world"] passed every envelope check, reached
+	// `$1::timestamptz`, and came back as `invalid input syntax for type
+	// timestamp with time zone` — a server error on a bad LINK, which §3 says
+	// is a 400. The console rejects the same input before it queries anything.
+	nonsense, err := paging.Encode(paging.Cursor{
+		Key:       []string{"hello", "world"},
+		Direction: paging.After,
+	})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	got, err := paging.Decode(nonsense, paging.Shape{paging.Timestamp, paging.UUID})
+	if err == nil {
+		t.Fatalf("Decode = %+v, nil error — want a rejection", got)
+	}
+	if !errors.Is(err, paging.ErrMalformedCursor) {
+		t.Errorf("error does not unwrap to ErrMalformedCursor, so a handler would answer 500: %v", err)
+	}
+	// The message names the component, because the only reader is looking at a
+	// link that does not work.
+	if !strings.Contains(err.Error(), "component 1") {
+		t.Errorf("error does not say which component is wrong: %v", err)
+	}
+}
+
+func TestEachComponentCheckerAcceptsWhatItsColumnAccepts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		check paging.Component
+		good  []string
+		bad   []string
+	}{
+		{
+			name:  "Integer",
+			check: paging.Integer,
+			good:  []string{"0", "3", "-1"},
+			bad:   []string{"", "1.5", "one", "0x1", " 1"},
+		},
+		{
+			name:  "Timestamp",
+			check: paging.Timestamp,
+			// With and without fractional seconds, and with an offset: every
+			// form a cursor key in this service renders a timestamptz as.
+			good: []string{"2026-08-19T09:41:02Z", "2026-08-19T09:41:02.5Z",
+				"2026-08-19T09:41:02.123456789Z", "2026-08-19T09:41:02+05:30"},
+			bad: []string{"", "2026-08-19", "yesterday", "1755600000"},
+		},
+		{
+			name:  "UUID",
+			check: paging.UUID,
+			good: []string{"3f2a1c94-0000-4000-8000-000000000001",
+				"3F2A1C94-0000-4000-8000-000000000001"},
+			bad: []string{"", "x", "3f2a1c9400004000800000000000001",
+				"3f2a1c94-0000-4000-8000-00000000000g"},
+		},
+		{
+			// The escape hatch, and it must stay one: a text column has no
+			// shape to check, and inventing one would reject values the query
+			// handles perfectly well.
+			name:  "Text",
+			check: paging.Text,
+			good:  []string{"", "anything at all", "\x00"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, value := range tc.good {
+				if err := tc.check(value); err != nil {
+					t.Errorf("%q was rejected: %v", value, err)
+				}
+			}
+			for _, value := range tc.bad {
+				if err := tc.check(value); err == nil {
+					t.Errorf("%q was accepted", value)
+				}
+			}
+		})
+	}
+}
+
+func TestAListingThatDeclaresNoShapeAcceptsNoCursor(t *testing.T) {
+	// A nil Shape is a listing that forgot to say what its key is. Every
+	// cursor Encode can mint has at least one component, so every one of them
+	// fails the length check — which is the loud failure, not a quiet
+	// pass-through.
+	raw, err := paging.Encode(paging.Cursor{Key: []string{"a"}, Direction: paging.After})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if _, err := paging.Decode(raw, nil); !errors.Is(err, paging.ErrMalformedCursor) {
+		t.Errorf("a nil shape accepted a cursor: %v", err)
 	}
 }

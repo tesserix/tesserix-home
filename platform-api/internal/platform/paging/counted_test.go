@@ -45,7 +45,7 @@ func equalInts(a, b []int) bool {
 
 func mustDecode(t *testing.T, raw string) paging.Cursor {
 	t.Helper()
-	c, err := paging.Decode(raw, 1)
+	c, err := paging.Decode(raw, paging.Shape{paging.Text})
 	if err != nil {
 		t.Fatalf("Decode(%q): %v", raw, err)
 	}

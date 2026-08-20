@@ -86,11 +86,16 @@ const (
 	backwardOrder = "DESC"
 )
 
-// sortComponents is how many values a cursor for these listings carries.
-// Passed to paging.Decode so a cursor minted by the ticket queue — which sorts
-// on four — is rejected rather than bound positionally against two columns
-// that mean something else.
-const sortComponents = 2
+// sortShape is both queues' key, component by component: the queue's timestamp,
+// then id.
+//
+// Passed to paging.Decode, which checks the COUNT — so a cursor minted by the
+// ticket queue, which sorts on four, is rejected rather than bound
+// positionally against two columns that mean something else — and the CONTENT,
+// so a well-formed two-component cursor carrying ["hello","world"] is a 400
+// rather than an `invalid input syntax for type timestamp with time zone`
+// arriving from `$1::timestamptz` as a 500.
+var sortShape = paging.Shape{paging.Timestamp, paging.UUID}
 
 // Page is one page of a queue plus the counts a caller needs to describe it
 // honestly.
@@ -203,7 +208,7 @@ func queuePage(ctx context.Context, db Querier, q queue, filter domain.Filter, l
 	}
 	var cursor *paging.Cursor
 	if rawCursor != "" {
-		decoded, err := paging.Decode(rawCursor, sortComponents)
+		decoded, err := paging.Decode(rawCursor, sortShape)
 		if err != nil {
 			return Page{}, err
 		}
@@ -223,7 +228,10 @@ func queuePage(ctx context.Context, db Querier, q queue, filter domain.Filter, l
 	// plus everything ahead of it. paging.Resolve subtracts the page's own
 	// length; nothing here pre-adjusts it.
 	countArgs := make([]any, 0, 8)
-	countWhere := where(q, filter, &countArgs)
+	countWhere, err := where(q, filter, &countArgs)
+	if err != nil {
+		return Page{}, err
+	}
 	precedingSelect := "0"
 	if cursor != nil {
 		comparison := "<="
@@ -247,7 +255,10 @@ func queuePage(ctx context.Context, db Querier, q queue, filter domain.Filter, l
 	}
 
 	pageArgs := make([]any, 0, 8)
-	pageWhere := where(q, filter, &pageArgs)
+	pageWhere, err := where(q, filter, &pageArgs)
+	if err != nil {
+		return Page{}, err
+	}
 	if cursor != nil {
 		comparison := ">"
 		if backwards {
@@ -338,10 +349,14 @@ func cursorKey(q queue) paging.Key[domain.Opportunity] {
 // indexes (crm_opp_due_idx, crm_opp_drifting_idx) are defined on, and writing
 // them first keeps the statement readable as "this queue, narrowed" rather
 // than as an undifferentiated conjunction.
-func where(q queue, filter domain.Filter, args *[]any) string {
+func where(q queue, filter domain.Filter, args *[]any) (string, error) {
 	clauses := []string{q.predicate(args)}
-	clauses = append(clauses, filterClauses(filter, args)...)
-	return strings.Join(clauses, "\n            AND ")
+	filters, err := filterClauses(filter, args)
+	if err != nil {
+		return "", err
+	}
+	clauses = append(clauses, filters...)
+	return strings.Join(clauses, "\n            AND "), nil
 }
 
 // filterClauses builds the five-axis filter, appending every value as a bound
@@ -349,7 +364,7 @@ func where(q queue, filter domain.Filter, args *[]any) string {
 //
 // An absent axis adds no clause at all, so the queue's own predicates stay
 // first and unmodified whatever filters are active.
-func filterClauses(filter domain.Filter, args *[]any) []string {
+func filterClauses(filter domain.Filter, args *[]any) ([]string, error) {
 	var clauses []string
 	bind := func(value any) int {
 		*args = append(*args, value)
@@ -394,10 +409,14 @@ func filterClauses(filter domain.Filter, args *[]any) []string {
 		clauses = append(clauses, fmt.Sprintf("g.country = $%d", bind(filter.Country.Value())))
 	}
 
-	if clause := followerClause(filter.Followers, args); clause != "" {
+	clause, err := followerClause(filter.Followers, args)
+	if err != nil {
+		return nil, err
+	}
+	if clause != "" {
 		clauses = append(clauses, clause)
 	}
-	return clauses
+	return clauses, nil
 }
 
 // primaryContactOrder is the one ordering that decides which contact is "the
@@ -423,9 +442,9 @@ const primaryContactOrder = `c2.is_primary DESC, c2.created_at ASC, c2.id ASC`
 // the exclusion holds either way — but leaving it implicit would make that
 // reliance invisible to the next reader, and the top band has no upper bound
 // to rely on at all.
-func followerClause(followers domain.Match, args *[]any) string {
+func followerClause(followers domain.Match, args *[]any) (string, error) {
 	if followers.IsAny() {
-		return ""
+		return "", nil
 	}
 	if followers.IsUnset() {
 		// The complement of every band: this organisation has no primary
@@ -442,15 +461,18 @@ func followerClause(followers domain.Match, args *[]any) string {
 		// excluding it would leave it reachable from no follower option at
 		// all — the very defect this option exists to fix. Bands ∪ unset
 		// therefore covers every row.
-		return primaryContactExists("NOT EXISTS", "")
+		return primaryContactExists("NOT EXISTS", ""), nil
 	}
 	// Validated by domain.Filter.Validate before any query ran, so the band is
-	// known here. Checked anyway rather than dereferenced blind: a second
-	// caller added later would otherwise turn a missing check into a predicate
-	// built from a zero bound.
+	// known here. Checked anyway rather than dereferenced blind — and the
+	// check FAILS CLOSED. Returning "" would drop the filter and answer an
+	// UNFILTERED queue, reported as a success, which is the broader-result-set
+	// failure the whole validation budget of this package is spent avoiding.
+	// A future second caller that skips Validate gets an error, not more rows
+	// than it asked for.
 	bounds, ok := domain.FollowerBand(followers.Value()).Bounds()
 	if !ok {
-		return ""
+		return "", fmt.Errorf("followers: %q is not a follower band", followers.Value())
 	}
 	*args = append(*args, bounds.Min)
 	test := fmt.Sprintf("\n               AND c.followers_count >= $%d", len(*args))
@@ -458,7 +480,7 @@ func followerClause(followers domain.Match, args *[]any) string {
 		*args = append(*args, bounds.Max)
 		test += fmt.Sprintf("\n               AND c.followers_count <= $%d", len(*args))
 	}
-	return primaryContactExists("EXISTS", test)
+	return primaryContactExists("EXISTS", test), nil
 }
 
 // primaryContactExists writes the correlated subquery both follower branches

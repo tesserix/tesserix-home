@@ -3,7 +3,7 @@ package repository_test
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"testing"
 	"time"
 
@@ -217,6 +217,13 @@ func TestTheBandsAndUnsetPartitionEveryRow(t *testing.T) {
 }
 
 func TestTheBandEdgesAreInclusiveOnBothSides(t *testing.T) {
+	// Asserted as a SET — sorted, then compared exactly. An earlier version of
+	// this test used strings.Contains over the joined labels and would have
+	// passed the very defect it exists to catch: "9999" contains "999", so
+	// under1k wrongly returning the 9999-follower organisation instead of the
+	// 999-follower one satisfied both the length check and the substring
+	// check. The four fixture rows share a next_action_at and come back in
+	// uuid order, which is why the comparison sorts rather than assuming one.
 	w := newWorld(t)
 	for _, edge := range []struct {
 		name  string
@@ -233,20 +240,15 @@ func TestTheBandEdgesAreInclusiveOnBothSides(t *testing.T) {
 		{"k1to10k", []string{"1000", "9999"}},
 		{"over10k", []string{"10000"}},
 	} {
-		page, err := repository.Due(w.ctx, w.pool, domain.Filter{Followers: domain.Is(tc.band)}, 50, "")
-		if err != nil {
-			t.Fatalf("Due(%s): %v", tc.band, err)
-		}
-		got := labels(page.Opportunities)
-		if len(got) != len(tc.want) {
-			t.Errorf("%s = %v, want %v", tc.band, got, tc.want)
-			continue
-		}
-		for _, want := range tc.want {
-			if !strings.Contains(strings.Join(got, ","), want) {
-				t.Errorf("%s = %v, want it to contain %q", tc.band, got, want)
+		t.Run(tc.band, func(t *testing.T) {
+			page, err := repository.Due(w.ctx, w.pool, domain.Filter{Followers: domain.Is(tc.band)}, 50, "")
+			if err != nil {
+				t.Fatalf("Due: %v", err)
 			}
-		}
+			if got := sortedLabels(page.Opportunities); !equal(got, tc.want) {
+				t.Errorf("%s = %v, want exactly %v", tc.band, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -272,6 +274,11 @@ func filterWorld(t *testing.T) *world {
 		stage: domain.StageQualified, owner: ptr("100% Committed"), nextActionAt: w.ago(3 * day)})
 	w.opportunity(oppSpec{org: "india", label: "d",
 		stage: domain.StageNew, nextActionAt: w.ago(2 * day)})
+	// A literal backslash in an owner name. Contrived as a name, and exactly
+	// the character whose escaping order decides whether the other two escapes
+	// survive.
+	w.opportunity(oppSpec{org: "india", label: "e", product: ptr("mark8ly"),
+		stage: domain.StageNew, owner: ptr(`DOMAIN\user`), nextActionAt: w.ago(day)})
 	return w
 }
 
@@ -282,7 +289,7 @@ func TestEachFilterAxisNarrowsOnItsOwn(t *testing.T) {
 		filter domain.Filter
 		want   []string
 	}{
-		{"product", domain.Filter{Product: domain.Is("mark8ly")}, []string{"a"}},
+		{"product", domain.Filter{Product: domain.Is("mark8ly")}, []string{"a", "e"}},
 		// The busiest option on this axis, not an edge case: every import and
 		// every migrated lead lands with a null product.
 		{"product unset", domain.Filter{Product: domain.Unset()}, []string{"b", "d"}},
@@ -294,9 +301,14 @@ func TestEachFilterAxisNarrowsOnItsOwn(t *testing.T) {
 		// "everything" is worse than one that matches nothing.
 		{"owner with a literal percent", domain.Filter{Owner: "%"}, []string{"c"}},
 		{"owner with a literal underscore", domain.Filter{Owner: "_"}, nil},
-		{"country", domain.Filter{Country: domain.Is("IN")}, []string{"a", "d"}},
+		// The backslash is escaped FIRST, so it does not double-escape the
+		// characters it is about to introduce — and it is the one whose
+		// ordering bug would be subtlest, because getting it wrong turns the
+		// escape character itself into an unterminated escape sequence.
+		{"owner with a literal backslash", domain.Filter{Owner: `\`}, []string{"e"}},
+		{"country", domain.Filter{Country: domain.Is("IN")}, []string{"a", "d", "e"}},
 		{"country unset", domain.Filter{Country: domain.Unset()}, []string{"c"}},
-		{"followers", domain.Filter{Followers: domain.Is("k1to10k")}, []string{"a", "d"}},
+		{"followers", domain.Filter{Followers: domain.Is("k1to10k")}, []string{"a", "d", "e"}},
 		{"followers unset", domain.Filter{Followers: domain.Unset()}, []string{"c"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -554,11 +566,175 @@ func TestACursorFromAListingThatSortsDifferentlyIsRejected(t *testing.T) {
 	}
 }
 
+func TestAWellFormedCursorCarryingNonsenseIsRefusedBeforeAnyQueryRuns(t *testing.T) {
+	// Two components, right version, valid direction — everything the
+	// envelope checks — and content that is neither a timestamp nor a uuid.
+	// Before paging.Shape this decoded cleanly, reached `$1::timestamptz` and
+	// came back as a 500 on what is actually a bad link. This pins that both
+	// queues declare a shape, not just that the kernel has one.
+	nonsense, err := paging.Encode(paging.Cursor{
+		Direction: paging.After,
+		Key:       []string{"hello", "world"},
+	})
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"due", func() error {
+			_, err := repository.Due(context.Background(), refusing{t}, domain.Filter{}, 50, nonsense)
+			return err
+		}},
+		{"drifting", func() error {
+			_, err := repository.Drifting(context.Background(), refusing{t}, domain.Filter{}, 7, 50, nonsense)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, paging.ErrMalformedCursor) {
+				t.Errorf("err = %v, want a malformed-cursor rejection so the handler answers 400", err)
+			}
+		})
+	}
+}
+
 func TestANegativeStaleWindowIsRefusedBeforeAnyQueryRuns(t *testing.T) {
 	// It asks for rows quiet since the future, which is empty — and answering
 	// "no drifting leads" to a caller bug is the silent success this package
 	// spends its validation on avoiding.
 	if _, err := repository.Drifting(context.Background(), refusing{t}, domain.Filter{}, -1, 50, ""); err == nil {
 		t.Error("Drifting accepted a negative staleness window")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Paging the DRIFTING queue, whose sort key is an expression
+// ---------------------------------------------------------------------------
+
+func TestPagingTheDriftingQueueWalksTheCoalescedSortKey(t *testing.T) {
+	// Every other keyset test here pages `Due`, whose sort key is a bare
+	// column. Drifting's is COALESCE(last_contacted_at, created_at) — the only
+	// expression in the module, and precisely the case appendAnchor's explicit
+	// ::timestamptz cast was written for, because one side of the comparison
+	// is not a column whose type the planner can read off.
+	//
+	// The fixture alternates between the two branches of the COALESCE, so a
+	// predicate that compared against last_contacted_at alone would order the
+	// never-contacted rows wrongly rather than not at all.
+	w := newWorld(t)
+	w.org(orgSpec{name: "acme"})
+	w.opportunity(oppSpec{org: "acme", label: "a", lastContactedAt: w.ago(50 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "b", createdAt: w.ago(40 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "c", lastContactedAt: w.ago(30 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "d", createdAt: w.ago(25 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "e", lastContactedAt: w.ago(20 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "f", createdAt: w.ago(10 * day)})
+
+	var walked []string
+	cursor := ""
+	for range 10 {
+		page, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 2, cursor)
+		if err != nil {
+			t.Fatalf("Drifting(cursor=%q): %v", cursor, err)
+		}
+		if page.Total != 6 {
+			t.Errorf("Total = %d, want 6", page.Total)
+		}
+		walked = append(walked, labels(page.Opportunities)...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	want := []string{"a", "b", "c", "d", "e", "f"}
+	if !equal(walked, want) {
+		t.Errorf("walked\n  %v\nwant\n  %v", walked, want)
+	}
+}
+
+func TestSteppingBackThroughTheDriftingQueue(t *testing.T) {
+	// The backward comparison over the same expression, flipped, with the
+	// anchor bound through the same cast.
+	w := newWorld(t)
+	w.org(orgSpec{name: "acme"})
+	w.opportunity(oppSpec{org: "acme", label: "a", lastContactedAt: w.ago(50 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "b", createdAt: w.ago(40 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "c", lastContactedAt: w.ago(30 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "d", createdAt: w.ago(25 * day)})
+
+	first, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 2, "")
+	if err != nil {
+		t.Fatalf("page 1: %v", err)
+	}
+	second, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 2, first.NextCursor)
+	if err != nil {
+		t.Fatalf("page 2: %v", err)
+	}
+	back, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 2, second.PreviousCursor)
+	if err != nil {
+		t.Fatalf("stepping back: %v", err)
+	}
+	if got := labels(back.Opportunities); !equal(got, []string{"a", "b"}) {
+		t.Errorf("back = %v, want [a b] in display order", got)
+	}
+	if back.Preceding != 0 {
+		t.Errorf("Preceding = %d, want 0 — the backward count was not corrected", back.Preceding)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A filter and a cursor at once
+// ---------------------------------------------------------------------------
+
+func TestAFilteredQueuePagesOverTheMatchingRowsAlone(t *testing.T) {
+	// The count statement and the page statement share a filter prefix and
+	// then append DIFFERENT trailing parameters — the count adds the anchor,
+	// the page adds the anchor and a limit — so their numbering diverges after
+	// that prefix. Nothing pinned it before this test, and a misnumbering
+	// would show as a page and a total describing different sets rather than
+	// as an error.
+	//
+	// It also pins the property Ruling 11 is about: the filter is applied
+	// BEFORE the limit, so a matching row ranked below the first page's
+	// cut-off still appears — filtering a fetched page in Go would drop it
+	// silently.
+	w := newWorld(t)
+	w.org(orgSpec{name: "india", country: ptr("IN")})
+	w.org(orgSpec{name: "australia", country: ptr("AU")})
+	var want []string
+	for i := range 9 {
+		org, label := "india", fmt.Sprintf("in-%d", i)
+		if i%2 == 1 {
+			org, label = "australia", fmt.Sprintf("au-%d", i)
+		} else {
+			want = append(want, label)
+		}
+		w.opportunity(oppSpec{org: org, label: label, nextActionAt: w.ago(time.Duration(20-i) * day)})
+	}
+
+	filter := domain.Filter{Country: domain.Is("IN")}
+	var walked []string
+	cursor := ""
+	for range 10 {
+		page, err := repository.Due(w.ctx, w.pool, filter, 2, cursor)
+		if err != nil {
+			t.Fatalf("Due(cursor=%q): %v", cursor, err)
+		}
+		if page.Total != int64(len(want)) {
+			t.Errorf("Total = %d, want %d on every page of a filtered walk", page.Total, len(want))
+		}
+		if got := page.Preceding; got != len(walked) {
+			t.Errorf("Preceding = %d after %d rows walked", got, len(walked))
+		}
+		walked = append(walked, labels(page.Opportunities)...)
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if !equal(walked, want) {
+		t.Errorf("walked\n  %v\nwant\n  %v", walked, want)
 	}
 }

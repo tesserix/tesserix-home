@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -150,6 +151,15 @@ func labels(rows []domain.Opportunity) []string {
 		}
 		out[i] = *r.NextActionNote
 	}
+	return out
+}
+
+// sortedLabels is labels() for an assertion whose subject is WHICH rows came
+// back rather than in what order — rows sharing a sort timestamp come back in
+// uuid order, which is stable but not predictable from the fixture.
+func sortedLabels(rows []domain.Opportunity) []string {
+	out := labels(rows)
+	slices.Sort(out)
 	return out
 }
 

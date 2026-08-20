@@ -74,10 +74,15 @@ const sortColumns = `
 		WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4
 	END AS sort_rank`
 
-// sortComponents is how many values a cursor for this listing carries. Passed
-// to paging.Decode so a cursor minted by a different listing is rejected
-// rather than bound positionally against the wrong columns.
-const sortComponents = 4
+// sortShape is this listing's key, component by component: the two derived
+// integers, then updated_at, then id.
+//
+// Passed to paging.Decode, which checks both the COUNT and the CONTENT — so a
+// cursor minted by a different listing is rejected rather than bound
+// positionally against the wrong columns, and a well-formed cursor carrying
+// nonsense in the right number of slots is a 400 rather than a ::timestamptz
+// cast error surfacing as a 500.
+var sortShape = paging.Shape{paging.Integer, paging.Integer, paging.Timestamp, paging.UUID}
 
 // The keyset predicate and the ORDER BY, written as one direction.
 //
@@ -140,7 +145,7 @@ type Page struct {
 func List(ctx context.Context, db Querier, filter Filter, limit int, rawCursor string) (Page, error) {
 	var cursor *paging.Cursor
 	if rawCursor != "" {
-		decoded, err := paging.Decode(rawCursor, sortComponents)
+		decoded, err := paging.Decode(rawCursor, sortShape)
 		if err != nil {
 			// Before either query runs, so a bad cursor costs no round trip.
 			return Page{}, err
