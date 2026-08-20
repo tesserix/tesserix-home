@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets/internal/repository"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/write"
 )
 
 // ErrRefused means the request was understood and the domain declined it —
@@ -115,17 +115,10 @@ func (s *Service) Detail(ctx context.Context, id string) (DetailPayload, error) 
 }
 
 // ---- writes -------------------------------------------------------------
-
-// Written is what a write produced: the status and body to answer with.
 //
-// The body is already JSON because it may have been stored for replay inside
-// the transaction that produced it — see perform. A caller writes it through
-// the envelope like any other payload; json.RawMessage passes through
-// unchanged.
-type Written struct {
-	Status int
-	Body   json.RawMessage
-}
+// Every write goes through write.Perform, which binds it to its audit row and
+// its idempotency record in one transaction. What is left here is the domain:
+// what to do, what to answer with, and what to call the action in the trail.
 
 // ReplyInput is a new message, optionally transitioning the ticket with it.
 type ReplyInput struct {
@@ -142,18 +135,18 @@ type ReplyInput struct {
 }
 
 // Reply appends a message and, optionally, transitions the ticket.
-func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input ReplyInput, key *idempotency.Key) (Written, error) {
+func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input ReplyInput, key *idempotency.Key) (write.Result, error) {
 	content := strings.TrimSpace(input.Content)
 	if content == "" {
 		// Trimmed first: a reply of spaces is an empty reply, and storing one
 		// would put a blank message on a merchant's thread.
-		return Written{}, fmt.Errorf("%w: a reply needs content", ErrRefused)
+		return write.Result{}, fmt.Errorf("%w: a reply needs content", ErrRefused)
 	}
 	if len(content) > domain.MaxReplyLength {
-		return Written{}, fmt.Errorf("%w: a reply is limited to %d characters", ErrRefused, domain.MaxReplyLength)
+		return write.Result{}, fmt.Errorf("%w: a reply is limited to %d characters", ErrRefused, domain.MaxReplyLength)
 	}
 
-	return s.perform(ctx, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
+	return write.Perform(ctx, s.pool, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
 		ticket, err := repository.Get(ctx, tx, ticketID)
 		if err != nil {
 			return nil, audit.Entry{}, 0, err
@@ -207,8 +200,8 @@ func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input
 }
 
 // SetStatus transitions a ticket.
-func (s *Service) SetStatus(ctx context.Context, actor Actor, ticketID string, to domain.Status, key *idempotency.Key) (Written, error) {
-	return s.perform(ctx, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
+func (s *Service) SetStatus(ctx context.Context, actor Actor, ticketID string, to domain.Status, key *idempotency.Key) (write.Result, error) {
+	return write.Perform(ctx, s.pool, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
 		ticket, err := repository.Get(ctx, tx, ticketID)
 		if err != nil {
 			return nil, audit.Entry{}, 0, err
@@ -237,101 +230,4 @@ func (s *Service) SetStatus(ctx context.Context, actor Actor, ticketID string, t
 			Summary: map[string]int{"status_changes": 1},
 		}, http.StatusOK, nil
 	})
-}
-
-// operation is one write: it does the work, and says what to record and what
-// to answer with.
-type operation func(ctx context.Context, tx pgx.Tx) (payload any, entry audit.Entry, status int, err error)
-
-// perform runs a write, its audit row and its idempotency record in ONE
-// transaction.
-//
-// # Why all three are in the same transaction
-//
-// The audit row: ADR-003 D2a cites `auditedOperation`'s guarantee — that an
-// unauditable operation does not proceed — as a reason not to split these
-// modules into services. Here the guarantee is structural rather than ordered:
-// a failed audit rolls the write back, and there is no window in which the
-// write has landed and the record has not.
-//
-// The idempotency record: a key in the table must always correspond to a
-// committed write. Recording outside the transaction would refuse the retry of
-// a request that never landed, which is worse than not having the feature at
-// all — the caller would be told their write was already applied.
-//
-// # This is a candidate for the kernel, not yet kernel
-//
-// Every module's writes will want exactly this. It stays here until a second
-// module needs it, because a shape extracted from one example is a guess: the
-// second module is what will show whether the seam is where it looks.
-func (s *Service) perform(ctx context.Context, key *idempotency.Key, op operation) (Written, error) {
-	// The replay check runs OUTSIDE the transaction and before the work. A
-	// retry should cost a single indexed lookup, not a transaction that does
-	// the whole operation and then discards it.
-	if key != nil {
-		stored, err := idempotency.Lookup(ctx, s.pool, *key)
-		if err != nil {
-			return Written{}, err
-		}
-		if stored != nil {
-			return Written{Status: stored.Status, Body: stored.Body}, nil
-		}
-	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Written{}, fmt.Errorf("beginning a write: %w", err)
-	}
-	// Rollback on every path that is not an explicit commit. On the committed
-	// path this is a no-op.
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	payload, entry, status, err := op(ctx, tx)
-	if err != nil {
-		return Written{}, err
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		// Inside the transaction on purpose: the stored replay body must be
-		// the same bytes the first caller received, and marshalling after the
-		// commit would leave a committed write with nothing recorded for it.
-		return Written{}, fmt.Errorf("encoding the response: %w", err)
-	}
-
-	if err := audit.Write(ctx, tx, entry); err != nil {
-		return Written{}, err
-	}
-
-	if key != nil {
-		won, err := idempotency.Record(ctx, tx, *key, status, body)
-		if err != nil {
-			return Written{}, err
-		}
-		if !won {
-			// A concurrent request with the same key committed first. Ours is
-			// the duplicate: abandon it — the deferred rollback does that —
-			// and answer with what the winner produced.
-			//
-			// Reached only under a genuine double-submit, which is exactly
-			// what the key exists to make harmless.
-			stored, err := idempotency.Lookup(ctx, s.pool, *key)
-			if err != nil {
-				return Written{}, err
-			}
-			if stored == nil {
-				// The winner committed its key and then... did not. Not
-				// reachable through this code path, since Record and the
-				// commit share a transaction, but reported rather than
-				// retried: an unexplained state should not become a loop.
-				return Written{}, errors.New("an idempotency key was claimed by a request that left no response")
-			}
-			return Written{Status: stored.Status, Body: stored.Body}, nil
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return Written{}, fmt.Errorf("committing a write: %w", err)
-	}
-	return Written{Status: status, Body: body}, nil
 }

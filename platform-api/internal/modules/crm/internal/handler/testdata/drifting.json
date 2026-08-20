@@ -1,0 +1,27 @@
+{
+  "success": true,
+  "data": {
+    "opportunities": [
+      {
+        "id": "<uuid>",
+        "organisation_id": "<uuid>",
+        "organisation_name": "Acme",
+        "product": "mark8ly",
+        "stage": "contacted",
+        "owner": "Priya Raman",
+        "next_action_at": null,
+        "next_action_note": "acme-quiet",
+        "last_contacted_at": "<timestamp>",
+        "quiet_since": "<timestamp>",
+        "is_starred": false
+      }
+    ]
+  },
+  "meta": {
+    "preceding_count": 0,
+    "total": 1,
+    "limit": 50
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

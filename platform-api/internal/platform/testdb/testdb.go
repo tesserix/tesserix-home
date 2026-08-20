@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -90,7 +91,7 @@ func New(t *testing.T) *pgxpool.Pool {
 	}
 	defer admin.Close()
 
-	name := databaseName(t)
+	name := databaseName(t, callerPackage(1))
 	// Dropped first so a crashed previous run cannot make this one fail for a
 	// reason that has nothing to do with the code under test.
 	if _, err := admin.Exec(ctx, `DROP DATABASE IF EXISTS "`+name+`" WITH (FORCE)`); err != nil {
@@ -124,17 +125,57 @@ func New(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// databaseName derives a legal, unique identifier from the test's name.
+// databaseName derives a legal identifier that is unique across the WHOLE test
+// binary set, not just within one package.
+//
+// # Why the package is part of the name
+//
+// It was not, and that was a real defect rather than a theoretical one: the
+// name came from t.Name() alone, so two packages with a test of the same name
+// resolved to the same database. `go test ./...` runs packages concurrently
+// and New does a non-atomic DROP IF EXISTS followed by CREATE, so whichever
+// lost got `duplicate key ... pg_database_datname_index` — a failure in a
+// package the change under test had never touched.
+//
+// It fired for real. `TestAnUnauditableOperationDoesNotProceed` is a good name
+// for the guarantee it checks, and both internal/platform/audit and
+// internal/platform/write check that guarantee. Neither test is wrong. The
+// helper was, and renaming one of them would have left the trap armed for the
+// next module or extraction that reaches for the same obvious name.
+//
+// # Why a base name AND a hash
+//
+// The base directory name (`audit`, `repository`) is there so the database
+// visible in `\l` on a debugging session says which package owns it. It is not
+// enough on its own — every module has an `internal/repository`, so two of
+// those would collide exactly as the tests did. The hash of the FULL package
+// directory is what actually guarantees uniqueness; the base name is what
+// makes it readable.
+//
+// # Why the characters are restricted
 //
 // Interpolated into DDL, where a parameter is not accepted — so it is
 // restricted to characters that cannot escape an identifier rather than
 // quoted and hoped for. Test names are developer-authored, but a name
 // containing a quote would produce a confusing syntax error rather than an
 // obvious one.
-func databaseName(t *testing.T) string {
+func databaseName(t *testing.T, pkgDir string) string {
+	prefix := "pa_test_" + sanitiseIdentifier(filepath.Base(pkgDir)) + "_" + shortHash(pkgDir) + "_"
+	name := prefix + sanitiseIdentifier(t.Name())
+	// Postgres truncates identifiers at 63 bytes, which would collide two long
+	// test names onto one database. Truncating from the END of the TEST NAME
+	// keeps the part of a Go test name that actually distinguishes it — and
+	// keeps the whole prefix, without which the cross-package collision this
+	// function exists to prevent would come back for long test names only.
+	if len(name) > 63 {
+		name = prefix + name[len(name)-(63-len(prefix)):]
+	}
+	return name
+}
+
+func sanitiseIdentifier(s string) string {
 	var b strings.Builder
-	b.WriteString("pa_test_")
-	for _, r := range strings.ToLower(t.Name()) {
+	for _, r := range strings.ToLower(s) {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
@@ -142,14 +183,33 @@ func databaseName(t *testing.T) string {
 			b.WriteByte('_')
 		}
 	}
-	name := b.String()
-	// Postgres truncates identifiers at 63 bytes, which would collide two long
-	// test names onto one database. Truncating from the END keeps the part of
-	// a Go test name that actually distinguishes it.
-	if len(name) > 63 {
-		name = name[len(name)-63:]
+	return b.String()
+}
+
+// shortHash is 8 hex digits of FNV-1a. Not cryptographic and does not need to
+// be: it distinguishes a fixed, small set of package directories in one
+// repository, where a collision would be visible as a test failure on the
+// first run rather than as anything subtle.
+func shortHash(s string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	return fmt.Sprintf("%08x", h.Sum32())
+}
+
+// callerPackage is the directory of the file `skip` frames up — that is, the
+// package whose test called New.
+//
+// The directory rather than the import path because runtime.Caller reports a
+// file, and deriving one from the other would need the module path. The
+// directory is already unique per package, which is all the hash needs.
+func callerPackage(skip int) string {
+	_, file, _, ok := runtime.Caller(skip + 1)
+	if !ok {
+		// Every database would then share one prefix, which is exactly the old
+		// behaviour — degraded, but no worse, and not silent: the name says so.
+		return "unknowncaller"
 	}
-	return name
+	return filepath.Dir(file)
 }
 
 func dsn(database string) string {

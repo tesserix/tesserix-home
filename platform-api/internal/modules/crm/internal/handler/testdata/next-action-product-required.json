@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "this opportunity was migrated without a product and cannot be updated until one is set (it is at stage \"qualified\")"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

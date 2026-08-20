@@ -1,0 +1,17 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "the filter is not valid: stage: \"won\" is terminal; neither queue contains a won or lost opportunity",
+    "details": {
+      "accepted": [
+        "new",
+        "contacted",
+        "qualified"
+      ],
+      "stage": "won"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

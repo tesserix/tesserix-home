@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "data": {
+    "opportunity": {
+      "id": "<uuid>",
+      "organisation_id": "<uuid>",
+      "organisation_name": "Acme",
+      "product": "mark8ly",
+      "stage": "contacted",
+      "owner": "Priya Raman",
+      "next_action_at": "<timestamp>",
+      "next_action_note": "send the quote",
+      "last_contacted_at": null,
+      "quiet_since": "<timestamp>",
+      "is_starred": false
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

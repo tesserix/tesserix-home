@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "no such opportunity"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

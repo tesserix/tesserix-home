@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "limit must be at least 1",
+    "details": {
+      "limit": "0"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

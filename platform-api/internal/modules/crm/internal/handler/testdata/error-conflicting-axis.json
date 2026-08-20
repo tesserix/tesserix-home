@@ -1,0 +1,13 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "product and product_unset cannot both be given",
+    "details": {
+      "product": "mark8ly",
+      "product_unset": "true"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "data": {
+    "opportunities": []
+  },
+  "meta": {
+    "preceding_count": 0,
+    "total": 0,
+    "limit": 50
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
