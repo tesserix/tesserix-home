@@ -28,6 +28,14 @@ COPY platform-api/ ./
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w -buildid=" -o /out/server ./cmd/server
 
+# The AI usage ingest ships in the same image and runs as its own Deployment,
+# with the chart overriding the entrypoint. One image because the two binaries
+# share the module and must never drift apart in the ledger's shape; two
+# Deployments because a burst of gateway telemetry must not contend with an
+# operator's page load.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w -buildid=" -o /out/ai-usage-ingest ./cmd/ai-usage-ingest
+
 # Static, non-root, no shell and no package manager. The service needs a TCP
 # socket and CA certificates and nothing else, and a distroless image means a
 # CVE in a utility this service never calls does not become this service's
@@ -36,6 +44,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 WORKDIR /app
 COPY --from=builder --chown=nonroot:nonroot /out/server /app/server
+COPY --from=builder --chown=nonroot:nonroot /out/ai-usage-ingest /app/ai-usage-ingest
 
 USER nonroot:nonroot
 EXPOSE 8080

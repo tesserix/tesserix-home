@@ -108,3 +108,6 @@ packages/*/dist
 # `git add` reported nothing wrong. Anchored to the repo root, it means only the
 # top-level cache.
 /graft/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/

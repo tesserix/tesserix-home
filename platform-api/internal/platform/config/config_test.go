@@ -301,3 +301,42 @@ func TestOnlyAnExactFalseDisablesAuth(t *testing.T) {
 		}
 	}
 }
+
+// LoadDatabase exists for the ingest binary, which writes the AI usage ledger
+// and serves no authenticated route. Load() would refuse to start it for want
+// of Zitadel settings it has no use for — and setting
+// PLATFORM_API_AUTH_ENABLED=false to get past that would say something untrue
+// about the process.
+
+func TestLoadDatabaseNeedsNoZitadelConfiguration(t *testing.T) {
+	setEnv(t, map[string]string{
+		"TESSERIX_DB_HOST":     "10.0.0.1",
+		"TESSERIX_DB_USER":     "platform_api",
+		"TESSERIX_DB_PASSWORD": "hunter2",
+	})
+
+	db, err := config.LoadDatabase()
+	if err != nil {
+		t.Fatalf("LoadDatabase: %v", err)
+	}
+	if db.Host != "10.0.0.1" || db.User != "platform_api" {
+		t.Errorf("got %s", db.String())
+	}
+	if db.Name != "tesserix_admin" {
+		t.Errorf("want the estate's database by default, got %q", db.Name)
+	}
+}
+
+func TestLoadDatabaseNamesEveryMissingVariableAtOnce(t *testing.T) {
+	setEnv(t, map[string]string{"TESSERIX_DB_HOST": "10.0.0.1"})
+
+	_, err := config.LoadDatabase()
+	if err == nil {
+		t.Fatal("want an error when the credentials are missing")
+	}
+	for _, want := range []string{"TESSERIX_DB_USER", "TESSERIX_DB_PASSWORD"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q does not mention %s", err, want)
+		}
+	}
+}

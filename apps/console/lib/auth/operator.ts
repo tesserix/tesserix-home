@@ -1,6 +1,7 @@
 import {
   CapabilityError,
   hasCapability,
+  isPlatformOperator,
   type Capability,
 } from "@tesserix/platform-auth";
 import { requiresCapability } from "@/lib/internal-access";
@@ -16,7 +17,7 @@ import { requiresCapability } from "@/lib/internal-access";
  * closed on its own rather than inherit safety from routing.
  */
 export function checkOperatorCapability(
-  session: { roles?: readonly string[] } | null,
+  session: { roles?: readonly string[]; email?: string } | null,
   required: Capability,
   provider: string | undefined = process.env.AUTH_PROVIDER,
 ): void {
@@ -24,6 +25,9 @@ export function checkOperatorCapability(
     throw new CapabilityError(required);
   }
   if (!requiresCapability(provider)) {
+    return;
+  }
+  if (isPlatformOperator(session.email)) {
     return;
   }
   if (!hasCapability(session.roles, required)) {

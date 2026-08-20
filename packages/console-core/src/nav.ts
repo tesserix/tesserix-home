@@ -91,6 +91,16 @@ export const platformNav: readonly NavEntry[] = [
     ],
   },
   {
+    // Its own group rather than an item in Health or Governance. Health is
+    // "is it up"; Governance is policy and queues. AI spend is neither: it is
+    // a bill and a guardrail record for one shared data plane that every
+    // product routes through, and it is read for a reason — a cost spike —
+    // that belongs to no other group's workflow.
+    name: "AI",
+    icon: "bar-chart",
+    items: [{ name: "AI usage", route: "platform.aiUsage", icon: "bar-chart" }],
+  },
+  {
     name: "Governance",
     icon: "shield",
     items: [

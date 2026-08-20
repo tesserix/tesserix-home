@@ -68,7 +68,7 @@ describe("console-native surfaces record no apps/web path", () => {
     // stop recording it. Every route that apps/web actually serves still says
     // where, and only a genuinely console-native surface may omit it.
     //
-    // Four ids now, each for its own reason, not one blanket "the CRM has no
+    // Five ids now, each for its own reason, not one blanket "the CRM has no
     // predecessor":
     //   - platform.auditLog: apps/web served three product-scoped audit pages
     //     and no estate-wide one — naming any single one would misrepresent
@@ -78,12 +78,15 @@ describe("console-native surfaces record no apps/web path", () => {
     //     DOES record a `web` path). There is nothing separate to point at.
     //   - platform.crmSuppressions: a suppression list never existed in
     //     apps/web at all. This is genuinely console-native, not a migration.
+    //   - platform.aiUsage: the gateway's spend ledger did not exist before
+    //     the console, in apps/web or anywhere else.
     //   - platform.crmOrganisations: same as suppressions — the old leads
     //     page was a flat list of lead rows with no concept of a business
     //     distinct from the person, so there is no predecessor to record.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "platform.auditLog",
+      "platform.aiUsage",
       "platform.crmImport",
       "platform.crmSuppressions",
       "platform.crmOrganisations",

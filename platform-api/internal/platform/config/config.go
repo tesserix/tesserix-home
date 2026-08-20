@@ -121,16 +121,7 @@ func Load() (Config, error) {
 			// carry it and no new Zitadel application is needed.
 			ProjectID: env("ZITADEL_PROJECT_ID", ""),
 		},
-		Database: Database{
-			Host:     env("TESSERIX_DB_HOST", ""),
-			Port:     env("TESSERIX_DB_PORT", defaultDBPort),
-			User:     env("TESSERIX_DB_USER", ""),
-			Password: os.Getenv("TESSERIX_DB_PASSWORD"),
-			Name:     env("TESSERIX_DB_NAME", defaultDBName),
-			SSLMode:  env("TESSERIX_DB_SSLMODE", defaultSSLMode),
-			MaxConns: defaultMaxConns,
-			MinConns: 0,
-		},
+		Database: database(),
 	}
 
 	if v := strings.TrimSpace(os.Getenv("TESSERIX_DB_MAX_CONNS")); v != "" {
@@ -161,20 +152,54 @@ func Load() (Config, error) {
 			missing = append(missing, "ZITADEL_PROJECT_ID")
 		}
 	}
-	if cfg.Database.Host == "" {
-		missing = append(missing, "TESSERIX_DB_HOST")
-	}
-	if cfg.Database.User == "" {
-		missing = append(missing, "TESSERIX_DB_USER")
-	}
-	if cfg.Database.Password == "" {
-		missing = append(missing, "TESSERIX_DB_PASSWORD")
-	}
+	missing = append(missing, cfg.Database.missing()...)
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment: %s", strings.Join(missing, ", "))
 	}
 
 	return cfg, nil
+}
+
+// LoadDatabase reads only the database group.
+//
+// For the processes that write the estate's data and serve no authenticated
+// route — the AI usage ingest today. Load() would refuse to start them for want
+// of Zitadel settings they never use, and setting PLATFORM_API_AUTH_ENABLED=false
+// to satisfy it would record something untrue about the process: that flag
+// means "serve domain modules unauthenticated", and ingest serves none.
+func LoadDatabase() (Database, error) {
+	db := database()
+	if missing := db.missing(); len(missing) > 0 {
+		return Database{}, fmt.Errorf("missing required environment: %s", strings.Join(missing, ", "))
+	}
+	return db, nil
+}
+
+func database() Database {
+	return Database{
+		Host:     env("TESSERIX_DB_HOST", ""),
+		Port:     env("TESSERIX_DB_PORT", defaultDBPort),
+		User:     env("TESSERIX_DB_USER", ""),
+		Password: os.Getenv("TESSERIX_DB_PASSWORD"),
+		Name:     env("TESSERIX_DB_NAME", defaultDBName),
+		SSLMode:  env("TESSERIX_DB_SSLMODE", defaultSSLMode),
+		MaxConns: defaultMaxConns,
+		MinConns: 0,
+	}
+}
+
+func (d Database) missing() []string {
+	var missing []string
+	if d.Host == "" {
+		missing = append(missing, "TESSERIX_DB_HOST")
+	}
+	if d.User == "" {
+		missing = append(missing, "TESSERIX_DB_USER")
+	}
+	if d.Password == "" {
+		missing = append(missing, "TESSERIX_DB_PASSWORD")
+	}
+	return missing
 }
 
 // DSN builds the libpq connection string.

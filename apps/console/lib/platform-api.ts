@@ -577,3 +577,78 @@ export async function fetchEstateAuditLog(
   );
   return parseEstateAuditLog(await readBody(response, "audit log"));
 }
+
+/**
+ * The AI cost and token usage ledger, from the platform API's `aiusage` module.
+ *
+ * Server-side only, and deliberately: the console holds the operator's Zitadel
+ * token and the gateway's telemetry is not a browser-reachable surface. The
+ * page's tabs each read one of these rather than one composite endpoint, so a
+ * reader who never opens the events tail never pays for it.
+ *
+ * No apps/web fallback, unlike `fetchTickets`. This surface has no predecessor
+ * there — the AI gateway postdates that app — so an unset `PLATFORM_API_ORIGIN`
+ * is a misconfiguration, and `platformRequest` says so.
+ */
+export interface AiUsageQuery {
+  readonly window?: string;
+  readonly product?: string;
+  readonly provider?: string;
+}
+
+function aiUsageParams(query: AiUsageQuery, extra: Record<string, string> = {}): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries({ ...query, ...extra })) {
+    // Blank means "no filter". Sent, it would filter on the empty string, and
+    // the platform API refuses parameters it does not read rather than
+    // ignoring them (#307) — so a stray key is a 400, not a wrong answer.
+    if (value) params.set(key, value);
+  }
+  const encoded = params.toString();
+  return encoded ? `?${encoded}` : "";
+}
+
+export async function fetchAiUsageSummary(
+  query: AiUsageQuery = {},
+): Promise<import("./ai-usage").AiUsageSummary> {
+  const { parseAiUsageSummary } = await import("./ai-usage");
+  return parseAiUsageSummary(
+    await platformRequest("ai usage summary", `/v1/ai/usage/summary${aiUsageParams(query)}`),
+  );
+}
+
+export async function fetchAiUsageBreakdown(
+  by: string,
+  query: AiUsageQuery = {},
+): Promise<import("./ai-usage").AiUsageBreakdown> {
+  const { parseAiUsageBreakdown } = await import("./ai-usage");
+  return parseAiUsageBreakdown(
+    await platformRequest(
+      "ai usage breakdown",
+      `/v1/ai/usage/breakdown${aiUsageParams(query, { by })}`,
+    ),
+  );
+}
+
+export async function fetchAiUsageGuardrails(
+  query: AiUsageQuery = {},
+): Promise<import("./ai-usage").AiUsageGuardrails> {
+  const { parseAiUsageGuardrails } = await import("./ai-usage");
+  return parseAiUsageGuardrails(
+    await platformRequest("ai guardrails", `/v1/ai/usage/guardrails${aiUsageParams(query)}`),
+  );
+}
+
+export const AI_EVENTS_LIMIT = 50;
+
+export async function fetchAiUsageEvents(
+  query: AiUsageQuery = {},
+  outcome?: string,
+): Promise<import("./ai-usage").AiUsageEvents> {
+  const { parseAiUsageEvents } = await import("./ai-usage");
+  const extra: Record<string, string> = { limit: String(AI_EVENTS_LIMIT) };
+  if (outcome) extra.outcome = outcome;
+  return parseAiUsageEvents(
+    await platformRequest("ai usage events", `/v1/ai/usage/events${aiUsageParams(query, extra)}`),
+  );
+}

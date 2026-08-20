@@ -117,6 +117,37 @@ Starting at 2 makes the migration net-neutral by construction — this pool rise
 as modules land while the console's falls as its data layer retires under D7.
 Raising it should be a deliberate act with a reason.
 
+## The AI usage ingest
+
+A second binary, `cmd/ai-usage-ingest`, writes the AI cost and token ledger the
+console's AI usage surface reads. agentgateway exports OTLP spans to it, it
+publishes them to JetStream keyed by span id, and a durable consumer writes
+`ai_usage_events` and `ai_usage_hourly` in one transaction.
+
+Separate from the API because their failure modes must not be shared: the
+console has to keep answering while ingest is behind, and a burst of gateway
+telemetry must not contend with an operator's page load. Same image, same
+module — `internal/modules/aiusage/internal/ingest` owns both sides of the
+ledger's shape so the reader and the writer cannot drift.
+
+```sh
+TESSERIX_DB_HOST=localhost \
+TESSERIX_DB_USER=tesserix \
+TESSERIX_DB_PASSWORD=… \
+TESSERIX_DB_SSLMODE=disable \
+AI_USAGE_NATS_URL=nats://localhost:4222 \
+go run ./cmd/ai-usage-ingest
+```
+
+| Variable | Default | |
+|---|---|---|
+| `AI_USAGE_INGEST_ADDR` | `:4318` | OTLP/HTTP listener; `POST /v1/traces` |
+| `AI_USAGE_NATS_URL` | in-cluster `nats` | JetStream, stream `AI_USAGE` |
+
+It reads `config.LoadDatabase()` rather than `config.Load()`: it serves no
+authenticated route, and demanding Zitadel settings it never uses would only
+teach operators to set them to something false.
+
 ## Probes
 
 | | | |

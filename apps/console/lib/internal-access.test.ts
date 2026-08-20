@@ -63,3 +63,20 @@ describe("an unrecognised provider fails safe for the console's purpose", () => 
     expect(isInternal(undefined, "ZITADEL")).toBe(true);
   });
 });
+
+describe("the platform operator allowlist opens the door on its own", () => {
+  // The failure this covers: an operator signs in successfully, holds no
+  // Platform Console role because the grant was never made, and meets a bare
+  // 403 with no way to fix it from inside the console.
+  it("admits an allowlisted operator carrying no roles", () => {
+    expect(isInternal(undefined, "zitadel", "samyak.rout@gmail.com")).toBe(true);
+    expect(isInternal([], "zitadel", "mahesh.sangawar@gmail.com")).toBe(true);
+  });
+
+  it("still refuses anyone else without the entry capability", () => {
+    expect(isInternal([], "zitadel", "someone.else@gmail.com")).toBe(false);
+    expect(isInternal(["respond"], "zitadel", "someone.else@gmail.com")).toBe(
+      false,
+    );
+  });
+});

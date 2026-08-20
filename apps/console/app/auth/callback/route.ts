@@ -8,7 +8,8 @@ import {
   sessionCookieOptions,
   verifyIdToken,
   isInternal,
-  toCapabilities,
+  capabilitiesFor,
+  isPlatformOperator,
 } from "@tesserix/platform-auth";
 
 import {
@@ -241,7 +242,15 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("invalid_id_token");
   }
 
-  if (!isInternal(identity, { internalOrgId: config.internalOrgId })) {
+  // An allowlisted platform operator is admitted without a project role grant,
+  // but never without the org check: `email` in the token is not proven
+  // verified, so the internal tenant stays the trust anchor.
+  const inInternalOrg =
+    !config.internalOrgId || identity.orgId === config.internalOrgId;
+  const admitted =
+    isInternal(identity, { internalOrgId: config.internalOrgId }) ||
+    (inInternalOrg && isPlatformOperator(identity.email));
+  if (!admitted) {
     // Authenticated, but not an internal operator — no roles on the Platform
     // Console project, or a member of another organization. 403 rather than
     // 401: signing in again would produce the same result.
@@ -266,7 +275,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Narrow to known capabilities before they reach the session: an
     // unrecognised role cannot be checked meaningfully, and carrying it invites
     // code elsewhere to match on a string the capability model never sanctioned.
-    roles: toCapabilities(identity.roles),
+    roles: capabilitiesFor(identity.email, identity.roles),
     // THE ZITADEL ACCESS AND REFRESH TOKENS ARE DELIBERATELY NOT HERE.
     //
     // They were, for ADR-003 D8, and it broke console login outright. The
