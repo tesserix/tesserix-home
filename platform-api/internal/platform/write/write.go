@@ -24,16 +24,29 @@
 //
 // # What the second example shows
 //
-// The CRM queues module is that second example. Its Go implementation follows;
-// at the time of the extraction this package has exactly one caller, and the
-// shape was checked against the console's EXISTING CRM writes rather than
-// against a Go module that does not exist yet. Those writes are real and
-// checkable — that is the evidence below, and it is deliberately not stated as
-// a Go module having needed this, because the compiler does not back that.
+// The CRM queues module is that second example, and it is no longer a
+// prospective one. When this package was extracted the shape had been checked
+// against the console's EXISTING CRM writes rather than against a Go module
+// that did not exist yet, and this paragraph said to read the confidence
+// accordingly. The module exists now and compiles against this package
+// UNMODIFIED: no widening, no adapter, not a line of this file changed to
+// admit it.
 //
-// So: a guess re-examined against a second, independently-written example,
-// not a shape a second compiler-checked caller has yet exercised. Read the
-// confidence accordingly.
+// What that does and does not establish, precisely. It is ONE Go caller
+// (crm/internal/service.SetNextAction) performing ONE write, exercising the
+// nil-key path and the keyed path — replay and same-key-different-body
+// included. It is not a claim that the shape is proven for every future
+// caller; a second module's single write is a second data point, not a proof.
+// It does close the specific gap this paragraph named, which was that no
+// compiler-checked caller outside tickets had used it at all.
+//
+// The refusal path is worth calling out because it is the one behaviour below
+// that is stated as a property rather than a convenience. CRM's write refuses
+// a grandfathered row from INSIDE the Operation by returning an error, and
+// "only an error rolls back" held: no audit row, no idempotency record, no
+// column moved, and the pool still usable for the next write. That property is
+// tested against a real Postgres in the CRM module's next_action_test.go
+// rather than argued here.
 //
 // On that evidence the shape holds, with one detail promoted from incidental
 // to load-bearing.

@@ -144,6 +144,17 @@ func (s *Service) SetNextAction(ctx context.Context, actor Actor, opportunityID 
 		// spells both `crm.next_action.set` through one call — and an audit
 		// reader asking "what happened to this deal's calendar" wants one
 		// action to filter on, with the count saying which way it went.
+		//
+		// The ACTION matches the console. The COUNT does not, and the
+		// divergence is deliberate: the console records {scheduled: 1} for a
+		// CLEAR as well — a constant, not a count
+		// (crm/[organisation]/actions.ts:152) — so once both writers
+		// are appending to console_audit_log, anything aggregating `scheduled`
+		// over that table is summing two meanings depending on which one
+		// produced the row. The reading here is the honest one — a clear
+		// scheduled nothing — so the console is arguably the side to change,
+		// and until it does, a query over this column has to discriminate on
+		// the writer rather than trust the sum.
 		scheduled := 0
 		if action.Scheduled() {
 			scheduled = 1

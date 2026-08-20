@@ -204,8 +204,8 @@ func New(svc *service.Service, log *slog.Logger) *Handler {
 // The stacking is still spelled out below rather than collapsed, so adding the
 // verb when it exists is one argument rather than a restructuring.
 //
-// Named Routes rather than Register: this module's public Register/Config file
-// is Task 6's, and it will call this.
+// Named Routes rather than Register: the module's public Register/Config file
+// is crm.go, and it calls this.
 func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	read := func(handler http.HandlerFunc) http.Handler {
 		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapCRM, h.log, handler))
@@ -216,12 +216,61 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapCRM, h.log, handler))
 	}
 
-	mux.Handle("GET /v1/crm/queues/due", read(h.due))
-	mux.Handle("GET /v1/crm/queues/drifting", read(h.drifting))
+	// Driven from RouteTable rather than three literal mux.Handle calls, so
+	// the list of routes is a value the capability test can range over. See
+	// RouteTable for why that matters.
+	for _, route := range RouteTable {
+		gate := read
+		if route.Write {
+			gate = write
+		}
+		mux.Handle(route.Method+" "+route.Pattern, gate(route.handler(h)))
+	}
+}
+
+// Route is one of the module's paths.
+//
+// Write says which gate it goes behind. Today both gates assert the same
+// capability — the CRM has no write verb to stack, per the finding above — so
+// the flag is what keeps the distinction expressible for the day it does, and
+// it is also what tells a test which routes carry a body.
+type Route struct {
+	Method  string
+	Pattern string
+	Write   bool
+	// handler is unexported so the table stays a description of the surface
+	// rather than a handle on it: a caller outside this package can read what
+	// is served, not reach into it.
+	handler func(*Handler) http.HandlerFunc
+}
+
+// RouteTable is every route this module serves, and it is the ONLY place they
+// are declared.
+//
+// # Why a table rather than three mux.Handle lines
+//
+// §9 and #269 require that every route refuse a principal without the `crm`
+// capability, and that the same request WITH it succeeds. A test that
+// hardcoded today's three routes would satisfy both on the day it was written
+// and then silently stop covering the module: a fourth route added next
+// quarter would be gated by whatever its author copied, and nothing would
+// notice if that was nothing.
+//
+// So the enumeration is fail-closed in both directions. Registration reads
+// this table, so a route that is not in it is not served at all; and the
+// capability test ranges over this table and FAILS on an entry it has no
+// request for, so a route added here without a capability case turns the suite
+// red rather than passing untested.
+var RouteTable = []Route{
+	{Method: http.MethodGet, Pattern: "/v1/crm/queues/due",
+		handler: func(h *Handler) http.HandlerFunc { return h.due }},
+	{Method: http.MethodGet, Pattern: "/v1/crm/queues/drifting",
+		handler: func(h *Handler) http.HandlerFunc { return h.drifting }},
 	// PUT rather than PATCH: the two fields are ONE thing — the next action —
 	// and this replaces it wholly. An absent field is a cleared field, which
 	// is a contract a PATCH could not honestly claim.
-	mux.Handle("PUT /v1/crm/opportunities/{id}/next-action", write(h.setNextAction))
+	{Method: http.MethodPut, Pattern: "/v1/crm/opportunities/{id}/next-action", Write: true,
+		handler: func(h *Handler) http.HandlerFunc { return h.setNextAction }},
 }
 
 // nextActionRequest is the write's body.

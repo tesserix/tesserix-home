@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -21,20 +20,11 @@ const nextActionPath = "/v1/crm/opportunities/"
 // put sends the write. `key` is the Idempotency-Key header, or "" for none.
 func (a *api) put(path, body, key string) response {
 	a.t.Helper()
-	req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+jwtShaped)
-	req.Header.Set("Content-Type", "application/json")
+	var headers map[string]string
 	if key != "" {
-		req.Header.Set(idempotency.Header, key)
+		headers = map[string]string{idempotency.Header: key}
 	}
-	rec := httptest.NewRecorder()
-	a.handler.ServeHTTP(rec, req)
-
-	out := response{status: rec.Code, raw: rec.Body.String()}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out.body); err != nil {
-		a.t.Fatalf("PUT %s: response is not JSON: %v (%s)", path, err, out.raw)
-	}
-	return out
+	return a.do(http.MethodPut, path, body, headers)
 }
 
 func (a *api) setNextAction(id, body, key string) response {
@@ -131,7 +121,15 @@ func (a *api) grandfathered(org, label string) string {
 
 // writeWorld is one organisation and one ordinary, updatable opportunity.
 func writeWorld(t *testing.T) (*api, string) {
-	a := serve(t)
+	return writeWorldAs(t, "read", "crm")
+}
+
+// writeWorldAs is the same fixture for a principal holding exactly the roles
+// named. The capability tests need the fixture without the capability, and
+// seeding it a second time in their own file would be a second copy of the
+// constraint every fixture here has to satisfy.
+func writeWorldAs(t *testing.T, roles ...string) (*api, string) {
+	a := serveAs(t, roles...)
 	a.org(orgSpec{name: "Acme", country: ptr("AU"), contacts: []contactSpec{{primary: true, followers: ptr(4000)}}})
 	id := a.opportunity(oppSpec{org: "Acme", label: "acme-mark8ly", product: ptr("mark8ly"),
 		stage: domain.StageContacted, owner: ptr("Priya Raman"), nextActionAt: a.ago(2 * day)})

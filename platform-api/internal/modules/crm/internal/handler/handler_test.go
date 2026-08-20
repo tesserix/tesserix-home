@@ -16,9 +16,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/domain"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/handler"
-	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/service"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/testdb"
@@ -29,9 +29,8 @@ import (
 // one part that must not be reimplemented for a test — everything else (the
 // capability gate, the envelope, the SQL) is what these assertions are about.
 //
-// The capability-REFUSAL tests are not here. Task 6 registers the module and
-// owns them, and duplicating them would put the same guarantee in two places
-// where only one of them would be updated.
+// The capability tests live in capability_test.go, beside the route table they
+// range over.
 
 const (
 	subjectOperator = "zitadel-operator-1"
@@ -132,21 +131,29 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// serve builds the module for a principal who may work the CRM surface: the
+// ordinary operator every test that is not ABOUT authorisation wants.
 func serve(t *testing.T) *api {
+	t.Helper()
+	return serveAs(t, "read", "crm")
+}
+
+// serveAs builds it for a principal holding exactly the roles named, which is
+// what the capability tests vary.
+func serveAs(t *testing.T, roles ...string) *api {
 	t.Helper()
 	pool := testdb.New(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	mux := http.NewServeMux()
-	verifier := auth.NewVerifier(stubParser{claims: tokenFor("read", "crm")}, projectID)
-	// Through RegisterModule, not by calling Routes directly: registering a
-	// module is exactly where the "no verifier, no module" guard lives, and a
-	// test that went around it would not be testing how the module is served.
-	//
-	// The module's own Register/Config file is Task 6's, so this composes what
-	// that file will compose. When it lands, this becomes crm.Register.
+	verifier := auth.NewVerifier(stubParser{claims: tokenFor(roles...)}, projectID)
+	// Through RegisterModule and the module's own crm.Register, not by calling
+	// Routes directly: registering a module is exactly where the "no verifier,
+	// no module" guard lives, and a test that went around it would not be
+	// testing how the module is served. This composes what cmd/server
+	// composes, line for line.
 	httpx.RegisterModule(mux, verifier, "crm", func(m *http.ServeMux) {
-		handler.New(service.New(pool), log).Routes(m, verifier)
+		crm.Register(m, crm.Config{Pool: pool, Verifier: verifier, Log: log})
 	})
 
 	return &api{
@@ -164,18 +171,39 @@ type response struct {
 	raw    string
 }
 
-func (a *api) get(path string) response {
+// do sends one request through the whole stack — middleware, verifier,
+// capability gate, handler — and insists the answer is JSON. Every helper in
+// this package goes through it, so a route exercised by the capability tests
+// is exercised exactly as the ones exercised by the contract tests are.
+func (a *api) do(method, path, body string, headers map[string]string) response {
 	a.t.Helper()
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Authorization", "Bearer "+jwtShaped)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
 	rec := httptest.NewRecorder()
 	a.handler.ServeHTTP(rec, req)
 
 	out := response{status: rec.Code, raw: rec.Body.String()}
+	// Every answer this service gives is enveloped, refusals included, so a
+	// body that will not parse is a finding rather than an inconvenience.
 	if err := json.Unmarshal(rec.Body.Bytes(), &out.body); err != nil {
-		a.t.Fatalf("GET %s: response is not JSON: %v (%s)", path, err, out.raw)
+		a.t.Fatalf("%s %s: response is not JSON: %v (%s)", method, path, err, out.raw)
 	}
 	return out
+}
+
+func (a *api) get(path string) response {
+	a.t.Helper()
+	return a.do(http.MethodGet, path, "", nil)
 }
 
 // labels is the `next_action_note` of every row, which is how the fixtures
