@@ -22,7 +22,11 @@ import {
   getOidcConfig,
   type TokenResponse,
 } from "@/lib/auth/oidc";
-import { saveTokens } from "@/lib/auth/operator-token-store";
+import {
+  accessTokenExpiresAt,
+  saveTokens,
+} from "@/lib/auth/operator-token-store";
+import { withDeadline } from "@/lib/auth/platform-token";
 import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
@@ -33,24 +37,32 @@ const STATE_COOKIE = "cx_oauth_state";
 const NONCE_COOKIE = "cx_oidc_nonce";
 
 /**
- * When the access token Zitadel just issued stops being accepted.
+ * How long the token-store write may run before this login stops waiting on
+ * it.
  *
- * The only honest source is `expires_in` on the token response AT THE MOMENT
- * OF EXCHANGE — `Math.floor(Date.now() / 1000) + expires_in`, converted here
- * to the `Date` `saveTokens` takes. A missing or non-positive `expires_in`
- * becomes "already expired" rather than a guessed lifetime: costs one extra
- * refresh in a case Zitadel effectively never produces, and is never wrong
- * about a credential the way inventing a lifetime would be. Mirrors
- * `expiryFrom` in `lib/auth/platform-token.ts`, which is out of scope for this
- * change and not imported from, to keep this route's edit surface to the
- * files it owns.
+ * `saveTokens` is awaited with no deadline of its own, and nothing bounds a
+ * query that has already started: `connectionTimeoutMillis` in
+ * `lib/db/tesserix.ts` bounds POOL ACQUISITION only, and there is no
+ * `statement_timeout` anywhere in this stack. An unreachable-but-not-refusing
+ * Postgres, or an INSERT blocked on a lock, would otherwise stall this
+ * response — and the operator's login — for as long as the query hangs. The
+ * pool path also runs an opportunistic table-wide `pruneExpired()` DELETE
+ * right after the INSERT (see `saveTokens`'s own JSDoc), so this deadline is
+ * guarding two statements on the login critical path, not one.
+ *
+ * `withDeadline` REJECTS past this many milliseconds rather than resolving —
+ * see its JSDoc in `lib/auth/platform-token.ts` — which is exactly what lets
+ * the timeout fall into the same `catch` a thrown store error falls into
+ * below: a hang degrades identically to a throw, not differently from one.
+ *
+ * ACCEPTED COST: a slow-but-alive database now fails the token write at 2s
+ * instead of eventually succeeding. That session gets "platform API
+ * unreachable" (every caller of `getPlatformApiToken()` already handles this)
+ * until the operator signs in again. That is strictly better than a login
+ * that hangs — this is the exact path that was down for a day, and to an
+ * operator a hung login is indistinguishable from that outage.
  */
-function accessTokenExpiresAt(expiresIn: number | undefined): Date {
-  if (!expiresIn || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-    return new Date();
-  }
-  return new Date(Date.now() + expiresIn * 1000);
-}
+const SAVE_TOKENS_DEADLINE_MS = 2_000;
 
 function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
@@ -295,15 +307,18 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Still works, for this operator. The next one with more roles is the one
     // it stops working for, and by then nobody is looking. error, not warn:
     // this is a countdown to an outage, not a curiosity.
-    console.error("[auth/callback] session cookie is close to the browser limit", {
-      sub: identity.sub,
-      roleCount: identity.roles.length,
-      bytes: fit.bytes,
-      warnAt: fit.warnAt,
-      limit: fit.limit,
-      headroom: fit.headroom,
-      hint: "an operator with more roles will exceed 4096 bytes and be unable to sign in",
-    });
+    console.error(
+      "[auth/callback] session cookie is close to the browser limit",
+      {
+        sub: identity.sub,
+        roleCount: identity.roles.length,
+        bytes: fit.bytes,
+        warnAt: fit.warnAt,
+        limit: fit.limit,
+        headroom: fit.headroom,
+        hint: "an operator with more roles will exceed 4096 bytes and be unable to sign in",
+      },
+    );
   }
 
   // The success line, so the logs can tell "no callback ever completed" apart
@@ -340,30 +355,35 @@ export async function GET(request: NextRequest): Promise<Response> {
   // (which every reader of `getPlatformApiToken()` already treats as a normal
   // outcome), not to "no login". Coupling the two would turn an ordinary
   // database blip into an outage of the entire console over a capability most
-  // pages never touch.
-  //
-  // `saveTokens` already swallows pool-path errors internally and returns
-  // rather than throwing (see its JSDoc) — but this call site does not lean on
-  // that alone. The try/catch below keeps the guarantee explicit and true even
-  // if the store's contract changes later, and it is what stands between a
-  // thrown error here and a login that never redirects.
+  // pages never touch. It must also never make the operator WAIT — see
+  // `SAVE_TOKENS_DEADLINE_MS` above for the hang half of this guarantee.
   if (tokens.access_token) {
     try {
-      await saveTokens(
-        sid,
-        identity.sub,
-        {
-          accessToken: tokens.access_token,
-          accessExpiresAt: accessTokenExpiresAt(tokens.expires_in),
-          // `?? null`, not `?? ""`: Zitadel omitting a refresh token must be
-          // stored as "no refresh token" (`OperatorTokensInput.refreshToken`
-          // is `string | null | undefined`), never as an empty string that
-          // would later decrypt to a token nothing issued.
-          refreshToken: tokens.refresh_token ?? null,
-        },
-        new Date(Date.now() + cookie.maxAge * 1000),
+      await withDeadline(
+        saveTokens(
+          sid,
+          identity.sub,
+          {
+            accessToken: tokens.access_token,
+            accessExpiresAt: accessTokenExpiresAt(tokens.expires_in),
+            // `?? null`, not `?? ""`: Zitadel omitting a refresh token must
+            // be stored as "no refresh token"
+            // (`OperatorTokensInput.refreshToken` is `string | null |
+            // undefined`), never as an empty string that would later decrypt
+            // to a token nothing issued.
+            refreshToken: tokens.refresh_token ?? null,
+          },
+          new Date(Date.now() + cookie.maxAge * 1000),
+        ),
+        SAVE_TOKENS_DEADLINE_MS,
+        "operator token store save timed out",
       );
     } catch {
+      // Either a thrown error (see `saveTokens`'s JSDoc — it already
+      // swallows pool-path errors and returns, but this call site does not
+      // lean on that alone) or the deadline above rejecting a hang. Both mean
+      // the same thing to this caller: the login proceeds exactly as if the
+      // store did not exist.
       console.error("[auth/callback] failed to store platform API tokens", {
         sub: identity.sub,
         sid,

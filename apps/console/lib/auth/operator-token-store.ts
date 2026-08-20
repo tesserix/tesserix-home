@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import type { QueryResultRow } from "pg";
 import { isDatabaseConfigured, tesserixQuery } from "../db/tesserix";
 
@@ -91,6 +96,34 @@ export interface OperatorTokensInput {
   accessToken: string;
   accessExpiresAt: Date;
   refreshToken?: string | null;
+}
+
+/**
+ * When an access token Zitadel just issued stops being accepted.
+ *
+ * The only honest source is `expires_in` on the token response AT THE MOMENT
+ * OF EXCHANGE OR REFRESH — `Math.floor(Date.now() / 1000) + expires_in` —
+ * converted here to the `Date` {@link OperatorTokensInput.accessExpiresAt}
+ * takes.
+ *
+ * A missing or non-positive `expires_in` becomes "already expired" rather
+ * than a guessed lifetime, so the caller treats it exactly as it would treat
+ * an imminent expiry: refresh again next time rather than hand out a token
+ * whose life nobody stated. Costs one extra round trip in a case Zitadel
+ * effectively never produces; the alternative is inventing an expiry and
+ * being wrong about a credential.
+ *
+ * ONE function, used by both the mint path (`/auth/callback`, on the initial
+ * exchange) and the renew path (`lib/auth/platform-token.ts`, on a refresh):
+ * two places computing a credential's expiry that must agree is exactly the
+ * kind of arithmetic where silent drift between two copies is expensive, so
+ * there is only one copy.
+ */
+export function accessTokenExpiresAt(expiresIn: number | undefined): Date {
+  if (!expiresIn || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return new Date();
+  }
+  return new Date(Date.now() + expiresIn * 1000);
 }
 
 /**
@@ -189,7 +222,9 @@ export function encryptToken(plaintext: string): Buffer | null {
  *
  * Exported for tests, for the same reason as {@link encryptToken}.
  */
-export function decryptToken(envelope: Buffer | Uint8Array | null): string | null {
+export function decryptToken(
+  envelope: Buffer | Uint8Array | null,
+): string | null {
   if (!envelope) return null;
   const key = getEncryptionKey();
   if (!key) return null;

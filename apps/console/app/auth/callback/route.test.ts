@@ -41,6 +41,8 @@ const state = vi.hoisted(() => ({
   }>,
   /** Swap in a throwing implementation to test the store-failure path. */
   saveTokensShouldThrow: false,
+  /** Swap in a never-resolving implementation to test the deadline path. */
+  saveTokensShouldHang: false,
   /** What `exchangeCode` returns. Overridable per test. */
   exchangeCodeResponse: {
     id_token: "id-token",
@@ -55,28 +57,43 @@ const state = vi.hoisted(() => ({
   },
 }));
 
+// `importOriginal` keeps every real export (`accessTokenExpiresAt`,
+// `readTokens`, `deleteTokens`, ...) intact and overrides only `saveTokens` —
+// so `route.ts`'s own call to `accessTokenExpiresAt` runs the real arithmetic,
+// and `lib/auth/platform-token.ts` (pulled in transitively via the real
+// `withDeadline` import) still sees a working module.
+//
+// `saveTokens` below is typed as `typeof actual.saveTokens`: a future
+// reordering of its parameters now fails to typecheck here instead of
+// silently writing `sub` into the `sid` column.
+//
 // A plain async function, deliberately not `vi.fn(...)`: this module's
 // `beforeEach` calls `vi.restoreAllMocks()`, which replaces a `vi.fn`'s
 // implementation with a no-op the first time it runs — silently discarding
 // the behavior below after the first test. Reading `state` at call time gets
 // the same per-test control without that trap.
-vi.mock("@/lib/auth/operator-token-store", () => ({
-  saveTokens: async (
-    sid: string,
-    sub: string,
-    tokens: {
-      accessToken: string;
-      accessExpiresAt: Date;
-      refreshToken?: string | null;
-    },
-    sessionExpiresAt: Date,
+vi.mock("@/lib/auth/operator-token-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/auth/operator-token-store")>();
+  const saveTokens: typeof actual.saveTokens = async (
+    sid,
+    sub,
+    tokens,
+    sessionExpiresAt,
   ) => {
     if (state.saveTokensShouldThrow) {
       throw new Error("store unavailable");
     }
+    if (state.saveTokensShouldHang) {
+      // Never resolves and never rejects — the only way to prove the
+      // deadline, not the store, is what ends the wait.
+      await new Promise<void>(() => {});
+      return;
+    }
     state.saveTokensCalls.push({ sid, sub, tokens, sessionExpiresAt });
-  },
-}));
+  };
+  return { ...actual, saveTokens };
+});
 
 vi.mock("@tesserix/platform-auth", async (importOriginal) => {
   const actual =
@@ -139,6 +156,7 @@ beforeEach(() => {
   state.sessionValue = "session-token";
   state.saveTokensCalls = [];
   state.saveTokensShouldThrow = false;
+  state.saveTokensShouldHang = false;
   state.exchangeCodeResponse = {
     id_token: "id-token",
     access_token: "A".repeat(1200),
@@ -354,15 +372,44 @@ describe("writing the platform API tokens to the store", () => {
     const res = await runCallback();
 
     expect(res.status).toBe(307);
-    expect(res.headers.get("set-cookie")).toContain(
-      "tx_session=session-token",
-    );
+    expect(res.headers.get("set-cookie")).toContain("tx_session=session-token");
     expect(res.headers.get("location")).toBe("https://console.tesserix.app/");
     expect(error).toHaveBeenCalledWith(
       "[auth/callback] failed to store platform API tokens",
       expect.objectContaining({ sub: "operator-1" }),
     );
   });
+
+  it(
+    "still mints the session and redirects when the store hangs past its deadline",
+    async () => {
+      // The critical guarantee the throw test above does NOT cover: a store
+      // that never settles — an unreachable-but-not-refusing Postgres, or an
+      // INSERT stuck behind a lock — must not hang the login either. The
+      // deadline (SAVE_TOKENS_DEADLINE_MS = 2000ms in route.ts), not the
+      // store, is what has to end the wait — the mocked `saveTokens` below
+      // never resolves on its own.
+      //
+      // Real timers, deliberately: `withDeadline`'s `setTimeout` and this
+      // test's wall clock have to be the same clock for "the deadline fired"
+      // to be a fact about the code rather than an artifact of how far fake
+      // time was advanced relative to when the timer was actually armed.
+      state.saveTokensShouldHang = true;
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await runCallback();
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get("set-cookie")).toContain(
+        "tx_session=session-token",
+      );
+      expect(error).toHaveBeenCalledWith(
+        "[auth/callback] failed to store platform API tokens",
+        expect.objectContaining({ sub: "operator-1" }),
+      );
+    },
+    { timeout: 6_000 },
+  );
 
   it("does not store anything when the exchange returns no access token", async () => {
     state.exchangeCodeResponse = {

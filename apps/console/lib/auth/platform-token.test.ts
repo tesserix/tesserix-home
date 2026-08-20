@@ -78,53 +78,62 @@ vi.mock("./oidc", () => ({
   },
 }));
 
-vi.mock("./operator-token-store", () => ({
-  readTokens: async (
-    sid: string,
-    options: ReadTokensOptions = {},
-  ): Promise<StoredOperatorTokens | null> => {
-    state.readOptions.push(options);
-    // "No key, or no database" — the store degrades to null, it does not throw.
-    if (state.storeUnusable) return null;
-    if (state.refreshedWhileWaiting && options.forUpdate) {
-      seedRow({
-        accessToken: "someone-elses-renewal",
-        accessExpiresAt: new Date(Date.now() + 3_600_000),
-        refreshToken: "rotated-1",
-      });
-    }
-    const row = state.row as Record<string, Row> | null;
-    const found = row?.[sid];
-    if (!found) return null;
-    return {
-      accessToken: found.accessToken,
-      accessExpiresAt: found.accessExpiresAt,
-      refreshToken: found.refreshToken,
-    };
-  },
-  saveTokens: async (
-    sid: string,
-    sub: string,
-    tokens: OperatorTokensInput,
-    sessionExpiresAt: Date,
-    options: TokenStoreOptions = {},
-  ): Promise<void> => {
-    state.saveOptions.push(options);
-    state.saved.push(tokens);
-    // The transaction path rethrows, by the store's own contract.
-    if (state.saveThrows) throw new Error("write failed");
-    if (state.storeUnusable) return;
-    const rows = (state.row ?? {}) as Record<string, Row>;
-    rows[sid] = {
-      sub,
-      accessToken: tokens.accessToken,
-      accessExpiresAt: tokens.accessExpiresAt,
-      refreshToken: tokens.refreshToken ?? null,
-      sessionExpiresAt,
-    };
-    state.row = rows;
-  },
-}));
+vi.mock("./operator-token-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./operator-token-store")>();
+  return {
+    // Real arithmetic for `accessTokenExpiresAt`, not a stub: it is the exact
+    // function under test reusing it (see task-5, fix round 1), and a stub
+    // here would hide a regression in the shared helper instead of
+    // exercising it.
+    accessTokenExpiresAt: actual.accessTokenExpiresAt,
+    readTokens: async (
+      sid: string,
+      options: ReadTokensOptions = {},
+    ): Promise<StoredOperatorTokens | null> => {
+      state.readOptions.push(options);
+      // "No key, or no database" — the store degrades to null, it does not throw.
+      if (state.storeUnusable) return null;
+      if (state.refreshedWhileWaiting && options.forUpdate) {
+        seedRow({
+          accessToken: "someone-elses-renewal",
+          accessExpiresAt: new Date(Date.now() + 3_600_000),
+          refreshToken: "rotated-1",
+        });
+      }
+      const row = state.row as Record<string, Row> | null;
+      const found = row?.[sid];
+      if (!found) return null;
+      return {
+        accessToken: found.accessToken,
+        accessExpiresAt: found.accessExpiresAt,
+        refreshToken: found.refreshToken,
+      };
+    },
+    saveTokens: async (
+      sid: string,
+      sub: string,
+      tokens: OperatorTokensInput,
+      sessionExpiresAt: Date,
+      options: TokenStoreOptions = {},
+    ): Promise<void> => {
+      state.saveOptions.push(options);
+      state.saved.push(tokens);
+      // The transaction path rethrows, by the store's own contract.
+      if (state.saveThrows) throw new Error("write failed");
+      if (state.storeUnusable) return;
+      const rows = (state.row ?? {}) as Record<string, Row>;
+      rows[sid] = {
+        sub,
+        accessToken: tokens.accessToken,
+        accessExpiresAt: tokens.accessExpiresAt,
+        refreshToken: tokens.refreshToken ?? null,
+        sessionExpiresAt,
+      };
+      state.row = rows;
+    },
+  };
+});
 
 // A mutex, because that is what `SELECT ... FOR UPDATE` is to this module.
 // Serialising at BEGIN rather than at the SELECT makes the double STRICTER
@@ -134,7 +143,7 @@ vi.mock("./operator-token-store", () => ({
 let txChain: Promise<unknown> = Promise.resolve();
 
 vi.mock("../db/tesserix", () => ({
-  tesserixTx: async <T,>(fn: (query: TxQuery) => Promise<T>): Promise<T> => {
+  tesserixTx: async <T>(fn: (query: TxQuery) => Promise<T>): Promise<T> => {
     const run = txChain.then(async () => {
       if (state.txThrows) throw new Error("tesserix DB env not set");
       state.txDepth += 1;
@@ -205,7 +214,11 @@ describe("getPlatformApiToken", () => {
   it("returns null WITHOUT touching the store when the session has no sid", async () => {
     // A session minted before the token store existed. They live 7 days and
     // outlive the deploy, and they must not cost a query each.
-    state.session = { sub: "operator-1", email: "op@tesserix.test", exp: now() + 86_400 };
+    state.session = {
+      sub: "operator-1",
+      email: "op@tesserix.test",
+      exp: now() + 86_400,
+    };
     seedRow({ accessExpiresAt: new Date(Date.now() + 3_600_000) });
 
     expect(await getToken()).toBeNull();
@@ -237,7 +250,10 @@ describe("getPlatformApiToken", () => {
   });
 
   it("serves a comfortably valid token without refreshing or locking", async () => {
-    seedRow({ accessToken: "still-good", accessExpiresAt: new Date(Date.now() + 3_600_000) });
+    seedRow({
+      accessToken: "still-good",
+      accessExpiresAt: new Date(Date.now() + 3_600_000),
+    });
 
     expect(await getToken()).toBe("still-good");
     expect(state.refreshCalls).toBe(0);
@@ -252,9 +268,16 @@ describe("getPlatformApiToken", () => {
   it("renews a token that expires imminently and persists BOTH new tokens", async () => {
     // The window matters: a token valid for another ten seconds has to survive
     // this request, the hop to the platform API, and that service's clock.
-    seedRow({ accessToken: "about-to-die", accessExpiresAt: new Date(Date.now() + 10_000) });
+    seedRow({
+      accessToken: "about-to-die",
+      accessExpiresAt: new Date(Date.now() + 10_000),
+    });
     state.refreshResponses = [
-      { access_token: "renewed", refresh_token: "rotated-1", expires_in: 3_600 },
+      {
+        access_token: "renewed",
+        refresh_token: "rotated-1",
+        expires_in: 3_600,
+      },
     ];
 
     expect(await getToken()).toBe("renewed");
@@ -266,7 +289,9 @@ describe("getPlatformApiToken", () => {
     expect(state.saved).toHaveLength(1);
     expect(state.saved[0].accessToken).toBe("renewed");
     expect(state.saved[0].refreshToken).toBe("rotated-1");
-    expect(state.saved[0].accessExpiresAt.getTime()).toBeGreaterThan(Date.now() + 3_000_000);
+    expect(state.saved[0].accessExpiresAt.getTime()).toBeGreaterThan(
+      Date.now() + 3_000_000,
+    );
 
     // And the row now holds them, so the next caller reads the new pair.
     const rows = state.row as Record<string, Row>;
@@ -275,7 +300,10 @@ describe("getPlatformApiToken", () => {
   });
 
   it("renews an already-expired token", async () => {
-    seedRow({ accessToken: "dead", accessExpiresAt: new Date(Date.now() - 3_600_000) });
+    seedRow({
+      accessToken: "dead",
+      accessExpiresAt: new Date(Date.now() - 3_600_000),
+    });
     state.refreshResponses = [{ access_token: "renewed", expires_in: 3_600 }];
 
     expect(await getToken()).toBe("renewed");
@@ -284,7 +312,10 @@ describe("getPlatformApiToken", () => {
   it("keeps the current refresh token when the response carries no replacement", async () => {
     // No rotation happened, so the token we spent is still the live one.
     // Overwriting it with null would strand the session at its next refresh.
-    seedRow({ accessExpiresAt: new Date(Date.now() - 1_000), refreshToken: "unrotated" });
+    seedRow({
+      accessExpiresAt: new Date(Date.now() - 1_000),
+      refreshToken: "unrotated",
+    });
     state.refreshResponses = [{ access_token: "renewed", expires_in: 3_600 }];
 
     await getToken();
@@ -317,21 +348,35 @@ describe("getPlatformApiToken", () => {
     // writes a dead token over the winner's row. Two replicas and parallel RSC
     // renders both produce this, and React's `cache` — request-scoped —
     // prevents neither.
-    seedRow({ accessToken: "about-to-die", accessExpiresAt: new Date(Date.now() + 10_000) });
+    seedRow({
+      accessToken: "about-to-die",
+      accessExpiresAt: new Date(Date.now() + 10_000),
+    });
     state.refreshDelayMs = 20;
     state.refreshResponses = [
-      { access_token: "renewed", refresh_token: "rotated-1", expires_in: 3_600 },
+      {
+        access_token: "renewed",
+        refresh_token: "rotated-1",
+        expires_in: 3_600,
+      },
       // If the lock or the re-check failed, the second caller would spend the
       // already-spent token and get this — a distinct value, so the assertion
       // says WHICH failure happened rather than only that one did.
-      { access_token: "double-spent", refresh_token: "rotated-2", expires_in: 3_600 },
+      {
+        access_token: "double-spent",
+        refresh_token: "rotated-2",
+        expires_in: 3_600,
+      },
     ];
 
     const { getPlatformApiToken } = await import("./platform-token");
     // Two independent request scopes would be two module registries; the
     // memo is not what is under test here, so call the same one twice and let
     // the fake transaction serialise them.
-    const [a, b] = await Promise.all([getPlatformApiToken(), getPlatformApiToken()]);
+    const [a, b] = await Promise.all([
+      getPlatformApiToken(),
+      getPlatformApiToken(),
+    ]);
 
     expect(state.refreshCalls).toBe(1);
     expect(a).toBe("renewed");
@@ -348,9 +393,14 @@ describe("getPlatformApiToken", () => {
     // read and spend nothing. Skipping this re-check is the classic
     // double-checked-locking bug, and it reintroduces the double-spend the
     // lock exists to prevent.
-    seedRow({ accessToken: "about-to-die", accessExpiresAt: new Date(Date.now() + 10_000) });
+    seedRow({
+      accessToken: "about-to-die",
+      accessExpiresAt: new Date(Date.now() + 10_000),
+    });
     state.refreshedWhileWaiting = true;
-    state.refreshResponses = [{ access_token: "must-not-happen", expires_in: 3_600 }];
+    state.refreshResponses = [
+      { access_token: "must-not-happen", expires_in: 3_600 },
+    ];
 
     expect(await getToken()).toBe("someone-elses-renewal");
     expect(state.refreshCalls).toBe(0);
@@ -364,7 +414,11 @@ describe("getPlatformApiToken", () => {
     // Zitadel issues a refresh token only when the application has the Refresh
     // Token grant enabled. Handing back the expired access token would turn a
     // clear local failure into a 401 from a service that has no idea why.
-    seedRow({ accessToken: "dead", accessExpiresAt: new Date(Date.now() - 3_600_000), refreshToken: null });
+    seedRow({
+      accessToken: "dead",
+      accessExpiresAt: new Date(Date.now() - 3_600_000),
+      refreshToken: null,
+    });
 
     expect(await getToken()).toBeNull();
     expect(state.refreshCalls).toBe(0);
@@ -375,7 +429,10 @@ describe("getPlatformApiToken", () => {
     // A revoked or rotated refresh token. That is "sign in again", not "the
     // console is broken" — and the row must keep the only tokens that could
     // still be valid rather than being cleared.
-    seedRow({ accessToken: "dead", accessExpiresAt: new Date(Date.now() - 10_000) });
+    seedRow({
+      accessToken: "dead",
+      accessExpiresAt: new Date(Date.now() - 10_000),
+    });
     state.refreshResponses = [null];
 
     expect(await getToken()).toBeNull();
@@ -390,7 +447,13 @@ describe("getPlatformApiToken", () => {
     // back. Returning the token anyway would hand out a credential whose
     // rotated refresh partner was never persisted.
     seedRow({ accessExpiresAt: new Date(Date.now() - 10_000) });
-    state.refreshResponses = [{ access_token: "renewed", refresh_token: "rotated-1", expires_in: 3_600 }];
+    state.refreshResponses = [
+      {
+        access_token: "renewed",
+        refresh_token: "rotated-1",
+        expires_in: 3_600,
+      },
+    ];
     state.saveThrows = true;
 
     await expect(getToken()).resolves.toBeNull();
@@ -458,7 +521,9 @@ describe("getPlatformApiToken", () => {
     // performance nicety; NOT sharing tokens between requests is a security
     // property, and it is the one a test can pin here.
     seedRow({ accessExpiresAt: new Date(Date.now() - 10_000) });
-    state.refreshResponses = [{ access_token: "renewed-1", refresh_token: "r1", expires_in: 3_600 }];
+    state.refreshResponses = [
+      { access_token: "renewed-1", refresh_token: "r1", expires_in: 3_600 },
+    ];
     expect(await getToken()).toBe("renewed-1");
 
     // A second "request": fresh module registry, a different operator.
@@ -473,7 +538,9 @@ describe("getPlatformApiToken", () => {
         sessionExpiresAt: new Date(Date.now() + 86_400_000),
       },
     };
-    state.refreshResponses = [{ access_token: "renewed-for-operator-2", expires_in: 3_600 }];
+    state.refreshResponses = [
+      { access_token: "renewed-for-operator-2", expires_in: 3_600 },
+    ];
 
     expect(await getToken()).toBe("renewed-for-operator-2");
   });

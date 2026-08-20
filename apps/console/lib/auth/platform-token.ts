@@ -1,7 +1,11 @@
 import { cache } from "react";
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { tesserixTx } from "../db/tesserix";
-import { readTokens, saveTokens } from "./operator-token-store";
+import {
+  accessTokenExpiresAt,
+  readTokens,
+  saveTokens,
+} from "./operator-token-store";
 import type { ConsoleOidcConfig } from "./oidc";
 import { getOidcConfig, refreshAccessToken } from "./oidc";
 
@@ -272,7 +276,7 @@ async function renewUnderLock(
         sub,
         {
           accessToken: renewed.access_token,
-          accessExpiresAt: expiryFrom(renewed.expires_in),
+          accessExpiresAt: accessTokenExpiresAt(renewed.expires_in),
           // PERSIST THE ROTATED REFRESH TOKEN. Dropping it is the bug this
           // whole change exists to fix: the next refresh would present a spent
           // token and fail forever. Falling back to the one we just spent is
@@ -307,17 +311,26 @@ async function renewUnderLock(
  *
  * The timer is always cleared, so a fast refresh does not hold the event loop
  * open for the remainder of the deadline.
+ *
+ * Exported: `/auth/callback` reuses this for the same reason it exists here —
+ * `saveTokens` is awaited with no deadline of its own, and neither
+ * `connectionTimeoutMillis` (pool ACQUISITION only) nor anything in
+ * `lib/db/tesserix.ts` bounds a query that has already started. A hung INSERT
+ * would otherwise hang the login with it. `message` defaults to this
+ * module's own wording so the one existing call site is unaffected; a caller
+ * bounding a different operation should pass one that says what timed out.
  */
-async function withDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+export async function withDeadline<T>(
+  promise: Promise<T>,
+  ms: number,
+  message = "zitadel refresh timed out",
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("zitadel refresh timed out")),
-          ms,
-        );
+        timer = setTimeout(() => reject(new Error(message)), ms);
       }),
     ]);
   } finally {
@@ -337,23 +350,6 @@ function isExpiring(expiresAt: Date | undefined): boolean {
   const seconds = Math.floor(expiresAt.getTime() / 1000);
   if (!Number.isFinite(seconds)) return true;
   return seconds - RENEW_WITHIN_SECONDS <= Math.floor(Date.now() / 1000);
-}
-
-/**
- * When the token Zitadel just issued stops being accepted.
- *
- * A missing `expires_in` becomes "already expired" rather than a guessed
- * lifetime, so {@link isExpiring} treats it exactly as the old cookie path did:
- * refresh again next time rather than hand out a token whose life nobody
- * stated. Costs one extra round trip in a case Zitadel effectively never
- * produces; the alternative is inventing an expiry and being wrong about a
- * credential.
- */
-function expiryFrom(expiresIn: number | undefined): Date {
-  if (!expiresIn || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-    return new Date();
-  }
-  return new Date(Date.now() + expiresIn * 1000);
 }
 
 /**
