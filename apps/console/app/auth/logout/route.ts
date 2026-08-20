@@ -6,6 +6,8 @@ import {
   sessionCookieOptions,
 } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
+import { withDeadline } from "@/lib/auth/deadline";
+import { deleteTokens } from "@/lib/auth/operator-token-store";
 import { publicOrigin } from "@/lib/public-origin";
 
 /**
@@ -18,6 +20,31 @@ import { publicOrigin } from "@/lib/public-origin";
  */
 
 export const dynamic = "force-dynamic";
+
+/**
+ * How long the token-store delete may run before sign-out stops waiting on it.
+ *
+ * THIS IS THE POINT OF THE WHOLE THING. Before the token store, logout did no
+ * I/O at all and could not hang. Now it awaits a DELETE, and nothing in this
+ * stack bounds a query that has already started: `connectionTimeoutMillis` in
+ * `lib/db/tesserix.ts` bounds pool ACQUISITION only, and there is no
+ * `statement_timeout` anywhere. A DELETE stuck behind a lock would therefore
+ * hang this response — and the cookie is expired on the response, so a response
+ * that never returns leaves `tx_session` intact. The operator stays
+ * AUTHENTICATED, on a cookie shared across `.tesserix.app`, on the one surface
+ * whose entire purpose is ending that session.
+ *
+ * `withDeadline` REJECTS past this rather than resolving, which drops the hang
+ * into the same `catch` a thrown store error already falls into: logged, cookie
+ * still expired, still redirected. 2000ms to match `SAVE_TOKENS_DEADLINE_MS` in
+ * `/auth/callback` — the same store, the same pool, the same reasoning.
+ *
+ * ACCEPTED COST: a slow-but-alive database leaves the row behind. It is
+ * unreachable without the `sid` claim the cleared cookie carried, and
+ * `pruneExpired` sweeps it at `session_expires_at`. That is strictly better
+ * than a sign-out that does not sign anyone out.
+ */
+const DELETE_TOKENS_DEADLINE_MS = 2_000;
 
 /**
  * Ending the Zitadel session as well, when configured.
@@ -52,6 +79,39 @@ async function signOut(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });
     }
     throw cause;
+  }
+
+  // Revoke platform API access for this session. Best-effort, and it must
+  // stay that way: signing out has to succeed locally no matter what happens
+  // here, or a database blip would leave an operator unable to sign out at
+  // all. Today, without this, logout revokes nothing and the row survives
+  // until `session_expires_at` — reachable by anyone who still holds the
+  // (encrypted) row's key, i.e. nobody once the cookie naming it is gone, but
+  // it should not sit there a moment longer than it has to.
+  //
+  // `session?.sid` — not `session.sid` — because a session minted before this
+  // shipped, or minted by `apps/web` (which shares the `tx_session` cookie),
+  // carries no `sid` at all. That is not an error: there is simply no row to
+  // delete, and `deleteTokens` is never called.
+  if (session?.sid) {
+    try {
+      await withDeadline(
+        deleteTokens(session.sid),
+        DELETE_TOKENS_DEADLINE_MS,
+        "operator token store delete timed out",
+      );
+    } catch {
+      // Two ways in. `deleteTokens` already swallows pool-path errors
+      // internally (see its JSDoc), so a throw from it should be unreachable in
+      // production — but the catch stays so this call site's guarantee ("logout
+      // never fails on this") is explicit and does not silently evaporate if
+      // the store's contract changes later. The deadline above is the reachable
+      // one, and it lands here deliberately: a hang must degrade exactly like a
+      // failure, not worse than one.
+      console.error("[auth/logout] failed to delete operator API tokens", {
+        sid: session.sid,
+      });
+    }
   }
 
   const destination = idpLogoutUrl() ?? `${publicOrigin(request)}/auth/login`;

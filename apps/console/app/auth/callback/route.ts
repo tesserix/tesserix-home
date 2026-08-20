@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import {
@@ -21,6 +22,11 @@ import {
   getOidcConfig,
   type TokenResponse,
 } from "@/lib/auth/oidc";
+import {
+  accessTokenExpiresAt,
+  saveTokens,
+} from "@/lib/auth/operator-token-store";
+import { withDeadline } from "@/lib/auth/deadline";
 import { publicOrigin } from "@/lib/public-origin";
 
 // GET /auth/callback — finish the OIDC flow and mint the session.
@@ -29,6 +35,47 @@ export const runtime = "nodejs";
 
 const STATE_COOKIE = "cx_oauth_state";
 const NONCE_COOKIE = "cx_oidc_nonce";
+
+/**
+ * How long the token-store write may run before this login stops waiting on
+ * it.
+ *
+ * `saveTokens` is awaited with no deadline of its own, and nothing bounds a
+ * query that has already started: `connectionTimeoutMillis` in
+ * `lib/db/tesserix.ts` bounds POOL ACQUISITION only, and there is no
+ * `statement_timeout` anywhere in this stack. An unreachable-but-not-refusing
+ * Postgres, or an INSERT blocked on a lock, would otherwise stall this
+ * response — and the operator's login — for as long as the query hangs. The
+ * pool path also runs an opportunistic table-wide `pruneExpired()` DELETE
+ * right after the INSERT (see `saveTokens`'s own JSDoc), so this deadline is
+ * guarding two statements on the login critical path, not one.
+ *
+ * `withDeadline` REJECTS past this many milliseconds rather than resolving —
+ * see its JSDoc in `lib/auth/deadline.ts` — which is exactly what lets
+ * the timeout fall into the same `catch` a thrown store error falls into
+ * below: a hang degrades identically to a throw, not differently from one.
+ *
+ * ACCEPTED COST: a slow-but-alive database now fails the token write at 2s
+ * instead of eventually succeeding. That session gets "platform API
+ * unreachable" (every caller of `getPlatformApiToken()` already handles this)
+ * until the operator signs in again. That is strictly better than a login
+ * that hangs — this is the exact path that was down for a day, and to an
+ * operator a hung login is indistinguishable from that outage.
+ */
+const SAVE_TOKENS_DEADLINE_MS = 2_000;
+
+/**
+ * What the deadline above rejects with, and the only way to tell a hang apart
+ * from a failure at the catch below.
+ *
+ * The distinction is not cosmetic. `saveTokens` runs an opportunistic
+ * table-wide `pruneExpired()` DELETE AFTER its INSERT has already committed
+ * (see its JSDoc), so a deadline that fires during the prune means the row is
+ * almost certainly there. Logging both cases as "failed to store" tells the
+ * 2am reader the tokens are missing when they are probably fine — a false
+ * negative that sends them looking for the wrong outage.
+ */
+const SAVE_TOKENS_TIMEOUT_MESSAGE = "operator token store save timed out";
 
 function failure(reason: string, status = 401): NextResponse {
   // Deliberately terse to the browser, detailed in the log. The operator does
@@ -206,6 +253,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("not_internal", 403);
   }
 
+  // Minted once, held in a variable, and used twice: as the session's `sid`
+  // claim below, and as the key `saveTokens` writes the Zitadel tokens under
+  // further down. Generating it twice would mint a cookie whose `sid` names a
+  // row that was never written.
+  const sid = randomBytes(16).toString("hex");
+
   const token = await signSession({
     sub: identity.sub,
     email: identity.email,
@@ -225,7 +278,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     // `.planning/debug/console-login-state-mismatch.md`.
     //
     // So the cookie carries IDENTITY only, and the credentials move to a
-    // server-side store keyed by a `sid` claim, read on the requests that
+    // server-side store keyed by `sid` below, read on the requests that
     // actually call the platform API rather than on every request. That store
     // is step 2 and is not built yet; until it lands
     // `getPlatformApiToken()` returns null, which every caller already
@@ -234,6 +287,13 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Do not put a token back in here to "just make the tickets module work".
     // The guard below will refuse to mint it and login will fail loudly, which
     // is the improvement.
+    //
+    // `sid` is minted here even though nothing reads it yet: it is the key
+    // the token-store row will be found by, the same CSPRNG pattern
+    // /auth/login already uses for its state/nonce cookies. Adds ~40 bytes to
+    // a cookie currently measuring 499 — the size guard below still applies
+    // and is the thing that would catch it if that ever stopped being true.
+    sid,
   });
 
   // The browser's silent 4096-byte drop is what made this bug invisible for a
@@ -260,15 +320,18 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Still works, for this operator. The next one with more roles is the one
     // it stops working for, and by then nobody is looking. error, not warn:
     // this is a countdown to an outage, not a curiosity.
-    console.error("[auth/callback] session cookie is close to the browser limit", {
-      sub: identity.sub,
-      roleCount: identity.roles.length,
-      bytes: fit.bytes,
-      warnAt: fit.warnAt,
-      limit: fit.limit,
-      headroom: fit.headroom,
-      hint: "an operator with more roles will exceed 4096 bytes and be unable to sign in",
-    });
+    console.error(
+      "[auth/callback] session cookie is close to the browser limit",
+      {
+        sub: identity.sub,
+        roleCount: identity.roles.length,
+        bytes: fit.bytes,
+        warnAt: fit.warnAt,
+        limit: fit.limit,
+        headroom: fit.headroom,
+        hint: "an operator with more roles will exceed 4096 bytes and be unable to sign in",
+      },
+    );
   }
 
   // The success line, so the logs can tell "no callback ever completed" apart
@@ -285,13 +348,86 @@ export async function GET(request: NextRequest): Promise<Response> {
     cookieLimit: fit.limit,
   });
 
+  // Computed here — rather than where it is used below, on the redirect
+  // response — because `saveTokens` needs `maxAge` too: `session_expires_at`
+  // is supposed to mirror the session cookie's own lifetime, and reading it
+  // from the one call site that already exists keeps that true by
+  // construction instead of by two numbers agreeing on trust.
+  const cookie = sessionCookieOptions();
+
+  // Write the platform-API tokens the exchange just returned into the store,
+  // keyed by the `sid` already minted into the session above.
+  //
+  // THE ASYMMETRY THAT MATTERS: the size guard above REFUSES to mint a
+  // session when the cookie would break login, because breaking login is not
+  // an option. This call is the mirror image and must resolve the opposite
+  // way — it must never be allowed to refuse a login. Reaching the platform
+  // API is an optional capability layered on top of a session that already
+  // exists; the database being down, the encryption key being unset, or this
+  // INSERT failing outright must degrade to "no platform API this session"
+  // (which every reader of `getPlatformApiToken()` already treats as a normal
+  // outcome), not to "no login". Coupling the two would turn an ordinary
+  // database blip into an outage of the entire console over a capability most
+  // pages never touch. It must also never make the operator WAIT — see
+  // `SAVE_TOKENS_DEADLINE_MS` above for the hang half of this guarantee.
+  if (tokens.access_token) {
+    try {
+      await withDeadline(
+        saveTokens(
+          sid,
+          identity.sub,
+          {
+            accessToken: tokens.access_token,
+            accessExpiresAt: accessTokenExpiresAt(tokens.expires_in),
+            // `?? null`, not `?? ""`: Zitadel omitting a refresh token must
+            // be stored as "no refresh token"
+            // (`OperatorTokensInput.refreshToken` is `string | null |
+            // undefined`), never as an empty string that would later decrypt
+            // to a token nothing issued.
+            refreshToken: tokens.refresh_token ?? null,
+          },
+          new Date(Date.now() + cookie.maxAge * 1000),
+        ),
+        SAVE_TOKENS_DEADLINE_MS,
+        SAVE_TOKENS_TIMEOUT_MESSAGE,
+      );
+    } catch (cause) {
+      // Either a thrown error (see `saveTokens`'s JSDoc — it already
+      // swallows pool-path errors and returns, but this call site does not
+      // lean on that alone) or the deadline above rejecting a hang. Both mean
+      // the same thing to THIS CALLER: the login proceeds exactly as if the
+      // store did not exist.
+      //
+      // They do not mean the same thing to whoever reads the log, so they do
+      // not share a line. A timeout leaves the row's fate genuinely unknown —
+      // and, because the prune runs after the INSERT commits, more likely
+      // written than not.
+      const timedOut =
+        cause instanceof Error && cause.message === SAVE_TOKENS_TIMEOUT_MESSAGE;
+      console.error(
+        timedOut
+          ? "[auth/callback] platform API token store timed out; the row may or may not have been written"
+          : "[auth/callback] failed to store platform API tokens",
+        { sub: identity.sub, sid },
+      );
+    }
+  } else {
+    // Zitadel can return an id_token without an access_token depending on
+    // grant configuration. Not fatal — the session is still minted below —
+    // but worth a line, since it means this operator's session cannot reach
+    // the platform API until they sign in again with it fixed.
+    console.warn(
+      "[auth/callback] token exchange returned no access token; platform API unreachable this session",
+      { sub: identity.sub, sid },
+    );
+  }
+
   // publicOrigin, NOT nextUrl.origin: behind the ingress the latter is the pod's
   // own bind address, so this redirect shipped the browser to
   // http://0.0.0.0:3000 — the third time this codebase has made that mistake.
   const res = NextResponse.redirect(
     new URL(state.returnTo, publicOrigin(request)),
   );
-  const cookie = sessionCookieOptions();
   res.cookies.set(sessionCookieName(), token, {
     httpOnly: true,
     secure: new URL(config.redirectUri).protocol === "https:",

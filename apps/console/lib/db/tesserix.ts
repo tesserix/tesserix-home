@@ -82,6 +82,24 @@ function getPool(): Pool {
     // leaves headroom on a single-instance database shared with apps/web.
     max: 2,
     idleTimeoutMillis: 30_000,
+    // COUPLED TO `REFRESH_TIMEOUT_MS` in `lib/auth/platform-token.ts`, and the
+    // coupling is not obvious from either side.
+    //
+    // The operator token refresh runs `BEGIN` -> `SELECT ... FOR UPDATE` ->
+    // a network call to Zitadel -> `INSERT` -> `COMMIT`, so it holds one of
+    // these two connections ACROSS the network call. A hung IdP therefore
+    // starves the whole console — CRM, tickets, audit, the sidebar all draw on
+    // this pool — not just the session being refreshed.
+    //
+    // `REFRESH_TIMEOUT_MS` is sized against THIS value and must stay
+    // meaningfully below it: the connection is held for the fetch plus the
+    // statements around it, so an equal deadline would let a hang outlast a
+    // waiting caller's own timeout. It is 3s to this 5s. Change either number
+    // against the other; matching them reinstates the starvation.
+    //
+    // Accepted, not discovered: the worst case is a few seconds of
+    // console-wide starvation during an IdP hang, at a refresh volume of
+    // roughly once per session per hour.
     connectionTimeoutMillis: 5_000,
   });
   // An unhandled 'error' event on an idle client crashes the process. CNPG

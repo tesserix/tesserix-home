@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { EncryptJWT } from "jose";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { measureSessionCookie } from "./session-cookie-size";
@@ -205,5 +205,76 @@ describe("platform API tokens in the session", () => {
     // the budget. Identity in the cookie is affordable; credentials were not.
     expect(grew).toBeGreaterThan(0);
     expect(grew).toBeLessThan(400);
+  });
+});
+
+// ---- sid: the key that will link a session to its token-store row --------
+//
+// The tokens moved out of the cookie in favor of a server-side store, and
+// `sid` is what will find a session's row in it. It follows the exact same
+// optional-field policy as `roles`/`accessToken`/etc above: absent must mean
+// "this session predates the token store", never "denied" — a console that
+// refused sessions without it would sign every operator out on deploy.
+
+describe("sid", () => {
+  it("round-trips through sign and verify", async () => {
+    const token = await signSession({
+      sub: "operator-1",
+      email: "operator@tesserix.test",
+      sid: "abc123def456",
+    });
+
+    const session = await verifySession(token);
+
+    expect(session?.sid).toBe("abc123def456");
+  });
+
+  it("still verifies a session minted without it (legacy compatibility)", async () => {
+    const token = await signSession({ sub: "operator-1", email: "operator@tesserix.test" });
+
+    const session = await verifySession(token);
+
+    expect(session).not.toBeNull();
+    expect(session?.sid).toBeUndefined();
+  });
+
+  it("differs across two mints", async () => {
+    const claims = { sub: "operator-1", email: "operator@tesserix.test" };
+    const sidA = randomBytes(16).toString("hex");
+    const sidB = randomBytes(16).toString("hex");
+
+    expect(sidA).not.toBe(sidB);
+
+    const tokenA = await signSession({ ...claims, sid: sidA });
+    const tokenB = await signSession({ ...claims, sid: sidB });
+
+    const sessionA = await verifySession(tokenA);
+    const sessionB = await verifySession(tokenB);
+
+    expect(sessionA?.sid).toBe(sidA);
+    expect(sessionB?.sid).toBe(sidB);
+    expect(sessionA?.sid).not.toBe(sessionB?.sid);
+  });
+
+  it("keeps the cookie comfortably under the browser's 4096-byte limit", async () => {
+    // Mirrors the "keeps the encoded session inside a browser's per-cookie
+    // budget" test above, but with `sid` included — the field this task adds.
+    const roles = [
+      "read", "crm", "support", "billing", "platform", "respond",
+      "rotate-credentials", "adjust-balance", "execute-refund", "mass-send", "hard-delete",
+    ];
+
+    const token = await signSession({
+      sub: "386888878927118733",
+      email: "an.operator.with.a.long.address@tesserix.example",
+      name: "An Operator With A Reasonably Long Name",
+      roles,
+      sid: randomBytes(16).toString("hex"),
+    });
+
+    const measurement = measureSessionCookie("tx_session", token);
+    expect(measurement.exceedsLimit).toBe(false);
+    expect(measurement.nearLimit).toBe(false);
+    expect(measurement.headroom).toBeGreaterThan(2900);
   });
 });
