@@ -118,7 +118,14 @@ func TestMain(m *testing.M) {
 	// Asserted, because the whole value of this package's UTC guard rests on
 	// it. If a future toolchain stopped honouring the assignment, the guard
 	// would silently go back to proving nothing.
-	if time.Now().Format(time.RFC3339) == time.Now().UTC().Format(time.RFC3339) {
+	//
+	// ONE `now`, compared against itself. Calling time.Now() twice would let a
+	// run that straddled a second boundary compare two different instants,
+	// whose RFC3339 renderings differ for a reason that has nothing to do with
+	// the zone — so the guard would pass vacuously, which is the exact failure
+	// it exists to prevent.
+	now := time.Now()
+	if now.Format(time.RFC3339) == now.UTC().Format(time.RFC3339) {
 		fmt.Fprintf(os.Stderr, "the test process is still rendering UTC; the timestamp guard would prove nothing\n")
 		os.Exit(1)
 	}

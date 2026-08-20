@@ -145,13 +145,33 @@ type QueuePayload struct {
 	Opportunities []Opportunity `json:"opportunities"`
 }
 
+// NextActionPayload is what the next-action write answers with.
+//
+// The whole opportunity, not the two fields the caller just set. A write's
+// response is the resource as the write left it — `updated_at` moved too, and
+// a caller re-rendering a queue row from an echo of its own request would be
+// rendering what it asked for rather than what happened.
+//
+// A named object with one field for the same reason QueuePayload is one: it
+// can gain a sibling without becoming a different type.
+type NextActionPayload struct {
+	Opportunity Opportunity `json:"opportunity"`
+}
+
 // utc normalises a timestamp for the wire.
 //
-// pgx returns timestamptz in the connection's session timezone, so a laptop in
-// +10:00 and a container in UTC serialise the SAME ROW differently. Both parse,
-// so nothing breaks loudly — which is exactly why it is pinned. The tickets
-// module found this by running the service rather than by testing it; the
-// golden files mask the timestamp value, which also masks its offset.
+// pgx decodes a timestamptz into `time.Local` — the PROCESS's zone, not the
+// database session's — so a laptop in +10:00 and a container in UTC serialise
+// the SAME ROW differently. Both parse, so nothing breaks loudly, which is
+// exactly why it is pinned. The tickets module found this by running the
+// service rather than by testing it; the golden files mask the timestamp
+// value, which also masks its offset.
+//
+// The mechanism is stated as time.Local rather than as the session timezone
+// because that was established by experiment, not assumed: with the session
+// pinned to Australia/Sydney and these calls deleted, a UTC process still
+// rendered Z. handler_test.go's TestMain comment records the run, and this
+// comment previously contradicted it eight lines away.
 func utc(t time.Time) time.Time { return t.UTC() }
 
 func utcPtr(t *time.Time) *time.Time {

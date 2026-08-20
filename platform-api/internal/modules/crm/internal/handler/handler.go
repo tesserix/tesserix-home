@@ -82,19 +82,40 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/domain"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/repository"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm/internal/service"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/paging"
 )
+
+// opNextAction is the dotted operation name, shared by the audit trail and the
+// idempotency records so a key minted here cannot replay another endpoint's
+// stored response.
+const opNextAction = "crm.next_action.set"
+
+// maxBodyBytes bounds a request body.
+//
+// The note is capped at domain.MaxNextActionNoteLength characters, and this is
+// the transport-level guard that stops a caller streaming a gigabyte before
+// anything gets the chance to say so. Generous relative to the domain limit so
+// the domain's message — which names the real limit — is the one a caller
+// meets.
+const maxBodyBytes = 64 << 10
 
 // Paging bounds. The same numbers as the tickets module, and the same
 // reasoning: a page size chosen for a shared db-f1-micro, and a cap that
@@ -154,13 +175,34 @@ func New(svc *service.Service, log *slog.Logger) *Handler {
 // token", anything holding a session could call the module directly and every
 // console restriction would be decoration.
 //
-// # Nothing is inherited
+// # Nothing is inherited, and the write has NO VERB TO INHERIT
 //
-// Each route names what it needs. Both of these are reads, so both name `crm`
+// Each route names what it needs. Both queues are reads, so both name `crm`
 // and no verb — a queue is genuinely readable by anyone who works the CRM
-// surface. The writes Task 5 adds will stack their verb ON TOP of `crm`
-// rather than replacing it, the way the tickets module stacks `respond` on
-// `support`.
+// surface.
+//
+// The next-action write names `crm` and no verb EITHER, and that is a finding
+// rather than an oversight. §7's model is that a verb LAYERS on a surface —
+// the tickets module stacks `respond` on `support` — but the CRM has no write
+// verb to stack. console-core's routes.ts declares `capability: "crm"` and
+// nothing else on all four CRM surfaces (`platform.crm`, `platform.crmImport`,
+// `platform.crmSuppressions`, `platform.crmOrganisations`), and the console's
+// own scheduleNextAction asserts exactly `{ capability: "crm" }`
+// (crm/[organisation]/actions.ts:139) with no second check. The verbs that
+// DO exist in the vocabulary — `respond`, `mass-send`, `hard-delete`,
+// `rotate-credentials`, `adjust-balance`, `execute-refund` — none of them
+// names scheduling a follow-up.
+//
+// So this route gates on `crm` alone. Inventing a `crm-write` here would be a
+// second vocabulary, gate an operator the console lets through, and — because
+// the strings are a contract with Zitadel's role keys — assert a role nobody
+// holds, which fails closed on every real operator. If the CRM should have a
+// write verb, it is decided in capabilities.ts and Zitadel first, and this
+// line changes after. Written down so the next reader knows the gate is thin
+// on purpose and where the decision belongs.
+//
+// The stacking is still spelled out below rather than collapsed, so adding the
+// verb when it exists is one argument rather than a restructuring.
 //
 // Named Routes rather than Register: this module's public Register/Config file
 // is Task 6's, and it will call this.
@@ -168,9 +210,131 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	read := func(handler http.HandlerFunc) http.Handler {
 		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapCRM, h.log, handler))
 	}
+	write := func(handler http.HandlerFunc) http.Handler {
+		// The surface, and — when the vocabulary grows one — its verb, stacked
+		// on top rather than replacing it. See the comment above.
+		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapCRM, h.log, handler))
+	}
 
 	mux.Handle("GET /v1/crm/queues/due", read(h.due))
 	mux.Handle("GET /v1/crm/queues/drifting", read(h.drifting))
+	// PUT rather than PATCH: the two fields are ONE thing — the next action —
+	// and this replaces it wholly. An absent field is a cleared field, which
+	// is a contract a PATCH could not honestly claim.
+	mux.Handle("PUT /v1/crm/opportunities/{id}/next-action", write(h.setNextAction))
+}
+
+// nextActionRequest is the write's body.
+//
+// Both fields are pointers so "absent" and "null" reach the handler as the
+// same thing — nil — which is what PUT means here: whatever you do not send is
+// cleared. A non-pointer `at` could not express clearing at all, since the
+// zero time is a real instant.
+type nextActionRequest struct {
+	// At is RFC 3339. encoding/json parses it into time.Time and refuses
+	// anything else, so a badly-spelled date is a 400 naming the field rather
+	// than a silently ignored parameter.
+	At *time.Time `json:"at"`
+	// Note is the reminder text.
+	Note *string `json:"note"`
+}
+
+func (h *Handler) setNextAction(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+
+	var request nextActionRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	key, err := h.readKey(r, principal, opNextAction, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.SetNextAction(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		r.PathValue("id"),
+		domain.NextAction{At: request.At, Note: request.Note},
+		key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	// written.Body is already JSON — it may have been stored for replay inside
+	// the transaction that produced it — and json.RawMessage passes through
+	// the envelope unchanged.
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
+}
+
+// beginWrite recovers the principal and reads the body once.
+//
+// The body is read rather than streamed into a decoder because it is needed
+// twice — decoded into a request struct, and digested for the idempotency key.
+// A decoder consumes the stream, so the digest would be of nothing.
+func (h *Handler) beginWrite(w http.ResponseWriter, r *http.Request) (*auth.Principal, []byte, bool) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		// Unreachable behind Authenticate. Refused rather than assumed,
+		// because the alternative is writing an audit row with an empty actor.
+		h.log.ErrorContext(r.Context(), "a write route ran without a principal",
+			slog.String("path", r.URL.Path))
+		h.fail(w, r, httpx.Internal("request failed"))
+		return nil, nil, false
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		h.fail(w, r, httpx.BadRequest("the request body could not be read"))
+		return nil, nil, false
+	}
+	return principal, body, true
+}
+
+// readKey turns an optional Idempotency-Key header into a key.
+//
+// Optional, deliberately: no header is a normal write, not a refusal. A header
+// the caller got WRONG is an error rather than a silent absence — see
+// idempotency.ErrInvalidKey in fail below — because a caller who meant to be
+// protected must be told they were not.
+func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation string, body []byte) (*idempotency.Key, error) {
+	key, asked, err := idempotency.FromRequest(r, principal.Subject, operation, body)
+	if err != nil {
+		return nil, err
+	}
+	if !asked {
+		return nil, nil
+	}
+	return &key, nil
+}
+
+// decode parses a request body, rejecting anything the struct does not
+// declare.
+//
+// DisallowUnknownFields because a caller sending `{"nte": "..."}` should be
+// told, not answered with a 200 that silently cleared the note. It is stricter
+// than most of the estate, and the strictness is worth it on a contract
+// products pin to: an unknown field today is a field this service might mean
+// something by tomorrow. It is the write-side twin of
+// rejectUnknownParameters, which does the same job for the reads.
+func decode(body []byte, into any) error {
+	if len(body) == 0 {
+		return httpx.BadRequest("a request body is required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		// The parse error's text is safe to return — it describes the caller's
+		// own body, not this service's internals — and without it a 400 on a
+		// large payload is a guessing game.
+		return httpx.BadRequest("the request body is not the expected JSON: " + err.Error())
+	}
+	return nil
 }
 
 // The query parameters each route admits. Anything else is a 400 — see the
@@ -452,6 +616,25 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.As(err, &envelope):
 		// Already a decided answer — a validation failure from parsing above.
 
+	case errors.Is(err, repository.ErrNotFound):
+		envelope = httpx.NotFound("no such opportunity")
+
+	case errors.Is(err, idempotency.ErrInvalidKey):
+		envelope = httpx.BadRequest("the " + idempotency.Header + " header is not usable")
+
+	case errors.Is(err, idempotency.ErrKeyReused):
+		// 409, not a replay of the stored response. The bodies differ, so
+		// replaying would silently discard the second request.
+		envelope = httpx.Conflict("this " + idempotency.Header + " was already used for a different request")
+
+	case errors.Is(err, service.ErrRefused):
+		// 422: understood, and declined. Distinct from 400 — the request was
+		// well-formed — and the message is the domain's own, which names what
+		// it declined. The grandfathered-row refusal arrives here, and its
+		// message tells the operator to supply the missing product rather than
+		// naming a Postgres constraint.
+		envelope = httpx.Validation(refusalMessage(err), nil)
+
 	case errors.Is(err, paging.ErrMalformedCursor):
 		// 400, not a silent first page. The cursor came off a URL, so this is
 		// a bad LINK rather than a flaky read, and the two want opposite
@@ -479,4 +662,16 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Int("status", envelope.StatusCode),
 	)
 	httpx.WriteError(w, r, envelope, h.log)
+}
+
+// refusalMessage strips the sentinel's own prefix so the caller reads the
+// domain's reason rather than "the request was refused: the request was
+// refused: …".
+func refusalMessage(err error) string {
+	const prefix = "the request was refused: "
+	message := err.Error()
+	if strings.HasPrefix(message, prefix) {
+		return strings.TrimPrefix(message, prefix)
+	}
+	return message
 }

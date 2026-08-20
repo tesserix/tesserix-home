@@ -501,30 +501,46 @@ func primaryContactExists(existence, test string) string {
           )`, existence, primaryContactOrder, test)
 }
 
+// scanner is what both a queue row and a single RETURNING row satisfy.
+// Declared so the column list above is read back in exactly one place: a
+// second Scan call written against `queueColumns` would be a second chance to
+// get the ORDER of eleven values wrong, and a swapped pair of same-typed
+// columns produces wrong data rather than an error.
+type scanner interface{ Scan(dest ...any) error }
+
+// scanOpportunity reads one row of `queueColumns`.
+func scanOpportunity(row scanner) (domain.Opportunity, error) {
+	var o domain.Opportunity
+	var stage string
+	if err := row.Scan(
+		&o.ID, &o.OrganisationID, &o.OrganisationName,
+		&o.Product, &stage, &o.Owner,
+		&o.NextActionAt, &o.NextActionNote, &o.LastContactedAt,
+		&o.QuietSince, &o.IsStarred,
+	); err != nil {
+		return domain.Opportunity{}, err
+	}
+	// Narrowed on the way OUT of the database as well as on the way in. The
+	// crm_stage enum makes this unreachable, which is the point: if it ever
+	// fires, the type gained a value without this module learning of it, and
+	// the module should say so rather than carry an unknown stage into a
+	// response the console parses strictly.
+	parsed, err := domain.ParseStage(stage)
+	if err != nil {
+		return domain.Opportunity{}, fmt.Errorf("opportunity %s: %w", o.ID, err)
+	}
+	o.Stage = parsed
+	return o, nil
+}
+
 func scanOpportunities(rows pgx.Rows) ([]domain.Opportunity, error) {
 	defer rows.Close()
 	out := make([]domain.Opportunity, 0, 16)
 	for rows.Next() {
-		var o domain.Opportunity
-		var stage string
-		if err := rows.Scan(
-			&o.ID, &o.OrganisationID, &o.OrganisationName,
-			&o.Product, &stage, &o.Owner,
-			&o.NextActionAt, &o.NextActionNote, &o.LastContactedAt,
-			&o.QuietSince, &o.IsStarred,
-		); err != nil {
+		o, err := scanOpportunity(rows)
+		if err != nil {
 			return nil, fmt.Errorf("reading an opportunity: %w", err)
 		}
-		// Narrowed on the way OUT of the database as well as on the way in.
-		// The crm_stage enum makes this unreachable, which is the point: if it
-		// ever fires, the type gained a value without this module learning of
-		// it, and the module should say so rather than carry an unknown stage
-		// into a response the console parses strictly.
-		parsed, err := domain.ParseStage(stage)
-		if err != nil {
-			return nil, fmt.Errorf("opportunity %s: %w", o.ID, err)
-		}
-		o.Stage = parsed
 		out = append(out, o)
 	}
 	if err := rows.Err(); err != nil {
