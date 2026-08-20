@@ -187,14 +187,41 @@ this document exists is that it was, accidentally.
    **The write half — actually restoring access while locked out — is still
    untested**, and it is the half that matters. #288 tracks it.
 
+## What changed on 2026-08-20
+
+- **The Refresh Token grant was actually enabled on `console-web`** (#304).
+  Confirmed before and after by probing the token endpoint with a deliberately
+  invalid refresh token, which separates a grant-level refusal from a
+  token-level one without spending a live credential: `unauthorized_client`
+  / `grant_type "refresh_token" not allowed` before, `Errors.User.RefreshToken.Invalid`
+  after.
+
+  **Zitadel was issuing refresh tokens the whole time it refused to redeem
+  them.** Issuing and redeeming are separate permissions, and conflating them
+  is what made this look enabled. The console stored a credential it was not
+  allowed to spend, and the failure would have surfaced about an hour into a
+  session — not at login — as every platform-API surface going unreachable for
+  the rest of the 7-day session.
+
+  Zitadel **rotates** refresh tokens on use: redeeming one returns a
+  replacement and kills the original. That is now observed against this
+  instance, and it is why `operator_api_tokens` must persist the replacement.
+
+- `ZITADEL_POST_LOGOUT_REDIRECT_URI` set, so sign-out ends the Zitadel session
+  rather than only the console cookie (#306, tesserix-k8s#516).
+
 ## What changed on 2026-08-19
 
 - Google removed as an identity provider, and the operators' Google links
   removed — part of ADR-003 D4, and one of the four auth paths #165 is about.
   Google's own OAuth client was rejecting Zitadel's callback with
   `redirect_uri_mismatch` regardless.
-- Auth Token Type switched Bearer → JWT, and the Refresh Token grant enabled,
-  for the platform API (#278).
+- Auth Token Type switched Bearer → JWT, for the platform API (#278).
+- **The Refresh Token grant was NOT enabled, though this page said it was.**
+  The claim stood here for a day and was wrong: `console-web`'s grant types
+  were `[AUTHORIZATION_CODE]` only until 2026-08-20. There is no second
+  application it could have meant — `platform-console` contains exactly one,
+  and the platform API has no Zitadel application of its own. See below.
 - Four capability roles added — `crm`, `support`, `billing`, `platform` (#261).
 - Duplicate operator users removed; the instance default organization changed
   to Tesserix as an unblock, then made irrelevant by `ZITADEL_ORG_ID`.
