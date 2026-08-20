@@ -2,9 +2,14 @@
   "success": false,
   "error": {
     "code": "VALIDATION_FAILED",
-    "message": "the filter is not valid",
+    "message": "the filter is not valid: stage: \"won\" is terminal; neither queue contains a won or lost opportunity",
     "details": {
-      "filter": "stage: \"won\" is terminal; neither queue contains a won or lost opportunity (want one of [new contacted qualified])"
+      "accepted": [
+        "new",
+        "contacted",
+        "qualified"
+      ],
+      "stage": "won"
     }
   },
   "timestamp": "<timestamp>",

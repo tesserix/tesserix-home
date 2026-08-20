@@ -2,9 +2,14 @@
   "success": false,
   "error": {
     "code": "VALIDATION_FAILED",
-    "message": "the filter is not valid",
+    "message": "the filter is not valid: stage: unknown stage \"archived\"",
     "details": {
-      "filter": "stage: unknown stage \"archived\" (want one of [new contacted qualified])"
+      "accepted": [
+        "new",
+        "contacted",
+        "qualified"
+      ],
+      "stage": "archived"
     }
   },
   "timestamp": "<timestamp>",

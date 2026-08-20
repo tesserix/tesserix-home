@@ -7,9 +7,11 @@
 //
 // `Due` and `Drifting` are the Go rewrite of dueOpportunities and
 // driftingOpportunities in apps/console/lib/db/crm-repo.ts. They differ in
-// exactly three things — their own predicate, the expression they sort by, and
-// the fact that Drifting takes a staleness window — so everything else lives in
-// `queuePage`, the way `queuePage` does on the console side. Two copies of a
+// exactly four things — their own predicate, the expression they sort by, the
+// fact that Drifting takes a staleness window, and their NAME, which their
+// cursors carry so that one queue's cursor is refused by the other (see
+// queue.shape) — so everything else lives in `queuePage`, the way `queuePage`
+// does on the console side. Two copies of a
 // keyset pager is two chances for one of them to skip a row at a page
 // boundary, and a skipped row in a work queue is invisible.
 //
@@ -86,16 +88,71 @@ const (
 	backwardOrder = "DESC"
 )
 
-// sortShape is both queues' key, component by component: the queue's timestamp,
-// then id.
+// The two queues' names. They are the last path segment of each route, they
+// are the third component of every cursor either queue mints, and they are the
+// reason a cursor from one is not usable on the other. See queueNamed.
+const (
+	dueName      = "due"
+	driftingName = "drifting"
+)
+
+// shape is this queue's cursor key, component by component: the queue's
+// timestamp, then id, then the queue's own NAME.
 //
-// Passed to paging.Decode, which checks the COUNT — so a cursor minted by the
-// ticket queue, which sorts on four, is rejected rather than bound
-// positionally against two columns that mean something else — and the CONTENT,
-// so a well-formed two-component cursor carrying ["hello","world"] is a 400
-// rather than an `invalid input syntax for type timestamp with time zone`
-// arriving from `$1::timestamptz` as a 500.
-var sortShape = paging.Shape{paging.Timestamp, paging.UUID}
+// paging.Decode checks the COUNT — so a cursor minted by the ticket queue,
+// which sorts on four, is rejected rather than bound positionally against
+// columns that mean something else — and the CONTENT, so a well-formed cursor
+// carrying ["hello","world"] is a 400 rather than an `invalid input syntax for
+// type timestamp with time zone` arriving from `$1::timestamptz` as a 500.
+//
+// # Why the count check is NOT enough, which is what this file used to claim
+//
+// Both queues sorted on two components of the same types, and both used ONE
+// package-level shape. So a DRIFTING cursor — anchored on
+// COALESCE(last_contacted_at, created_at) — pasted onto /v1/crm/queues/due
+// decoded cleanly and bound against o.next_action_at, and the page came back
+// 200 with `total` and `preceding_count` computed consistently against an
+// anchor that means something else entirely. Nothing looked wrong. That is
+// exactly the failure §3 says the version and the length check exist to
+// prevent: "a page rendered from the wrong anchor, reported as a success".
+// The old comment here cited the ticket queue as proof the guarantee held —
+// true only because tickets happens to sort on four components.
+//
+// It is not theoretical. The console guards the same collision with two
+// SEPARATE query parameters (DUE_CURSOR_PARAM and DRIFT_CURSOR_PARAM in
+// apps/console/app/(console)/platform/crm/page.tsx), and buildQueueCursorHref
+// deliberately preserves the other queue's cursor while replacing its own.
+// This API exposes ONE `cursor` parameter on both routes, so that mitigation
+// did not survive the port and has to be rebuilt inside the cursor.
+//
+// # Why a third component rather than two shapes
+//
+// Two shapes of the same length and the same component types would be the same
+// check twice: the distinctness has to be in the cursor's CONTENT, because
+// there is nothing else about a due cursor that differs from a drifting one.
+// So the queue names itself in its own key, and queueNamed refuses any other
+// name. A component is also the only place the refusal composes with
+// everything else — it unwraps to paging.ErrMalformedCursor, so the handler
+// already answers 400 ("start from the first page"), which is the right advice
+// for a link that cannot work here whatever it does elsewhere.
+func (q queue) shape() paging.Shape {
+	return paging.Shape{paging.Timestamp, paging.UUID, queueNamed(q.name)}
+}
+
+// queueNamed accepts one queue's own name and nothing else.
+//
+// The component ANCHORS nothing — appendAnchor binds the first two components
+// and never this one — so it costs no parameter and no comparison. It is
+// identity, carried inside the opaque string so that it travels with the
+// cursor into a bookmark or a link the way the direction and the version do.
+func queueNamed(name string) paging.Component {
+	return func(value string) error {
+		if value != name {
+			return fmt.Errorf("%q minted this cursor; the %s queue cannot page from it", value, name)
+		}
+		return nil
+	}
+}
 
 // Page is one page of a queue plus the counts a caller needs to describe it
 // honestly.
@@ -122,6 +179,7 @@ type Page struct {
 // drive from crm_organisations instead. Which index runs is Postgres's call.
 func Due(ctx context.Context, db Querier, filter domain.Filter, limit int, rawCursor string) (Page, error) {
 	return queuePage(ctx, db, queue{
+		name:    dueName,
 		sortKey: dueSortKey,
 		predicate: func(*[]any) string {
 			return `o.next_action_at <= now() AND o.stage NOT IN ('won', 'lost')`
@@ -157,6 +215,7 @@ func Drifting(ctx context.Context, db Querier, filter domain.Filter, staleDays, 
 		return Page{}, fmt.Errorf("staleDays is %d; a staleness window cannot be negative", staleDays)
 	}
 	return queuePage(ctx, db, queue{
+		name:    driftingName,
 		sortKey: driftingSortKey,
 		predicate: func(args *[]any) string {
 			*args = append(*args, staleDays)
@@ -171,6 +230,10 @@ func Drifting(ctx context.Context, db Querier, filter domain.Filter, staleDays, 
 
 // queue is what distinguishes one queue from the other.
 type queue struct {
+	// name identifies this queue in its own cursors, so a cursor minted by the
+	// other one is refused rather than bound against the wrong anchor. See
+	// queue.shape.
+	name string
 	// sortKey is the SQL expression this queue orders by. A package constant,
 	// never caller input — it is spliced into the statement, not bound.
 	sortKey string
@@ -208,7 +271,7 @@ func queuePage(ctx context.Context, db Querier, q queue, filter domain.Filter, l
 	}
 	var cursor *paging.Cursor
 	if rawCursor != "" {
-		decoded, err := paging.Decode(rawCursor, sortShape)
+		decoded, err := paging.Decode(rawCursor, q.shape())
 		if err != nil {
 			return Page{}, err
 		}
@@ -324,21 +387,27 @@ func queuePage(ctx context.Context, db Querier, q queue, filter domain.Filter, l
 // column, and stating the type is cheaper than depending on what the planner
 // deduces there. The ticket queue lost an afternoon to exactly this class of
 // problem in the opposite direction.
+// Only the first two components are bound: the third names the queue that
+// minted the cursor and is checked by q.shape(), not compared against a column.
 func appendAnchor(cursor *paging.Cursor, args *[]any) string {
 	*args = append(*args, cursor.Key[0], cursor.Key[1])
 	return fmt.Sprintf("($%d::timestamptz, $%d::uuid)", len(*args)-1, len(*args))
 }
 
 // cursorKey renders the anchor for one row: this listing's two ORDER BY
-// components, in declaration order, as text.
+// components, in declaration order, then the queue's own name.
 //
 // RFC3339Nano in UTC, because the value is compared back against a
 // timestamptz and a truncated rendering would put the anchor a fraction of a
 // second off the row it names — which shows up as a page boundary that repeats
 // or skips a row, and nowhere else.
+//
+// The name is not part of the ORDER BY and is never bound into the query. It
+// is here so that q.shape() has something to check, which is what makes a
+// drifting cursor unusable on the due queue and the other way round.
 func cursorKey(q queue) paging.Key[domain.Opportunity] {
 	return func(o domain.Opportunity) []string {
-		return []string{q.sortValue(o).UTC().Format(time.RFC3339Nano), o.ID}
+		return []string{q.sortValue(o).UTC().Format(time.RFC3339Nano), o.ID, q.name}
 	}
 }
 

@@ -9,6 +9,7 @@ package domain
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -56,20 +57,72 @@ var queueStages = []Stage{StageNew, StageContacted, StageQualified}
 
 // parseQueueStage narrows a stage a caller wants to FILTER by.
 //
-// Its messages enumerate `queueStages`, not `stages`. An error that offered
+// Its refusals enumerate `queueStages`, not `stages`. An error that offered
 // `won` as an accepted value while the queue refuses it would be the service
 // contradicting itself in the one place a caller is already confused.
+//
+// The accepted values travel in FilterRefusal.Accepted rather than inside the
+// message. They used to be interpolated with %v, which renders a []Stage as
+// `[new contacted qualified]` — a Go slice rendering pinned into a golden
+// file, where a client parsing the accepted set out of it would break the day
+// somebody changed a format verb. The module already answers the analogous
+// question with a JSON array (`accepted` on an unknown query parameter), and
+// this is that treatment applied to the axes too.
 func parseQueueStage(raw string) (Stage, error) {
 	parsed, err := ParseStage(raw)
 	if err != nil {
-		return "", fmt.Errorf("unknown stage %q (want one of %v)", raw, queueStages)
+		return "", FilterRefusal{
+			Parameter: "stage",
+			Value:     raw,
+			Reason:    fmt.Sprintf("unknown stage %q", raw),
+			Accepted:  stageNames(queueStages),
+		}
 	}
 	if parsed.Terminal() {
-		return "", fmt.Errorf(
-			"%q is terminal; neither queue contains a won or lost opportunity (want one of %v)",
-			raw, queueStages)
+		return "", FilterRefusal{
+			Parameter: "stage",
+			Value:     raw,
+			Reason: fmt.Sprintf(
+				"%q is terminal; neither queue contains a won or lost opportunity", raw),
+			Accepted: stageNames(queueStages),
+		}
 	}
 	return parsed, nil
+}
+
+// FilterRefusal is one filter axis's refusal, kept in pieces.
+//
+// §1's rule for `error.details` is that a key is a REQUEST PARAMETER and its
+// value is the offending input; the explanation belongs in `message`, and a
+// closed vocabulary belongs in `accepted` as a JSON array. A refusal formatted
+// into one string cannot be taken apart again into those pieces, so the domain
+// hands the handler the pieces and the handler decides the wire shape. That is
+// also why Accepted is []string rather than []Stage or []FollowerBand: what
+// reaches the wire is a JSON array of the spellings a caller may send, and a
+// typed slice would only be rendered back to those.
+//
+// Accepted is nil where the axis has no closed vocabulary — a country code is
+// a shape, not a list, and enumerating 249 of them would be noise.
+type FilterRefusal struct {
+	// Parameter is the query parameter the value arrived on, exactly as the
+	// handler's grammar spells it.
+	Parameter string
+	// Value is what the caller sent, verbatim and unnormalised.
+	Value string
+	// Reason is the human half, for `message`.
+	Reason string
+	// Accepted is every value this axis takes, or nil if it is not a list.
+	Accepted []string
+}
+
+func (r FilterRefusal) Error() string { return r.Parameter + ": " + r.Reason }
+
+func stageNames(list []Stage) []string {
+	out := make([]string, len(list))
+	for i, s := range list {
+		out[i] = string(s)
+	}
+	return out
 }
 
 // ParseStage narrows a caller-supplied string.
@@ -80,7 +133,11 @@ func parseQueueStage(raw string) (Stage, error) {
 func ParseStage(raw string) (Stage, error) {
 	s := Stage(raw)
 	if !slices.Contains(stages, s) {
-		return "", fmt.Errorf("unknown stage %q (want one of %v)", raw, stages)
+		// Joined rather than interpolated with %v: this message reaches a log
+		// when a row scans back with a stage this module does not know, and a
+		// Go slice rendering there is the same readability problem it was on
+		// the wire, minus the contract.
+		return "", fmt.Errorf("unknown stage %q (want one of %s)", raw, strings.Join(stageNames(stages), ", "))
 	}
 	return s, nil
 }
@@ -140,15 +197,24 @@ func (b FollowerBand) Bounds() (FollowerBounds, bool) {
 func ParseFollowerBand(raw string) (FollowerBand, error) {
 	b := FollowerBand(raw)
 	if _, ok := followerBands[b]; !ok {
-		return "", fmt.Errorf("unknown follower band %q (want one of %v)", raw, bandNames())
+		return "", FilterRefusal{
+			Parameter: "followers",
+			Value:     raw,
+			Reason:    fmt.Sprintf("unknown follower band %q", raw),
+			Accepted:  bandNames(),
+		}
 	}
 	return b, nil
 }
 
-func bandNames() []FollowerBand {
-	names := make([]FollowerBand, 0, len(followerBands))
+// bandNames is sorted, because it reaches the wire: Go randomises map
+// iteration, and an `accepted` array that reordered between two identical
+// requests would show up as a spurious diff in a golden file and as noise to a
+// client comparing responses.
+func bandNames() []string {
+	names := make([]string, 0, len(followerBands))
 	for name := range followerBands {
-		names = append(names, name)
+		names = append(names, string(name))
 	}
 	slices.Sort(names)
 	return names
@@ -227,7 +293,11 @@ func (m Match) Value() string { return m.value }
 // at the caller's parameter rather than at this type.
 func (m Match) validate(axis string) error {
 	if m.unset && m.value != "" {
-		return fmt.Errorf("%s: cannot be both unset and %q", axis, m.value)
+		return FilterRefusal{
+			Parameter: axis,
+			Value:     m.value,
+			Reason:    fmt.Sprintf("cannot be both unset and %q", m.value),
+		}
 	}
 	return nil
 }
@@ -289,18 +359,23 @@ func (f Filter) Validate() error {
 	if f.Stage != "" {
 		// parseQueueStage, not ParseStage: a queue filter may not name a
 		// terminal stage. See the comment on queueStages.
+		//
+		// Returned unwrapped, here and below: a FilterRefusal already carries
+		// the parameter it belongs to, and wrapping it with the axis name
+		// again would put "stage: " in front of a message that a handler is
+		// about to print beside `"stage": "won"` anyway.
 		if _, err := parseQueueStage(string(f.Stage)); err != nil {
-			return fmt.Errorf("stage: %w", err)
+			return err
 		}
 	}
 	if !f.Country.IsAny() && !f.Country.IsUnset() {
 		if err := validCountry(f.Country.Value()); err != nil {
-			return fmt.Errorf("country: %w", err)
+			return err
 		}
 	}
 	if !f.Followers.IsAny() && !f.Followers.IsUnset() {
 		if _, err := ParseFollowerBand(f.Followers.Value()); err != nil {
-			return fmt.Errorf("followers: %w", err)
+			return err
 		}
 	}
 	return nil
@@ -315,7 +390,15 @@ func (f Filter) Validate() error {
 // case worth turning into a 400.
 func validCountry(code string) error {
 	if len(code) != 2 || code[0] < 'A' || code[0] > 'Z' || code[1] < 'A' || code[1] > 'Z' {
-		return fmt.Errorf("%q is not an upper-case ISO 3166-1 alpha-2 code", code)
+		return FilterRefusal{
+			Parameter: "country",
+			Value:     code,
+			Reason:    fmt.Sprintf("%q is not an upper-case ISO 3166-1 alpha-2 code", code),
+			// No Accepted: this axis is a SHAPE, not a vocabulary. Listing
+			// every alpha-2 code would be 249 strings on every refusal, and
+			// the ones this table actually holds are data rather than
+			// contract.
+		}
 	}
 	return nil
 }

@@ -16,9 +16,7 @@
         "product_unset",
         "stage"
       ],
-      "unknown": [
-        "stge"
-      ]
+      "stge": "new"
     }
   },
   "timestamp": "<timestamp>",

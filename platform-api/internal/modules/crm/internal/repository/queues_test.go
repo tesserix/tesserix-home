@@ -94,10 +94,15 @@ func TestDriftingMeasuresANeverContactedLeadFromWhenItArrived(t *testing.T) {
 
 func TestDriftingIncludesARowExactlyOnTheStaleBoundary(t *testing.T) {
 	// `<=`, so the row whose quiet_since is exactly the window's edge is IN.
-	// The margin is a minute rather than a tick: now() at query time is later
-	// than the fixture's captured instant by however long seeding took, which
-	// pushes the exact-boundary row further inside the window and the
-	// just-inside row no further out.
+	//
+	// The margin is a minute rather than a tick, and it only means anything
+	// because `base` comes from the DATABASE (see newWorld). now() at query
+	// time is then later than base by however long seeding took — never
+	// earlier — so the exact-boundary row is pushed further inside the window
+	// and the just-inside row no further out. Read against a HOST clock the
+	// reasoning does not hold in either direction: a container lagging the
+	// host by a second puts exactly-7d outside the window, and a container
+	// running more than a minute ahead pulls one-minute-short inside it.
 	w := newWorld(t)
 	w.org(orgSpec{name: "acme"})
 	w.opportunity(oppSpec{org: "acme", label: "exactly-7d", lastContactedAt: w.ago(7 * day)})
@@ -550,10 +555,11 @@ func TestAMalformedCursorIsRefusedBeforeAnyQueryRuns(t *testing.T) {
 }
 
 func TestACursorFromAListingThatSortsDifferentlyIsRejected(t *testing.T) {
-	// The ticket queue sorts on four components; these queues sort on two. A
-	// four-component key bound positionally against two columns is a page
-	// rendered from the wrong anchor and reported as a success, which is the
-	// failure the length check exists to turn into a 400.
+	// The ticket queue sorts on four components; these queues declare three (a
+	// timestamp, a uuid and the queue's own name). A four-component key bound
+	// positionally against columns that mean something else is a page rendered
+	// from the wrong anchor and reported as a success, which is the failure
+	// the length check exists to turn into a 400.
 	foreign, err := paging.Encode(paging.Cursor{
 		Direction: paging.After,
 		Key:       []string{"0", "1", "2026-08-20T00:00:00Z", "3f2a1c94-0000-4000-8000-0000000000aa"},
@@ -567,36 +573,103 @@ func TestACursorFromAListingThatSortsDifferentlyIsRejected(t *testing.T) {
 }
 
 func TestAWellFormedCursorCarryingNonsenseIsRefusedBeforeAnyQueryRuns(t *testing.T) {
-	// Two components, right version, valid direction — everything the
-	// envelope checks — and content that is neither a timestamp nor a uuid.
-	// Before paging.Shape this decoded cleanly, reached `$1::timestamptz` and
-	// came back as a 500 on what is actually a bad link. This pins that both
-	// queues declare a shape, not just that the kernel has one.
-	nonsense, err := paging.Encode(paging.Cursor{
-		Direction: paging.After,
-		Key:       []string{"hello", "world"},
-	})
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
+	// The right NUMBER of components, right version, valid direction, and the
+	// queue's own name in the last one — everything except the content of the
+	// two that anchor. Before paging.Shape this decoded cleanly, reached
+	// `$1::timestamptz` and came back as a 500 on what is actually a bad link.
+	// This pins that both queues declare a shape, not just that the kernel has
+	// one, and the queue name is correct here precisely so the CONTENT check
+	// is what refuses it rather than the identity check added beside it.
+	nonsense := func(t *testing.T, queue string) string {
+		t.Helper()
+		raw, err := paging.Encode(paging.Cursor{
+			Direction: paging.After,
+			Key:       []string{"hello", "world", queue},
+		})
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+		return raw
 	}
 	for _, tc := range []struct {
 		name string
-		call func() error
+		call func(*testing.T) error
 	}{
-		{"due", func() error {
-			_, err := repository.Due(context.Background(), refusing{t}, domain.Filter{}, 50, nonsense)
+		{"due", func(t *testing.T) error {
+			_, err := repository.Due(context.Background(), refusing{t}, domain.Filter{}, 50, nonsense(t, "due"))
 			return err
 		}},
-		{"drifting", func() error {
-			_, err := repository.Drifting(context.Background(), refusing{t}, domain.Filter{}, 7, 50, nonsense)
+		{"drifting", func(t *testing.T) error {
+			_, err := repository.Drifting(context.Background(), refusing{t}, domain.Filter{}, 7, 50, nonsense(t, "drifting"))
 			return err
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := tc.call(); !errors.Is(err, paging.ErrMalformedCursor) {
+			if err := tc.call(t); !errors.Is(err, paging.ErrMalformedCursor) {
 				t.Errorf("err = %v, want a malformed-cursor rejection so the handler answers 400", err)
 			}
 		})
+	}
+}
+
+// A cursor is refused by the queue that did not mint it.
+//
+// This is the failure the single package-level shape allowed and nothing
+// caught: both queues sorted on a timestamp and a uuid, so a DRIFTING cursor —
+// anchored on COALESCE(last_contacted_at, created_at) — decoded cleanly on the
+// due queue, bound against o.next_action_at, and produced a 200 whose rows,
+// `total` and `preceding_count` were all computed consistently from an anchor
+// that means something else. §3 names that exactly: "a page rendered from the
+// wrong anchor, reported as a success".
+//
+// The cursors are MINTED BY THE QUEUES THEMSELVES over a real database rather
+// than assembled here, because a hand-built key would only prove that
+// queue.shape rejects a string this test wrote. What needs pinning is that the
+// cursor a caller actually receives from one route cannot be pasted onto the
+// other — which is what the console avoids by keeping two separate query
+// parameters, and what this API cannot avoid that way because both routes take
+// one `cursor`.
+//
+// The refusal is asserted against `refusing`, so it also pins that it happens
+// BEFORE any round trip: a cross-queue cursor is a bad link, not a query.
+func TestACursorIsRefusedByTheQueueThatDidNotMintIt(t *testing.T) {
+	w := newWorld(t)
+	w.org(orgSpec{name: "acme"})
+	// Two rows in each queue, so each queue returns a full page under limit 1
+	// and therefore mints a next cursor.
+	w.opportunity(oppSpec{org: "acme", label: "due-a", nextActionAt: w.ago(2 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "due-b", nextActionAt: w.ago(day)})
+	w.opportunity(oppSpec{org: "acme", label: "quiet-a", lastContactedAt: w.ago(40 * day)})
+	w.opportunity(oppSpec{org: "acme", label: "quiet-b", lastContactedAt: w.ago(30 * day)})
+
+	duePage, err := repository.Due(w.ctx, w.pool, domain.Filter{}, 1, "")
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+	driftingPage, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 1, "")
+	if err != nil {
+		t.Fatalf("Drifting: %v", err)
+	}
+	if duePage.NextCursor == "" || driftingPage.NextCursor == "" {
+		t.Fatalf("a queue minted no cursor: due %q, drifting %q", duePage.NextCursor, driftingPage.NextCursor)
+	}
+
+	// Each queue still pages from its OWN cursor. Without this the test would
+	// pass just as well if queue.shape refused everything.
+	if _, err := repository.Due(w.ctx, w.pool, domain.Filter{}, 1, duePage.NextCursor); err != nil {
+		t.Errorf("the due queue refused its own cursor: %v", err)
+	}
+	if _, err := repository.Drifting(w.ctx, w.pool, domain.Filter{}, 7, 1, driftingPage.NextCursor); err != nil {
+		t.Errorf("the drifting queue refused its own cursor: %v", err)
+	}
+
+	if _, err := repository.Due(context.Background(), refusing{t}, domain.Filter{}, 1,
+		driftingPage.NextCursor); !errors.Is(err, paging.ErrMalformedCursor) {
+		t.Errorf("the due queue accepted a drifting cursor: err = %v", err)
+	}
+	if _, err := repository.Drifting(context.Background(), refusing{t}, domain.Filter{}, 7, 1,
+		duePage.NextCursor); !errors.Is(err, paging.ErrMalformedCursor) {
+		t.Errorf("the drifting queue accepted a due cursor: err = %v", err)
 	}
 }
 

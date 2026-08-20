@@ -27,18 +27,39 @@ type world struct {
 	// base is captured ONCE, so every relative timestamp in a test is measured
 	// from the same instant. The queries compare against now(), which is later
 	// than base by however long the fixture took — which is why boundary tests
-	// below leave a minute of margin rather than a second.
+	// leave a minute of margin rather than a second.
+	//
+	// It comes from the DATABASE, not from time.Now(). Every predicate these
+	// tests exercise compares a seeded instant against the database's own
+	// now(), so a host clock is a SECOND clock and the margin above is only
+	// sound while there is one. TestDriftingIncludesARowExactlyOnTheStaleBoundary
+	// seeds a row at base-7d and asks for quiet_since <= now()-7d: a container
+	// whose clock lags the host by any amount at all puts that row outside the
+	// window, which is exactly how it failed against a freshly started
+	// Postgres. The margin is asymmetric too — one-minute-short fails the
+	// other way if the database clock runs more than a minute ahead — so
+	// widening it fixes neither direction. One clock does.
 	base time.Time
 	orgs map[string]string
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	// The one clock. now() rather than statement_timestamp() because now() is
+	// what every queue predicate calls, and it is transaction-scoped: read
+	// outside a transaction, as here, it is the instant of this statement.
+	var base time.Time
+	if err := pool.QueryRow(ctx, `SELECT now()`).Scan(&base); err != nil {
+		t.Fatalf("reading the database clock: %v", err)
+	}
 	return &world{
 		t:    t,
-		pool: testdb.New(t),
-		ctx:  context.Background(),
-		base: time.Now().UTC(),
+		pool: pool,
+		ctx:  ctx,
+		base: base.UTC(),
 		orgs: map[string]string{},
 	}
 }

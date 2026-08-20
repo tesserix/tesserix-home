@@ -596,7 +596,10 @@ func TestAMalformedCursorIsRefusedRatherThanServedAsPageOne(t *testing.T) {
 	for _, raw := range []string{
 		"nonsense",   // not base64url
 		"eyJ2IjoxfQ", // decodes, but has no direction and no key
-		"eyJ2IjoxLCJkIjoiYWZ0ZXIiLCJrIjpbImhlbGxvIiwid29ybGQiXX0", // right shape, wrong CONTENT
+		// Right length, right direction, right queue name, wrong CONTENT:
+		// {"v":1,"d":"after","k":["hello","world","due"]}. It decoded cleanly
+		// before paging.Shape and reached a ::timestamptz cast as a 500.
+		"eyJ2IjoxLCJkIjoiYWZ0ZXIiLCJrIjpbImhlbGxvIiwid29ybGQiLCJkdWUiXX0",
 	} {
 		got := a.get("/v1/crm/queues/due?cursor=" + raw)
 		if got.status != http.StatusBadRequest {

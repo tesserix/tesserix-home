@@ -19,6 +19,8 @@
 //	followers_unset  true  → only rows whose primary contact has no follower count
 //	limit            page size, 1..200, default 50, clamped up at 200
 //	cursor           an opaque keyset cursor from a previous response's meta
+//	                 ON THIS SAME QUEUE — a due cursor is refused by the
+//	                 drifting queue and the other way round, see queue.shape
 //	stale_days       drifting only: days of silence before a lead drifts (default 14)
 //
 // # Absence is a sibling flag, not a value
@@ -72,6 +74,23 @@
 // selecting rows with no product gets every row, and wants `product_unset=true`.
 // It matches the console's falsy check, so the translation stays one function.
 //
+// # What an error's `details` carries
+//
+// A key is a REQUEST PARAMETER and its value is the offending input, verbatim.
+// The explanation is the `message`. One key is not a parameter — `accepted`,
+// a JSON array of the values the endpoint would have taken — and it is there
+// because "what should I have sent" is the only part of a refusal a client can
+// act on programmatically.
+//
+// `details` is machine-readable and it is in the golden files, so it is a
+// contract. Before this rule the module had three readings of it in three
+// places, including one key called `filter` whose value was a sentence with a
+// Go slice rendered inside it. §1 of docs/PLATFORM-API-CONVENTIONS.md carries
+// the rule now; filterRefusal and rejectUnknownParameters are where it is
+// applied. The tickets module has not been converted — it answers
+// `{"status": "<explanation>"}` — and that divergence is recorded in the same
+// section rather than fixed here, because it is its own commit.
+//
 // # These routes take no request body
 //
 // Both are reads, so there is no JSON to decode strictly. The equivalent
@@ -85,6 +104,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -510,8 +530,7 @@ func (h *Handler) readQuery(query url.Values) (domain.Filter, int, error) {
 	// it is worth keeping, because only one of the two is worth a client
 	// retrying differently.
 	if err := filter.Validate(); err != nil {
-		return domain.Filter{}, 0, httpx.Validation("the filter is not valid",
-			map[string]any{"filter": err.Error()})
+		return domain.Filter{}, 0, filterRefusal(err)
 	}
 
 	limit, err := readLimit(query.Get("limit"))
@@ -519,6 +538,36 @@ func (h *Handler) readQuery(query url.Values) (domain.Filter, int, error) {
 		return domain.Filter{}, 0, err
 	}
 	return filter, limit, nil
+}
+
+// filterRefusal turns a domain refusal into the wire shape §1 requires.
+//
+// `details` keys the offending PARAMETER to the offending VALUE — never an
+// explanation, which lives in `message`, and never a key that is not something
+// the caller sent, with `accepted` the one deliberate exception. This used to
+// be `{"filter": "stage: unknown stage \"archived\" (want one of [new
+// contacted qualified])"}`: one key that is not a parameter, one value that is
+// a sentence, and a Go slice rendering inside it. A client could not read the
+// axis, the value or the accepted set out of that without parsing prose.
+//
+// domain.FilterRefusal exists so this function has pieces to place rather than
+// a string to take apart. A refusal that is somehow not one still answers 422
+// with a message — losing the details is better than losing the refusal.
+func filterRefusal(err error) error {
+	var refusal domain.FilterRefusal
+	if !errors.As(err, &refusal) {
+		return httpx.Validation("the filter is not valid: "+err.Error(), nil)
+	}
+	details := map[string]any{refusal.Parameter: refusal.Value}
+	if len(refusal.Accepted) > 0 {
+		// A JSON array of the spellings a caller may send, exactly as
+		// rejectUnknownParameters answers the same question for parameter
+		// names. The one key in `details` that is not a parameter, and it
+		// earns that because "what should I have sent" is the only part of a
+		// refusal a client can act on programmatically.
+		details["accepted"] = refusal.Accepted
+	}
+	return httpx.Validation("the filter is not valid: "+refusal.Error(), details)
 }
 
 // readMatch reads one nullable axis: `<axis>` and `<axis>_unset`.
@@ -608,8 +657,11 @@ func readStaleDays(raw string) (int, error) {
 		return 0, httpx.Validation("stale_days cannot be negative", map[string]any{"stale_days": raw})
 	}
 	if days > MaxStaleDays {
-		return 0, httpx.Validation("stale_days is beyond what this queue measures",
-			map[string]any{"stale_days": raw, "max": MaxStaleDays})
+		// The maximum is in the MESSAGE, not in `details`: `details` keys a
+		// request parameter to the value it carried, and "max" is neither.
+		return 0, httpx.Validation(
+			fmt.Sprintf("stale_days is beyond what this queue measures; the most it takes is %d", MaxStaleDays),
+			map[string]any{"stale_days": raw})
 	}
 	return days, nil
 }
@@ -644,13 +696,23 @@ func rejectUnknownParameters(query url.Values, allowed []string) error {
 	if len(unknown) == 0 {
 		return nil
 	}
-	// Sorted so the message is the same on every run: Go randomises map
-	// iteration, and a test asserting on this would otherwise flake.
+	// Sorted so the response is the same on every run: Go randomises map
+	// iteration, and a golden file asserting on this would otherwise flake.
 	sort.Strings(unknown)
 	accepted := append([]string{}, allowed...)
 	sort.Strings(accepted)
+	// Each unknown parameter keyed to the value it carried, which is §1's
+	// rule: a `details` key is a request parameter and its value is the
+	// offending input. It replaces a `unknown: [...]` list, which named the
+	// parameters but threw away what they said — and a caller who sent
+	// `?stge=new` wants to see `new` beside the misspelling. `accepted` is the
+	// same array it always was.
+	details := map[string]any{"accepted": accepted}
+	for _, name := range unknown {
+		details[name] = query.Get(name)
+	}
 	return httpx.BadRequest("the request carries query parameters this endpoint does not read").
-		WithDetails(map[string]any{"unknown": unknown, "accepted": accepted})
+		WithDetails(details)
 }
 
 // fail maps an error to a response and logs what the client is not told.
