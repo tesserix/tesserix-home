@@ -24,9 +24,17 @@ describe("after cutover: AUTH_PROVIDER=zitadel", () => {
     expect(requiresCapability("zitadel")).toBe(true);
   });
 
-  it("admits an operator holding the entry capability", () => {
-    expect(isInternal(["read"], "zitadel")).toBe(true);
-    expect(isInternal(["read", "execute-refund"], "zitadel")).toBe(true);
+  it("refuses a role grant that is not on the allowlist", () => {
+    // The entry capability is necessary and no longer sufficient. A grant made
+    // in Zitadel — by mistake, or by anyone who can administer the project —
+    // must not by itself produce a console operator.
+    expect(isInternal(["read"], "zitadel")).toBe(false);
+    expect(isInternal(["read", "execute-refund"], "zitadel")).toBe(false);
+    expect(isInternal(["read"], "zitadel", "someone.else@gmail.com")).toBe(false);
+  });
+
+  it("admits an allowlisted operator holding the entry capability", () => {
+    expect(isInternal(["read"], "zitadel", "samyak.rout@gmail.com")).toBe(true);
   });
 
   it.each([
@@ -73,10 +81,18 @@ describe("the platform operator allowlist opens the door on its own", () => {
     expect(isInternal([], "zitadel", "mahesh.sangawar@gmail.com")).toBe(true);
   });
 
-  it("still refuses anyone else without the entry capability", () => {
+  it("refuses everyone else, however well granted", () => {
     expect(isInternal([], "zitadel", "someone.else@gmail.com")).toBe(false);
     expect(isInternal(["respond"], "zitadel", "someone.else@gmail.com")).toBe(
       false,
     );
+    expect(isInternal(["read"], "zitadel", "someone.else@gmail.com")).toBe(false);
+  });
+
+  it("refuses a session carrying no email at all", () => {
+    // A token without an email claim cannot be matched against the allowlist,
+    // and the safe reading of "unidentified" is "not an operator".
+    expect(isInternal(["read"], "zitadel", undefined)).toBe(false);
+    expect(isInternal(["read"], "zitadel", null)).toBe(false);
   });
 });
