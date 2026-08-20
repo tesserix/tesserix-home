@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
@@ -112,6 +113,9 @@ func run(log *slog.Logger) error {
 	})
 	httpx.RegisterModule(mux, verifier, "crm", func(m *http.ServeMux) {
 		crm.Register(m, crm.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+	})
+	httpx.RegisterModule(mux, verifier, "aiusage", func(m *http.ServeMux) {
+		aiusage.Register(m, aiusage.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
 	})
 
 	server := &http.Server{

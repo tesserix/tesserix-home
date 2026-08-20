@@ -249,6 +249,15 @@ const ROUTES = {
   // control that actually applies here; no capability value can express it.
   "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
 
+  // The AI path's spend, token usage and guardrail activity, sourced from the
+  // agentgateway data plane rather than from any one product. No `web`: apps/web
+  // never had this surface — the gateway postdates it.
+  //
+  // Capability `platform` rather than something narrower: this is a read-only
+  // ledger view, and the operators who answer "why did Kora's bill move" are the
+  // same ones who read the audit log.
+  "platform.aiUsage": { mobile: "/platform/ai-usage", capability: "platform" },
+
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true, capability: "platform" },
   "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true, capability: "platform" },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true, capability: "platform" },

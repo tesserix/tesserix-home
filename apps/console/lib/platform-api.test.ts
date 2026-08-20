@@ -628,3 +628,146 @@ describe("the platform API switch", () => {
     await expect(mod.fetchTickets("cookie=1")).rejects.toThrow(/FORBIDDEN/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The AI usage reads.
+//
+// There is no apps/web fallback to switch on here — the AI gateway postdates
+// that app — so these cover what the transport does with the query: which
+// params it sends, which it drops, and that the envelope's payload reaches the
+// caller parsed rather than as `unknown`.
+// ---------------------------------------------------------------------------
+
+const AI_WINDOW = {
+  key: "24h",
+  from: "2026-08-19T07:00:00Z",
+  to: "2026-08-20T07:00:00Z",
+  bucket: "1h0m0s",
+  bucket_seconds: 3600,
+};
+
+const AI_TOKENS = { input: 1200, output: 300, cached_input: 400 };
+
+const AI_TOTALS = {
+  requests: 12,
+  tokens: AI_TOKENS,
+  cost_usd: 0.42,
+  ok_requests: 11,
+  blocked_requests: 1,
+  rate_limited_requests: 0,
+  error_requests: 0,
+  masked_requests: 2,
+};
+
+describe("the AI usage reads", () => {
+  function stubOnce(payload: unknown): string[] {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      seen.push(String(url));
+      return new Response(JSON.stringify(envelope(payload)), { status: 200 });
+    });
+    return seen;
+  }
+
+  it("sends the window and parses the totals", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    const seen = stubOnce({ window: AI_WINDOW, totals: AI_TOTALS, series: [] });
+
+    const mod = await import("./platform-api");
+    const summary = await mod.fetchAiUsageSummary({ window: "7d" });
+
+    expect(seen[0]).toContain("/v1/ai/usage/summary?window=7d");
+    expect(summary.totals.costUsd).toBeCloseTo(0.42);
+    expect(summary.totals.tokens.cachedInput).toBe(400);
+  });
+
+  it("drops a blank filter rather than sending an empty value", async () => {
+    // The API refuses parameters it does not read (#307), and `product=`
+    // would filter on the empty string — an answer of zero that looks like a
+    // quiet window rather than a bad request.
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    const seen = stubOnce({ window: AI_WINDOW, totals: AI_TOTALS, series: [] });
+
+    const mod = await import("./platform-api");
+    await mod.fetchAiUsageSummary({ window: "24h", product: "", provider: undefined });
+
+    const url = new URL(seen[0]);
+    expect(url.searchParams.get("window")).toBe("24h");
+    expect(url.searchParams.has("product")).toBe(false);
+    expect(url.searchParams.has("provider")).toBe(false);
+  });
+
+  it("sends the axis as `by`, alongside the filters", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    const seen = stubOnce({
+      window: AI_WINDOW,
+      by: "provider",
+      rows: [
+        {
+          key: "anthropic",
+          requests: 9,
+          tokens: AI_TOKENS,
+          cost_usd: 0.4,
+          error_requests: 0,
+          blocked_requests: 1,
+        },
+      ],
+    });
+
+    const mod = await import("./platform-api");
+    const breakdown = await mod.fetchAiUsageBreakdown("provider", { product: "kora" });
+
+    const url = new URL(seen[0]);
+    expect(url.pathname).toBe("/v1/ai/usage/breakdown");
+    expect(url.searchParams.get("by")).toBe("provider");
+    expect(url.searchParams.get("product")).toBe("kora");
+    expect(breakdown.rows[0].key).toBe("anthropic");
+  });
+
+  it("caps the events tail and forwards the outcome filter", async () => {
+    // The tail is a capped read, not a page: the limit is the console's, not
+    // the caller's, so a surface cannot ask the API for the whole month.
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    const seen = stubOnce({ window: AI_WINDOW, events: [] });
+
+    const mod = await import("./platform-api");
+    await mod.fetchAiUsageEvents({ window: "24h" }, "guardrail_blocked");
+
+    const url = new URL(seen[0]);
+    expect(url.searchParams.get("limit")).toBe(String(mod.AI_EVENTS_LIMIT));
+    expect(url.searchParams.get("outcome")).toBe("guardrail_blocked");
+  });
+
+  it("surfaces the API's refusal of an unknown window", async () => {
+    // 422 rather than a blank page: the surface renders the message, and an
+    // operator who hand-edited the URL is told what was wrong with it.
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    vi.stubGlobal("fetch", async () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: "INVALID_ARGUMENT", message: '"90d" is not a window: use 24h, 7d or 30d' },
+        }),
+        { status: 422 },
+      ),
+    );
+
+    const mod = await import("./platform-api");
+    await expect(mod.fetchAiUsageSummary({ window: "90d" })).rejects.toThrow(/is not a window/);
+  });
+
+  it("refuses to call the API without an operator token", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken(null);
+    const seen = stubOnce({ window: AI_WINDOW, totals: AI_TOTALS, series: [] });
+
+    const mod = await import("./platform-api");
+    await expect(mod.fetchAiUsageGuardrails()).rejects.toThrow(/access token/);
+    expect(seen).toHaveLength(0);
+  });
+});
