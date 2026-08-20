@@ -322,7 +322,7 @@ consumer exists, and a later extraction becomes swapping a local implementation
 for an HTTP client.
 
 **Kernel is `internal/platform/…`:** config, database, httpx, auth, reqid,
-paging, audit, idempotency, testdb. Kernel depends on no module. A helper that
+paging, audit, idempotency, write, testdb. Kernel depends on no module. A helper that
 two modules will both want belongs here — but see §9 on when to move it.
 
 ---
@@ -353,12 +353,18 @@ two modules will both want belongs here — but see §9 on when to move it.
   `-update-golden` and read the diff: a contract change should be visible in a
   pull request, which is the point for a contract products pin to.
 
-**One thing deliberately not yet extracted.** `service.perform` — the
+**The one deferred extraction has happened.** `service.perform` — the
 transaction script binding a write, its audit row and its idempotency record —
-lives inside the tickets module, not in the kernel. Every module's writes will
-want it. It moves when the *second* module needs it, because a shape extracted
-from one example is a guess, and the second module is what shows whether the
-seam is where it looks.
+was held inside the tickets module until a *second* module needed it, because a
+shape extracted from one example is a guess. The CRM queues module is that
+second example, and the shape held: it is now `internal/platform/write`,
+`write.Perform`. The seam was where it looked, with one detail promoted from
+incidental to load-bearing — the operation returns its audit entry *after*
+doing the work, which tickets barely used and CRM depends on, because some CRM
+verbs pick their action from what the write actually changed. The package
+comment carries the full judgement, including the two CRM behaviours (a
+result-derived action, and a no-op that still audits) that were checked against
+the shape and needed no change to it.
 
 ---
 
