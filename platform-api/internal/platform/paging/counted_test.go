@@ -130,11 +130,54 @@ func TestABackwardPageIsReReversedAndItsPositionCorrected(t *testing.T) {
 	if page.Counts.Preceding != 2 {
 		t.Errorf("preceding = %d, want 4 minus the page's own 2", page.Counts.Preceding)
 	}
+	// Decoded, not merely asserted non-empty. The most plausible wrong
+	// backward implementation anchors NextCursor on Rows[0] and PreviousCursor
+	// on the last row — forgetting that TrimBackward has ALREADY re-reversed
+	// the fetch — and a non-empty check passes it unchanged. The direction and
+	// the key are the whole point of the asymmetry Resolve exists to own.
 	if page.NextCursor == "" {
-		t.Error("a backward page always has a page ahead: the one it came from")
+		t.Fatal("a backward page always has a page ahead: the one it came from")
+	}
+	next := mustDecode(t, page.NextCursor)
+	if next.Direction != paging.After || next.Key[0] != "4" {
+		t.Errorf("next cursor = %+v, want after row 4 (the page's LAST row in display order)", next)
 	}
 	if page.PreviousCursor == "" {
-		t.Error("the fetch proved a page behind and no cursor was minted for it")
+		t.Fatal("the fetch proved a page behind and no cursor was minted for it")
+	}
+	previous := mustDecode(t, page.PreviousCursor)
+	if previous.Direction != paging.Before || previous.Key[0] != "3" {
+		t.Errorf("previous cursor = %+v, want before row 3 (the page's FIRST row in display order)", previous)
+	}
+}
+
+// The one behaviour `precedes` documents and nothing exercised: with counts
+// present, the COUNT decides, not the cursor. Everything ahead of this page was
+// deleted between the count query and the row query, so Preceding is 0 and
+// there is genuinely nowhere to go back to — even though this page was read by
+// following a forward cursor.
+//
+// Without this fixture `preceding > 0` and `cursor != nil` agree everywhere in
+// the suite, so the rule could be swapped for the other and no test would say.
+func TestACountedPageWithNothingAheadOffersNoWayBack(t *testing.T) {
+	anchor := mustDecode(t, encode(t, paging.After, "7"))
+
+	counted, err := paging.Resolve(rows(8, 9), 2, &anchor, &paging.Counts{Total: 2, Preceding: 0}, key)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if counted.PreviousCursor != "" {
+		t.Error("nothing sorts ahead of this page and it offered a way back anyway")
+	}
+
+	// The same fetch and the same cursor, counts opted out: now the cursor is
+	// the only evidence there is, and it says a page lies behind.
+	uncounted, err := paging.Resolve(rows(8, 9), 2, &anchor, nil, key)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if uncounted.PreviousCursor == "" {
+		t.Error("an uncounted page read from a cursor offered no way back")
 	}
 }
 
