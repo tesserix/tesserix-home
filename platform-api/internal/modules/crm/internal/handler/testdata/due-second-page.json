@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "data": {
+    "opportunities": [
+      {
+        "id": "<uuid>",
+        "organisation_id": "<uuid>",
+        "organisation_name": "Cinder",
+        "product": null,
+        "stage": "new",
+        "owner": "priya raman",
+        "next_action_at": "<timestamp>",
+        "next_action_note": "cinder-unattributed",
+        "last_contacted_at": null,
+        "quiet_since": "<timestamp>",
+        "is_starred": false
+      }
+    ]
+  },
+  "meta": {
+    "next_cursor": "<cursor>",
+    "previous_cursor": "<cursor>",
+    "preceding_count": 1,
+    "total": 4,
+    "limit": 1
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

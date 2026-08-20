@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "data": {
+    "opportunities": [
+      {
+        "id": "<uuid>",
+        "organisation_id": "<uuid>",
+        "organisation_name": "Dune",
+        "product": null,
+        "stage": "new",
+        "owner": null,
+        "next_action_at": "<timestamp>",
+        "next_action_note": "dune-unattributed",
+        "last_contacted_at": null,
+        "quiet_since": "<timestamp>",
+        "is_starred": false
+      }
+    ]
+  },
+  "meta": {
+    "next_cursor": "<cursor>",
+    "preceding_count": 0,
+    "total": 4,
+    "limit": 1
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

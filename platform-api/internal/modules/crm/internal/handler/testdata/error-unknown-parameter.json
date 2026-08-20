@@ -1,0 +1,26 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the request carries query parameters this endpoint does not read",
+    "details": {
+      "accepted": [
+        "country",
+        "country_unset",
+        "cursor",
+        "followers",
+        "followers_unset",
+        "limit",
+        "owner",
+        "product",
+        "product_unset",
+        "stage"
+      ],
+      "unknown": [
+        "stge"
+      ]
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

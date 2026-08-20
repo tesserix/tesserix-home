@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "the filter is not valid",
+    "details": {
+      "filter": "stage: unknown stage \"archived\" (want one of [new contacted qualified won lost])"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
