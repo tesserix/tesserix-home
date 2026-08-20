@@ -146,7 +146,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return unauthorized(request);
   }
 
-  if (!isInternal(session.roles)) {
+  if (!isInternal(session.roles, process.env.AUTH_PROVIDER, session.email)) {
     return forbidden(request);
   }
 

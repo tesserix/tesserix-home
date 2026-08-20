@@ -1,6 +1,7 @@
 import {
   CONSOLE_ENTRY_CAPABILITY,
   hasCapability,
+  isPlatformOperator,
 } from "@tesserix/platform-auth";
 
 /**
@@ -22,6 +23,10 @@ import {
  *   the TESSERIX org's Platform Console project, so a session lacking the entry
  *   capability is refused regardless of who minted it.
  *
+ * The estate's own operators (`operators.ts`) are admitted on their email
+ * alone. A missing role grant is an ordinary IdP mistake, and the console is
+ * the wrong place to be locked out of when it happens.
+ *
  * Note the asymmetry is deliberate and temporary. Once `ALLOWED_ADMIN_EMAILS`
  * retires, the `google` branch should go with it — leaving it behind would keep
  * a permanent bypass of the check this function exists to perform.
@@ -35,7 +40,9 @@ export function requiresCapability(
 export function isInternal(
   roles: readonly string[] | undefined,
   provider: string | undefined = process.env.AUTH_PROVIDER,
+  email?: string | null,
 ): boolean {
   if (!requiresCapability(provider)) return true;
+  if (isPlatformOperator(email)) return true;
   return hasCapability(roles, CONSOLE_ENTRY_CAPABILITY);
 }

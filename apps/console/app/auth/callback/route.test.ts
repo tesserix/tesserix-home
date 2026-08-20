@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionClaims } from "@tesserix/platform-auth";
+import { CAPABILITIES, type SessionClaims } from "@tesserix/platform-auth";
 
 // What this file is about: the session cookie the callback hands the browser.
 //
@@ -15,6 +15,21 @@ import type { SessionClaims } from "@tesserix/platform-auth";
 // Zitadel, JWE and the OIDC round trip are mocked; they have their own tests.
 // `measureSessionCookie` and `sessionCookieName` are the REAL implementations,
 // so the size assertions are measuring what production measures.
+
+// Ten real capability keys. Literal rather than sliced from `CAPABILITIES`
+// because `vi.hoisted` runs before the import does.
+const TEN_ROLES: readonly string[] = [
+  "read",
+  "crm",
+  "support",
+  "billing",
+  "platform",
+  "respond",
+  "rotate-credentials",
+  "adjust-balance",
+  "execute-refund",
+  "mass-send",
+];
 
 const state = vi.hoisted(() => ({
   /**
@@ -43,6 +58,14 @@ const state = vi.hoisted(() => ({
   saveTokensShouldThrow: false,
   /** Swap in a never-resolving implementation to test the deadline path. */
   saveTokensShouldHang: false,
+  /** The verified identity the id_token is pretended to carry. */
+  identity: {
+    sub: "operator-1",
+    email: "operator@tesserix.test",
+    name: "Operator One",
+    orgId: "org-1",
+    roles: [] as readonly string[],
+  },
   /** What `exchangeCode` returns. Overridable per test. */
   exchangeCodeResponse: {
     id_token: "id-token",
@@ -101,15 +124,11 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => {
     await importOriginal<typeof import("@tesserix/platform-auth")>();
   return {
     ...actual,
-    verifyIdToken: async () => ({
-      sub: "operator-1",
-      email: "operator@tesserix.test",
-      name: "Operator One",
-      orgId: "org-1",
-      roles: Array.from({ length: 10 }, (_, i) => `role-${i}`),
-    }),
-    isInternal: () => true,
-    toCapabilities: (roles: readonly string[]) => roles,
+    verifyIdToken: async () => state.identity,
+    // The real rule, minus the org check the fixture has no tenant for: an
+    // identity with no project role is not internal.
+    isInternal: (identity: { roles: readonly string[] }) =>
+      identity.roles.length > 0,
     signSession: async (claims: SessionClaims) => {
       state.claims = claims;
       return state.sessionValue;
@@ -154,6 +173,13 @@ async function runCallback(): Promise<Response> {
 
 beforeEach(() => {
   state.claims = null;
+  state.identity = {
+    sub: "operator-1",
+    email: "operator@tesserix.test",
+    name: "Operator One",
+    orgId: "org-1",
+    roles: TEN_ROLES,
+  };
   state.sessionValue = "session-token";
   state.saveTokensCalls = [];
   state.saveTokensShouldThrow = false;
@@ -431,5 +457,40 @@ describe("writing the platform API tokens to the store", () => {
       expect.stringContaining("no access token"),
       expect.objectContaining({ sub: "operator-1" }),
     );
+  });
+});
+
+describe("the platform operators the console is for", () => {
+  // Zitadel is the source of truth for everyone else. For these two it is
+  // not allowed to be the reason the console is unreachable.
+  it("mints a full-capability session for an allowlisted operator with no role grant", async () => {
+    state.identity = {
+      sub: "operator-2",
+      email: "Samyak.Rout@gmail.com",
+      name: "Samyak",
+      orgId: "org-1",
+      roles: [],
+    };
+
+    const response = await runCallback();
+
+    expect(response.status).toBe(307);
+    expect(state.claims?.roles).toEqual([...CAPABILITIES]);
+  });
+
+  it("refuses anyone else with no role grant", async () => {
+    state.identity = {
+      sub: "operator-3",
+      email: "someone.else@gmail.com",
+      name: "Someone",
+      orgId: "org-1",
+      roles: [],
+    };
+
+    const response = await runCallback();
+
+    expect(state.claims).toBeNull();
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "not_internal" });
   });
 });

@@ -40,3 +40,25 @@ describe("checkOperatorCapability", () => {
     );
   });
 });
+
+describe("an allowlisted platform operator holds every verb", () => {
+  it("passes a risk verb for an allowlisted email with no roles", () => {
+    expect(() =>
+      checkOperatorCapability(
+        { email: "mahesh.sangawar@gmail.com" },
+        "hard-delete",
+        "zitadel",
+      ),
+    ).not.toThrow();
+  });
+
+  it("does not extend that to any other email", () => {
+    expect(() =>
+      checkOperatorCapability(
+        { email: "someone.else@gmail.com", roles: ["read"] },
+        "hard-delete",
+        "zitadel",
+      ),
+    ).toThrow(CapabilityError);
+  });
+});
