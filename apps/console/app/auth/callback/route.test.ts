@@ -61,7 +61,7 @@ const state = vi.hoisted(() => ({
   /** The verified identity the id_token is pretended to carry. */
   identity: {
     sub: "operator-1",
-    email: "operator@tesserix.test",
+    email: "samyak.rout@gmail.com",
     name: "Operator One",
     orgId: "org-1",
     roles: [] as readonly string[],
@@ -125,10 +125,6 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => {
   return {
     ...actual,
     verifyIdToken: async () => state.identity,
-    // The real rule, minus the org check the fixture has no tenant for: an
-    // identity with no project role is not internal.
-    isInternal: (identity: { roles: readonly string[] }) =>
-      identity.roles.length > 0,
     signSession: async (claims: SessionClaims) => {
       state.claims = claims;
       return state.sessionValue;
@@ -175,7 +171,7 @@ beforeEach(() => {
   state.claims = null;
   state.identity = {
     sub: "operator-1",
-    email: "operator@tesserix.test",
+    email: "samyak.rout@gmail.com",
     name: "Operator One",
     orgId: "org-1",
     roles: TEN_ROLES,
@@ -213,10 +209,12 @@ describe("the claims the callback mints", () => {
 
     expect(state.claims).toMatchObject({
       sub: "operator-1",
-      email: "operator@tesserix.test",
+      email: "samyak.rout@gmail.com",
       name: "Operator One",
     });
-    expect(state.claims?.roles).toHaveLength(10);
+    // Granted roles no longer decide anything: an admitted operator is an
+    // allowlisted one, and an allowlisted one holds everything.
+    expect(state.claims?.roles).toEqual([...CAPABILITIES]);
   });
 
   it("mints a sid", async () => {
@@ -478,13 +476,15 @@ describe("the platform operators the console is for", () => {
     expect(state.claims?.roles).toEqual([...CAPABILITIES]);
   });
 
-  it("refuses anyone else with no role grant", async () => {
+  it("refuses anyone else, however completely Zitadel granted them", async () => {
+    // The point of the change: a project role grant is no longer a way in, so
+    // whoever can administer that project cannot mint a console operator.
     state.identity = {
       sub: "operator-3",
       email: "someone.else@gmail.com",
       name: "Someone",
       orgId: "org-1",
-      roles: [],
+      roles: [...CAPABILITIES],
     };
 
     const response = await runCallback();

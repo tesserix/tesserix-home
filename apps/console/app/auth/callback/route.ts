@@ -7,7 +7,6 @@ import {
   sessionCookieName,
   sessionCookieOptions,
   verifyIdToken,
-  isInternal,
   capabilitiesFor,
   isPlatformOperator,
 } from "@tesserix/platform-auth";
@@ -242,14 +241,12 @@ export async function GET(request: NextRequest): Promise<Response> {
     return failure("invalid_id_token");
   }
 
-  // An allowlisted platform operator is admitted without a project role grant,
-  // but never without the org check: `email` in the token is not proven
-  // verified, so the internal tenant stays the trust anchor.
+  // The allowlist decides, and the org check still gates it: `email` in the
+  // token is not proven verified, so the internal tenant stays the trust
+  // anchor and an allowlisted address alone is not a way in from another org.
   const inInternalOrg =
     !config.internalOrgId || identity.orgId === config.internalOrgId;
-  const admitted =
-    isInternal(identity, { internalOrgId: config.internalOrgId }) ||
-    (inInternalOrg && isPlatformOperator(identity.email));
+  const admitted = inInternalOrg && isPlatformOperator(identity.email);
   if (!admitted) {
     // Authenticated, but not an internal operator — no roles on the Platform
     // Console project, or a member of another organization. 403 rather than
