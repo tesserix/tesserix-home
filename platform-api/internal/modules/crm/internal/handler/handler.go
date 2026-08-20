@@ -86,7 +86,7 @@
 // contract. Before this rule the module had three readings of it in three
 // places, including one key called `filter` whose value was a sentence with a
 // Go slice rendered inside it. §1 of docs/PLATFORM-API-CONVENTIONS.md carries
-// the rule now; filterRefusal and rejectUnknownParameters are where it is
+// the rule now; filterRefusal and httpx.RejectUnknownParameters are where it is
 // applied. The tickets module has not been converted — it answers
 // `{"status": "<explanation>"}` — and that divergence is recorded in the same
 // section rather than fixed here, because it is its own commit.
@@ -94,7 +94,7 @@
 // # These routes take no request body
 //
 // Both are reads, so there is no JSON to decode strictly. The equivalent
-// strictness for a read is `rejectUnknownParameters`: a caller sending
+// strictness for a read is `httpx.RejectUnknownParameters`: a caller sending
 // `?stge=new` is told, rather than answered with an unfiltered queue reported
 // as a success. That is the same failure DisallowUnknownFields exists to
 // prevent, in the place a read can make it.
@@ -109,7 +109,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -390,7 +389,7 @@ func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation 
 // than most of the estate, and the strictness is worth it on a contract
 // products pin to: an unknown field today is a field this service might mean
 // something by tomorrow. It is the write-side twin of
-// rejectUnknownParameters, which does the same job for the reads.
+// httpx.RejectUnknownParameters, which does the same job for the reads.
 func decode(body []byte, into any) error {
 	if len(body) == 0 {
 		return httpx.BadRequest("a request body is required")
@@ -426,7 +425,7 @@ var (
 
 func (h *Handler) due(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	if err := rejectUnknownParameters(query, dueParameters); err != nil {
+	if err := httpx.RejectUnknownParameters(query, dueParameters); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -446,7 +445,7 @@ func (h *Handler) due(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) drifting(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	if err := rejectUnknownParameters(query, driftingParameters); err != nil {
+	if err := httpx.RejectUnknownParameters(query, driftingParameters); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -561,7 +560,7 @@ func filterRefusal(err error) error {
 	details := map[string]any{refusal.Parameter: refusal.Value}
 	if len(refusal.Accepted) > 0 {
 		// A JSON array of the spellings a caller may send, exactly as
-		// rejectUnknownParameters answers the same question for parameter
+		// httpx.RejectUnknownParameters answers the same question for parameter
 		// names. The one key in `details` that is not a parameter, and it
 		// earns that because "what should I have sent" is the only part of a
 		// refusal a client can act on programmatically.
@@ -664,55 +663,6 @@ func readStaleDays(raw string) (int, error) {
 			map[string]any{"stale_days": raw})
 	}
 	return days, nil
-}
-
-// rejectUnknownParameters refuses a query carrying anything this route does
-// not read.
-//
-// # Why this is worth a 400
-//
-// It is the read-side equivalent of DisallowUnknownFields, and the argument is
-// the same one §2 makes for a strict decode: a caller sending `?stge=new`
-// otherwise receives the WHOLE queue and a 200. A filter that silently does
-// nothing is the broader-result-set failure that runs through this entire
-// module — the same one crm-filters.ts exists to prevent, and the same one
-// domain.Filter.Validate refuses a bad value for. Accepting a misspelled
-// parameter would leave the one hole all of that was closing.
-//
-// The accepted list is returned in the message, sorted, because the person
-// reading it is looking at a URL that does not work and needs to know what to
-// write instead.
-func rejectUnknownParameters(query url.Values, allowed []string) error {
-	known := make(map[string]struct{}, len(allowed))
-	for _, name := range allowed {
-		known[name] = struct{}{}
-	}
-	var unknown []string
-	for name := range query {
-		if _, ok := known[name]; !ok {
-			unknown = append(unknown, name)
-		}
-	}
-	if len(unknown) == 0 {
-		return nil
-	}
-	// Sorted so the response is the same on every run: Go randomises map
-	// iteration, and a golden file asserting on this would otherwise flake.
-	sort.Strings(unknown)
-	accepted := append([]string{}, allowed...)
-	sort.Strings(accepted)
-	// Each unknown parameter keyed to the value it carried, which is §1's
-	// rule: a `details` key is a request parameter and its value is the
-	// offending input. It replaces a `unknown: [...]` list, which named the
-	// parameters but threw away what they said — and a caller who sent
-	// `?stge=new` wants to see `new` beside the misspelling. `accepted` is the
-	// same array it always was.
-	details := map[string]any{"accepted": accepted}
-	for _, name := range unknown {
-		details[name] = query.Get(name)
-	}
-	return httpx.BadRequest("the request carries query parameters this endpoint does not read").
-		WithDetails(details)
 }
 
 // fail maps an error to a response and logs what the client is not told.

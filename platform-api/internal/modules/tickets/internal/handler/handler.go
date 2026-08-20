@@ -102,8 +102,29 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	mux.Handle("PATCH /v1/tickets/{id}", write(h.setStatus))
 }
 
+// The query parameters each route admits. Anything else is a 400 — see
+// httpx.RejectUnknownParameters.
+//
+// listParameters is every parameter `list` reads, not merely the ones the
+// console currently sends: `tenant` and `cursor` are accepted here even
+// though today's caller does not use them, because the allowed set tracks
+// what the route reads, not what today's caller happens to send.
+//
+// summaryParameters is empty. The summary reads no query parameter at all —
+// the console calls it as `platformRequest("tickets summary",
+// "/v1/tickets/summary")`, with no query string — so any parameter on that
+// route is unknown.
+var (
+	listParameters    = []string{"status", "priority", "product", "tenant", "limit", "cursor"}
+	summaryParameters = []string{}
+)
+
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
+	if err := httpx.RejectUnknownParameters(query, listParameters); err != nil {
+		h.fail(w, r, err)
+		return
+	}
 
 	filter := repository.Filter{
 		Status:   query.Get("status"),
@@ -153,6 +174,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
+	if err := httpx.RejectUnknownParameters(r.URL.Query(), summaryParameters); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
 	payload, err := h.svc.Summary(r.Context())
 	if err != nil {
 		h.fail(w, r, err)
