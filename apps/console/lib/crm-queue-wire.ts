@@ -50,21 +50,39 @@ function toQueueRow(raw: unknown): QueueRow {
     throw new Error("crm queue: an opportunity was not an object");
   }
   const row = raw as Record<string, unknown>;
-  return {
+  // Built as a typed WireOpportunity before mapping, so the interface is
+  // CHECKED rather than decorative: a field renamed on the wire, or a typo
+  // here, is a compile error instead of a silent `undefined` three components
+  // later. An unused interface documenting a contract is worse than none —
+  // it drifts and nothing notices.
+  const wire: WireOpportunity = {
     id: requireString(row, "id"),
-    organisationId: requireString(row, "organisation_id"),
-    organisationName: requireString(row, "organisation_name"),
+    organisation_id: requireString(row, "organisation_id"),
+    organisation_name: requireString(row, "organisation_name"),
     product: nullableString(row, "product"),
     stage: requireString(row, "stage") as CrmStage,
     owner: nullableString(row, "owner"),
-    nextActionAt: nullableString(row, "next_action_at"),
-    nextActionNote: nullableString(row, "next_action_note"),
-    lastContactedAt: nullableString(row, "last_contacted_at"),
+    next_action_at: nullableString(row, "next_action_at"),
+    next_action_note: nullableString(row, "next_action_note"),
+    last_contacted_at: nullableString(row, "last_contacted_at"),
+    quiet_since: requireString(row, "quiet_since"),
+    is_starred: row.is_starred === true,
+  };
+  return {
+    id: wire.id,
+    organisationId: wire.organisation_id,
+    organisationName: wire.organisation_name,
+    product: wire.product,
+    stage: wire.stage,
+    owner: wire.owner,
+    nextActionAt: wire.next_action_at,
+    nextActionNote: wire.next_action_note,
+    lastContactedAt: wire.last_contacted_at,
     // Never recomputed from last_contacted_at/created_at here: it is the SQL
     // COALESCE the queue was ordered and filtered by, and a second copy of that
     // expression in TypeScript is exactly the drift the repo's comment warns of.
-    quietSince: requireString(row, "quiet_since"),
-    isStarred: row.is_starred === true,
+    quietSince: wire.quiet_since,
+    isStarred: wire.is_starred,
   } satisfies QueueRow as QueueRow;
 }
 
