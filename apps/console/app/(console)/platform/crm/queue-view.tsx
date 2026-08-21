@@ -9,6 +9,10 @@ import {
 import { QueueList, type QueueItem } from "@/components/kit/queue-list";
 import { ResultPager } from "@/components/kit/result-pager";
 import type { SurfaceState } from "@/components/kit/surface-state";
+// `states`, not `surface-state`: unlike `page.tsx`, this module already
+// carries a "use client" directive, so `SurfaceStateView` resolves to the
+// real component here, not a reference that throws when called.
+import { SurfaceStateView } from "@/components/kit/states";
 import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
 
 /**
@@ -58,6 +62,12 @@ export interface CrmQueueViewProps {
   values: FilterValues;
   due: CrmQueueGroupProps;
   drifting: CrmQueueGroupProps;
+  /**
+   * Where to send the operator back to after re-authenticating, carrying the
+   * exact URL (path + query) they were on — see `SurfaceStateView`'s own
+   * prop for why only the page knows this.
+   */
+  reauthReturnTo?: string;
 }
 
 /**
@@ -70,7 +80,17 @@ export interface CrmQueueViewProps {
  * `instrumentation-unavailable` the counts describe a read that never
  * happened, so displaying them would be a fabricated number.
  */
-function QueueSection({ group, onClearFilters }: { group: CrmQueueGroupProps; onClearFilters: () => void }) {
+function QueueSection({
+  group,
+  onClearFilters,
+  reauthReturnTo,
+  suppressReauthPrompt,
+}: {
+  group: CrmQueueGroupProps;
+  onClearFilters: () => void;
+  reauthReturnTo?: string;
+  suppressReauthPrompt: boolean;
+}) {
   return (
     <>
       {group.state.kind === "ready" ? (
@@ -88,6 +108,8 @@ function QueueSection({ group, onClearFilters }: { group: CrmQueueGroupProps; on
         state={group.state}
         emptyMessage={group.emptyMessage}
         onClearFilters={onClearFilters}
+        reauthReturnTo={reauthReturnTo}
+        suppressReauthPrompt={suppressReauthPrompt}
       />
     </>
   );
@@ -107,12 +129,30 @@ function QueueSection({ group, onClearFilters }: { group: CrmQueueGroupProps; on
  * inside its own `<section>` under its own heading, so which queue a "Next"
  * belongs to is never a matter of proximity.
  */
-export function CrmQueueView({ descriptors, values, due, drifting }: CrmQueueViewProps) {
+export function CrmQueueView({ descriptors, values, due, drifting, reauthReturnTo }: CrmQueueViewProps) {
   const { set, clear } = useUrlFilters(descriptors, QUEUE_CURSOR_PARAMS);
+
+  // Due and Drifting are two independent reads under one `Promise.allSettled`
+  // (`page.tsx`'s module doc), so a session with no operator token row fails
+  // BOTH with the same condition at once. Rendered once, here, above both
+  // groups — three stacked identical "sign in again" callouts (this plus the
+  // Handoff tab) would be a worse experience than the generic error this
+  // state replaces. Each `QueueSection` below is told to suppress its own
+  // copy of this ONE kind; every other state it might resolve to (ready,
+  // empty, a genuine error) still renders exactly where it always has.
+  const anyReauthRequired = due.state.kind === "reauth-required" || drifting.state.kind === "reauth-required";
 
   return (
     <div className="flex flex-col gap-6">
       <FilterBar descriptors={descriptors} values={values} onChange={set} onClear={clear} />
+
+      {anyReauthRequired ? (
+        <SurfaceStateView
+          state={{ kind: "reauth-required" }}
+          emptyMessage=""
+          reauthReturnTo={reauthReturnTo}
+        />
+      ) : null}
 
       {/* Due and Drifting are rendered as separate, separately-headed groups
           rather than merged into one list: merging them would make a
@@ -120,14 +160,24 @@ export function CrmQueueView({ descriptors, values, due, drifting }: CrmQueueVie
           deliberately scheduled (due). */}
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">{due.heading}</h2>
-        <QueueSection group={due} onClearFilters={clear} />
+        <QueueSection
+          group={due}
+          onClearFilters={clear}
+          reauthReturnTo={reauthReturnTo}
+          suppressReauthPrompt={anyReauthRequired}
+        />
       </section>
 
       {/* Quieter, and rendered below: this is a rule surfacing silence, not
           something anyone scheduled. */}
       <section className="flex flex-col gap-3 opacity-90">
         <h2 className="text-sm font-medium text-muted-foreground">{drifting.heading}</h2>
-        <QueueSection group={drifting} onClearFilters={clear} />
+        <QueueSection
+          group={drifting}
+          onClearFilters={clear}
+          reauthReturnTo={reauthReturnTo}
+          suppressReauthPrompt={anyReauthRequired}
+        />
       </section>
     </div>
   );

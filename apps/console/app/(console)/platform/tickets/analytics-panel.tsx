@@ -1,6 +1,12 @@
 import { StatTile } from "@/components/kit/stat-tile";
 import { RankedBars } from "@/components/kit/ranked-bars";
 import type { SurfaceState } from "@/components/kit/surface-state";
+// `states`, not `surface-state`: this module is composed into a server
+// component (`page.tsx`) without a directive of its own, same as `StatTile`
+// and `RankedBars` already are — only `SurfaceStateView` is rendered
+// directly here (as JSX, never called), so no directive is needed for that
+// either.
+import { SurfaceStateView } from "@/components/kit/states";
 import {
   formatCsat,
   formatResolutionTime,
@@ -25,16 +31,37 @@ export interface AnalyticsPanelProps {
   data: SupportAnalytics | null;
   /** Non-ready when the analytics read failed — independently of the queue. */
   state: SurfaceState;
+  /** Forwarded to the single reauth-required prompt below. */
+  reauthReturnTo?: string;
 }
 
-export function AnalyticsPanel({ data, state }: AnalyticsPanelProps) {
+export function AnalyticsPanel({ data, state, reauthReturnTo }: AnalyticsPanelProps) {
   // Every tile takes the shared state when there is no data, so a 501 renders
   // as "Not measured" eight times rather than eight zeroes.
   const tileState = data ? undefined : state;
   const breakdownState = data ? undefined : state;
 
+  // Unlike a 501 (each `StatTile` already renders its own compact "Not
+  // measured" note, and repeating that eight times is the existing,
+  // accepted shape of this panel), `reauth-required` is answered here ONCE:
+  // `breakdownState` is the same object handed to all three `RankedBars`
+  // below, each of which renders a full `SurfaceStateView` callout for a
+  // non-ready state — three identical "sign in again" prompts under one
+  // panel would be exactly the stacking `CrmQueueView` exists to avoid, one
+  // level down. `RankedBars` is told to suppress its own copy of this one
+  // kind via `suppressReauthPrompt`.
+  const reauthRequired = !data && state.kind === "reauth-required";
+
   return (
     <div className="flex flex-col gap-8">
+      {reauthRequired ? (
+        <SurfaceStateView
+          state={{ kind: "reauth-required" }}
+          emptyMessage=""
+          reauthReturnTo={reauthReturnTo}
+        />
+      ) : null}
+
       <section className="flex flex-col gap-3" aria-label="Volume">
         <h3 className="text-sm font-medium">Volume</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -103,6 +130,8 @@ export function AnalyticsPanel({ data, state }: AnalyticsPanelProps) {
           rows={data?.byStatus ?? []}
           emptyMessage="No conversations yet."
           state={breakdownState}
+          reauthReturnTo={reauthReturnTo}
+          suppressReauthPrompt={reauthRequired}
         />
         <RankedBars
           title="By reason"
@@ -110,6 +139,8 @@ export function AnalyticsPanel({ data, state }: AnalyticsPanelProps) {
           rows={data?.byReason ?? []}
           emptyMessage="No reasons recorded."
           state={breakdownState}
+          reauthReturnTo={reauthReturnTo}
+          suppressReauthPrompt={reauthRequired}
         />
         <RankedBars
           title="By tenant"
@@ -117,6 +148,8 @@ export function AnalyticsPanel({ data, state }: AnalyticsPanelProps) {
           rows={data?.byTenant ?? []}
           emptyMessage="No tenants yet."
           state={breakdownState}
+          reauthReturnTo={reauthReturnTo}
+          suppressReauthPrompt={reauthRequired}
         />
       </div>
     </div>

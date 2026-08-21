@@ -123,6 +123,21 @@ export function dbReadError(caught: unknown, surface: string): SurfaceError | nu
   // the app's logs, never in the response.
   console.error(`[console] failed to read ${surface} from tesserix-postgres`, caught);
 
+  // Checked before every Postgres-shaped classification below, and read the
+  // same structural way `toSurfaceError` reads it (never `instanceof`): a
+  // caller of this function is not always talking to Postgres any more.
+  // `crm-queues.ts` switches its due/drifting reads to the platform API when
+  // `PLATFORM_API_ORIGIN` is set, and a `PlatformApiError` from that branch
+  // carries `noOperatorToken` rather than a SQLSTATE. Without this check
+  // that marker was silently discarded here — `isUndefinedTable` and
+  // `isMalformedCursorError` both say no, and the read fell through to the
+  // generic "Try again shortly" message, which is exactly the useless-retry
+  // copy #300 exists to replace. See `resolveState`, which reads
+  // `reauthRequired` ahead of `status` for the same reason.
+  if (typeof caught === "object" && (caught as { noOperatorToken?: unknown }).noOperatorToken === true) {
+    return { status, reauthRequired: true };
+  }
+
   if (isUndefinedTable(caught)) {
     // A missing table is the `instrumentation-unavailable` case, not `error`:
     // the calm "this is not wired up yet" state the estate already uses for a

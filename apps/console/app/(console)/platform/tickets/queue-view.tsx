@@ -21,6 +21,9 @@ export interface QueueViewProps {
   items: QueueItem[];
   state: SurfaceState;
   emptyMessage: string;
+  /** Forwarded to `QueueList` for the `reauth-required` state — see
+   *  `SurfaceStateView`'s own prop for why only the page knows this. */
+  reauthReturnTo?: string;
 }
 
 /**
@@ -41,6 +44,7 @@ export function QueueView({
   items,
   state,
   emptyMessage,
+  reauthReturnTo,
 }: QueueViewProps) {
   const { set, clear } = useUrlFilters(descriptors);
 
@@ -57,6 +61,7 @@ export function QueueView({
         state={state}
         emptyMessage={emptyMessage}
         onClearFilters={clear}
+        reauthReturnTo={reauthReturnTo}
       />
     </div>
   );

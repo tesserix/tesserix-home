@@ -205,14 +205,40 @@ export function analyticsState(input: {
   });
 }
 
+/**
+ * The operator's exact URL as a relative path — every query param the
+ * browser had, not only the three this surface reads as filters — so
+ * signing in again returns them exactly where they were. Same shape
+ * `middleware.ts`'s `unauthorized` builds (`${pathname}${search}`) and
+ * `crm/page.tsx`'s `currentPath`, for the identical reason.
+ */
+function currentPath(searchParams: QueueSearchParams): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (typeof value === "string") {
+      params.set(key, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) params.append(key, entry);
+    }
+  }
+  const qs = params.toString();
+  return qs ? `/platform/tickets?${qs}` : "/platform/tickets";
+}
+
 export default async function TicketQueue({
   searchParams,
 }: {
   searchParams: Promise<QueueSearchParams>;
 }) {
   const cookieHeader = (await cookies()).toString();
-  const filters = readQueueFilters(await searchParams);
+  const resolvedSearchParams = await searchParams;
+  const filters = readQueueFilters(resolvedSearchParams);
   const filtered = Object.keys(filters).length > 0;
+  // Queue and Analytics are separate `SurfaceTabs` panels — never on screen
+  // together — so unlike the CRM work tab there is no cross-group stacking
+  // to suppress here; each independently-fetched half just needs the
+  // operator's own return path.
+  const reauthReturnTo = currentPath(resolvedSearchParams);
 
   // `allSettled`, not `all`: `Promise.all` rejects on the first failure, so a
   // parked analytics endpoint would reject the whole render and take the queue
@@ -283,6 +309,7 @@ export default async function TicketQueue({
                   items={rows}
                   state={state}
                   emptyMessage={QUEUE_EMPTY_MESSAGE}
+                  reauthReturnTo={reauthReturnTo}
                 />
               </div>
             ),
@@ -294,6 +321,7 @@ export default async function TicketQueue({
               <AnalyticsPanel
                 data={analytics}
                 state={analyticsState({ error: analyticsError, data: analytics })}
+                reauthReturnTo={reauthReturnTo}
               />
             ),
           },

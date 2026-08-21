@@ -96,6 +96,20 @@ export interface QueueListProps {
   now?: number;
   onRetry?: () => void;
   onClearFilters?: () => void;
+  /** Forwarded to `SurfaceStateView` for the `reauth-required` state — see
+   *  that prop's own doc comment. */
+  reauthReturnTo?: string;
+  /**
+   * When true, a `reauth-required` state renders nothing here instead of its
+   * own callout. Set by a caller that composes more than one independently-
+   * fetched list on screen at once (the CRM work tab's due/drifting groups
+   * under one `Promise.allSettled`) and is already rendering ONE prompt for
+   * the condition above them — without this, a session with no operator
+   * token row would stack an identical "sign in again" callout under every
+   * group that hit it. Every other state renders exactly as it would
+   * without this flag: the suppression is specific to this one kind.
+   */
+  suppressReauthPrompt?: boolean;
 }
 
 /**
@@ -125,16 +139,22 @@ export function QueueList({
   now,
   onRetry,
   onClearFilters,
+  reauthReturnTo,
+  suppressReauthPrompt,
 }: QueueListProps) {
   const clock = useClock(now);
 
   if (state.kind !== "ready") {
+    if (state.kind === "reauth-required" && suppressReauthPrompt) {
+      return null;
+    }
     return (
       <SurfaceStateView
         state={state}
         emptyMessage={emptyMessage}
         onRetry={onRetry}
         onClearFilters={onClearFilters}
+        reauthReturnTo={reauthReturnTo}
       />
     );
   }

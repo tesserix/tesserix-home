@@ -48,6 +48,18 @@ export interface RankedBarsProps {
   state?: SurfaceState;
   /** Long tails are noise on a dashboard; the rest stay one click away. */
   limit?: number;
+  /** Forwarded to `SurfaceStateView` for the `reauth-required` state. */
+  reauthReturnTo?: string;
+  /**
+   * When true, a `reauth-required` state renders nothing here instead of its
+   * own callout. `AnalyticsPanel` passes the SAME `state` object to three of
+   * these at once (by status, by reason, by tenant) plus eight `StatTile`s —
+   * without this, a session with no operator token row would stack the
+   * "sign in again" callout three times under one heading each. The panel
+   * renders it once itself and suppresses the copy here; every other state
+   * still renders exactly as it would without this flag.
+   */
+  suppressReauthPrompt?: boolean;
 }
 
 const DEFAULT_LIMIT = 8;
@@ -59,6 +71,8 @@ export function RankedBars({
   emptyMessage,
   state,
   limit = DEFAULT_LIMIT,
+  reauthReturnTo,
+  suppressReauthPrompt,
 }: RankedBarsProps) {
   // Bars are scaled to the largest row, not to the total: at a 40/30/30 split
   // every bar would otherwise be a third of the width and the ranking would be
@@ -67,6 +81,7 @@ export function RankedBars({
   const shown = rows.slice(0, limit);
   const resolved: SurfaceState =
     state && state.kind !== "ready" ? state : rows.length === 0 ? { kind: "empty" } : { kind: "ready" };
+  const suppressed = resolved.kind === "reauth-required" && suppressReauthPrompt;
 
   return (
     <section className="flex flex-col gap-3" aria-label={title}>
@@ -77,8 +92,8 @@ export function RankedBars({
         ) : null}
       </div>
 
-      {resolved.kind !== "ready" ? (
-        <SurfaceStateView state={resolved} emptyMessage={emptyMessage} />
+      {suppressed ? null : resolved.kind !== "ready" ? (
+        <SurfaceStateView state={resolved} emptyMessage={emptyMessage} reauthReturnTo={reauthReturnTo} />
       ) : (
         <ol className="flex flex-col gap-2">
           {shown.map((row) => (

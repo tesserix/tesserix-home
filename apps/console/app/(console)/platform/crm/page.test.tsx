@@ -178,6 +178,48 @@ describe("CrmPage", () => {
     expect(screen.getByText(/could not load the due queue/i)).toBeInTheDocument();
   });
 
+  // Due and Drifting are two independent reads under one `Promise.allSettled`
+  // (the module doc's whole point), so a session with no operator token row
+  // fails BOTH of them with the same condition. Three stacked "sign in
+  // again" callouts (this test, plus one more once Handoff is visited) would
+  // be worse than the generic error this state replaces — see #300 task 4.
+  it("shows one sign-in prompt, not two, when the session has no platform token", async () => {
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    dueOpportunities.mockRejectedValue(noToken);
+    driftingOpportunities.mockRejectedValue(noToken);
+
+    await renderCrmPage();
+
+    expect(screen.getAllByRole("link", { name: /sign in again/i })).toHaveLength(1);
+  });
+
+  it("still shows the other group's real rows when only one queue has no platform token", async () => {
+    // The suppression is specific to the reauth-required kind: a group that
+    // resolved normally must render normally beside the single prompt, not
+    // be blanked out along with it.
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    dueOpportunities.mockRejectedValue(noToken);
+    driftingOpportunities.mockResolvedValue(queuePage([DRIFTING_ROW]));
+
+    await renderCrmPage();
+
+    expect(screen.getAllByRole("link", { name: /sign in again/i })).toHaveLength(1);
+    expect(screen.getByText("Never Contacted Co")).toBeInTheDocument();
+  });
+
+  it("sends the operator back to the exact filtered URL they were on", async () => {
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    dueOpportunities.mockRejectedValue(noToken);
+    driftingOpportunities.mockRejectedValue(noToken);
+
+    await renderCrmPage({ product: "mark8ly" });
+
+    const link = screen.getByRole("link", { name: /sign in again/i });
+    const href = link.getAttribute("href")!;
+    expect(href.startsWith("/auth/login?returnTo=")).toBe(true);
+    expect(decodeURIComponent(href.split("returnTo=")[1])).toBe("/platform/crm?product=mark8ly");
+  });
+
   it("renders filtered-empty, not empty, when an active filter matches nothing", async () => {
     dueOpportunities.mockResolvedValue(queuePage([]));
     driftingOpportunities.mockResolvedValue(queuePage([]));
@@ -705,6 +747,20 @@ describe("Handoff", () => {
 
     expect(screen.getByText(/could not check/i)).toBeInTheDocument();
     expect(screen.queryByText(/no product/i)).toBeNull();
+  });
+
+  it("prompts sign-in, returning to the handoff tab, when the session has no platform token", async () => {
+    // wonWithoutConversion goes through dbReadError like the work queues do,
+    // so this exercises the same fix from the other side of the tab split.
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    wonWithoutConversion.mockRejectedValue(noToken);
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    const link = screen.getByRole("link", { name: /sign in again/i });
+    expect(decodeURIComponent(link.getAttribute("href")!.split("returnTo=")[1])).toBe(
+      "/platform/crm?tab=handoff",
+    );
   });
 
   it("renders empty, not ready, when nothing is waiting for handoff", async () => {

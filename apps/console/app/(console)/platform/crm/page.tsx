@@ -488,6 +488,30 @@ export function buildQueuePreviousHref(
  * and a genuine 8s stall on the WORK queue the day apps/web is slow to
  * answer rather than fast to 404. Only the active tab's data is ever read.
  */
+/**
+ * The operator's exact URL as a relative path — every param the browser had,
+ * not only the ones this page recognises as filters or a tab — so signing in
+ * again returns them exactly where they were, five filters and a page cursor
+ * included. `middleware.ts`'s `unauthorized` builds the same shape
+ * (`${pathname}${search}`) for the identical reason.
+ *
+ * Copies every entry rather than naming the params this page knows about,
+ * for the same reason `buildQueueCursorHref` does: a builder that names them
+ * drops whichever one it forgot the moment this page grows another filter.
+ */
+function currentPath(searchParams: QueueSearchParams): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(searchParams)) {
+    if (typeof value === "string") {
+      params.set(key, value);
+    } else if (Array.isArray(value)) {
+      for (const entry of value) params.append(key, entry);
+    }
+  }
+  const qs = params.toString();
+  return qs ? `/platform/crm?${qs}` : "/platform/crm";
+}
+
 function tabHref(searchParams: QueueSearchParams, tab: CrmTab): string {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
@@ -581,10 +605,12 @@ async function renderWorkTab({
   searchParams,
   filters,
   filtered,
+  reauthReturnTo,
 }: {
   searchParams: QueueSearchParams;
   filters: QueueFilter;
   filtered: boolean;
+  reauthReturnTo: string;
 }) {
   // `allSettled`, not `all`: a failure reading one group (due vs. drifting —
   // two independent queries) must not blank the other. `Promise.all` rejects
@@ -633,6 +659,7 @@ async function renderWorkTab({
     <CrmQueueView
       descriptors={QUEUE_FILTERS}
       values={toFilterValues(filters)}
+      reauthReturnTo={reauthReturnTo}
       due={{
         heading: "Due",
         // Lower-case and read as a noun phrase: the pager builds
@@ -681,7 +708,7 @@ async function renderWorkTab({
  * `fetchConversionSignal`) while this tab is the active one; see
  * `tabHref`'s doc comment for why the Work tab must never pay for this.
  */
-async function renderHandoffTab() {
+async function renderHandoffTab(reauthReturnTo: string) {
   const cookieHeader = (await cookies()).toString();
 
   let handoffRows: HandoffRow[] = [];
@@ -712,6 +739,7 @@ async function renderHandoffTab() {
       state={handoffState}
       emptyMessage={HANDOFF_EMPTY_MESSAGE}
       products={products}
+      reauthReturnTo={reauthReturnTo}
     />
   );
 }
@@ -725,6 +753,11 @@ export default async function CrmPage({
   const filters = readQueueFilters(resolvedSearchParams);
   const filtered = Object.keys(filters).length > 0;
   const activeTab = readTab(resolvedSearchParams);
+  // Computed once, ahead of the tab split: the query string it carries
+  // (including `tab` itself) already answers "which tab, with which
+  // filters" for both branches below, so signing in again lands the
+  // operator back on whichever tab and filters they left.
+  const reauthReturnTo = currentPath(resolvedSearchParams);
 
   // Only the active tab's data is ever read — see `tabHref`'s doc comment.
   // Awaited here, as a plain function call, and embedded as already-resolved
@@ -732,8 +765,8 @@ export default async function CrmPage({
   // `renderWorkTab`'s doc comment for why.
   const content =
     activeTab === "handoff"
-      ? await renderHandoffTab()
-      : await renderWorkTab({ searchParams: resolvedSearchParams, filters, filtered });
+      ? await renderHandoffTab(reauthReturnTo)
+      : await renderWorkTab({ searchParams: resolvedSearchParams, filters, filtered, reauthReturnTo });
 
   return (
     <div className="flex flex-col gap-6">
