@@ -36,7 +36,18 @@ export type SurfaceState =
    * same calm state with a different remedy, and telling an operator to read
    * the observability doc would send them to the wrong place.
    */
-  | { kind: "instrumentation-unavailable"; title?: string; message?: string };
+  | { kind: "instrumentation-unavailable"; title?: string; message?: string }
+  /**
+   * A valid session that cannot authenticate to the platform API, because it
+   * has no usable row in `operator_api_tokens`.
+   *
+   * Its own kind rather than an `error`, for the same reason
+   * `instrumentation-unavailable` is: this is not a failure and must not read
+   * as one. Nothing is broken, nothing needs retrying, and the remedy is a
+   * ten-second one the operator can perform — which the generic error copy
+   * never mentions. See #300.
+   */
+  | { kind: "reauth-required" };
 
 export interface SurfaceError {
   status?: number;
@@ -51,6 +62,12 @@ export interface SurfaceError {
    * the kind of text this state exists to keep off the page.
    */
   unavailable?: { title?: string; message: string };
+  /**
+   * Set when the producer signalled "this session has no usable operator token
+   * row". Read STRUCTURALLY off the caught value — never `instanceof` — for the
+   * reason given on `toSurfaceError`.
+   */
+  reauthRequired?: boolean;
 }
 
 export interface ResolveStateInput {
@@ -84,6 +101,13 @@ export function resolveState(input: ResolveStateInput): SurfaceState {
     return { kind: "loading" };
   }
   if (input.error) {
+    // Before the 501 check and before the generic error: this condition carries
+    // no status of its own, and the operator's remedy is different from every
+    // other failure's. Ordering it first also means a future error that somehow
+    // carried both signals resolves to the one with an action attached.
+    if (input.error.reauthRequired) {
+      return { kind: "reauth-required" };
+    }
     if (input.error.status === NOT_IMPLEMENTED) {
       const copy = input.error.unavailable;
       return copy
@@ -112,13 +136,24 @@ export function toSurfaceError(caught: unknown): SurfaceError | null {
     return null;
   }
   if (typeof caught === "object") {
-    const candidate = caught as { status?: unknown; message?: unknown };
+    const candidate = caught as {
+      status?: unknown;
+      message?: unknown;
+      noOperatorToken?: unknown;
+    };
     return {
       status: typeof candidate.status === "number" ? candidate.status : undefined,
       // An object with no string `message` would otherwise stringify to
       // "[object Object]" in front of an operator.
       message:
         typeof candidate.message === "string" ? candidate.message : FALLBACK_ERROR_MESSAGE,
+      // Strict `=== true`: a truthy non-boolean must not promote an ordinary
+      // failure into "sign in again", which would send the operator to do
+      // something that cannot help. `|| undefined` (rather than the bare
+      // boolean) keeps this key absent-equivalent under `toEqual` for every
+      // caller that never carried the marker — a literal `false` here would
+      // make every pre-existing exact-object assertion in this file fail.
+      reauthRequired: candidate.noOperatorToken === true || undefined,
     };
   }
   return { message: String(caught) };
