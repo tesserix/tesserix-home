@@ -84,3 +84,50 @@ describe("SurfaceStateView", () => {
     expect(row?.contains(title)).toBe(true);
   });
 });
+
+describe("SurfaceStateView — reauth-required", () => {
+  it("tells the operator that signing in again restores the surface", () => {
+    render(<SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />);
+    expect(screen.getByRole("link", { name: /sign in again/i })).toBeInTheDocument();
+  });
+
+  it("returns the operator to where they were", () => {
+    render(
+      <SurfaceStateView
+        state={{ kind: "reauth-required" }}
+        emptyMessage="no tickets"
+        reauthReturnTo="/platform/crm?stage=new"
+      />,
+    );
+    expect(screen.getByRole("link", { name: /sign in again/i })).toHaveAttribute(
+      "href",
+      "/auth/login?returnTo=%2Fplatform%2Fcrm%3Fstage%3Dnew",
+    );
+  });
+
+  it("falls back to a bare login link when no returnTo is given", () => {
+    render(<SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />);
+    expect(screen.getByRole("link", { name: /sign in again/i })).toHaveAttribute(
+      "href",
+      "/auth/login",
+    );
+  });
+
+  it("does not name a token, an ADR, or a database row", () => {
+    const { container } = render(
+      <SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />,
+    );
+    expect(container.textContent).not.toMatch(/token|ADR-003|operator_api_tokens/i);
+  });
+
+  it("is not an error state — it offers no retry", () => {
+    render(
+      <SurfaceStateView
+        state={{ kind: "reauth-required" }}
+        emptyMessage="no tickets"
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /retry|try again/i })).toBeNull();
+  });
+});
