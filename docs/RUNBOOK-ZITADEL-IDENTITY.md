@@ -171,21 +171,61 @@ this document exists is that it was, accidentally.
 
 1. **If any admin session is still open anywhere**, use it immediately to set a
    password on an operator's user. Do not close that tab.
-2. **If no session is open**, the recovery path runs through the Zitadel
-   instance's own admin, whose credentials live in OpenBao under
-   `kv/data/hms/api/*`. ADR-003 D4 names the circularity: the secrets surface
-   that administers those credentials is itself gated on Zitadel. The
-   non-console path is `kubectl` plus the OpenBao CLI, by an operator with
-   cluster access.
-3. **The read half has now been exercised**, on 2026-08-19, to diagnose the
-   login failure above: the `iam-admin-pat` secret in the `zitadel` namespace
-   was read with `kubectl` and used for GET-only Management API calls (user
-   search, grants, project and application configuration). It works, and it is
-   the fastest way to answer "what does Zitadel actually think" — every
-   correction on this page came from it rather than from the UI.
+2. **If no session is open**, recover with the instance's own admin credential,
+   read straight from Kubernetes:
 
-   **The write half — actually restoring access while locked out — is still
-   untested**, and it is the half that matters. #288 tracks it.
+   ```bash
+   export KUBECONFIG=~/.kube/gke-prod
+   PAT=$(kubectl -n zitadel get secret iam-admin-pat -o jsonpath='{.data.pat}' | base64 -d)
+   ```
+
+   That is a working Management API credential. **OpenBao is not involved.**
+
+   ~~ADR-003 D4 said these credentials live in OpenBao under
+   `kv/data/hms/api/*`, and that the secrets surface administering them is
+   itself gated on Zitadel.~~ **That was wrong** — `kv/data/hms/api/*` is empty
+   and there is no `hms/` path in OpenBao at all. Corrected 2026-08-21 (#288);
+   D4 carries the correction. The credentials are in the `zitadel` namespace's
+   K8s secrets and in GCP Secret Manager, neither gated on Zitadel.
+
+3. **Reactivate and reset**, using only that credential:
+
+   ```bash
+   # find the user
+   curl -s -X POST https://auth.tesserix.app/v2/users \
+     -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" \
+     -d '{"queries":[{"userNameQuery":{"userName":"THEIR_LOGIN_NAME"}}]}'
+
+   # reactivate, if deactivated
+   curl -s -X POST https://auth.tesserix.app/v2/users/USER_ID/reactivate \
+     -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" -d '{}'
+
+   # set a password
+   curl -s -X POST https://auth.tesserix.app/v2/users/USER_ID/password \
+     -H "Authorization: Bearer $PAT" -H "Content-Type: application/json" \
+     -d '{"newPassword":{"password":"...","changeRequired":true}}'
+   ```
+
+   Then check their `platform-console` role grant still exists — deleting a user
+   discards its grants silently, and a user with no grant on that project cannot
+   use the console even with a working password. See the traps below.
+
+4. **Both halves have now been exercised.** The read half on 2026-08-19, while
+   diagnosing the login failure above. The write half on 2026-08-21 (#288): a
+   throwaway user was deliberately deactivated and recovered end to end with no
+   console and no admin browser session, in **4 seconds** once the credential was
+   in hand.
+
+   **What is still untested is the human half** — whether someone unfamiliar can
+   follow this under pressure, and whether the people holding cluster and GCP
+   admin know that they are the recovery path. There is no separate break-glass
+   identity: recovering Zitadel needs the same access that can already do
+   anything.
+
+5. **Note on `kubectl exec`.** Several pods in this estate are distroless and
+   have no shell, so `kubectl exec ... -- sh` fails. Where a procedure needs to
+   authenticate as a workload, mint a token instead:
+   `kubectl -n NS create token SERVICE_ACCOUNT --duration=10m`.
 
 ## What changed on 2026-08-20
 
