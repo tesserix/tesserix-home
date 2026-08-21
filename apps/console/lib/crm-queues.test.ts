@@ -45,6 +45,15 @@ describe("crm-queues dual path", () => {
     expect(page.total).toBe(9);
   });
 
+  it("reads Postgres for the drifting queue when PLATFORM_API_ORIGIN is unset", async () => {
+    const repo = await import("@/lib/db/crm-repo");
+    const { fetchDriftingQueue } = await import("./crm-queues");
+    const page = await fetchDriftingQueue({ stage: "new" }, 14, 100, "cur");
+    expect(repo.driftingOpportunities).toHaveBeenCalledWith({ stage: "new" }, 14, 100, "cur");
+    expect(withMeta).not.toHaveBeenCalled();
+    expect(page.total).toBe(2);
+  });
+
   it("sends stale_days on the drifting queue", async () => {
     process.env.PLATFORM_API_ORIGIN = "http://platform-api.test";
     withMeta.mockResolvedValue({ data: { opportunities: [] }, meta: {} });
