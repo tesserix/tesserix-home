@@ -44,17 +44,31 @@ import { queueQuery } from "@/lib/crm-queue-query";
  * honest and actionable — but only once it reaches the page as a
  * `MalformedCursorError`, which is what `fetchDueQueue` and
  * `fetchDriftingQueue` translate it into below. Left as a bare
- * `PlatformApiError`, `dbReadError` doesn't recognise it (it only knows the
- * Postgres-shaped `malformedCursor` marker), and it would render as the
- * generic "Try again shortly." — the exact fate `invalidCursorMessage` exists
- * to prevent. So the cursor-codec break is accepted, but not by teaching
- * either side the other's codec: by re-classifying the refusal at this seam,
- * where both codecs are already in view.
+ * `PlatformApiError` it matches none of `dbReadError`'s classifications and
+ * renders as the generic "Try again shortly." — the exact fate
+ * `invalidCursorMessage` exists to prevent. So the cursor-codec break is
+ * accepted, but not by teaching either side the other's codec: by
+ * re-classifying the refusal at this seam, where both codecs are already in
+ * view.
  *
- * The same translation problem shows up twice more on this seam, for the
- * same root cause — the console's error vocabulary (`MalformedCursorError`,
- * `MissingProductError`) is Postgres-shaped, and a platform API refusal
- * arrives as a bare `PlatformApiError` that matches none of it:
+ * # WHICH SIDE OF THE SEAM A REFUSAL GETS FIXED ON
+ *
+ * Both answers are in use, and the rule that separates them is:
+ *
+ * RE-CLASSIFY AT THIS SEAM when the other backend's refusal has an existing
+ * console-vocabulary equivalent — a 400 cursor refusal IS a
+ * `MalformedCursorError`, a 422 terminal-stage refusal IS an empty page.
+ * EXTEND THE CENTRAL CLASSIFIER when the condition is new and has nothing to
+ * translate into: "no usable token row" has no Postgres analogue, so inventing
+ * a fake SQLSTATE to carry it would be worse. That one is a marker
+ * (`noOperatorToken`) that `dbReadError` and `toSurfaceError` both read
+ * structurally, which is why the sentence this comment used to carry — that
+ * `dbReadError` knows only Postgres-shaped markers — is no longer true.
+ *
+ * The cursor refusal above is one such case; two more sit on this seam for
+ * the same root cause — the console's error vocabulary (`MalformedCursorError`, `MissingProductError`)
+ * is Postgres-shaped, and these platform API refusals arrive as a bare
+ * `PlatformApiError` that matches none of it:
  *
  * - a terminal-stage filter (`?stage=won`/`lost`) is a 422 from the Go side,
  *   by design; the Postgres path's `WHERE` clause simply excludes those
