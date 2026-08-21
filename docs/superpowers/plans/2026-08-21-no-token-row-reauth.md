@@ -156,7 +156,7 @@ git commit -m "feat(console): mark the error a session with no operator token ro
 
 **Files:**
 - Modify: `apps/console/components/kit/surface-state.ts`
-- Test: `apps/console/components/kit/surface-state.test.ts` (create if absent)
+- Test: `apps/console/components/kit/surface-state.test.ts` — **this file already exists**; APPEND the new describe block, leave every existing test untouched
 
 **Interfaces:**
 - Consumes: the `noOperatorToken` marker from Task 1, read structurally.
@@ -318,7 +318,7 @@ git commit -m "feat(console): resolve a session with no operator token row to it
 
 **Files:**
 - Modify: `apps/console/components/kit/states.tsx`
-- Test: `apps/console/components/kit/states.render.test.tsx` (create if absent; match the naming of the sibling `*.render.test.tsx` files)
+- Test: `apps/console/components/kit/states.render.test.tsx` — **this file already exists**; APPEND the new describe block, leave every existing test untouched
 
 **Interfaces:**
 - Consumes: `{ kind: "reauth-required" }` from Task 2.
