@@ -63,22 +63,44 @@ export interface AiUsageFilters {
   provider?: string;
 }
 
+/** The estate's display name for a product slug, when it has one. A slug the
+ *  gateway emits for something the estate does not list is shown as it came. */
+function productLabel(context: string): string {
+  return ESTATE.find((product) => product.context === context)?.name ?? context;
+}
+
+/** Options for one axis, derived from what the window actually served, with the
+ *  applied value always kept so a saved URL round-trips through an empty window. */
+function observedOptions(
+  keys: readonly string[],
+  applied: string | undefined,
+  label: (key: string) => string,
+) {
+  const options = new Set(keys.filter((key) => key !== ""));
+  if (applied) options.add(applied);
+  return [...options].sort().map((key) => ({ value: key, label: label(key) }));
+}
+
+export interface AiUsageFilterOptions {
+  products: readonly string[];
+  providers: readonly string[];
+  applied?: AiUsageFilters;
+}
+
 /**
  * The filter descriptors.
  *
- * Provider options are derived from the providers the window actually shows,
- * not from a hard-coded list: the estate adds providers by editing gateway
- * config, and a list here would be wrong the day after it was written. The
- * applied value is always included so a saved URL round-trips even when that
- * provider has served nothing in this window.
+ * Both vocabularies are derived from the window's own breakdown rather than
+ * hard-coded: a product starts appearing here the first time it sends a request
+ * through the gateway, and a provider the day it is added to gateway config.
+ * A static list is wrong in both directions — it offers products that have never
+ * been wired to the gateway, and hides the ones added after it was written.
  */
-export function aiUsageFilters(
-  providers: readonly string[],
-  applied?: string,
-): FilterDescriptor[] {
-  const options = new Set(providers.filter((provider) => provider !== ""));
-  if (applied) options.add(applied);
-
+export function aiUsageFilters({
+  products,
+  providers,
+  applied,
+}: AiUsageFilterOptions): FilterDescriptor[] {
   return [
     {
       key: "window",
@@ -90,13 +112,13 @@ export function aiUsageFilters(
       key: "product",
       label: "Product",
       type: "select",
-      options: ESTATE.map((product) => ({ value: product.context, label: product.name })),
+      options: observedOptions(products, applied?.product, productLabel),
     },
     {
       key: "provider",
       label: "Provider",
       type: "select",
-      options: [...options].sort().map((provider) => ({ value: provider, label: provider })),
+      options: observedOptions(providers, applied?.provider, (provider) => provider),
     },
   ];
 }
@@ -202,7 +224,12 @@ export default async function AiUsagePage({
     provider: filters.provider,
   };
 
-  // `allSettled`, not `all`: one failing read must not blank the other five.
+  // The filter bar's vocabulary comes from the window alone. Reading it from the
+  // narrowed breakdowns would leave the dropdown holding only the value already
+  // applied, so picking a second product would mean clearing the first.
+  const vocabularyQuery: AiUsageQuery = { window: filters.window };
+
+  // `allSettled`, not `all`: one failing read must not blank the others.
   const [
     summaryResult,
     productResult,
@@ -211,6 +238,8 @@ export default async function AiUsagePage({
     modelResult,
     guardrailResult,
     eventsResult,
+    productVocabularyResult,
+    providerVocabularyResult,
   ] = await Promise.allSettled([
     fetchAiUsageSummary(query),
     fetchAiUsageBreakdown("product", query),
@@ -219,6 +248,8 @@ export default async function AiUsagePage({
     fetchAiUsageBreakdown("model", query),
     fetchAiUsageGuardrails(query),
     fetchAiUsageEvents(query),
+    fetchAiUsageBreakdown("product", vocabularyQuery),
+    fetchAiUsageBreakdown("provider", vocabularyQuery),
   ]);
 
   const summary = settled<AiUsageSummary>(summaryResult);
@@ -228,6 +259,8 @@ export default async function AiUsagePage({
   const models = settled<AiUsageBreakdown>(modelResult);
   const guardrails = settled<AiUsageGuardrails>(guardrailResult);
   const events = settled<AiUsageEvents>(eventsResult);
+  const productVocabulary = settled<AiUsageBreakdown>(productVocabularyResult);
+  const providerVocabulary = settled<AiUsageBreakdown>(providerVocabularyResult);
 
   const totals = summary.data?.totals ?? null;
   const seriesState = usageState({
@@ -240,10 +273,11 @@ export default async function AiUsagePage({
   const breakdownState = (data: AiUsageBreakdown | null, error: unknown): SurfaceState =>
     usageState({ error, rows: data?.rows ?? [], filtered });
 
-  const descriptors = aiUsageFilters(
-    (providers.data?.rows ?? []).map((row) => row.key),
-    filters.provider,
-  );
+  const descriptors = aiUsageFilters({
+    products: (productVocabulary.data?.rows ?? []).map((row) => row.key),
+    providers: (providerVocabulary.data?.rows ?? []).map((row) => row.key),
+    applied: filters,
+  });
 
   return (
     <div className="flex flex-col gap-6">

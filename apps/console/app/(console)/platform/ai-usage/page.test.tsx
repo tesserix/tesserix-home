@@ -177,21 +177,55 @@ describe("toFilterValues", () => {
 });
 
 describe("aiUsageFilters", () => {
+  const filters = (options: Parameters<typeof aiUsageFilters>[0]) => ({
+    product: aiUsageFilters(options).find((d) => d.key === "product"),
+    provider: aiUsageFilters(options).find((d) => d.key === "provider"),
+  });
+
   it("offers the providers the window actually shows", () => {
-    const provider = aiUsageFilters(["vertex", "anthropic"]).find((d) => d.key === "provider");
+    const { provider } = filters({ products: [], providers: ["vertex", "anthropic"] });
     expect(provider?.options?.map((o) => o.value)).toEqual(["anthropic", "vertex"]);
   });
 
   it("keeps the applied provider even when it served nothing", () => {
     // Otherwise a saved URL renders a filter the bar shows as unset while the
     // page is still narrowed by it.
-    const provider = aiUsageFilters([], "bedrock").find((d) => d.key === "provider");
+    const { provider } = filters({
+      products: [],
+      providers: [],
+      applied: { window: "24h", provider: "bedrock" },
+    });
     expect(provider?.options?.map((o) => o.value)).toEqual(["bedrock"]);
   });
 
   it("drops the unattributed key, which is not a provider anyone can pick", () => {
-    const provider = aiUsageFilters(["", "vertex"]).find((d) => d.key === "provider");
+    const { provider } = filters({ products: [], providers: ["", "vertex"] });
     expect(provider?.options?.map((o) => o.value)).toEqual(["vertex"]);
+  });
+
+  it("offers only the products that actually sent traffic", () => {
+    // The estate lists seven products; the gateway has seen two. Offering the
+    // other five is offering filters that can only ever return nothing.
+    const { product } = filters({ products: ["kora", "hms"], providers: [] });
+    expect(product?.options?.map((o) => o.value)).toEqual(["hms", "kora"]);
+  });
+
+  it("labels a known product with its estate name and an unknown one as it came", () => {
+    const { product } = filters({ products: ["kora", "somethingnew"], providers: [] });
+    const labels = Object.fromEntries(
+      (product?.options ?? []).map((o) => [o.value, o.label]),
+    );
+    expect(labels.kora).toBe("Kora");
+    expect(labels.somethingnew).toBe("somethingnew");
+  });
+
+  it("keeps the applied product even when it served nothing", () => {
+    const { product } = filters({
+      products: [],
+      providers: [],
+      applied: { window: "24h", product: "dwellm8" },
+    });
+    expect(product?.options?.map((o) => o.value)).toEqual(["dwellm8"]);
   });
 });
 
@@ -243,14 +277,28 @@ describe("the page", () => {
     expect(fetchers.summary).toHaveBeenCalledWith(query);
     expect(fetchers.guardrails).toHaveBeenCalledWith(query);
     expect(fetchers.events).toHaveBeenCalledWith(query);
-    // Four axes, one request each: product, capability, provider, model.
+    // Four narrowed axes, then the two unnarrowed reads the filter bar's
+    // vocabulary comes from.
     expect(fetchers.breakdown.mock.calls.map(([by]) => by)).toEqual([
       "product",
       "capability",
       "provider",
       "model",
+      "product",
+      "provider",
     ]);
     expect(fetchers.breakdown).toHaveBeenCalledWith("model", query);
+    expect(fetchers.breakdown).toHaveBeenCalledWith("product", { window: "7d" });
+  });
+
+  it("keeps the product filter offering products the current filter excludes", async () => {
+    // The narrowed read returns kora alone; the dropdown must still offer hms,
+    // or a reader who picked kora can never pick anything else.
+    await renderPage({ window: "24h", product: "kora" });
+    const vocabulary = fetchers.breakdown.mock.calls.filter(
+      ([by, q]) => by === "product" && q.product === undefined,
+    );
+    expect(vocabulary).toHaveLength(1);
   });
 
   it("shows sub-cent spend as a cost rather than as zero", async () => {

@@ -1,3 +1,7 @@
+// See page-header.tsx: @tesserix/web's barrel is "use client", so its table
+// exports are `undefined` in a server component and React fails with #130.
+"use client";
+
 import { SurfaceStateView } from "@/components/kit/states";
 import {
   Table,
