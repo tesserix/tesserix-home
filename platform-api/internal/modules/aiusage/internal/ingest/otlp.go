@@ -21,12 +21,14 @@ const (
 	attrCapability = "tesserix.capability"
 	attrGateway    = "tesserix.gateway"
 
-	attrProvider      = "gen_ai.system"
-	attrRequestModel  = "gen_ai.request.model"
-	attrResponseModel = "gen_ai.response.model"
-	attrInputTokens   = "gen_ai.usage.input_tokens"
-	attrOutputTokens  = "gen_ai.usage.output_tokens"
-	attrCachedTokens  = "gen_ai.usage.cache_read_input_tokens"
+	// gen_ai.system is the legacy name; agentgateway emits gen_ai.provider.name.
+	attrProvider       = "gen_ai.provider.name"
+	attrLegacyProvider = "gen_ai.system"
+	attrRequestModel   = "gen_ai.request.model"
+	attrResponseModel  = "gen_ai.response.model"
+	attrInputTokens    = "gen_ai.usage.input_tokens"
+	attrOutputTokens   = "gen_ai.usage.output_tokens"
+	attrCachedTokens   = "gen_ai.usage.cache_read_input_tokens"
 
 	attrCostTotal = "agw.ai.usage.cost.total"
 
@@ -64,7 +66,7 @@ func FromTraces(spans []*tracepb.ResourceSpans) []Record {
 func fromSpan(span *tracepb.Span, service string) (Record, bool) {
 	attrs := span.GetAttributes()
 	model := stringAttr(attrs, attrRequestModel)
-	provider := stringAttr(attrs, attrProvider)
+	provider := firstNonEmpty(stringAttr(attrs, attrProvider), stringAttr(attrs, attrLegacyProvider))
 	if model == "" && provider == "" {
 		return Record{}, false
 	}
