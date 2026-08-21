@@ -192,11 +192,6 @@ function unwrapEnvelope(label: string, status: number, body: unknown): Envelope 
   throw new PlatformApiError(`${label}: ${code} — ${message}`, status);
 }
 
-/** Thin wrapper kept so every existing `unwrap` call site is untouched. */
-function unwrap(label: string, status: number, body: unknown): unknown {
-  return unwrapEnvelope(label, status, body).data;
-}
-
 /**
  * Call the platform API as the current operator.
  *
