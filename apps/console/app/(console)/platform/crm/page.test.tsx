@@ -11,9 +11,12 @@ const wonWithoutConversion = vi.fn();
 const fetchConversionSignal = vi.fn();
 
 vi.mock("@/lib/db/crm-repo", () => ({
-  dueOpportunities: (...args: unknown[]) => dueOpportunities(...args),
-  driftingOpportunities: (...args: unknown[]) => driftingOpportunities(...args),
   wonWithoutConversion: (...args: unknown[]) => wonWithoutConversion(...args),
+}));
+
+vi.mock("@/lib/crm-queues", () => ({
+  fetchDueQueue: (...args: unknown[]) => dueOpportunities(...args),
+  fetchDriftingQueue: (...args: unknown[]) => driftingOpportunities(...args),
 }));
 
 vi.mock("@/lib/crm-conversion", () => ({

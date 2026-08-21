@@ -14,14 +14,13 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
 import {
-  dueOpportunities,
-  driftingOpportunities,
   wonWithoutConversion,
   type QueuePage,
   type QueueRow,
   type QueueFilter,
   type HandoffRow,
 } from "@/lib/db/crm-repo";
+import { fetchDriftingQueue, fetchDueQueue } from "@/lib/crm-queues";
 import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversion";
 import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
 import {
@@ -602,8 +601,8 @@ async function renderWorkTab({
   // The cursors are passed for the same reason: paging in SQL is the only
   // way page two can contain rows page one never fetched.
   const [dueResult, driftingResult] = await Promise.allSettled([
-    dueOpportunities(filters, DUE_LIMIT, readCursor(searchParams, DUE_CURSOR_PARAM)),
-    driftingOpportunities(
+    fetchDueQueue(filters, DUE_LIMIT, readCursor(searchParams, DUE_CURSOR_PARAM)),
+    fetchDriftingQueue(
       filters,
       DRIFT_DAYS,
       DRIFTING_LIMIT,
