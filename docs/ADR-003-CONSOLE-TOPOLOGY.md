@@ -4,6 +4,8 @@
 **Date**: 2026-08-18
 **Amended**: 2026-08-18 — D7 (the console retires its direct database access)
 and D8 (both principals authenticate through Zitadel).
+**Amended**: 2026-08-21 — D4's circularity premise was factually wrong and is
+corrected below; the break-glass path has now been exercised (#288).
 **Related**: [ADR-002: Delivery visibility on ArgoCD + Kargo](./ADR-002-DELIVERY-VISIBILITY.md)
 
 ## Context
@@ -227,18 +229,56 @@ unification is in the presentation, which is where the requirement actually live
 Secrets move behind Zitadel with everything else. The second identity provider
 goes.
 
-**The circularity must be answered rather than avoided.** Zitadel's own session
-signing key and login-client PAT are stored in OpenBao under `kv/data/hms/api/*`.
-A secrets surface gated on Zitadel cannot be used to fix Zitadel.
+**The circularity must be answered rather than avoided.**
 
-The resolution is that the emergency path does not run through the console at
-all: an operator with cluster access reads and rotates through `kubectl` and the
-OpenBao CLI directly. That is a legitimate break-glass, and it is how most estates
-work.
+> ~~Zitadel's own session signing key and login-client PAT are stored in OpenBao
+> under `kv/data/hms/api/*`. A secrets surface gated on Zitadel cannot be used to
+> fix Zitadel.~~
+>
+> ~~The resolution is that the emergency path does not run through the console at
+> all: an operator with cluster access reads and rotates through `kubectl` and the
+> OpenBao CLI directly.~~
+
+**CORRECTED 2026-08-21 (#288). The premise above was wrong, and the correction is
+kept visible because the error is instructive: this decision reasoned from a
+document rather than from the cluster, which is exactly what the "Verified state"
+section above forbids.**
+
+`kv/data/hms/api/*` **is empty. There is no `hms/` path in OpenBao at all** — it
+holds `cloudflared/` and `helivanta/` and nothing else, and no policy in the
+bootstrap configmap references `hms`. Verified by listing `kv/metadata`
+recursively.
+
+**So the circularity this decision set out to answer does not exist.** Zitadel's
+credentials live in two places, neither of them gated on Zitadel:
+
+| where | what | reached with |
+|---|---|---|
+| K8s secrets, `zitadel` namespace | `zitadel-masterkey`, `zitadel-admin-password`, `iam-admin-pat`, `iam-admin`, `zitadel-login-service-key`, `zitadel-db-credentials` | cluster access |
+| GCP Secret Manager | `prod-zitadel-masterkey`, `prod-zitadel-admin-password`, `prod-zitadel-console-client-secret`, `prod-onboarding-zitadel-machine-key` | GCP IAM |
+
+The emergency path is therefore simpler than this decision assumed, and OpenBao
+is not part of it: `kubectl -n zitadel get secret iam-admin-pat` yields a working
+Management API credential.
 
 **It must be written down and exercised once, before the second login is
 removed.** Otherwise the console silently becomes the only known path and the
 circularity becomes real the first time it matters.
+
+**Both are now done, though in the wrong order** — the second login was removed
+on 2026-08-19, and the drill was run on 2026-08-21 (#288). The drill recovered a
+deliberately deactivated throwaway user end to end using only the K8s-derived
+credential, with no console and no admin browser session: **4 seconds** once the
+credential was in hand. The write half — which
+`RUNBOOK-ZITADEL-IDENTITY.md` recorded as untested, and called "the half that
+matters" — now works and has been observed.
+
+**What the drill did not settle, and what this decision should have asked
+instead of the circularity question:** there is no separate break-glass identity.
+Recovering Zitadel requires cluster or GCP admin, held by exactly the people who
+can already do everything else. The recovery path has no independent custodian,
+so "is two operators enough?" is still open — and it was always the sharper
+question.
 
 **Two-person integrity must be preserved explicitly.** It rests on branch
 protection today, not on code. Confirm `main` protection on `tesserix-k8s`, and do
