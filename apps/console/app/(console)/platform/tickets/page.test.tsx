@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { PlatformApiError } from "@/lib/platform-api";
+import { fetchSupportAnalytics, fetchTickets, PlatformApiError } from "@/lib/platform-api";
 import { QueueList, type QueueItem } from "@/components/kit/queue-list";
 import type { Ticket } from "@/lib/tickets";
 import TicketQueue, {
@@ -18,8 +18,29 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ toString: () => "tx_session=abc" }),
 }));
 
+// A partial mock — every test but the reauth-required ones below calls
+// straight through to the real implementation, still exercised against
+// `stubUpstream`'s fetch mock exactly as before. Only `fetchTickets`/
+// `fetchSupportAnalytics` need to be individually overridable, to simulate
+// the platform-API branch's `noOperatorToken` rejection without actually
+// wiring `PLATFORM_API_ORIGIN` through this test file's fetch stub.
+vi.mock("@/lib/platform-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/platform-api")>();
+  return {
+    ...actual,
+    fetchTickets: vi.fn(actual.fetchTickets),
+    fetchSupportAnalytics: vi.fn(actual.fetchSupportAnalytics),
+  };
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Undoes a `mockRejectedValueOnce`/`mockImplementationOnce` override from a
+  // reauth-required test — `once` queues drain themselves, but restoring
+  // here guards against a leftover queued rejection reaching an unrelated
+  // test if one is ever added after such an override without consuming it.
+  vi.mocked(fetchTickets).mockClear();
+  vi.mocked(fetchSupportAnalytics).mockClear();
 });
 
 // The queue previously resolved its state with `triageState(error, null)`,
@@ -343,5 +364,59 @@ describe("the analytics tab", () => {
     // The whole reason analytics is read through apps/web rather than otto.
     expect(screen.getByText("Asha Threads")).toBeInTheDocument();
     expect(screen.queryByText("Not measured")).toBeNull();
+  });
+});
+
+describe("when the session has no platform token", () => {
+  it("prompts sign-in on the queue tab, carrying the operator's filters back", async () => {
+    stubUpstream({ rows: [] });
+    vi.mocked(fetchTickets).mockRejectedValueOnce(
+      new PlatformApiError("tickets: this session carries no platform API access token (ADR-003 D8)", undefined, {
+        noOperatorToken: true,
+      }),
+    );
+
+    await renderQueuePage({ status: "open" });
+
+    const link = screen.getByRole("link", { name: /sign in again/i });
+    expect(decodeURIComponent(link.getAttribute("href")!.split("returnTo=")[1])).toBe(
+      "/platform/tickets?status=open",
+    );
+  });
+
+  // Queue and Analytics are independent reads and independent tabs — a
+  // no-token session can fail either without the other reflecting it, same
+  // guarantee `does not blank the other queue` pins for the CRM surface.
+  it("does not show a sign-in prompt on the queue tab when only analytics has no token", async () => {
+    stubUpstream();
+    vi.mocked(fetchSupportAnalytics).mockRejectedValueOnce(
+      new PlatformApiError("support analytics: no platform API access token", undefined, {
+        noOperatorToken: true,
+      }),
+    );
+
+    await renderQueuePage({});
+
+    expect(screen.getByText(TICKET.subject)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /sign in again/i })).toBeNull();
+  });
+
+  // The panel hands the SAME state to three `RankedBars` (by status, by
+  // reason, by tenant) plus eight `StatTile`s. Without suppression each
+  // `RankedBars` would render its own full "sign in again" callout — three
+  // identical prompts under one tab, the exact stacking #300 task 4 exists
+  // to prevent.
+  it("shows exactly one sign-in prompt on the analytics tab, not three", async () => {
+    stubUpstream();
+    vi.mocked(fetchSupportAnalytics).mockRejectedValueOnce(
+      new PlatformApiError("support analytics: no platform API access token", undefined, {
+        noOperatorToken: true,
+      }),
+    );
+
+    await renderQueuePage({});
+    fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
+
+    expect(screen.getAllByRole("link", { name: /sign in again/i })).toHaveLength(1);
   });
 });

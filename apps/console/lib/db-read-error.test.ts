@@ -61,6 +61,24 @@ describe("dbReadError", () => {
     });
   });
 
+  it("preserves noOperatorToken so a platform-API-backed read reaches reauth-required", () => {
+    // `crm-queues.ts` switches due/drifting reads to the platform API when
+    // PLATFORM_API_ORIGIN is set; that branch's rejections carry this marker
+    // instead of a SQLSTATE, and it must survive this function unmangled.
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    expect(stateFor(noToken)).toEqual({ kind: "reauth-required" });
+  });
+
+  it("does not log a Postgres failure for a condition where nothing failed", () => {
+    // "A valid session holds no operator token row" is the branch's defined
+    // non-failure, and tesserix-postgres was never contacted on that path. An
+    // error-level line naming the database — on a surface an operator opens
+    // routinely — would be false twice over.
+    const noToken = Object.assign(new Error("no token"), { noOperatorToken: true });
+    dbReadError(noToken, SURFACE);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
   it("resolves a missing table to instrumentation-unavailable", () => {
     // An un-migrated database is "not set up yet", not "something went wrong":
     // nothing failed and nothing is flaky, so telling an operator to retry

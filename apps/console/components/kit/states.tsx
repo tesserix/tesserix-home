@@ -17,7 +17,7 @@ import {
   EmptyStateTitle,
   ErrorState,
 } from "@tesserix/web";
-import { Inbox, PlugZap, SearchX } from "lucide-react";
+import { Inbox, LogIn, PlugZap, SearchX } from "lucide-react";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE, type SurfaceState } from "./surface-state";
 
 /**
@@ -38,6 +38,12 @@ export interface SurfaceStateViewProps {
   emptyMessage: string;
   onRetry?: () => void;
   onClearFilters?: () => void;
+  /**
+   * Where to send the operator back to after re-authenticating. Only the page
+   * rendering this state knows its own path, so it must supply it — this
+   * component has no way to discover it on its own.
+   */
+  reauthReturnTo?: string;
 }
 
 /**
@@ -49,6 +55,7 @@ export function SurfaceStateView({
   emptyMessage,
   onRetry,
   onClearFilters,
+  reauthReturnTo,
 }: SurfaceStateViewProps): ReactNode {
   switch (state.kind) {
     case "ready":
@@ -123,6 +130,52 @@ export function SurfaceStateView({
               <CalloutTitle>{state.title ?? "Instrumentation unavailable"}</CalloutTitle>
               <CalloutDescription>
                 {state.message ?? INSTRUMENTATION_UNAVAILABLE_MESSAGE}
+              </CalloutDescription>
+            </div>
+          </div>
+        </Callout>
+      );
+
+    case "reauth-required":
+      // A Callout, like instrumentation-unavailable and for the same reason:
+      // this is not a failure. Nothing is broken and a retry cannot help — the
+      // session is valid but holds no credential for the platform API, and only
+      // a fresh sign-in mints one. An ErrorState would offer a retry button
+      // that does nothing, which is worse than the generic message this
+      // replaces.
+      return (
+        <Callout variant="warning" role="status">
+          <div className="flex items-start gap-2">
+            <LogIn className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0">
+              {/* "this" would be a dangling reference: this component renders
+                  above every surface and knows the name of none of them. */}
+              <CalloutTitle>Sign in again to continue</CalloutTitle>
+              <CalloutDescription>
+                {/* No token vocabulary, no ADR number: the operator cannot act
+                    on either, and naming them is what made the old message
+                    useless. */}
+                This session can no longer reach the platform. Signing in again
+                restores it — nothing is lost.{" "}
+                {/* A plain anchor, matching "Sign out" in
+                    `components/nav/operator-menu.tsx`, and NOT `next/link`.
+                    `/auth/login` is a route handler, not a page: it mints
+                    `cx_oauth_state` and `cx_oidc_nonce` and redirects to
+                    Zitadel. `<Link>` prefetches on viewport entry in
+                    production, which EXECUTES that handler — writing a fresh
+                    state/nonce pair over the operator's and firing an authorize
+                    request nobody asked for, on a callout that renders without
+                    anyone clicking anything. */}
+                <a
+                  href={
+                    reauthReturnTo
+                      ? `/auth/login?returnTo=${encodeURIComponent(reauthReturnTo)}`
+                      : "/auth/login"
+                  }
+                  className="underline underline-offset-4"
+                >
+                  Sign in again
+                </a>
               </CalloutDescription>
             </div>
           </div>

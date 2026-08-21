@@ -3,7 +3,7 @@ import type { TxQuery } from "../db/tesserix";
 import type {
   OperatorTokensInput,
   ReadTokensOptions,
-  StoredOperatorTokens,
+  TokenReadResult,
   TokenStoreOptions,
 } from "./operator-token-store";
 
@@ -34,6 +34,9 @@ const state = vi.hoisted(() => ({
   row: null as unknown,
   /** Set to make the store behave as if there is no database and no key. */
   storeUnusable: false,
+  /** Set to make the pooled read fail. The store swallows it and reports
+   *  `unavailable`, exactly as it does for a tesserix-postgres blip. */
+  readFails: false,
   /** Set to make the write inside the transaction fail. */
   saveThrows: false,
   /** Set to make the transaction itself unopenable (no database at all). */
@@ -81,19 +84,26 @@ vi.mock("./oidc", () => ({
 vi.mock("./operator-token-store", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./operator-token-store")>();
-  return {
+  const mocked = {
     // Real arithmetic for `accessTokenExpiresAt`, not a stub: it is the exact
     // function under test reusing it (see task-5, fix round 1), and a stub
     // here would hide a regression in the shared helper instead of
     // exercising it.
     accessTokenExpiresAt: actual.accessTokenExpiresAt,
-    readTokens: async (
+    // The store's real shape: an OUTCOME beside the tokens, because "the store
+    // worked and this session has no row" and "the store could not answer" are
+    // the same null and want opposite answers from the caller.
+    readTokenRecord: async (
       sid: string,
       options: ReadTokensOptions = {},
-    ): Promise<StoredOperatorTokens | null> => {
+    ): Promise<TokenReadResult> => {
       state.readOptions.push(options);
-      // "No key, or no database" — the store degrades to null, it does not throw.
-      if (state.storeUnusable) return null;
+      // "No key, or no database" — the store degrades, it does not throw, and
+      // it reports that it could not answer.
+      if (state.storeUnusable) return { outcome: "unavailable", tokens: null };
+      // A failed read is swallowed on the pooled path and reported the same
+      // way; nothing about the session is known either way.
+      if (state.readFails) return { outcome: "unavailable", tokens: null };
       if (state.refreshedWhileWaiting && options.forUpdate) {
         seedRow({
           accessToken: "someone-elses-renewal",
@@ -103,13 +113,18 @@ vi.mock("./operator-token-store", async (importOriginal) => {
       }
       const row = state.row as Record<string, Row> | null;
       const found = row?.[sid];
-      if (!found) return null;
+      if (!found) return { outcome: "absent", tokens: null };
       return {
-        accessToken: found.accessToken,
-        accessExpiresAt: found.accessExpiresAt,
-        refreshToken: found.refreshToken,
+        outcome: "ok",
+        tokens: {
+          accessToken: found.accessToken,
+          accessExpiresAt: found.accessExpiresAt,
+          refreshToken: found.refreshToken,
+        },
       };
     },
+    readTokens: async (sid: string, options: ReadTokensOptions = {}) =>
+      (await mocked.readTokenRecord(sid, options)).tokens,
     saveTokens: async (
       sid: string,
       sub: string,
@@ -133,6 +148,7 @@ vi.mock("./operator-token-store", async (importOriginal) => {
       state.row = rows;
     },
   };
+  return mocked;
 });
 
 // A mutex, because that is what `SELECT ... FOR UPDATE` is to this module.
@@ -183,6 +199,7 @@ beforeEach(() => {
   state.session = { sub: "operator-1", sid: "sid-1", exp: now() + 7 * 86_400 };
   state.row = null;
   state.storeUnusable = false;
+  state.readFails = false;
   state.saveThrows = false;
   state.txThrows = false;
   state.refreshCalls = 0;
@@ -543,5 +560,78 @@ describe("getPlatformApiToken", () => {
     ];
 
     expect(await getToken()).toBe("renewed-for-operator-2");
+  });
+});
+
+/**
+ * The distinction the sign-in prompt rests on.
+ *
+ * `getPlatformApiToken` answers null for every one of these, which is right for
+ * a caller that only wants the credential and useless to the one that has to
+ * tell an operator what to do about it. "Sign in again" is TRUE for an absent
+ * row and FALSE — permanently, uselessly false — for a store that could not
+ * answer: with the encryption key unset, the callback's write fails the same
+ * check the read did, so the fresh session lands on the identical prompt.
+ */
+describe("resolvePlatformApiToken", () => {
+  async function resolve() {
+    const { resolvePlatformApiToken } = await import("./platform-token");
+    return resolvePlatformApiToken();
+  }
+
+  it("asks for a sign-in when the store answered and the session has no row", async () => {
+    state.row = null;
+    expect(await resolve()).toEqual({ token: null, reauthRequired: true });
+  });
+
+  it("does NOT ask for a sign-in when the store is unusable (no encryption key)", async () => {
+    state.storeUnusable = true;
+    seedRow({ accessExpiresAt: new Date(Date.now() + 3_600_000) });
+    expect(await resolve()).toEqual({ token: null, reauthRequired: false });
+  });
+
+  it("does NOT ask for a sign-in when the read fails", async () => {
+    state.readFails = true;
+    seedRow({ accessExpiresAt: new Date(Date.now() + 3_600_000) });
+    expect(await resolve()).toEqual({ token: null, reauthRequired: false });
+  });
+
+  it("asks for a sign-in when the row holds an expired token and no way to renew it", async () => {
+    seedRow({
+      accessExpiresAt: new Date(Date.now() - 10_000),
+      refreshToken: null,
+    });
+    expect(await resolve()).toEqual({ token: null, reauthRequired: true });
+  });
+
+  it("does NOT ask for a sign-in when the refresh itself fails", async () => {
+    // Zitadel rejected it, or the transaction rolled back. The row is still
+    // there and nothing the operator does reaches the cause.
+    seedRow({ accessExpiresAt: new Date(Date.now() - 10_000) });
+    state.refreshResponses = [null];
+    expect(await resolve()).toEqual({ token: null, reauthRequired: false });
+  });
+
+  it("does NOT ask for a sign-in when Zitadel is not configured", async () => {
+    seedRow({ accessExpiresAt: new Date(Date.now() - 10_000) });
+    state.configThrows = true;
+    expect(await resolve()).toEqual({ token: null, reauthRequired: false });
+  });
+
+  it("never asks for a sign-in when it has a token", async () => {
+    seedRow({ accessExpiresAt: new Date(Date.now() + 3_600_000) });
+    expect(await resolve()).toEqual({ token: "stored", reauthRequired: false });
+  });
+
+  it("agrees with getPlatformApiToken, which is a wrapper over it", async () => {
+    // One resolution behind both entry points, so the token a caller presents
+    // and the reason another caller reports can never come apart.
+    seedRow({ accessExpiresAt: new Date(Date.now() + 3_600_000) });
+    const { getPlatformApiToken, resolvePlatformApiToken } = await import(
+      "./platform-token"
+    );
+    const resolved = await resolvePlatformApiToken();
+    expect(await getPlatformApiToken()).toBe(resolved.token);
+    expect(resolved).toEqual({ token: "stored", reauthRequired: false });
   });
 });

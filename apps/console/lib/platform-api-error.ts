@@ -29,15 +29,38 @@
  * quietly become "this is broken".
  */
 
+/** Options a thrower may attach beyond the standard `cause`. */
+export interface PlatformApiErrorOptions extends ErrorOptions {
+  /**
+   * True ONLY for "this session has no usable operator token row" — a valid
+   * session that simply cannot authenticate to the platform API, which signing
+   * in again fixes.
+   *
+   * A marker rather than a code string, matching `MalformedCursorError`'s
+   * `malformedCursor` — one spelling for "a structural reader can test this",
+   * not two. It is read structurally (see `toSurfaceError`), never with
+   * `instanceof`, because the reader must stay free of `lib/` imports and an
+   * `instanceof` across a bundler boundary can fail silently.
+   *
+   * It must NOT be set for a 401, a 403, a 5xx, or an unconfigured origin.
+   * Those are different problems with different remedies, and collapsing them
+   * into "sign in again" is the same unactionable answer this marker exists to
+   * replace.
+   */
+  noOperatorToken?: boolean;
+}
+
 /** Carries the HTTP status when there was one. A 501 means the endpoint is
  *  parked; anything else is a real failure. Losing the status here collapses
  *  that distinction and a parked plane starts reading as broken. */
 export class PlatformApiError extends Error {
   readonly status?: number;
+  readonly noOperatorToken: boolean;
 
-  constructor(message: string, status?: number, options?: ErrorOptions) {
+  constructor(message: string, status?: number, options?: PlatformApiErrorOptions) {
     super(message, options);
     this.name = "PlatformApiError";
     this.status = status;
+    this.noOperatorToken = options?.noOperatorToken === true;
   }
 }

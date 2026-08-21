@@ -1,10 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { AnchorHTMLAttributes } from "react";
 import {
   INSTRUMENTATION_UNAVAILABLE_MESSAGE,
   SurfaceStateView,
   type SurfaceStateViewProps,
 } from "./states";
+
+/**
+ * `next/link`, stamped so a rendered anchor says which one produced it.
+ *
+ * jsdom cannot see a prefetch, and `<Link>` and `<a>` render identically here,
+ * so this is what makes "the sign-in link does not prefetch" an assertion about
+ * the output rather than about the source text.
+ */
+vi.mock("next/link", () => ({
+  default: (props: AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a data-next-link="true" {...props} />
+  ),
+}));
 
 // resolveState decides *which* state a surface is in; states.test.ts covers
 // that. This covers the other half: that each state actually renders a
@@ -82,5 +96,63 @@ describe("SurfaceStateView", () => {
     expect(row).not.toBeNull();
     expect(row?.className).toContain("flex");
     expect(row?.contains(title)).toBe(true);
+  });
+});
+
+describe("SurfaceStateView — reauth-required", () => {
+  it("tells the operator that signing in again restores the surface", () => {
+    render(<SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />);
+    expect(screen.getByRole("link", { name: /sign in again/i })).toBeInTheDocument();
+  });
+
+  it("returns the operator to where they were", () => {
+    render(
+      <SurfaceStateView
+        state={{ kind: "reauth-required" }}
+        emptyMessage="no tickets"
+        reauthReturnTo="/platform/crm?stage=new"
+      />,
+    );
+    expect(screen.getByRole("link", { name: /sign in again/i })).toHaveAttribute(
+      "href",
+      "/auth/login?returnTo=%2Fplatform%2Fcrm%3Fstage%3Dnew",
+    );
+  });
+
+  it("falls back to a bare login link when no returnTo is given", () => {
+    render(<SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />);
+    expect(screen.getByRole("link", { name: /sign in again/i })).toHaveAttribute(
+      "href",
+      "/auth/login",
+    );
+  });
+
+  it("does not name a token, an ADR, or a database row", () => {
+    const { container } = render(
+      <SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />,
+    );
+    expect(container.textContent).not.toMatch(/token|ADR-003|operator_api_tokens/i);
+  });
+
+  // `/auth/login` is a route handler, not a page: a GET mints `cx_oauth_state`
+  // and `cx_oidc_nonce` and redirects to Zitadel. `<Link>` prefetches on
+  // viewport entry in production, which EXECUTES it — overwriting the
+  // operator's state/nonce pair and firing an authorize request nobody asked
+  // for, merely because the callout scrolled into view.
+  it("links with a plain anchor, so nothing prefetches the login handler", () => {
+    render(<SurfaceStateView state={{ kind: "reauth-required" }} emptyMessage="no tickets" />);
+    const link = screen.getByRole("link", { name: /sign in again/i });
+    expect(link).not.toHaveAttribute("data-next-link");
+  });
+
+  it("is not an error state — it offers no retry", () => {
+    render(
+      <SurfaceStateView
+        state={{ kind: "reauth-required" }}
+        emptyMessage="no tickets"
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /retry|try again/i })).toBeNull();
   });
 });

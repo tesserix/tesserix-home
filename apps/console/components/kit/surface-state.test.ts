@@ -77,3 +77,60 @@ describe("resolveState with a narrowed error", () => {
     ).toEqual({ kind: "instrumentation-unavailable" });
   });
 });
+
+describe("the reauth-required state", () => {
+  it("reads the marker structurally off a thrown error", () => {
+    const err = toSurfaceError({ message: "no token", noOperatorToken: true });
+    expect(err?.reauthRequired).toBe(true);
+  });
+
+  it("does not set it for an ordinary error", () => {
+    expect(toSurfaceError({ message: "boom", status: 500 })?.reauthRequired).toBeFalsy();
+  });
+
+  it("resolves to reauth-required", () => {
+    expect(
+      resolveState({ isLoading: false, error: { reauthRequired: true }, rows: [], filtered: false }),
+    ).toEqual({ kind: "reauth-required" });
+  });
+
+  it("prefers reauth-required over the generic error state", () => {
+    const state = resolveState({
+      isLoading: false,
+      error: { reauthRequired: true, message: "this session carries no platform API access token" },
+      rows: [],
+      filtered: false,
+    });
+    expect(state.kind).toBe("reauth-required");
+  });
+
+  it("leaves 501 as instrumentation-unavailable, not reauth", () => {
+    const state = resolveState({
+      isLoading: false,
+      error: { status: NOT_IMPLEMENTED },
+      rows: [],
+      filtered: false,
+    });
+    expect(state.kind).toBe("instrumentation-unavailable");
+  });
+
+  it("leaves 403 as an error, not reauth", () => {
+    const state = resolveState({
+      isLoading: false,
+      error: { status: 403, message: "forbidden" },
+      rows: [],
+      filtered: false,
+    });
+    expect(state.kind).toBe("error");
+  });
+
+  it("still shows loading before anything else", () => {
+    const state = resolveState({
+      isLoading: true,
+      error: { reauthRequired: true },
+      rows: [],
+      filtered: false,
+    });
+    expect(state.kind).toBe("loading");
+  });
+});

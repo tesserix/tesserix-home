@@ -315,14 +315,21 @@ export function HandoffView({
   state,
   emptyMessage,
   products,
+  reauthReturnTo,
 }: {
   items: readonly HandoffItem[];
   state: SurfaceState;
   emptyMessage: string;
   products: readonly ProductOption[];
+  /** Where to send the operator back to after re-authenticating — see
+   *  `SurfaceStateView`'s own prop for why only the page knows this. The
+   *  Handoff tab is its own `SurfaceTabs` panel, never on screen at the same
+   *  time as the Work tab's due/drifting groups, so unlike `CrmQueueView`
+   *  there is only ever one state here and nothing to suppress. */
+  reauthReturnTo?: string;
 }) {
   if (state.kind !== "ready") {
-    return <SurfaceStateView state={state} emptyMessage={emptyMessage} />;
+    return <SurfaceStateView state={state} emptyMessage={emptyMessage} reauthReturnTo={reauthReturnTo} />;
   }
   return (
     <ul className="flex flex-col">

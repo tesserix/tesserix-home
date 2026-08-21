@@ -336,19 +336,57 @@ interface TokenRow extends QueryResultRow {
 }
 
 /**
- * Read the tokens for one session, or null.
+ * Why a read reports an outcome and not merely a value.
  *
- * Null covers every "no usable token" case a caller must survive identically:
- * no row, no key, no database, a row whose ciphertext will not authenticate.
- * The access token failing to decrypt discards the whole row's worth of
- * answer — a refresh token without the access token it belongs to is not a
- * partial success worth returning.
+ * Returning null for everything is right for a caller that only needs to know
+ * whether it holds a token — and wrong for the one caller that has to tell an
+ * operator WHY it does not. "There is no row for this session" is fixed by
+ * signing in again; "the key is unset", "the database is unreachable" and "the
+ * ciphertext will not authenticate" are not, and telling an operator to sign in
+ * again for those is an instruction that can never work. With the key unset it
+ * is also an instruction that never stops: {@link saveTokens} fails the same
+ * {@link isStoreUsable} check, so the fresh session lands on the identical
+ * advice forever.
+ *
+ * The branches were always distinguished here; they were only collapsed at the
+ * return. This names them instead.
+ *
+ * - `ok` — a row was found and its access token decrypted.
+ * - `absent` — the store WORKED and this session genuinely has no usable row.
+ *   The only outcome that "sign in again" answers.
+ * - `unavailable` — the store could not answer: no key, no database, the read
+ *   threw, or the row's ciphertext failed its auth tag. Nothing an operator
+ *   does changes any of these, so they must reach the page as ordinary
+ *   failures.
+ *
+ * A row whose access token will not decrypt is `unavailable` and NOT `absent`:
+ * the row is there, so the store is not empty, and the causes — a rotated key
+ * or a mangled row — are deployment or data faults that a fresh sign-in would
+ * paper over rather than fix.
  */
-export async function readTokens(
+export type TokenReadOutcome = "ok" | "absent" | "unavailable";
+
+/** `tokens` is non-null exactly when `outcome` is `"ok"`. */
+export interface TokenReadResult {
+  outcome: TokenReadOutcome;
+  tokens: StoredOperatorTokens | null;
+}
+
+const ABSENT: TokenReadResult = { outcome: "absent", tokens: null };
+const UNAVAILABLE: TokenReadResult = { outcome: "unavailable", tokens: null };
+
+/**
+ * Read the tokens for one session, with the reason when there are none.
+ *
+ * Throws only on the caller-supplied-`query` path, exactly as the module header
+ * promises: a caller inside a transaction needs the failure so it can roll
+ * back. On the pool path every failure becomes an `unavailable` outcome.
+ */
+export async function readTokenRecord(
   sid: string,
   options: ReadTokensOptions = {},
-): Promise<StoredOperatorTokens | null> {
-  if (!isStoreUsable(options)) return null;
+): Promise<TokenReadResult> {
+  if (!isStoreUsable(options)) return UNAVAILABLE;
   const lock = options.query && options.forUpdate ? " FOR UPDATE" : "";
   try {
     const rows = await runner(options)<TokenRow>(
@@ -358,25 +396,47 @@ export async function readTokens(
       [sid],
     );
     const row = rows[0];
-    if (!row) return null;
+    if (!row) return ABSENT;
     const accessToken = decryptToken(row.access_token);
     if (!accessToken) {
       reportFailure("access token did not decrypt", sid);
-      return null;
+      return UNAVAILABLE;
     }
     return {
-      accessToken,
-      accessExpiresAt: row.access_expires_at,
-      // A refresh token that will not decrypt degrades to "no refresh token",
-      // which is already a case every caller handles: the session works until
-      // the access token expires.
-      refreshToken: decryptToken(row.refresh_token),
+      outcome: "ok",
+      tokens: {
+        accessToken,
+        accessExpiresAt: row.access_expires_at,
+        // A refresh token that will not decrypt degrades to "no refresh token",
+        // which is already a case every caller handles: the session works until
+        // the access token expires.
+        refreshToken: decryptToken(row.refresh_token),
+      },
     };
   } catch (err) {
     if (options.query) throw err;
     reportFailure("read", sid);
-    return null;
+    return UNAVAILABLE;
   }
+}
+
+/**
+ * Read the tokens for one session, or null.
+ *
+ * The shape every caller that only needs the credential wants: null covers
+ * every "no usable token" case they survive identically. The access token
+ * failing to decrypt discards the whole row's worth of answer — a refresh
+ * token without the access token it belongs to is not a partial success worth
+ * returning.
+ *
+ * A caller that has to explain the null to a human wants
+ * {@link readTokenRecord} instead.
+ */
+export async function readTokens(
+  sid: string,
+  options: ReadTokensOptions = {},
+): Promise<StoredOperatorTokens | null> {
+  return (await readTokenRecord(sid, options)).tokens;
 }
 
 /**
