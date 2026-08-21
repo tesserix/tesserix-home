@@ -216,6 +216,8 @@ async function platformCall(
   if (!token) {
     throw new PlatformApiError(
       `${label}: this session carries no platform API access token (ADR-003 D8)`,
+      undefined,
+      { noOperatorToken: true },
     );
   }
 

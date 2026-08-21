@@ -818,3 +818,39 @@ describe("platformRequestWithMeta", () => {
     expect(result.meta).toBeUndefined();
   });
 });
+
+describe("the no-operator-token signal", () => {
+  it("marks the error when the session has no token row", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken(null);
+    const { platformRequestWithMeta, PlatformApiError } = await import("./platform-api");
+    const caught = await platformRequestWithMeta("tickets", "/v1/tickets").catch((e) => e);
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect(caught.noOperatorToken).toBe(true);
+  });
+
+  it("does NOT mark an ordinary API failure", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: false, error: { code: "FORBIDDEN", message: "nope" } }),
+          { status: 403, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const { platformRequestWithMeta } = await import("./platform-api");
+    const caught = await platformRequestWithMeta("tickets", "/v1/tickets").catch((e) => e);
+    expect(caught.status).toBe(403);
+    expect(caught.noOperatorToken).toBe(false);
+  });
+
+  it("does NOT mark a missing origin", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "");
+    const { platformRequestWithMeta } = await import("./platform-api");
+    const caught = await platformRequestWithMeta("tickets", "/v1/tickets").catch((e) => e);
+    expect(caught.noOperatorToken).toBe(false);
+  });
+});
