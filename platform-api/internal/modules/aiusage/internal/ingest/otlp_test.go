@@ -334,3 +334,36 @@ func TestFromTracesHandlesAnEmptyExport(t *testing.T) {
 		t.Fatalf("want no records, got %d", len(records))
 	}
 }
+
+// agentgateway emits the current OTel name; gen_ai.system is the legacy one.
+func TestFromTracesReadsTheCurrentProviderAttribute(t *testing.T) {
+	t.Parallel()
+
+	pairs := llm(nil)
+	delete(pairs, "gen_ai.system")
+	pairs["gen_ai.provider.name"] = str("gcp.vertex_ai")
+
+	records := ingest.FromTraces(export("kora-ai", span(t, pairs)))
+
+	if len(records) != 1 {
+		t.Fatalf("want 1 record, got %d", len(records))
+	}
+	if records[0].Provider != "gcp.vertex_ai" {
+		t.Errorf("provider = %q, want the gen_ai.provider.name value", records[0].Provider)
+	}
+}
+
+func TestFromTracesPrefersTheCurrentProviderAttribute(t *testing.T) {
+	t.Parallel()
+
+	records := ingest.FromTraces(export("kora-ai", span(t, llm(map[string]*commonpb.AnyValue{
+		"gen_ai.provider.name": str("gcp.vertex_ai"),
+	}))))
+
+	if len(records) != 1 {
+		t.Fatalf("want 1 record, got %d", len(records))
+	}
+	if records[0].Provider != "gcp.vertex_ai" {
+		t.Errorf("provider = %q, want the current name to win over gen_ai.system", records[0].Provider)
+	}
+}
