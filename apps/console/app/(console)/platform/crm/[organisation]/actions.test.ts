@@ -8,9 +8,12 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 vi.mock("@/lib/db/crm-repo", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-repo")>()),
   advanceStage: vi.fn(),
-  setNextAction: vi.fn(),
   logActivity: vi.fn(),
   linkConversion: vi.fn(),
+}));
+vi.mock("@/lib/crm-queues", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/crm-queues")>()),
+  saveNextAction: vi.fn(),
 }));
 vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-writes")>()),
@@ -48,13 +51,13 @@ import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
 import {
   advanceStage,
-  setNextAction,
   logActivity,
   linkConversion as linkConversionRow,
   MissingProductError,
   AlreadyLinkedError,
   SuppressedContactError,
 } from "@/lib/db/crm-repo";
+import { saveNextAction as setNextAction } from "@/lib/crm-queues";
 import {
   createContact,
   createOpportunity as createOpportunityRow,

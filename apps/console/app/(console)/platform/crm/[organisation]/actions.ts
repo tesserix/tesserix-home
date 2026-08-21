@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { ESTATE } from "@tesserix/console-core";
 import {
   advanceStage,
-  setNextAction,
   logActivity,
   linkConversion as linkConversionRow,
   MissingProductError,
@@ -12,6 +11,7 @@ import {
   SuppressedContactError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
+import { saveNextAction } from "@/lib/crm-queues";
 import {
   createContact,
   createOpportunity as createOpportunityRow,
@@ -143,7 +143,7 @@ export async function scheduleNextAction(
     input.opportunityId,
     { capability: "crm" },
     (actor) =>
-      setNextAction({
+      saveNextAction({
         opportunityId: input.opportunityId,
         at: input.at,
         note: input.note,

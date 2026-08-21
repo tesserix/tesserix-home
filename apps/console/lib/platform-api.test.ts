@@ -771,3 +771,50 @@ describe("the AI usage reads", () => {
     expect(seen).toHaveLength(0);
   });
 });
+
+describe("platformRequestWithMeta", () => {
+  it("returns data and meta separately", async () => {
+    // vi.stubEnv, not a direct process.env write: the AI-usage block above
+    // stubs the env the same way, and a bare assignment here would leak into
+    // whichever test runs next in this file.
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    // The prior "refuses to call the API without an operator token" test
+    // leaves the shared tokenState at null; without this the request rejects
+    // before the fetch mock is ever reached.
+    withToken("access-token-1");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: { opportunities: [] },
+          meta: { total: 7, preceding_count: 0, limit: 100 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { platformRequestWithMeta } = await import("./platform-api");
+    const result = await platformRequestWithMeta("crm due", "/v1/crm/queues/due?limit=100");
+
+    expect(result.data).toEqual({ opportunities: [] });
+    expect(result.meta).toEqual({ total: 7, preceding_count: 0, limit: 100 });
+  });
+
+  it("returns an undefined meta when the envelope carries none", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: { opportunities: [] } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const { platformRequestWithMeta } = await import("./platform-api");
+    const result = await platformRequestWithMeta("crm due", "/v1/crm/queues/due");
+    expect(result.meta).toBeUndefined();
+  });
+});
