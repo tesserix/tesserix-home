@@ -119,24 +119,32 @@ export function dbReadError(caught: unknown, surface: string): SurfaceError | nu
       ? (caught as { status: number }).status
       : undefined;
 
-  // Server-side only: this runs in a React Server Component, so it lands in
-  // the app's logs, never in the response.
-  console.error(`[console] failed to read ${surface} from tesserix-postgres`, caught);
-
-  // Checked before every Postgres-shaped classification below, and read the
-  // same structural way `toSurfaceError` reads it (never `instanceof`): a
-  // caller of this function is not always talking to Postgres any more.
-  // `crm-queues.ts` switches its due/drifting reads to the platform API when
-  // `PLATFORM_API_ORIGIN` is set, and a `PlatformApiError` from that branch
-  // carries `noOperatorToken` rather than a SQLSTATE. Without this check
+  // Checked before the log and before every Postgres-shaped classification
+  // below, and read the same structural way `toSurfaceError` reads it (never
+  // `instanceof`): a caller of this function is not always talking to Postgres
+  // any more. `crm-queues.ts` switches its due/drifting reads to the platform
+  // API when `PLATFORM_API_ORIGIN` is set, and a `PlatformApiError` from that
+  // branch carries `noOperatorToken` rather than a SQLSTATE. Without this check
   // that marker was silently discarded here — `isUndefinedTable` and
   // `isMalformedCursorError` both say no, and the read fell through to the
   // generic "Try again shortly" message, which is exactly the useless-retry
   // copy #300 exists to replace. See `resolveState`, which reads
   // `reauthRequired` ahead of `status` for the same reason.
+  //
+  // AHEAD OF THE LOG, and that ordering is the point. This condition means "a
+  // valid session holds no operator token row" — nothing failed, and
+  // tesserix-postgres was never contacted on this path. Logging it at error
+  // level would name a database that was not involved, for a non-failure, every
+  // time an operator opens a routine surface. The log below is the right home
+  // for a GENUINE store failure, which is what reaches it now that
+  // `resolvePlatformApiToken` no longer marks those.
   if (typeof caught === "object" && (caught as { noOperatorToken?: unknown }).noOperatorToken === true) {
     return { status, reauthRequired: true };
   }
+
+  // Server-side only: this runs in a React Server Component, so it lands in
+  // the app's logs, never in the response.
+  console.error(`[console] failed to read ${surface} from tesserix-postgres`, caught);
 
   if (isUndefinedTable(caught)) {
     // A missing table is the `instrumentation-unavailable` case, not `error`:
