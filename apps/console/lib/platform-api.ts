@@ -153,8 +153,13 @@ export function platformApiOrigin(): string | null {
   return origin ? origin.replace(/\/+$/, "") : null;
 }
 
+interface Envelope {
+  data: unknown;
+  meta: unknown;
+}
+
 /**
- * Unwrap go-shared's StandardResponse.
+ * Unwrap go-shared's StandardResponse, keeping `meta`.
  *
  * `{ success, data, error, meta }` — the estate's envelope, which the platform
  * API adopts field for field. A failure is turned into a `PlatformApiError`
@@ -162,23 +167,34 @@ export function platformApiOrigin(): string | null {
  * operator can act on: "no such ticket" and "you do not hold the capability
  * this action requires" say different things and the console renders them
  * differently.
+ *
+ * `meta` was previously discarded because tickets did not need it: its summary
+ * is a separate resource, per §2. The CRM queues put `total`, `preceding_count`
+ * and both cursors there, and the console's pagination controls need all four —
+ * so the envelope has to be opened once and handed over whole.
  */
-function unwrap(label: string, status: number, body: unknown): unknown {
+function unwrapEnvelope(label: string, status: number, body: unknown): Envelope {
   if (typeof body !== "object" || body === null) {
     throw new PlatformApiError(`${label}: response was not an object`, status);
   }
   const envelope = body as {
     success?: unknown;
     data?: unknown;
+    meta?: unknown;
     error?: { code?: unknown; message?: unknown };
   };
   if (envelope.success === true) {
-    return envelope.data;
+    return { data: envelope.data, meta: envelope.meta };
   }
   const code = typeof envelope.error?.code === "string" ? envelope.error.code : "UNKNOWN";
   const message =
     typeof envelope.error?.message === "string" ? envelope.error.message : "request failed";
   throw new PlatformApiError(`${label}: ${code} — ${message}`, status);
+}
+
+/** Thin wrapper kept so every existing `unwrap` call site is untouched. */
+function unwrap(label: string, status: number, body: unknown): unknown {
+  return unwrapEnvelope(label, status, body).data;
 }
 
 /**
@@ -191,11 +207,11 @@ function unwrap(label: string, status: number, body: unknown): unknown {
  * `cache: "no-store"` for the same reason every other read here sets it — an
  * operator acting on a queue must not be shown a cached one.
  */
-async function platformRequest(
+async function platformCall(
   label: string,
   path: string,
   init: RequestInit = {},
-): Promise<unknown> {
+): Promise<Envelope> {
   const origin = platformApiOrigin();
   if (!origin) {
     throw new PlatformApiError(`${label}: the platform API origin is not configured`);
@@ -236,7 +252,24 @@ async function platformRequest(
   }
   // Unwrapped even on a non-2xx: the envelope is the same shape either way, and
   // its `error.code` is more useful than the status alone.
-  return unwrap(label, response.status, body);
+  return unwrapEnvelope(label, response.status, body);
+}
+
+async function platformRequest(
+  label: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<unknown> {
+  return (await platformCall(label, path, init)).data;
+}
+
+/** As `platformRequest`, but keeps `meta` — pagination lives there. */
+export async function platformRequestWithMeta(
+  label: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: unknown; meta: unknown }> {
+  return platformCall(label, path, init);
 }
 
 /**
