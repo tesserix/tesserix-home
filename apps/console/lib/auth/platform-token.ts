@@ -9,6 +9,7 @@ import { tesserixTx } from "../db/tesserix";
 import { withDeadline } from "./deadline";
 import {
   accessTokenExpiresAt,
+  readTokenRecord,
   readTokens,
   saveTokens,
 } from "./operator-token-store";
@@ -69,6 +70,20 @@ import { getOidcConfig, refreshAccessToken } from "./oidc";
  * `lib/platform-api.ts` treats null as "the platform API is not reachable as
  * this operator" and says so, rather than sending an unauthenticated request
  * that returns a 401 carrying nothing an operator can act on.
+ *
+ * # Not every null is answered by signing in again
+ *
+ * Of the five cases above, only some are a REMEDY the operator holds: cases
+ * 1, 2 and 3 all end with "this session has no credential, a fresh sign-in
+ * mints one". Case 5 — and a database that will not answer, and an encryption
+ * key that was never provisioned — are deployment faults, and a console that
+ * answers them with "sign in again" issues an instruction that cannot work
+ * however many times it is followed.
+ *
+ * So the resolver reports WHICH, and `platform-api.ts` marks only the
+ * remediable ones. See {@link PlatformTokenResult.reauthRequired}, and
+ * `readTokenRecord` in `./operator-token-store`, which is where the
+ * distinction is actually observed.
  *
  * NOTHING HERE THROWS. It renders inside pages that have no need of the
  * platform API, and a token lookup must never be what takes one of those down.
@@ -151,37 +166,98 @@ const REFRESH_TIMEOUT_MS = 3_000;
  * callers in one request share the result and two different requests do not —
  * which is also why it is NOT the answer to the concurrency problem below.
  */
-export const getPlatformApiToken = cache(async (): Promise<string | null> => {
-  const session = await getCurrentSession();
-  // No `sid`, no tokens. Not a fallback point: see the header.
-  if (!session?.sid) return null;
-  const sid = session.sid;
+export interface PlatformTokenResult {
+  /** The bearer token, or null when there is none to give. */
+  token: string | null;
+  /**
+   * True ONLY when the absence is one a fresh sign-in fixes: the store
+   * answered, and this session has no usable credential in it.
+   *
+   * Never true for a store that could not answer at all — no encryption key, no
+   * database, a read that threw, a row that would not decrypt — nor for a
+   * refresh that failed. Those are deployment or infrastructure faults, and
+   * "sign in again" is advice that cannot work for any of them.
+   *
+   * Meaningless when `token` is non-null, and always false there.
+   */
+  reauthRequired: boolean;
+}
 
-  // The common path, and deliberately lock-free: a valid token is the answer
-  // for the whole hour it lives, and taking a row lock to read it would put
-  // every platform-API render behind a two-connection pool.
-  const stored = await readTokens(sid);
-  if (!stored) return null;
-  if (!isExpiring(stored.accessExpiresAt)) return stored.accessToken;
-  if (!stored.refreshToken) {
-    // Expired, and nothing to renew it with. Returning the dead token would
-    // turn a clear "this session cannot reach the platform API" into a 401
-    // from a service that has no idea why either.
-    return null;
-  }
+const NO_TOKEN: PlatformTokenResult = { token: null, reauthRequired: false };
+const SIGN_IN_AGAIN: PlatformTokenResult = { token: null, reauthRequired: true };
 
-  let config: ConsoleOidcConfig;
-  try {
-    config = getOidcConfig();
-  } catch {
-    // Zitadel is not configured on this deployment. Not an error worth
-    // throwing from a read path — there is simply no token. Checked BEFORE the
-    // transaction so a misconfiguration never opens one.
-    return null;
-  }
+/**
+ * The token, plus whether its absence is the operator's to fix.
+ *
+ * Memoised per request for the same reason {@link getPlatformApiToken} was:
+ * one render that reads tickets and their summary must hit the store once.
+ */
+export const resolvePlatformApiToken = cache(
+  async (): Promise<PlatformTokenResult> => {
+    const session = await getCurrentSession();
+    // No `sid`, no tokens. Not a fallback point: see the header. A fresh
+    // sign-in DOES fix this — every session minted since the store exists
+    // carries a `sid` — so it is one of the remediable cases.
+    if (!session?.sid) return SIGN_IN_AGAIN;
+    const sid = session.sid;
 
-  return renewUnderLock(sid, session.sub, sessionExpiry(session.exp), config);
-});
+    // The common path, and deliberately lock-free: a valid token is the answer
+    // for the whole hour it lives, and taking a row lock to read it would put
+    // every platform-API render behind a two-connection pool.
+    const { outcome, tokens } = await readTokenRecord(sid);
+    // The store worked and holds nothing for this session — the one shape the
+    // sign-in prompt is true for.
+    if (outcome === "absent") return SIGN_IN_AGAIN;
+    // Key unset, database unreachable, read threw, ciphertext dead. Signing in
+    // again would land on this identical state, because the callback's write
+    // fails the same checks this read did.
+    if (outcome !== "ok" || !tokens) return NO_TOKEN;
+
+    if (!isExpiring(tokens.accessExpiresAt)) {
+      return { token: tokens.accessToken, reauthRequired: false };
+    }
+    if (!tokens.refreshToken) {
+      // Expired, and nothing to renew it with. Returning the dead token would
+      // turn a clear "this session cannot reach the platform API" into a 401
+      // from a service that has no idea why either. The row exists but holds
+      // nothing usable and nothing renewable, so a fresh sign-in is exactly the
+      // remedy — same as case 4 in the header.
+      return SIGN_IN_AGAIN;
+    }
+
+    let config: ConsoleOidcConfig;
+    try {
+      config = getOidcConfig();
+    } catch {
+      // Zitadel is not configured on this deployment. Not an error worth
+      // throwing from a read path — there is simply no token. Checked BEFORE the
+      // transaction so a misconfiguration never opens one. Not remediable: with
+      // no OIDC config there is no sign-in to send anyone to.
+      return NO_TOKEN;
+    }
+
+    const renewed = await renewUnderLock(
+      sid,
+      session.sub,
+      sessionExpiry(session.exp),
+      config,
+    );
+    // A failed renewal is an IdP or database problem, not a missing credential:
+    // the row is still there and the operator holds no lever over any of the
+    // reasons it did not work.
+    return renewed ? { token: renewed, reauthRequired: false } : NO_TOKEN;
+  },
+);
+
+/**
+ * Just the token, for callers with nothing to explain.
+ *
+ * A thin wrapper over {@link resolvePlatformApiToken}, sharing its per-request
+ * memo, so the two can never disagree about whether a session has a token.
+ */
+export async function getPlatformApiToken(): Promise<string | null> {
+  return (await resolvePlatformApiToken()).token;
+}
 
 /**
  * Refresh exactly once per session, however many callers arrive at once.

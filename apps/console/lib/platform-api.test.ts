@@ -342,7 +342,13 @@ const PLATFORM_ORIGIN = "http://platform-api.platform.svc.cluster.local";
 // order. A per-test `vi.doMock` was tried first and applied inconsistently —
 // the real module then ran and called next/headers' `cookies()` outside a
 // request scope, which failed for a reason unrelated to what was under test.
-const tokenState = vi.hoisted(() => ({ value: null as string | null }));
+const tokenState = vi.hoisted(() => ({
+  value: null as string | null,
+  /** The store could not answer at all — no encryption key, no database, a read
+   *  that threw. Distinct from `value: null`, which is a session that simply
+   *  has no row, and the two must NOT produce the same error. */
+  storeUnavailable: false,
+}));
 
 // Mocked at the PACKAGE boundary rather than on lib/auth/platform-token, so
 // `getPlatformApiToken` itself runs for real. Mocking the local module instead
@@ -356,7 +362,7 @@ const tokenState = vi.hoisted(() => ({ value: null as string | null }));
 vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getCurrentSession: async () =>
-    tokenState.value === null
+    tokenState.value === null && !tokenState.storeUnavailable
       ? { sub: "operator-1", email: "operator@tesserix.test" }
       : {
           sub: "operator-1",
@@ -369,21 +375,41 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 // The store, doubled at its own boundary so no database is needed. The expiry
 // is an hour out, so these exercise the transport rather than the renewal path
 // — which has its own coverage in lib/auth/platform-token.test.ts.
-vi.mock("./auth/operator-token-store", () => ({
-  readTokens: async () =>
-    tokenState.value === null
-      ? null
-      : {
-          accessToken: tokenState.value,
-          accessExpiresAt: new Date(Date.now() + 3_600_000),
-          refreshToken: null,
-        },
-  saveTokens: async () => {},
-}));
+vi.mock("./auth/operator-token-store", () => {
+  const record = () => {
+    if (tokenState.storeUnavailable) {
+      return { outcome: "unavailable" as const, tokens: null };
+    }
+    if (tokenState.value === null) {
+      return { outcome: "absent" as const, tokens: null };
+    }
+    return {
+      outcome: "ok" as const,
+      tokens: {
+        accessToken: tokenState.value,
+        accessExpiresAt: new Date(Date.now() + 3_600_000),
+        refreshToken: null,
+      },
+    };
+  };
+  return {
+    readTokenRecord: async () => record(),
+    readTokens: async () => record().tokens,
+    saveTokens: async () => {},
+  };
+});
 
 /** Stub the token so these test the transport, not the session. */
 function withToken(token: string | null) {
   tokenState.value = token;
+  tokenState.storeUnavailable = false;
+}
+
+/** The store itself cannot answer — the misconfigured-deployment and
+ *  database-blip shapes, which no amount of signing in again fixes. */
+function withUnavailableStore() {
+  tokenState.value = null;
+  tokenState.storeUnavailable = true;
 }
 
 /** go-shared's StandardResponse, which is what the module answers with. */
@@ -852,5 +878,23 @@ describe("the no-operator-token signal", () => {
     const { platformRequestWithMeta } = await import("./platform-api");
     const caught = await platformRequestWithMeta("tickets", "/v1/tickets").catch((e) => e);
     expect(caught.noOperatorToken).toBe(false);
+  });
+
+  // The branch's own failure mode, wearing better clothes. With
+  // OPERATOR_TOKEN_ENCRYPT_KEY unset the callback's write fails the same check
+  // this read did, so "sign in again" would be an instruction that can never
+  // work — offered to every operator, on every session, forever. A
+  // tesserix-postgres blip is the same shape for a few seconds. Both must stay
+  // ordinary errors.
+  it("does NOT mark a store that could not answer at all", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withUnavailableStore();
+    const { platformRequestWithMeta, PlatformApiError } = await import("./platform-api");
+    const caught = await platformRequestWithMeta("tickets", "/v1/tickets").catch((e) => e);
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect(caught.noOperatorToken).toBe(false);
+    // And it must not borrow the marked case's copy either: this session may
+    // well have a token row, and saying it does not would be a second untruth.
+    expect(caught.message).not.toContain("carries no platform API access token");
   });
 });

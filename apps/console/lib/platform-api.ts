@@ -211,13 +211,23 @@ async function platformCall(
   if (!origin) {
     throw new PlatformApiError(`${label}: the platform API origin is not configured`);
   }
-  const { getPlatformApiToken } = await import("./auth/platform-token");
-  const token = await getPlatformApiToken();
+  const { resolvePlatformApiToken } = await import("./auth/platform-token");
+  const { token, reauthRequired } = await resolvePlatformApiToken();
   if (!token) {
+    // The marker is set ONLY for the absence a fresh sign-in mints a token for.
+    // Marking every tokenless case would tell an operator to sign in again when
+    // the encryption key is unset — where the callback's write fails the same
+    // check the read did, so the new session lands on the identical prompt,
+    // forever — or when tesserix-postgres is down, where it answers an outage
+    // with a callout asserting nothing is broken. Both are this branch's own
+    // failure mode in better clothes: the unactionable message replaced by a
+    // confidently wrong one.
     throw new PlatformApiError(
-      `${label}: this session carries no platform API access token (ADR-003 D8)`,
+      reauthRequired
+        ? `${label}: this session carries no platform API access token (ADR-003 D8)`
+        : `${label}: could not obtain a platform API access token for this session`,
       undefined,
-      { noOperatorToken: true },
+      { noOperatorToken: reauthRequired },
     );
   }
 
