@@ -18,7 +18,6 @@ import {
   ErrorState,
 } from "@tesserix/web";
 import { Inbox, LogIn, PlugZap, SearchX } from "lucide-react";
-import Link from "next/link";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE, type SurfaceState } from "./surface-state";
 
 /**
@@ -149,14 +148,25 @@ export function SurfaceStateView({
           <div className="flex items-start gap-2">
             <LogIn className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <div className="min-w-0">
-              <CalloutTitle>Sign in again to load this</CalloutTitle>
+              {/* "this" would be a dangling reference: this component renders
+                  above every surface and knows the name of none of them. */}
+              <CalloutTitle>Sign in again to continue</CalloutTitle>
               <CalloutDescription>
                 {/* No token vocabulary, no ADR number: the operator cannot act
                     on either, and naming them is what made the old message
                     useless. */}
                 This session can no longer reach the platform. Signing in again
                 restores it — nothing is lost.{" "}
-                <Link
+                {/* A plain anchor, matching "Sign out" in
+                    `components/nav/operator-menu.tsx`, and NOT `next/link`.
+                    `/auth/login` is a route handler, not a page: it mints
+                    `cx_oauth_state` and `cx_oidc_nonce` and redirects to
+                    Zitadel. `<Link>` prefetches on viewport entry in
+                    production, which EXECUTES that handler — writing a fresh
+                    state/nonce pair over the operator's and firing an authorize
+                    request nobody asked for, on a callout that renders without
+                    anyone clicking anything. */}
+                <a
                   href={
                     reauthReturnTo
                       ? `/auth/login?returnTo=${encodeURIComponent(reauthReturnTo)}`
@@ -165,7 +175,7 @@ export function SurfaceStateView({
                   className="underline underline-offset-4"
                 >
                   Sign in again
-                </Link>
+                </a>
               </CalloutDescription>
             </div>
           </div>
