@@ -248,6 +248,50 @@ describe("audit log", () => {
     const parsed = parseEstateAuditLog(body);
     expect(parsed.entries.every((e) => e.source === "console")).toBe(true);
   });
+
+  // The platform transport, which the console reads whenever
+  // PLATFORM_API_ORIGIN is set. Its route must behave like the real module,
+  // and the property that was silently missing is the id namespace.
+  describe("the platform API's /v1/audit", () => {
+    // The platform API wraps every payload in `{ success, data }` and
+    // `platformRequest` hands the parser the `data` half; this mirrors that.
+    const payload = (body: unknown) => (body as { data: unknown }).data;
+
+    it("is accepted by the same parser, through the envelope", async () => {
+      const { status, body } = await get("/v1/audit?limit=200&since_hours=720");
+
+      expect(status).toBe(200);
+      const parsed = parseEstateAuditLog(payload(body));
+      expect(parsed.entries.length).toBeGreaterThan(0);
+      expect(parsed.failures.length).toBeGreaterThan(0);
+    });
+
+    it("namespaces every id with the source that produced it", async () => {
+      const { body } = await get("/v1/audit");
+
+      const parsed = parseEstateAuditLog(payload(body));
+      // The real service stamps `${slug}:${id}` from the slug it called,
+      // because two products returning primary key `12` are otherwise
+      // indistinguishable in a list keyed by id. A bare id here would let a
+      // platform API that stopped namespacing still look correct locally.
+      expect(parsed.entries.every((e) => e.id.startsWith(`${e.source}:`))).toBe(true);
+      expect(parsed.entries.every((e) => e.id.length > e.source.length + 1)).toBe(true);
+    });
+
+    it("emits the same ids as the apps/web route, which is the point of the cutover", async () => {
+      const platform = parseEstateAuditLog(payload((await get("/v1/audit")).body));
+      const web = parseEstateAuditLog(
+        (await get("/api/admin/apps/all/audit-logs")).body,
+      );
+
+      // Unsetting PLATFORM_API_ORIGIN is meant to be a true rollback. Two
+      // transports that key the same event differently are two different
+      // audit logs.
+      expect(platform.entries.map((e) => e.id).sort()).toEqual(
+        web.entries.map((e) => e.id).sort(),
+      );
+    });
+  });
 });
 
 describe("conversion-status", () => {

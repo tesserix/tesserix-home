@@ -590,26 +590,59 @@ export const AUDIT_LIMIT = 200;
  * Every product's audit trail, aggregated.
  *
  * `product` is a product id or `"all"`, which fans out across every source at
- * once. **One request, not three** — the fan-out lives behind the endpoint,
- * which is also where the partial-failure semantics live: 200 with a populated
- * `failures` array when some sources answered, 501 when every source is
- * unconfigured, 502 when every source genuinely failed.
+ * once. **One request, not three, on either transport** — the fan-out lives
+ * behind the endpoint, and so do the partial-failure semantics. The point of
+ * this function is that the two transports answer the same way, because
+ * unsetting `PLATFORM_API_ORIGIN` has to be a true rollback:
  *
- * `request` throws on any non-2xx, so a 501 arrives here as a
- * `PlatformApiError` carrying `status: 501` — which `resolveState` maps to
- * `instrumentation-unavailable` rather than to an error an operator would try
- * to retry. That mapping is the reason the status is kept rather than
- * flattened into a message.
+ * - **200 with a populated `failures` array** when some sources answered and
+ *   others did not. Both paths.
+ * - **501** when the surface is not instrumented at all: apps/web returns it
+ *   when every source is unconfigured, and the platform API returns it when
+ *   `FEDERATION_PRODUCTS` names no product. Both paths.
+ * - **400** for a source the endpoint does not know, so a typo'd filter is
+ *   visible rather than an empty timeline. Both paths.
+ * - **502** when every source genuinely failed — apps/web only. The platform
+ *   API expresses that as a 200 whose `failures` covers every source, which
+ *   the surface renders identically: rows it has beside the sources it lost.
+ *
+ * Both paths are asked for the same `limit` and `since_hours`, so the two
+ * transports cover the same window. Unbounded, the platform API asks each
+ * product for its entire audit log and truncates the answer at 1 MiB.
+ *
+ * `request` and `platformRequest` both throw on any non-2xx, so a 501 arrives
+ * here as a `PlatformApiError` carrying `status: 501` — which `resolveState`
+ * maps to `instrumentation-unavailable` rather than to an error an operator
+ * would try to retry. That mapping is the reason the status is kept rather
+ * than flattened into a message.
  */
 export async function fetchEstateAuditLog(
   cookieHeader: string,
   product: string,
 ): Promise<import("./audit").EstateAuditLog> {
   const { parseEstateAuditLog } = await import("./audit");
-  const query = new URLSearchParams({
+
+  // The same bounds on both transports, because the promise of the cutover is
+  // that the two answer the same question. Sent rather than left to the API's
+  // defaults so the window is stated by the caller that renders it.
+  const bounds = {
     limit: String(AUDIT_LIMIT),
     since_hours: String(AUDIT_SINCE_HOURS),
-  });
+  };
+
+  if (platformApiOrigin()) {
+    const query = new URLSearchParams(bounds);
+    // `all` is the absence of a filter, not a source. Sending `source=all`
+    // would ask the API for a product it has never heard of, and it refuses
+    // an unknown source with a 400 rather than returning nothing — which is
+    // the behaviour that makes a typo visible instead of silent.
+    if (product !== "all") query.set("source", product);
+    return parseEstateAuditLog(
+      await platformRequest("audit log", `/v1/audit?${query.toString()}`),
+    );
+  }
+
+  const query = new URLSearchParams(bounds);
   const response = await request(
     "audit log",
     `/api/admin/apps/${encodeURIComponent(product)}/audit-logs?${query.toString()}`,

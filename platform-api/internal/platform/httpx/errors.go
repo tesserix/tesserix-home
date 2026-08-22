@@ -76,15 +76,16 @@ func (e Error) Error() string { return e.Message }
 // Error codes. The estate's spelling, so a client that already handles
 // NOT_FOUND from another service handles it here.
 const (
-	CodeUnauthorized  = "UNAUTHORIZED"
-	CodeForbidden     = "FORBIDDEN"
-	CodeBadRequest    = "BAD_REQUEST"
-	CodeNotFound      = "NOT_FOUND"
-	CodeConflict      = "CONFLICT"
-	CodeValidation    = "VALIDATION_FAILED"
-	CodeInternal      = "INTERNAL_SERVER_ERROR"
-	CodeUnavailable   = "SERVICE_UNAVAILABLE"
-	CodeDatabaseError = "DATABASE_ERROR"
+	CodeUnauthorized   = "UNAUTHORIZED"
+	CodeForbidden      = "FORBIDDEN"
+	CodeBadRequest     = "BAD_REQUEST"
+	CodeNotFound       = "NOT_FOUND"
+	CodeConflict       = "CONFLICT"
+	CodeValidation     = "VALIDATION_FAILED"
+	CodeInternal       = "INTERNAL_SERVER_ERROR"
+	CodeUnavailable    = "SERVICE_UNAVAILABLE"
+	CodeNotImplemented = "NOT_IMPLEMENTED"
+	CodeDatabaseError  = "DATABASE_ERROR"
 )
 
 func Unauthorized(message string) Error {
@@ -124,6 +125,19 @@ func Validation(message string, details map[string]any) Error {
 // response is how schema and query shape leak to callers.
 func Internal(message string) Error {
 	return Error{Code: CodeInternal, Message: message, StatusCode: http.StatusInternalServerError}
+}
+
+// NotImplemented means this deployment does not measure the thing being asked
+// for at all.
+//
+// Distinct from Unavailable, and the distinction is the whole point:
+// Unavailable says "we measure this and cannot reach it right now",
+// NotImplemented says "nothing here was ever configured to produce it". A
+// surface that cannot tell those apart renders an unconfigured estate as
+// "nothing happened", which is the failure #198 records and which the console
+// maps to `instrumentation-unavailable` on exactly this status.
+func NotImplemented(message string) Error {
+	return Error{Code: CodeNotImplemented, Message: message, StatusCode: http.StatusNotImplemented}
 }
 
 // Unavailable means a dependency this request needed is not reachable.

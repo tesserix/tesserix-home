@@ -1,6 +1,6 @@
 # Taking the console off direct data access
 
-**Status:** draft — two decisions open, marked **DECISION** below.
+**Status:** draft — **DECISION 1 resolved 2026-08-22** (§C1); DECISION 2 still open.
 **Goal:** every console read and write reaches its data through the Go platform
 API, authenticated with the operator's Zitadel token, with no direct Postgres
 access and no calls into `apps/web`.
@@ -54,10 +54,46 @@ Blocked on this, and only this: dashboard tenant/store counts, the
 `tenant_names` enrichment on support analytics, and the mark8ly leg of the audit
 log. All three flow through `apps/web/lib/db/mark8ly.ts`.
 
-**DECISION 1 — does the Go service inherit that grant?**
+**DECISION 1 — does the Go service inherit that grant? — RESOLVED 2026-08-22: NO.**
+
 Granting it repeats the coupling #210 and #160 exist to remove, on a second
 service. Not granting it means those endpoints wait on mark8ly-owned APIs.
 Everything blocked above hangs off this answer. Phases 1–6 do not.
+
+**The answer is no.** `platform-api` does not inherit
+`mark8ly_platform_admin`, and no cross-database grant replaces it. Every
+mark8ly read reaches the console through mark8ly's own HTTP surface.
+
+The deciding argument was not the coupling in the abstract. It is that mark8ly
+was never designed for platform integration — its admin API is
+`/admin/stores/:storeId/*` almost end to end, and the platform questions this
+console asks have no store to scope to. A federated read does not fix that; it
+hides it. The console would compensate in TypeScript for a boundary mark8ly
+never drew, and that compensation is invisible from mark8ly's side, so nobody
+there learns when they have broken it. Migrations in this estate are manual
+while deploys are not, so the break lands unattended.
+
+**What this costs.** The three items blocked above — dashboard tenant/store
+counts, the `tenant_names` enrichment on support analytics, and the mark8ly leg
+of the audit log — now wait on mark8ly-owned endpoints rather than on a grant.
+That is a dependency on another repository's velocity, accepted deliberately.
+
+**The unblock path**, specified in
+`2026-08-22-mark8ly-console-integration-design.md`:
+
+| blocked item | mark8ly endpoint that unblocks it |
+|---|---|
+| mark8ly leg of the audit log | `GET /admin/audit-logs` (issue 2) |
+| `tenant_names` enrichment | `GET /admin/entities/tenants` (issue 3) |
+| dashboard tenant/store counts | `GET /admin/kpis` (issue 8) — see DECISION 2 |
+
+Note the interaction with DECISION 2: if the dashboard is deleted rather than
+split, the third row disappears with it and `/admin/kpis` is wanted for the
+Launchpad tile instead.
+
+Phase 7 is therefore no longer "gated on DECISION 1" but sequenced behind
+specific mark8ly issues, and it can start per-surface as each lands rather than
+all at once.
 
 ### C2. Parity is the default; fixes are separate changes
 
@@ -154,7 +190,8 @@ riskiest work happens last, after the pattern is proven.**
 4. **Suppressions.** Small surface, but C5 makes correctness non-negotiable.
 5. **Handoff + conversion link**, including the greenfield conversion-status.
 6. **Import.** Highest risk, done last on purpose.
-7. **Non-CRM surfaces**, gated on DECISION 1.
+7. **Non-CRM surfaces**, each gated on the mark8ly endpoint that serves it
+   (C1), not on a single decision. They land one at a time as those ship.
 
 **DECISION 2 — the dashboard.** `fetchDashboard` has no live callers; the home
 page deliberately stopped rendering those numbers. Options: delete it, or split

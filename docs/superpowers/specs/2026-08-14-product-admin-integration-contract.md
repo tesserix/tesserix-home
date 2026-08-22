@@ -1,7 +1,10 @@
-# Product Admin Integration Contract v1
+# Product Admin Integration Contract
 
-> **Status**: Draft for review | **Date**: 2026-08-14
+> **Status**: v2 | **Date**: 2026-08-14, amended 2026-08-22
 > **Companion to**: `2026-08-14-admin-console-redesign-design.md`
+> **v2 amendments**: §8. They change §2 (transport) and §3 (endpoints), and
+> close §7 (authorization). The original text of those sections is kept so
+> the reasoning that produced it stays legible.
 
 ## Why this exists
 
@@ -81,6 +84,8 @@ directory.
 
 ## 2. Transport
 
+> **Amended in v2 (§8.1).** The gateway moves out of `apps/web`.
+
 **One way in: the signed admin API gateway.**
 
 ```
@@ -112,6 +117,9 @@ from the request body. Kora already does this correctly.
 ---
 
 ## 3. Required endpoints
+
+> **Amended in v2 (§8.2–§8.3).** Adds `/admin/billing/*`, inbox action
+> execution, and domain writes.
 
 Five endpoints make a product manageable. A product implementing none of them gets a
 Launchpad tile and nothing else — which is a legitimate outcome for something like
@@ -307,6 +315,9 @@ column and a timestamp.
 
 ## 7. Open problem: platform-admin authorization
 
+> **Closed in v2 (§8.4).** The capability model landed. This section is kept
+> as the record of what was true on 2026-08-14, and why.
+
 **The contract cannot currently express who may act.** Platform-admin is binary and
 all-or-nothing; only store-scoped `can_*` relations are modellable, and console-side admin
 identity is a flat allowlist.
@@ -324,6 +335,150 @@ Consequences that bind this contract:
 **This needs its own design.** Until it lands, the contract governs *shape*, not
 *permission*, and that limitation should be explicit rather than discovered.
 
+## 8. v2 amendments (2026-08-22)
+
+Derived from `2026-08-22-mark8ly-console-integration-design.md`, which applied
+this contract to mark8ly and found five places it did not yet reach.
+
+### 8.1 Transport moves out of `apps/web`
+
+§2 routes every call through `console → /api/admin/apps/{slug}/gw/{path}`. That
+gateway lives in `apps/web`, which is being reduced to marketing pages. The
+transport is otherwise unchanged — one signed gateway, identity bound into the
+signature, no direct database access — but it is now served by the Go platform
+API:
+
+```
+console → platform-api /v1/federation/{slug}/{path} → signed → product /admin/{path}
+```
+
+`platform-api` gains a `federation` module holding the contract definitions, the
+per-product client registry, the fan-out and the partial-failure envelope
+`{ data, failures: [{ product, error }] }`.
+
+This is the same envelope `apps/console/lib/audit.ts` already consumes, so the
+console-side shape does not change when the fan-out moves. That is deliberate:
+it makes the re-homing of `/admin/audit-logs` a transport change with no
+renderer change, which is why it is the pilot.
+
+§2.1's ruling is unchanged and now has a resolved instance: `platform-api` does
+**not** inherit `apps/web`'s `mark8ly_platform_admin` cross-database grant. This
+closes DECISION 1 in `2026-08-21-console-off-direct-data-access.md`.
+
+### 8.2 New required endpoint: `GET /admin/billing/*`
+
+Five endpoints were enough to make a product *manageable*. They are not enough
+to make it *legible as a business*, and the gap is specific: a flat `/admin/kpis`
+map cannot express "which trials expire this week, with dunning state, across
+tenants". That is a list with per-row state, not a headline number.
+
+Two implementers exist (mark8ly, Fe3dr), so this is a contract endpoint rather
+than a product-specific one.
+
+```
+GET /admin/billing/subscriptions   — cross-tenant, standard envelope (§4.1)
+GET /admin/billing/trials          — expiring, with dunning state
+POST /admin/billing/trials/{id}/extend
+```
+
+Money fields obey §4.2 without exception: minor units, explicit currency. This
+is the endpoint most likely to be handed a bare number, because Stripe amounts
+already arrive in minor units and the temptation is to pass them through
+uncurrencied.
+
+A product with no billing concept implements none of these. It must not return
+`{}` or an empty list to mean "no billing" — that is indistinguishable from "no
+subscriptions", which is a real and different answer. Return `501` per §3.1.
+
+### 8.3 Writes: inbox actions, and domain writes
+
+v1 defined no write path. §3.2's inbox items declare an `actions` array and
+nothing said how to invoke one, so the load-bearing endpoint could describe work
+but not let anyone do it.
+
+**Inbox action execution:**
+
+```
+POST /admin/inbox/{id}/actions/{actionId}
+```
+
+The action id must be one the item itself declared. A product must reject an
+action absent from that item's `actions` array rather than accepting any action
+name it happens to implement — otherwise the declared list is documentation
+rather than a contract, and the console cannot rely on it to render safely.
+
+Destructive actions (`"destructive": true`) require an idempotency key. A queue
+action retried after a timeout must not fire twice.
+
+**Domain writes.** Some platform actions are not queue items — suspending a
+tenant is not something waiting on a human, it is something a human decides. A
+product exposing them uses ordinary REST under `/admin/`, with:
+
+- the capability required, named per route, drawn from the vocabulary in §8.4;
+- reason codes on anything reversible-but-consequential (suspend, unsuspend), so
+  the audit row says *why* and not only *what*;
+- confirmation semantics on anything irreversible (purge): the request carries
+  the resource's current identifying state, and the product rejects a mismatch.
+
+### 8.4 §7 closed — the authorization vocabulary exists
+
+§7 recorded that platform-admin was binary, so this contract governed shape and
+not permission, and every conformance-passing endpoint was reachable by every
+platform admin.
+
+That is no longer true. `packages/platform-auth/src/capabilities.ts` carries
+eleven capabilities; `console-core`'s `routes.ts` requires one per route — a
+*required* field since #261, because an optional one defaulting to `read` meant
+26 of 30 routes silently admitted every operator; and `platform-api` enforces
+`RequireCapability`.
+
+So the contract can now say who may act, and does:
+
+- **The gateway propagates the capability exercised**, alongside the operator
+  identity §2.2 already binds into the signature.
+- **Products write both into their own audit rows.** The console writes the same
+  action into `console_audit_log`. Two records of one action, joinable on
+  operator and timestamp, so "who did this" is answerable from either side.
+- **A shared secret alone is insufficient for writes.** `X-Internal-Auth` carries
+  no actor, so a write authenticated by it lands attributed to "the platform",
+  which is the same as unattributed.
+- **Products must not infer authority.** The capability is asserted at the
+  gateway and by the console route; a product treats it as a fact to record, and
+  refuses a request that arrives without one, rather than deciding for itself
+  what an operator may do.
+
+The limitation that remains, stated so it is not rediscovered: capabilities are
+estate-wide, not per-product. There is no way to express "may act on mark8ly but
+not on Fe3dr". That is a smaller open problem than §7's, and it is not blocking.
+
+### 8.5 Where a surface belongs
+
+The contract governs how a product exposes itself. It did not say where the
+console puts what comes back, and the absence produced a draft design that
+proposed console pages duplicating two that already existed.
+
+> **A surface belongs on the platform rail when the operator's question spans
+> products. It belongs on a product rail when the question presupposes the
+> product.**
+
+When ambiguous: *can two products' rows sit in one table without a column
+meaning something different in each?* If yes, it is estate-shaped.
+
+`nav.ts` already applies this without naming it — #133 folded support analytics
+into a Tickets tab, #139 folded Kora's audit trail into the estate-wide audit
+log. Both for the same reason: a second door onto one capability is worse than
+one door, because an operator then has to know which door records the answer.
+
+The practical consequence for products adopting this contract: implementing
+`/admin/inbox` or `/admin/audit-logs` does **not** earn a product rail entry. It
+makes the product a source in a surface that already exists. A product rail entry
+is justified only by a surface no other product could share.
+
+
 ## Changelog
 
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
+- **v2** (2026-08-22) — §8: transport moved off `apps/web`; billing endpoint,
+  inbox action execution and domain writes added; §7 closed by the capability
+  model; surface-placement rule stated. Derived from
+  `2026-08-22-mark8ly-console-integration-design.md`.

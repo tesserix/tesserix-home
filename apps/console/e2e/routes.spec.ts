@@ -128,6 +128,44 @@ test.describe("every console route renders server-side", () => {
   }
 });
 
+test.describe("audit log renders on either transport", () => {
+  // The estate audit log is the one surface with two upstream paths
+  // (`lib/platform-api.ts#fetchEstateAuditLog`): apps/web's
+  // `/api/admin/apps/:product/audit-logs` when `PLATFORM_API_ORIGIN` is
+  // unset, and the platform API's `/v1/audit` when it is set. Both are
+  // served by admin-stub.mjs so this test proves the same page renders
+  // either way, without asserting on the fixture rows themselves — those
+  // belong to the stub's own equivalence test (admin-stub.test.ts), not to
+  // an e2e run whose subject is "did the page render", not "did it render
+  // the right numbers".
+  test("the audit log renders", async ({ page }) => {
+    await stubClientEndpoints(page);
+
+    const response = await page.goto("/platform/audit-log");
+    if (!response) throw new Error("no response for /platform/audit-log");
+    expect(response.status()).toBeLessThan(500);
+
+    await expectConsoleChrome(page);
+    // `level: 1` disambiguates deliberately. The page renders TWO headings
+    // whose accessible names match /audit/i: the ConsolePageHeader -> h1
+    // ("Audit log"), and an h3 that @tesserix/web's AuditLogViewer renders
+    // for itself inside the timeline below (audit-timeline.tsx; its
+    // AuditLogTitle part defaults to headingLevel 3). The h1 is the page's
+    // own title and the only one, so level 1 is the stable target.
+    await expect(
+      page.getByRole("heading", { name: /audit/i, level: 1 }),
+    ).toBeVisible();
+
+    // Next's default error boundary renders this string when a server
+    // component throws during render. Its absence is what tells "the page
+    // rendered its (possibly degraded) state" apart from "the module
+    // crashed" — the same distinction `expectConsoleChrome` draws via the
+    // shell, made explicit here because this is the surface the cutover
+    // touches.
+    await expect(page.locator("body")).not.toContainText("Application error");
+  });
+});
+
 test.describe("server action modules evaluate", () => {
   test("submitting the new-organisation form reaches its action", async ({
     page,

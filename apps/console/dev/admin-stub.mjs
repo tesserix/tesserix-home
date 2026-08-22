@@ -51,6 +51,19 @@ const replies = new Map(
   Object.entries(REPLIES).map(([id, list]) => [id, list.map((r) => ({ ...r }))]),
 );
 
+// The id a PRODUCT would serve, recovered from the namespaced fixture.
+//
+// The fixture rows are stored the way apps/web emits them — already
+// `${source}:${id}` — because that route serves them verbatim. The platform
+// API's transport does the namespacing itself, from bare product ids, so its
+// route here needs the bare half to apply the rule to. Split at the FIRST
+// separator only: a raw id may contain colons of its own, which is why the
+// convention parses from the left.
+function bareAuditId(entry) {
+  const prefix = `${entry.source}:`;
+  return entry.id.startsWith(prefix) ? entry.id.slice(prefix.length) : entry.id;
+}
+
 function summaryOf(rows) {
   return {
     open: rows.filter((t) => t.status === "open").length,
@@ -181,6 +194,45 @@ export function createStubServer() {
         // Populated on a 200: the partial-failure path is the interesting one
         // and the console has real handling for it.
         failures: product === "all" ? AUDIT_FAILURES : [],
+      });
+    }
+
+    // GET /v1/audit — the platform API's shape (Task 5/7). Served here so a
+    // developer can flip PLATFORM_API_ORIGIN at the stub and exercise the
+    // cutover path without running platform-api and a product. Reuses the
+    // same fixtures as /api/admin/apps/:product/audit-logs above: both
+    // transports are deliberately made to emit the same body, and giving
+    // them the same rows here keeps that equivalence visible locally.
+    if (method === "GET" && pathname === "/v1/audit") {
+      const source = url.searchParams.get("source");
+      // No `source` means "every source" — the same fan-out the `all`
+      // product id triggers above, failures and all. A `source` narrows
+      // which sources were asked, so an unrecognised or unrepresented value
+      // returns an empty entries array rather than inventing rows, and never
+      // a 400: this stub stands in for a transport, not for the platform
+      // API's own validation.
+      const rows = source
+        ? AUDIT_ENTRIES.filter((e) => e.source === source)
+        : AUDIT_ENTRIES;
+      // The namespacing is PERFORMED here, not assumed from the fixture.
+      //
+      // Products serve bare ids — an integer primary key, a uuid — and the
+      // platform API's audit service stamps `${slug}:${id}` from the slug it
+      // called, which is what keeps two products' `12` from colliding in a
+      // list keyed by id. Serving the already-namespaced fixture verbatim
+      // made this stub agree with a platform API that did not namespace at
+      // all, which is how the absence went unnoticed locally. Stripping back
+      // to the bare id and re-applying the rule means a platform API that
+      // stopped namespacing would no longer match what this stub emits.
+      const entries = rows.map((entry) => ({
+        ...entry,
+        id: `${entry.source}:${bareAuditId(entry)}`,
+      }));
+      return json(res, 200, {
+        data: {
+          entries,
+          failures: source ? [] : AUDIT_FAILURES,
+        },
       });
     }
 

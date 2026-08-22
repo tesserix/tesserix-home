@@ -21,12 +21,14 @@ import (
 	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/federation"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/reqid"
 )
@@ -120,6 +122,20 @@ func run(log *slog.Logger) error {
 	})
 	httpx.RegisterModule(mux, verifier, "tools", func(m *http.ServeMux) {
 		tools.Register(m, tools.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+	})
+
+	// Federation client, shared by every module that reads another product.
+	// Built here rather than per-module: the registry is one deployment-wide
+	// fact, and two clients would mean two connection pools to the same hosts.
+	fed := federation.NewClient(cfg.Federation, nil)
+
+	httpx.RegisterModule(mux, verifier, "audit", func(m *http.ServeMux) {
+		audit.Register(m, audit.Config{
+			Fed:      fed,
+			Slugs:    cfg.Federation.Slugs(),
+			Verifier: verifier,
+			Log:      log,
+		})
 	})
 
 	server := &http.Server{
