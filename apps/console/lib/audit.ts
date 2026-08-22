@@ -49,9 +49,11 @@ export interface SourcedAuditEntry extends AuditEntry {
  *
  * Two sources feed this surface and they are not alike:
  *
- *   products — apps/web's `/api/admin/apps/all/audit-logs`, which fans out to
- *              mark8ly's database, kora-api and homechef-api and returns a
- *              partial result plus a per-source failure list.
+ *   products — the platform API's `GET /v1/audit`, which fans out to every
+ *              product declaring the audit contract and returns a partial
+ *              result plus a per-source failure list. Until PLATFORM_API_ORIGIN
+ *              is set this still comes from apps/web's aggregate endpoint; the
+ *              wire shape is identical, which is why the cutover is one branch.
  *   console  — `console_audit_log`, the console's own operator actions, read
  *              straight from tesserix-postgres.
  *

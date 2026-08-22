@@ -606,6 +606,16 @@ export async function fetchEstateAuditLog(
   product: string,
 ): Promise<import("./audit").EstateAuditLog> {
   const { parseEstateAuditLog } = await import("./audit");
+
+  if (platformApiOrigin()) {
+    // `all` is the absence of a filter, not a source. Sending `source=all`
+    // would ask the API for a product it has never heard of, and it refuses
+    // an unknown source with a 400 rather than returning nothing — which is
+    // the behaviour that makes a typo visible instead of silent.
+    const query = product === "all" ? "" : `?source=${encodeURIComponent(product)}`;
+    return parseEstateAuditLog(await platformRequest("audit log", `/v1/audit${query}`));
+  }
+
   const query = new URLSearchParams({
     limit: String(AUDIT_LIMIT),
     since_hours: String(AUDIT_SINCE_HOURS),
