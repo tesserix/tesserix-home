@@ -1,28 +1,21 @@
 name: Mobile Admin - Typecheck
 
-# Lightweight CI smoke for the Tesserix Admin Expo app (apps/mobile): runs
-# `tsc --noEmit` on any PR/push that touches the mobile app. No EAS minutes, no
-# native build — just type safety, so regressions are caught before a manual EAS
-# build. Mirrors the HomeChef mobile-typecheck workflow.
-#
-# apps/mobile is a pnpm workspace package and imports @tesserix/homechef-shared,
-# so we install the whole workspace from the root lockfile rather than just the
-# app — the shared package has to resolve for tsc to pass.
-
 on:
   push:
     branches: [main, 'feat/**', 'feature/**', 'bugfix/**', 'hotfix/**']
     paths:
       - 'apps/mobile/**'
       - 'packages/homechef-shared/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/mobile-typecheck.yml'
   pull_request:
     branches: [main]
     paths:
       - 'apps/mobile/**'
       - 'packages/homechef-shared/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/mobile-typecheck.yml'
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -36,39 +29,22 @@ jobs:
     name: tsc (mobile)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.17.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: '22'
-          cache: 'pnpm'
-
-      - name: Install dependencies
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: https://npm.pkg.github.com
+      - name: Install locked dependencies
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
         run: pnpm install --frozen-lockfile
-
-      # @tesserix/homechef-shared resolves through its dist/ (main/types point
-      # there) and dist/ isn't committed — without this, every import of it is a
-      # TS2307 in the app.
       - name: Build shared package
         run: pnpm --filter @tesserix/homechef-shared build
-
       - name: Typecheck
         working-directory: apps/mobile
         run: pnpm exec tsc --noEmit
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## Typecheck — Tesserix Admin mobile"
-            echo ""
-            echo "- **Result:** ${{ job.status }}"
-            echo "- \`tsc --noEmit\` over apps/mobile"
-          } >> "$GITHUB_STEP_SUMMARY"
