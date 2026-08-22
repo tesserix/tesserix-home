@@ -1265,7 +1265,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"net/url"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools/internal/domain"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools/internal/service"
@@ -1456,10 +1455,6 @@ func unwrap(err error) string {
 	}
 	return message
 }
-
-// unused is a compile-time reminder that url is imported for the write
-// handlers added in Task 4. Delete this line when they land.
-var _ = url.Values{}
 ```
 
 **Note for the implementer:** the write handlers (`createTool`, `updateTool`,
@@ -2138,10 +2133,13 @@ const (
 
 // The idempotency operation names, which scope a key to one kind of write. A
 // key reused across two different operations is two different requests.
+//
+// EXPORTED because the handler passes them to readKey and lives in a different
+// package. One spelling, declared once, rather than a second copy in handler.
 const (
-	opToolCreate = "platform.tools.create"
-	opToolUpdate = "platform.tools.update"
-	opToolDelete = "platform.tools.delete"
+	OpToolCreate = "platform.tools.create"
+	OpToolUpdate = "platform.tools.update"
+	OpToolDelete = "platform.tools.delete"
 )
 
 // ToolPatch is a partial change. Every field is a pointer so "absent" and
@@ -2309,8 +2307,7 @@ Add imports: `fmt`, `net/http`, `github.com/jackc/pgx/v5`, the module's
 - [ ] **Step 5: Replace the handler stubs**
 
 In `platform-api/internal/modules/tools/internal/handler/handler.go`, delete
-the six `notYet` stubs, the `notYet` helper and the `var _ = url.Values{}` line
-(and the now-unused `net/url` import — CI lints at `--max-warnings 0`), and add:
+the six `notYet` stubs and the `notYet` helper, and add:
 
 ```go
 // createToolRequest is the create body. Pointers where absence is meaningful.
@@ -2335,7 +2332,7 @@ func (h *Handler) createTool(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	key, err := h.readKey(r, principal, opToolCreate, body)
+	key, err := h.readKey(r, principal, service.OpToolCreate, body)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -2379,7 +2376,7 @@ func (h *Handler) updateTool(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	key, err := h.readKey(r, principal, opToolUpdate, body)
+	key, err := h.readKey(r, principal, service.OpToolUpdate, body)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -2420,7 +2417,7 @@ func (h *Handler) deleteTool(w http.ResponseWriter, r *http.Request) {
 	}
 	// A DELETE carries no body, so the idempotency digest is over an empty
 	// one — the key plus the path is what identifies the request.
-	key, err := h.readKey(r, principal, opToolDelete, body)
+	key, err := h.readKey(r, principal, service.OpToolDelete, body)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -2437,9 +2434,12 @@ func (h *Handler) deleteTool(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-The `opTool*` constants are unexported in `service`, so either export them or
-re-declare them in `handler`. Prefer exporting from `service` — one spelling,
-one file — and reference them as `service.OpToolCreate` etc.
+The `Op*` constants are exported from `service` and the handler spells them
+`service.OpToolCreate` / `OpToolUpdate` / `OpToolDelete`, as the code above
+does. Task 5 adds `OpGroupCreate`, `OpGroupUpdate` and `OpGroupDelete` the same
+way. (An earlier draft of this plan declared them unexported and then called
+them bare from `handler`, which would not have compiled across the package
+boundary.)
 
 - [ ] **Step 6: Update the capability cases**
 
