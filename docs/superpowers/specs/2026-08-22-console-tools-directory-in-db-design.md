@@ -99,7 +99,7 @@ behind than an unexercised endpoint.
 
 ## Schema
 
-One migration, `apps/console/db/migrations/0031_platform_tools.sql` (0030 is the
+One migration, `apps/web/db/migrations/0031_platform_tools.sql` (0030 is the
 current head). Migrations here are **manual**: this is applied to production
 *before* the PR merges, because Kargo deploys on merge and `db:migrate` does not
 ride along.

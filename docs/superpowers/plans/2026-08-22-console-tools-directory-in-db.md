@@ -60,7 +60,7 @@ by reading the `-v` output. A "pass" that skipped is not a pass.
 
 | Path | Responsibility |
 |---|---|
-| `apps/console/db/migrations/0031_platform_tools.sql` | Two tables, constraints, seed of today's 5 groups + 15 tools |
+| `apps/web/db/migrations/0031_platform_tools.sql` | Two tables, constraints, seed of today's 5 groups + 15 tools |
 | `platform-api/internal/modules/tools/tools.go` | Module public surface: `Config`, `Register` |
 | `platform-api/internal/modules/tools/internal/domain/tool.go` | Validation and normalisation; no SQL, no HTTP |
 | `platform-api/internal/modules/tools/internal/domain/tool_test.go` | Domain unit tests (no database) |
@@ -93,13 +93,13 @@ by reading the `-v` output. A "pass" that skipped is not a pass.
 ## Task 1: The migration and the repository read
 
 **Files:**
-- Create: `apps/console/db/migrations/0031_platform_tools.sql`
+- Create: `apps/web/db/migrations/0031_platform_tools.sql`
 - Create: `platform-api/internal/modules/tools/internal/repository/tools.go`
 - Test: `platform-api/internal/modules/tools/internal/repository/tools_test.go`
 
 **Interfaces:**
 - Consumes: `internal/platform/testdb` (`testdb.New(t) *pgxpool.Pool`), which
-  applies every file in `apps/console/db/migrations` to a fresh database — so
+  applies every file in `apps/web/db/migrations` to a fresh database — so
   `0031` reaches Go tests automatically once it exists.
 - Produces: `repository.Tool`, `repository.Group`, `repository.ListTools(ctx,
   q Queryer) ([]Tool, error)`, `repository.ListGroups(ctx, q Queryer)
@@ -253,7 +253,7 @@ skip. If it skips, `TESSERIX_TEST_DB_HOST` is unset and nothing was proved.
 
 - [ ] **Step 3: Write the migration**
 
-Create `apps/console/db/migrations/0031_platform_tools.sql`:
+Create `apps/web/db/migrations/0031_platform_tools.sql`:
 
 ```sql
 -- The internal tools directory, moved out of packages/console-core/src/tools.ts.
@@ -466,7 +466,7 @@ Expected: all six tests PASS, and no line contains `SKIP`.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/console/db/migrations/0031_platform_tools.sql \
+git add apps/web/db/migrations/0031_platform_tools.sql \
         platform-api/internal/modules/tools/internal/repository/
 git commit -m "feat(platform-api): seed the internal tools directory into tesserix_admin"
 ```
@@ -3661,7 +3661,7 @@ it("keeps the fallback list in step with the seed migration", async () => {
   // point of the feature — but a tool added to THIS file and not to the seed
   // is a fallback that disagrees with the live list for no reason.
   const migration = await readFile(
-    new URL("../../../apps/console/db/migrations/0031_platform_tools.sql", import.meta.url),
+    new URL("../../../apps/web/db/migrations/0031_platform_tools.sql", import.meta.url),
     "utf8",
   );
   for (const tool of INTERNAL_TOOLS) {
@@ -3716,7 +3716,7 @@ Expected: all green. Confirm the Go run reports **zero skips**.
 export KUBECONFIG=~/.kube/gke-prod
 kubectl -n tesserix port-forward svc/tesserix-postgres-rw 5433:5432 &
 # credentials: secret tesserix-postgres-tesserix-admin, database tesserix_admin
-psql "$DSN" -f apps/console/db/migrations/0031_platform_tools.sql
+psql "$DSN" -f apps/web/db/migrations/0031_platform_tools.sql
 psql "$DSN" -c 'SELECT count(*) FROM platform_tools;'   # expect 15
 psql "$DSN" -c 'SELECT count(*) FROM platform_tool_groups;'  # expect 5
 ```
