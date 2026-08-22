@@ -51,6 +51,19 @@ const replies = new Map(
   Object.entries(REPLIES).map(([id, list]) => [id, list.map((r) => ({ ...r }))]),
 );
 
+// The id a PRODUCT would serve, recovered from the namespaced fixture.
+//
+// The fixture rows are stored the way apps/web emits them — already
+// `${source}:${id}` — because that route serves them verbatim. The platform
+// API's transport does the namespacing itself, from bare product ids, so its
+// route here needs the bare half to apply the rule to. Split at the FIRST
+// separator only: a raw id may contain colons of its own, which is why the
+// convention parses from the left.
+function bareAuditId(entry) {
+  const prefix = `${entry.source}:`;
+  return entry.id.startsWith(prefix) ? entry.id.slice(prefix.length) : entry.id;
+}
+
 function summaryOf(rows) {
   return {
     open: rows.filter((t) => t.status === "open").length,
@@ -198,9 +211,23 @@ export function createStubServer() {
       // returns an empty entries array rather than inventing rows, and never
       // a 400: this stub stands in for a transport, not for the platform
       // API's own validation.
-      const entries = source
+      const rows = source
         ? AUDIT_ENTRIES.filter((e) => e.source === source)
         : AUDIT_ENTRIES;
+      // The namespacing is PERFORMED here, not assumed from the fixture.
+      //
+      // Products serve bare ids — an integer primary key, a uuid — and the
+      // platform API's audit service stamps `${slug}:${id}` from the slug it
+      // called, which is what keeps two products' `12` from colliding in a
+      // list keyed by id. Serving the already-namespaced fixture verbatim
+      // made this stub agree with a platform API that did not namespace at
+      // all, which is how the absence went unnoticed locally. Stripping back
+      // to the bare id and re-applying the rule means a platform API that
+      // stopped namespacing would no longer match what this stub emits.
+      const entries = rows.map((entry) => ({
+        ...entry,
+        id: `${entry.source}:${bareAuditId(entry)}`,
+      }));
       return json(res, 200, {
         data: {
           entries,

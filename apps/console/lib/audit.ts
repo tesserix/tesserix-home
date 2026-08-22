@@ -251,10 +251,14 @@ export function parseEstateAuditLog(json: unknown): EstateAuditLog {
  * are deliberately `AuditLogEntry`-shaped, and every row in that table has the
  * same source. A stored column would be a constant repeated a million times.
  *
- * Only the console's own rows need this. The products' rows arrive from the
- * aggregate endpoint already sourced and already namespaced — doing it again
- * here would produce `product:mark8ly:9f2` and put "product" in the Source
- * column of rows that can name their actual product.
+ * Only the console's own rows need this. The products' rows arrive already
+ * sourced and already namespaced on BOTH transports — apps/web's `attributeTo`
+ * (apps/web/lib/audit/entry.ts) does it at that app's boundary, and the
+ * platform API's audit service does it at the same point, stamping `source`
+ * and `${slug}:${id}` from the slug it called rather than from anything the
+ * product's body claims. Doing it again here would produce
+ * `product:mark8ly:9f2` and put "product" in the Source column of rows that
+ * can name their actual product.
  *
  * Immutable: new rows, the input untouched.
  */
