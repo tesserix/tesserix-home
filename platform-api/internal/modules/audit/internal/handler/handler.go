@@ -50,12 +50,13 @@ type Route struct {
 // The bounds every product is asked for when the caller names none.
 //
 // The SAME numbers apps/console/lib/platform-api.ts sends as AUDIT_LIMIT and
-// AUDIT_SINCE_HOURS, and the same ones apps/web's aggregate endpoint uses, so
-// a timeline read through this transport covers the same window as one read
-// through that one. Defaulting rather than leaving them unset matters even
-// with the console always sending them: an unbounded fan-out asks each product
-// for its entire audit log, and the federation client truncates the answer at
-// 1 MiB mid-JSON.
+// AUDIT_SINCE_HOURS. NOT the same as apps/web's own defaults: apps/web's
+// DEFAULT_SINCE_HOURS is 24, not 720 — 720 is only apps/web's MAX_SINCE_HOURS
+// ceiling. What matches here is what the console sends, not what the other
+// transport defaults to when nobody asks. Defaulting rather than leaving them
+// unset matters even with the console always sending them: an unbounded
+// fan-out asks each product for its entire audit log, and the federation
+// client truncates the answer at 1 MiB mid-JSON.
 const (
 	DefaultLimit      = 200
 	DefaultSinceHours = 720
