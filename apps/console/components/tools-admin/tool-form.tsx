@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import {
   Button,
   Callout,
@@ -23,46 +23,6 @@ import type { DirectoryGroup, DirectoryTool } from "@/lib/tools-directory";
 import type { ToolInput, ToolsWriteResult } from "@/lib/tools-write";
 
 /**
- * One labelled field, with its error rendered as a sibling of the input
- * rather than through `Input`'s own `errorText` prop.
- *
- * `Input` only wraps itself in a `div` when `isValid`/`isInvalid`/`errorText`
- * is passed, and even then the error `<p>` lands one level ABOVE the div that
- * directly contains the `<input>` (that inner div also holds the validity
- * icon). A refusal is placed "beside the input" — see the module doc and the
- * seam's own contract — which callers, including tests, read as: inside the
- * nearest `<div>` ancestor of the input itself. So this renders its own
- * single wrapping `div` around just the input and the error text, with the
- * `Label` outside it, and never passes `errorText` to `Input`.
- */
-function FormField({
-  id,
-  label,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  error?: string;
-  children: (id: string) => ReactNode;
-}) {
-  const errorId = `${id}-error`;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <div>
-        {children(id)}
-        {error ? (
-          <p id={errorId} role="alert" className="mt-1.5 text-xs text-destructive">
-            {error}
-          </p>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/**
  * The add/edit form for one directory tool, as a self-contained trigger +
  * dialog — the same shape as `OrganisationEditForm`
  * (`app/(console)/platform/crm/[organisation]/organisation-edit-form.tsx`).
@@ -71,6 +31,13 @@ function FormField({
  * error placement are identical; only the starting values, the dialog copy
  * and which action gets called differ, and all three are supplied by the
  * caller.
+ *
+ * Field errors use `Input`'s own `isInvalid`/`errorText` props — the same
+ * pattern `organisation-edit-form.tsx` uses — rather than a hand-rolled
+ * wrapper: `Input` already wires `aria-invalid` and `aria-describedby` onto
+ * the input itself so the association survives a screen-reader user tabbing
+ * away and back, which a bespoke `<p>` placed only visually beside the input
+ * would not.
  *
  * `import type` for everything from `lib/tools-directory` and
  * `lib/tools-write` — both open with `import "server-only"` and this is a
@@ -83,8 +50,6 @@ export function ToolForm({
   tool,
   defaultGroupKey,
   triggerLabel,
-  triggerVariant = "outline",
-  triggerSize = "sm",
   onSubmit,
 }: {
   mode: "add" | "edit";
@@ -94,8 +59,6 @@ export function ToolForm({
   /** Add mode only: which group the new tool's select should preselect. */
   defaultGroupKey?: string;
   triggerLabel: string;
-  triggerVariant?: "default" | "outline" | "secondary" | "ghost" | "destructive";
-  triggerSize?: "sm" | "default";
   onSubmit: (input: ToolInput) => Promise<ToolsWriteResult>;
 }) {
   const [open, setOpen] = useState(false);
@@ -158,7 +121,7 @@ export function ToolForm({
 
   return (
     <>
-      <Button type="button" variant={triggerVariant} size={triggerSize} onClick={() => setOpen(true)}>
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
         {triggerLabel}
       </Button>
       <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
@@ -181,60 +144,67 @@ export function ToolForm({
               void submit();
             }}
           >
-            <FormField id={`${formId}-name`} label="Name" error={fieldError("name")}>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={name}
-                  disabled={pending}
-                  required
-                  onChange={(event) => setName(event.target.value)}
-                />
-              )}
-            </FormField>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-name`}>Name</Label>
+              <Input
+                id={`${formId}-name`}
+                value={name}
+                disabled={pending}
+                required
+                isInvalid={Boolean(fieldError("name"))}
+                errorText={fieldError("name")}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </div>
 
             {/* No pattern validation here: the DNS-label rule already lives
                 in Go's domain.SubdomainPattern and the SQL CHECK, bound by a
                 test. A third copy in TypeScript would need its own drift
                 test and would rot. The API's 422 is the authority. */}
-            <FormField id={`${formId}-subdomain`} label="Subdomain" error={fieldError("subdomain")}>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={subdomain}
-                  disabled={pending}
-                  required
-                  onChange={(event) => setSubdomain(event.target.value)}
-                />
-              )}
-            </FormField>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-subdomain`}>Subdomain</Label>
+              <Input
+                id={`${formId}-subdomain`}
+                value={subdomain}
+                disabled={pending}
+                required
+                isInvalid={Boolean(fieldError("subdomain"))}
+                errorText={fieldError("subdomain")}
+                onChange={(event) => setSubdomain(event.target.value)}
+              />
+            </div>
 
-            <FormField id={`${formId}-purpose`} label="Purpose" error={fieldError("purpose")}>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={purpose}
-                  disabled={pending}
-                  required
-                  onChange={(event) => setPurpose(event.target.value)}
-                />
-              )}
-            </FormField>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-purpose`}>Purpose</Label>
+              <Input
+                id={`${formId}-purpose`}
+                value={purpose}
+                disabled={pending}
+                required
+                isInvalid={Boolean(fieldError("purpose"))}
+                errorText={fieldError("purpose")}
+                onChange={(event) => setPurpose(event.target.value)}
+              />
+            </div>
 
-            <FormField id={`${formId}-note`} label="Note (optional)" error={fieldError("note")}>
-              {(id) => (
-                <Input
-                  id={id}
-                  value={note}
-                  disabled={pending}
-                  onChange={(event) => setNote(event.target.value)}
-                />
-              )}
-            </FormField>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-note`}>Note (optional)</Label>
+              <Input
+                id={`${formId}-note`}
+                value={note}
+                disabled={pending}
+                isInvalid={Boolean(fieldError("note"))}
+                errorText={fieldError("note")}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </div>
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${formId}-group`}>Group</Label>
-              <Select name="groupKey" value={groupKey} onValueChange={setGroupKey} disabled={pending}>
+              {/* No `name`: this form submits from React state via `onSubmit`,
+                  never through `FormData`, so the hidden native select Radix
+                  mirrors its value onto would never be read. */}
+              <Select value={groupKey} onValueChange={setGroupKey} disabled={pending}>
                 <SelectTrigger id={`${formId}-group`} size="default">
                   <SelectValue placeholder="Choose a group…" />
                 </SelectTrigger>

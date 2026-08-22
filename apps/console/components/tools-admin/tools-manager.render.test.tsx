@@ -98,9 +98,12 @@ describe("ToolsManager", () => {
     await user.click(screen.getByRole("button", { name: /^save$/i }));
 
     // Beside the input, not at the top of the form — the whole point of the
-    // seam carrying `field`.
-    const field = screen.getByLabelText(/subdomain/i).closest("div");
-    expect(within(field as HTMLElement).getByText(/single DNS label/i)).toBeInTheDocument();
+    // seam carrying `field`. Asserted as the accessibility property that
+    // matters (the field is programmatically described as invalid), not as
+    // a DOM ancestor relationship only one particular markup shape satisfies.
+    const subdomain = screen.getByLabelText(/subdomain/i);
+    expect(subdomain).toHaveAccessibleDescription(/single DNS label/i);
+    expect(subdomain).toBeInvalid();
   });
 
   it("confirms before deleting, and names the tool", async () => {
@@ -112,10 +115,28 @@ describe("ToolsManager", () => {
 
     // A confirmation that does not name the thing is a confirmation nobody
     // reads.
-    expect(screen.getByText(/Zitadel/)).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Zitadel/)).toBeInTheDocument();
     expect(removeToolAction).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /^delete tool$/i }));
+    await user.click(within(dialog).getByRole("button", { name: /^delete tool$/i }));
     expect(removeToolAction).toHaveBeenCalledWith("t1");
+  });
+
+  it("shows the write's own refusal when a delete fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(removeToolAction).mockResolvedValue({
+      ok: false,
+      message: "You do not have permission to change the tools directory.",
+    });
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const row = screen.getByText("Zitadel").closest("li");
+    await user.click(within(row as HTMLElement).getByRole("button", { name: /^delete$/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^delete tool$/i }));
+
+    expect(within(dialog).getByText(/do not have permission/i)).toBeInTheDocument();
   });
 });

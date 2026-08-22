@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@tesserix/web";
+import { Button, Callout, CalloutDescription } from "@tesserix/web";
+import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import type { DirectoryGroup, DirectoryTool, ToolsDirectory } from "@/lib/tools-directory";
 import type { ToolInput } from "@/lib/tools-write";
 import { addToolAction, editToolAction, removeToolAction } from "@/app/(console)/platform/tools/actions";
@@ -59,50 +60,33 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
 /**
  * One tool's row, with its own Edit form and its own delete confirmation.
  *
- * The confirmation is inline rather than a second dialog: it replaces this
- * row's normal content with the confirmation copy, so the tool's name is
- * never rendered twice at once (a modal layered over an unchanged row would
- * leave the name matchable in two places, which is exactly what a screen
- * reader — and `getByText` — would trip on).
+ * The confirmation is `DestructiveConfirmDialog` — the same shared shell
+ * `organisation-detail-view.tsx` uses for organisation delete and contact
+ * erasure — rather than a hand-rolled inline swap: that shell already carries
+ * a focus trap, return-focus-on-close and Escape-to-cancel from `Dialog`,
+ * which an inline replacement of the row's own content would have had to
+ * reimplement (and, on the first pass here, did not).
  */
 function ToolRow({ tool, groups }: { tool: DirectoryTool; groups: readonly DirectoryGroup[] }) {
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  if (confirming) {
-    return (
-      <li className="flex items-center justify-between gap-2 text-sm">
-        <span>
-          Delete <span className="font-medium">{tool.name}</span>? This can&apos;t be undone.
-        </span>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={pending}
-            onClick={() => setConfirming(false)}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            size="sm"
-            disabled={pending}
-            onClick={async () => {
-              setPending(true);
-              const result = await removeToolAction(tool.id);
-              setPending(false);
-              if (result.ok) setConfirming(false);
-            }}
-          >
-            Delete tool
-          </Button>
-        </div>
-      </li>
-    );
-  }
+  const reset = () => {
+    setError(null);
+  };
+
+  const confirmDelete = async () => {
+    setError(null);
+    setPending(true);
+    const result = await removeToolAction(tool.id);
+    setPending(false);
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
+    setOpen(false);
+  };
 
   return (
     <li className="flex items-center justify-between gap-2 text-sm">
@@ -121,10 +105,32 @@ function ToolRow({ tool, groups }: { tool: DirectoryTool; groups: readonly Direc
           triggerLabel="Edit"
           onSubmit={(input: ToolInput) => editToolAction(tool.id, input)}
         />
-        <Button type="button" variant="outline" size="sm" onClick={() => setConfirming(true)}>
+        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
           Delete
         </Button>
       </div>
+      <DestructiveConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) reset();
+        }}
+        title={`Delete ${tool.name}?`}
+        description="This removes the tool from the directory. This can't be undone."
+        confirmLabel="Delete tool"
+        confirmId={`delete-tool-confirm-${tool.id}`}
+        loading={pending}
+        onConfirm={() => void confirmDelete()}
+      >
+        {/* A failed delete is not silently swallowed: the seam's own message
+            ("You do not have permission…", "That entry may have been
+            removed…") is shown here rather than discarded. */}
+        {error ? (
+          <Callout role="alert" variant="destructive">
+            <CalloutDescription>{error}</CalloutDescription>
+          </Callout>
+        ) : null}
+      </DestructiveConfirmDialog>
     </li>
   );
 }
