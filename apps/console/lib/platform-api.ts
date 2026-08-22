@@ -600,8 +600,12 @@ export const AUDIT_LIMIT = 200;
  * - **501** when the surface is not instrumented at all: apps/web returns it
  *   when every source is unconfigured, and the platform API returns it when
  *   `FEDERATION_PRODUCTS` names no product. Both paths.
- * - **400** for a source the endpoint does not know, so a typo'd filter is
- *   visible rather than an empty timeline. Both paths.
+ * - A source the endpoint does not know is visible rather than an empty
+ *   timeline on both paths, but the two do not agree on the status: the
+ *   platform API answers **400** naming the bad `source`, while apps/web's
+ *   aggregate endpoint answers **404** `unsupported_product`. Both are
+ *   refusals a typo'd filter cannot mistake for zero rows, which is the
+ *   property this surface relies on — the exact code is not.
  * - **502** when every source genuinely failed — apps/web only. The platform
  *   API expresses that as a 200 whose `failures` covers every source, which
  *   the surface renders identically: rows it has beside the sources it lost.
