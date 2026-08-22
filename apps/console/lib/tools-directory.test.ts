@@ -189,9 +189,11 @@ describe("readToolsDirectory", () => {
 
     // The directory survives an outage — that is the point of the fallback.
     expect(directory.tools).toHaveLength(15);
-    // And it says so. A silent fallback is two lists that disagree with
+    // And it says so: "degraded", not "builtin" — the origin IS set, so this
+    // is "on and broken", which the banner reports, not "off on purpose",
+    // which stays silent. A silent fallback is two lists that disagree with
     // nobody able to tell which one they are looking at.
-    expect(directory.source).toBe("builtin");
+    expect(directory.source).toBe("degraded");
   });
 
   it("falls back rather than throwing when the payload is the wrong shape", async () => {
@@ -211,8 +213,9 @@ describe("readToolsDirectory", () => {
     const directory = await readToolsDirectory();
 
     // A malformed success is a failure. The home page must not blow up over a
-    // directory of links.
-    expect(directory.source).toBe("builtin");
+    // directory of links. Still "degraded": the origin is set, so this is
+    // the API failing to answer, not the phase being switched off.
+    expect(directory.source).toBe("degraded");
     expect(directory.tools).toHaveLength(15);
   });
 
@@ -284,7 +287,9 @@ describe("readToolsDirectory", () => {
 
     const directory = await readToolsDirectory();
 
-    expect(directory.source).toBe("builtin");
+    // "degraded", not "builtin": the origin is set, so a malformed field is
+    // the API failing, not the phase being off.
+    expect(directory.source).toBe("degraded");
     expect(directory.tools).toHaveLength(15);
   });
 
@@ -322,7 +327,9 @@ describe("readToolsDirectory", () => {
 
     const directory = await readToolsDirectory();
 
-    expect(directory.source).toBe("builtin");
+    // "degraded", not "builtin": the origin is set, so a malformed field is
+    // the API failing, not the phase being off.
+    expect(directory.source).toBe("degraded");
     expect(directory.tools).toHaveLength(15);
   });
 });

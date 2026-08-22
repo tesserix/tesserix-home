@@ -8,10 +8,18 @@
  *
  * As of #318 this list is the FALLBACK, not the source of truth: the live
  * directory is `platform_tools` in tesserix_admin, served at
- * /v1/platform/tools and read by apps/console/lib/tools-directory.ts. This
- * literal is what renders when PLATFORM_API_ORIGIN is unset — which is
- * byte-for-byte the pre-#318 behaviour — and when the API cannot be reached,
- * in which case the page says so.
+ * /v1/platform/tools and read by apps/console/lib/tools-directory.ts. That
+ * loader renders this literal in two distinct cases, and says two different
+ * things about it:
+ *
+ *  - PLATFORM_API_ORIGIN is unset. Byte-for-byte the pre-#318 behaviour — the
+ *    page says NOTHING, because the phase is off on purpose, not broken.
+ *  - The origin is set but the API could not be reached. The page SAYS SO —
+ *    a banner, because this is a live directory standing in for one that was
+ *    supposed to answer and did not.
+ *
+ * See `DirectorySource` in tools-directory.ts for the type that keeps these
+ * two apart.
  *
  * Keep it in step with migration 0031's seed. A tool added through the API
  * will not appear here, and should not; a tool added HERE and not to the seed

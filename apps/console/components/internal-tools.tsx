@@ -63,7 +63,7 @@ export function InternalTools({
           a new tab and are not part of the console — some ask for their own
           sign-in.
         </p>
-        {directory.source === "builtin" && (
+        {directory.source === "degraded" && (
           // Not an error surface. The directory is correct and usable; what is
           // being reported is that it could not be confirmed against the live
           // one, which is the difference between a stale list and a wrong one.

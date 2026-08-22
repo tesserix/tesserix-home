@@ -33,8 +33,18 @@ describe("InternalTools", () => {
     expect(screen.queryByText(/built-in list/i)).not.toBeInTheDocument();
   });
 
-  it("says so when it fell back to the built-in list", () => {
+  it("says nothing when the phase is off on purpose (PLATFORM_API_ORIGIN unset)", () => {
     render(<InternalTools baseDomain="tesserix.app" directory={directory("builtin")} />);
+
+    // Unsetting the variable must restore the pre-#318 page byte-for-byte.
+    // A banner here would be false: nothing is broken, the phase was simply
+    // never switched on. This is the case the two-valued `source` used to
+    // conflate with "degraded" and wrongly banner.
+    expect(screen.queryByText(/built-in list/i)).not.toBeInTheDocument();
+  });
+
+  it("says so when the live directory is unreachable (degraded)", () => {
+    render(<InternalTools baseDomain="tesserix.app" directory={directory("degraded")} />);
 
     // The cost of a fallback is two lists that can disagree. This is what
     // stops them disagreeing SILENTLY.

@@ -26,12 +26,21 @@ export interface DirectoryGroup {
 /**
  * Where the rendered directory came from.
  *
- * `builtin` is not an error state — it is the correct answer when
- * `PLATFORM_API_ORIGIN` is unset — but it IS a state the page tells the
- * operator about when the API was supposed to answer and did not. Two lists
- * that can disagree must never disagree silently.
+ * Three states, not two, because "switched off on purpose" and "switched on
+ * and broken" are different facts and the operator-facing banner must not
+ * conflate them:
+ *
+ *  - `"platform-api"` — fetched and parsed successfully.
+ *  - `"builtin"` — `PLATFORM_API_ORIGIN` is unset. The phase is off on
+ *    purpose. No banner: unsetting the variable must restore the pre-#318
+ *    page byte-for-byte, and a page that claims the live directory is
+ *    "unavailable" when it was simply never configured is just false.
+ *  - `"degraded"` — the origin is set but the fetch or parse failed. The
+ *    built-in list is standing in for a live directory that IS supposed to
+ *    answer and did not. Banner: two lists that can disagree must never
+ *    disagree silently.
  */
-export type DirectorySource = "platform-api" | "builtin";
+export type DirectorySource = "platform-api" | "builtin" | "degraded";
 
 export interface ToolsDirectory {
   readonly groups: readonly DirectoryGroup[];
@@ -44,8 +53,9 @@ export interface ToolsDirectory {
  *
  * Two backends behind one signature, chosen by `PLATFORM_API_ORIGIN` — the
  * same switch `fetchTickets` and the CRM queues use, and for the same reason:
- * UNSET IS BYTE-FOR-BYTE THE OLD BEHAVIOUR, so this phase reverts by removing
- * one variable rather than by reverting code.
+ * UNSET IS BYTE-FOR-BYTE THE OLD BEHAVIOUR (now that `source` distinguishes
+ * "off on purpose" from "on and broken" — see `DirectorySource` — so this
+ * phase reverts by removing one variable rather than by reverting code.
  *
  * # Why a failure falls back instead of surfacing
  *
@@ -53,7 +63,7 @@ export interface ToolsDirectory {
  * reach Grafana because the console could not reach its own API is worse off
  * than one shown a slightly stale list — and the built-in list is not
  * plausibly stale by much, since it is the seed. So the failure is absorbed
- * and LABELLED rather than rendered as an error surface.
+ * and LABELLED (as `"degraded"`) rather than rendered as an error surface.
  *
  * That is a decision about THIS resource and does not generalise: a CRM queue
  * falling back to a hardcoded list would be indefensible. Per the rule at the
@@ -63,7 +73,8 @@ export interface ToolsDirectory {
  */
 export async function readToolsDirectory(): Promise<ToolsDirectory> {
   if (!platformApiOrigin()) {
-    return builtin();
+    // Off on purpose, not broken. See `DirectorySource`.
+    return builtin("builtin");
   }
   try {
     const [toolsBody, groupsBody] = await Promise.all([
@@ -77,12 +88,21 @@ export async function readToolsDirectory(): Promise<ToolsDirectory> {
     // the bare console.* call are this app's convention — see
     // lib/db-read-error.ts:147; there is no logger module.
     console.warn("[console] the tools directory could not be read from the platform API", cause);
-    return builtin();
+    // On and broken, not off. See `DirectorySource`.
+    return builtin("degraded");
   }
 }
 
-/** The code literal, which is also the seed migration 0031 applied. */
-function builtin(): ToolsDirectory {
+/**
+ * The code literal, which is also the seed migration 0031 applied.
+ *
+ * `source` is a parameter, not a hardcoded value, because the same literal
+ * backs two different facts for the operator: `"builtin"` when the phase is
+ * off on purpose (no banner) and `"degraded"` when it is on and the live
+ * directory could not be read (banner). The list is identical either way —
+ * only what the page says about it differs.
+ */
+function builtin(source: "builtin" | "degraded"): ToolsDirectory {
   return {
     groups: TOOL_GROUPS.map((group) => ({ key: group.key, label: group.label })),
     tools: INTERNAL_TOOLS.map((tool) => ({
@@ -96,7 +116,7 @@ function builtin(): ToolsDirectory {
       note: tool.note ?? null,
       groupKey: tool.group,
     })),
-    source: "builtin",
+    source,
   };
 }
 
