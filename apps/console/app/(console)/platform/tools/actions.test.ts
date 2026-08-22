@@ -7,8 +7,8 @@ vi.mock("@/lib/tools-write", () => ({
 }));
 
 import { revalidatePath } from "next/cache";
-import { createTool, deleteTool, updateTool } from "@/lib/tools-write";
-import { addToolAction, moveToolAction, removeToolAction } from "./actions";
+import { createTool, deleteTool, updateGroup, updateTool } from "@/lib/tools-write";
+import { addToolAction, moveGroupAction, moveToolAction, removeToolAction } from "./actions";
 
 afterEach(() => vi.resetAllMocks());
 
@@ -77,6 +77,21 @@ describe("the tools management actions", () => {
 
     expect(result).toEqual({ ok: true });
     expect(deleteTool).toHaveBeenCalledWith("tool-1");
-    expect(revalidatePath).toHaveBeenCalled();
+
+    const paths = vi.mocked(revalidatePath).mock.calls.map(([p]) => p);
+    // Parity with the first test: asserting only "called" would still pass if
+    // refresh() were gutted to revalidate just this page, leaving the home
+    // page's cards stale.
+    expect(paths).toContain("/platform/tools");
+    expect(paths).toContain("/");
+  });
+
+  it("swaps two groups' STORED sort orders, in two calls", async () => {
+    vi.mocked(updateGroup).mockResolvedValue({ ok: true });
+
+    await moveGroupAction({ key: "identity", sortOrder: 5 }, { key: "cost", sortOrder: 15 });
+
+    expect(updateGroup).toHaveBeenCalledWith("identity", { sortOrder: 15 });
+    expect(updateGroup).toHaveBeenCalledWith("cost", { sortOrder: 5 });
   });
 });
