@@ -9,9 +9,11 @@ import {
   addToolAction,
   editToolAction,
   removeToolAction,
+  moveToolAction,
   addGroupAction,
   renameGroupAction,
   removeGroupAction,
+  moveGroupAction,
 } from "@/app/(console)/platform/tools/actions";
 import { ToolForm } from "./tool-form";
 import { GroupForm } from "./group-form";
@@ -36,11 +38,13 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
         </h2>
         <GroupForm mode="add" triggerLabel="Add group" onSubmit={(input) => addGroupAction(input)} />
       </div>
-      {directory.groups.map((group) => {
+      {directory.groups.map((group, groupIndex) => {
         const tools = directory.tools.filter((tool) => tool.groupKey === group.key);
+        const previousGroup = directory.groups[groupIndex - 1];
+        const nextGroup = directory.groups[groupIndex + 1];
         return (
           <section key={group.key} className="flex flex-col gap-2">
-            <GroupHeader group={group}>
+            <GroupHeader group={group} previousGroup={previousGroup} nextGroup={nextGroup}>
               <ToolForm
                 mode="add"
                 groups={directory.groups}
@@ -58,8 +62,14 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
               <p className="text-sm text-muted-foreground">No tools in this group yet.</p>
             ) : (
               <ul className="flex flex-col gap-1">
-                {tools.map((tool) => (
-                  <ToolRow key={tool.id} tool={tool} groups={directory.groups} />
+                {tools.map((tool, toolIndex) => (
+                  <ToolRow
+                    key={tool.id}
+                    tool={tool}
+                    groups={directory.groups}
+                    previousTool={tools[toolIndex - 1]}
+                    nextTool={tools[toolIndex + 1]}
+                  />
                 ))}
               </ul>
             )}
@@ -89,14 +99,19 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
  */
 function GroupHeader({
   group,
+  previousGroup,
+  nextGroup,
   children,
 }: {
   group: DirectoryGroup;
+  previousGroup?: DirectoryGroup;
+  nextGroup?: DirectoryGroup;
   children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   const reset = () => {
     setError(null);
@@ -114,29 +129,69 @@ function GroupHeader({
     setOpen(false);
   };
 
+  const move = async (neighbour: DirectoryGroup) => {
+    setMoveError(null);
+    const result = await moveGroupAction(
+      { key: group.key, sortOrder: group.sortOrder },
+      { key: neighbour.key, sortOrder: neighbour.sortOrder },
+    );
+    // A failed move is not silently swallowed: the seam's own message is
+    // shown here, the same way a failed delete is above.
+    if (!result.ok) setMoveError(result.message);
+  };
+
   return (
-    <div className="flex items-center justify-between gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-        {group.label}
-      </h3>
-      <div className="flex items-center gap-2">
-        <GroupForm
-          mode="rename"
-          group={group}
-          triggerLabel="Rename"
-          onSubmit={(input) => renameGroupAction(group.key, input.label)}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-label={`Delete ${group.label}`}
-          onClick={() => setOpen(true)}
-        >
-          Delete
-        </Button>
-        {children}
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {group.label}
+        </h3>
+        <div className="flex items-center gap-2">
+          {previousGroup ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Move group up: ${group.label}`}
+              onClick={() => void move(previousGroup)}
+            >
+              Move group up
+            </Button>
+          ) : null}
+          {nextGroup ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Move group down: ${group.label}`}
+              onClick={() => void move(nextGroup)}
+            >
+              Move group down
+            </Button>
+          ) : null}
+          <GroupForm
+            mode="rename"
+            group={group}
+            triggerLabel="Rename"
+            onSubmit={(input) => renameGroupAction(group.key, input.label)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`Delete ${group.label}`}
+            onClick={() => setOpen(true)}
+          >
+            Delete
+          </Button>
+          {children}
+        </div>
       </div>
+      {moveError ? (
+        <Callout role="alert" variant="destructive">
+          <CalloutDescription>{moveError}</CalloutDescription>
+        </Callout>
+      ) : null}
       <DestructiveConfirmDialog
         open={open}
         onOpenChange={(next) => {
@@ -173,10 +228,21 @@ function GroupHeader({
  * which an inline replacement of the row's own content would have had to
  * reimplement (and, on the first pass here, did not).
  */
-function ToolRow({ tool, groups }: { tool: DirectoryTool; groups: readonly DirectoryGroup[] }) {
+function ToolRow({
+  tool,
+  groups,
+  previousTool,
+  nextTool,
+}: {
+  tool: DirectoryTool;
+  groups: readonly DirectoryGroup[];
+  previousTool?: DirectoryTool;
+  nextTool?: DirectoryTool;
+}) {
   const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   const reset = () => {
     setError(null);
@@ -194,33 +260,73 @@ function ToolRow({ tool, groups }: { tool: DirectoryTool; groups: readonly Direc
     setOpen(false);
   };
 
+  const move = async (neighbour: DirectoryTool) => {
+    setMoveError(null);
+    const result = await moveToolAction(
+      { id: tool.id, sortOrder: tool.sortOrder },
+      { id: neighbour.id, sortOrder: neighbour.sortOrder },
+    );
+    // A failed move is not silently swallowed: the seam's own message is
+    // shown here, the same way a failed delete is below.
+    if (!result.ok) setMoveError(result.message);
+  };
+
   return (
-    <li className="flex items-center justify-between gap-2 text-sm">
-      <span>
-        <span className="font-medium">{tool.name}</span>{" "}
-        <span className="text-muted-foreground">{tool.subdomain}</span>
-        {tool.note ? (
-          <span className="block text-xs text-muted-foreground">{tool.note}</span>
-        ) : null}
-      </span>
-      <div className="flex gap-2">
-        <ToolForm
-          mode="edit"
-          groups={groups}
-          tool={tool}
-          triggerLabel="Edit"
-          onSubmit={(input: ToolInput) => editToolAction(tool.id, input)}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          aria-label={`Delete ${tool.name}`}
-          onClick={() => setOpen(true)}
-        >
-          Delete
-        </Button>
+    <li className="flex flex-col gap-2 text-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span>
+          <span className="font-medium">{tool.name}</span>{" "}
+          <span className="text-muted-foreground">{tool.subdomain}</span>
+          {tool.note ? (
+            <span className="block text-xs text-muted-foreground">{tool.note}</span>
+          ) : null}
+        </span>
+        <div className="flex gap-2">
+          {previousTool ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Move up: ${tool.name}`}
+              onClick={() => void move(previousTool)}
+            >
+              Move up
+            </Button>
+          ) : null}
+          {nextTool ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Move down: ${tool.name}`}
+              onClick={() => void move(nextTool)}
+            >
+              Move down
+            </Button>
+          ) : null}
+          <ToolForm
+            mode="edit"
+            groups={groups}
+            tool={tool}
+            triggerLabel="Edit"
+            onSubmit={(input: ToolInput) => editToolAction(tool.id, input)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            aria-label={`Delete ${tool.name}`}
+            onClick={() => setOpen(true)}
+          >
+            Delete
+          </Button>
+        </div>
       </div>
+      {moveError ? (
+        <Callout role="alert" variant="destructive">
+          <CalloutDescription>{moveError}</CalloutDescription>
+        </Callout>
+      ) : null}
       <DestructiveConfirmDialog
         open={open}
         onOpenChange={(next) => {

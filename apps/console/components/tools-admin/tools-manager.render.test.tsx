@@ -19,6 +19,8 @@ import {
   addGroupAction,
   renameGroupAction,
   removeGroupAction,
+  moveToolAction,
+  moveGroupAction,
 } from "@/app/(console)/platform/tools/actions";
 import { ToolsManager } from "./tools-manager";
 import type { ToolsDirectory } from "@/lib/tools-directory";
@@ -199,5 +201,48 @@ describe("group management", () => {
     await user.click(within(dialog).getByRole("button", { name: /^delete group$/i }));
 
     expect(await screen.findByText(/move or remove the tools/i)).toBeInTheDocument();
+  });
+});
+
+describe("reordering", () => {
+  it("moves a tool down by swapping stored sort orders with the row below", async () => {
+    const user = userEvent.setup();
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const row = screen.getByText("Zitadel").closest("li");
+    await user.click(within(row as HTMLElement).getByRole("button", { name: /move down/i }));
+
+    // The fixture's REAL values — 10 and 20, deliberately not 1 and 2. An
+    // implementation that passed render indices would call this with 1 and 2
+    // and fail here, which is the whole point of the fixture.
+    expect(moveToolAction).toHaveBeenCalledWith(
+      { id: "t1", sortOrder: 10 },
+      { id: "t2", sortOrder: 20 },
+    );
+  });
+
+  it("does not offer to move the first tool up or the last one down", () => {
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const first = screen.getByText("Zitadel").closest("li");
+    const last = screen.getByText("Secret service").closest("li");
+
+    // A control that cannot do anything is worse than no control: it invites a
+    // click and answers with nothing.
+    expect(within(first as HTMLElement).queryByRole("button", { name: /move up/i })).toBeNull();
+    expect(within(last as HTMLElement).queryByRole("button", { name: /move down/i })).toBeNull();
+  });
+
+  it("moves a group among its peers", async () => {
+    const user = userEvent.setup();
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const section = screen.getByText("Identity and secrets").closest("section");
+    await user.click(within(section as HTMLElement).getByRole("button", { name: /move group down/i }));
+
+    expect(moveGroupAction).toHaveBeenCalledWith(
+      { key: "identity", sortOrder: 10 },
+      { key: "empty", sortOrder: 20 },
+    );
   });
 });
