@@ -50,6 +50,7 @@ export function ToolForm({
   tool,
   defaultGroupKey,
   triggerLabel,
+  triggerAriaLabel,
   onSubmit,
 }: {
   mode: "add" | "edit";
@@ -59,6 +60,14 @@ export function ToolForm({
   /** Add mode only: which group the new tool's select should preselect. */
   defaultGroupKey?: string;
   triggerLabel: string;
+  /**
+   * Overrides the trigger's accessible name without changing its visible
+   * text. `ToolsManager` renders one "Add tool" trigger per group, and their
+   * shared visible label is intentional — but a query written against that
+   * shared text alone has nothing to disambiguate multiple groups by. Passed
+   * as e.g. `Add tool to ${group.label}`.
+   */
+  triggerAriaLabel?: string;
   onSubmit: (input: ToolInput) => Promise<ToolsWriteResult>;
 }) {
   const [open, setOpen] = useState(false);
@@ -121,7 +130,13 @@ export function ToolForm({
 
   return (
     <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={triggerAriaLabel}
+        onClick={() => setOpen(true)}
+      >
         {triggerLabel}
       </Button>
       <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>

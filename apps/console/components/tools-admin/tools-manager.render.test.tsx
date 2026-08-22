@@ -62,7 +62,7 @@ describe("ToolsManager", () => {
     const user = userEvent.setup();
     render(<ToolsManager directory={DIRECTORY} />);
 
-    await user.click(screen.getAllByRole("button", { name: /add tool/i })[0]);
+    await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
     await user.type(screen.getByLabelText(/name/i), "Tempo");
     await user.type(screen.getByLabelText(/subdomain/i), "tempo");
     await user.type(screen.getByLabelText(/purpose/i), "Distributed traces.");
@@ -79,7 +79,7 @@ describe("ToolsManager", () => {
     const user = userEvent.setup();
     render(<ToolsManager directory={DIRECTORY} />);
 
-    await user.click(screen.getAllByRole("button", { name: /add tool/i })[0]);
+    await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
     await user.type(screen.getByLabelText(/name/i), "Tempo");
     await user.type(screen.getByLabelText(/subdomain/i), "tempo");
     await user.type(screen.getByLabelText(/purpose/i), "Traces.");
@@ -97,7 +97,7 @@ describe("ToolsManager", () => {
     });
     render(<ToolsManager directory={DIRECTORY} />);
 
-    await user.click(screen.getAllByRole("button", { name: /add tool/i })[0]);
+    await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
     await user.type(screen.getByLabelText(/name/i), "Bad");
     await user.type(screen.getByLabelText(/subdomain/i), "https://x.example");
     await user.type(screen.getByLabelText(/purpose/i), "x");
@@ -117,7 +117,7 @@ describe("ToolsManager", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     const row = screen.getByText("Zitadel").closest("li");
-    await user.click(within(row as HTMLElement).getByRole("button", { name: /^delete$/i }));
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "Delete Zitadel" }));
 
     // A confirmation that does not name the thing is a confirmation nobody
     // reads.
@@ -138,7 +138,7 @@ describe("ToolsManager", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     const row = screen.getByText("Zitadel").closest("li");
-    await user.click(within(row as HTMLElement).getByRole("button", { name: /^delete$/i }));
+    await user.click(within(row as HTMLElement).getByRole("button", { name: "Delete Zitadel" }));
 
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^delete tool$/i }));
@@ -188,13 +188,13 @@ describe("group management", () => {
     });
     render(<ToolsManager directory={DIRECTORY} />);
 
-    const section = screen.getByText("Identity and secrets").closest("section");
-    // The header's own control is labelled exactly "Delete" — mirroring
-    // ToolRow's row control — so that with the dialog open, only the dialog's
-    // "Delete group" confirm button matches that name; scoping both clicks
-    // avoids the ambiguity an unscoped query would hit. The header's button
-    // is the first "Delete" within the section, ahead of any tool rows'.
-    await user.click(within(section as HTMLElement).getAllByRole("button", { name: /^delete$/i })[0]);
+    // The header's own control has the visible text "Delete", same as every
+    // ToolRow's, but its accessible name is "Delete Identity and secrets" —
+    // an `aria-label` that leaves the rendered text untouched while making
+    // the query unambiguous regardless of how many groups or tool rows are
+    // on the page. The dialog's confirm button keeps its plain "Delete
+    // group" name and is queried scoped to the dialog.
+    await user.click(screen.getByRole("button", { name: "Delete Identity and secrets" }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: /^delete group$/i }));
 

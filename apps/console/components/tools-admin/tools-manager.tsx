@@ -46,6 +46,7 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
                 groups={directory.groups}
                 defaultGroupKey={group.key}
                 triggerLabel="Add tool"
+                triggerAriaLabel={`Add tool to ${group.label}`}
                 onSubmit={(input: ToolInput) => addToolAction(input)}
               />
             </GroupHeader>
@@ -73,11 +74,18 @@ export function ToolsManager({ directory }: { directory: ToolsDirectory }) {
  * One group's heading row: label, Rename, Delete, and (via `children`) that
  * group's own "Add tool" trigger.
  *
- * The delete control here is labelled exactly "Delete" — mirroring `ToolRow`
- * — so that once the confirmation dialog is open, only the dialog's own
- * "Delete group" button matches that name; an unscoped query for "Delete
- * group" against a header also labelled "Delete group" would match two
- * elements at once.
+ * The delete control's visible text is "Delete" — mirroring `ToolRow` — so
+ * that once the confirmation dialog is open, only the dialog's own "Delete
+ * group" button carries that literal text. But "Delete" alone collides with
+ * every `ToolRow`'s own "Delete" button once more than one group is on the
+ * page, and a positional `getAllByRole(...)[0]` query over that collision is
+ * exactly the brittle-under-reorder shape this surface hit twice already
+ * (here and in `ToolRow`) — so both delete buttons, plus this header's own
+ * "Add tool" trigger, carry an `aria-label` that names the group or tool
+ * they belong to. `aria-label` overrides the accessible name without
+ * changing the rendered text, so the visible label stays "Delete" / "Add
+ * tool" while a query can address the control unambiguously by name instead
+ * of by position.
  */
 function GroupHeader({
   group,
@@ -118,7 +126,13 @@ function GroupHeader({
           triggerLabel="Rename"
           onSubmit={(input) => renameGroupAction(group.key, input.label)}
         />
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`Delete ${group.label}`}
+          onClick={() => setOpen(true)}
+        >
           Delete
         </Button>
         {children}
@@ -197,7 +211,13 @@ function ToolRow({ tool, groups }: { tool: DirectoryTool; groups: readonly Direc
           triggerLabel="Edit"
           onSubmit={(input: ToolInput) => editToolAction(tool.id, input)}
         />
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`Delete ${tool.name}`}
+          onClick={() => setOpen(true)}
+        >
           Delete
         </Button>
       </div>

@@ -50,6 +50,11 @@ export function GroupForm({
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
   const [pending, setPending] = useState(false);
 
+  // Resets `key` too, even in rename mode where the field is never rendered
+  // and `key`'s value is otherwise unused (the rename caller's `onSubmit`
+  // reads only `input.label`, ignoring `input.key`). Harmless: one `reset`
+  // shared by both modes is simpler than forking it by mode to skip a state
+  // update nothing reads.
   const reset = () => {
     setKey(group?.key ?? "");
     setLabel(group?.label ?? "");
