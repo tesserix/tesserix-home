@@ -3,9 +3,12 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 type row struct {
@@ -93,5 +96,32 @@ func TestFanOutFailuresFollowTheOrderAsked(t *testing.T) {
 
 	if len(failures) != 2 || failures[0].Product != "kora" || failures[1].Product != "mark8ly" {
 		t.Fatalf("failures = %v, want [kora mark8ly] in the order asked", failures)
+	}
+}
+
+func TestFanOutFailureDoesNotLeakTheInternalURL(t *testing.T) {
+	// A closed listener's address: connecting to it produces a real
+	// *url.Error, which an httptest server never does.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	c := NewClient(NewRegistry([]Product{
+		{Slug: "mark8ly", BaseURL: "http://" + addr},
+	}), &http.Client{Timeout: 2 * time.Second})
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if strings.Contains(failures[0].Error, addr) {
+		t.Errorf("Failure.Error = %q — it leaks the internal address %q into a string the console renders in a browser", failures[0].Error, addr)
+	}
+	if failures[0].Error == "" {
+		t.Error("Failure.Error is empty — the cause must survive sanitisation, only the URL is dropped")
 	}
 }
