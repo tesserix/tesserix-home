@@ -23,6 +23,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/config"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/database"
@@ -116,6 +117,9 @@ func run(log *slog.Logger) error {
 	})
 	httpx.RegisterModule(mux, verifier, "aiusage", func(m *http.ServeMux) {
 		aiusage.Register(m, aiusage.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+	})
+	httpx.RegisterModule(mux, verifier, "tools", func(m *http.ServeMux) {
+		tools.Register(m, tools.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
 	})
 
 	server := &http.Server{
