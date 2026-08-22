@@ -25,6 +25,19 @@ describe("route identity", () => {
     // not a nested route. Matching must respect segment boundaries.
     expect(isRouteActive("/admin/apps/kora/foodsXYZ", "kora.foods", "web")).toBe(false);
   });
+
+  it("is never active for a renderer the route has no path for", () => {
+    // "platform.tools" has no `mobile` path at all (see RouteEntry.mobile) —
+    // without a guard, `target` is `undefined` and the string-prefix checks
+    // fall through to comparing against the literal "undefined/", which can
+    // spuriously match. The honest answer for "no path to be active against"
+    // is `false`, not a string match on the word "undefined".
+    expect(isRouteActive("/platform/tools", "platform.tools", "mobile")).toBe(false);
+    // Same trap on the `web` prefix — "platform.tools" has no `web` path
+    // either, and this path was already reachable before `mobile` became
+    // optional (`web` always was), so it is equally worth pinning here.
+    expect(isRouteActive("/platform/tools", "platform.tools", "web")).toBe(false);
+  });
 });
 
 describe("route capability", () => {

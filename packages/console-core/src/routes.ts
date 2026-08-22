@@ -443,6 +443,14 @@ export function isRouteActive(
       : prefix === "console"
         ? (entry.console ?? entry.mobile)
         : entry.mobile;
+  // `web` and `mobile` are both optional (see RouteEntry), so a route can
+  // have no path at all for a given renderer — a console-only surface like
+  // `platform.tools` has no `mobile`, and a console-native one has no `web`.
+  // Without this guard, `target` is `undefined` and the checks below fall
+  // through to comparing against the literal string "undefined/" rather than
+  // reporting "not active", which is the honest answer when there is no path
+  // to be active against.
+  if (target === undefined) return false;
   // Product roots are a strict prefix of their own children, so an exact
   // match is required or Overview stays highlighted on every nested route.
   if (entry.exact) return currentPath === target || currentPath === `${target}/`;
