@@ -691,6 +691,32 @@ describe("the platform API switch", () => {
     expect(seen[1]).not.toContain("source=");
   });
 
+  it("sends the same limit and window on the platform path as on the fallback", async () => {
+    // The cutover's whole premise is that unsetting PLATFORM_API_ORIGIN is a
+    // true rollback. An unbounded platform read asks every product for its
+    // entire audit log, which the API truncates at 1 MiB mid-JSON and reports
+    // as the generic "invalid response" — a different answer from the same
+    // question, which is exactly what must not happen.
+    const seen: string[] = [];
+    const capture = async (url: string) => {
+      seen.push(String(url));
+      return new Response(JSON.stringify(envelope({ entries: [], failures: [] })), {
+        status: 200,
+      });
+    };
+
+    vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
+    withToken("access-token-1");
+    vi.stubGlobal("fetch", capture);
+    const mod = await import("./platform-api");
+    await mod.fetchEstateAuditLog("cookie=1", "mark8ly");
+
+    expect(seen[0]).toContain(`limit=${mod.AUDIT_LIMIT}`);
+    expect(seen[0]).toContain(`since_hours=${mod.AUDIT_SINCE_HOURS}`);
+    // The filter still travels with them.
+    expect(seen[0]).toContain("source=mark8ly");
+  });
+
   it("still reads apps/web's audit-logs route when the origin is unset", async () => {
     // Proves the fallback survives the cutover: an unset PLATFORM_API_ORIGIN
     // must keep hitting the endpoint this surface has always used.
