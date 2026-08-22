@@ -1,0 +1,82 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/tools-write", () => ({
+  createTool: vi.fn(), updateTool: vi.fn(), deleteTool: vi.fn(),
+  createGroup: vi.fn(), updateGroup: vi.fn(), deleteGroup: vi.fn(),
+}));
+
+import { revalidatePath } from "next/cache";
+import { createTool, deleteTool, updateTool } from "@/lib/tools-write";
+import { addToolAction, moveToolAction, removeToolAction } from "./actions";
+
+afterEach(() => vi.resetAllMocks());
+
+const TOOL = {
+  name: "Tempo", subdomain: "tempo", purpose: "Traces.",
+  note: null, groupKey: "observability",
+};
+
+describe("the tools management actions", () => {
+  it("revalidates BOTH the management page and the home page after a write", async () => {
+    vi.mocked(createTool).mockResolvedValue({ ok: true });
+
+    await addToolAction(TOOL);
+
+    const paths = vi.mocked(revalidatePath).mock.calls.map(([p]) => p);
+    // The home page renders the same directory. Revalidating only this page
+    // leaves the cards stale until something else evicts them, which reads as
+    // "the edit did not work".
+    expect(paths).toContain("/platform/tools");
+    expect(paths).toContain("/");
+  });
+
+  it("does NOT revalidate when the write failed", async () => {
+    vi.mocked(createTool).mockResolvedValue({ ok: false, message: "nope" });
+
+    const result = await addToolAction(TOOL);
+
+    expect(result).toEqual({ ok: false, message: "nope" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("passes the seam's field through so a form can place the message", async () => {
+    vi.mocked(createTool).mockResolvedValue({ ok: false, message: "bad", field: "subdomain" });
+
+    const result = await addToolAction({ ...TOOL, subdomain: "!!" });
+
+    expect(result).toEqual({ ok: false, message: "bad", field: "subdomain" });
+  });
+
+  it("swaps two tools' STORED sort orders, in two calls", async () => {
+    vi.mocked(updateTool).mockResolvedValue({ ok: true });
+
+    await moveToolAction({ id: "a", sortOrder: 10 }, { id: "b", sortOrder: 20 });
+
+    // The real stored values, not render indices — see Task 6. Asserting BOTH
+    // legs with swapped values is what stops a half-move shipping unnoticed.
+    expect(updateTool).toHaveBeenCalledWith("a", { sortOrder: 20 });
+    expect(updateTool).toHaveBeenCalledWith("b", { sortOrder: 10 });
+  });
+
+  it("reports the first failure of a move and does not revalidate", async () => {
+    vi.mocked(updateTool)
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false, message: "second leg failed" });
+
+    const result = await moveToolAction({ id: "a", sortOrder: 10 }, { id: "b", sortOrder: 20 });
+
+    expect(result).toEqual({ ok: false, message: "second leg failed" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("removes a tool and revalidates", async () => {
+    vi.mocked(deleteTool).mockResolvedValue({ ok: true });
+
+    const result = await removeToolAction("tool-1");
+
+    expect(result).toEqual({ ok: true });
+    expect(deleteTool).toHaveBeenCalledWith("tool-1");
+    expect(revalidatePath).toHaveBeenCalled();
+  });
+});
