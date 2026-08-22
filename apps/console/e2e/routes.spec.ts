@@ -146,9 +146,12 @@ test.describe("audit log renders on either transport", () => {
     expect(response.status()).toBeLessThan(500);
 
     await expectConsoleChrome(page);
-    // `level: 1` distinguishes the page's own title (ConsolePageHeader ->
-    // PageHeaderTitle, an `<h1>`) from the sidebar's "Audit Log" nav-section
-    // heading, which is an `<h3>` and also matches /audit/i.
+    // `level: 1` disambiguates deliberately. The page renders TWO headings
+    // whose accessible names match /audit/i: the ConsolePageHeader -> h1
+    // ("Audit log"), and an h3 that @tesserix/web's AuditLogViewer renders
+    // for itself inside the timeline below (audit-timeline.tsx; its
+    // AuditLogTitle part defaults to headingLevel 3). The h1 is the page's
+    // own title and the only one, so level 1 is the stable target.
     await expect(
       page.getByRole("heading", { name: /audit/i, level: 1 }),
     ).toBeVisible();
