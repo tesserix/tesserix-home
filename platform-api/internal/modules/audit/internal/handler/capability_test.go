@@ -1,23 +1,43 @@
-package handler
+package handler_test
 
-import "testing"
+import (
+	"net/http"
+	"testing"
 
-// Ranges over RouteTable and fails on an entry it has no case for, so a route
-// added without a capability decision turns the suite red rather than passing
-// untested. Mirrors the tools module's capability_test.
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit/internal/handler"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
+)
+
+// Ranges over handler.RouteTable and fails on an entry it has no case for, so
+// a route added later without a capability decision turns the suite red
+// rather than passing untested. Mirrors the tools module's capability_test.
 func TestEveryRouteNamesItsCapability(t *testing.T) {
-	want := map[string]string{
-		"GET /v1/audit": "platform",
+	want := map[string]auth.Capability{
+		"GET /v1/audit": auth.CapPlatform,
 	}
-	for _, r := range RouteTable {
+	for _, r := range handler.RouteTable {
 		key := r.Method + " " + r.Pattern
 		capability, ok := want[key]
 		if !ok {
 			t.Errorf("route %s has no capability case in this test — decide one and add it", key)
 			continue
 		}
-		if capability != "platform" {
+		if capability != auth.CapPlatform {
 			t.Errorf("route %s: capability %q; the estate audit log is platform-gated per console-core routes.ts", key, capability)
+		}
+	}
+}
+
+// Companion to the refusal tests in handler_test.go: proves every route in
+// the table answers once the required capability IS held, so the 403 above
+// proves something rather than being satisfied by a route that never
+// answers at all.
+func TestEveryRouteAnswersWhenTheCapabilityIsHeld(t *testing.T) {
+	a := serve(t)
+	for _, r := range handler.RouteTable {
+		got := a.do(r.Method, r.Pattern, "", nil)
+		if got.status != http.StatusOK {
+			t.Errorf("%s %s with platform = %d, want 200: %s", r.Method, r.Pattern, got.status, got.raw)
 		}
 	}
 }

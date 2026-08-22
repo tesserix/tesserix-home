@@ -59,32 +59,23 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 
 func (h *Handler) estate(w http.ResponseWriter, r *http.Request) {
 	principal, ok := auth.FromContext(r.Context())
-	// The identity behind the request is read from the verified principal, not
-	// from anything client-supplied. Subject is looked up before the
-	// existence of the principal is asserted below, so a bad `source` still
-	// answers 400 rather than being shadowed by an auth concern this route's
-	// own Authenticate middleware already settled.
-	var subject string
-	if ok {
-		subject = principal.Subject
+	if !ok {
+		// Fail closed, before any work. Unreachable behind Authenticate in
+		// production; if this route is ever mounted without it, the refusal
+		// must come before the service is touched — otherwise status codes
+		// alone tell an unverified caller which product slugs exist.
+		httpx.WriteError(w, r, httpx.Unauthorized("no principal on an authenticated route"), h.log)
+		return
 	}
 
 	page, err := h.svc.Estate(r.Context(), federation.Operator{
-		ID:         subject,
+		ID:         principal.Subject,
 		Capability: string(auth.CapPlatform),
 	}, strings.TrimSpace(r.URL.Query().Get("source")))
 	if err != nil {
 		// The zero-value domain.Page{} on this path has NIL slices, which
 		// serialise as null — never fall through to WriteData here.
 		httpx.WriteError(w, r, httpx.BadRequest(err.Error()), h.log)
-		return
-	}
-
-	if !ok {
-		// Unreachable behind Authenticate in production; guarded here so a
-		// successful lookup can never be attributed to a caller who was
-		// never verified.
-		httpx.WriteError(w, r, httpx.Unauthorized("no principal on an authenticated route"), h.log)
 		return
 	}
 
