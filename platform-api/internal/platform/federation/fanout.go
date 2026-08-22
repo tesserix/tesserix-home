@@ -26,7 +26,11 @@ type Failure struct {
 	cause error
 }
 
-// Unwrap returns the unredacted cause, for logging and errors.Is/As.
+// Unwrap returns the unredacted cause, for server-side logging.
+//
+// Called DIRECTLY, never through errors.Is/As on a Failure: Failure has an
+// `Error` field, not an `Error() string` method, so it is not an error and
+// `errors.Is(f, …)` does not compile. Classify the value this returns instead.
 //
 // Failure.Error is deliberately a coarse, closed-set string because it is
 // rendered in a browser. This is the other half of that trade: the caller
