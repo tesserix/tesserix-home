@@ -112,6 +112,14 @@ var ErrDuplicateSubdomain = errors.New("a tool with this subdomain already exist
 var ErrUnknownGroup = errors.New("no group with this key exists")
 
 // ErrGroupHasTools is ON DELETE RESTRICT, named.
+//
+// Never returned by classify: migration 0031 defines exactly ONE foreign key,
+// platform_tools_group_key_fkey, and Postgres reports that same constraint
+// name whether an INSERT/UPDATE named a group that does not exist or a DELETE
+// tried to remove a group something still references. The two are
+// indistinguishable from the error alone — the direction is known at the
+// CALL SITE and nowhere else. The group-delete path (Task 5) raises this
+// sentinel itself rather than going through classify.
 var ErrGroupHasTools = errors.New("the group still has tools in it")
 
 // ErrInvalidSubdomain is the CHECK constraint, named.
@@ -119,9 +127,11 @@ var ErrInvalidSubdomain = errors.New("a subdomain must be a single DNS label")
 
 // classify turns a Postgres error into one of this package's sentinels.
 //
-// By CONSTRAINT NAME rather than by SQLSTATE alone: 23505 and 23503 each cover
-// more than one constraint on these tables, and a caller told "already exists"
-// for the wrong one would go and change the wrong field.
+// By CONSTRAINT NAME rather than by SQLSTATE alone: 23505 covers more than one
+// constraint on these tables, and a caller told "already exists" for the
+// wrong one would go and change the wrong field. 23503 has only one
+// constraint to name, but two directions it can be raised in — see
+// ErrGroupHasTools for why that case cannot be split here.
 func classify(err error) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -130,10 +140,14 @@ func classify(err error) error {
 	switch {
 	case pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "subdomain"):
 		return ErrDuplicateSubdomain
-	case pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "group_key"):
-		return ErrUnknownGroup
 	case pgErr.Code == "23503":
-		return ErrGroupHasTools
+		// The one foreign key this schema has, in the INSERT/UPDATE
+		// direction only — a caller named a group that does not exist. The
+		// other direction (deleting a group that still has tools) reports
+		// the identical constraint name and cannot be told apart here; the
+		// group-delete path raises ErrGroupHasTools itself instead of
+		// relying on classify.
+		return ErrUnknownGroup
 	case pgErr.Code == "23514" && strings.Contains(pgErr.ConstraintName, "dns_label"):
 		// Reachable only if domain.SubdomainPattern and the CHECK have
 		// drifted. Named anyway: a 500 carrying a constraint name is a worse

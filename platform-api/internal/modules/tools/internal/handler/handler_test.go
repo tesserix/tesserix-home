@@ -313,6 +313,32 @@ func TestPatchingChangesOnlyWhatWasSent(t *testing.T) {
 	if tool["group_key"] != "observability" {
 		t.Errorf("group_key = %v, want it untouched", tool["group_key"])
 	}
+	// kibana seeds with no note. An ABSENT note key in the body must leave
+	// that alone — proving "absent" rather than merely assuming it, since a
+	// bug that always cleared the note would still pass every other
+	// assertion here.
+	if tool["note"] != nil {
+		t.Errorf("note = %v, want it untouched (absent from the body) — kibana has none", tool["note"])
+	}
+}
+
+func TestPatchingSetsANoteThatWasAbsent(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("kibana")
+
+	// kibana seeds with a NULL note. This is the third state
+	// TestPatchingChangesOnlyWhatWasSent and TestPatchingCanClearANote do not
+	// cover: setting a note to an actual non-empty string, as opposed to
+	// leaving it absent or clearing it with an explicit null.
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":"Slow on cold start."}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["note"] != "Slow on cold start." {
+		t.Errorf("note = %v, want the new value", tool["note"])
+	}
 }
 
 func TestPatchingCanClearANote(t *testing.T) {
@@ -340,6 +366,30 @@ func TestPatchingAnUnknownToolIs404(t *testing.T) {
 
 	if got.status != http.StatusNotFound {
 		t.Errorf("patching a missing tool = %d, want 404: %s", got.status, got.raw)
+	}
+}
+
+func TestPatchingAMalformedIdIs404AndNot500(t *testing.T) {
+	a := serve(t)
+
+	// Unlike the well-formed-but-nonexistent uuid above, this exercises
+	// Postgres's 22P02 (invalid text representation) rather than
+	// pgx.ErrNoRows — the path classify maps back to ErrNoRow so a caller's
+	// typo in the id is a 404, not a 500.
+	got := a.do(http.MethodPatch, "/v1/platform/tools/not-a-uuid", `{"name":"x"}`, nil)
+
+	if got.status != http.StatusNotFound {
+		t.Errorf("patching a malformed id = %d, want 404: %s", got.status, got.raw)
+	}
+}
+
+func TestDeletingAMalformedIdIs404AndNot500(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodDelete, "/v1/platform/tools/not-a-uuid", "", nil)
+
+	if got.status != http.StatusNotFound {
+		t.Errorf("deleting a malformed id = %d, want 404: %s", got.status, got.raw)
 	}
 }
 

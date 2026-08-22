@@ -112,7 +112,7 @@ func (s *Service) CreateTool(ctx context.Context, actor Actor, tool domain.Tool,
 	}
 
 	return write.Perform(ctx, s.pool, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
-		order := 0
+		var order int
 		if tool.SortOrder != nil {
 			order = *tool.SortOrder
 		} else {
