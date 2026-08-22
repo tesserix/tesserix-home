@@ -36,10 +36,34 @@ vi.mock("./auth/operator-token-store", () => {
   };
 });
 
+// The loader's OWN dependency boundary. A `fetch` spy cannot prove "this
+// loader never asks the platform API when PLATFORM_API_ORIGIN is unset":
+// `platformCall` in lib/platform-api.ts independently re-checks the origin
+// and throws before any `fetch`, so `fetch` is never called whether or not
+// the loader's own early return exists — a fetch spy proves "the system does
+// not hit the network", which was never in doubt, not "this loader does not
+// try". `platformApiOrigin` is left real (via `importOriginal`) so the branch
+// under test is genuinely the loader's own `if (!platformApiOrigin())`.
+const platformRequestWithMetaSpy = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/platform-api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/platform-api")>();
+  return {
+    ...actual,
+    platformRequestWithMeta: async (
+      ...args: Parameters<typeof actual.platformRequestWithMeta>
+    ) => {
+      platformRequestWithMetaSpy(...args);
+      return actual.platformRequestWithMeta(...args);
+    },
+  };
+});
+
 afterEach(() => {
   process.env.PLATFORM_API_ORIGIN = ORIGINAL_ORIGIN;
   vi.unstubAllGlobals();
   vi.resetModules();
+  platformRequestWithMetaSpy.mockClear();
 });
 
 async function load() {
@@ -47,17 +71,8 @@ async function load() {
 }
 
 describe("readToolsDirectory", () => {
-  it("returns the built-in directory when PLATFORM_API_ORIGIN is unset, and never touches the network", async () => {
+  it("returns the built-in directory when PLATFORM_API_ORIGIN is unset, and never asks the platform API", async () => {
     delete process.env.PLATFORM_API_ORIGIN;
-    // The doc comment claims this phase reverts by removing one variable —
-    // that only holds if the early return never reaches `fetch`. Without this
-    // spy, deleting `if (!platformApiOrigin()) return builtin();` would still
-    // pass every other assertion here: `platformCall` in lib/platform-api.ts
-    // independently re-checks the origin and throws before any fetch, so the
-    // catch in `readToolsDirectory` produces byte-identical output by a
-    // different route. This proves the guard at THIS layer, not just downstream.
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
     const { readToolsDirectory } = await load();
 
     const directory = await readToolsDirectory();
@@ -73,7 +88,9 @@ describe("readToolsDirectory", () => {
       "cost",
       "reference",
     ]);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    // Proves the loader's OWN early return, not a downstream guard: see the
+    // comment on `platformRequestWithMetaSpy` above.
+    expect(platformRequestWithMetaSpy).not.toHaveBeenCalled();
   });
 
   it("reads the platform API when the origin is set", async () => {
