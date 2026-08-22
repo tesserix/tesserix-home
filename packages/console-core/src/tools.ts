@@ -4,7 +4,18 @@
  * Fifteen-odd tools run behind `*.tesserix.app` and nothing lists them. The
  * answer to "where do I look at X" is currently tribal knowledge or a browser
  * history search. This is the cheapest demonstration of the console's thesis —
- * one place to control every product — and it needs no backend at all.
+ * one place to control every product.
+ *
+ * As of #318 this list is the FALLBACK, not the source of truth: the live
+ * directory is `platform_tools` in tesserix_admin, served at
+ * /v1/platform/tools and read by apps/console/lib/tools-directory.ts. This
+ * literal is what renders when PLATFORM_API_ORIGIN is unset — which is
+ * byte-for-byte the pre-#318 behaviour — and when the API cannot be reached,
+ * in which case the page says so.
+ *
+ * Keep it in step with migration 0031's seed. A tool added through the API
+ * will not appear here, and should not; a tool added HERE and not to the seed
+ * is a fallback that disagrees with the live list for no reason.
  *
  * DELIBERATELY NO STATUS. Whether a tool is *up* belongs to the health strip.
  * Mixing the two invites the failure the spec warns about: a tile rendering
