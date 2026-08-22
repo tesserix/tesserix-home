@@ -83,6 +83,27 @@ func TestUnavailableIsDistinctFromInternal(t *testing.T) {
 	}
 }
 
+// NotImplemented is the "this deployment measures nothing here" answer, and it
+// has to be a status of its own: the console maps 501 to
+// `instrumentation-unavailable` and anything else to an error an operator
+// would retry. A handler hand-rolling the status would be one that drifts.
+func TestNotImplementedIsFiveOhOneAndDistinctFromUnavailable(t *testing.T) {
+	got := httpx.NotImplemented("no products are configured")
+
+	if got.StatusCode != http.StatusNotImplemented {
+		t.Errorf("StatusCode = %d, want 501", got.StatusCode)
+	}
+	if got.Code != httpx.CodeNotImplemented {
+		t.Errorf("Code = %q, want %q", got.Code, httpx.CodeNotImplemented)
+	}
+	if got.StatusCode == httpx.Unavailable("x").StatusCode {
+		t.Error("NotImplemented and Unavailable must be distinguishable by status: 'never configured' is not 'temporarily unreachable'")
+	}
+	if got.Message != "no products are configured" {
+		t.Errorf("Message = %q, want the message it was given", got.Message)
+	}
+}
+
 // The constructors get assigned to package-level sentinels. If WithDetails
 // mutated in place, one handler adding a field would edit every future
 // response sharing that value.

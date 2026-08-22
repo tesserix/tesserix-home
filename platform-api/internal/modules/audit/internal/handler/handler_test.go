@@ -49,6 +49,8 @@ func tokenFor(roles ...string) *auth.Claims {
 type api struct {
 	handler http.Handler
 	t       *testing.T
+	// asked receives the URL the stand-in product was called with.
+	asked chan string
 }
 
 // serve builds an api with an operator holding `platform`, the capability
@@ -60,9 +62,26 @@ func serve(t *testing.T) *api { t.Helper(); return serveAs(t, "platform") }
 // mark8ly's /admin/audit-logs endpoint, returning one row.
 func serveAs(t *testing.T, roles ...string) *api {
 	t.Helper()
+	return serveSlugs(t, []string{productSlug}, roles...)
+}
+
+// serveNoProducts mounts the same module with an EMPTY registry: the shape a
+// deployment has before FEDERATION_PRODUCTS is set.
+func serveNoProducts(t *testing.T) *api {
+	t.Helper()
+	return serveSlugs(t, nil, "platform")
+}
+
+// serveSlugs is the composition both of the above share. The stand-in product
+// records the URL it was asked for, so a test can assert on the query the
+// handler forwarded.
+func serveSlugs(t *testing.T, slugs []string, roles ...string) *api {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	asked := make(chan string, 4)
+	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked <- r.URL.String()
 		_, _ = w.Write([]byte(`{"data":[{"id":"1","action":"tenant.suspended","timestamp":"2026-08-22T10:00:00Z"}]}`))
 	}))
 	t.Cleanup(product.Close)
@@ -78,11 +97,11 @@ func serveAs(t *testing.T, roles ...string) *api {
 	// cmd/server composes, line for line.
 	httpx.RegisterModule(mux, verifier, "audit", func(m *http.ServeMux) {
 		audit.Register(m, audit.Config{
-			Fed: fed, Slugs: []string{productSlug}, Verifier: verifier, Log: log,
+			Fed: fed, Slugs: slugs, Verifier: verifier, Log: log,
 		})
 	})
 
-	return &api{handler: httpx.WithMiddleware(mux), t: t}
+	return &api{handler: httpx.WithMiddleware(mux), t: t, asked: asked}
 }
 
 type response struct {
@@ -203,5 +222,95 @@ func TestGetAuditWithNoAuthorizationHeaderIsFourOhOne(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("no token = %d, want 401", rec.Code)
+	}
+}
+
+// TestGetAuditWithNoConfiguredProductsIsFiveOhOne is I2's guard at the HTTP
+// surface. Before the fix an empty registry fanned out to nothing and answered
+// 200 with an empty timeline, so a misconfigured deployment was
+// indistinguishable from a quiet estate — and the console's
+// `instrumentation-unavailable` state, which reads exactly this status, could
+// never be reached on this transport.
+func TestGetAuditWithNoConfiguredProductsIsFiveOhOne(t *testing.T) {
+	a := serveNoProducts(t)
+
+	got := a.get("/v1/audit")
+
+	if got.status != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501 — an unconfigured registry must not read as 'nothing happened': %s", got.status, got.raw)
+	}
+	if strings.Contains(got.raw, `"entries"`) {
+		t.Errorf("body = %s, want no entries key: an empty timeline is the very claim this status refuses to make", got.raw)
+	}
+}
+
+// The bounds are DEFAULTED, not omitted, so a direct API caller is given the
+// same window the console asks for rather than an unbounded read the
+// federation client truncates at 1 MiB.
+func TestGetAuditDefaultsTheBoundsEachProductIsAskedFor(t *testing.T) {
+	a := serve(t)
+
+	if got := a.get("/v1/audit"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+
+	asked := <-a.asked
+	if !strings.Contains(asked, "limit=200") || !strings.Contains(asked, "since_hours=720") {
+		t.Errorf("product was asked for %q, want limit=200 and since_hours=720", asked)
+	}
+}
+
+func TestGetAuditForwardsTheBoundsItWasGiven(t *testing.T) {
+	a := serve(t)
+
+	if got := a.get("/v1/audit?limit=5&since_hours=24"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+
+	asked := <-a.asked
+	if !strings.Contains(asked, "limit=5") || !strings.Contains(asked, "since_hours=24") {
+		t.Errorf("product was asked for %q, want the caller's limit=5 and since_hours=24", asked)
+	}
+}
+
+// Junk is refused rather than coerced: a silently defaulted `?limit=abc` is a
+// truncated audit timeline nobody was told about, which is the same class of
+// lie as an unknown `?source=` returning zero rows.
+func TestGetAuditRefusesBoundsItCannotRead(t *testing.T) {
+	for _, query := range []string{
+		"?limit=abc",
+		"?limit=0",
+		"?limit=-1",
+		"?since_hours=soon",
+		"?since_hours=0",
+		"?window=7d",
+	} {
+		t.Run(query, func(t *testing.T) {
+			got := serve(t).get("/v1/audit" + query)
+			if got.status < 400 || got.status >= 500 {
+				t.Fatalf("GET /v1/audit%s = %d, want a 4xx refusal: %s", query, got.status, got.raw)
+			}
+			if strings.Contains(got.raw, `"entries"`) {
+				t.Errorf("body = %s, want no entries key on a refusal", got.raw)
+			}
+		})
+	}
+}
+
+// The whole point of I1, asserted through the real router: the row a product
+// serves with a bare id reaches the console namespaced with the product that
+// served it, exactly as apps/web's producer has always emitted it.
+func TestGetAuditNamespacesRowIdsWithTheirSource(t *testing.T) {
+	a := serve(t)
+
+	got := a.get("/v1/audit").data(t)
+
+	entries, _ := got["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %v, want 1", got["entries"])
+	}
+	first, _ := entries[0].(map[string]any)
+	if first["id"] != productSlug+":1" {
+		t.Errorf("id = %v, want %q — a bare id collides with any other product's integer keys", first["id"], productSlug+":1")
 	}
 }
