@@ -47,8 +47,17 @@ async function load() {
 }
 
 describe("readToolsDirectory", () => {
-  it("returns the built-in directory when PLATFORM_API_ORIGIN is unset", async () => {
+  it("returns the built-in directory when PLATFORM_API_ORIGIN is unset, and never touches the network", async () => {
     delete process.env.PLATFORM_API_ORIGIN;
+    // The doc comment claims this phase reverts by removing one variable —
+    // that only holds if the early return never reaches `fetch`. Without this
+    // spy, deleting `if (!platformApiOrigin()) return builtin();` would still
+    // pass every other assertion here: `platformCall` in lib/platform-api.ts
+    // independently re-checks the origin and throws before any fetch, so the
+    // catch in `readToolsDirectory` produces byte-identical output by a
+    // different route. This proves the guard at THIS layer, not just downstream.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
     const { readToolsDirectory } = await load();
 
     const directory = await readToolsDirectory();
@@ -64,6 +73,7 @@ describe("readToolsDirectory", () => {
       "cost",
       "reference",
     ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("reads the platform API when the origin is set", async () => {
@@ -72,19 +82,40 @@ describe("readToolsDirectory", () => {
       "fetch",
       vi.fn(async (url: string) => {
         const body = url.includes("tool-groups")
-          ? { success: true, data: { groups: [{ key: "identity", label: "Identity", sort_order: 1 }] } }
+          ? {
+              success: true,
+              data: {
+                groups: [
+                  { key: "identity", label: "Identity and secrets", sort_order: 1 },
+                  { key: "observability", label: "Observability", sort_order: 2 },
+                ],
+              },
+            }
           : {
               success: true,
               data: {
                 tools: [
                   {
-                    id: "1",
+                    id: "11111111-1111-1111-1111-111111111111",
                     name: "Zitadel",
                     subdomain: "auth",
-                    purpose: "Identity platform.",
+                    purpose: "Identity platform. Operators, organisations, projects and roles.",
                     note: null,
                     group_key: "identity",
                     sort_order: 1,
+                  },
+                  {
+                    id: "22222222-2222-2222-2222-222222222222",
+                    name: "Secret service",
+                    subdomain: "secret-service",
+                    purpose:
+                      "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
+                    // Real, non-null value from the golden file, not every
+                    // fixture row's `null` — a misspelled key here would
+                    // otherwise pass every other assertion in this suite.
+                    note: "Separate login — independent of the platform's identity on purpose.",
+                    group_key: "identity",
+                    sort_order: 2,
                   },
                 ],
               },
@@ -100,10 +131,36 @@ describe("readToolsDirectory", () => {
     const directory = await readToolsDirectory();
 
     expect(directory.source).toBe("platform-api");
-    expect(directory.tools).toHaveLength(1);
-    // snake_case on the wire, camelCase in the console: the translation
-    // happens once, here, rather than in each renderer.
-    expect(directory.tools[0]).toMatchObject({ subdomain: "auth", groupKey: "identity" });
+    // Groups asserted in full, `label` included: a defect isolated to
+    // `label: str(row, "label")` passed every earlier version of this suite.
+    expect(directory.groups).toEqual([
+      { key: "identity", label: "Identity and secrets" },
+      { key: "observability", label: "Observability" },
+    ]);
+    expect(directory.tools).toHaveLength(2);
+    // Every field asserted individually and with distinct values, so a swap
+    // between two same-typed fields (id/name/purpose/subdomain are all
+    // strings) is detectable rather than silently passing `toMatchObject`.
+    expect(directory.tools[0]).toEqual({
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "Zitadel",
+      subdomain: "auth",
+      purpose: "Identity platform. Operators, organisations, projects and roles.",
+      note: null,
+      groupKey: "identity",
+    });
+    // Proves `note` actually survives the wire: every other fixture in this
+    // suite carries `note: null`, which `nullableStr` would also produce for
+    // a misspelled key.
+    expect(directory.tools[1]).toEqual({
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "Secret service",
+      subdomain: "secret-service",
+      purpose:
+        "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
+      note: "Separate login — independent of the platform's identity on purpose.",
+      groupKey: "identity",
+    });
   });
 
   it("falls back to the built-in directory, LABELLED, when the API fails", async () => {
@@ -172,5 +229,83 @@ describe("readToolsDirectory", () => {
     // renders whatever it is handed and an orphan would be a card under no
     // heading. Dropped rather than shown under an invented one.
     expect(directory.tools.map((t) => t.subdomain)).toEqual(["auth"]);
+  });
+
+  it("falls back when a single tool's note is the wrong type", async () => {
+    // Exercises `nullableStr`'s own throw branch directly, rather than only
+    // `arrayAt`'s top-level shape check — a `note` that is neither a string
+    // nor null/undefined (here, a number) must not reach the renderer.
+    process.env.PLATFORM_API_ORIGIN = "https://api.tesserix.test";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = url.includes("tool-groups")
+          ? { success: true, data: { groups: [{ key: "identity", label: "Identity", sort_order: 1 }] } }
+          : {
+              success: true,
+              data: {
+                tools: [
+                  {
+                    id: "1",
+                    name: "Zitadel",
+                    subdomain: "auth",
+                    purpose: "x",
+                    note: 12345,
+                    group_key: "identity",
+                    sort_order: 1,
+                  },
+                ],
+              },
+            };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const { readToolsDirectory } = await load();
+
+    const directory = await readToolsDirectory();
+
+    expect(directory.source).toBe("builtin");
+    expect(directory.tools).toHaveLength(15);
+  });
+
+  it("falls back when a single tool has no id", async () => {
+    // Exercises `str`'s own throw branch directly: a missing `id` must not
+    // reach the renderer as `undefined`.
+    process.env.PLATFORM_API_ORIGIN = "https://api.tesserix.test";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const body = url.includes("tool-groups")
+          ? { success: true, data: { groups: [{ key: "identity", label: "Identity", sort_order: 1 }] } }
+          : {
+              success: true,
+              data: {
+                tools: [
+                  {
+                    name: "Zitadel",
+                    subdomain: "auth",
+                    purpose: "x",
+                    note: null,
+                    group_key: "identity",
+                    sort_order: 1,
+                  },
+                ],
+              },
+            };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    const { readToolsDirectory } = await load();
+
+    const directory = await readToolsDirectory();
+
+    expect(directory.source).toBe("builtin");
+    expect(directory.tools).toHaveLength(15);
   });
 });
