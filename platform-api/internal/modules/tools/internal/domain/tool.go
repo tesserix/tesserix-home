@@ -51,8 +51,8 @@ type Tool struct {
 	SortOrder *int
 }
 
-// Normalise trims, lower-cases the subdomain and collapses a blank note to
-// absence.
+// Normalise trims, lower-cases the subdomain and group key, and collapses a
+// blank note to absence.
 //
 // Called BEFORE Validate, always: a note of three spaces is not an over-long
 // note, and refusing it for its length would name the wrong problem.
@@ -60,7 +60,7 @@ func (t Tool) Normalise() Tool {
 	t.Name = strings.TrimSpace(t.Name)
 	t.Subdomain = strings.ToLower(strings.TrimSpace(t.Subdomain))
 	t.Purpose = strings.TrimSpace(t.Purpose)
-	t.GroupKey = strings.TrimSpace(t.GroupKey)
+	t.GroupKey = strings.ToLower(strings.TrimSpace(t.GroupKey))
 	if t.Note != nil {
 		trimmed := strings.TrimSpace(*t.Note)
 		if trimmed == "" {
