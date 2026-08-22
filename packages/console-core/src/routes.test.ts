@@ -118,7 +118,9 @@ describe("route capability", () => {
     expect(route.capability).toBe("platform");
     // Deliberately console-only: apps/web has no directory management and is
     // being retired. A `web` path here would put a link in a rail that leads
-    // nowhere.
-    expect(route.web).toBeUndefined();
+    // nowhere. Written as a key check because ROUTES is const-narrowed — the
+    // literal type has no `web` property at all, so reading `.web` is a
+    // compile error rather than an `undefined`.
+    expect("web" in route).toBe(false);
   });
 });
