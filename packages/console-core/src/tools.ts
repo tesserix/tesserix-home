@@ -160,7 +160,7 @@ export const INTERNAL_TOOLS: readonly InternalTool[] = [
  * is no fallback to `tesserix.app` on purpose: a missing value should surface
  * as a configuration error, not as a silent link to prod.
  */
-export function toolUrl(tool: InternalTool, baseDomain: string): string {
+export function toolUrl(tool: { readonly subdomain: string }, baseDomain: string): string {
   return `https://${tool.subdomain}.${baseDomain}`;
 }
 
