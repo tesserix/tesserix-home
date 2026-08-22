@@ -79,6 +79,15 @@ export function InternalTools({
         // runtime for the first time — the data tests that used to forbid this
         // case applied only to the code literal. This is the only thing left
         // standing between an empty group and a bare heading.
+        //
+        // A declared-but-empty group would render as a heading over nothing,
+        // which reads as a loading failure rather than an absence.
+        //
+        // The MANAGEMENT surface deliberately does the opposite and shows
+        // empty groups (components/tools-admin/tools-manager.tsx): a group an
+        // operator just created is empty, and hiding it there would make
+        // creation look like it silently failed. Two surfaces, two audiences,
+        // one deliberate divergence — not an inconsistency to reconcile.
         if (tools.length === 0) return null;
         return (
           <div key={group.key} className="flex flex-col gap-2">

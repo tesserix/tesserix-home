@@ -132,8 +132,8 @@ describe("routeEntries under capability enforcement", () => {
 
 describe("toolEntries", () => {
   const rows: DirectoryTool[] = [
-    { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity" },
-    { id: "2", name: "Kargo", subdomain: "kargo", purpose: "Promotes images.", note: null, groupKey: "delivery" },
+    { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity", sortOrder: 10 },
+    { id: "2", name: "Kargo", subdomain: "kargo", purpose: "Promotes images.", note: null, groupKey: "delivery", sortOrder: 10 },
   ];
 
   it("builds an entry per supplied row rather than from the code literal", () => {

@@ -6,12 +6,12 @@ import type { ToolsDirectory } from "@/lib/tools-directory";
 const directory = (source: ToolsDirectory["source"]): ToolsDirectory => ({
   source,
   groups: [
-    { key: "identity", label: "Identity and secrets" },
-    { key: "cost", label: "Cost" },
+    { key: "identity", label: "Identity and secrets", sortOrder: 10 },
+    { key: "cost", label: "Cost", sortOrder: 20 },
   ],
   tools: [
-    { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity.", note: null, groupKey: "identity" },
-    { id: "2", name: "Kubecost", subdomain: "kubecost", purpose: "Spend.", note: null, groupKey: "cost" },
+    { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity.", note: null, groupKey: "identity", sortOrder: 10 },
+    { id: "2", name: "Kubecost", subdomain: "kubecost", purpose: "Spend.", note: null, groupKey: "cost", sortOrder: 10 },
   ],
 });
 
@@ -54,9 +54,15 @@ describe("InternalTools", () => {
   it("skips a group with no tools rather than rendering a bare heading", () => {
     const empty: ToolsDirectory = {
       source: "platform-api",
-      groups: [{ key: "identity", label: "Identity and secrets" }, { key: "ghost", label: "Ghost" }],
+      groups: [
+        { key: "identity", label: "Identity and secrets", sortOrder: 10 },
+        { key: "ghost", label: "Ghost", sortOrder: 20 },
+      ],
       tools: [
-        { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity.", note: null, groupKey: "identity" },
+        {
+          id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity.",
+          note: null, groupKey: "identity", sortOrder: 10,
+        },
       ],
     };
 

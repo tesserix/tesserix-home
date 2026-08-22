@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { webPath, mobilePath, isRouteActive, routeCapability, ROUTE_IDS } from "./routes";
+import { webPath, mobilePath, isRouteActive, routeCapability, ROUTE_IDS, ROUTES } from "./routes";
 
 describe("route identity", () => {
   it("prefixes the same id differently per renderer", () => {
@@ -24,6 +24,31 @@ describe("route identity", () => {
     // "/admin/apps/kora/foods" is a string prefix of it even though it is
     // not a nested route. Matching must respect segment boundaries.
     expect(isRouteActive("/admin/apps/kora/foodsXYZ", "kora.foods", "web")).toBe(false);
+  });
+
+  it("is never active for a renderer the route has no path for", () => {
+    // "platform.tools" has no `mobile` path at all (see RouteEntry.mobile) —
+    // without a guard, `target` is `undefined` and the string-prefix checks
+    // fall through to comparing against the literal "undefined/", which can
+    // spuriously match. The honest answer for "no path to be active against"
+    // is `false`, not a string match on the word "undefined".
+    expect(isRouteActive("/platform/tools", "platform.tools", "mobile")).toBe(false);
+    // Same trap on the `web` prefix — "platform.tools" has no `web` path
+    // either, and this path was already reachable before `mobile` became
+    // optional (`web` always was), so it is equally worth pinning here.
+    expect(isRouteActive("/platform/tools", "platform.tools", "web")).toBe(false);
+  });
+
+  it("does not match a path that collides with the string an absent target stringifies to", () => {
+    // Deliberately absurd input, and that is the point: `platform.tools` has no
+    // `mobile` or `web` path, so without the undefined guard `target`
+    // stringifies into the template as "undefined/" and ANY path under a
+    // literal "undefined/" prefix would match. A tidier currentPath cannot
+    // tell the guarded and unguarded versions apart — both answer `false` for
+    // it — so a test built on one would pass against the very bug it exists
+    // to catch. This is the ablation that actually distinguishes them.
+    expect(isRouteActive("undefined/anything", "platform.tools", "mobile")).toBe(false);
+    expect(isRouteActive("undefined/anything", "platform.tools", "web")).toBe(false);
   });
 });
 
@@ -85,5 +110,17 @@ describe("route capability", () => {
     // fails when that happens.
     const elevated = ROUTE_IDS.filter((id) => routeCapability(id) !== "read");
     expect(elevated.length).toBeGreaterThan(0);
+  });
+
+  it("declares the tools surface on the console only, gated on platform", () => {
+    const route = ROUTES["platform.tools"];
+    expect(route.console).toBe("/platform/tools");
+    expect(route.capability).toBe("platform");
+    // Deliberately console-only: apps/web has no directory management and is
+    // being retired. A `web` path here would put a link in a rail that leads
+    // nowhere. Written as a key check because ROUTES is const-narrowed — the
+    // literal type has no `web` property at all, so reading `.web` is a
+    // compile error rather than an `undefined`.
+    expect("web" in route).toBe(false);
   });
 });

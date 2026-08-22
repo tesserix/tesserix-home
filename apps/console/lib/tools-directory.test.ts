@@ -103,8 +103,8 @@ describe("readToolsDirectory", () => {
               success: true,
               data: {
                 groups: [
-                  { key: "identity", label: "Identity and secrets", sort_order: 1 },
-                  { key: "observability", label: "Observability", sort_order: 2 },
+                  { key: "identity", label: "Identity and secrets", sort_order: 5 },
+                  { key: "observability", label: "Observability", sort_order: 15 },
                 ],
               },
             }
@@ -119,7 +119,7 @@ describe("readToolsDirectory", () => {
                     purpose: "Identity platform. Operators, organisations, projects and roles.",
                     note: null,
                     group_key: "identity",
-                    sort_order: 1,
+                    sort_order: 10,
                   },
                   {
                     id: "22222222-2222-2222-2222-222222222222",
@@ -132,7 +132,7 @@ describe("readToolsDirectory", () => {
                     // otherwise pass every other assertion in this suite.
                     note: "Separate login — independent of the platform's identity on purpose.",
                     group_key: "identity",
-                    sort_order: 2,
+                    sort_order: 20,
                   },
                 ],
               },
@@ -151,8 +151,8 @@ describe("readToolsDirectory", () => {
     // Groups asserted in full, `label` included: a defect isolated to
     // `label: str(row, "label")` passed every earlier version of this suite.
     expect(directory.groups).toEqual([
-      { key: "identity", label: "Identity and secrets" },
-      { key: "observability", label: "Observability" },
+      { key: "identity", label: "Identity and secrets", sortOrder: 5 },
+      { key: "observability", label: "Observability", sortOrder: 15 },
     ]);
     expect(directory.tools).toHaveLength(2);
     // Every field asserted individually and with distinct values, so a swap
@@ -165,6 +165,7 @@ describe("readToolsDirectory", () => {
       purpose: "Identity platform. Operators, organisations, projects and roles.",
       note: null,
       groupKey: "identity",
+      sortOrder: 10,
     });
     // Proves `note` actually survives the wire: every other fixture in this
     // suite carries `note: null`, which `nullableStr` would also produce for
@@ -177,7 +178,30 @@ describe("readToolsDirectory", () => {
         "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
       note: "Separate login — independent of the platform's identity on purpose.",
       groupKey: "identity",
+      sortOrder: 20,
     });
+    // Non-contiguous on purpose: `[1, 2]` would pass even if the loader
+    // invented the values from the array index, which is the exact bug this
+    // task prevents.
+    expect(directory.tools.map((t) => t.sortOrder)).toEqual([10, 20]);
+    expect(directory.groups.map((g) => g.sortOrder)).toEqual([5, 15]);
+  });
+
+  it("gives the built-in list positions too, so the type has no hole", async () => {
+    delete process.env.PLATFORM_API_ORIGIN;
+    const { readToolsDirectory } = await load();
+
+    const directory = await readToolsDirectory();
+
+    // 1-based declaration order. The built-in list is never editable — the
+    // surface is hidden when the origin is unset — but a reader should not
+    // have to reason about a missing field.
+    //
+    // The first THREE, not just the first: `[0].sortOrder === 1` alone would
+    // still pass against a hardcoded `sortOrder: 1` on every entry, which is
+    // not what "positions" means.
+    expect(directory.groups[0].sortOrder).toBe(1);
+    expect(directory.tools.slice(0, 3).map((t) => t.sortOrder)).toEqual([1, 2, 3]);
   });
 
   it("falls back to the built-in directory, LABELLED, when the API fails", async () => {

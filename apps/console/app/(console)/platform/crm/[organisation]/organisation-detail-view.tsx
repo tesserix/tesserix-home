@@ -1,18 +1,12 @@
 "use client";
 
-import { useState, useTransition, type ReactNode } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Badge,
   Button,
   Callout,
   CalloutDescription,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   Input,
   Label,
   Select,
@@ -21,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@tesserix/web";
+import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import { CRM_STAGES, requiresProduct, type CrmStage } from "@/lib/crm";
 import type {
   ActivityRow,
@@ -136,67 +131,6 @@ function ConfirmTypedName({
   );
 }
 
-/**
- * The shared destructive-confirmation shell both hard-delete controls use.
- *
- * Built on `Dialog`'s own primitives, not the packaged `ConfirmDialog`: its
- * confirm button doesn't accept `aria-describedby`, and that association —
- * pointing the button at the same status text the typed-name field
- * describes itself with — is exactly what a screen-reader operator needs to
- * learn why a mistyped name leaves the button unreachable.
- */
-function DestructiveConfirmDialog({
-  open,
-  onOpenChange,
-  title,
-  description,
-  confirmLabel,
-  confirmId,
-  statusId,
-  loading,
-  confirmDisabled,
-  onConfirm,
-  children,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  description: string;
-  confirmLabel: string;
-  confirmId: string;
-  statusId: string;
-  loading: boolean;
-  confirmDisabled: boolean;
-  onConfirm: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {children}
-        <DialogFooter>
-          <Button type="button" variant="outline" disabled={loading} onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            id={confirmId}
-            type="button"
-            variant="destructive"
-            aria-describedby={statusId}
-            disabled={loading || confirmDisabled}
-            onClick={onConfirm}
-          >
-            {loading ? "Please wait…" : confirmLabel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 /**
  * A contact's "forget me" control (DPDP erasure — #213/#154).

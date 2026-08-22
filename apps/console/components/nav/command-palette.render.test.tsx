@@ -15,12 +15,12 @@ import type { DirectoryTool } from "@/lib/tools-directory";
 // Cost estimator) has to be supplied here rather than assumed from the
 // code literal in `@tesserix/console-core`.
 const TOOL_ROWS: DirectoryTool[] = [
-  { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity" },
-  { id: "2", name: "Grafana", subdomain: "grafana", purpose: "Dashboards and charts over the metrics pipeline.", note: null, groupKey: "observability" },
-  { id: "3", name: "Kargo", subdomain: "kargo", purpose: "Promotes images between stages.", note: null, groupKey: "delivery" },
-  { id: "4", name: "Kubecost", subdomain: "kubecost", purpose: "Cluster spend by namespace and workload.", note: null, groupKey: "cost" },
-  { id: "5", name: "Cost estimator", subdomain: "costestimator", purpose: "Models the cost of a change before making it.", note: null, groupKey: "cost" },
-  { id: "6", name: "Docs", subdomain: "docs", purpose: "Engineering documentation.", note: null, groupKey: "reference" },
+  { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity", sortOrder: 10 },
+  { id: "2", name: "Grafana", subdomain: "grafana", purpose: "Dashboards and charts over the metrics pipeline.", note: null, groupKey: "observability", sortOrder: 10 },
+  { id: "3", name: "Kargo", subdomain: "kargo", purpose: "Promotes images between stages.", note: null, groupKey: "delivery", sortOrder: 10 },
+  { id: "4", name: "Kubecost", subdomain: "kubecost", purpose: "Cluster spend by namespace and workload.", note: null, groupKey: "cost", sortOrder: 10 },
+  { id: "5", name: "Cost estimator", subdomain: "costestimator", purpose: "Models the cost of a change before making it.", note: null, groupKey: "cost", sortOrder: 20 },
+  { id: "6", name: "Docs", subdomain: "docs", purpose: "Engineering documentation.", note: null, groupKey: "reference", sortOrder: 10 },
 ];
 
 const PROPS = {
@@ -226,7 +226,13 @@ describe("ConsoleCommandPalette", () => {
     // queries against `value`, so typing the bare word "tool" matched every
     // tool entry regardless of its actual name or purpose. None of the tool
     // names, subdomains or groups in the fixture contain the substring
-    // "tool", so a correctly-scoped `value` returns zero tool options here.
+    // "tool", so a correctly-scoped `value` returns zero tool DIRECTORY
+    // options here.
+    //
+    // "Platform · Tools" (`platform.tools`, the directory management route
+    // itself) is the one legitimate hit: its route id genuinely contains
+    // "tool", so it is not the collision this test guards against — it is
+    // typing "tool" and finding the page about tools, which is correct.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -246,8 +252,8 @@ describe("ConsoleCommandPalette", () => {
     await waitFor(() =>
       expect(screen.queryByText(/searching tickets/i)).not.toBeInTheDocument(),
     );
-    expect(await screen.findByText(/nothing matching/i)).toBeInTheDocument();
-    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(await screen.findByRole("option", { name: /Platform · Tools/i })).toBeInTheDocument();
+    expect(screen.queryAllByRole("option")).toHaveLength(1);
   });
 
   it("does not claim nothing matches while a full list of routes is showing", async () => {
@@ -464,7 +470,10 @@ describe("ConsoleCommandPalette", () => {
       <ConsoleCommandPalette
         {...PROPS}
         tools={[
-          { id: "9", name: "Tempo", subdomain: "tempo", purpose: "Traces.", note: null, groupKey: "observability" },
+          {
+            id: "9", name: "Tempo", subdomain: "tempo", purpose: "Traces.",
+            note: null, groupKey: "observability", sortOrder: 10,
+          },
         ]}
       />,
     );
