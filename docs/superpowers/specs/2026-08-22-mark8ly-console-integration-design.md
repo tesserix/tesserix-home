@@ -145,7 +145,7 @@ Three layers. The middle one is new.
 ```
 apps/console          renders; knows contracts, never products
       |  HTTP, operator Zitadel token + capability
-platform-api          THE AGGREGATOR (new: federation module)
+platform-api          THE AGGREGATOR (new: federation kernel package)
       |  HTTP, signed, operator identity bound
 mark8ly / fe3dr / …   each implements the contracts it declares
 ```
@@ -154,9 +154,15 @@ mark8ly / fe3dr / …   each implements the contracts it declares
 `lib/platform-api.ts`. One auth model, one error shape, one place a product
 outage is caught and reported as a partial result.
 
-**`platform-api` grows a `federation` module** alongside `aiusage`, `crm`,
-`tickets` and `tools`: contract definitions, the per-product client registry,
-the fan-out, and the partial-failure envelope. That envelope is
+**`platform-api` grows federation as KERNEL, not as a module.** It lives in
+`internal/platform/federation` beside `httpx` and `auth` — the per-product
+client registry, the client, and the fan-out — and the modules that read other
+products consume it. It is deliberately *not* a sibling of `aiusage`, `crm`,
+`tickets` and `tools`: a module may not import another module (see
+`internal/modules/doc.go`), and audit needs it today with tenants, billing and
+compliance to follow. What each such module owns is its own contract shape and
+its own routes; `audit` is the first, serving `GET /v1/audit`. The
+partial-failure envelope those modules return is
 `{ data, failures: [{ product, error }] }` — the shape `lib/audit.ts` already
 consumes, so this adopts a proven envelope rather than inventing one.
 
