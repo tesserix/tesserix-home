@@ -1,0 +1,16 @@
+{
+  "success": true,
+  "data": {
+    "tool": {
+      "id": "<uuid>",
+      "name": "Tempo",
+      "subdomain": "tempo",
+      "purpose": "Distributed traces.",
+      "note": null,
+      "group_key": "observability",
+      "sort_order": 7
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

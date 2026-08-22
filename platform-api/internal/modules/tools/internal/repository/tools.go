@@ -238,3 +238,80 @@ func DeleteTool(ctx context.Context, e Execer, id string) (Tool, error) {
 	}
 	return t, nil
 }
+
+// NextGroupSortOrder is the position a new group takes: after the existing
+// ones. A new group must not silently displace identity from the top.
+func NextGroupSortOrder(ctx context.Context, q Queryer) (int, error) {
+	var next int
+	err := q.QueryRow(ctx,
+		`SELECT COALESCE(MAX(sort_order), 0) + 1 FROM platform_tool_groups`).Scan(&next)
+	return next, err
+}
+
+// InsertGroup adds a heading.
+func InsertGroup(ctx context.Context, e Execer, key, label string, sortOrder int) (Group, error) {
+	var g Group
+	err := e.QueryRow(ctx,
+		`INSERT INTO platform_tool_groups (key, label, sort_order) VALUES ($1, $2, $3)
+		 RETURNING key, label, sort_order`, key, label, sortOrder).
+		Scan(&g.Key, &g.Label, &g.SortOrder)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Group{}, ErrDuplicateGroup
+		}
+		return Group{}, err
+	}
+	return g, nil
+}
+
+// ErrDuplicateGroup is the group primary key, named.
+var ErrDuplicateGroup = errors.New("a group with this key already exists")
+
+// UpdateGroup changes a heading's label or position. The KEY is not
+// changeable — see the handler.
+func UpdateGroup(ctx context.Context, e Execer, key string, label *string, sortOrder *int) (Group, error) {
+	var g Group
+	err := e.QueryRow(ctx,
+		`UPDATE platform_tool_groups
+		    SET label      = COALESCE($2, label),
+		        sort_order = COALESCE($3, sort_order),
+		        updated_at = now()
+		  WHERE key = $1
+		RETURNING key, label, sort_order`, key, label, sortOrder).
+		Scan(&g.Key, &g.Label, &g.SortOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Group{}, ErrNoRow
+	}
+	return g, err
+}
+
+// DeleteGroup removes a heading, and is refused by the foreign key if any tool
+// still references it.
+//
+// It maps 23503 ITSELF rather than deferring to classify, and that is the whole
+// point of this function having its own error handling. Migration 0031 defines
+// exactly one foreign key, `platform_tools_group_key_fkey`, and Postgres reports
+// that same constraint name in BOTH directions — inserting a tool into a group
+// that does not exist, and deleting a group that still has tools. Neither the
+// constraint name nor the table name distinguishes them. The DIRECTION is known
+// here at the call site and nowhere else, so this is the only place the
+// distinction can be drawn correctly. classify's 23503 branch means "unknown
+// group", which is right for every caller except this one.
+func DeleteGroup(ctx context.Context, e Execer, key string) (Group, error) {
+	var g Group
+	err := e.QueryRow(ctx,
+		`DELETE FROM platform_tool_groups WHERE key = $1 RETURNING key, label, sort_order`, key).
+		Scan(&g.Key, &g.Label, &g.SortOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Group{}, ErrNoRow
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return Group{}, ErrGroupHasTools
+		}
+		return Group{}, classify(err)
+	}
+	return g, nil
+}

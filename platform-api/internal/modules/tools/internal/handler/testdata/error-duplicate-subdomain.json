@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "a tool with this subdomain already exists"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

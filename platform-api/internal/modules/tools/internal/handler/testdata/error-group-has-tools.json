@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "the group still has tools in it — move or remove them first"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

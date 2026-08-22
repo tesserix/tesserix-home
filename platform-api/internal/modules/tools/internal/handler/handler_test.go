@@ -452,3 +452,87 @@ func TestAWriteRecordsAnAuditRow(t *testing.T) {
 		t.Errorf("actor = %q, want the principal's subject", actor)
 	}
 }
+
+func TestCreatingAGroupAnswers201(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups",
+		`{"key":"security","label":"Security"}`, nil)
+
+	if got.status != http.StatusCreated {
+		t.Fatalf("create group = %d, want 201: %s", got.status, got.raw)
+	}
+	group, _ := got.data(t)["group"].(map[string]any)
+	if group["key"] != "security" {
+		t.Errorf("created group = %v", group)
+	}
+	// Appended rather than inserted at the front: a new group must not
+	// silently displace identity from the top of the page.
+	if order, ok := group["sort_order"].(float64); !ok || order != 6 {
+		t.Errorf("sort_order = %v, want 6 — after the five seeded groups", group["sort_order"])
+	}
+}
+
+func TestDeletingAGroupThatStillHasToolsIs409(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodDelete, "/v1/platform/tool-groups/identity", "", nil)
+
+	// The tools would be orphaned, and ON DELETE RESTRICT refuses. 409 rather
+	// than 500: the request is valid and the state refuses it.
+	if got.status != http.StatusConflict {
+		t.Errorf("deleting a populated group = %d, want 409: %s", got.status, got.raw)
+	}
+	if got := len(a.get("/v1/platform/tool-groups").data(t)["groups"].([]any)); got != 5 {
+		t.Errorf("the refused delete changed the group count to %d", got)
+	}
+}
+
+func TestDeletingAnEmptyGroupSucceeds(t *testing.T) {
+	a := serve(t)
+	a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"security","label":"Security"}`, nil)
+
+	got := a.do(http.MethodDelete, "/v1/platform/tool-groups/security", "", nil)
+
+	if got.status != http.StatusOK {
+		t.Errorf("deleting an empty group = %d, want 200: %s", got.status, got.raw)
+	}
+}
+
+func TestRenamingAGroupsLabelLeavesItsToolsAlone(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPatch, "/v1/platform/tool-groups/cost", `{"label":"Spend"}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch group = %d, want 200: %s", got.status, got.raw)
+	}
+	group, _ := got.data(t)["group"].(map[string]any)
+	if group["label"] != "Spend" {
+		t.Errorf("label = %v, want Spend", group["label"])
+	}
+	// The key is the foreign key. A label change must not move a single tool.
+	tools := a.get("/v1/platform/tools").data(t)["tools"].([]any)
+	inCost := 0
+	for _, raw := range tools {
+		if tool, _ := raw.(map[string]any); tool["group_key"] == "cost" {
+			inCost++
+		}
+	}
+	if inCost != 2 {
+		t.Errorf("cost has %d tools after a label change, want 2", inCost)
+	}
+}
+
+func TestAGroupsKeyCannotBeChanged(t *testing.T) {
+	a := serve(t)
+
+	// Not supported, and refused loudly rather than ignored: every tool in the
+	// group references the key, so renaming it is a migration rather than an
+	// edit. Add the new group, move the tools, remove the old one.
+	got := a.do(http.MethodPatch, "/v1/platform/tool-groups/cost", `{"key":"spend"}`, nil)
+
+	if got.status != http.StatusBadRequest {
+		t.Errorf("changing a group key = %d, want 400: %s", got.status, got.raw)
+	}
+}

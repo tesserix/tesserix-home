@@ -44,18 +44,19 @@ func routeCases() map[string]routeCase {
 			want: http.StatusOK,
 		},
 		"DELETE /v1/platform/tools/{id}": {want: http.StatusOK},
-		// The group writes answer 501 until Task 5. The point of the case is
-		// the REFUSAL half — a stub must be behind the gate too — and `want`
-		// is updated when the writes land.
 		"POST /v1/platform/tool-groups": {
 			body: `{"key":"security","label":"Security"}`,
-			want: http.StatusNotImplemented,
+			want: http.StatusCreated,
 		},
 		"PATCH /v1/platform/tool-groups/{key}": {
 			body: `{"label":"Changed"}`,
-			want: http.StatusNotImplemented,
+			want: http.StatusOK,
 		},
-		"DELETE /v1/platform/tool-groups/{key}": {want: http.StatusNotImplemented},
+		// `reference` is the group `path` fills in, and it has three tools —
+		// so DELETE is refused by the foreign key. The capability test asks
+		// only whether the gate let the request through, and 409 proves it
+		// did as well as 200 would.
+		"DELETE /v1/platform/tool-groups/{key}": {want: http.StatusConflict},
 	}
 }
 

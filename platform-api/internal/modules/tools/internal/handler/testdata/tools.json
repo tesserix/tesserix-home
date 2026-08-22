@@ -1,0 +1,144 @@
+{
+  "success": true,
+  "data": {
+    "tools": [
+      {
+        "id": "<uuid>",
+        "name": "Zitadel",
+        "subdomain": "auth",
+        "purpose": "Identity platform. Operators, organisations, projects and roles.",
+        "note": null,
+        "group_key": "identity",
+        "sort_order": 1
+      },
+      {
+        "id": "<uuid>",
+        "name": "Secret service",
+        "subdomain": "secret-service",
+        "purpose": "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
+        "note": "Separate login — independent of the platform's identity on purpose.",
+        "group_key": "identity",
+        "sort_order": 2
+      },
+      {
+        "id": "<uuid>",
+        "name": "Grafana",
+        "subdomain": "grafana",
+        "purpose": "Dashboards and charts over the metrics pipeline.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 1
+      },
+      {
+        "id": "<uuid>",
+        "name": "Observability",
+        "subdomain": "observability",
+        "purpose": "Tesserix's own OTel trace and log explorer.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 2
+      },
+      {
+        "id": "<uuid>",
+        "name": "Prometheus",
+        "subdomain": "prometheus",
+        "purpose": "Raw metric queries, when a Grafana panel is not enough.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 3
+      },
+      {
+        "id": "<uuid>",
+        "name": "Alertmanager",
+        "subdomain": "alertmanager",
+        "purpose": "Firing alerts, silences and routing.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 4
+      },
+      {
+        "id": "<uuid>",
+        "name": "Kibana",
+        "subdomain": "kibana",
+        "purpose": "Full-text log search across workloads, when you have a message but no trace.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 5
+      },
+      {
+        "id": "<uuid>",
+        "name": "OpenPanel",
+        "subdomain": "analytics",
+        "purpose": "Self-hosted product analytics — page views and events.",
+        "note": null,
+        "group_key": "observability",
+        "sort_order": 6
+      },
+      {
+        "id": "<uuid>",
+        "name": "ArgoCD",
+        "subdomain": "argocd",
+        "purpose": "What is deployed, and whether it matches git.",
+        "note": "Reached outside the Istio gateway; its own login.",
+        "group_key": "delivery",
+        "sort_order": 1
+      },
+      {
+        "id": "<uuid>",
+        "name": "Kargo",
+        "subdomain": "kargo",
+        "purpose": "Promotes images between stages. Where a stuck rollout shows up.",
+        "note": null,
+        "group_key": "delivery",
+        "sort_order": 2
+      },
+      {
+        "id": "<uuid>",
+        "name": "Kubecost",
+        "subdomain": "kubecost",
+        "purpose": "Cluster spend by namespace and workload.",
+        "note": null,
+        "group_key": "cost",
+        "sort_order": 1
+      },
+      {
+        "id": "<uuid>",
+        "name": "Cost estimator",
+        "subdomain": "costestimator",
+        "purpose": "Models the cost of a change before making it.",
+        "note": null,
+        "group_key": "cost",
+        "sort_order": 2
+      },
+      {
+        "id": "<uuid>",
+        "name": "Agentic registry",
+        "subdomain": "aregistry",
+        "purpose": "Registry for agentic artifacts — skills, tools, MCPs, prompts.",
+        "note": null,
+        "group_key": "reference",
+        "sort_order": 1
+      },
+      {
+        "id": "<uuid>",
+        "name": "Design system",
+        "subdomain": "ui",
+        "purpose": "Storybook for @tesserix/web — the components every app is built from.",
+        "note": null,
+        "group_key": "reference",
+        "sort_order": 2
+      },
+      {
+        "id": "<uuid>",
+        "name": "Docs",
+        "subdomain": "docs",
+        "purpose": "Engineering documentation.",
+        "note": null,
+        "group_key": "reference",
+        "sort_order": 3
+      }
+    ]
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

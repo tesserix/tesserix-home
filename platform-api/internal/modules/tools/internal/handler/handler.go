@@ -178,16 +178,103 @@ func unwrap(err error) string {
 	return message
 }
 
-// Replaced in Task 5. A stub rather than an absent route because RouteTable is
-// what registration reads, and a table that does not yet list the writes would
-// make Task 5 a change to the surface rather than a filling-in of it.
-func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
-func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
-func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
+// createGroupRequest is the create body.
+type createGroupRequest struct {
+	Key       string `json:"key"`
+	Label     string `json:"label"`
+	SortOrder *int   `json:"sort_order"`
+}
 
-func (h *Handler) notYet(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteError(w, r, httpx.Error{StatusCode: http.StatusNotImplemented,
-		Code: "NOT_IMPLEMENTED", Message: "this write is not built yet"}, h.log)
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	var request createGroupRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	key, err := h.readKey(r, principal, service.OpGroupCreate, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.CreateGroup(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		request.Key, request.Label, key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
+}
+
+// updateGroupRequest is the group PATCH body.
+//
+// `key` is declared and REFUSED rather than omitted from the struct. Omitted,
+// DisallowUnknownFields would answer "unknown field key", which reads as a
+// typo; declared, the refusal can say why a key cannot be renamed and what to
+// do instead.
+type updateGroupRequest struct {
+	Key       *string `json:"key"`
+	Label     *string `json:"label"`
+	SortOrder *int    `json:"sort_order"`
+}
+
+func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	var request updateGroupRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if request.Key != nil {
+		h.fail(w, r, httpx.BadRequest(
+			"a group's key cannot be changed: every tool in the group references it. "+
+				"Add the new group, move the tools to it, then remove the old one"))
+		return
+	}
+	key, err := h.readKey(r, principal, service.OpGroupUpdate, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	patch := service.GroupPatch{Label: request.Label, SortOrder: request.SortOrder}
+	written, err := h.svc.UpdateGroup(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		r.PathValue("key"), patch, key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
+}
+
+func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	key, err := h.readKey(r, principal, service.OpGroupDelete, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.DeleteGroup(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		r.PathValue("key"), key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
 }
 
 // maxBodyBytes caps a write. A directory entry is a few hundred bytes; this is

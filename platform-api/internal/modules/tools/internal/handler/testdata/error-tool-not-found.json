@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "no tool with this id"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

@@ -73,6 +73,10 @@ const (
 	ActionToolCreated = "platform.tool.created"
 	ActionToolUpdated = "platform.tool.updated"
 	ActionToolDeleted = "platform.tool.deleted"
+
+	ActionGroupCreated = "platform.tool_group.created"
+	ActionGroupUpdated = "platform.tool_group.updated"
+	ActionGroupDeleted = "platform.tool_group.deleted"
 )
 
 // The idempotency operation names, which scope a key to one kind of write. A
@@ -84,6 +88,10 @@ const (
 	OpToolCreate = "platform.tools.create"
 	OpToolUpdate = "platform.tools.update"
 	OpToolDelete = "platform.tools.delete"
+
+	OpGroupCreate = "platform.tool_groups.create"
+	OpGroupUpdate = "platform.tool_groups.update"
+	OpGroupDelete = "platform.tool_groups.delete"
 )
 
 // ToolPatch is a partial change. Every field is a pointer so "absent" and
@@ -126,7 +134,7 @@ func (s *Service) CreateTool(ctx context.Context, actor Actor, tool domain.Tool,
 		stored, err := repository.InsertTool(ctx, tx, tool.Name, tool.Subdomain,
 			tool.Purpose, tool.Note, tool.GroupKey, order)
 		if err != nil {
-			return nil, audit.Entry{}, 0, mapRepoError(err)
+			return nil, audit.Entry{}, 0, mapToolError(err)
 		}
 
 		return ToolPayload{Tool: toolWire(stored)},
@@ -196,7 +204,7 @@ func (s *Service) UpdateTool(ctx context.Context, actor Actor, id string, patch 
 		stored, err := repository.UpdateTool(ctx, tx, id, patch.Name, patch.Subdomain,
 			patch.Purpose, patch.GroupKey, patch.Note, patch.ClearNote, patch.SortOrder)
 		if err != nil {
-			return nil, audit.Entry{}, 0, mapRepoError(err)
+			return nil, audit.Entry{}, 0, mapToolError(err)
 		}
 		return ToolPayload{Tool: toolWire(stored)},
 			audit.Entry{Actor: actor.Subject, Action: ActionToolUpdated, Target: stored.ID,
@@ -212,7 +220,7 @@ func (s *Service) DeleteTool(ctx context.Context, actor Actor, id string,
 	return write.Perform(ctx, s.pool, key, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
 		removed, err := repository.DeleteTool(ctx, tx, id)
 		if err != nil {
-			return nil, audit.Entry{}, 0, mapRepoError(err)
+			return nil, audit.Entry{}, 0, mapToolError(err)
 		}
 		return ToolPayload{Tool: toolWire(removed)},
 			audit.Entry{Actor: actor.Subject, Action: ActionToolDeleted, Target: removed.ID,
@@ -221,14 +229,14 @@ func (s *Service) DeleteTool(ctx context.Context, actor Actor, id string,
 	})
 }
 
-// mapRepoError turns the repository's named constraints into this package's
-// three outcomes.
+// mapToolError turns the repository's named constraints into this package's
+// three outcomes, for a tool write.
 //
 // The distinction that matters: a duplicate subdomain is a CONFLICT because
 // the request was valid and the directory's state refused it, while an unknown
 // group is a REFUSAL because the caller named something that does not exist.
 // A client retries the first after looking, and fixes the second.
-func mapRepoError(err error) error {
+func mapToolError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrNoRow):
 		return fmt.Errorf("%w: no tool with this id", ErrNotFound)
@@ -242,4 +250,89 @@ func mapRepoError(err error) error {
 		return fmt.Errorf("%w: %s", ErrRefused, err)
 	}
 	return err
+}
+
+// mapGroupError is mapToolError's near-copy for a group write. Identical but
+// for the ErrNoRow message: "no group with this key" rather than "no tool
+// with this id". A parameter that exists only to pick a noun is the worse
+// shape than the duplication.
+func mapGroupError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrNoRow):
+		return fmt.Errorf("%w: no group with this key", ErrNotFound)
+	case errors.Is(err, repository.ErrDuplicateGroup):
+		return fmt.Errorf("%w: %s", ErrConflict, err)
+	case errors.Is(err, repository.ErrUnknownGroup):
+		return fmt.Errorf("%w: %s — add the group first, or use one of the existing keys", ErrRefused, err)
+	case errors.Is(err, repository.ErrGroupHasTools):
+		return fmt.Errorf("%w: %s — move or remove them first", ErrConflict, err)
+	case errors.Is(err, repository.ErrInvalidSubdomain):
+		return fmt.Errorf("%w: %s", ErrRefused, err)
+	}
+	return err
+}
+
+// GroupPatch is a partial change to a group. Key is intentionally absent — a
+// group's key cannot be changed through this patch; see the handler.
+type GroupPatch struct {
+	Label     *string
+	SortOrder *int
+}
+
+// CreateGroup adds a heading.
+func (s *Service) CreateGroup(ctx context.Context, actor Actor, key, label string,
+	idemKey *idempotency.Key,
+) (write.Result, error) {
+	return write.Perform(ctx, s.pool, idemKey, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
+		order, err := repository.NextGroupSortOrder(ctx, tx)
+		if err != nil {
+			return nil, audit.Entry{}, 0, err
+		}
+
+		stored, err := repository.InsertGroup(ctx, tx, key, label, order)
+		if err != nil {
+			return nil, audit.Entry{}, 0, mapGroupError(err)
+		}
+
+		return GroupPayload{Group: groupWire(stored)},
+			audit.Entry{
+				Actor:   actor.Subject,
+				Action:  ActionGroupCreated,
+				Target:  stored.Key,
+				Summary: map[string]int{"groups": 1},
+			},
+			http.StatusCreated, nil
+	})
+}
+
+// UpdateGroup applies a partial change.
+func (s *Service) UpdateGroup(ctx context.Context, actor Actor, key string, patch GroupPatch,
+	idemKey *idempotency.Key,
+) (write.Result, error) {
+	return write.Perform(ctx, s.pool, idemKey, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
+		stored, err := repository.UpdateGroup(ctx, tx, key, patch.Label, patch.SortOrder)
+		if err != nil {
+			return nil, audit.Entry{}, 0, mapGroupError(err)
+		}
+		return GroupPayload{Group: groupWire(stored)},
+			audit.Entry{Actor: actor.Subject, Action: ActionGroupUpdated, Target: stored.Key,
+				Summary: map[string]int{"groups": 1}},
+			http.StatusOK, nil
+	})
+}
+
+// DeleteGroup removes a heading and answers with it as it was.
+func (s *Service) DeleteGroup(ctx context.Context, actor Actor, key string,
+	idemKey *idempotency.Key,
+) (write.Result, error) {
+	return write.Perform(ctx, s.pool, idemKey, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
+		removed, err := repository.DeleteGroup(ctx, tx, key)
+		if err != nil {
+			return nil, audit.Entry{}, 0, mapGroupError(err)
+		}
+		return GroupPayload{Group: groupWire(removed)},
+			audit.Entry{Actor: actor.Subject, Action: ActionGroupDeleted, Target: removed.Key,
+				Summary: map[string]int{"groups": 1}},
+			http.StatusOK, nil
+	})
 }
