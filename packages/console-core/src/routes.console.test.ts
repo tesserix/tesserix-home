@@ -26,8 +26,11 @@ describe("consolePath", () => {
     // URLs. It only holds while the shapes agree — see the divergence test.
     // "platform.dashboard" is excluded: it sets an explicit `console: "/"`
     // because the console root, not `/platform`, is where that surface lives.
+    // "platform.tools" is excluded too: it has no mobile counterpart at all
+    // (see RouteEntry.mobile), so there is nothing for `console` to agree
+    // with — the fallback has nothing to fall back to.
     for (const id of ROUTE_IDS) {
-      if (id === "platform.dashboard") continue;
+      if (id === "platform.dashboard" || id === "platform.tools") continue;
       expect(consolePath(id)).toBe(mobilePath(id));
     }
   });
@@ -83,8 +86,11 @@ describe("console-native surfaces record no apps/web path", () => {
     //   - platform.crmOrganisations: same as suppressions — the old leads
     //     page was a flat list of lead rows with no concept of a business
     //     distinct from the person, so there is no predecessor to record.
+    //   - platform.tools: apps/web has no directory management surface and is
+    //     being retired, so there is nothing here to point at either.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
+      "platform.tools",
       "platform.auditLog",
       "platform.aiUsage",
       "platform.crmImport",

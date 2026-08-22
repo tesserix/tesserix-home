@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { webPath, mobilePath, isRouteActive, routeCapability, ROUTE_IDS } from "./routes";
+import { webPath, mobilePath, isRouteActive, routeCapability, ROUTE_IDS, ROUTES } from "./routes";
 
 describe("route identity", () => {
   it("prefixes the same id differently per renderer", () => {
@@ -85,5 +85,15 @@ describe("route capability", () => {
     // fails when that happens.
     const elevated = ROUTE_IDS.filter((id) => routeCapability(id) !== "read");
     expect(elevated.length).toBeGreaterThan(0);
+  });
+
+  it("declares the tools surface on the console only, gated on platform", () => {
+    const route = ROUTES["platform.tools"];
+    expect(route.console).toBe("/platform/tools");
+    expect(route.capability).toBe("platform");
+    // Deliberately console-only: apps/web has no directory management and is
+    // being retired. A `web` path here would put a link in a rail that leads
+    // nowhere.
+    expect(route.web).toBeUndefined();
   });
 });

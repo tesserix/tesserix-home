@@ -226,7 +226,13 @@ describe("ConsoleCommandPalette", () => {
     // queries against `value`, so typing the bare word "tool" matched every
     // tool entry regardless of its actual name or purpose. None of the tool
     // names, subdomains or groups in the fixture contain the substring
-    // "tool", so a correctly-scoped `value` returns zero tool options here.
+    // "tool", so a correctly-scoped `value` returns zero tool DIRECTORY
+    // options here.
+    //
+    // "Platform · Tools" (`platform.tools`, the directory management route
+    // itself) is the one legitimate hit: its route id genuinely contains
+    // "tool", so it is not the collision this test guards against — it is
+    // typing "tool" and finding the page about tools, which is correct.
     mockSearch([]);
     const user = userEvent.setup();
     render(<ConsoleCommandPalette {...PROPS} />);
@@ -246,8 +252,8 @@ describe("ConsoleCommandPalette", () => {
     await waitFor(() =>
       expect(screen.queryByText(/searching tickets/i)).not.toBeInTheDocument(),
     );
-    expect(await screen.findByText(/nothing matching/i)).toBeInTheDocument();
-    expect(screen.queryAllByRole("option")).toHaveLength(0);
+    expect(await screen.findByRole("option", { name: /Platform · Tools/i })).toBeInTheDocument();
+    expect(screen.queryAllByRole("option")).toHaveLength(1);
   });
 
   it("does not claim nothing matches while a full list of routes is showing", async () => {

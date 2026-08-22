@@ -26,7 +26,14 @@ interface RouteEntry {
    * record, and an honest gap in a record beats a confident wrong entry.
    */
   web?: string;
-  mobile: string;
+  /**
+   * Path in the mobile app. Optional for the same reason `web` is: a route
+   * that exists only in the console (`platform.tools`) has no mobile
+   * counterpart to record, and a placeholder path here would claim one that
+   * was never built. Every route before `platform.tools` happens to set this,
+   * which is why it looked required — it never was one.
+   */
+  mobile?: string;
   /**
    * Path in `apps/console`. Optional: when absent the console serves the
    * `mobile` path, which is already the clean shape (`/platform/tickets`)
@@ -103,7 +110,7 @@ interface RouteEntry {
 // entry against the RouteEntry shape. Annotating the table itself as
 // `Record<string, RouteEntry>` would widen every key to `string` and collapse
 // `RouteId` to `string`, making the exported type meaningless.
-const ROUTES = {
+export const ROUTES = {
   // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
   // `pending` the rail links to in-app routes that are not there — five 404s.
   "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true, capability: "platform" },
@@ -130,6 +137,12 @@ const ROUTES = {
   // directory already live there, and it is the only way back to the
   // console home once a rail link has navigated away from it.
   "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/", capability: "platform" },
+  // Managing the internal tools directory (#318 follow-up). `platform`
+  // because every write on /v1/platform/tools requires it — the two READS
+  // moved to `read` so the home page's directory renders for everyone, and
+  // this surface is the other half of that split: one place where the write
+  // affordances live, so the UI's gate and the API's cannot drift.
+  "platform.tools": { console: "/platform/tools", capability: "platform" },
   "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true, capability: "platform" },
   // First surface built in the console — hence no `pending`. Served at
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
@@ -358,7 +371,7 @@ export function webPath(id: RouteId): string | undefined {
   return getRoute(id).web;
 }
 
-export function mobilePath(id: RouteId): string {
+export function mobilePath(id: RouteId): string | undefined {
   return getRoute(id).mobile;
 }
 
@@ -368,10 +381,19 @@ export function mobilePath(id: RouteId): string {
  * The console does NOT serve `apps/web`'s `/admin/*` paths. Those belong to an
  * app being retired, and `/admin/...` on a host that is itself the admin reads
  * as a leftover — which it would be.
+ *
+ * A route must set at least one of `console`/`mobile`, or it has no console
+ * path at all and this throws — the same fail-closed shape `getRoute` already
+ * uses for an unknown id, rather than silently returning `undefined` from a
+ * function whose signature promises `string`.
  */
 export function consolePath(id: RouteId): string {
   const entry = getRoute(id);
-  return entry.console ?? entry.mobile;
+  const path = entry.console ?? entry.mobile;
+  if (path === undefined) {
+    throw new Error(`Route "${id}" has neither a console nor a mobile path`);
+  }
+  return path;
 }
 
 /**
