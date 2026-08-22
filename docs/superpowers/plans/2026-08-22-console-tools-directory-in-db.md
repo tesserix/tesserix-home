@@ -3759,7 +3759,10 @@ true, and the module doc in the Go package now repeats it.
 
 ```bash
 cd /Users/Mahesh.Sangawar/personal/tesserix-new/tesserix-home
-npx turbo run test --filter=@tesserix/console-core --filter=console
+# NOT `turbo run test` — neither package declares a `test` script (only
+# `test:unit`), so that command executes 0 tasks and reports success having
+# run nothing.
+npx turbo run test:unit --filter=@tesserix/console-core --filter=console
 cd apps/console && npx next build && npx eslint . --max-warnings 0
 cd ../../platform-api && go build ./... && go vet ./... && go test ./... 2>&1 | tail -20
 ```
