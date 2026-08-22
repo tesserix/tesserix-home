@@ -1,0 +1,158 @@
+"use client";
+
+import { useState } from "react";
+import {
+  Button,
+  Callout,
+  CalloutDescription,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Input,
+  Label,
+} from "@tesserix/web";
+import type { DirectoryGroup } from "@/lib/tools-directory";
+import type { ToolsWriteResult } from "@/lib/tools-write";
+
+/**
+ * The add/rename form for one directory group, as a self-contained trigger +
+ * dialog — the same shape `ToolForm` uses.
+ *
+ * The key field is add-mode only, and rendered nowhere at all in rename mode
+ * — not disabled, not read-only, absent. The key is a foreign key every tool
+ * in the group references; the API refuses to change it with a 400 that
+ * explains the remedy, and a visible-but-inert field would only invite the
+ * question of why it can't be touched.
+ *
+ * Field errors use `Input`'s own `isInvalid`/`errorText` props, same as
+ * `ToolForm` — `Input` wires `aria-invalid`/`aria-describedby` onto the input
+ * itself, so the association survives a screen-reader user tabbing away and
+ * back.
+ */
+export function GroupForm({
+  mode,
+  group,
+  triggerLabel,
+  onSubmit,
+}: {
+  mode: "add" | "rename";
+  /** Required in rename mode, for the starting value and the dialog title. */
+  group?: DirectoryGroup;
+  triggerLabel: string;
+  onSubmit: (input: { key: string; label: string }) => Promise<ToolsWriteResult>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState(group?.key ?? "");
+  const [label, setLabel] = useState(group?.label ?? "");
+  const [error, setError] = useState<{ message: string; field?: string } | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const reset = () => {
+    setKey(group?.key ?? "");
+    setLabel(group?.label ?? "");
+    setError(null);
+  };
+
+  const close = () => {
+    setOpen(false);
+    reset();
+  };
+
+  const fieldError = (field: string): string | undefined =>
+    error?.field === field ? error.message : undefined;
+  const formError = error && !error.field ? error.message : null;
+
+  const submit = async () => {
+    setError(null);
+    setPending(true);
+    const result = await onSubmit({ key, label });
+    setPending(false);
+    if (!result.ok) {
+      setError({ message: result.message, field: result.field });
+      return;
+    }
+    setOpen(false);
+    reset();
+  };
+
+  const formId = `group-form-${mode}-${group?.key ?? "new"}`;
+  const title = mode === "add" ? "Add group" : `Rename ${group?.label ?? "group"}`;
+  const description =
+    mode === "add"
+      ? "Add a group to the internal tools directory."
+      : "Update this group's label.";
+
+  return (
+    <>
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        {triggerLabel}
+      </Button>
+      <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>{title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+
+          <form
+            id={formId}
+            className="flex flex-col gap-4"
+            // Native validation is not the authority here — the API's own
+            // refusal is (see ToolForm for the same reasoning).
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
+            {mode === "add" ? (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor={`${formId}-key`}>Key</Label>
+                <Input
+                  id={`${formId}-key`}
+                  value={key}
+                  disabled={pending}
+                  required
+                  isInvalid={Boolean(fieldError("key"))}
+                  errorText={fieldError("key")}
+                  onChange={(event) => setKey(event.target.value)}
+                />
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${formId}-label`}>Label</Label>
+              <Input
+                id={`${formId}-label`}
+                value={label}
+                disabled={pending}
+                required
+                isInvalid={Boolean(fieldError("label"))}
+                errorText={fieldError("label")}
+                onChange={(event) => setLabel(event.target.value)}
+              />
+            </div>
+
+            {formError ? (
+              <Callout role="alert" variant="destructive">
+                <CalloutDescription>{formError}</CalloutDescription>
+              </Callout>
+            ) : null}
+          </form>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={pending} onClick={close}>
+              Cancel
+            </Button>
+            <Button type="submit" form={formId} disabled={pending}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

@@ -13,7 +13,13 @@ vi.mock("@/app/(console)/platform/tools/actions", () => ({
   moveGroupAction: vi.fn(async () => ({ ok: true })),
 }));
 
-import { addToolAction, removeToolAction } from "@/app/(console)/platform/tools/actions";
+import {
+  addToolAction,
+  removeToolAction,
+  addGroupAction,
+  renameGroupAction,
+  removeGroupAction,
+} from "@/app/(console)/platform/tools/actions";
 import { ToolsManager } from "./tools-manager";
 import type { ToolsDirectory } from "@/lib/tools-directory";
 
@@ -138,5 +144,60 @@ describe("ToolsManager", () => {
     await user.click(within(dialog).getByRole("button", { name: /^delete tool$/i }));
 
     expect(within(dialog).getByText(/do not have permission/i)).toBeInTheDocument();
+  });
+});
+
+describe("group management", () => {
+  it("adds a group", async () => {
+    const user = userEvent.setup();
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    await user.click(screen.getByRole("button", { name: /add group/i }));
+    await user.type(screen.getByLabelText(/^key$/i), "security");
+    await user.type(screen.getByLabelText(/label/i), "Security");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(addGroupAction).toHaveBeenCalledWith({ key: "security", label: "Security" });
+  });
+
+  it("renames a group without offering to change its key", async () => {
+    const user = userEvent.setup();
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const section = screen.getByText("Identity and secrets").closest("section");
+    await user.click(within(section as HTMLElement).getByRole("button", { name: /rename/i }));
+
+    // The key is a foreign key every tool in the group references. The API
+    // refuses to change it with a 400 explaining the remedy; offering an
+    // editable field here would invite that refusal on every rename.
+    expect(screen.queryByLabelText(/^key$/i)).not.toBeInTheDocument();
+
+    const input = screen.getByLabelText(/label/i);
+    await user.clear(input);
+    await user.type(input, "Identity");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(renameGroupAction).toHaveBeenCalledWith("identity", "Identity");
+  });
+
+  it("surfaces the API's refusal to delete a populated group", async () => {
+    const user = userEvent.setup();
+    vi.mocked(removeGroupAction).mockResolvedValue({
+      ok: false,
+      message: "Move or remove the tools in this group first.",
+    });
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const section = screen.getByText("Identity and secrets").closest("section");
+    // The header's own control is labelled exactly "Delete" — mirroring
+    // ToolRow's row control — so that with the dialog open, only the dialog's
+    // "Delete group" confirm button matches that name; scoping both clicks
+    // avoids the ambiguity an unscoped query would hit. The header's button
+    // is the first "Delete" within the section, ahead of any tool rows'.
+    await user.click(within(section as HTMLElement).getAllByRole("button", { name: /^delete$/i })[0]);
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^delete group$/i }));
+
+    expect(await screen.findByText(/move or remove the tools/i)).toBeInTheDocument();
   });
 });
