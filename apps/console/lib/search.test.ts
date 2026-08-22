@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ROUTE_IDS } from "@tesserix/console-core";
+import type { DirectoryTool } from "@/lib/tools-directory";
 import {
   MIN_TICKET_QUERY,
   routeEntries,
@@ -130,8 +131,33 @@ describe("routeEntries under capability enforcement", () => {
 });
 
 describe("toolEntries", () => {
+  const rows: DirectoryTool[] = [
+    { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity" },
+    { id: "2", name: "Kargo", subdomain: "kargo", purpose: "Promotes images.", note: null, groupKey: "delivery" },
+  ];
+
+  it("builds an entry per supplied row rather than from the code literal", () => {
+    const entries = toolEntries("tesserix.app", rows);
+
+    // The whole point of the cutover: a tool added through CRUD is findable in
+    // the palette the same minute. Reading INTERNAL_TOOLS here would have
+    // meant the cards showed reality and the palette showed 2026.
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e) => e.label)).toEqual(["Zitadel", "Kargo"]);
+  });
+
+  it("derives the href from the base domain", () => {
+    const entries = toolEntries("dev.tesserix.app", rows);
+
+    expect(entries[0].href).toBe("https://auth.dev.tesserix.app");
+  });
+
+  it("returns nothing when the directory is empty", () => {
+    expect(toolEntries("tesserix.app", [])).toEqual([]);
+  });
+
   it("builds an absolute external URL from the base domain", () => {
-    const entries = toolEntries("tesserix.app");
+    const entries = toolEntries("tesserix.app", rows);
     expect(entries.length).toBeGreaterThan(0);
     for (const entry of entries) {
       expect(entry.external).toBe(true);
@@ -141,7 +167,7 @@ describe("toolEntries", () => {
   });
 
   it("carries the tool's purpose as the hint, so a name nobody knows is explained", () => {
-    const entries = toolEntries("tesserix.app");
+    const entries = toolEntries("tesserix.app", rows);
     expect(entries.every((e) => e.hint.length > 0)).toBe(true);
   });
 });

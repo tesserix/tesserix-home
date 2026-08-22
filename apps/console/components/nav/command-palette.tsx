@@ -21,11 +21,15 @@ import {
   type SearchEntry,
   type SearchKind,
 } from "@/lib/search";
+import type { DirectoryTool } from "@/lib/tools-directory";
 
 export interface CommandPaletteProps {
   readonly capabilities: readonly string[];
   readonly enforceCapabilities: boolean;
   readonly toolsBaseDomain: string;
+  // Fetched server-side in app/(console)/layout.tsx. A prop rather than an
+  // import because this is a client component — see lib/search.ts.
+  readonly tools: readonly DirectoryTool[];
 }
 
 /**
@@ -61,6 +65,7 @@ export function ConsoleCommandPalette({
   capabilities,
   enforceCapabilities,
   toolsBaseDomain,
+  tools: toolRows,
 }: CommandPaletteProps): React.JSX.Element {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -73,8 +78,8 @@ export function ConsoleCommandPalette({
     [capabilities, enforceCapabilities],
   );
   const tools = useMemo(
-    () => visibleTo(toolEntries(toolsBaseDomain), capabilities, enforceCapabilities),
-    [capabilities, enforceCapabilities, toolsBaseDomain],
+    () => visibleTo(toolEntries(toolsBaseDomain, toolRows), capabilities, enforceCapabilities),
+    [capabilities, enforceCapabilities, toolsBaseDomain, toolRows],
   );
 
   // Global ⌘K/Ctrl+K. Skipped while focus sits in some other input, textarea

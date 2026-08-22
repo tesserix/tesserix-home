@@ -3,12 +3,11 @@ import {
   isPending,
   ROUTE_IDS,
   type RouteId,
-  INTERNAL_TOOLS,
-  type InternalTool,
   toolUrl,
   routeCapability,
 } from "@tesserix/console-core";
 import type { Capability } from "@tesserix/platform-auth";
+import type { DirectoryTool } from "@/lib/tools-directory";
 
 /**
  * The command palette's search domain.
@@ -123,11 +122,11 @@ export function routeEntries(): SearchEntry[] {
   });
 }
 
-function toolKeywords(tool: InternalTool): readonly string[] {
-  return [tool.name, tool.subdomain, tool.group];
+function toolKeywords(tool: DirectoryTool): readonly string[] {
+  return [tool.name, tool.subdomain, tool.groupKey];
 }
 
-function toolHint(tool: InternalTool): string {
+function toolHint(tool: DirectoryTool): string {
   return tool.note ? `${tool.purpose} ${tool.note}` : tool.purpose;
 }
 
@@ -142,9 +141,19 @@ function toolHint(tool: InternalTool): string {
  * by naming them, and each tool enforces its own authorization on arrival.
  * Hiding a link the operator may well be able to open would be a worse guess
  * than showing it.
+ *
+ * The rows are a PARAMETER rather than an import, and that is structural
+ * rather than stylistic: this module is imported by command-palette.tsx,
+ * which is `"use client"`. Importing lib/tools-directory here would pull a
+ * `server-only` module into the browser bundle — the #299 failure — so the
+ * directory is fetched in the console layout and travels down as a prop,
+ * the same path toolsBaseDomain already takes.
  */
-export function toolEntries(baseDomain: string): SearchEntry[] {
-  return INTERNAL_TOOLS.map((tool) => ({
+export function toolEntries(
+  baseDomain: string,
+  tools: readonly DirectoryTool[],
+): SearchEntry[] {
+  return tools.map((tool) => ({
     id: `tool:${tool.subdomain}`,
     kind: "tool",
     label: tool.name,
@@ -154,7 +163,6 @@ export function toolEntries(baseDomain: string): SearchEntry[] {
     disabled: false,
     keywords: toolKeywords(tool),
     capability: "read", // deliberate — see the doc comment above
-
   }));
 }
 

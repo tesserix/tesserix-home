@@ -24,6 +24,7 @@ const PROPS = {
   email: "mahesh.sangawar@tesserix.app",
   capabilities: ["read", "crm", "support", "platform"],
   showCapabilities: true,
+  tools: [],
 };
 
 describe("ConsoleHeader", () => {
