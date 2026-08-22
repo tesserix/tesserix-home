@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -146,9 +147,59 @@ func TestFanOutFailureDoesNotLeakTheHostnameOnDNSFailure(t *testing.T) {
 	}
 }
 
-func TestFanOutKeepsOurOwnErrorTextForNonTransportFailures(t *testing.T) {
+// Replaces TestFanOutKeepsOurOwnErrorTextForNonTransportFailures, which
+// asserted the opposite rule: that a decode failure keeps its own text. The
+// decode func is CALLER-supplied, so its text is not this package's to trust —
+// a caller's decode error can embed a URL of its own.
+func TestFanOutDoesNotLeakTheCallersOwnDecodeErrorText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL}}), srv.Client())
+
+	leaky := func(_ string, _ []byte) ([]row, error) {
+		return nil, errors.New("boom http://secret-internal.svc:9999/x")
+	}
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), leaky)
+
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if strings.Contains(failures[0].Error, "secret-internal.svc:9999") {
+		t.Errorf("Failure.Error = %q — the caller's own decode error text reached the browser", failures[0].Error)
+	}
+	if failures[0].Error != "invalid response" {
+		t.Errorf("Failure.Error = %q, want %q", failures[0].Error, "invalid response")
+	}
+}
+
+func TestFanOutFailureDoesNotLeakTheURLWhenTheRequestCannotBeBuilt(t *testing.T) {
+	// Control characters make http.NewRequestWithContext's URL parse fail, so
+	// the failure happens before any network call and is not an ErrTransport.
+	// net/url's parse error quotes the whole URL back at you.
+	const host = "mark8ly-internal.svc.cluster.local"
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: "http://" + host + ":8080"}}), http.DefaultClient)
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x\x7f\x01", operator(), decodeRows)
+
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if strings.Contains(failures[0].Error, host) {
+		t.Errorf("Failure.Error = %q — leaks the internal host from a request-build failure", failures[0].Error)
+	}
+	if failures[0].Error != "product misconfigured" {
+		t.Errorf("Failure.Error = %q, want %q", failures[0].Error, "product misconfigured")
+	}
+}
+
+func TestFanOutReportsANonSuccessAsItsStatusCodeAlone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
 
@@ -156,8 +207,11 @@ func TestFanOutKeepsOurOwnErrorTextForNonTransportFailures(t *testing.T) {
 
 	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
 
-	if len(failures) != 1 || failures[0].Error == "connection failed" {
-		t.Fatalf("failures = %v — a decode failure must keep its own text, not be classified as a transport failure", failures)
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if failures[0].Error != "responded 503" {
+		t.Errorf("Failure.Error = %q, want %q — the status code and nothing else", failures[0].Error, "responded 503")
 	}
 }
 

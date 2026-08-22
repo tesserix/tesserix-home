@@ -27,6 +27,26 @@ var ErrProductNotConfigured = errors.New("federation: product not configured")
 // Callers must treat an ErrTransport as unsafe to show a user verbatim.
 var ErrTransport = errors.New("transport failure")
 
+// ErrRequestInvalid marks a call that could not even be turned into a request
+// — in practice a product whose configured BaseURL is not a URL. net/url's
+// parse error quotes the whole offending URL back at you, so this is never
+// safe to show a user verbatim; sanitize renders it "product misconfigured".
+var ErrRequestInvalid = errors.New("federation: request could not be built")
+
+// statusError is a product answering with a non-2xx.
+//
+// It is a type rather than a sentinel so sanitize can render the status code —
+// the one detail of this failure that is useful to an operator and cannot leak
+// anything — without going near the error's own text.
+type statusError struct {
+	Slug   string
+	Status int
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("federation: %s responded %d", e.Slug, e.Status)
+}
+
 // Operator is who the call is being made on behalf of, and under what
 // authority.
 //
@@ -66,7 +86,7 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, product.BaseURL+path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("federation: building request for %s: %w", slug, err)
+		return nil, fmt.Errorf("federation: building request for %s: %w: %w", slug, ErrRequestInvalid, err)
 	}
 	req.Header.Set("X-Internal-Auth", product.Secret)
 	req.Header.Set("X-Operator-Id", op.ID)
@@ -86,7 +106,7 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 		return nil, fmt.Errorf("federation: reading %s response: %w: %w", slug, ErrTransport, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("federation: %s responded %d", slug, resp.StatusCode)
+		return nil, &statusError{Slug: slug, Status: resp.StatusCode}
 	}
 	return body, nil
 }

@@ -3,6 +3,7 @@ package federation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 )
@@ -10,50 +11,68 @@ import (
 // Failure is one source that could not be read.
 //
 // Error is a string rather than an error because it crosses the HTTP boundary
-// into the console, which renders it beside the source's name. It must never
-// carry a secret or an internal URL.
+// into the console, which renders it beside the source's name. It is always
+// one of the closed set of strings sanitize builds, so it cannot carry a
+// secret, an internal hostname, an address, or a URL.
 type Failure struct {
 	Product string `json:"product"`
 	Error   string `json:"error"`
 }
 
+// errDecode marks a failure in the caller-supplied decode func. Unlike the
+// other classes, this one is raised here rather than in client.go, because
+// decoding is the one step FanOut performs itself.
+var errDecode = errors.New("federation: decoding response")
+
 // sanitize maps a failure to a string that is safe to render in a browser.
 //
-// This value is shown in the console beside the source's name, so it must
-// never carry an internal hostname, address, or URL. It is an ALLOWLIST
-// gated on the ErrTransport sentinel declared in client.go, not on inferring
-// network-ness from an error's type: that inference was tried three times
-// (a one-layer `*url.Error` unwrap, a deepest-unwrap, and `*url.Error` as the
-// gate itself) and each attempt missed a case, because `*url.Error` only
-// wraps what `http.Client.Do` returns — not a failure reading the response
-// body afterward, which surfaces as a bare `*net.OpError` with an address in
-// its own Error() string. client.go is the only code that touches the
-// network, so it is the only code that can mark an error as transport-origin
-// completely and by construction; here we just trust that mark.
+// It NEVER returns an arbitrary error's text. Every failure becomes one of a
+// small closed set of strings built entirely from values this package
+// controls, plus — for a non-2xx — a status code. There is deliberately no
+// pass-through arm.
 //
-// The unredacted error is still what a caller logs server-side.
+// That is the whole point. Four earlier versions tried to DETECT unsafe text
+// and strip or classify it: unwrap `*url.Error` one layer (`*net.OpError`
+// still carries host:port), unwrap to the deepest cause (`*net.DNSError` has
+// a nil UnwrapErr, so the walk stops on "lookup <host> on <server>"), gate on
+// `*url.Error` (a mid-body-read reset happens after Do returns and is not one),
+// and gate on ErrTransport with a pass-through for everything else (a
+// malformed BaseURL fails in net/url, which quotes the URL back at you). Each
+// leaked. Detection is a denylist and denylists lose; an error's Error() text
+// is written by whoever authored the error — including net/*, including a
+// FUTURE CALLER's decode func — so none of it can be trusted here.
+//
+// Only the string is narrowed. Client.Get and FanOut keep the full error
+// values, so a caller still logs the unredacted cause server-side.
 func sanitize(err error) string {
-	if !errors.Is(err, ErrTransport) {
-		// Not a network failure: this package's own error text, safe as written.
-		return err.Error()
+	// Transport, first: it is the only class with sub-classes worth telling
+	// apart, and client.go marks it at the two lines that touch the network.
+	if errors.Is(err, ErrTransport) {
+		switch {
+		case errors.Is(err, context.Canceled):
+			return "request canceled"
+		case errors.Is(err, context.DeadlineExceeded):
+			return "timed out"
+		}
+		if _, ok := errors.AsType[*net.DNSError](err); ok {
+			return "name resolution failed"
+		}
+		if netErr, ok := errors.AsType[net.Error](err); ok && netErr.Timeout() {
+			return "timed out"
+		}
+		return "connection failed"
 	}
 
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "request canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timed out"
+	if errors.Is(err, ErrRequestInvalid) || errors.Is(err, ErrProductNotConfigured) {
+		return "product misconfigured"
 	}
-
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
-		return "name resolution failed"
+	if statusErr, ok := errors.AsType[*statusError](err); ok {
+		return fmt.Sprintf("responded %d", statusErr.Status)
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timed out"
+	if errors.Is(err, errDecode) {
+		return "invalid response"
 	}
-	return "connection failed"
+	return "failed"
 }
 
 // FanOut reads the same path from several products concurrently and returns
@@ -92,6 +111,12 @@ func FanOut[T any](
 				return
 			}
 			rows, err := decode(slug, body)
+			if err != nil {
+				// decode is caller-supplied, so its text is not ours to
+				// trust — mark it so sanitize can classify it without
+				// reading it.
+				err = fmt.Errorf("federation: decoding %s response: %w: %w", slug, errDecode, err)
+			}
 			results[i] = result{rows: rows, err: err}
 		}(i, slug)
 	}
