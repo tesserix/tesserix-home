@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "CONFLICT",
+    "message": "a group with this key already exists"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

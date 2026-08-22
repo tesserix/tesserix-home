@@ -90,6 +90,13 @@ func TestGoldenResponses(t *testing.T) {
 
 	assertGolden(t, "group-created",
 		a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"security","label":"Security"}`, nil).raw)
+	assertGolden(t, "group-updated",
+		a.do(http.MethodPatch, "/v1/platform/tool-groups/security", `{"label":"Sec"}`, nil).raw)
+	// A throwaway empty group, created and then deleted, so the seeded five
+	// other goldens read from stay untouched.
+	a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"scratch","label":"Scratch"}`, nil)
+	assertGolden(t, "group-deleted",
+		a.do(http.MethodDelete, "/v1/platform/tool-groups/scratch", "", nil).raw)
 
 	// Every error shape. A client's error handling is written against these
 	// and exercised less than its success path, so a change here is likelier
@@ -114,4 +121,8 @@ func TestGoldenResponses(t *testing.T) {
 		a.do(http.MethodDelete, "/v1/platform/tool-groups/identity", "", nil).raw)
 	assertGolden(t, "error-group-key-immutable",
 		a.do(http.MethodPatch, "/v1/platform/tool-groups/cost", `{"key":"spend"}`, nil).raw)
+	assertGolden(t, "error-group-not-found",
+		a.do(http.MethodPatch, "/v1/platform/tool-groups/no-such-group", `{"label":"x"}`, nil).raw)
+	assertGolden(t, "error-duplicate-group",
+		a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"identity","label":"Another identity"}`, nil).raw)
 }

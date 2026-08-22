@@ -179,6 +179,10 @@ func unwrap(err error) string {
 }
 
 // createGroupRequest is the create body.
+//
+// SortOrder is wired through to the service — absent means "the end of the
+// list", the same convention createToolRequest uses, rather than being
+// decoded and silently dropped.
 type createGroupRequest struct {
 	Key       string `json:"key"`
 	Label     string `json:"label"`
@@ -203,7 +207,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 
 	written, err := h.svc.CreateGroup(r.Context(),
 		service.Actor{Subject: principal.Subject, Email: principal.Email},
-		request.Key, request.Label, key)
+		request.Key, request.Label, request.SortOrder, key)
 	if err != nil {
 		h.fail(w, r, err)
 		return

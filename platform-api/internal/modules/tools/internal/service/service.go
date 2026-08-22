@@ -280,16 +280,33 @@ type GroupPatch struct {
 }
 
 // CreateGroup adds a heading.
-func (s *Service) CreateGroup(ctx context.Context, actor Actor, key, label string,
+//
+// SortOrder is wired through explicitly rather than dropped: the tool-create
+// path already accepts a caller-chosen position, and a group that silently
+// ignored the same field would be the odd one out — the exact failure
+// updateGroupRequest.Key was designed to avoid, one field over.
+func (s *Service) CreateGroup(ctx context.Context, actor Actor, key, label string, sortOrder *int,
 	idemKey *idempotency.Key,
 ) (write.Result, error) {
+	// Normalised then validated, in that order — see CreateTool.
+	group := domain.Group{Key: key, Label: label, SortOrder: sortOrder}.Normalise()
+	if err := group.Validate(); err != nil {
+		return write.Result{}, err
+	}
+
 	return write.Perform(ctx, s.pool, idemKey, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
-		order, err := repository.NextGroupSortOrder(ctx, tx)
-		if err != nil {
-			return nil, audit.Entry{}, 0, err
+		var order int
+		if group.SortOrder != nil {
+			order = *group.SortOrder
+		} else {
+			next, err := repository.NextGroupSortOrder(ctx, tx)
+			if err != nil {
+				return nil, audit.Entry{}, 0, err
+			}
+			order = next
 		}
 
-		stored, err := repository.InsertGroup(ctx, tx, key, label, order)
+		stored, err := repository.InsertGroup(ctx, tx, group.Key, group.Label, order)
 		if err != nil {
 			return nil, audit.Entry{}, 0, mapGroupError(err)
 		}
@@ -309,6 +326,29 @@ func (s *Service) CreateGroup(ctx context.Context, actor Actor, key, label strin
 func (s *Service) UpdateGroup(ctx context.Context, actor Actor, key string, patch GroupPatch,
 	idemKey *idempotency.Key,
 ) (write.Result, error) {
+	// Validated as a whole only where a field was sent — see UpdateTool.
+	// The key is fixed to a placeholder that always satisfies the pattern:
+	// this patch never carries a key, so the probe's key can never be what
+	// fails validation.
+	if patch.Label != nil || patch.SortOrder != nil {
+		probe := domain.Group{Key: "placeholder", Label: "placeholder"}
+		if patch.Label != nil {
+			probe.Label = *patch.Label
+		}
+		probe.SortOrder = patch.SortOrder
+
+		probe = probe.Normalise()
+		if err := probe.Validate(); err != nil {
+			return write.Result{}, err
+		}
+		if patch.Label != nil {
+			patch.Label = &probe.Label
+		}
+		if patch.SortOrder != nil {
+			patch.SortOrder = probe.SortOrder
+		}
+	}
+
 	return write.Perform(ctx, s.pool, idemKey, func(ctx context.Context, tx pgx.Tx) (any, audit.Entry, int, error) {
 		stored, err := repository.UpdateGroup(ctx, tx, key, patch.Label, patch.SortOrder)
 		if err != nil {

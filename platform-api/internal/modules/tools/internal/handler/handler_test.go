@@ -536,3 +536,81 @@ func TestAGroupsKeyCannotBeChanged(t *testing.T) {
 		t.Errorf("changing a group key = %d, want 400: %s", got.status, got.raw)
 	}
 }
+
+func TestCreatingAGroupWithAnEmptyKeyIs422(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"","label":"Security"}`, nil)
+
+	if got.status != http.StatusUnprocessableEntity {
+		t.Errorf("an empty key = %d, want 422: %s", got.status, got.raw)
+	}
+}
+
+func TestCreatingAGroupWithAnEmptyLabelIs422(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"security","label":""}`, nil)
+
+	if got.status != http.StatusUnprocessableEntity {
+		t.Errorf("an empty label = %d, want 422: %s", got.status, got.raw)
+	}
+}
+
+func TestCreatingAGroupWithSpacesInTheKeyIs422(t *testing.T) {
+	a := serve(t)
+
+	// A key is referenced by every tool in the group — an identifier, not
+	// prose. "Not A Key" fails the pattern even after normalisation lowers it.
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"Not A Key","label":"x"}`, nil)
+
+	if got.status != http.StatusUnprocessableEntity {
+		t.Errorf("a key with spaces = %d, want 422: %s", got.status, got.raw)
+	}
+}
+
+func TestCreatingAGroupNormalisesTheKeyAndLabel(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"  Security  ","label":"Security"}`, nil)
+
+	if got.status != http.StatusCreated {
+		t.Fatalf("create group = %d, want 201: %s", got.status, got.raw)
+	}
+	group, _ := got.data(t)["group"].(map[string]any)
+	if group["key"] != "security" {
+		t.Errorf("key = %v, want the trimmed, lower-cased form security", group["key"])
+	}
+}
+
+func TestCreatingAGroupWithADuplicateKeyIs409(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"identity","label":"Another identity"}`, nil)
+
+	// The primary key, not the foreign key: identity already exists, so this
+	// is ErrDuplicateGroup rather than the ON DELETE RESTRICT path.
+	if got.status != http.StatusConflict {
+		t.Errorf("a duplicate group key = %d, want 409: %s", got.status, got.raw)
+	}
+}
+
+func TestPatchingAnUnknownGroupIs404(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPatch, "/v1/platform/tool-groups/no-such-group", `{"label":"x"}`, nil)
+
+	if got.status != http.StatusNotFound {
+		t.Errorf("patching an unknown group = %d, want 404: %s", got.status, got.raw)
+	}
+}
+
+func TestDeletingAnUnknownGroupIs404(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodDelete, "/v1/platform/tool-groups/no-such-group", "", nil)
+
+	if got.status != http.StatusNotFound {
+		t.Errorf("deleting an unknown group = %d, want 404: %s", got.status, got.raw)
+	}
+}

@@ -260,7 +260,7 @@ func InsertGroup(ctx context.Context, e Execer, key, label string, sortOrder int
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return Group{}, ErrDuplicateGroup
 		}
-		return Group{}, err
+		return Group{}, classify(err)
 	}
 	return g, nil
 }
@@ -283,7 +283,7 @@ func UpdateGroup(ctx context.Context, e Execer, key string, label *string, sortO
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Group{}, ErrNoRow
 	}
-	return g, err
+	return g, classify(err)
 }
 
 // DeleteGroup removes a heading, and is refused by the foreign key if any tool
