@@ -15,12 +15,14 @@ export interface DirectoryTool {
   readonly purpose: string;
   readonly note: string | null;
   readonly groupKey: string;
+  readonly sortOrder: number;
 }
 
 /** One heading. */
 export interface DirectoryGroup {
   readonly key: string;
   readonly label: string;
+  readonly sortOrder: number;
 }
 
 /**
@@ -108,8 +110,14 @@ export async function readToolsDirectory(): Promise<ToolsDirectory> {
  */
 function builtin(source: "builtin" | "degraded"): ToolsDirectory {
   return {
-    groups: TOOL_GROUPS.map((group) => ({ key: group.key, label: group.label })),
-    tools: INTERNAL_TOOLS.map((tool) => ({
+    groups: TOOL_GROUPS.map((group, index) => ({
+      key: group.key,
+      label: group.label,
+      // 1-based declaration order — this list is never editable, but the
+      // type has no hole for a reader to reason about.
+      sortOrder: index + 1,
+    })),
+    tools: INTERNAL_TOOLS.map((tool, index) => ({
       // The literal has no ids. A synthetic one keyed on the subdomain — which
       // is unique by construction — keeps React's keys stable without
       // pretending a database row exists.
@@ -119,6 +127,8 @@ function builtin(source: "builtin" | "degraded"): ToolsDirectory {
       purpose: tool.purpose,
       note: tool.note ?? null,
       groupKey: tool.group,
+      // 1-based declaration order, matching `groups` above.
+      sortOrder: index + 1,
     })),
     source,
   };
@@ -139,6 +149,7 @@ function parse(toolsData: unknown, groupsData: unknown): ToolsDirectory {
   const groups: DirectoryGroup[] = rawGroups.map((row) => ({
     key: str(row, "key"),
     label: str(row, "label"),
+    sortOrder: num(row, "sort_order"),
   }));
   const declared = new Set(groups.map((group) => group.key));
 
@@ -150,6 +161,7 @@ function parse(toolsData: unknown, groupsData: unknown): ToolsDirectory {
       purpose: str(row, "purpose"),
       note: nullableStr(row, "note"),
       groupKey: str(row, "group_key"),
+      sortOrder: num(row, "sort_order"),
     }))
     // A tool whose group is not declared would render as a card under no
     // heading. The foreign key makes it unreachable through the API; this is
@@ -181,6 +193,14 @@ function nullableStr(row: Record<string, unknown>, key: string): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") {
     throw new Error(`\`${key}\` is ${typeof value}, expected a string or null`);
+  }
+  return value;
+}
+
+function num(row: Record<string, unknown>, key: string): number {
+  const value = row[key];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`\`${key}\` is ${typeof value}, expected a number`);
   }
   return value;
 }
