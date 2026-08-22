@@ -17,7 +17,21 @@ import (
 type Failure struct {
 	Product string `json:"product"`
 	Error   string `json:"error"`
+	// cause is the unredacted error, for server-side logging only.
+	//
+	// Unexported, so encoding/json omits it: the wire shape the console
+	// receives is unchanged and the closed-set guarantee on Error still
+	// holds. Reached via Unwrap() so a caller can log the real failure
+	// without the browser ever seeing it.
+	cause error
 }
+
+// Unwrap returns the unredacted cause, for logging and errors.Is/As.
+//
+// Failure.Error is deliberately a coarse, closed-set string because it is
+// rendered in a browser. This is the other half of that trade: the caller
+// keeps the detail, the page does not.
+func (f Failure) Unwrap() error { return f.cause }
 
 // errDecode marks a failure in the caller-supplied decode func. Unlike the
 // other classes, this one is raised here rather than in client.go, because
@@ -42,8 +56,9 @@ var errDecode = errors.New("federation: decoding response")
 // is written by whoever authored the error — including net/*, including a
 // FUTURE CALLER's decode func — so none of it can be trusted here.
 //
-// Only the string is narrowed. Client.Get and FanOut keep the full error
-// values, so a caller still logs the unredacted cause server-side.
+// Only the string is narrowed, never the error. Client.Get returns the full
+// error, and FanOut keeps it on Failure.cause (reachable via Unwrap), so a
+// caller still logs the unredacted cause server-side.
 func sanitize(err error) string {
 	// Transport, first: it is the only class with sub-classes worth telling
 	// apart, and client.go marks it at the two lines that touch the network.
@@ -128,7 +143,11 @@ func FanOut[T any](
 	failures := make([]Failure, 0)
 	for i, r := range results {
 		if r.err != nil {
-			failures = append(failures, Failure{Product: slugs[i], Error: sanitize(r.err)})
+			failures = append(failures, Failure{
+				Product: slugs[i],
+				Error:   sanitize(r.err),
+				cause:   r.err,
+			})
 			continue
 		}
 		merged = append(merged, r.rows...)

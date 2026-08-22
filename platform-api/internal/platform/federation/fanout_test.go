@@ -249,3 +249,48 @@ func TestFanOutFailureDoesNotLeakTheAddressWhenTheBodyReadFails(t *testing.T) {
 		t.Error("Failure.Error is empty — a failure must still say something")
 	}
 }
+
+func TestFailureKeepsTheUnredactedCauseForLoggingButNotForTheWire(t *testing.T) {
+	const host = "mark8ly-internal.invalid"
+
+	c := NewClient(NewRegistry([]Product{
+		{Slug: "mark8ly", BaseURL: "http://" + host + ":8080"},
+	}), &http.Client{Timeout: 5 * time.Second})
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+
+	// errors.Unwrap(failures[0]) does not compile: Failure is not an error
+	// (Failure.Error is a field, not a method), so Unwrap is called directly.
+	// The two assertions below are what matter, not the accessor.
+	cause := failures[0].Unwrap()
+	if cause == nil {
+		t.Fatal("cause is nil — the server-side half of the redaction trade is missing")
+	}
+	if !strings.Contains(cause.Error(), host) {
+		t.Errorf("cause = %q, want it to still name %q so an operator can diagnose from logs", cause, host)
+	}
+
+	encoded, err := json.Marshal(failures[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), host) {
+		t.Errorf("serialised Failure = %s — the cause must never reach the wire", encoded)
+	}
+
+	// The host check alone is not enough to prove the cause is unexported: an
+	// error whose concrete type has only unexported fields (fmt.wrapError, as
+	// here) marshals to {}, so an exported Cause would pass it while still
+	// widening the wire contract — and a *net.DNSError, whose fields ARE
+	// exported, would then leak the host outright. Pin the key set instead.
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) != 2 || wire["product"] == nil || wire["error"] == nil {
+		t.Errorf("serialised Failure = %s — the wire shape must be exactly {product, error}", encoded)
+	}
+}
