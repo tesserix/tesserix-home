@@ -63,7 +63,7 @@ func serveAs(t *testing.T, roles ...string) *api {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"id":"1","action":"tenant.suspended","created_at":"2026-08-22T10:00:00Z"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"1","action":"tenant.suspended","timestamp":"2026-08-22T10:00:00Z"}]}`))
 	}))
 	t.Cleanup(product.Close)
 

@@ -48,6 +48,11 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, source str
 
 	entries, failures := federation.FanOut(ctx, s.fed, slugs, productPath, op,
 		func(slug string, body []byte) ([]domain.Entry, error) {
+			// Decodes the SAME field names this module emits: the upstream
+			// product endpoint does not exist yet, and one vocabulary
+			// spanning the contract means this decode is already correct
+			// the day a product implements it against apps/console/lib/
+			// audit.ts's shape.
 			var envelope struct {
 				Data []domain.Entry `json:"data"`
 			}
@@ -62,6 +67,11 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, source str
 			return envelope.Data, nil
 		})
 
+	// Logged over the federation.Failure values, before mapping to the
+	// domain shape: federation.Failure carries the unredacted cause via
+	// Unwrap(), and domain.Failure deliberately does not — it is what gets
+	// marshalled to the browser, and the whole point of the sanitised
+	// Message is that the raw cause never reaches a page.
 	for _, f := range failures {
 		s.log.Error("audit: federation source failed",
 			"product", f.Product,
@@ -73,10 +83,15 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, source str
 	// Newest first. Each source returns its own rows ordered; merged, they are
 	// not, and a timeline out of order is not a timeline.
 	sort.SliceStable(entries, func(i, j int) bool {
-		return entries[i].CreatedAt.After(entries[j].CreatedAt)
+		return entries[i].Timestamp.After(entries[j].Timestamp)
 	})
 
-	return domain.Page{Entries: entries, Failures: failures}, nil
+	domainFailures := make([]domain.Failure, len(failures))
+	for i, f := range failures {
+		domainFailures[i] = domain.Failure{Source: f.Product, Message: f.Error}
+	}
+
+	return domain.Page{Entries: entries, Failures: domainFailures}, nil
 }
 
 func contains(haystack []string, needle string) bool {
