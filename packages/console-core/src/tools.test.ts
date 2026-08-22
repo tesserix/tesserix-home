@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   INTERNAL_TOOLS,
@@ -30,13 +31,35 @@ describe("the tool list is data, not markup", () => {
   });
 
   it("has no duplicate subdomains", () => {
+    // Still asserted, but it is no longer the only guarantee: platform_tools has
+    // a UNIQUE constraint on subdomain (migration 0031). This keeps the FALLBACK
+    // list honest — it is what renders when the platform API cannot be reached.
     const seen = INTERNAL_TOOLS.map((t) => t.subdomain);
     expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it("keeps the fallback list in step with the seed migration", async () => {
+    // The literal and migration 0031's seed are two copies of one directory. A
+    // tool added to the database through CRUD will not be here — that is the
+    // point of the feature — but a tool added to THIS file and not to the seed
+    // is a fallback that disagrees with the live list for no reason.
+    const migration = await readFile(
+      new URL("../../../apps/web/db/migrations/0031_platform_tools.sql", import.meta.url),
+      "utf8",
+    );
+    for (const tool of INTERNAL_TOOLS) {
+      expect(migration, `${tool.name} is in the fallback but not in the seed`).toContain(
+        `'${tool.subdomain}'`,
+      );
+    }
   });
 });
 
 describe("grouping", () => {
   it("assigns every tool to a declared group", () => {
+    // The live path's guarantee is now a foreign key with ON DELETE RESTRICT.
+    // This asserts the same thing about the fallback, which no foreign key
+    // covers.
     const declared = new Set<ToolGroup>(TOOL_GROUPS.map((g) => g.key));
     for (const tool of INTERNAL_TOOLS) {
       expect(declared, `${tool.name} has an undeclared group`).toContain(
@@ -48,6 +71,12 @@ describe("grouping", () => {
   it("leaves no group empty", () => {
     // An empty group renders as a heading with nothing under it, which reads
     // as a loading failure rather than an absence.
+    //
+    // NOTE: with groups in platform_tool_groups this can no longer be
+    // guaranteed for the LIVE directory — a foreign key cannot express "and at
+    // least one tool references you". The renderer skips an empty group
+    // (components/internal-tools.tsx) and internal-tools.render.test.tsx covers
+    // that. What this test still guarantees is the fallback.
     for (const group of TOOL_GROUPS) {
       expect(
         toolsInGroup(group.key).length,

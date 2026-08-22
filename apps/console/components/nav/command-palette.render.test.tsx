@@ -225,7 +225,7 @@ describe("ConsoleCommandPalette", () => {
     // was set to `entry.id` (`tool:${subdomain}`), and the primitive matches
     // queries against `value`, so typing the bare word "tool" matched every
     // tool entry regardless of its actual name or purpose. None of the tool
-    // names, subdomains or groups in `tools.ts` contain the substring
+    // names, subdomains or groups in the fixture contain the substring
     // "tool", so a correctly-scoped `value` returns zero tool options here.
     mockSearch([]);
     const user = userEvent.setup();
