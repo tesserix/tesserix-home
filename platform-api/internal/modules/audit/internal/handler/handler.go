@@ -15,6 +15,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -60,6 +61,27 @@ type Route struct {
 const (
 	DefaultLimit      = 200
 	DefaultSinceHours = 720
+
+	// MaxLimit and MaxSinceHours mirror apps/web's own MAX_LIMIT and
+	// MAX_SINCE_HOURS. Mirrored VALUE, not mirrored BEHAVIOUR: apps/web
+	// clamps a value above its maximum down to the maximum, silently.
+	// This handler refuses instead — see readBound and checkMax below.
+	//
+	// That is a deliberate divergence between the two transports, not an
+	// oversight. This estate's convention is to refuse a parameter it
+	// cannot honour rather than quietly substitute something else for it —
+	// the same rule that makes a stray unknown parameter a 400
+	// (httpx.RejectUnknownParameters) rather than an ignored one. Silently
+	// turning `?limit=5000` into `limit=1000` is exactly that kind of quiet
+	// substitution, just on a value instead of a name. Refusing it is
+	// consistent with the rest of this handler's stance even though it
+	// means this endpoint answers 400 where apps/web would answer 200.
+	//
+	// It is also invisible in practice: the console only ever sends
+	// AUDIT_LIMIT/AUDIT_SINCE_HOURS (200/720, both within these maximums),
+	// so nothing observable through the console changes.
+	MaxLimit      = 1000
+	MaxSinceHours = 720
 )
 
 // estateParameters is every query parameter this route reads. Anything else is
@@ -97,12 +119,12 @@ func (h *Handler) estate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit, err := readBound(query.Get("limit"), "limit", DefaultLimit)
+	limit, err := readBound(query.Get("limit"), "limit", DefaultLimit, MaxLimit)
 	if err != nil {
 		httpx.WriteError(w, r, err, h.log)
 		return
 	}
-	sinceHours, err := readBound(query.Get("since_hours"), "since_hours", DefaultSinceHours)
+	sinceHours, err := readBound(query.Get("since_hours"), "since_hours", DefaultSinceHours, MaxSinceHours)
 	if err != nil {
 		httpx.WriteError(w, r, err, h.log)
 		return
@@ -140,19 +162,33 @@ func (h *Handler) estate(w http.ResponseWriter, r *http.Request) {
 //
 // Absent means the default, so a direct API caller gets the SAME window the
 // console asks for rather than an unbounded read. Present-but-not-a-positive-
-// integer is a 400 naming the parameter: this estate refuses parameters it
-// cannot read rather than silently coercing them (#307), and a silently
-// coerced `?limit=abc` is a truncated audit timeline nobody was told about.
-func readBound(raw, name string, fallback int) (int, error) {
+// integer, or present-but-over-max, is a 400 naming the parameter: this
+// estate refuses parameters it cannot read (or honour) rather than silently
+// coercing them (#307), and a silently coerced `?limit=abc` — or a silently
+// clamped `?limit=5000` — is a truncated audit timeline nobody was told
+// about.
+//
+// A 400, not the 422 httpx.Validation returns: a malformed or out-of-range
+// query parameter is the same class of malformed request that
+// httpx.RejectUnknownParameters already answers 400 for on this same
+// handler, and one HTTP surface should not answer two different shapes for
+// one concern.
+func readBound(raw, name string, fallback, max int) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return fallback, nil
 	}
 	value, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, httpx.Validation(name+" is not an integer", map[string]any{name: raw})
+		return 0, httpx.BadRequest(name + " is not an integer").
+			WithDetails(map[string]any{name: raw})
 	}
 	if value < 1 {
-		return 0, httpx.Validation(name+" must be a positive integer", map[string]any{name: value})
+		return 0, httpx.BadRequest(name + " must be a positive integer").
+			WithDetails(map[string]any{name: value})
+	}
+	if value > max {
+		return 0, httpx.BadRequest(fmt.Sprintf("%s must not exceed %d", name, max)).
+			WithDetails(map[string]any{name: value, "max": max})
 	}
 	return value, nil
 }
