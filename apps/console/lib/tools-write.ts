@@ -2,6 +2,7 @@
 // token. A client component importing it must fail the build.
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
 import { platformRequestWithMeta } from "@/lib/platform-api";
@@ -55,7 +56,7 @@ function apiMessage(error: PlatformApiError, label: string): string | undefined 
   const withoutLabel = error.message.startsWith(`${label}: `)
     ? error.message.slice(label.length + 2)
     : error.message;
-  const match = /^[A-Z_]+ — (.+)$/s.exec(withoutLabel);
+  const match = /^[A-Z_]+ — ([\s\S]+)$/.exec(withoutLabel);
   return match?.[1];
 }
 
@@ -115,9 +116,17 @@ async function withToolsWrite(
 function write(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) {
   return platformRequestWithMeta(LABEL, path, {
     method,
-    ...(body === undefined
-      ? {}
-      : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    // A retry — the operator resubmitting a form, or a transport-level retry
+    // of the same request — must not reapply the write a second time. The Go
+    // API records this key in the same transaction as the change and answers
+    // a repeat with the stored result instead of a fresh insert, so the key
+    // is sent unconditionally: DELETE has no body but is exactly as retryable
+    // as a POST.
+    headers: {
+      "idempotency-key": randomUUID(),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
 

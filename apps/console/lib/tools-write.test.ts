@@ -14,7 +14,7 @@ import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
-import { createTool, deleteGroup, updateTool } from "./tools-write";
+import { createTool, deleteGroup, deleteTool, updateTool } from "./tools-write";
 
 afterEach(() => vi.resetAllMocks());
 
@@ -149,5 +149,31 @@ describe("the tools write seam", () => {
 
     const [, , init] = vi.mocked(platformRequestWithMeta).mock.calls[0];
     expect(JSON.parse(String(init?.body))).toEqual({ name: "Renamed" });
+  });
+
+  it("sends an idempotency key on a create (a body write)", async () => {
+    signedIn();
+    vi.mocked(platformRequestWithMeta).mockResolvedValue({ data: {}, meta: null });
+
+    await createTool(TOOL);
+
+    const [, , init] = vi.mocked(platformRequestWithMeta).mock.calls[0];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["idempotency-key"]).toEqual(expect.any(String));
+    expect(headers["idempotency-key"].length).toBeGreaterThan(0);
+  });
+
+  it("sends an idempotency key on a delete (the no-body path)", async () => {
+    signedIn();
+    vi.mocked(platformRequestWithMeta).mockResolvedValue({ data: {}, meta: null });
+
+    await deleteTool("t1");
+
+    const [, , init] = vi.mocked(platformRequestWithMeta).mock.calls[0];
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["idempotency-key"]).toEqual(expect.any(String));
+    expect(headers["idempotency-key"].length).toBeGreaterThan(0);
   });
 });
