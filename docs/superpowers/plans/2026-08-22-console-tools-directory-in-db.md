@@ -2659,6 +2659,16 @@ func UpdateGroup(ctx context.Context, e Execer, key string, label *string, sortO
 
 // DeleteGroup removes a heading, and is refused by the foreign key if any tool
 // still references it.
+//
+// It maps 23503 ITSELF rather than deferring to classify, and that is the whole
+// point of this function having its own error handling. Migration 0031 defines
+// exactly one foreign key, `platform_tools_group_key_fkey`, and Postgres reports
+// that same constraint name in BOTH directions — inserting a tool into a group
+// that does not exist, and deleting a group that still has tools. Neither the
+// constraint name nor the table name distinguishes them. The DIRECTION is known
+// here at the call site and nowhere else, so this is the only place the
+// distinction can be drawn correctly. classify's 23503 branch means "unknown
+// group", which is right for every caller except this one.
 func DeleteGroup(ctx context.Context, e Execer, key string) (Group, error) {
 	var g Group
 	err := e.QueryRow(ctx,
@@ -2668,6 +2678,10 @@ func DeleteGroup(ctx context.Context, e Execer, key string) (Group, error) {
 		return Group{}, ErrNoRow
 	}
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return Group{}, ErrGroupHasTools
+		}
 		return Group{}, classify(err)
 	}
 	return g, nil
