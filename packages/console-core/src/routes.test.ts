@@ -38,6 +38,18 @@ describe("route identity", () => {
     // optional (`web` always was), so it is equally worth pinning here.
     expect(isRouteActive("/platform/tools", "platform.tools", "web")).toBe(false);
   });
+
+  it("does not match a path that collides with the string an absent target stringifies to", () => {
+    // Deliberately absurd input, and that is the point: `platform.tools` has no
+    // `mobile` or `web` path, so without the undefined guard `target`
+    // stringifies into the template as "undefined/" and ANY path under a
+    // literal "undefined/" prefix would match. A tidier currentPath cannot
+    // tell the guarded and unguarded versions apart — both answer `false` for
+    // it — so a test built on one would pass against the very bug it exists
+    // to catch. This is the ablation that actually distinguishes them.
+    expect(isRouteActive("undefined/anything", "platform.tools", "mobile")).toBe(false);
+    expect(isRouteActive("undefined/anything", "platform.tools", "web")).toBe(false);
+  });
 });
 
 describe("route capability", () => {
