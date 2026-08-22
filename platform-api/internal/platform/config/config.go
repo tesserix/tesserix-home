@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/federation"
 )
 
 // Config is the whole of the service's configuration. Loaded once at startup
@@ -17,6 +19,7 @@ type Config struct {
 	Database        Database
 	Auth            Auth
 	ShutdownTimeout time.Duration
+	Federation      *federation.Registry
 }
 
 // Auth is the Zitadel wiring (ADR-003 D8).
@@ -156,6 +159,12 @@ func Load() (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing required environment: %s", strings.Join(missing, ", "))
 	}
+
+	reg, err := federation.LoadRegistry(os.Getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Federation = reg
 
 	return cfg, nil
 }

@@ -162,6 +162,15 @@ func TestRegisteringAModuleWithoutAVerifierPanics(t *testing.T) {
 	})
 }
 
+// Guards the composition root's contract: /v1/audit exists only because a
+// module registered it. A 404 here means nothing has silently claimed the
+// path.
+func TestAuditRouteIsNotServedWithoutAModule(t *testing.T) {
+	if rec := get(t, stubChecker{}, "/v1/audit"); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 on a bare router", rec.Code)
+	}
+}
+
 // The other half: with a verifier it registers normally.
 func TestRegisteringAModuleWithAVerifierWorks(t *testing.T) {
 	registered := false
