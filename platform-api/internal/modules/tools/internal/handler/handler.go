@@ -36,10 +36,7 @@
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -49,10 +46,6 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
 )
-
-// maxBodyBytes caps a write. A directory entry is a few hundred bytes; this is
-// generous by three orders of magnitude and still bounded.
-const maxBodyBytes = 64 << 10
 
 // Handler serves the module.
 type Handler struct {
@@ -143,57 +136,6 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteData(w, r, http.StatusOK, payload, h.log)
-}
-
-// beginWrite recovers the principal and reads the body once — it is needed
-// twice, decoded into a request struct and digested for the idempotency key,
-// and a decoder would consume the stream.
-func (h *Handler) beginWrite(w http.ResponseWriter, r *http.Request) (*auth.Principal, []byte, bool) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		// Unreachable behind Authenticate. Refused rather than assumed,
-		// because the alternative is an audit row with an empty actor.
-		h.log.ErrorContext(r.Context(), "a write route ran without a principal",
-			slog.String("path", r.URL.Path))
-		h.fail(w, r, httpx.Internal("request failed"))
-		return nil, nil, false
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		h.fail(w, r, httpx.BadRequest("the request body could not be read"))
-		return nil, nil, false
-	}
-	return principal, body, true
-}
-
-// readKey turns an optional Idempotency-Key header into a key. Optional
-// deliberately: no header is a normal write. A header the caller got WRONG is
-// an error, because a caller who meant to be protected must be told they were
-// not.
-func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation string, body []byte) (*idempotency.Key, error) {
-	key, asked, err := idempotency.FromRequest(r, principal.Subject, operation, body)
-	if err != nil {
-		return nil, err
-	}
-	if !asked {
-		return nil, nil
-	}
-	return &key, nil
-}
-
-// decode parses a body, rejecting anything the struct does not declare. An
-// unknown field today is a field this service might mean something by
-// tomorrow; the write-side twin of RejectUnknownParameters.
-func decode(body []byte, into any) error {
-	if len(body) == 0 {
-		return httpx.BadRequest("a request body is required")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(into); err != nil {
-		return httpx.BadRequest("the request body is not the expected JSON: " + err.Error())
-	}
-	return nil
 }
 
 // fail maps a failure to a status code.
