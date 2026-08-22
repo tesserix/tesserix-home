@@ -2703,7 +2703,21 @@ exists only to pick a noun.
 
 - [ ] **Step 4: Add the group service writes and handlers**
 
-Follow the tool writes exactly. Actions `platform.tool_group.created`,
+Follow the tool writes exactly — and "exactly" includes the part that is easy to
+skip, because the group path has no compiler pressure to make you do it:
+**`CreateGroup` builds a `domain.Group`, calls `Normalise()` then `Validate()`
+before touching the database, and `UpdateGroup` does the same for the fields
+actually sent** (the `probe` pattern `UpdateTool` uses, writing normalised
+values back onto the patch). Without this the whole `Group` half of the domain
+package is dead code: `key text PRIMARY KEY` and `label text NOT NULL` both
+accept the empty string, so `{"key":"","label":""}` would answer 201 and create
+a group with an empty key and a blank heading, and `{"key":"Not A Key"}` would
+put spaces into a key every tool in the group references.
+
+`createGroupRequest.SortOrder` must be wired through to `CreateGroup`, not
+declared and dropped. A silently-ignored field is exactly what declaring-and-
+refusing `key` exists to prevent; reintroducing it one field over would be
+worse than omitting it. Actions `platform.tool_group.created`,
 `.updated`, `.deleted`; operations `platform.tool_groups.create`, `.update`,
 `.delete`; payload `GroupPayload{Group: groupWire(stored)}`; statuses 201, 200,
 200. The PATCH body is:
@@ -2850,6 +2864,17 @@ func TestGoldenResponses(t *testing.T) {
 
 	assertGolden(t, "group-created",
 		a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"security","label":"Security"}`, nil).raw)
+	assertGolden(t, "group-updated",
+		a.do(http.MethodPatch, "/v1/platform/tool-groups/security", `{"label":"Security and access"}`, nil).raw)
+	// A throwaway group, deleted — NOT one of the seeded five, which other
+	// goldens above read. The 409 delete is captured separately below; a
+	// successful one needs an empty group to act on.
+	assertGolden(t, "group-deleted",
+		a.do(http.MethodDelete, "/v1/platform/tool-groups/security", "", nil).raw)
+	assertGolden(t, "error-group-not-found",
+		a.do(http.MethodPatch, "/v1/platform/tool-groups/no-such-group", `{"label":"x"}`, nil).raw)
+	assertGolden(t, "error-duplicate-group",
+		a.do(http.MethodPost, "/v1/platform/tool-groups", `{"key":"identity","label":"Identity again"}`, nil).raw)
 
 	// Every error shape. A client's error handling is written against these
 	// and exercised less than its success path, so a change here is likelier
