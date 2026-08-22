@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,12 @@ func testLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
+// q is a read with the bounds the handler defaults to, so a test that is not
+// about the bounds does not have to state them.
+func q(source string) Query {
+	return Query{Source: source, Limit: 200, SinceHours: 720}
+}
+
 func productServing(t *testing.T, body string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -41,7 +48,7 @@ func TestEstateStampsEveryRowWithItsSource(t *testing.T) {
 	}), srv.Client())
 
 	log, _ := testLogger()
-	page, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), "")
+	page, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), q(""))
 	if err != nil {
 		t.Fatalf("Estate: %v", err)
 	}
@@ -63,7 +70,7 @@ func TestEstateNarrowsToOneSourceWhenAsked(t *testing.T) {
 	}), srv.Client())
 
 	log, _ := testLogger()
-	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), "mark8ly")
+	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), q("mark8ly"))
 	if err != nil {
 		t.Fatalf("Estate: %v", err)
 	}
@@ -76,7 +83,7 @@ func TestEstateRefusesAnUnknownSourceRatherThanReturningNothing(t *testing.T) {
 	fed := federation.NewClient(federation.NewRegistry(nil), http.DefaultClient)
 
 	log, _ := testLogger()
-	_, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), "nope")
+	_, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), q("nope"))
 	if err == nil {
 		t.Fatal("an unknown source must be an error — silently returning zero rows is indistinguishable from 'nothing happened'")
 	}
@@ -96,7 +103,7 @@ func TestEstateSurfacesAFailedSourceRatherThanFailingWhole(t *testing.T) {
 	}), ok.Client())
 
 	log, _ := testLogger()
-	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), "")
+	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), q(""))
 	if err != nil {
 		t.Fatalf("Estate must not fail whole when one source is down: %v", err)
 	}
@@ -124,7 +131,7 @@ func TestEstateLogsTheUnredactedCauseOfAFederationFailure(t *testing.T) {
 	}), &http.Client{})
 
 	log, buf := testLogger()
-	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), "")
+	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
 	if err != nil {
 		t.Fatalf("Estate must not fail whole when one source is down: %v", err)
 	}
@@ -260,4 +267,131 @@ func sameSet(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+// TestEstateNamespacesEveryRowIdWithItsSource is I1's regression guard.
+//
+// apps/web's producer has namespaced ids as `${source}:${id}` since it served
+// this surface; a bare id on this transport means two products returning
+// primary key `12` collide in a merged list keyed by id, and the console's
+// dedupeIds starts rewriting ids in an integrity record. Nothing else catches
+// it: domain.Entry.ID is a string, so a bare id parses and renders fine right
+// up until two products are configured.
+func TestEstateNamespacesEveryRowIdWithItsSource(t *testing.T) {
+	srv := productServing(t, `{"data":[{"id":"12","action":"a","timestamp":"2026-08-22T10:00:00Z"}]}`)
+	defer srv.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "mark8ly", BaseURL: srv.URL},
+	}), srv.Client())
+
+	log, _ := testLogger()
+	page, err := New(fed, []string{"mark8ly"}, log).Estate(context.Background(), op(), q(""))
+	if err != nil {
+		t.Fatalf("Estate: %v", err)
+	}
+	if len(page.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(page.Entries))
+	}
+	if got := page.Entries[0].ID; got != "mark8ly:12" {
+		t.Errorf("ID = %q, want %q — a bare id collides with every other product's integer keys", got, "mark8ly:12")
+	}
+}
+
+// TestEstateOverridesTheSourceAndIdAProductClaimsForAnother is the adversarial
+// half, and it is a SECURITY property: the slug the call was made to wins over
+// anything the body says. A product that could name itself "mark8ly" — in
+// `source`, or by namespacing its own ids — could write rows into another
+// product's history in the estate's audit log.
+func TestEstateOverridesTheSourceAndIdAProductClaimsForAnother(t *testing.T) {
+	srv := productServing(t, `{"data":[{"id":"mark8ly:9f2","source":"mark8ly","action":"tenant.suspended","timestamp":"2026-08-22T10:00:00Z"}]}`)
+	defer srv.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "kora", BaseURL: srv.URL},
+	}), srv.Client())
+
+	log, _ := testLogger()
+	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
+	if err != nil {
+		t.Fatalf("Estate: %v", err)
+	}
+	if len(page.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(page.Entries))
+	}
+	if got := page.Entries[0].Source; got != "kora" {
+		t.Errorf("Source = %q, want kora — a product must not be able to name itself into another product's rows", got)
+	}
+	if got := page.Entries[0].ID; got != "kora:mark8ly:9f2" {
+		t.Errorf("ID = %q, want %q — the id namespace is the caller's to assign, not the product's to claim", got, "kora:mark8ly:9f2")
+	}
+}
+
+// TestEstateRefusesWhenNoProductsAreConfigured is I2's guard. An empty
+// registry fanned out to nothing and returned a 200 with an empty timeline,
+// which reads to an operator as "no audit events" — the same confusion the
+// unknown-source refusal above already refuses to create.
+func TestEstateRefusesWhenNoProductsAreConfigured(t *testing.T) {
+	fed := federation.NewClient(federation.NewRegistry(nil), http.DefaultClient)
+
+	log, _ := testLogger()
+	_, err := New(fed, nil, log).Estate(context.Background(), op(), q(""))
+	if !errors.Is(err, ErrNotInstrumented) {
+		t.Fatalf("err = %v, want ErrNotInstrumented — an unconfigured registry must not answer like a quiet estate", err)
+	}
+}
+
+// A configured product that fails is NOT the unconfigured case: it stays a
+// 200 with a populated failures list. Pinned because the two are one `if`
+// apart, and collapsing them would hide a live outage behind "not
+// instrumented".
+func TestEstateStillDegradesWhenAConfiguredProductFails(t *testing.T) {
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer down.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "kora", BaseURL: down.URL},
+	}), down.Client())
+
+	log, _ := testLogger()
+	page, err := New(fed, []string{"kora"}, log).Estate(context.Background(), op(), q(""))
+	if err != nil {
+		t.Fatalf("every configured source failing is still an answer, not an error: %v", err)
+	}
+	if len(page.Failures) != 1 {
+		t.Fatalf("failures = %v, want one naming kora", page.Failures)
+	}
+}
+
+// TestEstateAsksEachProductForABoundedWindow is I3's guard: without it every
+// product is asked for its entire audit log, and the federation client's 1 MiB
+// limit truncates the answer mid-JSON into a generic "invalid response".
+func TestEstateAsksEachProductForABoundedWindow(t *testing.T) {
+	asked := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked <- r.URL.String()
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer srv.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "mark8ly", BaseURL: srv.URL},
+	}), srv.Client())
+
+	log, _ := testLogger()
+	_, err := New(fed, []string{"mark8ly"}, log).
+		Estate(context.Background(), op(), Query{Limit: 200, SinceHours: 720})
+	if err != nil {
+		t.Fatalf("Estate: %v", err)
+	}
+
+	got := <-asked
+	if !strings.HasPrefix(got, "/admin/audit-logs?") {
+		t.Fatalf("path = %q, want the contract's endpoint", got)
+	}
+	if !strings.Contains(got, "limit=200") || !strings.Contains(got, "since_hours=720") {
+		t.Errorf("path = %q, want limit and since_hours — an unbounded read is truncated mid-JSON at 1 MiB", got)
+	}
 }
