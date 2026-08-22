@@ -184,6 +184,31 @@ export function createStubServer() {
       });
     }
 
+    // GET /v1/audit — the platform API's shape (Task 5/7). Served here so a
+    // developer can flip PLATFORM_API_ORIGIN at the stub and exercise the
+    // cutover path without running platform-api and a product. Reuses the
+    // same fixtures as /api/admin/apps/:product/audit-logs above: both
+    // transports are deliberately made to emit the same body, and giving
+    // them the same rows here keeps that equivalence visible locally.
+    if (method === "GET" && pathname === "/v1/audit") {
+      const source = url.searchParams.get("source");
+      // No `source` means "every source" — the same fan-out the `all`
+      // product id triggers above, failures and all. A `source` narrows
+      // which sources were asked, so an unrecognised or unrepresented value
+      // returns an empty entries array rather than inventing rows, and never
+      // a 400: this stub stands in for a transport, not for the platform
+      // API's own validation.
+      const entries = source
+        ? AUDIT_ENTRIES.filter((e) => e.source === source)
+        : AUDIT_ENTRIES;
+      return json(res, 200, {
+        data: {
+          entries,
+          failures: source ? [] : AUDIT_FAILURES,
+        },
+      });
+    }
+
     const conversionMatch = pathname.match(
       /^\/api\/admin\/apps\/([^/]+)\/conversion-status$/,
     );
