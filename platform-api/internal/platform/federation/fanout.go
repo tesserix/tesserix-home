@@ -3,6 +3,8 @@ package federation
 import (
 	"context"
 	"errors"
+	"net"
+	"net/url"
 	"sync"
 )
 
@@ -16,25 +18,43 @@ type Failure struct {
 	Error   string `json:"error"`
 }
 
-// sanitize strips the request URL and any dialed address out of a transport
-// error, keeping only the innermost cause.
+// sanitize maps a failure to a string that is safe to render in a browser.
 //
-// `*url.Error` embeds the full URL in its Error() string, and the
-// `*net.OpError` it typically wraps also embeds the dialed host:port in ITS
-// Error() string (stripping only the url.Error layer still leaves the
-// address behind, e.g. "dial tcp 10.0.4.12:8080: connect: connection
-// refused"). This value is rendered in a browser beside the source's name,
-// so we walk to the deepest wrapped error — e.g. "connection refused" — and
-// use only that. The unredacted error is still what a caller logs
-// server-side.
+// This value is shown in the console beside the source's name, so it must
+// never carry an internal hostname, address, or URL. It is an ALLOWLIST, not
+// an attempt to strip identifiers out of arbitrary error text: `*url.Error`,
+// `*net.OpError`, `*net.DNSError` and several TLS errors each embed an
+// address in their own Error() string, and unwrapping to the deepest cause
+// does not help — `*net.DNSError.UnwrapErr` may be nil, so unwrapping stops
+// there and returns "lookup <host> on <server>: no such host".
+//
+// `http.Client.Do` always returns a `*url.Error` when a request fails, so
+// that type is a complete gate for transport failures. Everything else is an
+// error this package constructed, whose text we control.
+//
+// The unredacted error is still what a caller logs server-side.
 func sanitize(err error) string {
-	for {
-		unwrapped := errors.Unwrap(err)
-		if unwrapped == nil {
-			return err.Error()
-		}
-		err = unwrapped
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		// Not a transport failure: our own error text, safe as written.
+		return err.Error()
 	}
+
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "request canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timed out"
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "name resolution failed"
+	}
+	if urlErr.Timeout() {
+		return "timed out"
+	}
+	return "connection failed"
 }
 
 // FanOut reads the same path from several products concurrently and returns

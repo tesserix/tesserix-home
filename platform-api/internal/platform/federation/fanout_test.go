@@ -125,3 +125,38 @@ func TestFanOutFailureDoesNotLeakTheInternalURL(t *testing.T) {
 		t.Error("Failure.Error is empty — the cause must survive sanitisation, only the URL is dropped")
 	}
 }
+
+func TestFanOutFailureDoesNotLeakTheHostnameOnDNSFailure(t *testing.T) {
+	const host = "mark8ly-internal.invalid"
+
+	c := NewClient(NewRegistry([]Product{
+		{Slug: "mark8ly", BaseURL: "http://" + host + ":8080"},
+	}), &http.Client{Timeout: 5 * time.Second})
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if strings.Contains(failures[0].Error, host) {
+		t.Errorf("Failure.Error = %q — leaks the internal hostname into a string the console renders in a browser", failures[0].Error)
+	}
+	if failures[0].Error == "" {
+		t.Error("Failure.Error is empty — a failure must still say something")
+	}
+}
+
+func TestFanOutKeepsOurOwnErrorTextForNonTransportFailures(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`not json`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL}}), srv.Client())
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/x", operator(), decodeRows)
+
+	if len(failures) != 1 || failures[0].Error == "connection failed" {
+		t.Fatalf("failures = %v — a decode failure must keep its own text, not be classified as a transport failure", failures)
+	}
+}
