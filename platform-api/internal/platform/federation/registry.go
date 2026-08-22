@@ -69,11 +69,23 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 	}
 
 	var products []Product
+	seen := make(map[string]struct{})
 	for _, raw := range strings.Split(declared, ",") {
 		slug := strings.TrimSpace(raw)
 		if slug == "" {
 			continue
 		}
+		// A repeated slug would collapse silently in NewRegistry's map — last
+		// declaration wins, and which one that is depends on the order someone
+		// typed an env var in. This file is the estate's blast-radius control;
+		// a product whose coordinates are decided by a typo is not a control.
+		if _, duplicate := seen[slug]; duplicate {
+			return nil, fmt.Errorf(
+				"federation: product %q is declared more than once in FEDERATION_PRODUCTS",
+				slug)
+		}
+		seen[slug] = struct{}{}
+
 		prefix := "FEDERATION_" + strings.ToUpper(slug) + "_"
 		base := strings.TrimSpace(getenv(prefix + "BASE_URL"))
 		if base == "" {
@@ -81,10 +93,22 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 				"federation: product %q is declared in FEDERATION_PRODUCTS but %sBASE_URL is empty",
 				slug, prefix)
 		}
+		// Exactly as strict as BASE_URL, and for a stronger reason. An empty
+		// secret is not a missing feature: Client.Get sends
+		// `X-Internal-Auth: ""`, so a typo'd FEDERATION_<SLUG>_SECRET
+		// downgrades every federated call to an unauthenticated one that still
+		// carries operator identity headers. This client exists to carry
+		// signed operator identity; it fails closed at boot instead.
+		secret := strings.TrimSpace(getenv(prefix + "SECRET"))
+		if secret == "" {
+			return nil, fmt.Errorf(
+				"federation: product %q is declared in FEDERATION_PRODUCTS but %sSECRET is empty",
+				slug, prefix)
+		}
 		products = append(products, Product{
 			Slug:    slug,
 			BaseURL: strings.TrimRight(base, "/"),
-			Secret:  strings.TrimSpace(getenv(prefix + "SECRET")),
+			Secret:  secret,
 		})
 	}
 	return NewRegistry(products), nil
