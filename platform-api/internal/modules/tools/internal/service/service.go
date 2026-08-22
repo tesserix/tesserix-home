@@ -196,7 +196,20 @@ func (s *Service) UpdateTool(ctx context.Context, actor Actor, id string, patch 
 			patch.GroupKey = &probe.GroupKey
 		}
 		if patch.Note != nil {
-			patch.Note = probe.Note
+			// Normalise() collapses a blank note ("" or "   ") to nil. If the
+			// caller sent a note and it came back nil, that IS the caller
+			// asking to clear it — not "leave it alone", which is what
+			// writing nil into patch.Note while leaving ClearNote false would
+			// do: the repository's CASE WHEN ClearNote THEN NULL ELSE
+			// COALESCE(new, existing) END keeps the old note when neither
+			// branch fires. Without this, `PATCH {"note": ""}` answers 200,
+			// writes an audit row claiming an update, and the note never
+			// changes.
+			if probe.Note == nil {
+				patch.Note, patch.ClearNote = nil, true
+			} else {
+				patch.Note = probe.Note
+			}
 		}
 	}
 

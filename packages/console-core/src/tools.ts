@@ -21,6 +21,13 @@
  * See `DirectorySource` in tools-directory.ts for the type that keeps these
  * two apart.
  *
+ * PLATFORM_API_ORIGIN is NOT a tools-only lever, and unsetting it in
+ * production is not a scoped rollback of this phase alone: the same variable
+ * also switches fetchTickets (apps/console/lib/platform-api.ts:330) and the
+ * CRM queues, both cut over ahead of this one. Unsetting it restores this
+ * literal as the served directory AND reverts those two to their `apps/web`
+ * path, at the same time.
+ *
  * Keep it in step with migration 0031's seed. A tool added through the API
  * will not appear here, and should not; a tool added HERE and not to the seed
  * is a fallback that disagrees with the live list for no reason.

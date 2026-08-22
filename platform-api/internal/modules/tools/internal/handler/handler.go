@@ -25,14 +25,25 @@
 // where pagination was forgotten, and the next reader would be right to
 // wonder.
 //
-// # Every route gates on `platform`
+// # The two GETs gate on `read`; the six writes gate on `platform`
 //
-// Taken from `platform.dashboard` in packages/console-core/src/routes.ts,
-// which is the surface the directory is served on. There is no verb to stack:
-// the vocabulary's verbs — respond, mass-send, hard-delete,
-// rotate-credentials, adjust-balance, execute-refund — none of them names
-// editing a directory of links. Inventing `tools-write` would assert a Zitadel
-// role nobody holds, which fails closed on every real operator.
+// apps/console/lib/search.ts documents the contract this module has to honour:
+// the command palette renders on every console page for every operator who
+// merely holds console entry, and it calls these two GETs to search the
+// directory. `search.ts` says so explicitly — "the console grants nothing by
+// naming them, and each tool enforces its own authorization on arrival" — so
+// gating the reads behind `platform` was the bug: an operator holding
+// `read`+`crm`+`support` but not `platform` got 403 on both GETs, every time,
+// and the console's loader mistook that permanent refusal for a transient
+// outage ("Live directory unavailable").
+//
+// The six writes stay behind `platform`, taken from `platform.dashboard` in
+// packages/console-core/src/routes.ts, which is the surface the directory is
+// administered on. There is no verb to stack: the vocabulary's verbs —
+// respond, mass-send, hard-delete, rotate-credentials, adjust-balance,
+// execute-refund — none of them names editing a directory of links. Inventing
+// `tools-write` would assert a Zitadel role nobody holds, which fails closed
+// on every real operator.
 package handler
 
 import (
@@ -60,8 +71,9 @@ func New(svc *service.Service, log *slog.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-// Route is one of the module's paths. Write says which gate it goes behind and
-// tells a test which routes carry a body.
+// Route is one of the module's paths. Write says which gate it goes behind —
+// true selects `platform`, false selects `read` — and tells a test which
+// routes carry a body.
 type Route struct {
 	Method  string
 	Pattern string
@@ -100,11 +112,17 @@ var RouteTable = []Route{
 // Routes mounts the table. Named Routes rather than Register because the
 // module's public Register/Config file is tools.go, and it calls this.
 func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
-	gate := func(handler http.HandlerFunc) http.Handler {
-		return auth.Authenticate(verifier, h.log,
-			auth.RequireCapability(auth.CapPlatform, h.log, handler))
+	read := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapRead, h.log, handler))
+	}
+	write := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapPlatform, h.log, handler))
 	}
 	for _, route := range RouteTable {
+		gate := read
+		if route.Write {
+			gate = write
+		}
 		mux.Handle(route.Method+" "+route.Pattern, gate(route.handler(h)))
 	}
 }
@@ -241,6 +259,16 @@ func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, httpx.BadRequest(
 			"a group's key cannot be changed: every tool in the group references it. "+
 				"Add the new group, move the tools to it, then remove the old one"))
+		return
+	}
+	if request.Label == nil && request.SortOrder == nil {
+		// An empty patch still reaches an all-COALESCE(NULL, …) UPDATE that
+		// matches the row, bumps updated_at, and commits an audit entry
+		// claiming `platform.tool_group.updated` — a false statement in the
+		// one table whose entire value is that it contains none. Refused
+		// before the write rather than left to look like a no-op success.
+		h.fail(w, r, httpx.BadRequest(
+			"send at least one field to change — label or sort_order"))
 		return
 	}
 	key, err := h.readKey(r, principal, service.OpGroupUpdate, body)
@@ -400,6 +428,16 @@ func (h *Handler) updateTool(w http.ResponseWriter, r *http.Request) {
 	var request updateToolRequest
 	if err := decode(body, &request); err != nil {
 		h.fail(w, r, err)
+		return
+	}
+	if request.Name == nil && request.Subdomain == nil && request.Purpose == nil &&
+		request.GroupKey == nil && request.SortOrder == nil && len(request.Note) == 0 {
+		// Same reasoning as the group PATCH: an empty body still reaches an
+		// all-COALESCE(NULL, …) UPDATE that matches the row, bumps
+		// updated_at, and commits an audit entry claiming
+		// `platform.tool.updated` for a request that changed nothing.
+		h.fail(w, r, httpx.BadRequest(
+			"send at least one field to change — name, subdomain, purpose, group_key, note or sort_order"))
 		return
 	}
 	key, err := h.readKey(r, principal, service.OpToolUpdate, body)

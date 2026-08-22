@@ -358,6 +358,59 @@ func TestPatchingCanClearANote(t *testing.T) {
 	}
 }
 
+// I2: PATCH {"note": ""} must clear the note, not silently keep the old one.
+//
+// Normalise() collapses a blank note to nil for a CREATE; on a PATCH that
+// nil has to become an explicit clear (ClearNote=true), or the repository's
+// COALESCE keeps the existing value while the response and the audit trail
+// both claim an update happened. secret-service seeds with a real note, so a
+// bug that leaves it untouched is visible rather than masked by an
+// already-nil column.
+func TestPatchingWithAnEmptyStringNoteClearsIt(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("secret-service")
+
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":""}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["note"] != nil {
+		t.Errorf("note = %v, want null after an empty string — Normalise collapses "+
+			"blank to absence and a PATCH has to honour that as a clear", tool["note"])
+	}
+}
+
+// The whitespace-only sibling of the test above: Normalise trims before
+// collapsing, so "   " must clear exactly like "".
+func TestPatchingWithAWhitespaceOnlyNoteClearsIt(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("secret-service")
+
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":"   "}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["note"] != nil {
+		t.Errorf("note = %v, want null after a whitespace-only note", tool["note"])
+	}
+}
+
+// I5's tool-side twin of TestPatchingAGroupWithAnEmptyBodyIs400.
+func TestPatchingAToolWithAnEmptyBodyIs400(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("kibana")
+
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{}`, nil)
+
+	if got.status != http.StatusBadRequest {
+		t.Errorf("an empty tool patch = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
 func TestPatchingAnUnknownToolIs404(t *testing.T) {
 	a := serve(t)
 
@@ -534,6 +587,23 @@ func TestAGroupsKeyCannotBeChanged(t *testing.T) {
 
 	if got.status != http.StatusBadRequest {
 		t.Errorf("changing a group key = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
+// I5: an empty PATCH must not reach the write. Without this it performs an
+// all-COALESCE(NULL, …) UPDATE that matches the row, bumps updated_at, and
+// commits `platform.tool_group.updated` for a request that changed nothing —
+// a false statement in the one table whose entire value is that it contains
+// none. This is a separate check from TestAGroupsKeyCannotBeChanged: that one
+// refuses a `key` in the body regardless of what else is sent, this one
+// refuses a body with nothing else in it.
+func TestPatchingAGroupWithAnEmptyBodyIs400(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPatch, "/v1/platform/tool-groups/cost", `{}`, nil)
+
+	if got.status != http.StatusBadRequest {
+		t.Errorf("an empty group patch = %d, want 400: %s", got.status, got.raw)
 	}
 }
 

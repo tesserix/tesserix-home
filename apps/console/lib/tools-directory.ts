@@ -52,10 +52,14 @@ export interface ToolsDirectory {
  * The tools directory, from the platform API or from the code literal.
  *
  * Two backends behind one signature, chosen by `PLATFORM_API_ORIGIN` — the
- * same switch `fetchTickets` and the CRM queues use, and for the same reason:
- * UNSET IS BYTE-FOR-BYTE THE OLD BEHAVIOUR (now that `source` distinguishes
- * "off on purpose" from "on and broken" — see `DirectorySource` — so this
- * phase reverts by removing one variable rather than by reverting code.
+ * SAME switch `fetchTickets` (`lib/platform-api.ts:330`) and the CRM queues
+ * use, not a lookalike of it. UNSET IS BYTE-FOR-BYTE THE OLD BEHAVIOUR for
+ * this directory (now that `source` distinguishes "off on purpose" from "on
+ * and broken" — see `DirectorySource`) — but unsetting it in production is
+ * NOT a tools-only rollback: it reverts tickets and the CRM queues to the
+ * `apps/web` path in the same act, simultaneously. That is a decision for
+ * whoever owns the estate-wide lever, not something this module can scope
+ * down on its own.
  *
  * # Why a failure falls back instead of surfacing
  *

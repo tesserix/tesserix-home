@@ -187,8 +187,13 @@ rather than orphaning rows.
 
 New `apps/console/lib/tools-directory.ts`, `server-only`, dual path on
 `PLATFORM_API_ORIGIN`, following the seam in `lib/crm-queues.ts`. Unset is
-byte-for-byte today's behaviour, so the phase reverts by removing one variable
-rather than by reverting code.
+byte-for-byte today's behaviour, so unsetting it removes code paths rather
+than reverting them — **but the lever is not scoped to this phase.**
+`PLATFORM_API_ORIGIN` also switches `fetchTickets`
+(`apps/console/lib/platform-api.ts:330`) and the CRM queues, both already cut
+over ahead of this one. Unsetting it in production to roll back the tools
+directory rolls those back too, at the same time and by the same act — an
+estate-wide lever, not a tools-only one.
 
 ```
 readToolsDirectory(): Promise<{
@@ -246,7 +251,9 @@ main.
 3. Writes work under an `Idempotency-Key`, with golden coverage.
 4. The console home page and the command palette both render from the API,
    with `PLATFORM_API_ORIGIN` set.
-5. Unsetting `PLATFORM_API_ORIGIN` restores today's behaviour exactly.
+5. Unsetting `PLATFORM_API_ORIGIN` restores the pre-#318 tools directory
+   exactly, AND simultaneously reverts `fetchTickets` and the CRM queues to
+   the `apps/web` path — it is an estate-wide lever, not a tools-only one.
 6. A fetch failure renders the built-in list, labelled as such.
 7. `npx next build` passes; no skipped database tests.
 
