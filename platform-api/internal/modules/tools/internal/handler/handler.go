@@ -36,7 +36,10 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -175,12 +178,9 @@ func unwrap(err error) string {
 	return message
 }
 
-// Replaced in Task 4. A stub rather than an absent route because RouteTable is
+// Replaced in Task 5. A stub rather than an absent route because RouteTable is
 // what registration reads, and a table that does not yet list the writes would
-// make Task 4 a change to the surface rather than a filling-in of it.
-func (h *Handler) createTool(w http.ResponseWriter, r *http.Request)  { h.notYet(w, r) }
-func (h *Handler) updateTool(w http.ResponseWriter, r *http.Request)  { h.notYet(w, r) }
-func (h *Handler) deleteTool(w http.ResponseWriter, r *http.Request)  { h.notYet(w, r) }
+// make Task 5 a change to the surface rather than a filling-in of it.
 func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
 func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) { h.notYet(w, r) }
@@ -188,4 +188,182 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) { h.notYet
 func (h *Handler) notYet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteError(w, r, httpx.Error{StatusCode: http.StatusNotImplemented,
 		Code: "NOT_IMPLEMENTED", Message: "this write is not built yet"}, h.log)
+}
+
+// maxBodyBytes caps a write. A directory entry is a few hundred bytes; this is
+// generous by three orders of magnitude and still bounded.
+const maxBodyBytes = 64 << 10
+
+// beginWrite recovers the principal and reads the body once — it is needed
+// twice, decoded into a request struct and digested for the idempotency key,
+// and a decoder would consume the stream.
+func (h *Handler) beginWrite(w http.ResponseWriter, r *http.Request) (*auth.Principal, []byte, bool) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		// Unreachable behind Authenticate. Refused rather than assumed,
+		// because the alternative is an audit row with an empty actor.
+		h.log.ErrorContext(r.Context(), "a write route ran without a principal",
+			slog.String("path", r.URL.Path))
+		h.fail(w, r, httpx.Internal("request failed"))
+		return nil, nil, false
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		h.fail(w, r, httpx.BadRequest("the request body could not be read"))
+		return nil, nil, false
+	}
+	return principal, body, true
+}
+
+// readKey turns an optional Idempotency-Key header into a key. Optional
+// deliberately: no header is a normal write. A header the caller got WRONG is
+// an error, because a caller who meant to be protected must be told they were
+// not.
+func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation string, body []byte) (*idempotency.Key, error) {
+	key, asked, err := idempotency.FromRequest(r, principal.Subject, operation, body)
+	if err != nil {
+		return nil, err
+	}
+	if !asked {
+		return nil, nil
+	}
+	return &key, nil
+}
+
+// decode parses a body, rejecting anything the struct does not declare. An
+// unknown field today is a field this service might mean something by
+// tomorrow; the write-side twin of RejectUnknownParameters.
+func decode(body []byte, into any) error {
+	if len(body) == 0 {
+		return httpx.BadRequest("a request body is required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		return httpx.BadRequest("the request body is not the expected JSON: " + err.Error())
+	}
+	return nil
+}
+
+// createToolRequest is the create body. Pointers where absence is meaningful.
+type createToolRequest struct {
+	Name      string  `json:"name"`
+	Subdomain string  `json:"subdomain"`
+	Purpose   string  `json:"purpose"`
+	Note      *string `json:"note"`
+	GroupKey  string  `json:"group_key"`
+	// Absent means "the end of its group". A non-pointer would make 0 —
+	// legitimately the first position — indistinguishable from "unspecified".
+	SortOrder *int `json:"sort_order"`
+}
+
+func (h *Handler) createTool(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	var request createToolRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	key, err := h.readKey(r, principal, service.OpToolCreate, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.CreateTool(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		domain.Tool{
+			Name: request.Name, Subdomain: request.Subdomain, Purpose: request.Purpose,
+			Note: request.Note, GroupKey: request.GroupKey, SortOrder: request.SortOrder,
+		}, key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
+}
+
+// updateToolRequest is the PATCH body.
+//
+// json.RawMessage for Note rather than *string, because THREE states have to
+// be distinguishable and a pointer carries two: absent (leave it), null
+// (clear it) and a string (set it). Without the raw form there is no way to
+// remove a note.
+type updateToolRequest struct {
+	Name      *string         `json:"name"`
+	Subdomain *string         `json:"subdomain"`
+	Purpose   *string         `json:"purpose"`
+	GroupKey  *string         `json:"group_key"`
+	Note      json.RawMessage `json:"note"`
+	SortOrder *int            `json:"sort_order"`
+}
+
+func (h *Handler) updateTool(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	var request updateToolRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	key, err := h.readKey(r, principal, service.OpToolUpdate, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	patch := service.ToolPatch{
+		Name: request.Name, Subdomain: request.Subdomain, Purpose: request.Purpose,
+		GroupKey: request.GroupKey, SortOrder: request.SortOrder,
+	}
+	// The three states, read explicitly.
+	if len(request.Note) > 0 {
+		if string(request.Note) == "null" {
+			patch.ClearNote = true
+		} else {
+			var note string
+			if err := json.Unmarshal(request.Note, &note); err != nil {
+				h.fail(w, r, httpx.BadRequest("note must be a string or null"))
+				return
+			}
+			patch.Note = &note
+		}
+	}
+
+	written, err := h.svc.UpdateTool(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		r.PathValue("id"), patch, key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
+}
+
+func (h *Handler) deleteTool(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+	// A DELETE carries no body, so the idempotency digest is over an empty
+	// one — the key plus the path is what identifies the request.
+	key, err := h.readKey(r, principal, service.OpToolDelete, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.DeleteTool(r.Context(),
+		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		r.PathValue("id"), key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
 }

@@ -208,3 +208,197 @@ func TestAnUnknownQueryParameterIsRefused(t *testing.T) {
 		t.Errorf("an unknown parameter = %d, want 400: %s", got.status, got.raw)
 	}
 }
+
+func (a *api) toolID(subdomain string) string {
+	a.t.Helper()
+	var id string
+	if err := a.pool.QueryRow(context.Background(),
+		`SELECT id FROM platform_tools WHERE subdomain = $1`, subdomain).Scan(&id); err != nil {
+		a.t.Fatalf("finding %s: %v", subdomain, err)
+	}
+	return id
+}
+
+func TestCreatingAToolAnswers201WithTheRow(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"Tempo","subdomain":"tempo","purpose":"Distributed traces.","group_key":"observability"}`, nil)
+
+	if got.status != http.StatusCreated {
+		t.Fatalf("create = %d, want 201: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["subdomain"] != "tempo" {
+		t.Errorf("created tool = %v, want subdomain tempo", tool)
+	}
+	if tool["id"] == nil || tool["id"] == "" {
+		t.Error("the created tool has no id; a client cannot address it to edit it")
+	}
+	// Absent sort_order means "last in its group" rather than 0, which would
+	// silently make a new tool the first one.
+	if order, ok := tool["sort_order"].(float64); !ok || order <= 1 {
+		t.Errorf("sort_order = %v, want the end of the observability group", tool["sort_order"])
+	}
+}
+
+func TestCreatingAToolWithAUrlForASubdomainIs422(t *testing.T) {
+	a := serve(t)
+
+	// The property the whole schema exists to protect: a row that carries a
+	// host would send a dev console's operators to production.
+	got := a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"Grafana","subdomain":"https://grafana.tesserix.app","purpose":"x","group_key":"observability"}`, nil)
+
+	if got.status != http.StatusUnprocessableEntity {
+		t.Errorf("a URL as a subdomain = %d, want 422: %s", got.status, got.raw)
+	}
+}
+
+func TestCreatingAToolInAnUnknownGroupIs422AndNot500(t *testing.T) {
+	a := serve(t)
+
+	// The foreign key would refuse this anyway; the point is that the caller
+	// is told which field is wrong rather than handed a constraint name.
+	got := a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"x","subdomain":"x","purpose":"x","group_key":"no-such-group"}`, nil)
+
+	if got.status != http.StatusUnprocessableEntity {
+		t.Errorf("an unknown group = %d, want 422: %s", got.status, got.raw)
+	}
+}
+
+func TestCreatingADuplicateSubdomainIs409(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"Another","subdomain":"auth","purpose":"x","group_key":"identity"}`, nil)
+
+	// 409 rather than 422: the request is entirely valid, and what refuses it
+	// is the state of the directory rather than the shape of the input.
+	if got.status != http.StatusConflict {
+		t.Errorf("a duplicate subdomain = %d, want 409: %s", got.status, got.raw)
+	}
+}
+
+func TestAnUnknownFieldInTheBodyIsRefused(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"x","subdomain":"x","purpose":"x","group_key":"reference","status":"up"}`, nil)
+
+	// `status` is the exact field this directory refuses to carry, and a
+	// silent 201 that dropped it would be the worst possible answer.
+	if got.status != http.StatusBadRequest {
+		t.Errorf("an unknown field = %d, want 400: %s", got.status, got.raw)
+	}
+}
+
+func TestPatchingChangesOnlyWhatWasSent(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("kibana")
+
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"purpose":"Log search."}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["purpose"] != "Log search." {
+		t.Errorf("purpose = %v, want the new value", tool["purpose"])
+	}
+	if tool["name"] != "Kibana" {
+		t.Errorf("name = %v, want it untouched — PATCH changes what was sent", tool["name"])
+	}
+	if tool["group_key"] != "observability" {
+		t.Errorf("group_key = %v, want it untouched", tool["group_key"])
+	}
+}
+
+func TestPatchingCanClearANote(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("argocd")
+
+	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":null}`, nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("patch = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	// An explicit null clears; an ABSENT key leaves it alone. Both spellings
+	// have to be expressible or a note could never be removed.
+	if tool["note"] != nil {
+		t.Errorf("note = %v, want null after an explicit null", tool["note"])
+	}
+}
+
+func TestPatchingAnUnknownToolIs404(t *testing.T) {
+	a := serve(t)
+
+	got := a.do(http.MethodPatch,
+		"/v1/platform/tools/00000000-0000-0000-0000-000000000000", `{"name":"x"}`, nil)
+
+	if got.status != http.StatusNotFound {
+		t.Errorf("patching a missing tool = %d, want 404: %s", got.status, got.raw)
+	}
+}
+
+func TestDeletingAToolRemovesItAndAnswersWithIt(t *testing.T) {
+	a := serve(t)
+	id := a.toolID("docs")
+
+	got := a.do(http.MethodDelete, "/v1/platform/tools/"+id, "", nil)
+
+	if got.status != http.StatusOK {
+		t.Fatalf("delete = %d, want 200: %s", got.status, got.raw)
+	}
+	tool, _ := got.data(t)["tool"].(map[string]any)
+	if tool["subdomain"] != "docs" {
+		t.Errorf("delete answered with %v, want the row as it was", tool)
+	}
+	if after := a.get("/v1/platform/tools").data(t)["tools"].([]any); len(after) != 14 {
+		t.Errorf("after deleting one of 15 there are %d", len(after))
+	}
+}
+
+func TestARepeatedWriteUnderOneIdempotencyKeyHappensOnce(t *testing.T) {
+	a := serve(t)
+	body := `{"name":"Tempo","subdomain":"tempo","purpose":"Traces.","group_key":"observability"}`
+	headers := map[string]string{"Idempotency-Key": "6f1c0f4e-2b7a-4a1f-9d3e-0c5b8a2e7d11"}
+
+	first := a.do(http.MethodPost, "/v1/platform/tools", body, headers)
+	second := a.do(http.MethodPost, "/v1/platform/tools", body, headers)
+
+	if first.status != http.StatusCreated {
+		t.Fatalf("first create = %d, want 201: %s", first.status, first.raw)
+	}
+	// The replay is the SAME answer, not a 409 from the unique constraint —
+	// which is what a retry would get without the idempotency record.
+	if second.status != first.status {
+		t.Errorf("replay = %d, want the stored %d: %s", second.status, first.status, second.raw)
+	}
+	if got := len(a.get("/v1/platform/tools").data(t)["tools"].([]any)); got != 16 {
+		t.Errorf("after one create and one replay there are %d tools, want 16", got)
+	}
+}
+
+func TestAWriteRecordsAnAuditRow(t *testing.T) {
+	a := serve(t)
+
+	a.do(http.MethodPost, "/v1/platform/tools",
+		`{"name":"Tempo","subdomain":"tempo","purpose":"Traces.","group_key":"observability"}`, nil)
+
+	var action, actor string
+	err := a.pool.QueryRow(context.Background(),
+		`SELECT action, actor FROM console_audit_log ORDER BY occurred_at DESC LIMIT 1`).
+		Scan(&action, &actor)
+	if err != nil {
+		t.Fatalf("reading the audit trail: %v", err)
+	}
+	if action != "platform.tool.created" {
+		t.Errorf("action = %q, want platform.tool.created", action)
+	}
+	if actor != subjectOperator {
+		t.Errorf("actor = %q, want the principal's subject", actor)
+	}
+}

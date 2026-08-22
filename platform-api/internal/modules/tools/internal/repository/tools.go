@@ -6,8 +6,11 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Queryer is what this package needs from a pool or a transaction.
@@ -87,4 +90,137 @@ func ListTools(ctx context.Context, q Queryer) ([]Tool, error) {
 		tools = append(tools, t)
 	}
 	return tools, rows.Err()
+}
+
+// Execer is a Queryer that also writes. The writes take a transaction, never a
+// pool: they are performed inside write.Perform so the row, its audit entry
+// and its idempotency record commit together or not at all.
+type Execer interface {
+	Queryer
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// ErrNoRow is returned when a write addressed a row that is not there.
+// Distinguished here rather than at the call site because pgx.ErrNoRows means
+// the same thing for a read that legitimately found nothing.
+var ErrNoRow = errors.New("no such row")
+
+// ErrDuplicateSubdomain is the unique constraint, named.
+var ErrDuplicateSubdomain = errors.New("a tool with this subdomain already exists")
+
+// ErrUnknownGroup is the foreign key, named.
+var ErrUnknownGroup = errors.New("no group with this key exists")
+
+// ErrGroupHasTools is ON DELETE RESTRICT, named.
+var ErrGroupHasTools = errors.New("the group still has tools in it")
+
+// ErrInvalidSubdomain is the CHECK constraint, named.
+var ErrInvalidSubdomain = errors.New("a subdomain must be a single DNS label")
+
+// classify turns a Postgres error into one of this package's sentinels.
+//
+// By CONSTRAINT NAME rather than by SQLSTATE alone: 23505 and 23503 each cover
+// more than one constraint on these tables, and a caller told "already exists"
+// for the wrong one would go and change the wrong field.
+func classify(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	switch {
+	case pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "subdomain"):
+		return ErrDuplicateSubdomain
+	case pgErr.Code == "23503" && strings.Contains(pgErr.ConstraintName, "group_key"):
+		return ErrUnknownGroup
+	case pgErr.Code == "23503":
+		return ErrGroupHasTools
+	case pgErr.Code == "23514" && strings.Contains(pgErr.ConstraintName, "dns_label"):
+		// Reachable only if domain.SubdomainPattern and the CHECK have
+		// drifted. Named anyway: a 500 carrying a constraint name is a worse
+		// answer than a 422 saying what a subdomain must look like, even when
+		// the API should have caught it first.
+		return ErrInvalidSubdomain
+	case pgErr.Code == "22P02":
+		// A malformed uuid in the path. 404 is the honest answer: there is no
+		// row with that identifier, and 500 would blame the service for the
+		// caller's typo.
+		return ErrNoRow
+	}
+	return err
+}
+
+// NextSortOrder is the position a new entry takes in its group: the end.
+//
+// Computed rather than defaulted to zero, which would silently make every new
+// tool the first one in its group.
+func NextSortOrder(ctx context.Context, q Queryer, groupKey string) (int, error) {
+	var next int
+	err := q.QueryRow(ctx,
+		`SELECT COALESCE(MAX(sort_order), 0) + 1 FROM platform_tools WHERE group_key = $1`,
+		groupKey).Scan(&next)
+	return next, err
+}
+
+// InsertTool adds an entry and returns it as stored.
+func InsertTool(ctx context.Context, e Execer, name, subdomain, purpose string,
+	note *string, groupKey string, sortOrder int,
+) (Tool, error) {
+	var t Tool
+	err := e.QueryRow(ctx,
+		`INSERT INTO platform_tools (name, subdomain, purpose, note, group_key, sort_order)
+		      VALUES ($1, $2, $3, $4, $5, $6)
+		   RETURNING id, name, subdomain, purpose, note, group_key, sort_order`,
+		name, subdomain, purpose, note, groupKey, sortOrder).
+		Scan(&t.ID, &t.Name, &t.Subdomain, &t.Purpose, &t.Note, &t.GroupKey, &t.SortOrder)
+	if err != nil {
+		return Tool{}, classify(err)
+	}
+	return t, nil
+}
+
+// UpdateTool applies a partial change. A nil argument leaves the column alone;
+// clearing the note is a non-nil pointer to a nil string, which is why
+// clearNote is separate — SQL has no way to spell "set this to NULL" and
+// "leave it" with one parameter.
+func UpdateTool(ctx context.Context, e Execer, id string,
+	name, subdomain, purpose, groupKey *string, note *string, clearNote bool, sortOrder *int,
+) (Tool, error) {
+	var t Tool
+	err := e.QueryRow(ctx,
+		`UPDATE platform_tools
+		    SET name       = COALESCE($2, name),
+		        subdomain  = COALESCE($3, subdomain),
+		        purpose    = COALESCE($4, purpose),
+		        group_key  = COALESCE($5, group_key),
+		        note       = CASE WHEN $7 THEN NULL ELSE COALESCE($6, note) END,
+		        sort_order = COALESCE($8, sort_order),
+		        updated_at = now()
+		  WHERE id = $1
+		RETURNING id, name, subdomain, purpose, note, group_key, sort_order`,
+		id, name, subdomain, purpose, groupKey, note, clearNote, sortOrder).
+		Scan(&t.ID, &t.Name, &t.Subdomain, &t.Purpose, &t.Note, &t.GroupKey, &t.SortOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Tool{}, ErrNoRow
+	}
+	if err != nil {
+		return Tool{}, classify(err)
+	}
+	return t, nil
+}
+
+// DeleteTool removes an entry and returns it as it was, so the write can
+// answer with what it removed.
+func DeleteTool(ctx context.Context, e Execer, id string) (Tool, error) {
+	var t Tool
+	err := e.QueryRow(ctx,
+		`DELETE FROM platform_tools WHERE id = $1
+		 RETURNING id, name, subdomain, purpose, note, group_key, sort_order`, id).
+		Scan(&t.ID, &t.Name, &t.Subdomain, &t.Purpose, &t.Note, &t.GroupKey, &t.SortOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Tool{}, ErrNoRow
+	}
+	if err != nil {
+		return Tool{}, classify(err)
+	}
+	return t, nil
 }

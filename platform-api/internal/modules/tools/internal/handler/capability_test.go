@@ -35,18 +35,18 @@ func routeCases() map[string]routeCase {
 	return map[string]routeCase{
 		"GET /v1/platform/tools":       {want: http.StatusOK},
 		"GET /v1/platform/tool-groups": {want: http.StatusOK},
-		// The writes answer 501 until Task 4. The point of the case is the
-		// REFUSAL half — a stub must be behind the gate too — and `want` is
-		// updated to 201/200/200 when the writes land.
 		"POST /v1/platform/tools": {
 			body: `{"name":"Tempo","subdomain":"tempo","purpose":"Traces.","group_key":"observability"}`,
-			want: http.StatusNotImplemented,
+			want: http.StatusCreated,
 		},
 		"PATCH /v1/platform/tools/{id}": {
 			body: `{"purpose":"Changed."}`,
-			want: http.StatusNotImplemented,
+			want: http.StatusOK,
 		},
-		"DELETE /v1/platform/tools/{id}": {want: http.StatusNotImplemented},
+		"DELETE /v1/platform/tools/{id}": {want: http.StatusOK},
+		// The group writes answer 501 until Task 5. The point of the case is
+		// the REFUSAL half — a stub must be behind the gate too — and `want`
+		// is updated when the writes land.
 		"POST /v1/platform/tool-groups": {
 			body: `{"key":"security","label":"Security"}`,
 			want: http.StatusNotImplemented,
