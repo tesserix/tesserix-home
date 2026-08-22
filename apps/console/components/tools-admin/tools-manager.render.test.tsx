@@ -25,11 +25,25 @@ import {
 import { ToolsManager } from "./tools-manager";
 import type { ToolsDirectory } from "@/lib/tools-directory";
 
+/**
+ * Two populated groups (`identity`, `delivery`), one single-tool group
+ * (`monitoring`), and one empty group (`empty`) — deliberately, not just
+ * two tools in one group. With only one populated group, group-filtered
+ * adjacency and global-array adjacency can never disagree, so a regression
+ * to `directory.tools.findIndex(...) === 0 / length - 1` (ignoring group
+ * boundaries) would pass every test unnoticed. Here `t2` (Secret service) is
+ * last within `identity` but has a global successor (`t3`, in `delivery`),
+ * and `t3` is first within `delivery` but has a global predecessor (`t2`, in
+ * `identity`) — the two disagree, and only a correctly group-scoped
+ * implementation gets both boundaries right.
+ */
 const DIRECTORY: ToolsDirectory = {
   source: "platform-api",
   groups: [
     { key: "identity", label: "Identity and secrets", sortOrder: 10 },
-    { key: "empty", label: "Nothing here yet", sortOrder: 20 },
+    { key: "delivery", label: "Delivery", sortOrder: 20 },
+    { key: "monitoring", label: "Monitoring", sortOrder: 30 },
+    { key: "empty", label: "Nothing here yet", sortOrder: 40 },
   ],
   tools: [
     {
@@ -39,6 +53,18 @@ const DIRECTORY: ToolsDirectory = {
     {
       id: "t2", name: "Secret service", subdomain: "secret-service", purpose: "Secrets.",
       note: "Separate login.", groupKey: "identity", sortOrder: 20,
+    },
+    {
+      id: "t3", name: "ArgoCD", subdomain: "argocd", purpose: "What is deployed.",
+      note: null, groupKey: "delivery", sortOrder: 10,
+    },
+    {
+      id: "t4", name: "Kargo", subdomain: "kargo", purpose: "Promotes images.",
+      note: null, groupKey: "delivery", sortOrder: 20,
+    },
+    {
+      id: "t5", name: "Sentry", subdomain: "sentry", purpose: "Error tracking.",
+      note: null, groupKey: "monitoring", sortOrder: 10,
     },
   ],
 };
@@ -225,12 +251,54 @@ describe("reordering", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     const first = screen.getByText("Zitadel").closest("li");
-    const last = screen.getByText("Secret service").closest("li");
+    // Sentry is the last tool in the whole directory, alone in `monitoring`:
+    // no previous, no next.
+    const last = screen.getByText("Sentry").closest("li");
 
     // A control that cannot do anything is worse than no control: it invites a
     // click and answers with nothing.
     expect(within(first as HTMLElement).queryByRole("button", { name: /move up/i })).toBeNull();
     expect(within(last as HTMLElement).queryByRole("button", { name: /move down/i })).toBeNull();
+  });
+
+  it("does not offer to move a group's last tool down, even when another group follows", async () => {
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const row = screen.getByText("Secret service").closest("li");
+    // t2 is last in `identity`, but t3 (ArgoCD, in `delivery`) is next in
+    // directory.tools. A neighbour computed from the flat list would offer a
+    // "Move down" here and silently move a tool into another group.
+    expect(within(row as HTMLElement).queryByRole("button", { name: /move down/i })).toBeNull();
+    // And the first tool of the NEXT group must not offer "Move up" for the
+    // mirror-image reason.
+    const first = screen.getByText("ArgoCD").closest("li");
+    expect(within(first as HTMLElement).queryByRole("button", { name: /move up/i })).toBeNull();
+  });
+
+  it("offers neither control to the sole tool of a single-tool group", () => {
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const row = screen.getByText("Sentry").closest("li");
+    expect(within(row as HTMLElement).queryByRole("button", { name: /move up/i })).toBeNull();
+    expect(within(row as HTMLElement).queryByRole("button", { name: /move down/i })).toBeNull();
+  });
+
+  it("shows the write's own refusal when a tool move fails", async () => {
+    const user = userEvent.setup();
+    vi.mocked(moveToolAction).mockResolvedValue({
+      ok: false,
+      message: "That change was not saved. Try again shortly.",
+    });
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const row = screen.getByText("Zitadel").closest("li");
+    await user.click(within(row as HTMLElement).getByRole("button", { name: /move down/i }));
+
+    // The swap is two non-atomic PATCHes; a half-completed move is exactly
+    // when the operator needs telling, not silence.
+    expect(
+      await within(row as HTMLElement).findByText(/not saved\. try again shortly/i),
+    ).toBeInTheDocument();
   });
 
   it("moves a group among its peers", async () => {
@@ -242,7 +310,21 @@ describe("reordering", () => {
 
     expect(moveGroupAction).toHaveBeenCalledWith(
       { key: "identity", sortOrder: 10 },
-      { key: "empty", sortOrder: 20 },
+      { key: "delivery", sortOrder: 20 },
     );
+  });
+
+  it("does not offer to move the first group up or the last group down", () => {
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    const first = screen.getByText("Identity and secrets").closest("section");
+    const last = screen.getByText("Nothing here yet").closest("section");
+
+    expect(
+      within(first as HTMLElement).queryByRole("button", { name: /move group up/i }),
+    ).toBeNull();
+    expect(
+      within(last as HTMLElement).queryByRole("button", { name: /move group down/i }),
+    ).toBeNull();
   });
 });
