@@ -18,6 +18,13 @@ import {
 import { ToolForm } from "./tool-form";
 import { GroupForm } from "./group-form";
 
+// Mirrors `lib/tools-write.ts`'s own `NOT_SAVED` sentence. Shown here only
+// when a server action call itself rejects — offline, a 502 at the edge, an
+// expired session, a deploy mid-request — a case distinct from the action
+// resolving with `{ ok: false, message }`, which already carries its own
+// message.
+const NOT_SAVED = "That change was not saved. Try again shortly.";
+
 /**
  * The grouped management view. Task 1 renders it read-only so the page's
  * gates can be tested on their own; Task 4 added the tool add/edit form and
@@ -120,24 +127,41 @@ function GroupHeader({
   const confirmDelete = async () => {
     setError(null);
     setPending(true);
-    const result = await removeGroupAction(group.key);
-    setPending(false);
-    if (!result.ok) {
-      setError(result.message);
-      return;
+    try {
+      const result = await removeGroupAction(group.key);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // A stale move error from an earlier, unrelated failure must not
+      // outlive this successful delete on the same row — otherwise it
+      // persists through an action that has nothing to do with it.
+      setMoveError(null);
+      setOpen(false);
+    } catch {
+      // The action call itself rejected rather than resolving with a result —
+      // without this the dialog stays on "Please wait…" forever, since
+      // nothing below would ever clear `pending`.
+      setError(NOT_SAVED);
+    } finally {
+      setPending(false);
     }
-    setOpen(false);
   };
 
   const move = async (neighbour: DirectoryGroup) => {
     setMoveError(null);
-    const result = await moveGroupAction(
-      { key: group.key, sortOrder: group.sortOrder },
-      { key: neighbour.key, sortOrder: neighbour.sortOrder },
-    );
-    // A failed move is not silently swallowed: the seam's own message is
-    // shown here, the same way a failed delete is above.
-    if (!result.ok) setMoveError(result.message);
+    try {
+      const result = await moveGroupAction(
+        { key: group.key, sortOrder: group.sortOrder },
+        { key: neighbour.key, sortOrder: neighbour.sortOrder },
+      );
+      // A failed move is not silently swallowed: the seam's own message is
+      // shown here, the same way a failed delete is above.
+      if (!result.ok) setMoveError(result.message);
+    } catch {
+      // The call itself rejected — see ToolForm's identical catch.
+      setMoveError(NOT_SAVED);
+    }
   };
 
   return (
@@ -173,6 +197,7 @@ function GroupHeader({
             mode="rename"
             group={group}
             triggerLabel="Rename"
+            triggerAriaLabel={`Rename ${group.label}`}
             onSubmit={(input) => renameGroupAction(group.key, input.label)}
           />
           <Button
@@ -251,24 +276,40 @@ function ToolRow({
   const confirmDelete = async () => {
     setError(null);
     setPending(true);
-    const result = await removeToolAction(tool.id);
-    setPending(false);
-    if (!result.ok) {
-      setError(result.message);
-      return;
+    try {
+      const result = await removeToolAction(tool.id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // A stale move error from an earlier, unrelated failure must not
+      // outlive this successful delete on the same row.
+      setMoveError(null);
+      setOpen(false);
+    } catch {
+      // The action call itself rejected — without this the dialog stays on
+      // "Please wait…" forever, since nothing below would ever clear
+      // `pending`.
+      setError(NOT_SAVED);
+    } finally {
+      setPending(false);
     }
-    setOpen(false);
   };
 
   const move = async (neighbour: DirectoryTool) => {
     setMoveError(null);
-    const result = await moveToolAction(
-      { id: tool.id, sortOrder: tool.sortOrder },
-      { id: neighbour.id, sortOrder: neighbour.sortOrder },
-    );
-    // A failed move is not silently swallowed: the seam's own message is
-    // shown here, the same way a failed delete is below.
-    if (!result.ok) setMoveError(result.message);
+    try {
+      const result = await moveToolAction(
+        { id: tool.id, sortOrder: tool.sortOrder },
+        { id: neighbour.id, sortOrder: neighbour.sortOrder },
+      );
+      // A failed move is not silently swallowed: the seam's own message is
+      // shown here, the same way a failed delete is below.
+      if (!result.ok) setMoveError(result.message);
+    } catch {
+      // The call itself rejected — see ToolForm's identical catch.
+      setMoveError(NOT_SAVED);
+    }
   };
 
   return (
@@ -309,6 +350,7 @@ function ToolRow({
             groups={groups}
             tool={tool}
             triggerLabel="Edit"
+            triggerAriaLabel={`Edit ${tool.name}`}
             onSubmit={(input: ToolInput) => editToolAction(tool.id, input)}
           />
           <Button

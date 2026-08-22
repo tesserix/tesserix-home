@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +16,7 @@ vi.mock("@/app/(console)/platform/tools/actions", () => ({
 
 import {
   addToolAction,
+  editToolAction,
   removeToolAction,
   addGroupAction,
   renameGroupAction,
@@ -71,6 +73,15 @@ const DIRECTORY: ToolsDirectory = {
 
 afterEach(() => vi.resetAllMocks());
 
+// Set by the `Harness` component in the reopen-after-edit test below, so the
+// mocked `editToolAction` can drive that component's state the way a real
+// Next.js router refresh would drive `ToolsManager`'s `directory` prop.
+let harnessSetDirectory: (
+  update: (prev: ToolsDirectory) => ToolsDirectory,
+) => void = () => {
+  throw new Error("harnessSetDirectory used before Harness rendered");
+};
+
 describe("ToolsManager", () => {
   it("shows an empty group rather than hiding it", () => {
     render(<ToolsManager directory={DIRECTORY} />);
@@ -91,7 +102,7 @@ describe("ToolsManager", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
-    await user.type(screen.getByLabelText(/name/i), "Tempo");
+    await user.type(screen.getByLabelText(/^name$/i), "Tempo");
     await user.type(screen.getByLabelText(/subdomain/i), "tempo");
     await user.type(screen.getByLabelText(/purpose/i), "Distributed traces.");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
@@ -108,7 +119,7 @@ describe("ToolsManager", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
-    await user.type(screen.getByLabelText(/name/i), "Tempo");
+    await user.type(screen.getByLabelText(/^name$/i), "Tempo");
     await user.type(screen.getByLabelText(/subdomain/i), "tempo");
     await user.type(screen.getByLabelText(/purpose/i), "Traces.");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
@@ -126,7 +137,7 @@ describe("ToolsManager", () => {
     render(<ToolsManager directory={DIRECTORY} />);
 
     await user.click(screen.getByRole("button", { name: "Add tool to Identity and secrets" }));
-    await user.type(screen.getByLabelText(/name/i), "Bad");
+    await user.type(screen.getByLabelText(/^name$/i), "Bad");
     await user.type(screen.getByLabelText(/subdomain/i), "https://x.example");
     await user.type(screen.getByLabelText(/purpose/i), "x");
     await user.click(screen.getByRole("button", { name: /^save$/i }));
@@ -173,6 +184,84 @@ describe("ToolsManager", () => {
 
     expect(within(dialog).getByText(/do not have permission/i)).toBeInTheDocument();
   });
+
+  it("opens Edit prefilled with the tool's current values, and submits the change", async () => {
+    const user = userEvent.setup();
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Zitadel" }));
+
+    // Prefilled with t1's CURRENT values, not blank and not another row's —
+    // this is the case finding 1 lived in: a form seeded only at mount would
+    // still pass a first open, so the fixture's other tools exist precisely
+    // so a wrong value would be a wrong value, not an absent one.
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue("Zitadel");
+    expect(screen.getByLabelText(/subdomain/i)).toHaveValue("auth");
+    expect(screen.getByLabelText(/purpose/i)).toHaveValue("Identity platform.");
+
+    const purpose = screen.getByLabelText(/purpose/i);
+    await user.clear(purpose);
+    await user.type(purpose, "Auth, renamed.");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(editToolAction).toHaveBeenCalledWith(
+      "t1",
+      expect.objectContaining({ name: "Zitadel", purpose: "Auth, renamed." }),
+    );
+  });
+
+  it("shows the NEW value on reopen after an edit, not the value it replaced", async () => {
+    // `ToolsManager` only ever renders the `directory` prop it is given — in
+    // the real app, a successful write's `revalidatePath` triggers a Next.js
+    // router refresh that re-fetches the directory and hands this component
+    // the UPDATED tool before the operator can reopen the dialog. `Harness`
+    // stands in for that refresh: the mocked `editToolAction` updates its
+    // state the same way a real refresh would update the prop.
+    function Harness() {
+      const [directory, setDirectory] = useState(DIRECTORY);
+      harnessSetDirectory = setDirectory;
+      return <ToolsManager directory={directory} />;
+    }
+    vi.mocked(editToolAction).mockImplementation(async (id, patch) => {
+      harnessSetDirectory((prev) => ({
+        ...prev,
+        tools: prev.tools.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      }));
+      return { ok: true };
+    });
+
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Zitadel" }));
+    const name = screen.getByLabelText(/^name$/i);
+    await user.clear(name);
+    await user.type(name, "Auth");
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    // `ToolRow` is keyed on `tool.id`, which an edit does not change, so the
+    // form is reconciled rather than remounted between opens — the fix has to
+    // re-seed on the trigger's own click, not rely on mount-time state, or
+    // this would still show "Zitadel" here.
+    await user.click(screen.getByRole("button", { name: "Edit Auth" }));
+    expect(screen.getByLabelText(/^name$/i)).toHaveValue("Auth");
+  });
+
+  it("shows a message and leaves the dialog usable when the action call itself rejects", async () => {
+    const user = userEvent.setup();
+    vi.mocked(editToolAction).mockRejectedValue(new Error("network"));
+    render(<ToolsManager directory={DIRECTORY} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Zitadel" }));
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(
+      await screen.findByText(/not saved\. try again shortly/i),
+    ).toBeInTheDocument();
+    // Not stuck disabled: pending was cleared in a `finally`, so the form can
+    // be retried.
+    expect(screen.getByRole("button", { name: /^save$/i })).not.toBeDisabled();
+  });
 });
 
 describe("group management", () => {
@@ -192,8 +281,10 @@ describe("group management", () => {
     const user = userEvent.setup();
     render(<ToolsManager directory={DIRECTORY} />);
 
-    const section = screen.getByText("Identity and secrets").closest("section");
-    await user.click(within(section as HTMLElement).getByRole("button", { name: /rename/i }));
+    // The exact accessible name, not `within(section)` scoping on the shared
+    // "Rename" text — every group renders one, and querying by name alone
+    // disambiguates regardless of how many groups are on the page.
+    await user.click(screen.getByRole("button", { name: "Rename Identity and secrets" }));
 
     // The key is a foreign key every tool in the group references. The API
     // refuses to change it with a 400 explaining the remedy; offering an

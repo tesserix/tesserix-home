@@ -59,7 +59,7 @@ describe("the tools management actions", () => {
     expect(updateTool).toHaveBeenCalledWith("b", { sortOrder: 10 });
   });
 
-  it("reports the first failure of a move and does not revalidate", async () => {
+  it("reports the second leg's failure but STILL revalidates, because the first leg's write landed", async () => {
     vi.mocked(updateTool)
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({ ok: false, message: "second leg failed" });
@@ -67,7 +67,13 @@ describe("the tools management actions", () => {
     const result = await moveToolAction({ id: "a", sortOrder: 10 }, { id: "b", sortOrder: 20 });
 
     expect(result).toEqual({ ok: false, message: "second leg failed" });
-    expect(revalidatePath).not.toHaveBeenCalled();
+    // Leg 1 (mocked `{ ok: true }` above) already wrote to the database, so the
+    // cache MUST be evicted even though the overall action reports failure —
+    // otherwise the operator sees an error next to a list that silently
+    // disagrees with what the API now holds.
+    const paths = vi.mocked(revalidatePath).mock.calls.map(([p]) => p);
+    expect(paths).toContain("/platform/tools");
+    expect(paths).toContain("/");
   });
 
   it("removes a tool and revalidates", async () => {

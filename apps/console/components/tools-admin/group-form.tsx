@@ -17,6 +17,10 @@ import {
 import type { DirectoryGroup } from "@/lib/tools-directory";
 import type { ToolsWriteResult } from "@/lib/tools-write";
 
+// Mirrors `lib/tools-write.ts`'s own `NOT_SAVED` sentence — see `ToolForm`
+// for why this cannot be imported and when this copy actually shows.
+const NOT_SAVED = "That change was not saved. Try again shortly.";
+
 /**
  * The add/rename form for one directory group, as a self-contained trigger +
  * dialog — the same shape `ToolForm` uses.
@@ -36,12 +40,21 @@ export function GroupForm({
   mode,
   group,
   triggerLabel,
+  triggerAriaLabel,
   onSubmit,
 }: {
   mode: "add" | "rename";
   /** Required in rename mode, for the starting value and the dialog title. */
   group?: DirectoryGroup;
   triggerLabel: string;
+  /**
+   * Overrides the trigger's accessible name without changing its visible
+   * text — same reasoning as `ToolForm.triggerAriaLabel`: multiple groups
+   * each render a "Rename" trigger with the same visible text, and a query
+   * against that shared text has nothing to disambiguate them by. Passed as
+   * e.g. `Rename ${group.label}`.
+   */
+  triggerAriaLabel?: string;
   onSubmit: (input: { key: string; label: string }) => Promise<ToolsWriteResult>;
 }) {
   const [open, setOpen] = useState(false);
@@ -73,14 +86,22 @@ export function GroupForm({
   const submit = async () => {
     setError(null);
     setPending(true);
-    const result = await onSubmit({ key, label });
-    setPending(false);
-    if (!result.ok) {
-      setError({ message: result.message, field: result.field });
-      return;
+    try {
+      const result = await onSubmit({ key, label });
+      if (!result.ok) {
+        setError({ message: result.message, field: result.field });
+        return;
+      }
+      setOpen(false);
+      reset();
+    } catch {
+      // The action call itself rejected rather than resolving with a
+      // ToolsWriteResult — see ToolForm's identical catch for the full
+      // reasoning.
+      setError({ message: NOT_SAVED });
+    } finally {
+      setPending(false);
     }
-    setOpen(false);
-    reset();
   };
 
   const formId = `group-form-${mode}-${group?.key ?? "new"}`;
@@ -92,7 +113,19 @@ export function GroupForm({
 
   return (
     <>
-      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        aria-label={triggerAriaLabel}
+        onClick={() => {
+          // Seed at OPEN time, not mount time — same reasoning as ToolForm:
+          // `GroupHeader` is keyed on `group.key`, unchanged by a rename, so
+          // this component is reconciled rather than remounted between opens.
+          reset();
+          setOpen(true);
+        }}
+      >
         {triggerLabel}
       </Button>
       <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>

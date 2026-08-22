@@ -22,6 +22,13 @@ import {
 import type { DirectoryGroup, DirectoryTool } from "@/lib/tools-directory";
 import type { ToolInput, ToolsWriteResult } from "@/lib/tools-write";
 
+// Mirrors `lib/tools-write.ts`'s own `NOT_SAVED` sentence. Not imported: that
+// module opens with `import "server-only"`, which a client component may
+// never pull in. Shown only when the `await onSubmit(...)` call itself
+// rejects — a case `lib/tools-write.ts`'s own message never reaches, because
+// that message is produced INSIDE a resolved `ToolsWriteResult`.
+const NOT_SAVED = "That change was not saved. Try again shortly.";
+
 /**
  * The add/edit form for one directory tool, as a self-contained trigger +
  * dialog — the same shape as `OrganisationEditForm`
@@ -102,23 +109,34 @@ export function ToolForm({
   const submit = async () => {
     setError(null);
     setPending(true);
-    const result = await onSubmit({
-      name,
-      subdomain,
-      purpose,
-      // An empty note is "no note", not the three-character string "" — the
-      // seam's `null` and an empty string are different answers to "does
-      // this tool have a note", and only `null` is the correct one here.
-      note: note.trim() === "" ? null : note,
-      groupKey,
-    });
-    setPending(false);
-    if (!result.ok) {
-      setError({ message: result.message, field: result.field });
-      return;
+    try {
+      const result = await onSubmit({
+        name,
+        subdomain,
+        purpose,
+        // An empty note is "no note", not the three-character string "" — the
+        // seam's `null` and an empty string are different answers to "does
+        // this tool have a note", and only `null` is the correct one here.
+        note: note.trim() === "" ? null : note,
+        groupKey,
+      });
+      if (!result.ok) {
+        setError({ message: result.message, field: result.field });
+        return;
+      }
+      setOpen(false);
+      reset();
+    } catch {
+      // The server action call itself rejected — offline, a 502 at the edge,
+      // an expired session, a deploy mid-request — rather than resolving with
+      // a `ToolsWriteResult`. `withToolsWrite` only maps failures it can catch
+      // on the SERVER side; a rejection here never reaches it, so nothing
+      // upstream produces a message. Without this the dialog would stay
+      // disabled forever, having cleared `pending` nowhere.
+      setError({ message: NOT_SAVED });
+    } finally {
+      setPending(false);
     }
-    setOpen(false);
-    reset();
   };
 
   const formId = `tool-form-${mode}-${tool?.id ?? "new"}`;
@@ -135,7 +153,16 @@ export function ToolForm({
         variant="outline"
         size="sm"
         aria-label={triggerAriaLabel}
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          // Seed at OPEN time, not mount time: `ToolRow` is keyed on
+          // `tool.id`, which does not change on edit, so this component is
+          // reconciled rather than remounted between opens. Re-running
+          // `useState(tool?.name ?? "")`'s initializer never happens on a
+          // reconciled component, so a stale prior open (or a save that
+          // moved `tool` on) would otherwise leak into the next open.
+          reset();
+          setOpen(true);
+        }}
       >
         {triggerLabel}
       </Button>

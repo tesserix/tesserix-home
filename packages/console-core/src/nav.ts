@@ -124,6 +124,10 @@ export const platformNav: readonly NavEntry[] = [
       { name: "GDPR queue", route: "platform.gdprQueue", icon: "shield" },
       { name: "Break-glass", route: "platform.breakGlass", icon: "key-round" },
       { name: "Settings", route: "platform.settings", icon: "settings" },
+      // Managing the internal tools directory (#318 follow-up). Beside
+      // Settings: both are configuration surfaces for the platform itself,
+      // not a queue or a record of work done.
+      { name: "Tools", route: "platform.tools", icon: "settings" },
     ],
   },
   {

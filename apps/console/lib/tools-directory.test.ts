@@ -196,8 +196,12 @@ describe("readToolsDirectory", () => {
     // 1-based declaration order. The built-in list is never editable — the
     // surface is hidden when the origin is unset — but a reader should not
     // have to reason about a missing field.
+    //
+    // The first THREE, not just the first: `[0].sortOrder === 1` alone would
+    // still pass against a hardcoded `sortOrder: 1` on every entry, which is
+    // not what "positions" means.
     expect(directory.groups[0].sortOrder).toBe(1);
-    expect(directory.tools[0].sortOrder).toBe(1);
+    expect(directory.tools.slice(0, 3).map((t) => t.sortOrder)).toEqual([1, 2, 3]);
   });
 
   it("falls back to the built-in directory, LABELLED, when the API fails", async () => {

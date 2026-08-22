@@ -67,8 +67,12 @@ export async function moveToolAction(
   const first = await updateTool(moving.id, { sortOrder: neighbour.sortOrder });
   if (!first.ok) return first;
   const second = await updateTool(neighbour.id, { sortOrder: moving.sortOrder });
-  if (!second.ok) return second;
+  // Leg 1's write already landed even when leg 2 fails: the database changed
+  // and the cached page has not, so refresh() runs on BOTH paths below, not
+  // only the success one. Skipping it here would show an error alongside an
+  // unchanged list — reading as "nothing happened" when half of it did.
   refresh();
+  if (!second.ok) return second;
   return { ok: true };
 }
 
@@ -95,7 +99,9 @@ export async function moveGroupAction(
   const first = await updateGroup(moving.key, { sortOrder: neighbour.sortOrder });
   if (!first.ok) return first;
   const second = await updateGroup(neighbour.key, { sortOrder: moving.sortOrder });
-  if (!second.ok) return second;
+  // Same reasoning as moveToolAction: leg 1's write landed regardless of leg
+  // 2's outcome, so refresh() runs on both paths.
   refresh();
+  if (!second.ok) return second;
   return { ok: true };
 }

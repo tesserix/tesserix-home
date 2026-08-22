@@ -116,12 +116,14 @@ async function withToolsWrite(
 function write(path: string, method: "POST" | "PATCH" | "DELETE", body?: unknown) {
   return platformRequestWithMeta(LABEL, path, {
     method,
-    // A retry — the operator resubmitting a form, or a transport-level retry
-    // of the same request — must not reapply the write a second time. The Go
-    // API records this key in the same transaction as the change and answers
-    // a repeat with the stored result instead of a fresh insert, so the key
-    // is sent unconditionally: DELETE has no body but is exactly as retryable
-    // as a POST.
+    // Minted per call, same as `platform-api.ts`'s `idempotencyKey()`: the key
+    // identifies THIS request. A transport-level retry of it (the browser or
+    // an edge hop resending the same call) reuses this key and the Go API
+    // answers with the stored result instead of a fresh insert. A genuine
+    // resubmission — the operator submitting the form again — mints a NEW key
+    // here and IS applied again; this key does not make the form idempotent,
+    // only the one request it wraps. Sent unconditionally: DELETE has no body
+    // but is exactly as retryable as a POST.
     headers: {
       "idempotency-key": randomUUID(),
       ...(body === undefined ? {} : { "content-type": "application/json" }),
