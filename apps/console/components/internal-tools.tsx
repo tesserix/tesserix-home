@@ -1,10 +1,6 @@
 import { ExternalLink } from "lucide-react";
-import {
-  TOOL_GROUPS,
-  toolUrl,
-  toolsInGroup,
-  type InternalTool,
-} from "@tesserix/console-core";
+import { toolUrl } from "@tesserix/console-core";
+import type { DirectoryTool, ToolsDirectory } from "@/lib/tools-directory";
 
 /**
  * The estate's internal tools, grouped.
@@ -17,7 +13,7 @@ import {
  * does not hand operators links into production.
  */
 
-function ToolLink({ tool, baseDomain }: { tool: InternalTool; baseDomain: string }) {
+function ToolLink({ tool, baseDomain }: { tool: DirectoryTool; baseDomain: string }) {
   return (
     <li>
       <a
@@ -49,7 +45,13 @@ function ToolLink({ tool, baseDomain }: { tool: InternalTool; baseDomain: string
   );
 }
 
-export function InternalTools({ baseDomain }: { baseDomain: string }) {
+export function InternalTools({
+  baseDomain,
+  directory,
+}: {
+  baseDomain: string;
+  directory: ToolsDirectory;
+}) {
   return (
     <section className="flex flex-col gap-3" aria-labelledby="tools-heading">
       <div className="flex flex-col gap-1 border-t border-border pt-6">
@@ -61,13 +63,22 @@ export function InternalTools({ baseDomain }: { baseDomain: string }) {
           a new tab and are not part of the console — some ask for their own
           sign-in.
         </p>
+        {directory.source === "degraded" && (
+          // Not an error surface. The directory is correct and usable; what is
+          // being reported is that it could not be confirmed against the live
+          // one, which is the difference between a stale list and a wrong one.
+          <p className="text-xs text-muted-foreground">
+            Live directory unavailable — showing the built-in list.
+          </p>
+        )}
       </div>
 
-      {TOOL_GROUPS.map((group) => {
-        const tools = toolsInGroup(group.key);
-        // A declared-but-empty group would render as a heading over nothing,
-        // which reads as a loading failure rather than an absence. The data
-        // tests forbid it; this is the render-side belt.
+      {directory.groups.map((group) => {
+        const tools = directory.tools.filter((tool) => tool.groupKey === group.key);
+        // Groups now live in a database table, so an empty one is possible at
+        // runtime for the first time — the data tests that used to forbid this
+        // case applied only to the code literal. This is the only thing left
+        // standing between an empty group and a bare heading.
         if (tools.length === 0) return null;
         return (
           <div key={group.key} className="flex flex-col gap-2">

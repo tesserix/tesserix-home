@@ -1,0 +1,186 @@
+// `server-only`: this module reads an operator's bearer token on one branch.
+// A client component importing it must fail the build, not ship server code to
+// the browser — see #299, and see the note in lib/search.ts about why the
+// palette receives rows as a prop rather than importing this.
+import "server-only";
+
+import { INTERNAL_TOOLS, TOOL_GROUPS } from "@tesserix/console-core";
+import { platformApiOrigin, platformRequestWithMeta } from "@/lib/platform-api";
+
+/** One directory entry, in the console's own casing. */
+export interface DirectoryTool {
+  readonly id: string;
+  readonly name: string;
+  readonly subdomain: string;
+  readonly purpose: string;
+  readonly note: string | null;
+  readonly groupKey: string;
+}
+
+/** One heading. */
+export interface DirectoryGroup {
+  readonly key: string;
+  readonly label: string;
+}
+
+/**
+ * Where the rendered directory came from.
+ *
+ * Three states, not two, because "switched off on purpose" and "switched on
+ * and broken" are different facts and the operator-facing banner must not
+ * conflate them:
+ *
+ *  - `"platform-api"` — fetched and parsed successfully.
+ *  - `"builtin"` — `PLATFORM_API_ORIGIN` is unset. The phase is off on
+ *    purpose. No banner: unsetting the variable must restore the pre-#318
+ *    page byte-for-byte, and a page that claims the live directory is
+ *    "unavailable" when it was simply never configured is just false.
+ *  - `"degraded"` — the origin is set but the fetch or parse failed. The
+ *    built-in list is standing in for a live directory that IS supposed to
+ *    answer and did not. Banner: two lists that can disagree must never
+ *    disagree silently.
+ */
+export type DirectorySource = "platform-api" | "builtin" | "degraded";
+
+export interface ToolsDirectory {
+  readonly groups: readonly DirectoryGroup[];
+  readonly tools: readonly DirectoryTool[];
+  readonly source: DirectorySource;
+}
+
+/**
+ * The tools directory, from the platform API or from the code literal.
+ *
+ * Two backends behind one signature, chosen by `PLATFORM_API_ORIGIN` — the
+ * SAME switch `fetchTickets` (`lib/platform-api.ts:330`) and the CRM queues
+ * use, not a lookalike of it. UNSET IS BYTE-FOR-BYTE THE OLD BEHAVIOUR for
+ * this directory (now that `source` distinguishes "off on purpose" from "on
+ * and broken" — see `DirectorySource`) — but unsetting it in production is
+ * NOT a tools-only rollback: it reverts tickets and the CRM queues to the
+ * `apps/web` path in the same act, simultaneously. That is a decision for
+ * whoever owns the estate-wide lever, not something this module can scope
+ * down on its own.
+ *
+ * # Why a failure falls back instead of surfacing
+ *
+ * This is a directory of links, not a queue of work. An operator who cannot
+ * reach Grafana because the console could not reach its own API is worse off
+ * than one shown a slightly stale list — and the built-in list is not
+ * plausibly stale by much, since it is the seed. So the failure is absorbed
+ * and LABELLED (as `"degraded"`) rather than rendered as an error surface.
+ *
+ * That is a decision about THIS resource and does not generalise: a CRM queue
+ * falling back to a hardcoded list would be indefensible. Per the rule at the
+ * top of lib/crm-queues.ts, this is handled at the seam because the refusal
+ * has an existing console-vocabulary equivalent — the built-in directory — so
+ * neither error classifier needs to learn a new condition.
+ */
+export async function readToolsDirectory(): Promise<ToolsDirectory> {
+  if (!platformApiOrigin()) {
+    // Off on purpose, not broken. See `DirectorySource`.
+    return builtin("builtin");
+  }
+  try {
+    const [toolsBody, groupsBody] = await Promise.all([
+      platformRequestWithMeta("tools directory", "/v1/platform/tools"),
+      platformRequestWithMeta("tool groups", "/v1/platform/tool-groups"),
+    ]);
+    return parse(toolsBody.data, groupsBody.data);
+  } catch (cause) {
+    // Server-side only: this runs in a React Server Component, so it lands
+    // in the app's logs and never in the response. The `[console]` prefix and
+    // the bare console.* call are this app's convention — see
+    // lib/db-read-error.ts:147; there is no logger module.
+    console.warn("[console] the tools directory could not be read from the platform API", cause);
+    // On and broken, not off. See `DirectorySource`.
+    return builtin("degraded");
+  }
+}
+
+/**
+ * The code literal, which is also the seed migration 0031 applied.
+ *
+ * `source` is a parameter, not a hardcoded value, because the same literal
+ * backs two different facts for the operator: `"builtin"` when the phase is
+ * off on purpose (no banner) and `"degraded"` when it is on and the live
+ * directory could not be read (banner). The list is identical either way —
+ * only what the page says about it differs.
+ */
+function builtin(source: "builtin" | "degraded"): ToolsDirectory {
+  return {
+    groups: TOOL_GROUPS.map((group) => ({ key: group.key, label: group.label })),
+    tools: INTERNAL_TOOLS.map((tool) => ({
+      // The literal has no ids. A synthetic one keyed on the subdomain — which
+      // is unique by construction — keeps React's keys stable without
+      // pretending a database row exists.
+      id: `builtin:${tool.subdomain}`,
+      name: tool.name,
+      subdomain: tool.subdomain,
+      purpose: tool.purpose,
+      note: tool.note ?? null,
+      groupKey: tool.group,
+    })),
+    source,
+  };
+}
+
+/**
+ * Turn the two payloads into the console's shape, or throw.
+ *
+ * Throwing is caught by the caller and becomes the labelled fallback. A
+ * malformed success is a failure: a `tools` that is not an array would
+ * otherwise reach the renderer and throw there, where the fallback cannot
+ * catch it.
+ */
+function parse(toolsData: unknown, groupsData: unknown): ToolsDirectory {
+  const rawGroups = arrayAt(groupsData, "groups");
+  const rawTools = arrayAt(toolsData, "tools");
+
+  const groups: DirectoryGroup[] = rawGroups.map((row) => ({
+    key: str(row, "key"),
+    label: str(row, "label"),
+  }));
+  const declared = new Set(groups.map((group) => group.key));
+
+  const tools: DirectoryTool[] = rawTools
+    .map((row) => ({
+      id: str(row, "id"),
+      name: str(row, "name"),
+      subdomain: str(row, "subdomain"),
+      purpose: str(row, "purpose"),
+      note: nullableStr(row, "note"),
+      groupKey: str(row, "group_key"),
+    }))
+    // A tool whose group is not declared would render as a card under no
+    // heading. The foreign key makes it unreachable through the API; this is
+    // the render-side belt, matching the one in internal-tools.tsx.
+    .filter((tool) => declared.has(tool.groupKey));
+
+  return { groups, tools, source: "platform-api" };
+}
+
+function arrayAt(data: unknown, key: string): Record<string, unknown>[] {
+  const container = data as Record<string, unknown> | null;
+  const value = container?.[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`the tools directory payload has no \`${key}\` array`);
+  }
+  return value as Record<string, unknown>[];
+}
+
+function str(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  if (typeof value !== "string") {
+    throw new Error(`\`${key}\` is ${typeof value}, expected a string`);
+  }
+  return value;
+}
+
+function nullableStr(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key];
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") {
+    throw new Error(`\`${key}\` is ${typeof value}, expected a string or null`);
+  }
+  return value;
+}

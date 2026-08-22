@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": {
+    "group": {
+      "key": "scratch",
+      "label": "Scratch",
+      "sort_order": 7
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

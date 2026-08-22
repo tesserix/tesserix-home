@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "a subdomain must be a single DNS label — lower-case letters, digits and hyphens, not starting or ending with a hyphen, at most 63 characters. It is a label and not a URL because the console derives the host from the environment it is running in"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

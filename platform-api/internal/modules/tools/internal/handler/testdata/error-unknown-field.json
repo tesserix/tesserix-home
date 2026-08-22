@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the request body is not the expected JSON: json: unknown field \"status\""
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "no group with this key"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

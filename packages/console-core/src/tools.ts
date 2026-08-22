@@ -4,7 +4,33 @@
  * Fifteen-odd tools run behind `*.tesserix.app` and nothing lists them. The
  * answer to "where do I look at X" is currently tribal knowledge or a browser
  * history search. This is the cheapest demonstration of the console's thesis —
- * one place to control every product — and it needs no backend at all.
+ * one place to control every product.
+ *
+ * As of #318 this list is the FALLBACK, not the source of truth: the live
+ * directory is `platform_tools` in tesserix_admin, served at
+ * /v1/platform/tools and read by apps/console/lib/tools-directory.ts. That
+ * loader renders this literal in two distinct cases, and says two different
+ * things about it:
+ *
+ *  - PLATFORM_API_ORIGIN is unset. Byte-for-byte the pre-#318 behaviour — the
+ *    page says NOTHING, because the phase is off on purpose, not broken.
+ *  - The origin is set but the API could not be reached. The page SAYS SO —
+ *    a banner, because this is a live directory standing in for one that was
+ *    supposed to answer and did not.
+ *
+ * See `DirectorySource` in tools-directory.ts for the type that keeps these
+ * two apart.
+ *
+ * PLATFORM_API_ORIGIN is NOT a tools-only lever, and unsetting it in
+ * production is not a scoped rollback of this phase alone: the same variable
+ * also switches fetchTickets (apps/console/lib/platform-api.ts:330) and the
+ * CRM queues, both cut over ahead of this one. Unsetting it restores this
+ * literal as the served directory AND reverts those two to their `apps/web`
+ * path, at the same time.
+ *
+ * Keep it in step with migration 0031's seed. A tool added through the API
+ * will not appear here, and should not; a tool added HERE and not to the seed
+ * is a fallback that disagrees with the live list for no reason.
  *
  * DELIBERATELY NO STATUS. Whether a tool is *up* belongs to the health strip.
  * Mixing the two invites the failure the spec warns about: a tile rendering
@@ -160,7 +186,7 @@ export const INTERNAL_TOOLS: readonly InternalTool[] = [
  * is no fallback to `tesserix.app` on purpose: a missing value should surface
  * as a configuration error, not as a silent link to prod.
  */
-export function toolUrl(tool: InternalTool, baseDomain: string): string {
+export function toolUrl(tool: { readonly subdomain: string }, baseDomain: string): string {
   return `https://${tool.subdomain}.${baseDomain}`;
 }
 

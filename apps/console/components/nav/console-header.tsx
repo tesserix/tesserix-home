@@ -4,6 +4,7 @@ import { ConsoleCommandPalette } from "./command-palette";
 import { HeaderTrail } from "./header-trail";
 import { NotificationBell } from "./notification-bell";
 import { OperatorMenu } from "./operator-menu";
+import type { DirectoryTool } from "@/lib/tools-directory";
 
 const DEFAULT_TOOLS_BASE_DOMAIN = "tesserix.app";
 
@@ -18,6 +19,13 @@ export interface ConsoleHeaderProps {
    * `internal-tools.tsx` already uses is a perfectly good default.
    */
   readonly toolsBaseDomain?: string;
+  /**
+   * Fetched server-side in app/(console)/layout.tsx and threaded straight
+   * through to the palette. Deliberately no default: an empty-array default
+   * would turn a plumbing mistake (forgetting to pass the directory) into a
+   * silently empty palette instead of a type error.
+   */
+  readonly tools: readonly DirectoryTool[];
 }
 
 /**
@@ -42,6 +50,7 @@ export function ConsoleHeader({
   capabilities,
   showCapabilities,
   toolsBaseDomain = DEFAULT_TOOLS_BASE_DOMAIN,
+  tools,
 }: ConsoleHeaderProps): React.JSX.Element {
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-border bg-background/95 px-6 backdrop-blur sm:px-8">
@@ -53,6 +62,7 @@ export function ConsoleHeader({
           capabilities={capabilities}
           enforceCapabilities={showCapabilities}
           toolsBaseDomain={toolsBaseDomain}
+          tools={tools}
         />
         <NotificationBell />
         <OperatorMenu

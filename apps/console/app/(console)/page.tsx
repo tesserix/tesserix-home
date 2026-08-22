@@ -1,11 +1,15 @@
 import { EstateMap } from "@/components/estate-map";
 import { InternalTools } from "@/components/internal-tools";
 import { ConsolePageHeader } from "@/components/kit/page-header";
+import { readToolsDirectory } from "@/lib/tools-directory";
 
-export default function ConsoleHome() {
-  // No data fetch. The home page renders the estate map and the tools
-  // directory, both of which are static data — so it no longer queries
-  // Mark8ly's database on every render to produce numbers it does not show.
+export default async function ConsoleHome() {
+  // The tools directory is data now (#318): it comes from platform_tools
+  // through the platform API, falling back to the built-in list. The estate
+  // map is still static — its context list is a validation vocabulary the CRM
+  // writes against, and moving it is a separate decision.
+  const directory = await readToolsDirectory();
+
   return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
@@ -22,7 +26,10 @@ export default function ConsoleHome() {
       <EstateMap />
       {/* Base domain is configuration, not a constant: a non-production console
           must not hand operators links into production tools. */}
-      <InternalTools baseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"} />
+      <InternalTools
+        baseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"}
+        directory={directory}
+      />
     </div>
   );
 }

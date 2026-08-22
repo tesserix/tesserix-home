@@ -7,6 +7,21 @@ const push = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 import { ConsoleCommandPalette } from "./command-palette";
+import type { DirectoryTool } from "@/lib/tools-directory";
+
+// Stands in for what the console layout now fetches from the database via
+// `readToolsDirectory()`. This palette no longer reads `INTERNAL_TOOLS`
+// itself, so any tool the tests below expect to find (Grafana, Kubecost,
+// Cost estimator) has to be supplied here rather than assumed from the
+// code literal in `@tesserix/console-core`.
+const TOOL_ROWS: DirectoryTool[] = [
+  { id: "1", name: "Zitadel", subdomain: "auth", purpose: "Identity platform.", note: null, groupKey: "identity" },
+  { id: "2", name: "Grafana", subdomain: "grafana", purpose: "Dashboards and charts over the metrics pipeline.", note: null, groupKey: "observability" },
+  { id: "3", name: "Kargo", subdomain: "kargo", purpose: "Promotes images between stages.", note: null, groupKey: "delivery" },
+  { id: "4", name: "Kubecost", subdomain: "kubecost", purpose: "Cluster spend by namespace and workload.", note: null, groupKey: "cost" },
+  { id: "5", name: "Cost estimator", subdomain: "costestimator", purpose: "Models the cost of a change before making it.", note: null, groupKey: "cost" },
+  { id: "6", name: "Docs", subdomain: "docs", purpose: "Engineering documentation.", note: null, groupKey: "reference" },
+];
 
 const PROPS = {
   // A full-access operator, so these tests exercise the palette rather than the
@@ -17,6 +32,7 @@ const PROPS = {
   capabilities: ["read", "crm", "support", "platform"],
   enforceCapabilities: true,
   toolsBaseDomain: "tesserix.app",
+  tools: TOOL_ROWS,
 };
 
 // `/api/search` returns entries already built by `ticketEntry` server-side —
@@ -209,7 +225,7 @@ describe("ConsoleCommandPalette", () => {
     // was set to `entry.id` (`tool:${subdomain}`), and the primitive matches
     // queries against `value`, so typing the bare word "tool" matched every
     // tool entry regardless of its actual name or purpose. None of the tool
-    // names, subdomains or groups in `tools.ts` contain the substring
+    // names, subdomains or groups in the fixture contain the substring
     // "tool", so a correctly-scoped `value` returns zero tool options here.
     mockSearch([]);
     const user = userEvent.setup();
@@ -439,5 +455,23 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     const input = await screen.findByPlaceholderText(/search routes, tools and tickets/i);
     expect(input.className).toContain("focus-visible:outline-offset-[-2px]");
+  });
+
+  it("offers a tool that exists only in the database", async () => {
+    mockSearch([]);
+    const user = userEvent.setup();
+    render(
+      <ConsoleCommandPalette
+        {...PROPS}
+        tools={[
+          { id: "9", name: "Tempo", subdomain: "tempo", purpose: "Traces.", note: null, groupKey: "observability" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /search/i }));
+
+    // Tempo is in no literal anywhere. If this passes, the palette is reading
+    // the database rather than console-core.
+    expect(await screen.findByText("Tempo")).toBeInTheDocument();
   });
 });

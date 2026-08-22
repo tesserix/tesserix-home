@@ -1,0 +1,34 @@
+{
+  "success": true,
+  "data": {
+    "groups": [
+      {
+        "key": "identity",
+        "label": "Identity and secrets",
+        "sort_order": 1
+      },
+      {
+        "key": "observability",
+        "label": "Observability",
+        "sort_order": 2
+      },
+      {
+        "key": "delivery",
+        "label": "Delivery",
+        "sort_order": 3
+      },
+      {
+        "key": "cost",
+        "label": "Cost",
+        "sort_order": 4
+      },
+      {
+        "key": "reference",
+        "label": "Reference",
+        "sort_order": 5
+      }
+    ]
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

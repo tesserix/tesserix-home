@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "data": {
+    "group": {
+      "key": "security",
+      "label": "Security",
+      "sort_order": 6
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

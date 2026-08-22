@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "no group with this key exists — add the group first, or use one of the existing keys"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

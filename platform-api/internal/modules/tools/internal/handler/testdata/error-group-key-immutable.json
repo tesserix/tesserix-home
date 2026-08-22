@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "a group's key cannot be changed: every tool in the group references it. Add the new group, move the tools to it, then remove the old one"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
