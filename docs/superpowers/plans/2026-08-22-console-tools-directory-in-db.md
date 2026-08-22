@@ -1259,10 +1259,7 @@ Create `platform-api/internal/modules/tools/internal/handler/handler.go`:
 package handler
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 
@@ -1272,10 +1269,6 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
 )
-
-// maxBodyBytes caps a write. A directory entry is a few hundred bytes; this is
-// generous by three orders of magnitude and still bounded.
-const maxBodyBytes = 64 << 10
 
 // Handler serves the module.
 type Handler struct {
@@ -1368,57 +1361,6 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, r, http.StatusOK, payload, h.log)
 }
 
-// beginWrite recovers the principal and reads the body once — it is needed
-// twice, decoded into a request struct and digested for the idempotency key,
-// and a decoder would consume the stream.
-func (h *Handler) beginWrite(w http.ResponseWriter, r *http.Request) (*auth.Principal, []byte, bool) {
-	principal, ok := auth.FromContext(r.Context())
-	if !ok {
-		// Unreachable behind Authenticate. Refused rather than assumed,
-		// because the alternative is an audit row with an empty actor.
-		h.log.ErrorContext(r.Context(), "a write route ran without a principal",
-			slog.String("path", r.URL.Path))
-		h.fail(w, r, httpx.Internal("request failed"))
-		return nil, nil, false
-	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	if err != nil {
-		h.fail(w, r, httpx.BadRequest("the request body could not be read"))
-		return nil, nil, false
-	}
-	return principal, body, true
-}
-
-// readKey turns an optional Idempotency-Key header into a key. Optional
-// deliberately: no header is a normal write. A header the caller got WRONG is
-// an error, because a caller who meant to be protected must be told they were
-// not.
-func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation string, body []byte) (*idempotency.Key, error) {
-	key, asked, err := idempotency.FromRequest(r, principal.Subject, operation, body)
-	if err != nil {
-		return nil, err
-	}
-	if !asked {
-		return nil, nil
-	}
-	return &key, nil
-}
-
-// decode parses a body, rejecting anything the struct does not declare. An
-// unknown field today is a field this service might mean something by
-// tomorrow; the write-side twin of RejectUnknownParameters.
-func decode(body []byte, into any) error {
-	if len(body) == 0 {
-		return httpx.BadRequest("a request body is required")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(into); err != nil {
-		return httpx.BadRequest("the request body is not the expected JSON: " + err.Error())
-	}
-	return nil
-}
-
 // fail maps a failure to a status code.
 //
 // Four domain outcomes, four codes, because collapsing any pair would make two
@@ -1484,6 +1426,15 @@ The field names are `Code`, `Message`, `StatusCode` and `Details`
 never reaches the wire. The `Code` constants are SCREAMING_SNAKE (`CodeNotFound
 = "NOT_FOUND"`); `NOT_IMPLEMENTED` has no constant because nothing else answers
 501, and these stubs are deleted in Tasks 4–5.
+
+
+**These four write helpers are NOT in this task.** `maxBodyBytes`, `beginWrite`,
+`readKey` and `decode` are used only by the write handlers, so declaring them
+here leaves four unused symbols — and `golangci-lint`'s `unused` check fails on
+exactly that, which means this task's commit would not pass CI on its own.
+Task 4 introduces them alongside the handlers that call them. (An earlier draft
+of this plan put them here; the Task 3 implementer's commit tripped the linter
+and it was moved.)
 
 - [ ] **Step 6: Write the module's public surface**
 
@@ -2308,6 +2259,72 @@ Add imports: `fmt`, `net/http`, `github.com/jackc/pgx/v5`, the module's
 
 In `platform-api/internal/modules/tools/internal/handler/handler.go`, delete
 the six `notYet` stubs and the `notYet` helper, and add:
+
+First the four helpers every write shares. They live here rather than in Task 3
+because nothing before this task calls them, and an unused unexported symbol
+fails `golangci-lint`'s `unused` check:
+
+```go
+// maxBodyBytes caps a write. A directory entry is a few hundred bytes; this is
+// generous by three orders of magnitude and still bounded.
+const maxBodyBytes = 64 << 10
+
+// beginWrite recovers the principal and reads the body once — it is needed
+// twice, decoded into a request struct and digested for the idempotency key,
+// and a decoder would consume the stream.
+func (h *Handler) beginWrite(w http.ResponseWriter, r *http.Request) (*auth.Principal, []byte, bool) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		// Unreachable behind Authenticate. Refused rather than assumed,
+		// because the alternative is an audit row with an empty actor.
+		h.log.ErrorContext(r.Context(), "a write route ran without a principal",
+			slog.String("path", r.URL.Path))
+		h.fail(w, r, httpx.Internal("request failed"))
+		return nil, nil, false
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		h.fail(w, r, httpx.BadRequest("the request body could not be read"))
+		return nil, nil, false
+	}
+	return principal, body, true
+}
+
+// readKey turns an optional Idempotency-Key header into a key. Optional
+// deliberately: no header is a normal write. A header the caller got WRONG is
+// an error, because a caller who meant to be protected must be told they were
+// not.
+func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation string, body []byte) (*idempotency.Key, error) {
+	key, asked, err := idempotency.FromRequest(r, principal.Subject, operation, body)
+	if err != nil {
+		return nil, err
+	}
+	if !asked {
+		return nil, nil
+	}
+	return &key, nil
+}
+
+// decode parses a body, rejecting anything the struct does not declare. An
+// unknown field today is a field this service might mean something by
+// tomorrow; the write-side twin of RejectUnknownParameters.
+func decode(body []byte, into any) error {
+	if len(body) == 0 {
+		return httpx.BadRequest("a request body is required")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		return httpx.BadRequest("the request body is not the expected JSON: " + err.Error())
+	}
+	return nil
+}
+```
+
+Add `bytes`, `encoding/json` and `io` to the file's imports — Task 3 left them
+out deliberately, because nothing there needed them.
+
+Then the handlers themselves:
 
 ```go
 // createToolRequest is the create body. Pointers where absence is meaningful.
