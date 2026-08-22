@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"net/url"
 	"sync"
 )
 
@@ -21,22 +20,21 @@ type Failure struct {
 // sanitize maps a failure to a string that is safe to render in a browser.
 //
 // This value is shown in the console beside the source's name, so it must
-// never carry an internal hostname, address, or URL. It is an ALLOWLIST, not
-// an attempt to strip identifiers out of arbitrary error text: `*url.Error`,
-// `*net.OpError`, `*net.DNSError` and several TLS errors each embed an
-// address in their own Error() string, and unwrapping to the deepest cause
-// does not help — `*net.DNSError.UnwrapErr` may be nil, so unwrapping stops
-// there and returns "lookup <host> on <server>: no such host".
-//
-// `http.Client.Do` always returns a `*url.Error` when a request fails, so
-// that type is a complete gate for transport failures. Everything else is an
-// error this package constructed, whose text we control.
+// never carry an internal hostname, address, or URL. It is an ALLOWLIST
+// gated on the ErrTransport sentinel declared in client.go, not on inferring
+// network-ness from an error's type: that inference was tried three times
+// (a one-layer `*url.Error` unwrap, a deepest-unwrap, and `*url.Error` as the
+// gate itself) and each attempt missed a case, because `*url.Error` only
+// wraps what `http.Client.Do` returns — not a failure reading the response
+// body afterward, which surfaces as a bare `*net.OpError` with an address in
+// its own Error() string. client.go is the only code that touches the
+// network, so it is the only code that can mark an error as transport-origin
+// completely and by construction; here we just trust that mark.
 //
 // The unredacted error is still what a caller logs server-side.
 func sanitize(err error) string {
-	var urlErr *url.Error
-	if !errors.As(err, &urlErr) {
-		// Not a transport failure: our own error text, safe as written.
+	if !errors.Is(err, ErrTransport) {
+		// Not a network failure: this package's own error text, safe as written.
 		return err.Error()
 	}
 
@@ -51,7 +49,8 @@ func sanitize(err error) string {
 	if errors.As(err, &dnsErr) {
 		return "name resolution failed"
 	}
-	if urlErr.Timeout() {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "timed out"
 	}
 	return "connection failed"

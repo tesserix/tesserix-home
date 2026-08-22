@@ -160,3 +160,38 @@ func TestFanOutKeepsOurOwnErrorTextForNonTransportFailures(t *testing.T) {
 		t.Fatalf("failures = %v — a decode failure must keep its own text, not be classified as a transport failure", failures)
 	}
 }
+
+func TestFanOutFailureDoesNotLeakTheAddressWhenTheBodyReadFails(t *testing.T) {
+	// Promise a body, flush the headers, then kill the connection underneath
+	// the client. Do() has already returned by then, so the failure happens in
+	// io.ReadAll — the path *url.Error never covered.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "4096")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL}}), srv.Client())
+
+	_, failures := FanOut(context.Background(), c, []string{"mark8ly"}, "/admin/audit-logs", operator(), decodeRows)
+
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one", failures)
+	}
+	if strings.Contains(failures[0].Error, host) {
+		t.Errorf("Failure.Error = %q — leaks the address %q from a mid-body-read failure", failures[0].Error, host)
+	}
+	if failures[0].Error == "" {
+		t.Error("Failure.Error is empty — a failure must still say something")
+	}
+}

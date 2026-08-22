@@ -13,6 +13,20 @@ import (
 // call. Tested with errors.Is so callers do not string-match.
 var ErrProductNotConfigured = errors.New("federation: product not configured")
 
+// ErrTransport marks an error as having come from the network rather than
+// from this package's own logic.
+//
+// It exists because the alternative — inferring transport-ness from an error's
+// type in the fan-out — kept missing cases: `*url.Error` wraps what `Do`
+// returns but NOT what reading the response body returns, and `*net.OpError`,
+// `*net.DNSError` and friends each embed an address in their own Error()
+// string. The two lines below are the only places this package touches the
+// network, so marking them here is complete by construction in a way a type
+// switch elsewhere can never be.
+//
+// Callers must treat an ErrTransport as unsafe to show a user verbatim.
+var ErrTransport = errors.New("transport failure")
+
 // Operator is who the call is being made on behalf of, and under what
 // authority.
 //
@@ -61,7 +75,7 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("federation: calling %s: %w", slug, err)
+		return nil, fmt.Errorf("federation: calling %s: %w: %w", slug, ErrTransport, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -69,7 +83,7 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 	// product; reading it all would make it this process's outage too.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("federation: reading %s response: %w", slug, err)
+		return nil, fmt.Errorf("federation: reading %s response: %w: %w", slug, ErrTransport, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("federation: %s responded %d", slug, resp.StatusCode)
