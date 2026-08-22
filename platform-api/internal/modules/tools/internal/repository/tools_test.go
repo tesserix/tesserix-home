@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools/internal/domain"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools/internal/repository"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/testdb"
 )
@@ -126,5 +127,41 @@ func TestAGroupWithToolsCannotBeDeleted(t *testing.T) {
 		`DELETE FROM platform_tool_groups WHERE key = 'identity'`)
 	if err == nil {
 		t.Fatal("a group with tools was deleted; ON DELETE RESTRICT is missing")
+	}
+}
+
+func TestTheApiAndTheDatabaseRefuseTheSameSubdomains(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	// The regex is written twice — once in domain, once in migration 0031 —
+	// and this is what keeps the copies honest. A divergence means either a
+	// 500 from a constraint the API thought it had already checked, or a row
+	// the API refuses that the database would have taken.
+	for _, candidate := range []string{
+		"a", "ab", "z9", "secret-service-2",
+		"https://grafana.tesserix.app", "grafana.tesserix.app",
+		"Grafana", "-leading", "trailing-", "under_score", "",
+	} {
+		apiOK := domain.Tool{Name: "x", Subdomain: candidate, Purpose: "x",
+			GroupKey: "reference"}.Normalise().Validate() == nil
+
+		_, err := pool.Exec(ctx,
+			`INSERT INTO platform_tools (name, subdomain, purpose, group_key, sort_order)
+			 VALUES ('probe', $1, 'probe', 'reference', 999)`, candidate)
+		dbOK := err == nil
+		if dbOK {
+			_, _ = pool.Exec(ctx, `DELETE FROM platform_tools WHERE subdomain = $1 AND name = 'probe'`, candidate)
+		}
+
+		// "Grafana" is the one legitimate asymmetry: the API lower-cases it in
+		// Normalise, so it accepts what the raw database refuses.
+		if candidate == "Grafana" {
+			continue
+		}
+		if apiOK != dbOK {
+			t.Errorf("subdomain %q: API accepts=%v, database accepts=%v — the CHECK in "+
+				"0031 and domain.SubdomainPattern have drifted", candidate, apiOK, dbOK)
+		}
 	}
 }
