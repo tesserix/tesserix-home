@@ -276,6 +276,13 @@ func TestGetAuditForwardsTheBoundsItWasGiven(t *testing.T) {
 // Junk is refused rather than coerced: a silently defaulted `?limit=abc` is a
 // truncated audit timeline nobody was told about, which is the same class of
 // lie as an unknown `?source=` returning zero rows.
+//
+// Asserted against the EXACT status, not just "some 4xx": readBound used to
+// answer 422 via httpx.Validation while its own comment promised 400, and a
+// loose 4xx-range assertion is exactly what let that drift ship unnoticed.
+// httpx.RejectUnknownParameters, on the same handler, has always answered
+// 400 for a malformed query — one surface must not answer two shapes for one
+// concern.
 func TestGetAuditRefusesBoundsItCannotRead(t *testing.T) {
 	for _, query := range []string{
 		"?limit=abc",
@@ -287,13 +294,59 @@ func TestGetAuditRefusesBoundsItCannotRead(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			got := serve(t).get("/v1/audit" + query)
-			if got.status < 400 || got.status >= 500 {
-				t.Fatalf("GET /v1/audit%s = %d, want a 4xx refusal: %s", query, got.status, got.raw)
+			if got.status != http.StatusBadRequest {
+				t.Fatalf("GET /v1/audit%s = %d, want 400: %s", query, got.status, got.raw)
 			}
 			if strings.Contains(got.raw, `"entries"`) {
 				t.Errorf("body = %s, want no entries key on a refusal", got.raw)
 			}
 		})
+	}
+}
+
+// The handler mirrors apps/web's own maximums (MAX_LIMIT and
+// MAX_SINCE_HOURS) so `?limit=1000000` cannot fan out to every product
+// unbounded and hit the federation client's 1 MiB read cap. Unlike
+// apps/web, which clamps silently, this handler refuses — see the comment
+// on MaxLimit/MaxSinceHours in handler.go for why that divergence is
+// deliberate.
+func TestGetAuditRefusesBoundsAboveTheMaximum(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		name  string
+	}{
+		{"?limit=1001", "limit"},
+		{"?since_hours=721", "since_hours"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			got := serve(t).get("/v1/audit" + tc.query)
+			if got.status != http.StatusBadRequest {
+				t.Fatalf("GET /v1/audit%s = %d, want 400: %s", tc.query, got.status, got.raw)
+			}
+			if !strings.Contains(got.raw, tc.name) {
+				t.Errorf("body = %s, want the offending parameter %q named", got.raw, tc.name)
+			}
+			if strings.Contains(got.raw, `"entries"`) {
+				t.Errorf("body = %s, want no entries key on a refusal", got.raw)
+			}
+		})
+	}
+}
+
+// The maximums themselves are still accepted — this is a boundary test, not
+// an off-by-one: 1000 and 720 are apps/web's own MAX_LIMIT and
+// MAX_SINCE_HOURS, and they are exactly what the console sends today via
+// AUDIT_LIMIT/AUDIT_SINCE_HOURS.
+func TestGetAuditAcceptsBoundsAtExactlyTheMaximum(t *testing.T) {
+	a := serve(t)
+
+	if got := a.get("/v1/audit?limit=1000&since_hours=720"); got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200 at the exact maximum: %s", got.status, got.raw)
+	}
+
+	asked := <-a.asked
+	if !strings.Contains(asked, "limit=1000") || !strings.Contains(asked, "since_hours=720") {
+		t.Errorf("product was asked for %q, want limit=1000 and since_hours=720", asked)
 	}
 }
 
