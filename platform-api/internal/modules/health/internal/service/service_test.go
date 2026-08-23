@@ -37,7 +37,7 @@ func (s *stub) Databases(context.Context) ([]cluster.Database, error) {
 func healthy() *stub {
 	return &stub{
 		workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
-		databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+		databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 	}
 }
 

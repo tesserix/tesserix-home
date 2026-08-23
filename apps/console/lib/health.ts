@@ -10,9 +10,63 @@ export type HealthState = "healthy" | "degraded" | "unmeasured";
 
 const STATES: readonly string[] = ["healthy", "degraded", "unmeasured"];
 
-export interface HealthCounts {
+/**
+ * The verdict on one row, as the CLASSIFIER decided it.
+ *
+ * Not re-derived here. A database has three ways to fail — short counts,
+ * zero instances, and a phase CNPG does not consider settled — and only the
+ * Go code that increments the ready counter applies all three. A renderer
+ * comparing `ready < instances` marks a failing-over cluster fine, in a row
+ * printed directly under a summary that counts it bad; that drift is what
+ * this field exists to make impossible.
+ *
+ * OPTIONAL on the wire: the older platform-api sends items with no `ok` at
+ * all, and one is live in production until this ships. `itemOK` falls back to
+ * the counts comparison the page used before this field existed — imperfect,
+ * but exactly the old behaviour, which is the honest thing to show for an old
+ * API rather than a guess dressed up as a verdict.
+ */
+function itemOK(record: Record<string, unknown>, fallback: boolean): boolean {
+  return typeof record.ok === "boolean" ? record.ok : fallback;
+}
+
+/** One workload row — a Knative service or similar. */
+export interface WorkloadItem {
+  readonly name: string;
+  readonly desired: number;
+  readonly ready: number;
+  /** See {@link itemOK}. */
+  readonly ok: boolean;
+}
+
+/** One database row — a CNPG cluster or similar. */
+export interface DatabaseItem {
+  readonly name: string;
+  readonly instances: number;
+  readonly ready: number;
+  readonly phase: string | null;
+  /** See {@link itemOK}. */
+  readonly ok: boolean;
+}
+
+export interface HealthCounts<Item> {
   readonly total: number;
   readonly ready: number;
+  /**
+   * `null` means "this payload carried no `items` field at all" — the older
+   * platform-api shape, still live in production until this ships, and the
+   * shape a malformed non-array `items` (a string, an object) degrades to
+   * rather than throwing.
+   *
+   * An empty array means "items was present and parsed to nothing", which is
+   * a LIVE path, not a theoretical one: the Go side serialises `[]` rather
+   * than omitting the field, so `"items": []` is exactly what every
+   * `unmeasured` snapshot carries — a failed cluster read, an RBAC 403,
+   * startup without a token. The distinction is what lets the page tell
+   * "nothing to show" apart from "no opinion on rows at all" and render
+   * exactly as it did before this field existed.
+   */
+  readonly items?: readonly Item[] | null;
 }
 
 export interface EstateHealth {
@@ -20,8 +74,8 @@ export interface EstateHealth {
   readonly stale: boolean;
   readonly checkedAt: string | null;
   readonly reason: string | null;
-  readonly workloads: HealthCounts;
-  readonly databases: HealthCounts;
+  readonly workloads: HealthCounts<WorkloadItem>;
+  readonly databases: HealthCounts<DatabaseItem>;
 }
 
 /**
@@ -35,17 +89,66 @@ const UNMEASURED: EstateHealth = Object.freeze({
   stale: false,
   checkedAt: null,
   reason: null,
-  workloads: Object.freeze({ total: 0, ready: 0 }),
-  databases: Object.freeze({ total: 0, ready: 0 }),
+  workloads: Object.freeze({ total: 0, ready: 0, items: null }),
+  databases: Object.freeze({ total: 0, ready: 0, items: null }),
 });
 
-function counts(value: unknown): HealthCounts {
+function counts(value: unknown): { total: number; ready: number } {
   if (typeof value !== "object" || value === null) return { total: 0, ready: 0 };
   const record = value as Record<string, unknown>;
   return {
     total: typeof record.total === "number" ? record.total : 0,
     ready: typeof record.ready === "number" ? record.ready : 0,
   };
+}
+
+/** Pulls `.items` off a counts payload, but only when it is actually an
+ *  array — a non-array `items` (a string, an object) is exactly as
+ *  untrustworthy as a missing one and degrades to the same `null`. */
+function rawItems(value: unknown): unknown[] | null {
+  if (typeof value !== "object" || value === null) return null;
+  const items = (value as Record<string, unknown>).items;
+  return Array.isArray(items) ? items : null;
+}
+
+function workloadItems(value: unknown): readonly WorkloadItem[] | null {
+  const raw = rawItems(value);
+  if (raw === null) return null;
+  const items: WorkloadItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue; // a string, a number: unusable, drop it
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== "string") continue; // no name, no row to key or label
+    const desired = typeof record.desired === "number" ? record.desired : 0;
+    const ready = typeof record.ready === "number" ? record.ready : 0;
+    items.push({ name: record.name, desired, ready, ok: itemOK(record, ready >= desired) });
+  }
+  return items;
+}
+
+function databaseItems(value: unknown): readonly DatabaseItem[] | null {
+  const raw = rawItems(value);
+  if (raw === null) return null;
+  const items: DatabaseItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== "string") continue;
+    const instances = typeof record.instances === "number" ? record.instances : 0;
+    const ready = typeof record.ready === "number" ? record.ready : 0;
+    items.push({
+      name: record.name,
+      instances,
+      ready,
+      phase: typeof record.phase === "string" ? record.phase : null,
+      // The fallback is the counts comparison the row used before `ok`
+      // existed. It cannot see the phase — that is the POINT of `ok`, and
+      // the reason an old API's rows are exactly as good as they were, and
+      // no better.
+      ok: itemOK(record, ready >= instances),
+    });
+  }
+  return items;
 }
 
 /**
@@ -69,8 +172,14 @@ export function parseHealth(json: unknown): EstateHealth {
       : "unmeasured";
 
   const checkedAt = typeof record.checked_at === "string" ? record.checked_at : null;
-  const workloads = counts(record.workloads);
-  const databases = counts(record.databases);
+  const workloads: HealthCounts<WorkloadItem> = {
+    ...counts(record.workloads),
+    items: workloadItems(record.workloads),
+  };
+  const databases: HealthCounts<DatabaseItem> = {
+    ...counts(record.databases),
+    items: databaseItems(record.databases),
+  };
 
   // The Go classifier refuses to call an empty reading healthy. Re-derived
   // here rather than trusted, because a version skew, a partial payload or a

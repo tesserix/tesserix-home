@@ -215,4 +215,225 @@ describe("the health page", () => {
 
     expect(screen.getByText(/Last measured: unknown/)).toBeInTheDocument();
   });
+
+  describe("per-item detail", () => {
+    it("renders a row per workload with its name and ready/desired count", async () => {
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 8,
+            ready: 8,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("console")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    });
+
+    it("renders a row per database with its name, ready/instances count, and phase", async () => {
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          databases: {
+            total: 1,
+            ready: 1,
+            items: [
+              {
+                name: "tesserix-postgres",
+                instances: 1,
+                ready: 1,
+                phase: "Cluster in healthy state",
+                ok: true,
+              },
+            ],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("tesserix-postgres")).toBeInTheDocument();
+      // Two, not one: the section summary count ("Databases ready") and the
+      // row both legitimately read "1 / 1" here (1 database, 1 instance).
+      expect(screen.getAllByText("1 / 1")).toHaveLength(2);
+      expect(screen.getByText(/Cluster in healthy state/)).toBeInTheDocument();
+    });
+
+    it("marks a row short of target using the page's own degraded vocabulary", async () => {
+      // Same shape/colour the state indicator uses for "degraded" — no fourth
+      // colour invented for this. `mp-orders` is short (1 of 2 ready); a
+      // second, on-target row proves the marker is per-row, not per-section.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: "mp-orders 1/2 ready",
+          workloads: {
+            total: 8,
+            ready: 7,
+            items: [
+              { name: "mp-orders", desired: 2, ready: 1, ok: false },
+              { name: "console", desired: 2, ready: 2, ok: true },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+
+      // The degraded marker (diamond, `bg-warning`) sits on the short row and
+      // nowhere else in the row list — same shape/colour class the state
+      // section uses for "Degraded", never a fourth colour invented for the
+      // row list. Scoped to `li` so the state section's own "Degraded" dot
+      // (this fixture's overall state) does not get counted here too.
+      const degradedDots = container.querySelectorAll("li .rotate-45.bg-warning");
+      expect(degradedDots.length).toBe(1);
+    });
+
+    it("marks a database whose counts match but whose phase failed it", async () => {
+      // THE case this branch's phase check exists for, and the one a row
+      // deriving its own verdict from counts gets wrong: CNPG reports 1 of 1
+      // instance ready while the cluster is mid-failover, so the row reads
+      // "1 / 1" directly under a summary reading "0 / 1". Two different
+      // numbers for the same database under the word "ready", on one screen.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: 'tesserix-postgres reports phase "Failing over"',
+          databases: {
+            total: 1,
+            ready: 0,
+            items: [
+              {
+                name: "tesserix-postgres",
+                instances: 1,
+                ready: 1,
+                phase: "Failing over",
+                ok: false,
+              },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      const rows = container.querySelectorAll("li .rotate-45.bg-warning");
+      expect(rows.length).toBe(1);
+      // And the phase does not render in the muted class a healthy phase
+      // gets — an operator scanning the list must find the bad row without
+      // reading and interpreting every phase string.
+      const phase = screen.getByText("Failing over");
+      expect(phase.className).not.toContain("text-muted-foreground");
+    });
+
+    it("marks a database reporting zero instances", async () => {
+      // Go degrades on this (`Instances > 0`, a rule counts alone cannot
+      // express); unmarked it renders "0 / 0" and reads as "wants nothing,
+      // has nothing, fine".
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: "tesserix-postgres 0/0 instances ready",
+          databases: {
+            total: 1,
+            ready: 0,
+            items: [
+              { name: "tesserix-postgres", instances: 0, ready: 0, phase: null, ok: false },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      expect(container.querySelectorAll("li .rotate-45.bg-warning").length).toBe(1);
+      // A textual carrier too, not the colour alone. "short of target" would
+      // be wrong here — nothing is short, the cluster reports no instances.
+      expect(screen.getByText("— not ready")).toBeInTheDocument();
+    });
+
+    it("says so when the row list is shorter than the count above it", async () => {
+      // `total` comes off the payload, the rows come from the item parser,
+      // and nothing reconciles them: one malformed entry among eight renders
+      // "8 / 8" above a single row, which an operator reads as the estate
+      // inventory.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 8,
+            ready: 8,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("showing 1 of 8")).toBeInTheDocument();
+    });
+
+    it("says nothing about the row count when the list is complete", async () => {
+      // Guards the guard: a note that always renders is noise, and would
+      // train an operator to ignore the one case it is meant to flag.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.queryByText(/showing \d+ of \d+/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the row list inside the dd it belongs to", async () => {
+      // The HTML content model for a `dl > div` is one-or-more `dt` followed
+      // by one-or-more `dd`; a `ul` sibling is not permitted, and a screen
+      // reader walking the list orphans the rows from their term.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      const list = container.querySelector("dl ul");
+      expect(list).not.toBeNull();
+      expect(list?.closest("dd")).not.toBeNull();
+      expect(container.querySelector("dl > div > ul")).toBeNull();
+    });
+
+    it("renders the page unchanged when items is absent — no empty table, no throw", async () => {
+      // The older platform-api answers without `items` at all, and one is
+      // running in production until this ships. The page must render exactly
+      // as it does today: the summary counts, and nothing claiming to be a
+      // row list underneath them.
+      vi.mocked(readEstateHealth).mockResolvedValue(health());
+
+      render(await HealthPage());
+
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(screen.getByText("8 / 8")).toBeInTheDocument();
+      // No table/list role born from a null items array, and no row content
+      // from the ablation fixtures leaking in from elsewhere.
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.queryByText("console")).not.toBeInTheDocument();
+      expect(screen.queryByText("mp-orders")).not.toBeInTheDocument();
+    });
+  });
 });

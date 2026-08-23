@@ -18,7 +18,7 @@ func TestClassify(t *testing.T) {
 		{
 			name:      "everything ready is healthy",
 			workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 2}},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
 		{
@@ -49,7 +49,7 @@ func TestClassify(t *testing.T) {
 				{Name: "quiet", Desired: 0, Ready: 0},
 				{Name: "console", Desired: 1, Ready: 1},
 			},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
 		{
@@ -97,8 +97,50 @@ func TestClassify(t *testing.T) {
 			// indicator cry wolf on every deploy.
 			name:      "a workload with more ready than desired is not degraded",
 			workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 3}},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
+		},
+		{
+			// A rolling update CNPG cannot carry out — a PodDisruptionBudget
+			// in the way, a node-maintenance window, or a supervised
+			// switchover waiting on a human. The cluster is serving every
+			// query and can sit here for DAYS, so degrading on it means an
+			// indicator that is amber indefinitely, which is an indicator
+			// operators learn to ignore.
+			name:      "a cluster whose upgrade is delayed is healthy — it is serving",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.UpgradeDelayedPhase}},
+			want:      domain.StateHealthy,
+		},
+		{
+			// The set of healthy phases is a SET, not the complement of a
+			// list of bad ones. A phase this build has never heard of must
+			// read as a problem, which is the fail-safe direction.
+			name:      "an unknown future phase is still a problem",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: "Cluster doing something new"}},
+			want:      domain.StateDegraded,
+		},
+		{
+			// The primary is serving, but action genuinely IS required, so
+			// amber is honest here — this is the phase that stays degraded.
+			name:      "waiting for user action stays degraded",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: "Waiting for user action"}},
+			want:      domain.StateDegraded,
+		},
+		{
+			// The narrower sibling of the case above. A cluster whose
+			// instance counts have populated while its phase has NOT is a
+			// real window during creation — the controller sets them at
+			// different moments. Matching counts are not evidence it is
+			// serving, so this degrades rather than passing on the counts
+			// alone. Pinned because the phase check is what makes it true,
+			// and nothing else in the suite exercises an empty phase.
+			name:      "a database that has not reported a phase yet is degraded",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: ""}},
+			want:      domain.StateDegraded,
 		},
 	}
 
@@ -120,7 +162,7 @@ func TestClassifyCountsWhatItSaw(t *testing.T) {
 			{Name: "c", Desired: 3, Ready: 3},
 		},
 		[]cluster.Database{
-			{Name: "pg", Instances: 1, Ready: 1},
+			{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
 			{Name: "pg2", Instances: 2, Ready: 0},
 		},
 	)
@@ -170,5 +212,173 @@ func TestUnmeasuredCarriesItsReason(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "403") {
 		t.Errorf("reason = %q, want the cause preserved", got.Reason)
+	}
+}
+
+func TestItemsSurviveClassifySortedByName(t *testing.T) {
+	// Deliberately fed out of name order, so a pass here cannot be an
+	// accident of input order matching output order.
+	got := domain.Classify(
+		[]cluster.Workload{
+			{Name: "platform-api", Desired: 1, Ready: 1},
+			{Name: "console", Desired: 2, Ready: 2},
+		},
+		[]cluster.Database{
+			{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+			{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase},
+		},
+	)
+
+	wantWorkloads := []domain.WorkloadItem{
+		{Name: "console", Desired: 2, Ready: 2, OK: true},
+		{Name: "platform-api", Desired: 1, Ready: 1, OK: true},
+	}
+	if len(got.WorkloadItems) != len(wantWorkloads) {
+		t.Fatalf("WorkloadItems = %+v, want %+v", got.WorkloadItems, wantWorkloads)
+	}
+	for i, want := range wantWorkloads {
+		if got.WorkloadItems[i] != want {
+			t.Errorf("WorkloadItems[%d] = %+v, want %+v", i, got.WorkloadItems[i], want)
+		}
+	}
+
+	wantDatabases := []domain.DatabaseItem{
+		{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase, OK: true},
+		{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase, OK: true},
+	}
+	if len(got.DatabaseItems) != len(wantDatabases) {
+		t.Fatalf("DatabaseItems = %+v, want %+v", got.DatabaseItems, wantDatabases)
+	}
+	for i, want := range wantDatabases {
+		if got.DatabaseItems[i] != want {
+			t.Errorf("DatabaseItems[%d] = %+v, want %+v", i, got.DatabaseItems[i], want)
+		}
+	}
+}
+
+func TestADatabaseWithMatchingCountsButAWrongPhaseIsDegraded(t *testing.T) {
+	// The deferred finding from #332's review: counts alone are not enough.
+	// A cluster can report every instance ready while CNPG itself says the
+	// cluster is not settled — mid-failover, for example — and that is not
+	// healthy.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: "Failing over"}},
+	)
+	if got.State != domain.StateDegraded {
+		t.Fatalf("State = %q, want degraded — matching counts do not mean healthy when the phase is not", got.State)
+	}
+	if !strings.Contains(got.Reason, "Failing over") {
+		t.Errorf("reason = %q, want it to name the phase", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "tesserix-postgres") {
+		t.Errorf("reason = %q, want it to name the database", got.Reason)
+	}
+	if got.Databases.Ready != 0 {
+		t.Errorf("Databases.Ready = %d, want 0 — a wrong phase must not count as ready", got.Databases.Ready)
+	}
+	// Pins the WRONG-phase sentence specifically, so it stays distinct from
+	// the ABSENT-phase sentence pinned below.
+	if !strings.Contains(got.Reason, `reports phase "Failing over", not`) {
+		t.Errorf("reason = %q, want the wrong-phase sentence", got.Reason)
+	}
+	if strings.Contains(got.Reason, "has not reported a phase yet") {
+		t.Errorf("reason = %q, want the wrong-phase sentence, not the absent-phase one", got.Reason)
+	}
+}
+
+func TestAnEmptyPhaseReasonSaysNotReportedRatherThanQuotingAnEmptyString(t *testing.T) {
+	// An absent phase and a wrong phase are different facts about the
+	// cluster and get different sentences. `reports phase ""` reads like a
+	// bug in this code; the operator should be told to wait, not to
+	// investigate a parsing glitch.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: ""}},
+	)
+	if got.State != domain.StateDegraded {
+		t.Fatalf("State = %q, want degraded", got.State)
+	}
+	if !strings.Contains(got.Reason, "has not reported a phase yet") {
+		t.Errorf("reason = %q, want it to say the phase has not been reported yet", got.Reason)
+	}
+	if strings.Contains(got.Reason, `phase ""`) {
+		t.Errorf(`reason = %q, must not read like a parsing glitch (contains phase "")`, got.Reason)
+	}
+}
+
+func TestEveryItemCarriesTheClassifiersOwnVerdict(t *testing.T) {
+	// The point of OK: a consumer must never have to re-derive the rule.
+	// The three ways a database fails are all exercised here, and each one
+	// must show up as OK false on the ROW as well as in the summary count.
+	got := domain.Classify(
+		[]cluster.Workload{
+			{Name: "ok", Desired: 2, Ready: 2},
+			{Name: "short", Desired: 2, Ready: 1},
+		},
+		[]cluster.Database{
+			{Name: "a-healthy", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+			{Name: "b-bad-phase", Instances: 1, Ready: 1, Phase: "Failing over"},
+			{Name: "c-no-instances", Instances: 0, Ready: 0, Phase: domain.HealthyPhase},
+			{Name: "d-short", Instances: 3, Ready: 1, Phase: domain.HealthyPhase},
+		},
+	)
+
+	wantWorkloads := map[string]bool{"ok": true, "short": false}
+	for _, item := range got.WorkloadItems {
+		if want := wantWorkloads[item.Name]; item.OK != want {
+			t.Errorf("WorkloadItems[%q].OK = %v, want %v", item.Name, item.OK, want)
+		}
+	}
+
+	wantDatabases := map[string]bool{
+		"a-healthy": true, "b-bad-phase": false, "c-no-instances": false, "d-short": false,
+	}
+	for _, item := range got.DatabaseItems {
+		if want := wantDatabases[item.Name]; item.OK != want {
+			t.Errorf("DatabaseItems[%q].OK = %v, want %v", item.Name, item.OK, want)
+		}
+	}
+
+	// The summary and the rows are the same decision, so they must agree.
+	okWorkloads := 0
+	for _, item := range got.WorkloadItems {
+		if item.OK {
+			okWorkloads++
+		}
+	}
+	if okWorkloads != got.Workloads.Ready {
+		t.Errorf("%d workload rows say OK but the summary counts %d ready",
+			okWorkloads, got.Workloads.Ready)
+	}
+	okDatabases := 0
+	for _, item := range got.DatabaseItems {
+		if item.OK {
+			okDatabases++
+		}
+	}
+	if okDatabases != got.Databases.Ready {
+		t.Errorf("%d database rows say OK but the summary counts %d ready",
+			okDatabases, got.Databases.Ready)
+	}
+}
+
+func TestADelayedUpgradeCountsAsReadyAndNamesNoProblem(t *testing.T) {
+	// The state assertion in the table above would still pass if the phase
+	// merely stopped producing a problem while the cluster failed to count
+	// as ready — that combination renders "Databases ready 0 / 1" under the
+	// word "Healthy". This pins the count and the row too.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.UpgradeDelayedPhase}},
+	)
+	if got.Databases.Ready != 1 {
+		t.Errorf("Databases.Ready = %d, want 1 — a delayed upgrade is still serving", got.Databases.Ready)
+	}
+	if got.Reason != "" {
+		t.Errorf("Reason = %q, want none", got.Reason)
+	}
+	if len(got.DatabaseItems) != 1 || !got.DatabaseItems[0].OK {
+		t.Errorf("DatabaseItems = %+v, want the row marked OK", got.DatabaseItems)
 	}
 }

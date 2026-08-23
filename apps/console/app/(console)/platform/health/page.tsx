@@ -1,5 +1,5 @@
 import { ConsolePageHeader } from "@/components/kit/page-header";
-import { readEstateHealth } from "@/lib/health";
+import { readEstateHealth, type DatabaseItem, type WorkloadItem } from "@/lib/health";
 import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
 
 /**
@@ -26,7 +26,13 @@ import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
  * 2. What was measured — workload and database counts, and the degraded
  *    reason as text. The reason is already reachable without a mouse from the
  *    indicator's `aria-label`; this is the first place it is VISIBLE AS TEXT.
- *    A section nothing measured says so instead of printing a count.
+ *    A section nothing measured says so instead of printing a count. When the
+ *    payload carries per-item detail (a newer platform-api; see `lib/
+ *    health.ts`'s `HealthCounts.items`), each count is followed by its rows —
+ *    the count stays the heading, the rows are the detail underneath it. An
+ *    older platform-api answers with no `items` at all, which `parseHealth`
+ *    represents as `null` rather than `[]`; that section then renders exactly
+ *    as it did before this existed, with no row list and no empty table.
  * 3. What is NOT measured yet — Uptime, Observability and Custom domains,
  *    the three concerns whose rail entries move here (Task 2). Named
  *    plainly, in the unmeasured ring's own visual language, never as a
@@ -107,8 +113,43 @@ export default async function HealthPage() {
             anythingMeasured && counts.total > 0 ? (
               <div key={name} className="flex flex-col gap-1">
                 <dt className="text-xs text-muted-foreground">{name} ready</dt>
-                <dd className="text-lg font-medium text-foreground">
-                  {counts.ready} / {counts.total}
+                {/*
+                  The row list lives INSIDE the `dd`, not beside it. The
+                  content model for a `dl > div` is one-or-more `dt` followed
+                  by one-or-more `dd`; a `ul` sibling is not permitted there,
+                  and a screen reader walking the definition list orphans the
+                  rows from the term they belong to. Purely structural — the
+                  `dd` carries the same flex column the wrapper did, so the
+                  rendering is unchanged.
+                */}
+                <dd className="flex flex-col gap-1">
+                  <span className="text-lg font-medium text-foreground">
+                    {counts.ready} / {counts.total}
+                  </span>
+                  {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
+                    <RowList total={counts.total} shown={health.workloads.items.length}>
+                      {health.workloads.items.map((item, index) => (
+                        // Index-QUALIFIED, not the name alone. Kubernetes
+                        // names are unique per namespace per kind, so a
+                        // collision is not reachable from a live cluster —
+                        // but `parseHealth` does not dedupe, and a replayed
+                        // or hand-crafted payload with two rows of the same
+                        // name would give React duplicate keys and licence to
+                        // mis-reconcile them. Qualifying the key here is one
+                        // line; deduping in the parser would silently DROP a
+                        // row the API sent, which is the opposite of what
+                        // this page is for.
+                        <WorkloadRow key={`${index}-${item.name}`} item={item} />
+                      ))}
+                    </RowList>
+                  ) : null}
+                  {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
+                    <RowList total={counts.total} shown={health.databases.items.length}>
+                      {health.databases.items.map((item, index) => (
+                        <DatabaseRow key={`${index}-${item.name}`} item={item} />
+                      ))}
+                    </RowList>
+                  ) : null}
                 </dd>
               </div>
             ) : (
@@ -161,5 +202,113 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       {children}
     </div>
+  );
+}
+
+/**
+ * A row list, and — when it is shorter than the count above it — a line
+ * saying so.
+ *
+ * `total` comes off the payload; the rows come from the item parser, which
+ * independently drops entries it cannot trust. Nothing reconciles the two, so
+ * `{total: 8, items: [<one malformed>, <one good>]}` renders "Workloads ready
+ * 8 / 8" above exactly ONE row — and an operator reads a row list as the
+ * inventory and concludes the estate has one workload. Neither truncating the
+ * count nor inventing the missing rows is honest; saying how many are shown
+ * is.
+ */
+function RowList({
+  total,
+  shown,
+  children,
+}: {
+  total: number;
+  shown: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      {shown !== total ? (
+        <span className="text-xs text-muted-foreground">
+          showing {shown} of {total}
+        </span>
+      ) : null}
+      <ul className="flex flex-col gap-1 pt-1">{children}</ul>
+    </>
+  );
+}
+
+/**
+ * One workload's row: name, `ready / desired`, marked when the classifier
+ * failed it.
+ *
+ * The verdict is `item.ok` — the classifier's own, carried on the wire — and
+ * is deliberately NOT re-derived from the counts here. See `lib/health.ts`'s
+ * `itemOK` for why, and for what an older platform-api's rows fall back to.
+ *
+ * The marker reuses `HEALTH_PRESENTATION.degraded` — the same diamond/amber
+ * the state section uses for "Degraded" — rather than a fourth colour
+ * invented for this row list. The dot alone is never the only carrier: a
+ * failed row also says so as TEXT, so the marker survives a monochrome
+ * rendering as well as a colour-blind reader, same as the state indicator
+ * above it.
+ */
+function WorkloadRow({ item }: { item: WorkloadItem }) {
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      {item.ok ? null : (
+        <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
+      )}
+      <span className="text-foreground">{item.name}</span>
+      <span className="text-muted-foreground">
+        {item.ready} / {item.desired}
+      </span>
+      {item.ok ? null : <span className="text-muted-foreground">— short of target</span>}
+    </li>
+  );
+}
+
+/**
+ * One database's row: name, `ready / instances`, phase, marked when the
+ * classifier failed it.
+ *
+ * A database fails for THREE reasons the counts alone cannot show: short
+ * instances, zero instances, and a phase CNPG does not consider settled. A
+ * mid-failover cluster reports `1 / 1` with the estate summary reading
+ * `0 / 1`, so the counts are exactly the wrong thing to read the verdict off
+ * — hence `item.ok`, and hence the phase's own class changing with it. An
+ * operator must be able to find the bad row by scanning, not by reading and
+ * interpreting every phase string on the page.
+ *
+ * See {@link WorkloadRow} for why the marker is the shared degraded token.
+ */
+function DatabaseRow({ item }: { item: DatabaseItem }) {
+  // The counts-specific wording only applies when the COUNTS are what failed.
+  // A cluster failed on its phase is not "short of target", and saying so
+  // would send an operator looking for a missing instance that is running.
+  const short = item.ready < item.instances;
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      {item.ok ? null : (
+        <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
+      )}
+      <span className="text-foreground">{item.name}</span>
+      <span className="text-muted-foreground">
+        {item.ready} / {item.instances}
+      </span>
+      {item.ok ? null : (
+        <span className="text-muted-foreground">
+          {short ? "— short of target" : "— not ready"}
+        </span>
+      )}
+      {item.phase ? (
+        // A failed row's phase IS the finding, so it does not render in the
+        // same muted grey as "Cluster in healthy state". Never the only
+        // carrier — the diamond and the "— not ready" text say it too.
+        <span className={item.ok ? "text-muted-foreground" : "font-medium text-foreground"}>
+          {item.phase}
+        </span>
+      ) : null}
+    </li>
   );
 }
