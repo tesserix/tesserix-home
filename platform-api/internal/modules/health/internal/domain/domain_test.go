@@ -100,6 +100,19 @@ func TestClassify(t *testing.T) {
 			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
+		{
+			// The narrower sibling of the case above. A cluster whose
+			// instance counts have populated while its phase has NOT is a
+			// real window during creation — the controller sets them at
+			// different moments. Matching counts are not evidence it is
+			// serving, so this degrades rather than passing on the counts
+			// alone. Pinned because the phase check is what makes it true,
+			// and nothing else in the suite exercises an empty phase.
+			name:      "a database that has not reported a phase yet is degraded",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: ""}},
+			want:      domain.StateDegraded,
+		},
 	}
 
 	for _, test := range tests {
@@ -234,5 +247,33 @@ func TestADatabaseWithMatchingCountsButAWrongPhaseIsDegraded(t *testing.T) {
 	}
 	if got.Databases.Ready != 0 {
 		t.Errorf("Databases.Ready = %d, want 0 — a wrong phase must not count as ready", got.Databases.Ready)
+	}
+	// Pins the WRONG-phase sentence specifically, so it stays distinct from
+	// the ABSENT-phase sentence pinned below.
+	if !strings.Contains(got.Reason, `reports phase "Failing over", not`) {
+		t.Errorf("reason = %q, want the wrong-phase sentence", got.Reason)
+	}
+	if strings.Contains(got.Reason, "has not reported a phase yet") {
+		t.Errorf("reason = %q, want the wrong-phase sentence, not the absent-phase one", got.Reason)
+	}
+}
+
+func TestAnEmptyPhaseReasonSaysNotReportedRatherThanQuotingAnEmptyString(t *testing.T) {
+	// An absent phase and a wrong phase are different facts about the
+	// cluster and get different sentences. `reports phase ""` reads like a
+	// bug in this code; the operator should be told to wait, not to
+	// investigate a parsing glitch.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: ""}},
+	)
+	if got.State != domain.StateDegraded {
+		t.Fatalf("State = %q, want degraded", got.State)
+	}
+	if !strings.Contains(got.Reason, "has not reported a phase yet") {
+		t.Errorf("reason = %q, want it to say the phase has not been reported yet", got.Reason)
+	}
+	if strings.Contains(got.Reason, `phase ""`) {
+		t.Errorf(`reason = %q, must not read like a parsing glitch (contains phase "")`, got.Reason)
 	}
 }

@@ -144,8 +144,20 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 		// "not the healthy phase" rather than a list of known-bad phases, so
 		// an unknown future phase reads as a problem, not as fine.
 		if database.Phase != HealthyPhase {
-			problems = append(problems, fmt.Sprintf("%s reports phase %q, not %q",
-				database.Name, database.Phase, HealthyPhase))
+			// An ABSENT phase and a WRONG phase are different facts and get
+			// different sentences. `reports phase ""` reads like a bug in
+			// this code; "has not reported a phase yet" is what actually
+			// happened, and tells the operator to wait rather than to
+			// investigate.
+			if database.Phase == "" {
+				problems = append(problems, fmt.Sprintf(
+					"%s has not reported a phase yet (want %q)",
+					database.Name, HealthyPhase))
+			} else {
+				problems = append(problems, fmt.Sprintf(
+					"%s reports phase %q, not %q",
+					database.Name, database.Phase, HealthyPhase))
+			}
 			continue
 		}
 		snapshot.Databases.Ready++
