@@ -10,11 +10,33 @@ export type HealthState = "healthy" | "degraded" | "unmeasured";
 
 const STATES: readonly string[] = ["healthy", "degraded", "unmeasured"];
 
+/**
+ * The verdict on one row, as the CLASSIFIER decided it.
+ *
+ * Not re-derived here. A database has three ways to fail — short counts,
+ * zero instances, and a phase CNPG does not consider settled — and only the
+ * Go code that increments the ready counter applies all three. A renderer
+ * comparing `ready < instances` marks a failing-over cluster fine, in a row
+ * printed directly under a summary that counts it bad; that drift is what
+ * this field exists to make impossible.
+ *
+ * OPTIONAL on the wire: the older platform-api sends items with no `ok` at
+ * all, and one is live in production until this ships. `itemOK` falls back to
+ * the counts comparison the page used before this field existed — imperfect,
+ * but exactly the old behaviour, which is the honest thing to show for an old
+ * API rather than a guess dressed up as a verdict.
+ */
+function itemOK(record: Record<string, unknown>, fallback: boolean): boolean {
+  return typeof record.ok === "boolean" ? record.ok : fallback;
+}
+
 /** One workload row — a Knative service or similar. */
 export interface WorkloadItem {
   readonly name: string;
   readonly desired: number;
   readonly ready: number;
+  /** See {@link itemOK}. */
+  readonly ok: boolean;
 }
 
 /** One database row — a CNPG cluster or similar. */
@@ -23,6 +45,8 @@ export interface DatabaseItem {
   readonly instances: number;
   readonly ready: number;
   readonly phase: string | null;
+  /** See {@link itemOK}. */
+  readonly ok: boolean;
 }
 
 export interface HealthCounts<Item> {
@@ -30,11 +54,15 @@ export interface HealthCounts<Item> {
   readonly ready: number;
   /**
    * `null` means "this payload carried no `items` field at all" — the older
-   * platform-api shape, still live in production until this ships. An empty
-   * array means "items was present and parsed to nothing" — the Go side
-   * never actually sends this (it serialises `[]`, not omits the field), but
-   * a malformed non-array `items` degrades to the same `null` as absence
-   * rather than throwing. The distinction is what lets the page tell
+   * platform-api shape, still live in production until this ships, and the
+   * shape a malformed non-array `items` (a string, an object) degrades to
+   * rather than throwing.
+   *
+   * An empty array means "items was present and parsed to nothing", which is
+   * a LIVE path, not a theoretical one: the Go side serialises `[]` rather
+   * than omitting the field, so `"items": []` is exactly what every
+   * `unmeasured` snapshot carries — a failed cluster read, an RBAC 403,
+   * startup without a token. The distinction is what lets the page tell
    * "nothing to show" apart from "no opinion on rows at all" and render
    * exactly as it did before this field existed.
    */
@@ -91,11 +119,9 @@ function workloadItems(value: unknown): readonly WorkloadItem[] | null {
     if (typeof entry !== "object" || entry === null) continue; // a string, a number: unusable, drop it
     const record = entry as Record<string, unknown>;
     if (typeof record.name !== "string") continue; // no name, no row to key or label
-    items.push({
-      name: record.name,
-      desired: typeof record.desired === "number" ? record.desired : 0,
-      ready: typeof record.ready === "number" ? record.ready : 0,
-    });
+    const desired = typeof record.desired === "number" ? record.desired : 0;
+    const ready = typeof record.ready === "number" ? record.ready : 0;
+    items.push({ name: record.name, desired, ready, ok: itemOK(record, ready >= desired) });
   }
   return items;
 }
@@ -108,11 +134,18 @@ function databaseItems(value: unknown): readonly DatabaseItem[] | null {
     if (typeof entry !== "object" || entry === null) continue;
     const record = entry as Record<string, unknown>;
     if (typeof record.name !== "string") continue;
+    const instances = typeof record.instances === "number" ? record.instances : 0;
+    const ready = typeof record.ready === "number" ? record.ready : 0;
     items.push({
       name: record.name,
-      instances: typeof record.instances === "number" ? record.instances : 0,
-      ready: typeof record.ready === "number" ? record.ready : 0,
+      instances,
+      ready,
       phase: typeof record.phase === "string" ? record.phase : null,
+      // The fallback is the counts comparison the row used before `ok`
+      // existed. It cannot see the phase — that is the POINT of `ok`, and
+      // the reason an old API's rows are exactly as good as they were, and
+      // no better.
+      ok: itemOK(record, ready >= instances),
     });
   }
   return items;

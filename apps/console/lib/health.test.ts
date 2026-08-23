@@ -108,7 +108,7 @@ describe("parseHealth", () => {
         },
       });
 
-      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2 }]);
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2, ok: true }]);
     });
 
     it("parses database items, including a null phase", () => {
@@ -129,7 +129,13 @@ describe("parseHealth", () => {
       });
 
       expect(got.databases.items).toEqual([
-        { name: "tesserix-postgres", instances: 1, ready: 1, phase: "Cluster in healthy state" },
+        {
+          name: "tesserix-postgres",
+          instances: 1,
+          ready: 1,
+          phase: "Cluster in healthy state",
+          ok: true,
+        },
       ]);
     });
 
@@ -172,7 +178,7 @@ describe("parseHealth", () => {
         },
       });
 
-      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2 }]);
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2, ok: true }]);
     });
 
     it("coerces a non-numeric count to 0, matching counts()'s own style", () => {
@@ -185,7 +191,7 @@ describe("parseHealth", () => {
         },
       });
 
-      expect(got.workloads.items).toEqual([{ name: "console", desired: 0, ready: 0 }]);
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 0, ready: 0, ok: true }]);
     });
 
     it("coerces a non-string phase to null rather than trusting it", () => {
@@ -199,7 +205,7 @@ describe("parseHealth", () => {
       });
 
       expect(got.databases.items).toEqual([
-        { name: "tesserix-postgres", instances: 1, ready: 1, phase: null },
+        { name: "tesserix-postgres", instances: 1, ready: 1, phase: null, ok: true },
       ]);
     });
 
@@ -217,7 +223,76 @@ describe("parseHealth", () => {
       });
 
       expect(got.state).toBe("degraded");
-      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 0 }]);
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 0, ok: false }]);
+    });
+
+    it("carries the classifier's own per-row verdict rather than re-deriving it", () => {
+      // A cluster mid-failover reports MATCHING counts and is not healthy.
+      // Nothing on the client can know that from the numbers, which is why
+      // the verdict is on the wire.
+      const got = parseHealth({
+        ...wire,
+        state: "degraded",
+        databases: {
+          total: 1,
+          ready: 0,
+          items: [
+            {
+              name: "tesserix-postgres",
+              instances: 1,
+              ready: 1,
+              phase: "Failing over",
+              ok: false,
+            },
+          ],
+        },
+      });
+
+      expect(got.databases.items?.[0].ok).toBe(false);
+    });
+
+    it("falls back to the counts comparison when ok is absent — the older API shape", () => {
+      // An older platform-api sends items with no `ok` at all, and one is
+      // live in production until this ships. The fallback is EXACTLY what
+      // the row did before this field existed: imperfect (it cannot see a
+      // phase), but the old behaviour rather than a guess.
+      const got = parseHealth({
+        ...wire,
+        state: "degraded",
+        workloads: {
+          total: 2,
+          ready: 1,
+          items: [
+            { name: "short", desired: 2, ready: 1 },
+            { name: "fine", desired: 2, ready: 2 },
+          ],
+        },
+        databases: {
+          total: 1,
+          ready: 1,
+          items: [
+            { name: "pg", instances: 1, ready: 1, phase: "Failing over" },
+          ],
+        },
+      });
+
+      expect(got.workloads.items?.map((item) => item.ok)).toEqual([false, true]);
+      // Matching counts and no `ok`: the old row said "fine" and so does
+      // this. The phase is invisible to the fallback, which is the point.
+      expect(got.databases.items?.[0].ok).toBe(true);
+    });
+
+    it("ignores a non-boolean ok rather than trusting it", () => {
+      const got = parseHealth({
+        ...wire,
+        workloads: {
+          total: 1,
+          ready: 0,
+          items: [{ name: "console", desired: 2, ready: 0, ok: "yes" }],
+        },
+      });
+
+      expect(got.workloads.items?.[0].ok).toBe(false);
     });
   });
 });

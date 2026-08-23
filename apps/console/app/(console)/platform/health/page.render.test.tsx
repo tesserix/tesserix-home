@@ -223,7 +223,7 @@ describe("the health page", () => {
           workloads: {
             total: 8,
             ready: 8,
-            items: [{ name: "console", desired: 2, ready: 2 }],
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
           },
         }),
       );
@@ -246,6 +246,7 @@ describe("the health page", () => {
                 instances: 1,
                 ready: 1,
                 phase: "Cluster in healthy state",
+                ok: true,
               },
             ],
           },
@@ -273,8 +274,8 @@ describe("the health page", () => {
             total: 8,
             ready: 7,
             items: [
-              { name: "mp-orders", desired: 2, ready: 1 },
-              { name: "console", desired: 2, ready: 2 },
+              { name: "mp-orders", desired: 2, ready: 1, ok: false },
+              { name: "console", desired: 2, ready: 2, ok: true },
             ],
           },
         }),
@@ -292,6 +293,69 @@ describe("the health page", () => {
       // (this fixture's overall state) does not get counted here too.
       const degradedDots = container.querySelectorAll("li .rotate-45.bg-warning");
       expect(degradedDots.length).toBe(1);
+    });
+
+    it("marks a database whose counts match but whose phase failed it", async () => {
+      // THE case this branch's phase check exists for, and the one a row
+      // deriving its own verdict from counts gets wrong: CNPG reports 1 of 1
+      // instance ready while the cluster is mid-failover, so the row reads
+      // "1 / 1" directly under a summary reading "0 / 1". Two different
+      // numbers for the same database under the word "ready", on one screen.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: 'tesserix-postgres reports phase "Failing over"',
+          databases: {
+            total: 1,
+            ready: 0,
+            items: [
+              {
+                name: "tesserix-postgres",
+                instances: 1,
+                ready: 1,
+                phase: "Failing over",
+                ok: false,
+              },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      const rows = container.querySelectorAll("li .rotate-45.bg-warning");
+      expect(rows.length).toBe(1);
+      // And the phase does not render in the muted class a healthy phase
+      // gets — an operator scanning the list must find the bad row without
+      // reading and interpreting every phase string.
+      const phase = screen.getByText("Failing over");
+      expect(phase.className).not.toContain("text-muted-foreground");
+    });
+
+    it("marks a database reporting zero instances", async () => {
+      // Go degrades on this (`Instances > 0`, a rule counts alone cannot
+      // express); unmarked it renders "0 / 0" and reads as "wants nothing,
+      // has nothing, fine".
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: "tesserix-postgres 0/0 instances ready",
+          databases: {
+            total: 1,
+            ready: 0,
+            items: [
+              { name: "tesserix-postgres", instances: 0, ready: 0, phase: null, ok: false },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      expect(container.querySelectorAll("li .rotate-45.bg-warning").length).toBe(1);
+      // A textual carrier too, not the colour alone. "short of target" would
+      // be wrong here — nothing is short, the cluster reports no instances.
+      expect(screen.getByText("— not ready")).toBeInTheDocument();
     });
 
     it("renders the page unchanged when items is absent — no empty table, no throw", async () => {

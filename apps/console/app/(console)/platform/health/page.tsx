@@ -118,15 +118,24 @@ export default async function HealthPage() {
                 </dd>
                 {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
                   <ul className="flex flex-col gap-1 pt-1">
-                    {health.workloads.items.map((item) => (
-                      <WorkloadRow key={item.name} item={item} />
+                    {health.workloads.items.map((item, index) => (
+                      // Index-QUALIFIED, not the name alone. Kubernetes names
+                      // are unique per namespace per kind, so a collision is
+                      // not reachable from a live cluster — but `parseHealth`
+                      // does not dedupe, and a replayed or hand-crafted
+                      // payload with two rows of the same name would give
+                      // React duplicate keys and licence to mis-reconcile
+                      // them. Qualifying the key here is one line; deduping in
+                      // the parser would silently DROP a row the API sent,
+                      // which is the opposite of what this page is for.
+                      <WorkloadRow key={`${index}-${item.name}`} item={item} />
                     ))}
                   </ul>
                 ) : null}
                 {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
                   <ul className="flex flex-col gap-1 pt-1">
-                    {health.databases.items.map((item) => (
-                      <DatabaseRow key={item.name} item={item} />
+                    {health.databases.items.map((item, index) => (
+                      <DatabaseRow key={`${index}-${item.name}`} item={item} />
                     ))}
                   </ul>
                 ) : null}
@@ -185,47 +194,76 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * One workload's row: name, `ready / desired`, marked when short.
+ * One workload's row: name, `ready / desired`, marked when the classifier
+ * failed it.
+ *
+ * The verdict is `item.ok` — the classifier's own, carried on the wire — and
+ * is deliberately NOT re-derived from the counts here. See `lib/health.ts`'s
+ * `itemOK` for why, and for what an older platform-api's rows fall back to.
  *
  * The marker reuses `HEALTH_PRESENTATION.degraded` — the same diamond/amber
  * the state section uses for "Degraded" — rather than a fourth colour
- * invented for this row list. The dot alone is never the only carrier: an
- * on-target row and a short one already read differently as TEXT (the counts
- * differ, and a short row adds " — short of target"), so the marker survives
- * a monochrome rendering as well as a colour-blind reader, same as the state
- * indicator above it.
+ * invented for this row list. The dot alone is never the only carrier: a
+ * failed row also says so as TEXT, so the marker survives a monochrome
+ * rendering as well as a colour-blind reader, same as the state indicator
+ * above it.
  */
 function WorkloadRow({ item }: { item: WorkloadItem }) {
-  const short = item.ready < item.desired;
   return (
     <li className="flex items-center gap-2 text-sm">
-      {short ? (
+      {item.ok ? null : (
         <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
-      ) : null}
+      )}
       <span className="text-foreground">{item.name}</span>
       <span className="text-muted-foreground">
         {item.ready} / {item.desired}
       </span>
-      {short ? <span className="text-muted-foreground">— short of target</span> : null}
+      {item.ok ? null : <span className="text-muted-foreground">— short of target</span>}
     </li>
   );
 }
 
-/** One database's row: name, `ready / instances`, phase, marked when short.
- *  See {@link WorkloadRow} for why the marker is the shared degraded token. */
+/**
+ * One database's row: name, `ready / instances`, phase, marked when the
+ * classifier failed it.
+ *
+ * A database fails for THREE reasons the counts alone cannot show: short
+ * instances, zero instances, and a phase CNPG does not consider settled. A
+ * mid-failover cluster reports `1 / 1` with the estate summary reading
+ * `0 / 1`, so the counts are exactly the wrong thing to read the verdict off
+ * — hence `item.ok`, and hence the phase's own class changing with it. An
+ * operator must be able to find the bad row by scanning, not by reading and
+ * interpreting every phase string on the page.
+ *
+ * See {@link WorkloadRow} for why the marker is the shared degraded token.
+ */
 function DatabaseRow({ item }: { item: DatabaseItem }) {
+  // The counts-specific wording only applies when the COUNTS are what failed.
+  // A cluster failed on its phase is not "short of target", and saying so
+  // would send an operator looking for a missing instance that is running.
   const short = item.ready < item.instances;
   return (
     <li className="flex items-center gap-2 text-sm">
-      {short ? (
+      {item.ok ? null : (
         <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
-      ) : null}
+      )}
       <span className="text-foreground">{item.name}</span>
       <span className="text-muted-foreground">
         {item.ready} / {item.instances}
       </span>
-      {short ? <span className="text-muted-foreground">— short of target</span> : null}
-      {item.phase ? <span className="text-muted-foreground">{item.phase}</span> : null}
+      {item.ok ? null : (
+        <span className="text-muted-foreground">
+          {short ? "— short of target" : "— not ready"}
+        </span>
+      )}
+      {item.phase ? (
+        // A failed row's phase IS the finding, so it does not render in the
+        // same muted grey as "Cluster in healthy state". Never the only
+        // carrier — the diamond and the "— not ready" text say it too.
+        <span className={item.ok ? "text-muted-foreground" : "font-medium text-foreground"}>
+          {item.phase}
+        </span>
+      ) : null}
     </li>
   );
 }
