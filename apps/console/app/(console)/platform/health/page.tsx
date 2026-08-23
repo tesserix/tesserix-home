@@ -1,5 +1,11 @@
 import { ConsolePageHeader } from "@/components/kit/page-header";
-import { readEstateHealth, type DatabaseItem, type WorkloadItem } from "@/lib/health";
+import { StatTile } from "@/components/kit/stat-tile";
+import {
+  readEstateHealth,
+  type DatabaseItem,
+  type HealthCounts,
+  type WorkloadItem,
+} from "@/lib/health";
 import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
 
 /**
@@ -26,11 +32,14 @@ import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
  * 2. What was measured — workload and database counts, and the degraded
  *    reason as text. The reason is already reachable without a mouse from the
  *    indicator's `aria-label`; this is the first place it is VISIBLE AS TEXT.
- *    A section nothing measured says so instead of printing a count. When the
- *    payload carries per-item detail (a newer platform-api; see `lib/
- *    health.ts`'s `HealthCounts.items`), each count is followed by its rows —
- *    the count stays the heading, the rows are the detail underneath it. An
- *    older platform-api answers with no `items` at all, which `parseHealth`
+ *    The counts render as `StatTile`s, the same dashboard-card primitive
+ *    `/platform/ai-usage` uses for its own numbers — a section nothing
+ *    measured uses the tile's own `instrumentation-unavailable` state
+ *    ("Not measured") rather than printing a count. When the payload carries
+ *    per-item detail (a newer platform-api; see `lib/health.ts`'s
+ *    `HealthCounts.items`), each tile is followed by a `dl` of its rows — the
+ *    tile stays the summary, the rows are the detail underneath it. An older
+ *    platform-api answers with no `items` at all, which `parseHealth`
  *    represents as `null` rather than `[]`; that section then renders exactly
  *    as it did before this existed, with no row list and no empty table.
  * 3. What is NOT measured yet — Uptime, Observability and Custom domains,
@@ -55,6 +64,44 @@ const NOT_YET_MEASURED = ["Uptime", "Observability", "Custom domains"] as const;
 // unchanged.
 const STATE_WORD = "text-base font-medium text-foreground";
 
+/**
+ * Formats a reading timestamp for display, deterministically.
+ *
+ * Fixed locale ("en-GB") and an explicit `timeZone: "UTC"` — never the
+ * viewer's own locale or timezone, and never a relative age ("40 seconds
+ * ago"). Either of those would make the rendered text depend on WHO is
+ * looking rather than WHAT was measured, which is the same non-determinism
+ * the raw-ISO approach below was originally guarding against, just moved
+ * into the formatter instead of removed.
+ */
+function formatCheckedAt(iso: string): string {
+  const formatted = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(iso));
+  return `${formatted} UTC`;
+}
+
+/**
+ * Whether a single section (Workloads or Databases) has a real reading to
+ * show, independently of the other section and of the page's overall state.
+ *
+ * Nothing measured means nothing measured EITHER section (`anythingMeasured`
+ * false covers that), but a section can also individually come back empty —
+ * a partial payload, a source that did not answer — while its sibling is
+ * fine. A `0 / 0` in either case asserts an instrumentation taxonomy at the
+ * exact moment nothing counted it, and reads as "there are zero of these"
+ * rather than "nothing counted them".
+ */
+function sectionMeasured(anythingMeasured: boolean, counts: HealthCounts<unknown>): boolean {
+  return anythingMeasured && counts.total > 0;
+}
+
 export default async function HealthPage() {
   const health = await readEstateHealth();
   const presentation = HEALTH_PRESENTATION[health.state];
@@ -68,9 +115,19 @@ export default async function HealthPage() {
   // workloads" rather than "nothing counted them".
   const anythingMeasured = health.state !== "unmeasured";
   const sections = [
-    { name: "Workloads", counts: health.workloads },
-    { name: "Databases", counts: health.databases },
+    { name: "Workloads", counts: health.workloads, items: health.workloads.items },
+    { name: "Databases", counts: health.databases, items: health.databases.items },
   ] as const;
+  // The healthy-state sentence from `describeHealth` is nothing but
+  // "N of M workloads and N of M databases ready" — a prose restatement of
+  // exactly the counts the "What was measured" section renders a few lines
+  // below, as a heading over the same numbers' row detail. Degraded and
+  // unmeasured don't have this problem: degraded's clause is the REASON
+  // (kept — the row list has no equivalent for it), and unmeasured has no
+  // counts clause at all. `stale` always earns its own clause too (it names
+  // a fact the timestamp line below doesn't: that the CURRENT reading could
+  // not be taken), so a stale healthy reading still prints the sentence.
+  const showStateSentence = health.state !== "healthy" || health.stale;
 
   return (
     <Shell>
@@ -85,7 +142,9 @@ export default async function HealthPage() {
             <span className="text-sm text-muted-foreground">(stale)</span>
           ) : null}
         </div>
-        <p className="text-sm text-muted-foreground">{describeHealth(health)}</p>
+        {showStateSentence ? (
+          <p className="text-sm text-muted-foreground">{describeHealth(health)}</p>
+        ) : null}
         {/*
           The header indicator and this page each call `readEstateHealth()`
           separately, and clicking the indicator is a soft navigation — Next
@@ -93,76 +152,117 @@ export default async function HealthPage() {
           reading from the last hard load while this page renders a fresh one.
           Dating the reading is what lets an operator compare the two.
 
-          RAW ISO, deliberately: this renders on the server and hydrates on the
-          client, so a relative age reads the clock and a locale-formatted time
-          reads the locale — either is a hydration mismatch.
+          FORMATTED, not raw ISO: this page is a SERVER component that never
+          hydrates on the client — there is no second render to mismatch
+          against, so the hydration hazard the raw-ISO choice was guarding
+          against does not apply here (it does apply to the header indicator,
+          a "use client" component, which is why THAT surface stays raw).
+          What still applies is determinism: the format below is fixed
+          UTC/`en-GB`, never the viewer's own locale or timezone, and never a
+          relative age — see `formatCheckedAt`. The machine-readable ISO value
+          is preserved on `dateTime` either way.
         */}
         <p className="text-sm text-muted-foreground">
-          {health.checkedAt
-            ? `Last measured ${health.checkedAt}`
-            : "Last measured: unknown — no reading timestamp came back."}
+          {health.checkedAt ? (
+            <>
+              <span>Last measured</span>{" "}
+              <time dateTime={health.checkedAt}>{formatCheckedAt(health.checkedAt)}</time>
+            </>
+          ) : (
+            "Last measured: unknown — no reading timestamp came back."
+          )}
         </p>
       </section>
 
-      <section aria-labelledby="health-measured-heading" className="flex flex-col gap-3">
+      <section aria-labelledby="health-measured-heading" className="flex flex-col gap-4">
         <h2 id="health-measured-heading" className="text-sm font-medium text-muted-foreground">
           What was measured
         </h2>
-        <dl className="grid grid-cols-2 gap-4 sm:max-w-md">
-          {sections.map(({ name, counts }) =>
-            anythingMeasured && counts.total > 0 ? (
-              <div key={name} className="flex flex-col gap-1">
-                <dt className="text-xs text-muted-foreground">{name} ready</dt>
+        {/*
+          Two `StatTile`s — the same dashboard-card primitive every other
+          stat on the console uses (see `ai-usage/page.tsx`'s tile row) —
+          rather than a bespoke two-column `dl`. That row was the page's
+          narrowest, most cramped element (capped at `sm:max-w-md`, 448px,
+          split into two ~200px halves); tiles built for the full grid fill
+          the width the rest of the console's dashboards already use.
+
+          Two tiles, not the four-wide house grid `ai-usage` uses: this page
+          only has two real numbers to show, and forcing a `lg:grid-cols-4`
+          template here would leave two tiles-shaped holes — the exact "empty
+          on the right" complaint this change exists to fix, just moved one
+          level down. `sm:grid-cols-2` lets both tiles claim real width on
+          any screen at least `sm`, and stack on mobile.
+
+          Each tile also carries the `unmeasured` state itself, via
+          `StatTile`'s own `instrumentation-unavailable` surface state — the
+          same "we are not measuring this" vocabulary every other parked
+          stat on the console already uses — instead of a bespoke "Nothing
+          measured this" branch invented for this one page. `sectionMeasured`
+          below is what decides, per section, independently of the other:
+          a database section reporting zero total under an otherwise
+          `degraded` reading still parks correctly even though workloads is
+          fine.
+        */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {sections.map(({ name, counts }) => (
+            <StatTile
+              key={name}
+              // "{name} ready" once there is something to report, bare
+              // "{name}" while parked — matching the wording the rest of the
+              // page already used for this distinction, so a bare "Databases"
+              // never appears next to a real reading and gets mistaken for one.
+              label={sectionMeasured(anythingMeasured, counts) ? `${name} ready` : name}
+              value={sectionMeasured(anythingMeasured, counts) ? `${counts.ready} / ${counts.total}` : ""}
+              state={sectionMeasured(anythingMeasured, counts) ? undefined : { kind: "instrumentation-unavailable" }}
+            />
+          ))}
+        </div>
+        {/*
+          The per-item detail lives in its own `dl`, separate from the tiles
+          above: a `StatTile` has room for one label and one number, not a
+          multi-row breakdown, and a row list stuffed inside one would break
+          the tile's own layout contract every other stat on the console
+          relies on. Rendered only when there is something to list — an
+          older platform-api's `items: null`, or a parked section, means no
+          `dl` at all, not an empty one.
+        */}
+        {sections.map(({ name, counts, items }) =>
+          sectionMeasured(anythingMeasured, counts) && items && items.length > 0 ? (
+            <dl key={name} className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1">
+                <dt className="text-xs text-muted-foreground">{name}</dt>
                 {/*
                   The row list lives INSIDE the `dd`, not beside it. The
                   content model for a `dl > div` is one-or-more `dt` followed
                   by one-or-more `dd`; a `ul` sibling is not permitted there,
                   and a screen reader walking the definition list orphans the
-                  rows from the term they belong to. Purely structural — the
-                  `dd` carries the same flex column the wrapper did, so the
-                  rendering is unchanged.
+                  rows from the term they belong to.
                 */}
                 <dd className="flex flex-col gap-1">
-                  <span className="text-lg font-medium text-foreground">
-                    {counts.ready} / {counts.total}
-                  </span>
-                  {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
-                    <RowList total={counts.total} shown={health.workloads.items.length}>
-                      {health.workloads.items.map((item, index) => (
-                        // Index-QUALIFIED, not the name alone. Kubernetes
-                        // names are unique per namespace per kind, so a
-                        // collision is not reachable from a live cluster —
-                        // but `parseHealth` does not dedupe, and a replayed
-                        // or hand-crafted payload with two rows of the same
-                        // name would give React duplicate keys and licence to
-                        // mis-reconcile them. Qualifying the key here is one
-                        // line; deduping in the parser would silently DROP a
-                        // row the API sent, which is the opposite of what
-                        // this page is for.
-                        <WorkloadRow key={`${index}-${item.name}`} item={item} />
-                      ))}
-                    </RowList>
-                  ) : null}
-                  {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
-                    <RowList total={counts.total} shown={health.databases.items.length}>
-                      {health.databases.items.map((item, index) => (
-                        <DatabaseRow key={`${index}-${item.name}`} item={item} />
-                      ))}
-                    </RowList>
-                  ) : null}
+                  <RowList total={counts.total} shown={items.length}>
+                    {name === "Workloads"
+                      ? (items as readonly WorkloadItem[]).map((item, index) => (
+                          // Index-QUALIFIED, not the name alone. Kubernetes
+                          // names are unique per namespace per kind, so a
+                          // collision is not reachable from a live cluster —
+                          // but `parseHealth` does not dedupe, and a replayed
+                          // or hand-crafted payload with two rows of the same
+                          // name would give React duplicate keys and licence
+                          // to mis-reconcile them. Qualifying the key here is
+                          // one line; deduping in the parser would silently
+                          // DROP a row the API sent, which is the opposite of
+                          // what this page is for.
+                          <WorkloadRow key={`${index}-${item.name}`} item={item} />
+                        ))
+                      : (items as readonly DatabaseItem[]).map((item, index) => (
+                          <DatabaseRow key={`${index}-${item.name}`} item={item} />
+                        ))}
+                  </RowList>
                 </dd>
               </div>
-            ) : (
-              <div key={name} className="flex flex-col gap-1">
-                <dt className="text-xs text-muted-foreground">{name}</dt>
-                <dd className="flex items-center gap-2 text-sm text-foreground">
-                  <span aria-hidden="true" className={unmeasuredPresentation.dot} />
-                  <span>Nothing measured this.</span>
-                </dd>
-              </div>
-            ),
-          )}
-        </dl>
+            </dl>
+          ) : null,
+        )}
         {reasonLines.length > 0 ? (
           <div className="flex flex-col gap-1 text-sm text-foreground">
             {reasonLines.map((line, index) => (
@@ -194,8 +294,13 @@ export default async function HealthPage() {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
+  // `gap-10` here, deliberately wider than any gap used inside a section
+  // (`gap-1`–`gap-8`): State / What was measured / Not yet measured are three
+  // distinct groups, and a flat spacing scale across the whole page — the
+  // original bug — gives the eye no rhythm to tell a section break from a
+  // row break.
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-10">
       <ConsolePageHeader
         title="Estate health"
         description="What the console currently measures, and what it does not yet."
@@ -259,11 +364,22 @@ function WorkloadRow({ item }: { item: WorkloadItem }) {
       {item.ok ? null : (
         <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
       )}
-      <span className="text-foreground">{item.name}</span>
-      <span className="text-muted-foreground">
+      {/*
+        `min-w-0 flex-1 truncate` on the name, `whitespace-nowrap` on the
+        count: the name's flex box always absorbs whatever width is left in
+        the row, so the count that follows it lands at the same horizontal
+        position on every row regardless of how long the name is — a column,
+        without a grid. `title` keeps the full name reachable when truncated.
+      */}
+      <span className="min-w-0 flex-1 truncate text-foreground" title={item.name}>
+        {item.name}
+      </span>
+      <span className="whitespace-nowrap tabular-nums text-muted-foreground">
         {item.ready} / {item.desired}
       </span>
-      {item.ok ? null : <span className="text-muted-foreground">— short of target</span>}
+      {item.ok ? null : (
+        <span className="whitespace-nowrap text-muted-foreground">— short of target</span>
+      )}
     </li>
   );
 }
@@ -292,12 +408,15 @@ function DatabaseRow({ item }: { item: DatabaseItem }) {
       {item.ok ? null : (
         <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
       )}
-      <span className="text-foreground">{item.name}</span>
-      <span className="text-muted-foreground">
+      {/* See {@link WorkloadRow} for why the name truncates and the count doesn't wrap. */}
+      <span className="min-w-0 flex-1 truncate text-foreground" title={item.name}>
+        {item.name}
+      </span>
+      <span className="whitespace-nowrap tabular-nums text-muted-foreground">
         {item.ready} / {item.instances}
       </span>
       {item.ok ? null : (
-        <span className="text-muted-foreground">
+        <span className="whitespace-nowrap text-muted-foreground">
           {short ? "— short of target" : "— not ready"}
         </span>
       )}

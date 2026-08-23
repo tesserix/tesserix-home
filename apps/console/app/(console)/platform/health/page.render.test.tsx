@@ -171,7 +171,11 @@ describe("the health page", () => {
     expect(screen.queryByText("0 / 0")).not.toBeInTheDocument();
     expect(screen.queryByText(/Workloads ready/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Databases ready/)).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Nothing measured this\./)).toHaveLength(2);
+    // "Not measured" is `StatTile`'s own `instrumentation-unavailable`
+    // copy (see `components/kit/stat-tile.tsx`) — the page now uses that
+    // shared vocabulary instead of a bespoke "Nothing measured this" string,
+    // so both parked tiles (Workloads, Databases) render it once each.
+    expect(screen.getAllByText("Not measured")).toHaveLength(2);
   });
 
   it("says a section was not measured when its total is zero", async () => {
@@ -191,21 +195,28 @@ describe("the health page", () => {
 
     expect(screen.getByText("7 / 8")).toBeInTheDocument();
     expect(screen.queryByText("0 / 0")).not.toBeInTheDocument();
-    expect(screen.getAllByText(/Nothing measured this\./)).toHaveLength(1);
+    // See the "prints no 0 / 0" test above for why this is "Not measured".
+    expect(screen.getAllByText("Not measured")).toHaveLength(1);
   });
 
-  it("dates the reading with the raw ISO timestamp", async () => {
+  it("dates the reading with a deterministic UTC-formatted timestamp", async () => {
     // The header holds its own reading across soft navigations, so the two
     // surfaces can disagree; the timestamp is what makes them comparable.
-    // RAW ISO — a relative age or a locale format would be a hydration
-    // mismatch between the server render and the client hydrate.
+    // This page is a SERVER component that never hydrates, so there is no
+    // hydration mismatch to guard against — but the format must still be
+    // deterministic (fixed locale, explicit UTC), never the viewer's own
+    // locale/timezone and never a relative age. The raw ISO value is pinned
+    // to the `<time>` element's `dateTime` attribute.
     vi.mocked(readEstateHealth).mockResolvedValue(
       health({ checkedAt: "2026-08-23T12:00:00Z" }),
     );
 
-    render(await HealthPage());
+    const { container } = render(await HealthPage());
 
-    expect(screen.getByText("Last measured 2026-08-23T12:00:00Z")).toBeInTheDocument();
+    expect(screen.getByText("Last measured")).toBeInTheDocument();
+    expect(screen.getByText("23 Aug 2026, 12:00 UTC")).toBeInTheDocument();
+    const time = container.querySelector("time");
+    expect(time?.getAttribute("dateTime")).toBe("2026-08-23T12:00:00Z");
   });
 
   it("says so rather than blanking when there is no timestamp", async () => {
@@ -232,6 +243,29 @@ describe("the health page", () => {
 
       expect(screen.getByText("console")).toBeInTheDocument();
       expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    });
+
+    it("keeps a long workload name reachable via `title` when the row truncates its display text", async () => {
+      // The row list used to have no fallback at all for a name too long to
+      // fit — the cramped `sm:max-w-md` column made "tesserix-postgres" wrap
+      // mid-word. The fix truncates the display text instead, but a
+      // truncated name must still be reachable in full, which is what
+      // `title` (and the raw text still present in the DOM) is for.
+      const longName = "mp-connector-external-marketplace-integrations-worker";
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: longName, desired: 1, ready: 1, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      const name = screen.getByText(longName);
+      expect(name).toHaveAttribute("title", longName);
     });
 
     it("renders a row per database with its name, ready/instances count, and phase", async () => {
