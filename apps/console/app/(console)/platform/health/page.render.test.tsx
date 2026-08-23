@@ -358,6 +358,66 @@ describe("the health page", () => {
       expect(screen.getByText("— not ready")).toBeInTheDocument();
     });
 
+    it("says so when the row list is shorter than the count above it", async () => {
+      // `total` comes off the payload, the rows come from the item parser,
+      // and nothing reconciles them: one malformed entry among eight renders
+      // "8 / 8" above a single row, which an operator reads as the estate
+      // inventory.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 8,
+            ready: 8,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("showing 1 of 8")).toBeInTheDocument();
+    });
+
+    it("says nothing about the row count when the list is complete", async () => {
+      // Guards the guard: a note that always renders is noise, and would
+      // train an operator to ignore the one case it is meant to flag.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.queryByText(/showing \d+ of \d+/)).not.toBeInTheDocument();
+    });
+
+    it("keeps the row list inside the dd it belongs to", async () => {
+      // The HTML content model for a `dl > div` is one-or-more `dt` followed
+      // by one-or-more `dd`; a `ul` sibling is not permitted, and a screen
+      // reader walking the list orphans the rows from their term.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      const list = container.querySelector("dl ul");
+      expect(list).not.toBeNull();
+      expect(list?.closest("dd")).not.toBeNull();
+      expect(container.querySelector("dl > div > ul")).toBeNull();
+    });
+
     it("renders the page unchanged when items is absent — no empty table, no throw", async () => {
       // The older platform-api answers without `items` at all, and one is
       // running in production until this ships. The page must render exactly

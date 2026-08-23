@@ -113,32 +113,44 @@ export default async function HealthPage() {
             anythingMeasured && counts.total > 0 ? (
               <div key={name} className="flex flex-col gap-1">
                 <dt className="text-xs text-muted-foreground">{name} ready</dt>
-                <dd className="text-lg font-medium text-foreground">
-                  {counts.ready} / {counts.total}
+                {/*
+                  The row list lives INSIDE the `dd`, not beside it. The
+                  content model for a `dl > div` is one-or-more `dt` followed
+                  by one-or-more `dd`; a `ul` sibling is not permitted there,
+                  and a screen reader walking the definition list orphans the
+                  rows from the term they belong to. Purely structural — the
+                  `dd` carries the same flex column the wrapper did, so the
+                  rendering is unchanged.
+                */}
+                <dd className="flex flex-col gap-1">
+                  <span className="text-lg font-medium text-foreground">
+                    {counts.ready} / {counts.total}
+                  </span>
+                  {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
+                    <RowList total={counts.total} shown={health.workloads.items.length}>
+                      {health.workloads.items.map((item, index) => (
+                        // Index-QUALIFIED, not the name alone. Kubernetes
+                        // names are unique per namespace per kind, so a
+                        // collision is not reachable from a live cluster —
+                        // but `parseHealth` does not dedupe, and a replayed
+                        // or hand-crafted payload with two rows of the same
+                        // name would give React duplicate keys and licence to
+                        // mis-reconcile them. Qualifying the key here is one
+                        // line; deduping in the parser would silently DROP a
+                        // row the API sent, which is the opposite of what
+                        // this page is for.
+                        <WorkloadRow key={`${index}-${item.name}`} item={item} />
+                      ))}
+                    </RowList>
+                  ) : null}
+                  {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
+                    <RowList total={counts.total} shown={health.databases.items.length}>
+                      {health.databases.items.map((item, index) => (
+                        <DatabaseRow key={`${index}-${item.name}`} item={item} />
+                      ))}
+                    </RowList>
+                  ) : null}
                 </dd>
-                {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
-                  <ul className="flex flex-col gap-1 pt-1">
-                    {health.workloads.items.map((item, index) => (
-                      // Index-QUALIFIED, not the name alone. Kubernetes names
-                      // are unique per namespace per kind, so a collision is
-                      // not reachable from a live cluster — but `parseHealth`
-                      // does not dedupe, and a replayed or hand-crafted
-                      // payload with two rows of the same name would give
-                      // React duplicate keys and licence to mis-reconcile
-                      // them. Qualifying the key here is one line; deduping in
-                      // the parser would silently DROP a row the API sent,
-                      // which is the opposite of what this page is for.
-                      <WorkloadRow key={`${index}-${item.name}`} item={item} />
-                    ))}
-                  </ul>
-                ) : null}
-                {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
-                  <ul className="flex flex-col gap-1 pt-1">
-                    {health.databases.items.map((item, index) => (
-                      <DatabaseRow key={`${index}-${item.name}`} item={item} />
-                    ))}
-                  </ul>
-                ) : null}
               </div>
             ) : (
               <div key={name} className="flex flex-col gap-1">
@@ -190,6 +202,39 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       {children}
     </div>
+  );
+}
+
+/**
+ * A row list, and — when it is shorter than the count above it — a line
+ * saying so.
+ *
+ * `total` comes off the payload; the rows come from the item parser, which
+ * independently drops entries it cannot trust. Nothing reconciles the two, so
+ * `{total: 8, items: [<one malformed>, <one good>]}` renders "Workloads ready
+ * 8 / 8" above exactly ONE row — and an operator reads a row list as the
+ * inventory and concludes the estate has one workload. Neither truncating the
+ * count nor inventing the missing rows is honest; saying how many are shown
+ * is.
+ */
+function RowList({
+  total,
+  shown,
+  children,
+}: {
+  total: number;
+  shown: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      {shown !== total ? (
+        <span className="text-xs text-muted-foreground">
+          showing {shown} of {total}
+        </span>
+      ) : null}
+      <ul className="flex flex-col gap-1 pt-1">{children}</ul>
+    </>
   );
 }
 
