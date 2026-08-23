@@ -32,6 +32,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/cluster"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/handler"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/service"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
@@ -52,4 +53,33 @@ type Config struct {
 // Register mounts the module's routes.
 func Register(mux *http.ServeMux, cfg Config) {
 	handler.New(service.New(cfg.Source, nil), cfg.Log).Routes(mux, cfg.Verifier)
+}
+
+// Re-exported so the composition root can build a Source and hand it over
+// without importing this module's internals, which Go forbids from outside
+// this subtree. Aliases rather than new types: a wrapper type would need
+// conversion at every call site for no benefit.
+type (
+	// Source is what the module reads to answer a health request.
+	Source = service.Source
+	// Workload is one Deployment as the module sees it.
+	Workload = cluster.Workload
+	// Database is one CNPG Cluster as the module sees it.
+	Database = cluster.Database
+	// ClusterConfig is how to reach the Kubernetes API.
+	ClusterConfig = cluster.Config
+)
+
+// NewClusterSource builds a Source that reads the Kubernetes API.
+//
+// Returns an untyped nil on failure rather than a nil *cluster.Reader. A nil
+// pointer assigned into an interface produces a NON-nil interface holding a
+// nil pointer, so `source != nil` would be true and the first method call
+// would panic — the classic Go trap, and worth the extra two lines to avoid.
+func NewClusterSource(cfg ClusterConfig) (Source, error) {
+	reader, err := cluster.New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return reader, nil
 }

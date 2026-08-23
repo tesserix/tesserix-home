@@ -23,6 +23,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
@@ -124,6 +125,40 @@ func run(log *slog.Logger) error {
 		tools.Register(m, tools.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
 	})
 
+	// Estate health. The reader is built here rather than inside the module
+	// because building it can FAIL — no token outside a cluster, no CA, the
+	// flag off — and the composition root is where that is a startup fact
+	// rather than a per-request surprise.
+	//
+	// A failure is not fatal. `unmeasuredSource` makes the module answer
+	// `unmeasured` with the real reason, which is exactly what the indicator
+	// exists to render. Refusing to boot because a health check cannot read
+	// the cluster would turn a degraded signal into an outage.
+	var clusterSource health.Source = unmeasuredSource{reason: "cluster reads are disabled"}
+	if cfg.ClusterRead.Enabled {
+		source, err := health.NewClusterSource(health.ClusterConfig{
+			APIServer:     cfg.ClusterRead.APIServer,
+			TokenPath:     cfg.ClusterRead.TokenPath,
+			CAPath:        cfg.ClusterRead.CAPath,
+			NamespacePath: cfg.ClusterRead.NamespacePath,
+		})
+		if err != nil {
+			log.Warn("cluster reads are enabled but the reader could not be built — "+
+				"health will report unmeasured",
+				slog.Any("error", err),
+				slog.String("likely_cause", "the Role/RoleBinding in tesserix-k8s has not been applied"),
+			)
+			clusterSource = unmeasuredSource{reason: err.Error()}
+		} else {
+			log.Info("cluster reads enabled")
+			clusterSource = source
+		}
+	}
+
+	httpx.RegisterModule(mux, verifier, "health", func(m *http.ServeMux) {
+		health.Register(m, health.Config{Source: clusterSource, Verifier: verifier, Log: log})
+	})
+
 	// Federation client, shared by every module that reads another product.
 	// Built here rather than per-module: the registry is one deployment-wide
 	// fact, and two clients would mean two connection pools to the same hosts.
@@ -181,4 +216,21 @@ func run(log *slog.Logger) error {
 	}
 	log.Info("stopped")
 	return nil
+}
+
+// unmeasuredSource is the Source for "there is no cluster to read".
+//
+// It returns an error rather than empty slices. Empty slices would reach
+// domain.Classify, which treats a reading with nothing in it as unmeasured
+// anyway — but with the generic "returned nothing to measure" reason instead
+// of the real one. The operator wants "cluster reads are disabled", not a
+// description of an empty namespace.
+type unmeasuredSource struct{ reason string }
+
+func (u unmeasuredSource) Deployments(context.Context) ([]health.Workload, error) {
+	return nil, errors.New(u.reason)
+}
+
+func (u unmeasuredSource) Databases(context.Context) ([]health.Database, error) {
+	return nil, errors.New(u.reason)
 }

@@ -17,6 +17,9 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"TESSERIX_DB_PASSWORD", "TESSERIX_DB_NAME", "TESSERIX_DB_SSLMODE",
 		"TESSERIX_DB_MAX_CONNS",
 		"PLATFORM_API_AUTH_ENABLED", "ZITADEL_ISSUER", "ZITADEL_PROJECT_ID",
+		"PLATFORM_API_CLUSTER_READ_ENABLED", "PLATFORM_API_CLUSTER_API_SERVER",
+		"PLATFORM_API_CLUSTER_TOKEN_PATH", "PLATFORM_API_CLUSTER_CA_PATH",
+		"PLATFORM_API_CLUSTER_NAMESPACE_PATH",
 	} {
 		t.Setenv(k, "")
 	}
@@ -324,6 +327,22 @@ func TestLoadDatabaseNeedsNoZitadelConfiguration(t *testing.T) {
 	}
 	if db.Name != "tesserix_admin" {
 		t.Errorf("want the estate's database by default, got %q", db.Name)
+	}
+}
+
+func TestClusterReadIsOffUnlessExplicitlyEnabled(t *testing.T) {
+	// Not "unset means on in production". The grant this needs is applied by
+	// hand, so the default must be the state that works without it.
+	e := validEnv()
+	e["PLATFORM_API_CLUSTER_READ_ENABLED"] = ""
+	setEnv(t, e)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ClusterRead.Enabled {
+		t.Error("cluster read defaulted to enabled")
 	}
 }
 

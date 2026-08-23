@@ -18,6 +18,7 @@ type Config struct {
 	Env             string
 	Database        Database
 	Auth            Auth
+	ClusterRead     ClusterRead
 	ShutdownTimeout time.Duration
 	Federation      *federation.Registry
 }
@@ -38,6 +39,23 @@ type Auth struct {
 	Enabled   bool
 	Issuer    string
 	ProjectID string
+}
+
+// ClusterRead is how the health module reaches the Kubernetes API.
+//
+// Disabled by default. Every field has a working in-cluster default, so the
+// flag exists for one reason: enabling this REQUIRES an RBAC grant that a
+// human applies separately (tesserix-k8s, charts/apps/platform-api/templates/
+// rbac.yaml). A deployment that has not had the grant applied must be able to
+// run this build, and a service that silently tried to read the cluster
+// without permission would report `unmeasured` to every operator with no
+// indication that the cause was a missing manifest.
+type ClusterRead struct {
+	Enabled       bool
+	APIServer     string
+	TokenPath     string
+	CAPath        string
+	NamespacePath string
 }
 
 // Database describes the connection to tesserix-postgres.
@@ -125,6 +143,13 @@ func Load() (Config, error) {
 			ProjectID: env("ZITADEL_PROJECT_ID", ""),
 		},
 		Database: database(),
+		ClusterRead: ClusterRead{
+			Enabled:       env("PLATFORM_API_CLUSTER_READ_ENABLED", "") == "true",
+			APIServer:     env("PLATFORM_API_CLUSTER_API_SERVER", ""),
+			TokenPath:     env("PLATFORM_API_CLUSTER_TOKEN_PATH", ""),
+			CAPath:        env("PLATFORM_API_CLUSTER_CA_PATH", ""),
+			NamespacePath: env("PLATFORM_API_CLUSTER_NAMESPACE_PATH", ""),
+		},
 	}
 
 	if v := strings.TrimSpace(os.Getenv("TESSERIX_DB_MAX_CONNS")); v != "" {
