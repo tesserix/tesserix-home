@@ -56,6 +56,13 @@ func Unmeasured(reason string) Snapshot {
 // databases came back empty means the CNPG half was not measured, and an
 // indicator that says "healthy" while blind to every database is telling an
 // operator something it does not know.
+//
+// # And an estate desiring no replicas at all is empty, not healthy
+//
+// One Deployment at zero is switched off on purpose. Every Deployment at zero
+// is a namespace with nothing running in it, which one bad rollout or a sync
+// against a broken values file is enough to produce — and "12 of 12 workloads
+// ready" over zero pods is the parked plane again.
 func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapshot {
 	snapshot := Snapshot{
 		Workloads: Counts{Total: len(workloads)},
@@ -64,7 +71,12 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 
 	var problems []string
 
+	// The total desired across the whole namespace, for the all-zero rule
+	// below. Per-workload, zero is a legitimate state; in aggregate it is not.
+	desired := 0
+
 	for _, workload := range workloads {
+		desired += workload.Desired
 		// Desired 0 is switched off on purpose, and wanting nothing is
 		// satisfied by having nothing.
 		if workload.Ready >= workload.Desired {
@@ -93,6 +105,23 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 	if len(workloads) == 0 || len(databases) == 0 {
 		snapshot.State = StateUnmeasured
 		snapshot.Reason = "the cluster read returned nothing to measure"
+		// Anything that WAS measured still gets named. `unmeasured` is the
+		// honest state, but the workloads observed down are the most
+		// actionable fact in the answer and dropping them helps nobody.
+		if len(problems) > 0 {
+			snapshot.Reason += "; " + strings.Join(problems, "; ")
+		}
+		return snapshot
+	}
+
+	// The per-workload rule above treats one Deployment at zero as switched
+	// off on purpose, which is right. It does not stretch to ALL of them: an
+	// estate where nothing desires a single replica was not observed running,
+	// it was observed empty. Either a rollout emptied the namespace or the
+	// reading is not describing a live estate, and neither is "healthy".
+	if desired == 0 {
+		snapshot.State = StateUnmeasured
+		snapshot.Reason = "no workload in the namespace desires a replica"
 		return snapshot
 	}
 

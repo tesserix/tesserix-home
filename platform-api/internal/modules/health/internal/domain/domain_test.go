@@ -37,10 +37,29 @@ func TestClassify(t *testing.T) {
 			// A Deployment deliberately scaled to zero wants nothing and has
 			// nothing. It is not broken, and reporting it as such would train
 			// operators to ignore the indicator.
-			name:      "a workload desiring zero replicas is not degraded",
-			workloads: []cluster.Workload{{Name: "quiet", Desired: 0, Ready: 0}},
+			//
+			// The second workload is not decoration. This subtest is about ONE
+			// workload at zero inside a live estate; with `quiet` alone the
+			// fixture is also an estate where NOTHING desires a replica, which
+			// the all-zero rule below now — correctly — calls unmeasured. The
+			// intent and the assertion are unchanged; the fixture is now only
+			// the case the name claims.
+			name: "a workload desiring zero replicas is not degraded",
+			workloads: []cluster.Workload{
+				{Name: "quiet", Desired: 0, Ready: 0},
+				{Name: "console", Desired: 1, Ready: 1},
+			},
 			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
 			want:      domain.StateHealthy,
+		},
+		{
+			name: "an estate with every workload scaled to zero is unmeasured",
+			workloads: []cluster.Workload{
+				{Name: "console", Desired: 0, Ready: 0},
+				{Name: "platform-api", Desired: 0, Ready: 0},
+			},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			want:      domain.StateUnmeasured,
 		},
 		{
 			// The DELIBERATE asymmetry with the workload case above. A
@@ -122,6 +141,25 @@ func TestDegradedNamesWhatIsWrong(t *testing.T) {
 	)
 	if !strings.Contains(got.Reason, "mp-orders") {
 		t.Errorf("reason = %q, want it to name mp-orders", got.Reason)
+	}
+}
+
+func TestAnUnmeasuredReadingStillNamesWhatItSawDown(t *testing.T) {
+	// The RBAC Role grants `apps/deployments` and `postgresql.cnpg.io/clusters`
+	// as two separate rules, so the CNPG list coming back empty while the
+	// Deployments read fine is a real shape, not a hypothetical. `unmeasured`
+	// is the honest state for it — but the workloads observed down are the
+	// most actionable fact in the answer, and returning before they are
+	// assembled discards them.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "mp-orders", Desired: 2, Ready: 0}},
+		nil,
+	)
+	if got.State != domain.StateUnmeasured {
+		t.Errorf("State = %q, want unmeasured with no databases measured", got.State)
+	}
+	if !strings.Contains(got.Reason, "mp-orders") {
+		t.Errorf("reason = %q, want it to still name mp-orders", got.Reason)
 	}
 }
 
