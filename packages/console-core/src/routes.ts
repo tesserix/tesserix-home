@@ -272,7 +272,12 @@ export const ROUTES = {
   "platform.aiUsage": { mobile: "/platform/ai-usage", capability: "platform" },
 
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true, capability: "platform" },
-  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true, capability: "platform" },
+  // The estate health page, reached from the header indicator. `read`, NOT
+  // `platform`: the indicator renders for every operator, and a link that
+  // 403s the person who can see it is worse than no link. `pending` is gone
+  // because the console surface now exists; the `web` path stays, since
+  // apps/web still serves its own.
+  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", console: "/platform/health", capability: "read" },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true, capability: "platform" },
   "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true, capability: "platform" },
   // Left at `read`: none of CAPABILITIES covers DNS mutation, and inventing a

@@ -65,14 +65,22 @@ describe("route capability", () => {
     expect(routeCapability("kora.foods")).toBe("platform");
   });
 
-  it("puts no route on the console entry ticket", () => {
+  it("puts no route on the console entry ticket, except the one that must stay universal", () => {
     // The property #261 exists for, stated as an invariant rather than a list:
     // `read` means "may enter the console" and nothing else, so a route
     // resolving to it would be a surface gated on the ticket every operator
     // already holds.
+    //
+    // `platform.serviceHealth` is the deliberate, sole exception. The header
+    // indicator it is reached from renders for every operator regardless of
+    // capability, so gating the page above `read` would 403 an operator on a
+    // link they can see — the exact defect caught twice before this route
+    // existed. The exception is named explicitly rather than the assertion
+    // being dropped, so a second route drifting onto `read` by accident still
+    // fails this test.
     const onEntry = ROUTE_IDS.filter((id) => routeCapability(id) === "read");
 
-    expect(onEntry).toEqual([]);
+    expect(onEntry).toEqual(["platform.serviceHealth"]);
   });
 
   it("gives the identity lookup a surface, now that one exists", () => {
