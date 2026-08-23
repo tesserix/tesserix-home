@@ -79,17 +79,13 @@ export const platformNav: readonly NavEntry[] = [
       { name: "Announcements", route: "platform.announcements", icon: "megaphone" },
     ],
   },
-  {
-    name: "Health",
-    icon: "activity",
-    items: [
-      { name: "Uptime", route: "platform.uptime", icon: "activity" },
-      { name: "Service health", route: "platform.serviceHealth", icon: "heart-pulse" },
-      { name: "Observability", route: "platform.observability", icon: "gauge" },
-      { name: "Databases", route: "platform.databases", icon: "database" },
-      { name: "Custom domains", route: "platform.customDomains", icon: "globe" },
-    ],
-  },
+  // No "Health" group: its five entries (Uptime, Service health,
+  // Observability, Databases, Custom domains) were unbuilt `pending`
+  // placeholders that led nowhere. Estate health now lives at the real
+  // `/platform/health` page, reached from the header's health indicator —
+  // not from a rail group. The route ids stay in routes.ts (apps/web still
+  // serves those paths); only the nav entries are gone. Removed deliberately
+  // — do not re-add this group.
   {
     // Its own group rather than an item in Health or Governance. Health is
     // "is it up"; Governance is policy and queues. AI spend is neither: it is
