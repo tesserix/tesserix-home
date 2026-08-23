@@ -101,6 +101,35 @@ func TestClassify(t *testing.T) {
 			want:      domain.StateHealthy,
 		},
 		{
+			// A rolling update CNPG cannot carry out — a PodDisruptionBudget
+			// in the way, a node-maintenance window, or a supervised
+			// switchover waiting on a human. The cluster is serving every
+			// query and can sit here for DAYS, so degrading on it means an
+			// indicator that is amber indefinitely, which is an indicator
+			// operators learn to ignore.
+			name:      "a cluster whose upgrade is delayed is healthy — it is serving",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.UpgradeDelayedPhase}},
+			want:      domain.StateHealthy,
+		},
+		{
+			// The set of healthy phases is a SET, not the complement of a
+			// list of bad ones. A phase this build has never heard of must
+			// read as a problem, which is the fail-safe direction.
+			name:      "an unknown future phase is still a problem",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: "Cluster doing something new"}},
+			want:      domain.StateDegraded,
+		},
+		{
+			// The primary is serving, but action genuinely IS required, so
+			// amber is honest here — this is the phase that stays degraded.
+			name:      "waiting for user action stays degraded",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: "Waiting for user action"}},
+			want:      domain.StateDegraded,
+		},
+		{
 			// The narrower sibling of the case above. A cluster whose
 			// instance counts have populated while its phase has NOT is a
 			// real window during creation — the controller sets them at
@@ -331,5 +360,25 @@ func TestEveryItemCarriesTheClassifiersOwnVerdict(t *testing.T) {
 	if okDatabases != got.Databases.Ready {
 		t.Errorf("%d database rows say OK but the summary counts %d ready",
 			okDatabases, got.Databases.Ready)
+	}
+}
+
+func TestADelayedUpgradeCountsAsReadyAndNamesNoProblem(t *testing.T) {
+	// The state assertion in the table above would still pass if the phase
+	// merely stopped producing a problem while the cluster failed to count
+	// as ready — that combination renders "Databases ready 0 / 1" under the
+	// word "Healthy". This pins the count and the row too.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.UpgradeDelayedPhase}},
+	)
+	if got.Databases.Ready != 1 {
+		t.Errorf("Databases.Ready = %d, want 1 — a delayed upgrade is still serving", got.Databases.Ready)
+	}
+	if got.Reason != "" {
+		t.Errorf("Reason = %q, want none", got.Reason)
+	}
+	if len(got.DatabaseItems) != 1 || !got.DatabaseItems[0].OK {
+		t.Errorf("DatabaseItems = %+v, want the row marked OK", got.DatabaseItems)
 	}
 }

@@ -69,11 +69,52 @@ type Snapshot struct {
 	DatabaseItems []DatabaseItem
 }
 
-// HealthyPhase is the only CNPG cluster phase this module treats as healthy.
-// Verified against the production cluster. Deliberately not a list of "bad"
-// phases: an unknown future phase must read as a problem, not as fine, which
-// is the fail-safe direction and matches this module's whole premise.
-const HealthyPhase = "Cluster in healthy state"
+// The CNPG cluster phases this module treats as healthy.
+//
+// These are hardcoded ENGLISH STRINGS from a third-party controller, not an
+// API we own. They mirror CNPG's own constants in
+// `api/v1/cluster_types.go` — `PhaseHealthy` and `PhaseUpgradeDelayed` — and
+// that file is where to look first if a CNPG upgrade turns the estate amber
+// with a reason that looks like a real problem: a reworded phase string
+// fails safe (amber, not green), which is the right direction, but it fails
+// PERMANENTLY, so the breadcrumb matters.
+const (
+	// HealthyPhase is the phase a settled cluster reports, and the one the
+	// degraded reason names as the wanted value. Verified against the
+	// production cluster.
+	HealthyPhase = "Cluster in healthy state"
+	// UpgradeDelayedPhase is a rolling update that CNPG has not been able to
+	// carry out — a PodDisruptionBudget in the way, a node-maintenance
+	// window, or `primaryUpdateStrategy: supervised` waiting on a human.
+	UpgradeDelayedPhase = "Cluster upgrade delayed"
+)
+
+// healthyPhases is the SET of phases treated as healthy, deliberately not
+// the complement of a list of bad ones: an unknown future phase must read as
+// a problem, not as fine, which is the fail-safe direction and matches this
+// module's whole premise.
+//
+// Why UpgradeDelayedPhase is in it: the cluster is serving every query, and
+// CNPG can sit in this phase for days while a maintenance window or a
+// supervised switchover waits. Degrading on it means an amber estate
+// indicator indefinitely — and a permanently amber indicator is one
+// operators learn to ignore, which is this feature's own failure mode
+// arrived at from the opposite direction. It is the database twin of the
+// workload rule's `>=`, which exists so the indicator does not cry wolf on
+// every deploy; without this, the database rule cried wolf on every CNPG
+// rollout.
+//
+// "Waiting for user action" is deliberately NOT here. The primary is
+// serving, but action genuinely is required, so amber is honest there.
+var healthyPhases = map[string]struct{}{
+	HealthyPhase:        {},
+	UpgradeDelayedPhase: {},
+}
+
+func isHealthyPhase(phase string) bool {
+	_, ok := healthyPhases[phase]
+	return ok
+}
 
 // Unmeasured is the snapshot for "nothing measured this".
 func Unmeasured(reason string) Snapshot {
@@ -147,7 +188,7 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 		// Counts matching is not enough — see below — so the row's verdict
 		// is BOTH rules, which is exactly the condition under which
 		// Databases.Ready is incremented at the bottom of this loop.
-		ok := countsOK && database.Phase == HealthyPhase
+		ok := countsOK && isHealthyPhase(database.Phase)
 		snapshot.DatabaseItems = append(snapshot.DatabaseItems, DatabaseItem{
 			Name: database.Name, Instances: database.Instances, Ready: database.Ready,
 			Phase: database.Phase, OK: ok,
@@ -161,9 +202,9 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 		// Counts matching is not enough. CNPG can report every instance ready
 		// while the cluster itself is mid-failover or otherwise not settled —
 		// the phase is the fact that says whether it actually is. Treated as
-		// "not the healthy phase" rather than a list of known-bad phases, so
-		// an unknown future phase reads as a problem, not as fine.
-		if database.Phase != HealthyPhase {
+		// "not one of the healthy phases" rather than a list of known-bad
+		// phases, so an unknown future phase reads as a problem, not as fine.
+		if !isHealthyPhase(database.Phase) {
 			// An ABSENT phase and a WRONG phase are different facts and get
 			// different sentences. `reports phase ""` reads like a bug in
 			// this code; "has not reported a phase yet" is what actually
