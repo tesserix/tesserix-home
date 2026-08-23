@@ -219,6 +219,53 @@ describe("the health page", () => {
     expect(time?.getAttribute("dateTime")).toBe("2026-08-23T12:00:00Z");
   });
 
+  it("renders a malformed timestamp as its raw string rather than throwing", async () => {
+    // `checked_at` is untrusted: `lib/health.ts` type-checks it and never
+    // parses it, so a version skew, a Go zero time serialised as
+    // "0001-01-01 00:00:00", or a truncated value arrives here as a
+    // well-typed string that `new Date()` cannot read.
+    // `Intl.DateTimeFormat.format` THROWS `RangeError: Invalid time value`
+    // on one, inside an async server component — the whole page would render
+    // its error boundary at exactly the moment an operator went looking for
+    // estate health. Before the formatter existed the same string printed
+    // harmlessly.
+    vi.mocked(readEstateHealth).mockResolvedValue(health({ checkedAt: "not-a-date" }));
+
+    const { container } = render(await HealthPage());
+
+    // The page renders at all — the state, the counts, everything.
+    expect(screen.getByText("Healthy")).toBeInTheDocument();
+    expect(screen.getByText("8 / 8")).toBeInTheDocument();
+    // And the unparseable value is shown as-is rather than swallowed.
+    expect(screen.getByText("not-a-date")).toBeInTheDocument();
+    expect(container.querySelector("time")?.getAttribute("dateTime")).toBe("not-a-date");
+  });
+
+  it("renders an out-of-range ISO-shaped timestamp as its raw string rather than throwing", async () => {
+    // The shape that gets past a naive eyeball review and past
+    // `lib/health.ts`'s `typeof === "string"` check: it LOOKS like RFC 3339,
+    // so nothing upstream objects, and `new Date()` still returns an Invalid
+    // Date that `Intl.DateTimeFormat.format` throws on.
+    vi.mocked(readEstateHealth).mockResolvedValue(
+      health({ checkedAt: "2026-13-45T99:99:99Z" }),
+    );
+
+    render(await HealthPage());
+
+    expect(screen.getByText("Healthy")).toBeInTheDocument();
+    expect(screen.getByText("2026-13-45T99:99:99Z")).toBeInTheDocument();
+  });
+
+  it("says so rather than blanking when there is an empty timestamp", async () => {
+    // `health.checkedAt ?` is falsy for `""`, so this takes the same branch
+    // as `null` and never reaches the formatter. Costs nothing to pin.
+    vi.mocked(readEstateHealth).mockResolvedValue(health({ checkedAt: "" }));
+
+    render(await HealthPage());
+
+    expect(screen.getByText(/Last measured: unknown/)).toBeInTheDocument();
+  });
+
   it("says so rather than blanking when there is no timestamp", async () => {
     vi.mocked(readEstateHealth).mockResolvedValue(health({ checkedAt: null }));
 

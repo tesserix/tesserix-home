@@ -73,8 +73,30 @@ const STATE_WORD = "text-base font-medium text-foreground";
  * looking rather than WHAT was measured, which is the same non-determinism
  * the raw-ISO approach below was originally guarding against, just moved
  * into the formatter instead of removed.
+ *
+ * # Why the NaN guard is not defensive padding
+ *
+ * `checked_at` is an untrusted wire field. `lib/health.ts` only type-checks
+ * it (`typeof record.checked_at === "string"`) — it never parses it — so a
+ * version skew, a truncated value, or an out-of-range ISO-shaped value such
+ * as `"2026-13-45T99:99:99Z"` all reach here as a perfectly well-typed
+ * string that `new Date()` turns into an Invalid Date.
+ * `Intl.DateTimeFormat.format`
+ * THROWS `RangeError: Invalid time value` on one, inside an async server
+ * component, and the whole page renders its error boundary instead — at
+ * exactly the moment an operator went looking for estate health.
+ *
+ * Every other field on this payload is deliberately distrusted (`parseHealth`
+ * downgrades a `healthy` claim that counted nothing); this one does not get
+ * to be the exception because it gained a formatter. An unparseable value
+ * falls back to printing the raw string, which is what this line did before
+ * the formatter existed and is still the honest rendering of "the API sent
+ * this". The machine-readable `dateTime` attribute carries the raw value
+ * either way, parseable or not.
  */
 function formatCheckedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
   const formatted = new Intl.DateTimeFormat("en-GB", {
     timeZone: "UTC",
     day: "2-digit",
@@ -83,7 +105,7 @@ function formatCheckedAt(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  }).format(new Date(iso));
+  }).format(date);
   return `${formatted} UTC`;
 }
 
