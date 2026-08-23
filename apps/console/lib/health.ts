@@ -94,7 +94,14 @@ export async function readEstateHealth(): Promise<EstateHealth> {
   try {
     const { data } = await platformRequestWithMeta("estate health", "/v1/platform/health");
     return parseHealth(data);
-  } catch {
+  } catch (cause) {
+    // Logged, not swallowed. This is the only place that knows WHY the
+    // indicator went unmeasured — the operator sees the same grey dot whether
+    // the API is down, the origin is unset, or the RBAC grant was never
+    // applied, and without this line the three are indistinguishable from
+    // outside. Bounded by the caller's 15s cache, so a sustained outage is at
+    // most a handful of lines a minute.
+    console.warn("[console] estate health unavailable", cause);
     return UNMEASURED;
   }
 }
