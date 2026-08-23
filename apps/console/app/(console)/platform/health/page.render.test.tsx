@@ -156,6 +156,75 @@ describe("the health page", () => {
     expect(screen.getByText("Healthy")).toBeInTheDocument();
   });
 
+  describe("the state sentence", () => {
+    // `describeHealth`'s healthy clause is nothing but "N of M workloads and
+    // N of M databases ready" — a prose restatement of the two numbers the
+    // tiles directly below already carry. The page suppresses it for a
+    // healthy, non-stale reading and prints it for every other case. That is
+    // a CONTENT decision, so it gets pinned in both directions: nothing else
+    // in this file would catch either its disappearance from a degraded
+    // reading or its accidental return to a healthy one.
+
+    it("prints no restating sentence for a healthy, non-stale reading", async () => {
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({ state: "healthy", stale: false }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(screen.queryByText(/Estate healthy:/)).not.toBeInTheDocument();
+      // The numbers themselves are still on the page — the tiles carry them.
+      expect(screen.getByText("8 / 8")).toBeInTheDocument();
+      expect(screen.getByText("1 / 1")).toBeInTheDocument();
+    });
+
+    it("prints the sentence for a degraded reading", async () => {
+      // Degraded's clause is the REASON, which the tiles have no equivalent
+      // for. Suppressing it would delete the only prose account of what went
+      // wrong from the state section.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({ state: "degraded", reason: "mp-orders 0/2 ready" }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText(/Estate degraded: mp-orders 0\/2 ready\./)).toBeInTheDocument();
+    });
+
+    it("prints the sentence for an unmeasured reading", async () => {
+      // "Estate health is not being measured" is a claim about the
+      // INSTRUMENT, not about counts, and it is not restated anywhere else.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "unmeasured",
+          checkedAt: null,
+          workloads: { total: 0, ready: 0 },
+          databases: { total: 0, ready: 0 },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText(/Estate health is not being measured/)).toBeInTheDocument();
+    });
+
+    it("prints the sentence for a stale healthy reading", async () => {
+      // `stale` earns its own clause: it names a fact the timestamp line
+      // cannot, that the CURRENT reading could not be taken at all.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({ state: "healthy", stale: true }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(
+        screen.getByText(/This is the last known reading, taken at 2026-08-23T12:00:00Z/),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("prints no 0 / 0 count when nothing was measured", async () => {
     // The failure this guards: `readEstateHealth()` falls back to `unmeasured`
     // with zero counts on an unobtainable token, an unreachable API, a 403,
