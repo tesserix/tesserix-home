@@ -72,7 +72,7 @@ export function HealthIndicator({
       // span was not focusable; this is a link in the tab order on every
       // console page now. The `aria-label` is the accessible name.
       aria-current={onHealthPage ? "page" : undefined}
-      className={`flex items-center gap-1.5 text-xs ${presentation.text}`}
+      className={`flex items-center gap-1.5 rounded-md border border-border bg-background p-2 text-xs transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring ${presentation.text}`}
     >
       <NavIcon name="heart-pulse" className="size-3.5 shrink-0" />
       <span
@@ -84,8 +84,8 @@ export function HealthIndicator({
         aria-label={description}
         className="flex items-center gap-1.5"
       >
-        <span aria-hidden="true" className={presentation.dot} />
         <span className="hidden sm:inline">{presentation.label}</span>
+        <span aria-hidden="true" className={presentation.dot} />
         {health.stale ? <span className="hidden sm:inline">(stale)</span> : null}
       </span>
     </Link>

@@ -106,6 +106,31 @@ describe("HealthIndicator", () => {
     // than an accessible query, since it must not add to the accessible name.
     expect(link.querySelectorAll("svg")).toHaveLength(1);
   });
+
+  it("places the state dot after the label in DOM order", () => {
+    // The dot moved from before the label to after it. A test that only
+    // checked both existed would have passed before the move too — this pins
+    // the order itself via compareDocumentPosition.
+    render(<HealthIndicator health={health()} />);
+    const status = screen.getByRole("status");
+    const label = screen.getByText("Healthy");
+    const dot = status.querySelector("[aria-hidden='true']");
+    expect(dot).not.toBeNull();
+    expect(label.compareDocumentPosition(dot!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("carries a bordered control style like its sibling, the notification bell", () => {
+    render(<HealthIndicator health={health()} />);
+    const link = screen.getByRole("link");
+    expect(link.className).toContain("rounded-md");
+    expect(link.className).toContain("border");
+    expect(link.className).toContain("border-border");
+    expect(link.className).toContain("hover:bg-accent");
+    expect(link.className).toContain("focus-visible:outline-2");
+    expect(link.className).toContain("focus-visible:outline-ring");
+  });
 });
 
 describe("HealthIndicator on the health page itself", () => {
