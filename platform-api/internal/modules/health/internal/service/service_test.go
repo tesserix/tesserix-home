@@ -56,12 +56,20 @@ func TestASecondCallInsideTheWindowDoesNotReadTheCluster(t *testing.T) {
 	source, c := healthy(), newClock()
 	svc := service.New(source, c.now)
 
-	svc.Health(t.Context())
+	first := svc.Health(t.Context())
 	c.add(5 * time.Second)
-	svc.Health(t.Context())
+	second := svc.Health(t.Context())
 
 	if source.calls != 1 {
 		t.Errorf("read the cluster %d times, want 1 — the header renders on every page", source.calls)
+	}
+	// CheckedAt is when the READING was taken, not when it was served. A
+	// cache hit five seconds later still reports the original moment;
+	// stamping the serve time here would make every cached answer look
+	// freshly measured.
+	if !second.CheckedAt.Equal(first.CheckedAt) {
+		t.Errorf("CheckedAt = %v on the cached call, want the original %v",
+			second.CheckedAt, first.CheckedAt)
 	}
 }
 
@@ -96,6 +104,13 @@ func TestAFailedReadServesTheLastGoodValueMarkedStale(t *testing.T) {
 	}
 	if !got.Stale {
 		t.Error("a value served from cache after a failed read must be marked stale")
+	}
+	// The stale value keeps the timestamp of the reading it actually came
+	// from. This is what makes `stale` legible downstream — the console can
+	// say HOW old, not merely that it is old.
+	if !got.CheckedAt.Equal(first.CheckedAt) {
+		t.Errorf("CheckedAt = %v on the stale serve, want the original %v",
+			got.CheckedAt, first.CheckedAt)
 	}
 }
 
