@@ -108,19 +108,13 @@ describe("routeEntries under capability enforcement", () => {
     expect(support.some((e) => e.id === "route:platform.tickets")).toBe(true);
   });
 
-  it("shows an operator holding only console entry the estate health page, and nothing else", () => {
+  it("shows an operator holding only console entry nothing at all", () => {
     // #261's point, made visible. `read` is now entry and nothing else, so a
     // `read`-only session reaches the shell and no feature surface. Before, it
     // saw every route, because 26 of 30 defaulted to exactly this capability.
-    //
-    // `platform.serviceHealth` is the one deliberate exception (see
-    // routes.test.ts): the header health indicator renders for every
-    // operator, so the page it links to must not 403 the person who can see
-    // the link. Named explicitly rather than the assertion being relaxed to
-    // "at most one", so a second route drifting onto `read` still fails here.
     const entryOnly = visibleTo(routeEntries(), ["read"], true);
 
-    expect(entryOnly.map((e) => e.id)).toEqual(["route:platform.serviceHealth"]);
+    expect(entryOnly).toEqual([]);
   });
 
   it("shows a CRM operator the CRM and not the ticket queue", () => {
