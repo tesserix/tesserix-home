@@ -2,9 +2,11 @@
 
 import { ConsoleCommandPalette } from "./command-palette";
 import { HeaderTrail } from "./header-trail";
+import { HealthIndicator } from "./health-indicator";
 import { NotificationBell } from "./notification-bell";
 import { OperatorMenu } from "./operator-menu";
 import type { DirectoryTool } from "@/lib/tools-directory";
+import type { EstateHealth } from "@/lib/health";
 
 const DEFAULT_TOOLS_BASE_DOMAIN = "tesserix.app";
 
@@ -26,6 +28,13 @@ export interface ConsoleHeaderProps {
    * silently empty palette instead of a type error.
    */
   readonly tools: readonly DirectoryTool[];
+  /**
+   * Fetched server-side in app/(console)/layout.tsx, like `tools`.
+   * Deliberately no default: an "everything is fine" default would be the
+   * exact lie the third state exists to prevent, introduced by a forgotten
+   * prop rather than by a broken sensor.
+   */
+  readonly health: EstateHealth;
 }
 
 /**
@@ -51,6 +60,7 @@ export function ConsoleHeader({
   showCapabilities,
   toolsBaseDomain = DEFAULT_TOOLS_BASE_DOMAIN,
   tools,
+  health,
 }: ConsoleHeaderProps): React.JSX.Element {
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-2 border-b border-border bg-background/95 px-6 backdrop-blur sm:px-8">
@@ -58,6 +68,7 @@ export function ConsoleHeader({
         <HeaderTrail />
       </div>
       <div className="flex items-center gap-2">
+        <HealthIndicator health={health} />
         <ConsoleCommandPalette
           capabilities={capabilities}
           enforceCapabilities={showCapabilities}
