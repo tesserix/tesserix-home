@@ -139,3 +139,18 @@ func TestAFailedFirstReadIsUnmeasuredNotHealthy(t *testing.T) {
 		t.Errorf("state = %q, want unmeasured with no cached value to fall back to", got.Snapshot.State)
 	}
 }
+
+func TestAFailingReadIsNotRetriedOnEveryCall(t *testing.T) {
+	source, c := healthy(), newClock()
+	source.err = errors.New("the API server answered 503")
+	svc := service.New(source, c.now)
+
+	svc.Health(t.Context())
+	c.add(5 * time.Second)
+	svc.Health(t.Context())
+
+	if source.calls != 1 {
+		t.Errorf("read the cluster %d times, want 1 — a failing read held under "+
+			"the lock and retried per render costs N x ReadTimeout", source.calls)
+	}
+}
