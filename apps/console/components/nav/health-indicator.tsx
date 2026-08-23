@@ -27,15 +27,25 @@ interface Presentation {
 
 // The console's own semantic tokens — NOT another app's palette. These carry
 // the console's dark mode for free, which hardcoded values would not.
+//
+// # The three SHAPES are load-bearing — do not tidy them into three circles
+//
+// Below `sm` the text label and the `(stale)` mark are hidden, so the dot is
+// the entire indicator. Three same-sized circles differing only in hue is
+// colour-alone information (WCAG 2.1 AA, 1.4.1) and unreadable to a
+// red/green-deficient operator — exactly the reader who most needs it.
+// Filled circle / rotated square (a diamond) / hollow ring stay distinct in
+// monochrome and at 8px. No test can catch a regression here: jsdom has no
+// viewport.
 const PRESENTATION: Record<HealthState, Presentation> = {
   healthy: {
     label: "Healthy",
-    dot: "bg-success",
+    dot: "size-2 rounded-full bg-success",
     text: "text-muted-foreground",
   },
   degraded: {
     label: "Degraded",
-    dot: "bg-warning",
+    dot: "size-2 rotate-45 bg-warning",
     text: "text-foreground",
   },
   unmeasured: {
@@ -44,7 +54,7 @@ const PRESENTATION: Record<HealthState, Presentation> = {
     // reader and in a monochrome rendering. This is the whole point of the
     // third state and must not be softened into a paler green.
     label: "Unmeasured",
-    dot: "border border-muted-foreground bg-transparent",
+    dot: "size-2 rounded-full border border-muted-foreground bg-transparent",
     text: "text-muted-foreground",
   },
 };
@@ -72,7 +82,16 @@ function describe(health: EstateHealth): string {
   }
 
   if (health.stale) {
-    parts.push("This is the last known reading; the current one could not be taken.");
+    // The RAW ISO string, deliberately. A relative age ("40 seconds ago")
+    // reads the clock, and a locale-formatted time reads the locale; this
+    // renders on the server and hydrates on the client, so either one is a
+    // hydration mismatch. The timestamp is what tells an operator whether the
+    // reading is 20 seconds old or about to be abandoned as unmeasured.
+    parts.push(
+      health.checkedAt
+        ? `This is the last known reading, taken at ${health.checkedAt}; the current one could not be taken.`
+        : "This is the last known reading; the current one could not be taken.",
+    );
   }
 
   return parts.join(" ");
@@ -94,7 +113,7 @@ export function HealthIndicator({
       title={describe(health)}
       className={`flex items-center gap-1.5 text-xs ${presentation.text}`}
     >
-      <span aria-hidden="true" className={`size-2 rounded-full ${presentation.dot}`} />
+      <span aria-hidden="true" className={presentation.dot} />
       <span className="hidden sm:inline">{presentation.label}</span>
       {health.stale ? <span className="hidden sm:inline">(stale)</span> : null}
     </span>

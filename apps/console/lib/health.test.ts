@@ -35,10 +35,24 @@ describe("parseHealth", () => {
     expect(parseHealth(null).state).toBe("unmeasured");
   });
 
-  it("reads absent counts as zero rather than throwing", () => {
-    // The indicator must render something on every page. A parser that
-    // throws takes the whole console layout down with it.
-    const got = parseHealth({ state: "healthy" });
-    expect(got.workloads).toEqual({ total: 0, ready: 0 });
+  it("does not throw on absent counts", () => {
+    expect(() => parseHealth({ state: "degraded" })).not.toThrow();
+    expect(parseHealth({ state: "degraded" }).workloads).toEqual({ total: 0, ready: 0 });
+  });
+
+  it("refuses a healthy claim that counted nothing", () => {
+    // The parked plane, one layer out. A payload can say "healthy" and carry
+    // no counts — a version skew, a partial response — and rendering that
+    // green is the failure this whole feature exists to prevent.
+    expect(parseHealth({ state: "healthy" }).state).toBe("unmeasured");
+    expect(parseHealth({ state: "healthy", workloads: { total: 3, ready: 3 } }).state)
+      .toBe("unmeasured");
+    expect(
+      parseHealth({
+        state: "healthy",
+        workloads: { total: 3, ready: 3 },
+        databases: { total: 1, ready: 1 },
+      }).state,
+    ).toBe("healthy");
   });
 });

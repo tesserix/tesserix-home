@@ -68,13 +68,29 @@ export function parseHealth(json: unknown): EstateHealth {
       ? (record.state as HealthState)
       : "unmeasured";
 
+  const checkedAt = typeof record.checked_at === "string" ? record.checked_at : null;
+  const workloads = counts(record.workloads);
+  const databases = counts(record.databases);
+
+  // The Go classifier refuses to call an empty reading healthy. Re-derived
+  // here rather than trusted, because a version skew, a partial payload or a
+  // renamed field can all cross this wire, and the rule has to survive that.
+  // Guarding the state STRING is not the same as guarding the CLAIM.
+  if (state === "healthy" && (workloads.total === 0 || databases.total === 0)) {
+    return {
+      ...UNMEASURED,
+      checkedAt,
+      reason: "the reading claimed healthy but counted nothing",
+    };
+  }
+
   return {
     state,
     stale: record.stale === true,
-    checkedAt: typeof record.checked_at === "string" ? record.checked_at : null,
+    checkedAt,
     reason: typeof record.reason === "string" ? record.reason : null,
-    workloads: counts(record.workloads),
-    databases: counts(record.databases),
+    workloads,
+    databases,
   };
 }
 
@@ -92,15 +108,28 @@ export function parseHealth(json: unknown): EstateHealth {
 export async function readEstateHealth(): Promise<EstateHealth> {
   if (platformApiOrigin() === null) return UNMEASURED;
   try {
-    const { data } = await platformRequestWithMeta("estate health", "/v1/platform/health");
+    const { data } = await platformRequestWithMeta("estate health", "/v1/platform/health", {
+      // Node's fetch has no request-level timeout and undici's headersTimeout
+      // is 300s. This runs in the root layout inside a Promise.all, so an
+      // unbounded await here is not a slow indicator — it is every console
+      // page hanging on a decorative element. Three seconds is far above the
+      // p99 of a cached in-cluster read and far below anything a person will
+      // wait for.
+      signal: AbortSignal.timeout(3000),
+    });
     return parseHealth(data);
   } catch (cause) {
     // Logged, not swallowed. This is the only place that knows WHY the
     // indicator went unmeasured — the operator sees the same grey dot whether
     // the API is down, the origin is unset, or the RBAC grant was never
     // applied, and without this line the three are indistinguishable from
-    // outside. Bounded by the caller's 15s cache, so a sustained outage is at
-    // most a handful of lines a minute.
+    // outside. It fires once per console page render for as long as the
+    // platform API is unreachable — `platformCall` sets `cache: "no-store"`,
+    // and the 15s cache is the Go service's own, bounding cluster reads rather
+    // than this request. In the cases that reach this catch (unreachable, 5xx,
+    // non-JSON, 403, or the abort above) the request never gets far enough for
+    // any cache to help. That volume is accepted: the alternative is a silent
+    // outage.
     console.warn("[console] estate health unavailable", cause);
     return UNMEASURED;
   }
