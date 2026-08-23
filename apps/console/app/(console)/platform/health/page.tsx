@@ -35,13 +35,18 @@ import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
  *    The counts render as `StatTile`s, the same dashboard-card primitive
  *    `/platform/ai-usage` uses for its own numbers — a section nothing
  *    measured uses the tile's own `instrumentation-unavailable` state
- *    ("Not measured") rather than printing a count. When the payload carries
- *    per-item detail (a newer platform-api; see `lib/health.ts`'s
- *    `HealthCounts.items`), each tile is followed by a `dl` of its rows — the
- *    tile stays the summary, the rows are the detail underneath it. An older
- *    platform-api answers with no `items` at all, which `parseHealth`
- *    represents as `null` rather than `[]`; that section then renders exactly
- *    as it did before this existed, with no row list and no empty table.
+ *    ("Not measured") rather than printing a count. The two sections are TWO
+ *    COLUMNS, Workloads left and Databases right, each column being a tile
+ *    with its own row list directly beneath it: that fills the page's width
+ *    with per-item information rather than with two mostly-blank cards, and
+ *    keeps every count beside the tile it belongs to instead of a screen away
+ *    from it. Each column caps its measure so a row's name and its count stay
+ *    readable together. When the payload carries per-item detail (a newer
+ *    platform-api; see `lib/health.ts`'s `HealthCounts.items`), that column's
+ *    `dl` of rows appears; an older platform-api answers with no `items` at
+ *    all, which `parseHealth` represents as `null` rather than `[]`, and that
+ *    column then renders exactly as it did before this existed — the tile
+ *    alone, no row list and no empty table.
  * 3. What is NOT measured yet — Uptime, Observability and Custom domains,
  *    the three concerns whose rail entries move here (Task 2). Named
  *    plainly, in the unmeasured ring's own visual language, never as a
@@ -136,9 +141,47 @@ export default async function HealthPage() {
   // exact moment no instrument reported, and reads as "there are zero
   // workloads" rather than "nothing counted them".
   const anythingMeasured = health.state !== "unmeasured";
+  // Each section carries its own already-built rows rather than a bag of
+  // `unknown[]` the renderer has to route back to a type. The previous shape
+  // put `items` on the section and cast it at the render site
+  // (`items as readonly WorkloadItem[]`, chosen by `name === "Workloads"`),
+  // which is a hand-maintained invariant a compiler cannot check: a typo in
+  // the string, a reordered array, or a third section would have routed
+  // database rows through `WorkloadRow` silently, printing `ready / undefined`
+  // and dropping every phase. Building the rows here reads
+  // `health.workloads.items` and `health.databases.items` DIRECTLY, so each
+  // item type meets its own row component under the type checker's eye and
+  // there is no cast anywhere on the page.
+  //
+  // `null` rows (an older platform-api with no `items` field at all) stays
+  // distinguishable from `[]` (`items` present, nothing in it) — `?.` maps
+  // one and `?? null` preserves the other, exactly as `HealthCounts.items`
+  // documents.
   const sections = [
-    { name: "Workloads", counts: health.workloads, items: health.workloads.items },
-    { name: "Databases", counts: health.databases, items: health.databases.items },
+    {
+      name: "Workloads",
+      counts: health.workloads,
+      rows:
+        health.workloads.items?.map((item, index) => (
+          // Index-QUALIFIED, not the name alone. Kubernetes names are unique
+          // per namespace per kind, so a collision is not reachable from a
+          // live cluster — but `parseHealth` does not dedupe, and a replayed
+          // or hand-crafted payload with two rows of the same name would give
+          // React duplicate keys and licence to mis-reconcile them.
+          // Qualifying the key here is one line; deduping in the parser would
+          // silently DROP a row the API sent, which is the opposite of what
+          // this page is for.
+          <WorkloadRow key={`${index}-${item.name}`} item={item} />
+        )) ?? null,
+    },
+    {
+      name: "Databases",
+      counts: health.databases,
+      rows:
+        health.databases.items?.map((item, index) => (
+          <DatabaseRow key={`${index}-${item.name}`} item={item} />
+        )) ?? null,
+    },
   ] as const;
   // The healthy-state sentence from `describeHealth` is nothing but
   // "N of M workloads and N of M databases ready" — a prose restatement of
@@ -201,92 +244,111 @@ export default async function HealthPage() {
           What was measured
         </h2>
         {/*
-          Two `StatTile`s — the same dashboard-card primitive every other
-          stat on the console uses (see `ai-usage/page.tsx`'s tile row) —
-          rather than a bespoke two-column `dl`. That row was the page's
-          narrowest, most cramped element (capped at `sm:max-w-md`, 448px,
-          split into two ~200px halves); tiles built for the full grid fill
-          the width the rest of the console's dashboards already use.
+          TWO COLUMNS, each one a `StatTile` with its own row list directly
+          underneath it — not a row of tiles above a stack of full-width
+          lists.
 
-          Two tiles, not the four-wide house grid `ai-usage` uses: this page
-          only has two real numbers to show, and forcing a `lg:grid-cols-4`
-          template here would leave two tiles-shaped holes — the exact "empty
-          on the right" complaint this change exists to fix, just moved one
-          level down. `sm:grid-cols-2` lets both tiles claim real width on
-          any screen at least `sm`, and stack on mobile.
+          # Why the tile row alone did not fill the page
 
-          Each tile also carries the `unmeasured` state itself, via
-          `StatTile`'s own `instrumentation-unavailable` surface state — the
-          same "we are not measuring this" vocabulary every other parked
-          stat on the console already uses — instead of a bespoke "Nothing
-          measured this" branch invented for this one page. `sectionMeasured`
-          below is what decides, per section, independently of the other:
-          a database section reporting zero total under an otherwise
-          `degraded` reading still parks correctly even though workloads is
-          fine.
+          The complaint this page kept failing was that its right half was
+          empty. A `sm:grid-cols-2` row of tiles answers that with tiles, not
+          with content: at a 1440 viewport the console's content column is
+          ~1152px, so each tile is ~568px wide holding a ~110px label over a
+          ~40px number, and `DashboardCard` stacks those top-left. Roughly
+          four fifths of each card is blank, and the blank pools on the right
+          of both — the original complaint, reproduced twice at higher
+          resolution. Pairing each tile with the rows it summarises puts real
+          per-workload and per-database information in that space instead.
+
+          # And why the rows must live in a column, not across the page
+
+          A row is `flex` with `min-w-0 flex-1 truncate` on the name and the
+          count after it, so the count sits at the far right of whatever box
+          the row is in. Given the full content width that means `console` at
+          x≈0 and `2 / 2` at x≈1100 — a full screen apart, in the only part
+          of this page carrying per-workload detail. `max-w-xl` (576px) caps
+          each column's measure so a name and its count stay readable
+          together; on a wide screen the two columns fill the width between
+          them, and below `sm` they stack, still capped.
+
+          `sm:grid-cols-2` rather than `lg:`: a single capped column with a
+          blank right half at 900px is the same complaint again, and the
+          tiles read fine at the ~300px a `sm` viewport gives them. A name
+          too long for that truncates and stays reachable via `title`, the
+          same fallback the row already had.
+
+          Each tile carries the `unmeasured` state itself, via `StatTile`'s
+          own `instrumentation-unavailable` surface state — the same "we are
+          not measuring this" vocabulary every other parked stat on the
+          console already uses — instead of a bespoke "Nothing measured this"
+          branch invented for this one page. `sectionMeasured` is what
+          decides, per section, independently of the other: a database
+          section reporting zero total under an otherwise `degraded` reading
+          still parks correctly even though workloads is fine, and a parked
+          section shows its tile with no row list under it.
         */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          {sections.map(({ name, counts }) => (
-            <StatTile
-              key={name}
-              // "{name} ready" once there is something to report, bare
-              // "{name}" while parked — matching the wording the rest of the
-              // page already used for this distinction, so a bare "Databases"
-              // never appears next to a real reading and gets mistaken for one.
-              label={sectionMeasured(anythingMeasured, counts) ? `${name} ready` : name}
-              value={sectionMeasured(anythingMeasured, counts) ? `${counts.ready} / ${counts.total}` : ""}
-              state={sectionMeasured(anythingMeasured, counts) ? undefined : { kind: "instrumentation-unavailable" }}
-            />
-          ))}
-        </div>
-        {/*
-          The per-item detail lives in its own `dl`, separate from the tiles
-          above: a `StatTile` has room for one label and one number, not a
-          multi-row breakdown, and a row list stuffed inside one would break
-          the tile's own layout contract every other stat on the console
-          relies on. Rendered only when there is something to list — an
-          older platform-api's `items: null`, or a parked section, means no
-          `dl` at all, not an empty one.
-        */}
-        {sections.map(({ name, counts, items }) =>
-          sectionMeasured(anythingMeasured, counts) && items && items.length > 0 ? (
-            <dl key={name} className="flex flex-col gap-2">
-              <div className="flex flex-col gap-1">
-                <dt className="text-xs text-muted-foreground">{name}</dt>
+        <div className="grid gap-x-6 gap-y-8 sm:grid-cols-2">
+          {sections.map(({ name, counts, rows }) => {
+            const measured = sectionMeasured(anythingMeasured, counts);
+            return (
+              <div key={name} className="flex max-w-xl flex-col gap-3">
+                <StatTile
+                  // "{name} ready" once there is something to report, bare
+                  // "{name}" while parked — matching the wording the rest of
+                  // the page already used for this distinction, so a bare
+                  // "Databases" never appears next to a real reading and gets
+                  // mistaken for one.
+                  label={measured ? `${name} ready` : name}
+                  value={measured ? `${counts.ready} / ${counts.total}` : ""}
+                  state={measured ? undefined : { kind: "instrumentation-unavailable" }}
+                />
                 {/*
-                  The row list lives INSIDE the `dd`, not beside it. The
-                  content model for a `dl > div` is one-or-more `dt` followed
-                  by one-or-more `dd`; a `ul` sibling is not permitted there,
-                  and a screen reader walking the definition list orphans the
-                  rows from the term they belong to.
+                  The rows stay in their own `dl` rather than inside the tile:
+                  a `StatTile` has room for one label and one number, and a
+                  multi-row breakdown stuffed into one would break the layout
+                  contract every other stat on the console relies on. Rendered
+                  only when there is something to list — an older
+                  platform-api's `items: null`, or a parked section, means no
+                  `dl` at all, not an empty one.
                 */}
-                <dd className="flex flex-col gap-1">
-                  <RowList total={counts.total} shown={items.length}>
-                    {name === "Workloads"
-                      ? (items as readonly WorkloadItem[]).map((item, index) => (
-                          // Index-QUALIFIED, not the name alone. Kubernetes
-                          // names are unique per namespace per kind, so a
-                          // collision is not reachable from a live cluster —
-                          // but `parseHealth` does not dedupe, and a replayed
-                          // or hand-crafted payload with two rows of the same
-                          // name would give React duplicate keys and licence
-                          // to mis-reconcile them. Qualifying the key here is
-                          // one line; deduping in the parser would silently
-                          // DROP a row the API sent, which is the opposite of
-                          // what this page is for.
-                          <WorkloadRow key={`${index}-${item.name}`} item={item} />
-                        ))
-                      : (items as readonly DatabaseItem[]).map((item, index) => (
-                          <DatabaseRow key={`${index}-${item.name}`} item={item} />
-                        ))}
-                  </RowList>
-                </dd>
+                {measured && rows && rows.length > 0 ? (
+                  <dl className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-1">
+                      {/*
+                        SCREEN-READER ONLY, and not a restatement of the tile.
+                        Visually this term had nothing left to do once the rows
+                        moved directly under their own tile: it printed
+                        "Workloads" immediately below a tile reading "Workloads
+                        ready", a heading duplicating the label an inch above
+                        it. The `dl` still needs a term for its `dd` to be
+                        valid and for a screen reader to have something to
+                        associate the rows with, so it stays in the accessible
+                        tree with wording that says what the rows ARE rather
+                        than repeating what the tile already said.
+                      */}
+                      <dt className="sr-only">{name} detail</dt>
+                      {/*
+                        The row list lives INSIDE the `dd`, not beside it. The
+                        content model for a `dl > div` is one-or-more `dt`
+                        followed by one-or-more `dd`; a `ul` sibling is not
+                        permitted there, and a screen reader walking the
+                        definition list orphans the rows from the term they
+                        belong to.
+                      */}
+                      <dd className="flex flex-col gap-1">
+                        <RowList total={counts.total} shown={rows.length}>
+                          {rows}
+                        </RowList>
+                      </dd>
+                    </div>
+                  </dl>
+                ) : null}
               </div>
-            </dl>
-          ) : null,
-        )}
+            );
+          })}
+        </div>
         {reasonLines.length > 0 ? (
-          <div className="flex flex-col gap-1 text-sm text-foreground">
+          <div className="flex max-w-2xl flex-col gap-1 text-sm text-foreground">
             {reasonLines.map((line, index) => (
               // Index is stable here: reasonLines is derived fresh from one
               // render's `health.reason` and never reordered or filtered.

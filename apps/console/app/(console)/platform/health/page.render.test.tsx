@@ -118,9 +118,14 @@ describe("the health page", () => {
 
     render(await HealthPage());
 
-    // "Databases" is a substring of nothing else on the not-yet-measured
-    // list, so this is safe against the workload/database count labels,
-    // which read "Databases ready" rather than bare "Databases".
+    // Exact-text "Databases", so it cannot collide with anything the measured
+    // section renders. The tile label reads "Databases ready" when there is a
+    // reading and bare "Databases" only while PARKED — which this fixture is
+    // not — and the row list's own term reads "Databases detail". (The older
+    // comment here claimed the tile label was the only thing to worry about;
+    // it also had to account for the row list's term, which used to be a
+    // visible bare "Databases" heading duplicating the tile above it. That
+    // heading is now `sr-only` and reworded — see the sibling test below.)
     expect(screen.queryByText("Databases")).not.toBeInTheDocument();
     expect(screen.queryByText("Service health")).not.toBeInTheDocument();
   });
@@ -497,6 +502,77 @@ describe("the health page", () => {
       expect(list).not.toBeNull();
       expect(list?.closest("dd")).not.toBeNull();
       expect(container.querySelector("dl > div > ul")).toBeNull();
+    });
+
+    it("does not repeat the tile's own label as a heading above its rows", async () => {
+      // With the rows sitting directly under their own tile, a visible term
+      // restating that tile is pure duplication: "Workloads ready" as the
+      // tile label and "Workloads" as a heading an inch below it. The term
+      // still exists — a `dd` needs one, and a screen reader needs something
+      // to associate the rows with — but it is `sr-only` and worded as what
+      // the rows ARE rather than as a second copy of the tile's label.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      expect(screen.getByText("Workloads ready")).toBeInTheDocument();
+      // No bare "Workloads" heading anywhere — exact text, so it cannot match
+      // the tile's own "Workloads ready".
+      expect(screen.queryByText("Workloads")).not.toBeInTheDocument();
+      const term = container.querySelector("dl dt");
+      expect(term?.textContent).toBe("Workloads detail");
+      expect(term?.className).toContain("sr-only");
+    });
+
+    it("keeps each row list in the same column as the tile it summarises", async () => {
+      // The composition this page settled on: two columns, Workloads and
+      // Databases, each a tile with its own rows beneath it. A tile row above
+      // a stack of full-width lists puts a count a screen away from the name
+      // it belongs to; this is the DOM fact that stops that coming back.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 1,
+            ready: 1,
+            items: [{ name: "console", desired: 2, ready: 2, ok: true }],
+          },
+          databases: {
+            total: 1,
+            ready: 1,
+            items: [
+              {
+                name: "tesserix-postgres",
+                instances: 1,
+                ready: 1,
+                phase: "Cluster in healthy state",
+                ok: true,
+              },
+            ],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      const workloadColumn = screen.getByText("Workloads detail").closest("dl")?.parentElement;
+      expect(workloadColumn?.textContent).toContain("Workloads ready");
+      expect(workloadColumn?.textContent).toContain("console");
+      // And nothing from the other section leaks into it.
+      expect(workloadColumn?.textContent).not.toContain("Databases ready");
+      expect(workloadColumn?.textContent).not.toContain("tesserix-postgres");
+
+      const databaseColumn = screen.getByText("Databases detail").closest("dl")?.parentElement;
+      expect(databaseColumn?.textContent).toContain("Databases ready");
+      expect(databaseColumn?.textContent).toContain("tesserix-postgres");
+      expect(databaseColumn?.textContent).not.toContain("Workloads ready");
     });
 
     it("renders the page unchanged when items is absent — no empty table, no throw", async () => {
