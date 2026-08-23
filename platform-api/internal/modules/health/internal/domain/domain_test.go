@@ -43,6 +43,16 @@ func TestClassify(t *testing.T) {
 			want:      domain.StateHealthy,
 		},
 		{
+			// The DELIBERATE asymmetry with the workload case above. A
+			// Deployment at zero replicas is switched off on purpose; a CNPG
+			// Cluster reporting zero instances is initialising or has not
+			// populated its status, and is serving nothing either way.
+			name:      "a database with zero instances is degraded, unlike a zero-replica workload",
+			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 0, Ready: 0}},
+			want:      domain.StateDegraded,
+		},
+		{
 			// THE CENTRAL CASE. A namespace with no workloads is not a
 			// healthy namespace; it is a read that returned nothing, which is
 			// what a silently-broken read looks like. Reporting it healthy is
@@ -61,6 +71,15 @@ func TestClassify(t *testing.T) {
 			workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
 			databases: nil,
 			want:      domain.StateUnmeasured,
+		},
+		{
+			// `>=`, not `==`. A Deployment mid-rollout can briefly report more
+			// ready than desired, and reporting that as broken would make the
+			// indicator cry wolf on every deploy.
+			name:      "a workload with more ready than desired is not degraded",
+			workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 3}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			want:      domain.StateHealthy,
 		},
 	}
 

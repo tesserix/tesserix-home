@@ -75,6 +75,12 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 			workload.Name, workload.Ready, workload.Desired))
 	}
 
+	// Note the `Instances > 0` guard, which the workload loop deliberately
+	// does NOT have. A Deployment desiring zero replicas is switched off on
+	// purpose and is satisfied by having nothing. A CNPG Cluster reporting
+	// zero instances is not an intentional state — it is initialising, or its
+	// status has not populated — and it is serving no queries either way.
+	// Two resources, two rules, on purpose.
 	for _, database := range databases {
 		if database.Ready >= database.Instances && database.Instances > 0 {
 			snapshot.Databases.Ready++
