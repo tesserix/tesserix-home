@@ -68,13 +68,13 @@ export function ConsoleHeader({
         <HeaderTrail />
       </div>
       <div className="flex items-center gap-2">
-        <HealthIndicator health={health} />
         <ConsoleCommandPalette
           capabilities={capabilities}
           enforceCapabilities={showCapabilities}
           toolsBaseDomain={toolsBaseDomain}
           tools={tools}
         />
+        <HealthIndicator health={health} />
         <NotificationBell />
         <OperatorMenu
           name={name}

@@ -1,5 +1,8 @@
 "use client";
 
+import Link from "next/link";
+import { consolePath } from "@tesserix/console-core";
+import { NavIcon } from "./icon";
 import type { EstateHealth } from "@/lib/health";
 import { describeHealth, HEALTH_PRESENTATION } from "@/lib/health-presentation";
 
@@ -26,6 +29,19 @@ import { describeHealth, HEALTH_PRESENTATION } from "@/lib/health-presentation";
  * Below `sm` the text label and the `(stale)` mark are hidden, so the dot is
  * the entire indicator. No test can catch a viewport-only regression here:
  * jsdom has no viewport.
+ *
+ * # A link, but `role="status"` stays off the link
+ *
+ * This now navigates to the health page (`platform.serviceHealth`, resolved
+ * through `consolePath` rather than a hardcoded string — see
+ * `components/nav/sidebar.tsx` for the same pattern). `status` on an anchor
+ * would fight the link semantics: the control needs to be announced as a
+ * link, and a link's accessible name is computed from its content unless the
+ * link itself carries `aria-label`. So `aria-label`/`role="status"` stay on
+ * an INNER span; the browser's name-from-content walk picks up that span's
+ * `aria-label` as its contribution to the anchor's name, which is how the
+ * link ends up with the full sentence as its accessible name instead of
+ * collapsing to the bare state word.
  */
 
 export function HealthIndicator({
@@ -34,19 +50,28 @@ export function HealthIndicator({
   readonly health: EstateHealth;
 }): React.JSX.Element {
   const presentation = HEALTH_PRESENTATION[health.state];
+  const description = describeHealth(health);
 
   return (
-    <span
-      // `status` rather than `alert`: this is ambient, and an alert would
-      // interrupt a screen reader on every navigation.
-      role="status"
-      aria-label={describeHealth(health)}
-      title={describeHealth(health)}
+    <Link
+      href={consolePath("platform.serviceHealth")}
+      title={description}
       className={`flex items-center gap-1.5 text-xs ${presentation.text}`}
     >
-      <span aria-hidden="true" className={presentation.dot} />
-      <span className="hidden sm:inline">{presentation.label}</span>
-      {health.stale ? <span className="hidden sm:inline">(stale)</span> : null}
-    </span>
+      <NavIcon name="heart-pulse" className="size-3.5 shrink-0" />
+      <span
+        // `status` rather than `alert`: this is ambient, and an alert would
+        // interrupt a screen reader on every navigation. Living on this
+        // inner span (not the anchor) is what keeps the control announced
+        // as a link while still carrying the full sentence as its name.
+        role="status"
+        aria-label={description}
+        className="flex items-center gap-1.5"
+      >
+        <span aria-hidden="true" className={presentation.dot} />
+        <span className="hidden sm:inline">{presentation.label}</span>
+        {health.stale ? <span className="hidden sm:inline">(stale)</span> : null}
+      </span>
+    </Link>
   );
 }

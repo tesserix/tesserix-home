@@ -111,4 +111,17 @@ describe("ConsoleHeader", () => {
     });
     expect(screen.getByRole("status")).toHaveTextContent(/degraded/i);
   });
+
+  it("places the health indicator after the search control, not before it", () => {
+    // A test that only checked both exist would pass whether the indicator
+    // sits to the left or right of Search and prove nothing about the move.
+    // DOCUMENT_POSITION_FOLLOWING pins the actual DOM order.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 501 })));
+    renderHeader();
+    const search = screen.getByRole("button", { name: /search/i });
+    const health = screen.getByRole("status");
+    expect(
+      search.compareDocumentPosition(health) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
 });
