@@ -70,16 +70,24 @@ type (
 	ClusterConfig = cluster.Config
 )
 
-// NewClusterSource builds a Source that reads the Kubernetes API.
+// NewClusterSource builds a Source that reads the Kubernetes API, and reports
+// the namespace it will read.
+//
+// The namespace is returned rather than exposed as a method on Source. It is
+// a fact about the CONSTRUCTION — established once, from the pod's own
+// ServiceAccount directory — not a question worth asking a Source later, and
+// widening the interface for one log line would make every implementation
+// (including the composition root's unmeasured stand-in) carry a method
+// nothing reads.
 //
 // Returns an untyped nil on failure rather than a nil *cluster.Reader. A nil
 // pointer assigned into an interface produces a NON-nil interface holding a
 // nil pointer, so `source != nil` would be true and the first method call
-// would panic — the classic Go trap, and worth the extra two lines to avoid.
-func NewClusterSource(cfg ClusterConfig) (Source, error) {
+// would panic.
+func NewClusterSource(cfg ClusterConfig) (Source, string, error) {
 	reader, err := cluster.New(cfg)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return reader, nil
+	return reader, reader.Namespace(), nil
 }

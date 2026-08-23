@@ -136,7 +136,7 @@ func run(log *slog.Logger) error {
 	// the cluster would turn a degraded signal into an outage.
 	var clusterSource health.Source = unmeasuredSource{reason: "cluster reads are disabled"}
 	if cfg.ClusterRead.Enabled {
-		source, err := health.NewClusterSource(health.ClusterConfig{
+		reader, namespace, err := health.NewClusterSource(health.ClusterConfig{
 			APIServer:     cfg.ClusterRead.APIServer,
 			TokenPath:     cfg.ClusterRead.TokenPath,
 			CAPath:        cfg.ClusterRead.CAPath,
@@ -150,8 +150,8 @@ func run(log *slog.Logger) error {
 			)
 			clusterSource = unmeasuredSource{reason: err.Error()}
 		} else {
-			log.Info("cluster reads enabled")
-			clusterSource = source
+			log.Info("cluster reads enabled", slog.String("namespace", namespace))
+			clusterSource = reader
 		}
 	}
 
