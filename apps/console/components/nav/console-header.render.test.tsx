@@ -13,19 +13,31 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/platform/tickets",
 }));
 
-import { ConsoleHeader } from "./console-header";
+import { ConsoleHeader, type ConsoleHeaderProps } from "./console-header";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const PROPS = {
+const PROPS: ConsoleHeaderProps = {
   name: "Mahesh Sangawar",
   email: "mahesh.sangawar@tesserix.app",
   capabilities: ["read", "crm", "support", "platform"],
   showCapabilities: true,
   tools: [],
+  health: {
+    state: "healthy",
+    stale: false,
+    checkedAt: "2026-08-23T12:00:00Z",
+    reason: null,
+    workloads: { total: 8, ready: 8 },
+    databases: { total: 1, ready: 1 },
+  },
 };
+
+function renderHeader(overrides: Partial<ConsoleHeaderProps> = {}) {
+  return render(<ConsoleHeader {...PROPS} {...overrides} />);
+}
 
 describe("ConsoleHeader", () => {
   it("carries both the bell and the operator menu", async () => {
@@ -81,5 +93,22 @@ describe("ConsoleHeader", () => {
     const operatorPanel = screen.getByRole("dialog", { name: /operator menu/i });
     expect(operatorPanel.className).toContain("top-full");
     expect(operatorPanel.className).not.toContain("bottom-full");
+  });
+
+  it("renders the health indicator", () => {
+    // Threaded from the layout. If this stops rendering, every operator loses
+    // the signal silently — nothing else on the page would look different.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 501 })));
+    renderHeader({
+      health: {
+        state: "degraded",
+        stale: false,
+        checkedAt: null,
+        reason: null,
+        workloads: { total: 1, ready: 0 },
+        databases: { total: 1, ready: 1 },
+      },
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(/degraded/i);
   });
 });

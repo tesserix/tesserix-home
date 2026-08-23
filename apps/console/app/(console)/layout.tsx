@@ -3,6 +3,7 @@ import { ConsoleSidebar } from "@/components/nav/sidebar";
 import { ConsoleHeader } from "@/components/nav/console-header";
 import { requiresCapability } from "@/lib/internal-access";
 import { readToolsDirectory } from "@/lib/tools-directory";
+import { readEstateHealth } from "@/lib/health";
 
 // Every route in this group reads the session cookie to render operator
 // identity in the header, and middleware already refuses unauthenticated
@@ -19,7 +20,13 @@ export default async function ConsoleLayout({
   // rather than failing the whole console.
   const session = await getCurrentSession();
   const showCapabilities = requiresCapability();
-  const directory = await readToolsDirectory();
+  // Read alongside the directory rather than after it: both are independent
+  // server reads and awaiting them in sequence adds one round trip to every
+  // console page render.
+  const [directory, health] = await Promise.all([
+    readToolsDirectory(),
+    readEstateHealth(),
+  ]);
 
   return (
     <div className="flex min-h-screen">
@@ -34,6 +41,7 @@ export default async function ConsoleLayout({
           showCapabilities={showCapabilities}
           toolsBaseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"}
           tools={directory.tools}
+          health={health}
         />
         {/* Every console surface gets the same measure and gutters here rather
             than each page inventing its own. Without this, content sits flush
