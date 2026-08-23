@@ -215,4 +215,101 @@ describe("the health page", () => {
 
     expect(screen.getByText(/Last measured: unknown/)).toBeInTheDocument();
   });
+
+  describe("per-item detail", () => {
+    it("renders a row per workload with its name and ready/desired count", async () => {
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          workloads: {
+            total: 8,
+            ready: 8,
+            items: [{ name: "console", desired: 2, ready: 2 }],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("console")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+    });
+
+    it("renders a row per database with its name, ready/instances count, and phase", async () => {
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          databases: {
+            total: 1,
+            ready: 1,
+            items: [
+              {
+                name: "tesserix-postgres",
+                instances: 1,
+                ready: 1,
+                phase: "Cluster in healthy state",
+              },
+            ],
+          },
+        }),
+      );
+
+      render(await HealthPage());
+
+      expect(screen.getByText("tesserix-postgres")).toBeInTheDocument();
+      // Two, not one: the section summary count ("Databases ready") and the
+      // row both legitimately read "1 / 1" here (1 database, 1 instance).
+      expect(screen.getAllByText("1 / 1")).toHaveLength(2);
+      expect(screen.getByText(/Cluster in healthy state/)).toBeInTheDocument();
+    });
+
+    it("marks a row short of target using the page's own degraded vocabulary", async () => {
+      // Same shape/colour the state indicator uses for "degraded" — no fourth
+      // colour invented for this. `mp-orders` is short (1 of 2 ready); a
+      // second, on-target row proves the marker is per-row, not per-section.
+      vi.mocked(readEstateHealth).mockResolvedValue(
+        health({
+          state: "degraded",
+          reason: "mp-orders 1/2 ready",
+          workloads: {
+            total: 8,
+            ready: 7,
+            items: [
+              { name: "mp-orders", desired: 2, ready: 1 },
+              { name: "console", desired: 2, ready: 2 },
+            ],
+          },
+        }),
+      );
+
+      const { container } = render(await HealthPage());
+
+      expect(screen.getByText("1 / 2")).toBeInTheDocument();
+      expect(screen.getByText("2 / 2")).toBeInTheDocument();
+
+      // The degraded marker (diamond, `bg-warning`) sits on the short row and
+      // nowhere else in the row list — same shape/colour class the state
+      // section uses for "Degraded", never a fourth colour invented for the
+      // row list. Scoped to `li` so the state section's own "Degraded" dot
+      // (this fixture's overall state) does not get counted here too.
+      const degradedDots = container.querySelectorAll("li .rotate-45.bg-warning");
+      expect(degradedDots.length).toBe(1);
+    });
+
+    it("renders the page unchanged when items is absent — no empty table, no throw", async () => {
+      // The older platform-api answers without `items` at all, and one is
+      // running in production until this ships. The page must render exactly
+      // as it does today: the summary counts, and nothing claiming to be a
+      // row list underneath them.
+      vi.mocked(readEstateHealth).mockResolvedValue(health());
+
+      render(await HealthPage());
+
+      expect(screen.getByText("Healthy")).toBeInTheDocument();
+      expect(screen.getByText("8 / 8")).toBeInTheDocument();
+      // No table/list role born from a null items array, and no row content
+      // from the ablation fixtures leaking in from elsewhere.
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.queryByText("console")).not.toBeInTheDocument();
+      expect(screen.queryByText("mp-orders")).not.toBeInTheDocument();
+    });
+  });
 });

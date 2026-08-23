@@ -37,7 +37,11 @@ describe("parseHealth", () => {
 
   it("does not throw on absent counts", () => {
     expect(() => parseHealth({ state: "degraded" })).not.toThrow();
-    expect(parseHealth({ state: "degraded" }).workloads).toEqual({ total: 0, ready: 0 });
+    expect(parseHealth({ state: "degraded" }).workloads).toEqual({
+      total: 0,
+      ready: 0,
+      items: null,
+    });
   });
 
   it("refuses a healthy claim that counted nothing", () => {
@@ -73,7 +77,7 @@ describe("parseHealth", () => {
     expect(short.state).toBe("degraded");
     expect(short.reason).toMatch(/claimed healthy but reported fewer ready than total/);
     // The counts survive the downgrade — the page still shows what was read.
-    expect(short.workloads).toEqual({ total: 8, ready: 3 });
+    expect(short.workloads).toEqual({ total: 8, ready: 3, items: null });
   });
 
   it("catches short counts on the database side too", () => {
@@ -91,5 +95,129 @@ describe("parseHealth", () => {
     // Guards the guard: a downgrade rule that fires on everything would
     // satisfy the two tests above while deleting the healthy state.
     expect(parseHealth(wire).state).toBe("healthy");
+  });
+
+  describe("per-item detail", () => {
+    it("parses workload items", () => {
+      const got = parseHealth({
+        ...wire,
+        workloads: {
+          total: 8,
+          ready: 8,
+          items: [{ name: "console", desired: 2, ready: 2 }],
+        },
+      });
+
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2 }]);
+    });
+
+    it("parses database items, including a null phase", () => {
+      const got = parseHealth({
+        ...wire,
+        databases: {
+          total: 1,
+          ready: 1,
+          items: [
+            {
+              name: "tesserix-postgres",
+              instances: 1,
+              ready: 1,
+              phase: "Cluster in healthy state",
+            },
+          ],
+        },
+      });
+
+      expect(got.databases.items).toEqual([
+        { name: "tesserix-postgres", instances: 1, ready: 1, phase: "Cluster in healthy state" },
+      ]);
+    });
+
+    it("reports no items when the payload carries none — the older API shape", () => {
+      // An older platform-api answers without `items` at all. This must be
+      // distinguishable from a genuinely empty list so the page can render
+      // exactly as it does today rather than showing an empty table.
+      const got = parseHealth(wire);
+
+      expect(got.workloads.items).toBeNull();
+      expect(got.databases.items).toBeNull();
+    });
+
+    it("does not throw when items is missing, null, or the wrong shape entirely", () => {
+      expect(() => parseHealth({ ...wire, workloads: { total: 8, ready: 8, items: null } }))
+        .not.toThrow();
+      expect(parseHealth({ ...wire, workloads: { total: 8, ready: 8, items: null } }).workloads.items)
+        .toBeNull();
+
+      expect(() => parseHealth({ ...wire, workloads: { total: 8, ready: 8, items: "nope" } }))
+        .not.toThrow();
+      expect(
+        parseHealth({ ...wire, workloads: { total: 8, ready: 8, items: "nope" } }).workloads.items,
+      ).toBeNull();
+    });
+
+    it("drops a malformed item instead of throwing or trusting it", () => {
+      const got = parseHealth({
+        ...wire,
+        workloads: {
+          total: 8,
+          ready: 8,
+          items: [
+            { name: "console", desired: 2, ready: 2 },
+            "not an object",
+            { desired: 1, ready: 1 }, // missing name — unusable, drop it
+            null,
+            42,
+          ],
+        },
+      });
+
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 2 }]);
+    });
+
+    it("coerces a non-numeric count to 0, matching counts()'s own style", () => {
+      const got = parseHealth({
+        ...wire,
+        workloads: {
+          total: 8,
+          ready: 8,
+          items: [{ name: "console", desired: "two", ready: null }],
+        },
+      });
+
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 0, ready: 0 }]);
+    });
+
+    it("coerces a non-string phase to null rather than trusting it", () => {
+      const got = parseHealth({
+        ...wire,
+        databases: {
+          total: 1,
+          ready: 1,
+          items: [{ name: "tesserix-postgres", instances: 1, ready: 1, phase: 42 }],
+        },
+      });
+
+      expect(got.databases.items).toEqual([
+        { name: "tesserix-postgres", instances: 1, ready: 1, phase: null },
+      ]);
+    });
+
+    it("carries items through the degraded-downgrade path", () => {
+      // The "healthy but short" downgrade must not silently drop the detail
+      // rows it was carrying — the page still shows what was read.
+      const got = parseHealth({
+        ...wire,
+        state: "healthy",
+        workloads: {
+          total: 8,
+          ready: 3,
+          items: [{ name: "console", desired: 2, ready: 0 }],
+        },
+      });
+
+      expect(got.state).toBe("degraded");
+      expect(got.workloads.items).toEqual([{ name: "console", desired: 2, ready: 0 }]);
+    });
   });
 });

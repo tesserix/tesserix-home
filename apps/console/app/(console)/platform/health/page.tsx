@@ -1,5 +1,5 @@
 import { ConsolePageHeader } from "@/components/kit/page-header";
-import { readEstateHealth } from "@/lib/health";
+import { readEstateHealth, type DatabaseItem, type WorkloadItem } from "@/lib/health";
 import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
 
 /**
@@ -26,7 +26,13 @@ import { HEALTH_PRESENTATION, describeHealth } from "@/lib/health-presentation";
  * 2. What was measured — workload and database counts, and the degraded
  *    reason as text. The reason is already reachable without a mouse from the
  *    indicator's `aria-label`; this is the first place it is VISIBLE AS TEXT.
- *    A section nothing measured says so instead of printing a count.
+ *    A section nothing measured says so instead of printing a count. When the
+ *    payload carries per-item detail (a newer platform-api; see `lib/
+ *    health.ts`'s `HealthCounts.items`), each count is followed by its rows —
+ *    the count stays the heading, the rows are the detail underneath it. An
+ *    older platform-api answers with no `items` at all, which `parseHealth`
+ *    represents as `null` rather than `[]`; that section then renders exactly
+ *    as it did before this existed, with no row list and no empty table.
  * 3. What is NOT measured yet — Uptime, Observability and Custom domains,
  *    the three concerns whose rail entries move here (Task 2). Named
  *    plainly, in the unmeasured ring's own visual language, never as a
@@ -110,6 +116,20 @@ export default async function HealthPage() {
                 <dd className="text-lg font-medium text-foreground">
                   {counts.ready} / {counts.total}
                 </dd>
+                {name === "Workloads" && health.workloads.items && health.workloads.items.length > 0 ? (
+                  <ul className="flex flex-col gap-1 pt-1">
+                    {health.workloads.items.map((item) => (
+                      <WorkloadRow key={item.name} item={item} />
+                    ))}
+                  </ul>
+                ) : null}
+                {name === "Databases" && health.databases.items && health.databases.items.length > 0 ? (
+                  <ul className="flex flex-col gap-1 pt-1">
+                    {health.databases.items.map((item) => (
+                      <DatabaseRow key={item.name} item={item} />
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             ) : (
               <div key={name} className="flex flex-col gap-1">
@@ -161,5 +181,51 @@ function Shell({ children }: { children: React.ReactNode }) {
       />
       {children}
     </div>
+  );
+}
+
+/**
+ * One workload's row: name, `ready / desired`, marked when short.
+ *
+ * The marker reuses `HEALTH_PRESENTATION.degraded` — the same diamond/amber
+ * the state section uses for "Degraded" — rather than a fourth colour
+ * invented for this row list. The dot alone is never the only carrier: an
+ * on-target row and a short one already read differently as TEXT (the counts
+ * differ, and a short row adds " — short of target"), so the marker survives
+ * a monochrome rendering as well as a colour-blind reader, same as the state
+ * indicator above it.
+ */
+function WorkloadRow({ item }: { item: WorkloadItem }) {
+  const short = item.ready < item.desired;
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      {short ? (
+        <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
+      ) : null}
+      <span className="text-foreground">{item.name}</span>
+      <span className="text-muted-foreground">
+        {item.ready} / {item.desired}
+      </span>
+      {short ? <span className="text-muted-foreground">— short of target</span> : null}
+    </li>
+  );
+}
+
+/** One database's row: name, `ready / instances`, phase, marked when short.
+ *  See {@link WorkloadRow} for why the marker is the shared degraded token. */
+function DatabaseRow({ item }: { item: DatabaseItem }) {
+  const short = item.ready < item.instances;
+  return (
+    <li className="flex items-center gap-2 text-sm">
+      {short ? (
+        <span aria-hidden="true" className={HEALTH_PRESENTATION.degraded.dot} />
+      ) : null}
+      <span className="text-foreground">{item.name}</span>
+      <span className="text-muted-foreground">
+        {item.ready} / {item.instances}
+      </span>
+      {short ? <span className="text-muted-foreground">— short of target</span> : null}
+      {item.phase ? <span className="text-muted-foreground">{item.phase}</span> : null}
+    </li>
   );
 }

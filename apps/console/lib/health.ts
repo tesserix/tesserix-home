@@ -10,9 +10,35 @@ export type HealthState = "healthy" | "degraded" | "unmeasured";
 
 const STATES: readonly string[] = ["healthy", "degraded", "unmeasured"];
 
-export interface HealthCounts {
+/** One workload row — a Knative service or similar. */
+export interface WorkloadItem {
+  readonly name: string;
+  readonly desired: number;
+  readonly ready: number;
+}
+
+/** One database row — a CNPG cluster or similar. */
+export interface DatabaseItem {
+  readonly name: string;
+  readonly instances: number;
+  readonly ready: number;
+  readonly phase: string | null;
+}
+
+export interface HealthCounts<Item> {
   readonly total: number;
   readonly ready: number;
+  /**
+   * `null` means "this payload carried no `items` field at all" — the older
+   * platform-api shape, still live in production until this ships. An empty
+   * array means "items was present and parsed to nothing" — the Go side
+   * never actually sends this (it serialises `[]`, not omits the field), but
+   * a malformed non-array `items` degrades to the same `null` as absence
+   * rather than throwing. The distinction is what lets the page tell
+   * "nothing to show" apart from "no opinion on rows at all" and render
+   * exactly as it did before this field existed.
+   */
+  readonly items?: readonly Item[] | null;
 }
 
 export interface EstateHealth {
@@ -20,8 +46,8 @@ export interface EstateHealth {
   readonly stale: boolean;
   readonly checkedAt: string | null;
   readonly reason: string | null;
-  readonly workloads: HealthCounts;
-  readonly databases: HealthCounts;
+  readonly workloads: HealthCounts<WorkloadItem>;
+  readonly databases: HealthCounts<DatabaseItem>;
 }
 
 /**
@@ -35,17 +61,61 @@ const UNMEASURED: EstateHealth = Object.freeze({
   stale: false,
   checkedAt: null,
   reason: null,
-  workloads: Object.freeze({ total: 0, ready: 0 }),
-  databases: Object.freeze({ total: 0, ready: 0 }),
+  workloads: Object.freeze({ total: 0, ready: 0, items: null }),
+  databases: Object.freeze({ total: 0, ready: 0, items: null }),
 });
 
-function counts(value: unknown): HealthCounts {
+function counts(value: unknown): { total: number; ready: number } {
   if (typeof value !== "object" || value === null) return { total: 0, ready: 0 };
   const record = value as Record<string, unknown>;
   return {
     total: typeof record.total === "number" ? record.total : 0,
     ready: typeof record.ready === "number" ? record.ready : 0,
   };
+}
+
+/** Pulls `.items` off a counts payload, but only when it is actually an
+ *  array — a non-array `items` (a string, an object) is exactly as
+ *  untrustworthy as a missing one and degrades to the same `null`. */
+function rawItems(value: unknown): unknown[] | null {
+  if (typeof value !== "object" || value === null) return null;
+  const items = (value as Record<string, unknown>).items;
+  return Array.isArray(items) ? items : null;
+}
+
+function workloadItems(value: unknown): readonly WorkloadItem[] | null {
+  const raw = rawItems(value);
+  if (raw === null) return null;
+  const items: WorkloadItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue; // a string, a number: unusable, drop it
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== "string") continue; // no name, no row to key or label
+    items.push({
+      name: record.name,
+      desired: typeof record.desired === "number" ? record.desired : 0,
+      ready: typeof record.ready === "number" ? record.ready : 0,
+    });
+  }
+  return items;
+}
+
+function databaseItems(value: unknown): readonly DatabaseItem[] | null {
+  const raw = rawItems(value);
+  if (raw === null) return null;
+  const items: DatabaseItem[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.name !== "string") continue;
+    items.push({
+      name: record.name,
+      instances: typeof record.instances === "number" ? record.instances : 0,
+      ready: typeof record.ready === "number" ? record.ready : 0,
+      phase: typeof record.phase === "string" ? record.phase : null,
+    });
+  }
+  return items;
 }
 
 /**
@@ -69,8 +139,14 @@ export function parseHealth(json: unknown): EstateHealth {
       : "unmeasured";
 
   const checkedAt = typeof record.checked_at === "string" ? record.checked_at : null;
-  const workloads = counts(record.workloads);
-  const databases = counts(record.databases);
+  const workloads: HealthCounts<WorkloadItem> = {
+    ...counts(record.workloads),
+    items: workloadItems(record.workloads),
+  };
+  const databases: HealthCounts<DatabaseItem> = {
+    ...counts(record.databases),
+    items: databaseItems(record.databases),
+  };
 
   // The Go classifier refuses to call an empty reading healthy. Re-derived
   // here rather than trusted, because a version skew, a partial payload or a
