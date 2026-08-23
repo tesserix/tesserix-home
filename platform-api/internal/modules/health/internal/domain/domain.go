@@ -34,6 +34,13 @@ type WorkloadItem struct {
 	Name    string
 	Desired int
 	Ready   int
+	// OK is this module's own verdict on this one row, set by the same
+	// statement that decides whether the row counts towards Counts.Ready.
+	// It exists so no consumer has to re-derive the rule: a renderer that
+	// re-implements "ready >= desired" is a second copy of a rule that has
+	// already changed once, and the first time the two disagree the page
+	// shows a row marked fine directly under a summary that counts it bad.
+	OK bool
 }
 
 // DatabaseItem is one CNPG Cluster's detail, including the phase CNPG itself
@@ -44,6 +51,10 @@ type DatabaseItem struct {
 	Instances int
 	Ready     int
 	Phase     string
+	// OK is this row's verdict. A database has THREE ways to fail — short
+	// counts, zero instances, and a phase that is not a healthy one — and
+	// only the code that applies all three gets to say. See WorkloadItem.OK.
+	OK bool
 }
 
 // Snapshot is one classification.
@@ -104,12 +115,17 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 
 	for _, workload := range workloads {
 		desired += workload.Desired
-		snapshot.WorkloadItems = append(snapshot.WorkloadItems, WorkloadItem{
-			Name: workload.Name, Desired: workload.Desired, Ready: workload.Ready,
-		})
+		// ONE decision, used three ways: the row's verdict, the ready
+		// counter, and whether this workload is named as a problem. The row
+		// and the summary cannot disagree by construction.
+		//
 		// Desired 0 is switched off on purpose, and wanting nothing is
 		// satisfied by having nothing.
-		if workload.Ready >= workload.Desired {
+		ok := workload.Ready >= workload.Desired
+		snapshot.WorkloadItems = append(snapshot.WorkloadItems, WorkloadItem{
+			Name: workload.Name, Desired: workload.Desired, Ready: workload.Ready, OK: ok,
+		})
+		if ok {
 			snapshot.Workloads.Ready++
 			continue
 		}
@@ -127,12 +143,16 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 	// status has not populated — and it is serving no queries either way.
 	// Two resources, two rules, on purpose.
 	for _, database := range databases {
+		countsOK := database.Ready >= database.Instances && database.Instances > 0
+		// Counts matching is not enough — see below — so the row's verdict
+		// is BOTH rules, which is exactly the condition under which
+		// Databases.Ready is incremented at the bottom of this loop.
+		ok := countsOK && database.Phase == HealthyPhase
 		snapshot.DatabaseItems = append(snapshot.DatabaseItems, DatabaseItem{
 			Name: database.Name, Instances: database.Instances, Ready: database.Ready,
-			Phase: database.Phase,
+			Phase: database.Phase, OK: ok,
 		})
 
-		countsOK := database.Ready >= database.Instances && database.Instances > 0
 		if !countsOK {
 			problems = append(problems, fmt.Sprintf("%s %d/%d instances ready",
 				database.Name, database.Ready, database.Instances))

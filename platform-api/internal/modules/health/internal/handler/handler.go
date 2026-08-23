@@ -60,10 +60,17 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 // caller expecting behaviour this endpoint does not have.
 var noParameters = []string{}
 
+// `ok` is the classifier's own per-row verdict, additive to the shape the
+// previous release served. It is on the wire so the console does not have to
+// re-derive it: a database has three ways to fail (short counts, zero
+// instances, a phase that is not a healthy one) and a renderer that
+// re-implements one of them marks a row fine under a summary that counts it
+// bad. Optional on the client, which still has an older API to talk to.
 type workloadItem struct {
 	Name    string `json:"name"`
 	Desired int    `json:"desired"`
 	Ready   int    `json:"ready"`
+	OK      bool   `json:"ok"`
 }
 
 type databaseItem struct {
@@ -71,6 +78,7 @@ type databaseItem struct {
 	Instances int    `json:"instances"`
 	Ready     int    `json:"ready"`
 	Phase     string `json:"phase"`
+	OK        bool   `json:"ok"`
 }
 
 type workloadCounts struct {
@@ -99,7 +107,7 @@ type body struct {
 func workloadItems(items []domain.WorkloadItem) []workloadItem {
 	out := make([]workloadItem, len(items))
 	for i, item := range items {
-		out[i] = workloadItem{Name: item.Name, Desired: item.Desired, Ready: item.Ready}
+		out[i] = workloadItem{Name: item.Name, Desired: item.Desired, Ready: item.Ready, OK: item.OK}
 	}
 	return out
 }
@@ -109,6 +117,7 @@ func databaseItems(items []domain.DatabaseItem) []databaseItem {
 	for i, item := range items {
 		out[i] = databaseItem{
 			Name: item.Name, Instances: item.Instances, Ready: item.Ready, Phase: item.Phase,
+			OK: item.OK,
 		}
 	}
 	return out

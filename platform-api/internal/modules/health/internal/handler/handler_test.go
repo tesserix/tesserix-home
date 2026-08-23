@@ -180,6 +180,9 @@ func TestHealthPutsItemsOnTheWireUnderBothSections(t *testing.T) {
 	if workloadItem["name"] != "console" || workloadItem["desired"] != 2.0 || workloadItem["ready"] != 2.0 {
 		t.Errorf("workloads.items[0] = %v, want console 2/2", workloadItem)
 	}
+	if workloadItem["ok"] != true {
+		t.Errorf("workloads.items[0].ok = %v, want true — the row verdict must be on the wire", workloadItem["ok"])
+	}
 
 	databases, ok := data["databases"].(map[string]any)
 	if !ok {
@@ -196,6 +199,46 @@ func TestHealthPutsItemsOnTheWireUnderBothSections(t *testing.T) {
 	if databaseItem["name"] != "tesserix-postgres" || databaseItem["instances"] != 1.0 ||
 		databaseItem["ready"] != 1.0 || databaseItem["phase"] != domain.HealthyPhase {
 		t.Errorf("databases.items[0] = %v, want tesserix-postgres 1/1 %q", databaseItem, domain.HealthyPhase)
+	}
+	if databaseItem["ok"] != true {
+		t.Errorf("databases.items[0].ok = %v, want true — the row verdict must be on the wire", databaseItem["ok"])
+	}
+}
+
+func TestTheWireCarriesAFalseVerdictForARowTheSummaryCountsBad(t *testing.T) {
+	// The failure this pins: a cluster mid-failover reports MATCHING counts,
+	// so anything re-deriving the verdict from counts alone marks the row
+	// fine directly under a summary reading "0 / 1". Only the classifier
+	// knows, so only the classifier's answer goes on the wire.
+	source := stubSource{
+		workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 2}},
+		databases: []cluster.Database{
+			{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: "Failing over"},
+		},
+	}
+	a := serveAs(t, source, "read")
+
+	data := a.get("/v1/platform/health").data(t)
+	databases, ok := data["databases"].(map[string]any)
+	if !ok {
+		t.Fatalf("databases is not an object: %v", data)
+	}
+	items, ok := databases["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("databases.items = %v, want one item", databases["items"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("databases.items[0] is not an object: %v", items[0])
+	}
+	if item["ok"] != false {
+		t.Errorf("databases.items[0].ok = %v, want false — the phase failed it", item["ok"])
+	}
+	if item["ready"] != 1.0 || item["instances"] != 1.0 {
+		t.Errorf("databases.items[0] = %v, want the matching counts preserved", item)
+	}
+	if databases["ready"] != 0.0 {
+		t.Errorf("databases.ready = %v, want 0", databases["ready"])
 	}
 }
 

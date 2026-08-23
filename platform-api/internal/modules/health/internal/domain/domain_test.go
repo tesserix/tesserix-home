@@ -201,8 +201,8 @@ func TestItemsSurviveClassifySortedByName(t *testing.T) {
 	)
 
 	wantWorkloads := []domain.WorkloadItem{
-		{Name: "console", Desired: 2, Ready: 2},
-		{Name: "platform-api", Desired: 1, Ready: 1},
+		{Name: "console", Desired: 2, Ready: 2, OK: true},
+		{Name: "platform-api", Desired: 1, Ready: 1, OK: true},
 	}
 	if len(got.WorkloadItems) != len(wantWorkloads) {
 		t.Fatalf("WorkloadItems = %+v, want %+v", got.WorkloadItems, wantWorkloads)
@@ -214,8 +214,8 @@ func TestItemsSurviveClassifySortedByName(t *testing.T) {
 	}
 
 	wantDatabases := []domain.DatabaseItem{
-		{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase},
-		{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+		{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase, OK: true},
+		{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase, OK: true},
 	}
 	if len(got.DatabaseItems) != len(wantDatabases) {
 		t.Fatalf("DatabaseItems = %+v, want %+v", got.DatabaseItems, wantDatabases)
@@ -275,5 +275,61 @@ func TestAnEmptyPhaseReasonSaysNotReportedRatherThanQuotingAnEmptyString(t *test
 	}
 	if strings.Contains(got.Reason, `phase ""`) {
 		t.Errorf(`reason = %q, must not read like a parsing glitch (contains phase "")`, got.Reason)
+	}
+}
+
+func TestEveryItemCarriesTheClassifiersOwnVerdict(t *testing.T) {
+	// The point of OK: a consumer must never have to re-derive the rule.
+	// The three ways a database fails are all exercised here, and each one
+	// must show up as OK false on the ROW as well as in the summary count.
+	got := domain.Classify(
+		[]cluster.Workload{
+			{Name: "ok", Desired: 2, Ready: 2},
+			{Name: "short", Desired: 2, Ready: 1},
+		},
+		[]cluster.Database{
+			{Name: "a-healthy", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+			{Name: "b-bad-phase", Instances: 1, Ready: 1, Phase: "Failing over"},
+			{Name: "c-no-instances", Instances: 0, Ready: 0, Phase: domain.HealthyPhase},
+			{Name: "d-short", Instances: 3, Ready: 1, Phase: domain.HealthyPhase},
+		},
+	)
+
+	wantWorkloads := map[string]bool{"ok": true, "short": false}
+	for _, item := range got.WorkloadItems {
+		if want := wantWorkloads[item.Name]; item.OK != want {
+			t.Errorf("WorkloadItems[%q].OK = %v, want %v", item.Name, item.OK, want)
+		}
+	}
+
+	wantDatabases := map[string]bool{
+		"a-healthy": true, "b-bad-phase": false, "c-no-instances": false, "d-short": false,
+	}
+	for _, item := range got.DatabaseItems {
+		if want := wantDatabases[item.Name]; item.OK != want {
+			t.Errorf("DatabaseItems[%q].OK = %v, want %v", item.Name, item.OK, want)
+		}
+	}
+
+	// The summary and the rows are the same decision, so they must agree.
+	okWorkloads := 0
+	for _, item := range got.WorkloadItems {
+		if item.OK {
+			okWorkloads++
+		}
+	}
+	if okWorkloads != got.Workloads.Ready {
+		t.Errorf("%d workload rows say OK but the summary counts %d ready",
+			okWorkloads, got.Workloads.Ready)
+	}
+	okDatabases := 0
+	for _, item := range got.DatabaseItems {
+		if item.OK {
+			okDatabases++
+		}
+	}
+	if okDatabases != got.Databases.Ready {
+		t.Errorf("%d database rows say OK but the summary counts %d ready",
+			okDatabases, got.Databases.Ready)
 	}
 }
