@@ -7,6 +7,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/cluster"
@@ -27,15 +28,41 @@ type Counts struct {
 	Ready int
 }
 
+// WorkloadItem is one Deployment's detail, carried through to the wire so an
+// operator can see which workload is short without leaving the page.
+type WorkloadItem struct {
+	Name    string
+	Desired int
+	Ready   int
+}
+
+// DatabaseItem is one CNPG Cluster's detail, including the phase CNPG itself
+// reports — the fact that decides whether a cluster with matching counts is
+// actually healthy.
+type DatabaseItem struct {
+	Name      string
+	Instances int
+	Ready     int
+	Phase     string
+}
+
 // Snapshot is one classification.
 type Snapshot struct {
 	State State
 	// Reason is empty when healthy, and names the specific workload or
 	// database otherwise.
-	Reason    string
-	Workloads Counts
-	Databases Counts
+	Reason        string
+	Workloads     Counts
+	Databases     Counts
+	WorkloadItems []WorkloadItem
+	DatabaseItems []DatabaseItem
 }
+
+// HealthyPhase is the only CNPG cluster phase this module treats as healthy.
+// Verified against the production cluster. Deliberately not a list of "bad"
+// phases: an unknown future phase must read as a problem, not as fine, which
+// is the fail-safe direction and matches this module's whole premise.
+const HealthyPhase = "Cluster in healthy state"
 
 // Unmeasured is the snapshot for "nothing measured this".
 func Unmeasured(reason string) Snapshot {
@@ -77,6 +104,9 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 
 	for _, workload := range workloads {
 		desired += workload.Desired
+		snapshot.WorkloadItems = append(snapshot.WorkloadItems, WorkloadItem{
+			Name: workload.Name, Desired: workload.Desired, Ready: workload.Ready,
+		})
 		// Desired 0 is switched off on purpose, and wanting nothing is
 		// satisfied by having nothing.
 		if workload.Ready >= workload.Desired {
@@ -86,6 +116,9 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 		problems = append(problems, fmt.Sprintf("%s %d/%d ready",
 			workload.Name, workload.Ready, workload.Desired))
 	}
+	sort.Slice(snapshot.WorkloadItems, func(i, j int) bool {
+		return snapshot.WorkloadItems[i].Name < snapshot.WorkloadItems[j].Name
+	})
 
 	// Note the `Instances > 0` guard, which the workload loop deliberately
 	// does NOT have. A Deployment desiring zero replicas is switched off on
@@ -94,13 +127,32 @@ func Classify(workloads []cluster.Workload, databases []cluster.Database) Snapsh
 	// status has not populated — and it is serving no queries either way.
 	// Two resources, two rules, on purpose.
 	for _, database := range databases {
-		if database.Ready >= database.Instances && database.Instances > 0 {
-			snapshot.Databases.Ready++
+		snapshot.DatabaseItems = append(snapshot.DatabaseItems, DatabaseItem{
+			Name: database.Name, Instances: database.Instances, Ready: database.Ready,
+			Phase: database.Phase,
+		})
+
+		countsOK := database.Ready >= database.Instances && database.Instances > 0
+		if !countsOK {
+			problems = append(problems, fmt.Sprintf("%s %d/%d instances ready",
+				database.Name, database.Ready, database.Instances))
 			continue
 		}
-		problems = append(problems, fmt.Sprintf("%s %d/%d instances ready",
-			database.Name, database.Ready, database.Instances))
+		// Counts matching is not enough. CNPG can report every instance ready
+		// while the cluster itself is mid-failover or otherwise not settled —
+		// the phase is the fact that says whether it actually is. Treated as
+		// "not the healthy phase" rather than a list of known-bad phases, so
+		// an unknown future phase reads as a problem, not as fine.
+		if database.Phase != HealthyPhase {
+			problems = append(problems, fmt.Sprintf("%s reports phase %q, not %q",
+				database.Name, database.Phase, HealthyPhase))
+			continue
+		}
+		snapshot.Databases.Ready++
 	}
+	sort.Slice(snapshot.DatabaseItems, func(i, j int) bool {
+		return snapshot.DatabaseItems[i].Name < snapshot.DatabaseItems[j].Name
+	})
 
 	if len(workloads) == 0 || len(databases) == 0 {
 		snapshot.State = StateUnmeasured

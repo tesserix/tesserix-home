@@ -13,6 +13,7 @@ import (
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/cluster"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health/internal/domain"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 )
@@ -111,7 +112,7 @@ func (r response) data(t *testing.T) map[string]any {
 
 var okSource = stubSource{
 	workloads: []cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
-	databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+	databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 }
 
 func TestHealthAnswersTheStateAndItsCounts(t *testing.T) {
@@ -146,6 +147,55 @@ func TestAFailedClusterReadIsStillA200Unmeasured(t *testing.T) {
 	}
 	if state := got.data(t)["state"]; state != "unmeasured" {
 		t.Errorf("state = %v, want unmeasured", state)
+	}
+}
+
+func TestHealthPutsItemsOnTheWireUnderBothSections(t *testing.T) {
+	source := stubSource{
+		workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 2}},
+		databases: []cluster.Database{
+			{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+		},
+	}
+	a := serveAs(t, source, "read")
+
+	got := a.get("/v1/platform/health")
+	if got.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
+	}
+	data := got.data(t)
+
+	workloads, ok := data["workloads"].(map[string]any)
+	if !ok {
+		t.Fatalf("workloads is not an object: %s", got.raw)
+	}
+	workloadItems, ok := workloads["items"].([]any)
+	if !ok || len(workloadItems) != 1 {
+		t.Fatalf("workloads.items = %v, want one item: %s", workloads["items"], got.raw)
+	}
+	workloadItem, ok := workloadItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("workloads.items[0] is not an object: %s", got.raw)
+	}
+	if workloadItem["name"] != "console" || workloadItem["desired"] != 2.0 || workloadItem["ready"] != 2.0 {
+		t.Errorf("workloads.items[0] = %v, want console 2/2", workloadItem)
+	}
+
+	databases, ok := data["databases"].(map[string]any)
+	if !ok {
+		t.Fatalf("databases is not an object: %s", got.raw)
+	}
+	databaseItems, ok := databases["items"].([]any)
+	if !ok || len(databaseItems) != 1 {
+		t.Fatalf("databases.items = %v, want one item: %s", databases["items"], got.raw)
+	}
+	databaseItem, ok := databaseItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("databases.items[0] is not an object: %s", got.raw)
+	}
+	if databaseItem["name"] != "tesserix-postgres" || databaseItem["instances"] != 1.0 ||
+		databaseItem["ready"] != 1.0 || databaseItem["phase"] != domain.HealthyPhase {
+		t.Errorf("databases.items[0] = %v, want tesserix-postgres 1/1 %q", databaseItem, domain.HealthyPhase)
 	}
 }
 

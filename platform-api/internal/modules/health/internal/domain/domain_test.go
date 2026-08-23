@@ -18,7 +18,7 @@ func TestClassify(t *testing.T) {
 		{
 			name:      "everything ready is healthy",
 			workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 2}},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
 		{
@@ -49,7 +49,7 @@ func TestClassify(t *testing.T) {
 				{Name: "quiet", Desired: 0, Ready: 0},
 				{Name: "console", Desired: 1, Ready: 1},
 			},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
 		{
@@ -97,7 +97,7 @@ func TestClassify(t *testing.T) {
 			// indicator cry wolf on every deploy.
 			name:      "a workload with more ready than desired is not degraded",
 			workloads: []cluster.Workload{{Name: "console", Desired: 2, Ready: 3}},
-			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1}},
+			databases: []cluster.Database{{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase}},
 			want:      domain.StateHealthy,
 		},
 	}
@@ -120,7 +120,7 @@ func TestClassifyCountsWhatItSaw(t *testing.T) {
 			{Name: "c", Desired: 3, Ready: 3},
 		},
 		[]cluster.Database{
-			{Name: "pg", Instances: 1, Ready: 1},
+			{Name: "pg", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
 			{Name: "pg2", Instances: 2, Ready: 0},
 		},
 	)
@@ -170,5 +170,69 @@ func TestUnmeasuredCarriesItsReason(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "403") {
 		t.Errorf("reason = %q, want the cause preserved", got.Reason)
+	}
+}
+
+func TestItemsSurviveClassifySortedByName(t *testing.T) {
+	// Deliberately fed out of name order, so a pass here cannot be an
+	// accident of input order matching output order.
+	got := domain.Classify(
+		[]cluster.Workload{
+			{Name: "platform-api", Desired: 1, Ready: 1},
+			{Name: "console", Desired: 2, Ready: 2},
+		},
+		[]cluster.Database{
+			{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+			{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase},
+		},
+	)
+
+	wantWorkloads := []domain.WorkloadItem{
+		{Name: "console", Desired: 2, Ready: 2},
+		{Name: "platform-api", Desired: 1, Ready: 1},
+	}
+	if len(got.WorkloadItems) != len(wantWorkloads) {
+		t.Fatalf("WorkloadItems = %+v, want %+v", got.WorkloadItems, wantWorkloads)
+	}
+	for i, want := range wantWorkloads {
+		if got.WorkloadItems[i] != want {
+			t.Errorf("WorkloadItems[%d] = %+v, want %+v", i, got.WorkloadItems[i], want)
+		}
+	}
+
+	wantDatabases := []domain.DatabaseItem{
+		{Name: "analytics-postgres", Instances: 2, Ready: 2, Phase: domain.HealthyPhase},
+		{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: domain.HealthyPhase},
+	}
+	if len(got.DatabaseItems) != len(wantDatabases) {
+		t.Fatalf("DatabaseItems = %+v, want %+v", got.DatabaseItems, wantDatabases)
+	}
+	for i, want := range wantDatabases {
+		if got.DatabaseItems[i] != want {
+			t.Errorf("DatabaseItems[%d] = %+v, want %+v", i, got.DatabaseItems[i], want)
+		}
+	}
+}
+
+func TestADatabaseWithMatchingCountsButAWrongPhaseIsDegraded(t *testing.T) {
+	// The deferred finding from #332's review: counts alone are not enough.
+	// A cluster can report every instance ready while CNPG itself says the
+	// cluster is not settled — mid-failover, for example — and that is not
+	// healthy.
+	got := domain.Classify(
+		[]cluster.Workload{{Name: "console", Desired: 1, Ready: 1}},
+		[]cluster.Database{{Name: "tesserix-postgres", Instances: 1, Ready: 1, Phase: "Failing over"}},
+	)
+	if got.State != domain.StateDegraded {
+		t.Fatalf("State = %q, want degraded — matching counts do not mean healthy when the phase is not", got.State)
+	}
+	if !strings.Contains(got.Reason, "Failing over") {
+		t.Errorf("reason = %q, want it to name the phase", got.Reason)
+	}
+	if !strings.Contains(got.Reason, "tesserix-postgres") {
+		t.Errorf("reason = %q, want it to name the database", got.Reason)
+	}
+	if got.Databases.Ready != 0 {
+		t.Errorf("Databases.Ready = %d, want 0 — a wrong phase must not count as ready", got.Databases.Ready)
 	}
 }
