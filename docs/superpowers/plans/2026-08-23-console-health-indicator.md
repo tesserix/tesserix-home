@@ -39,6 +39,9 @@ Vitest, Helm (`tesserix-k8s`).
   `ClusterRole`.
 - **Commits:** single-line conventional commits. No signatures, no co-author
   trailers.
+- **The package manager is pnpm@10.17.1, not npm.** `pnpm typecheck`,
+  `pnpm test:unit`, `pnpm exec vitest run …`. There is no `package-lock.json`
+  and `npm ci` fails outright. The root `CLAUDE.md` says npm and is wrong.
 - **Kubernetes API paths, verbatim** (verified against `tesseract-prod-in-gke`):
   - `/apis/apps/v1/namespaces/{ns}/deployments`
   - `/apis/postgresql.cnpg.io/v1/namespaces/{ns}/clusters`
@@ -1975,7 +1978,7 @@ describe("parseHealth", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd apps/console && npx vitest run lib/health.test.ts`
+Run: `cd apps/console && pnpm exec vitest run lib/health.test.ts`
 Expected: FAIL — `./health` does not exist.
 
 - [ ] **Step 3: Write the implementation**
@@ -2085,7 +2088,7 @@ export async function readEstateHealth(): Promise<EstateHealth> {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd apps/console && npx vitest run lib/health.test.ts`
+Run: `cd apps/console && pnpm exec vitest run lib/health.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Ablate the unrecognised-state default**
@@ -2198,7 +2201,7 @@ add `health` to whatever helper it already uses.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd apps/console && npx vitest run components/nav/health-indicator.render.test.tsx components/nav/console-header.render.test.tsx`
+Run: `cd apps/console && pnpm exec vitest run components/nav/health-indicator.render.test.tsx components/nav/console-header.render.test.tsx`
 Expected: FAIL — component does not exist; `health` is not a prop.
 
 - [ ] **Step 3: Write the component**
@@ -2349,7 +2352,7 @@ and pass `health={health}` to `ConsoleHeader`.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `cd apps/console && npx vitest run components/nav/`
+Run: `cd apps/console && pnpm exec vitest run components/nav/`
 Expected: PASS.
 
 - [ ] **Step 7: Ablate the unmeasured description**
@@ -2384,7 +2387,7 @@ five commands, both workspaces.**
 changed its `src/`, the console type-checks against stale types until:
 
 ```bash
-cd packages/console-core && npm run build
+cd packages/console-core && pnpm build
 ```
 
 (This plan does not change `console-core` — but check `git diff --stat` and run
@@ -2401,15 +2404,15 @@ Expected: PASS, zero skips in `./internal/modules/health/...`.
 - [ ] **Step 3: Console typecheck — BOTH workspaces**
 
 ```bash
-cd apps/console && npm run typecheck
-cd ../../packages/console-core && npm run typecheck
+cd apps/console && pnpm typecheck
+cd ../../packages/console-core && pnpm typecheck
 ```
 Expected: PASS both.
 
 - [ ] **Step 4: Unit tests, and confirm zero skips**
 
 ```bash
-cd apps/console && npm run test:unit
+cd apps/console && pnpm test:unit
 ```
 Expected: PASS. **Read the summary line for skipped tests.** Database-backed
 tests skip silently without `TESSERIX_TEST_DB_HOST`; a pass that skipped is not
@@ -2418,7 +2421,7 @@ a pass. If any health test skipped, set the variable and re-run.
 - [ ] **Step 5: Lint and build**
 
 ```bash
-cd apps/console && npm run lint && npm run build
+cd apps/console && pnpm lint && pnpm build
 ```
 Expected: PASS. `next build` is the only thing that catches a `server-only`
 module reaching the browser bundle — which `lib/health.ts` would do if any
