@@ -19,6 +19,24 @@ export function isNavGroup(e: NavEntry): e is NavGroup {
   return "items" in e;
 }
 
+/**
+ * Every NavItem in a rail, with groups flattened away.
+ *
+ * Exported rather than left as a local helper in each caller, because there
+ * are now two kinds of caller and they must agree: nav.test.ts walks the rails
+ * to assert what they do and do not carry, and the console's command palette
+ * walks them to decide what it may still advertise (a pending route with no
+ * rail entry says LESS in the palette than the deleted rail did — see
+ * `routeEntries` in apps/console/lib/search.ts). A second walker that stopped
+ * descending into groups would silently report an empty rail, which is exactly
+ * the failure mode nav.test.ts guards against for its own copy.
+ */
+export function navItems(entries: readonly NavEntry[]): readonly NavItem[] {
+  return entries.flatMap((entry) =>
+    isNavGroup(entry) ? navItems(entry.items) : [entry],
+  );
+}
+
 // Seeded from apps/web/lib/products/nav-config.ts's koraNav. Kora's rail has
 // no groups yet — every entry is a flat NavItem — so this mirrors that shape
 // exactly rather than inventing grouping the web app doesn't have.
@@ -87,11 +105,14 @@ export const platformNav: readonly NavEntry[] = [
   // serves those paths); only the nav entries are gone. Removed deliberately
   // — do not re-add this group.
   {
-    // Its own group rather than an item in Health or Governance. Health is
-    // "is it up"; Governance is policy and queues. AI spend is neither: it is
-    // a bill and a guardrail record for one shared data plane that every
+    // Its own group rather than an item in Operate or Governance. Operate is
+    // service upkeep; Governance is policy and queues. AI spend is neither: it
+    // is a bill and a guardrail record for one shared data plane that every
     // product routes through, and it is read for a reason — a cost spike —
-    // that belongs to no other group's workflow.
+    // that belongs to no other group's workflow. (The original argument here
+    // placed it against a "Health" group; that group has since been deleted as
+    // dead placeholders — see the marker above — so the comparison is gone but
+    // the conclusion is not.)
     name: "AI",
     icon: "bar-chart",
     items: [{ name: "AI usage", route: "platform.aiUsage", icon: "bar-chart" }],
