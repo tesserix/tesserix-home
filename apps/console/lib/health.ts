@@ -84,6 +84,30 @@ export function parseHealth(json: unknown): EstateHealth {
     };
   }
 
+  // The same distrust, applied to the counts the payload DID carry. A payload
+  // can say "healthy" and report 3 of 8 workloads ready — version skew again,
+  // or a partial answer — and rendering that green puts the word "Healthy"
+  // directly above "Workloads 3 / 8". `degraded`, not `unmeasured`: something
+  // WAS measured here and it came back short, which is a different claim from
+  // "no instrument reported". Downgrading to unmeasured would discard a real
+  // reading; the honest reading of short counts is that the estate is degraded.
+  if (
+    state === "healthy" &&
+    (workloads.ready < workloads.total || databases.ready < databases.total)
+  ) {
+    return {
+      state: "degraded",
+      stale: record.stale === true,
+      checkedAt,
+      reason:
+        "the reading claimed healthy but reported fewer ready than total: " +
+        `${workloads.ready}/${workloads.total} workloads, ` +
+        `${databases.ready}/${databases.total} databases`,
+      workloads,
+      databases,
+    };
+  }
+
   return {
     state,
     stale: record.stale === true,
@@ -124,7 +148,9 @@ export async function readEstateHealth(): Promise<EstateHealth> {
     // the API is down, the origin is unset, or the RBAC grant was never
     // applied, and without this line the three are indistinguishable from
     // outside. It fires once per console page render for as long as the
-    // platform API is unreachable — `platformCall` sets `cache: "no-store"`,
+    // platform API is unreachable — twice on `/platform/health`, which reads
+    // health in the layout (the header indicator) and again in the page, each
+    // through its own call. `platformCall` sets `cache: "no-store"`,
     // and the 15s cache is the Go service's own, bounding cluster reads rather
     // than this request. In the cases that reach this catch (unreachable, 5xx,
     // non-JSON, 403, or the abort above) the request never gets far enough for

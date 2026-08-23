@@ -43,7 +43,7 @@ describe("ConsoleSidebar", () => {
 
     expect(screen.getByText("Platform")).toBeInTheDocument();
     expect(screen.getByText("Operate")).toBeInTheDocument();
-    expect(screen.getByText("Health")).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
     expect(screen.getByText("Governance")).toBeInTheDocument();
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
     expect(screen.getByText("Break-glass")).toBeInTheDocument();
@@ -104,14 +104,14 @@ describe("ConsoleSidebar", () => {
     const user = userEvent.setup();
     render(<ConsoleSidebar />);
 
-    const health = screen.getByRole("button", { name: "Health" });
-    expect(health).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("Uptime")).toBeVisible();
+    const ai = screen.getByRole("button", { name: "AI" });
+    expect(ai).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("AI usage")).toBeVisible();
 
-    await user.click(health);
+    await user.click(ai);
 
-    expect(health).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByText("Uptime")).not.toBeVisible();
+    expect(ai).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("AI usage")).not.toBeVisible();
   });
 
   it("keeps pending entries visible-but-disabled inside an open group", () => {
@@ -129,16 +129,16 @@ describe("ConsoleSidebar", () => {
   it("remembers a collapsed group across a remount", async () => {
     const user = userEvent.setup();
     const first = render(<ConsoleSidebar />);
-    await user.click(screen.getByRole("button", { name: "Health" }));
+    await user.click(screen.getByRole("button", { name: "AI" }));
     first.unmount();
 
     render(<ConsoleSidebar />);
 
-    expect(screen.getByRole("button", { name: "Health" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "AI" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    expect(screen.getByText("Uptime")).not.toBeVisible();
+    expect(screen.getByText("AI usage")).not.toBeVisible();
   });
 
   it("opens the group holding the current route, whatever was stored", () => {
@@ -146,7 +146,7 @@ describe("ConsoleSidebar", () => {
     // the one landmark saying which part of the console this is.
     window.localStorage.setItem(
       COLLAPSED_GROUPS_KEY,
-      JSON.stringify(["Operate", "Health", "Governance", "Growth"]),
+      JSON.stringify(["Operate", "AI", "Governance", "Growth"]),
     );
     pathname.current = "/platform/audit-log";
 
@@ -159,7 +159,7 @@ describe("ConsoleSidebar", () => {
     expect(screen.getByText("Audit log")).toBeVisible();
     // Guards the guard: the other groups honour the stored preference, so the
     // assertion above is about the active group and not about ignoring storage.
-    expect(screen.getByRole("button", { name: "Health" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "AI" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
@@ -169,7 +169,7 @@ describe("ConsoleSidebar", () => {
     window.localStorage.setItem(COLLAPSED_GROUPS_KEY, "{not json");
     render(<ConsoleSidebar />);
 
-    expect(screen.getByRole("button", { name: "Health" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "AI" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );

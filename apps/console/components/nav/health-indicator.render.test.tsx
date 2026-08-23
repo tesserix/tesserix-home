@@ -1,6 +1,11 @@
 // @vitest-environment jsdom
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// HealthIndicator now renders a next/link. Matches the mock shape used by
+// sidebar.render.test.tsx, the other nav component that links via Link.
+vi.mock("next/navigation", () => ({ usePathname: () => "/platform/tickets" }));
+
 import { HealthIndicator } from "./health-indicator";
 import type { EstateHealth } from "@/lib/health";
 
@@ -56,5 +61,68 @@ describe("HealthIndicator", () => {
       />,
     );
     expect(screen.getByRole("status")).toHaveAccessibleName(/mp-orders/);
+  });
+
+  it("is a link to the health page, resolved through the route helper", () => {
+    // Not a hardcoded "/platform/health" — this pins consolePath's actual
+    // output for platform.serviceHealth, so a route-table edit that changes
+    // the path is caught here too.
+    render(<HealthIndicator health={health()} />);
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/platform/health");
+  });
+
+  it("carries the full sentence as the link's accessible name, not just the state word", () => {
+    // role="status" lives on an inner element (ambient, not an alert) while
+    // the anchor stays a link; if the anchor's accessible name collapsed to
+    // "Healthy" a screen reader would announce far less than it does today.
+    render(<HealthIndicator health={health({ state: "healthy" })} />);
+    const link = screen.getByRole("link");
+    expect(link).toHaveAccessibleName(
+      /Estate healthy: 8 of 8 workloads and 1 of 1 databases ready\./,
+    );
+  });
+
+  it("does not double the accessible name with a title attribute", () => {
+    // `title` carried the same string as the inner span's `aria-label`, so a
+    // screen reader announced the sentence as both the name and the
+    // description. Harmless on a non-focusable span; this is a link in the tab
+    // order on every console page now.
+    render(<HealthIndicator health={health()} />);
+    expect(screen.getByRole("link")).not.toHaveAttribute("title");
+  });
+
+  it("marks itself current only when it points at the page being viewed", () => {
+    // The module mock at the top of this file puts the reader on
+    // /platform/tickets, so the indicator is a link elsewhere and must not
+    // claim to be the current page.
+    render(<HealthIndicator health={health()} />);
+    expect(screen.getByRole("link")).not.toHaveAttribute("aria-current");
+  });
+
+  it("renders an icon alongside the state dot, not instead of it", () => {
+    render(<HealthIndicator health={health()} />);
+    const link = screen.getByRole("link");
+    // The icon is decorative (aria-hidden) — assert on the SVG itself rather
+    // than an accessible query, since it must not add to the accessible name.
+    expect(link.querySelectorAll("svg")).toHaveLength(1);
+  });
+});
+
+describe("HealthIndicator on the health page itself", () => {
+  // A separate `describe` with its own module registry: `usePathname` is
+  // mocked at module scope above, and the point here is a DIFFERENT pathname.
+  it("marks itself as the current page, the way the sidebar does", async () => {
+    vi.resetModules();
+    vi.doMock("next/navigation", () => ({ usePathname: () => "/platform/health" }));
+    const { HealthIndicator: OnPage } = await import("./health-indicator");
+
+    render(<OnPage health={health()} />);
+
+    // Resolved through `isRouteActive(..., "console")`, the same mechanism the
+    // sidebar uses — not a second string comparison that could disagree with
+    // it about what "active" means.
+    expect(screen.getByRole("link")).toHaveAttribute("aria-current", "page");
+    vi.doUnmock("next/navigation");
+    vi.resetModules();
   });
 });

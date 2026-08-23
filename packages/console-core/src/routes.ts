@@ -272,7 +272,12 @@ export const ROUTES = {
   "platform.aiUsage": { mobile: "/platform/ai-usage", capability: "platform" },
 
   "platform.uptime": { web: "/admin/uptime", mobile: "/platform/uptime", pending: true, capability: "platform" },
-  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", pending: true, capability: "platform" },
+  // The estate health page. NOT `pending`: the console serves this surface at
+  // /platform/health. It is reached from the header health indicator rather
+  // than from the rail — the rail's Health group was deleted as dead
+  // placeholders (see nav.ts) — and the `web` path stays recorded because
+  // apps/web still serves its own.
+  "platform.serviceHealth": { web: "/admin/health", mobile: "/platform/health", console: "/platform/health", capability: "platform" },
   "platform.observability": { web: "/admin/observability", mobile: "/platform/observability", pending: true, capability: "platform" },
   "platform.databases": { web: "/admin/databases", mobile: "/platform/databases", pending: true, capability: "platform" },
   // Left at `read`: none of CAPABILITIES covers DNS mutation, and inventing a

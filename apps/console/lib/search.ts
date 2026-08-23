@@ -1,6 +1,9 @@
 import {
   consolePath,
   isPending,
+  koraNav,
+  navItems,
+  platformNav,
   ROUTE_IDS,
   type RouteId,
   toolUrl,
@@ -92,7 +95,9 @@ export function routeLabel(id: RouteId): string {
 }
 
 /**
- * Every route as a search entry, pending ones included and marked disabled.
+ * Every route a rail still advertises, as a search entry — pending ones
+ * included and marked disabled, EXCEPT those no rail advertises any more
+ * (see `offeredInPalette`).
  *
  * Pending routes still need to be discoverable: hiding 21 of 22 routes would
  * leave the palette looking like the console has one page, and an operator
@@ -101,12 +106,44 @@ export function routeLabel(id: RouteId): string {
  *
  * Capability comes from the route table, not from here: which capability a
  * surface needs is part of its identity, and a second mapping in this file
- * would drift from the one in `console-core`. Most routes resolve to the
- * `read` default; the handful that do not are the ones an operator without
- * them must not see advertised.
+ * would drift from the one in `console-core`. Since #261 there is no `read`
+ * default at all — every route names its own capability, and `visibleTo`
+ * filters against a value that actually varies rather than against the entry
+ * ticket every operator holds.
  */
+/**
+ * Every route id a rail still advertises.
+ *
+ * Both rails, not just `platformNav`: Kora's surfaces are pending and live in
+ * `koraNav`, and they are precisely the ones that must keep their palette rows.
+ * Built from `navItems` — the walker console-core exports — rather than a
+ * second flattener here, so the palette and nav.test.ts cannot disagree about
+ * what the rails contain.
+ */
+const RAILED_ROUTES: ReadonlySet<string> = new Set(
+  [...navItems(platformNav), ...navItems(koraNav)].map((item) => item.route),
+);
+
+/**
+ * True while the palette may still offer a route id at all.
+ *
+ * A pending route with a rail entry stays: the rail advertises it as coming,
+ * and a disabled palette row says the same thing in the same words. A pending
+ * route with NO rail entry is different — nothing advertises it anywhere, so a
+ * greyed, unclickable row with no explanation says LESS than the deleted rail
+ * group did. Uptime, Observability, Databases and Custom domains are exactly
+ * those four; `/platform/health` now names three of them in prose, as things
+ * nothing measures yet, which is more than the palette row ever said.
+ *
+ * A rule, not a hardcoded id list: the next surface whose rail entry is
+ * deleted, or added, is handled without editing this file.
+ */
+function offeredInPalette(id: RouteId): boolean {
+  return !isPending(id) || RAILED_ROUTES.has(id);
+}
+
 export function routeEntries(): SearchEntry[] {
-  return ROUTE_IDS.map((id) => {
+  return ROUTE_IDS.filter(offeredInPalette).map((id) => {
     const [first, second] = id.split(".");
     return {
       id: `route:${id}`,

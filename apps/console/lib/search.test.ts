@@ -91,11 +91,49 @@ describe("routeEntries", () => {
     expect(lookup?.keywords).toContain("platform.identityLookup");
   });
 
-  it("still emits exactly one entry per route id", () => {
-    // The capability field must not add or drop palette entries.
+  it("still emits at most one entry per route id", () => {
+    // The capability field must not add or duplicate palette entries. The
+    // count is no longer `ROUTE_IDS.length`: a pending route no rail
+    // advertises any more is deliberately dropped (see below), so what is
+    // pinned here is one-entry-per-id and no duplicates.
     const entries = routeEntries();
-    expect(entries.length).toBe(ROUTE_IDS.length);
-    expect(new Set(entries.map((e) => e.id)).size).toBe(ROUTE_IDS.length);
+    expect(entries.length).toBeLessThanOrEqual(ROUTE_IDS.length);
+    expect(new Set(entries.map((e) => e.id)).size).toBe(entries.length);
+  });
+
+  it("drops a pending route no rail advertises any more", () => {
+    // The rail's Health group (Uptime, Service health, Observability,
+    // Databases, Custom domains) was deleted as unbuilt placeholders. These
+    // four are still pending and now have no rail entry, so a greyed,
+    // unclickable palette row with no explanation says LESS than the rail
+    // did. `/platform/health` names three of them in prose instead.
+    const ids = routeEntries().map((e) => e.id);
+    for (const id of [
+      "platform.uptime",
+      "platform.observability",
+      "platform.databases",
+      "platform.customDomains",
+    ]) {
+      expect(ids).not.toContain(`route:${id}`);
+    }
+  });
+
+  it("keeps a pending route that a rail still advertises", () => {
+    // The rule is "pending AND unadvertised", not "pending". Kora's surfaces
+    // are pending and sit in koraNav; platform.liveChat is pending and sits in
+    // Operate. The rail promises them, so the palette may say the same thing.
+    const ids = routeEntries().map((e) => e.id);
+    expect(ids).toContain("route:kora.foods");
+    expect(ids).toContain("route:platform.liveChat");
+    // and they are still marked disabled rather than linked
+    expect(routeEntries().find((e) => e.id === "route:kora.foods")?.disabled).toBe(true);
+  });
+
+  it("keeps the estate health page, which is built and has no rail entry", () => {
+    // Not pending, so the "unadvertised" half of the rule never applies. This
+    // is the one surface reached only from the header indicator, and the
+    // palette is the other way to find it.
+    expect(routeEntries().map((e) => e.id)).toContain("route:platform.serviceHealth");
   });
 });
 

@@ -55,4 +55,41 @@ describe("parseHealth", () => {
       }).state,
     ).toBe("healthy");
   });
+
+  it("refuses a healthy claim whose own counts are short", () => {
+    // Guarding the state STRING is not the same as guarding the CLAIM. A
+    // payload saying "healthy" while reporting 3 of 8 workloads ready renders
+    // a green dot, the word "Healthy", and "Workloads 3 / 8" directly beneath
+    // it — the state word contradicted by the numbers next to it.
+    const short = parseHealth({
+      ...wire,
+      state: "healthy",
+      workloads: { total: 8, ready: 3 },
+      databases: { total: 1, ready: 1 },
+    });
+
+    // `degraded`, not `unmeasured`: something WAS measured and it came back
+    // short. Discarding a real reading would be its own dishonesty.
+    expect(short.state).toBe("degraded");
+    expect(short.reason).toMatch(/claimed healthy but reported fewer ready than total/);
+    // The counts survive the downgrade — the page still shows what was read.
+    expect(short.workloads).toEqual({ total: 8, ready: 3 });
+  });
+
+  it("catches short counts on the database side too", () => {
+    expect(
+      parseHealth({
+        ...wire,
+        state: "healthy",
+        workloads: { total: 8, ready: 8 },
+        databases: { total: 2, ready: 1 },
+      }).state,
+    ).toBe("degraded");
+  });
+
+  it("still calls a genuinely complete healthy reading healthy", () => {
+    // Guards the guard: a downgrade rule that fires on everything would
+    // satisfy the two tests above while deleting the healthy state.
+    expect(parseHealth(wire).state).toBe("healthy");
+  });
 });

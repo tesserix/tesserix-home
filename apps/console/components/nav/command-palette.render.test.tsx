@@ -111,22 +111,23 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
-      "custom",
+      "identity lookup",
     );
-    // `platform.customDomains` is pending and stays at the `read` capability,
-    // so it is the right fixture for pending-ness alone. This used to use
-    // `platform.breakGlass`, which now declares `rotate-credentials` and is
-    // correctly filtered out for this read-only operator — a different
-    // property, tested below.
-    const pending = await screen.findByRole("option", { name: /Custom Domains/i });
+    // `platform.identityLookup` is pending, declares `platform` (which this
+    // fixture operator holds), and keeps its rail entry in Operate — so it is
+    // the right fixture for pending-ness alone. It replaces
+    // `platform.customDomains`, which is pending with NO rail entry any more
+    // and is therefore no longer offered at all: a different property, pinned
+    // in lib/search.test.ts.
+    const pending = await screen.findByRole("option", { name: /Identity Lookup/i });
     expect(pending).toBeDisabled();
   });
 
   it("finds a camelCase route by the words its label displays", async () => {
     // Regression test for the labelling-rule fix: `value` is now built from
     // the same split-and-capitalize rule the label renders with, so typing
-    // the words an operator reads on screen ("custom domains") must find
-    // `platform.customDomains` even though nothing in the route id itself
+    // the words an operator reads on screen ("identity lookup") must find
+    // `platform.identityLookup` even though nothing in the route id itself
     // contains a space.
     mockSearch([]);
     const user = userEvent.setup();
@@ -134,9 +135,9 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
-      "custom domains",
+      "identity lookup",
     );
-    expect(await screen.findByRole("option", { name: /Custom Domains/i })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: /Identity Lookup/i })).toBeInTheDocument();
   });
 
   it("does not offer a route whose capability the operator lacks", async () => {
@@ -438,9 +439,9 @@ describe("ConsoleCommandPalette", () => {
     await user.click(screen.getByRole("button", { name: /search/i }));
     await user.type(
       await screen.findByPlaceholderText(/search routes, tools and tickets/i),
-      "custom",
+      "identity lookup",
     );
-    const pending = await screen.findByRole("option", { name: /Custom Domains/i });
+    const pending = await screen.findByRole("option", { name: /Identity Lookup/i });
     await user.click(pending);
 
     expect(push).not.toHaveBeenCalled();

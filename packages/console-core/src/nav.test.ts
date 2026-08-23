@@ -2,16 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   isNavGroup,
   koraNav,
+  navItems,
   platformNav,
   type NavEntry,
   type NavGroup,
 } from "./nav";
 import { isPending, isRetired, webPath } from "./routes";
 
+// The walker now lives in nav.ts, because the console's command palette needs
+// the same one — see `navItems`. This alias keeps the assertions below reading
+// as they did.
 function collectItems(
   entries: readonly NavEntry[],
-): { name: string; route: Parameters<typeof webPath>[0] }[] {
-  return entries.flatMap((entry) => (isNavGroup(entry) ? collectItems(entry.items) : [entry]));
+): readonly { name: string; route: Parameters<typeof webPath>[0] }[] {
+  return navItems(entries);
 }
 
 describe("koraNav", () => {
@@ -158,8 +162,10 @@ describe("platformNav", () => {
 
   it("puts the CRM in Growth, not Operate", () => {
     // Growth exists because a sales queue does not belong beside service
-    // health (Operate) or policy/accountability (Governance) — it is revenue
-    // work, not platform upkeep.
+    // upkeep (Operate — the ticket queue, identity lookup, live chat) or
+    // policy/accountability (Governance) — it is revenue work, not platform
+    // upkeep. Service health is in neither: it has no rail entry at all, and
+    // is reached from the header indicator.
     const growth: NavGroup | undefined = platformNav
       .filter(isNavGroup)
       .find((group) => group.name === "Growth");
@@ -171,6 +177,26 @@ describe("platformNav", () => {
       .filter(isNavGroup)
       .find((group) => group.name === "Operate");
     expect(operate!.items.map((item) => item.route)).not.toContain("platform.crm");
+  });
+
+  it("keeps the estate health page out of every nav group, deliberately", () => {
+    // nav.test.ts otherwise encodes the #134 rule that a BUILT surface
+    // unreachable from the rail is a failure — and `platform.serviceHealth` is
+    // now exactly that, on purpose. It is reached from the header's health
+    // indicator, which renders on every console page; the rail group it used
+    // to belong to (Health: Uptime, Service health, Observability, Databases,
+    // Custom domains) was five unbuilt placeholders leading nowhere and was
+    // deleted with it.
+    //
+    // The marker in nav.ts says "do not re-add this group", which does not
+    // cover the likelier regression: someone adding a single "Service health"
+    // item to Operate, citing the very rule above. This is what fails then.
+    const railed = [...collectItems(platformNav), ...collectItems(koraNav)].map(
+      (item) => item.route,
+    );
+    expect(railed).not.toContain("platform.serviceHealth");
+    // Guards the guard: an empty walk would satisfy the line above.
+    expect(railed).toContain("platform.auditLog");
   });
 
   it("puts Organisations in Growth, ahead of import", () => {
