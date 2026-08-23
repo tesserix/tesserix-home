@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { consolePath } from "@tesserix/console-core";
+import { usePathname } from "next/navigation";
+import { consolePath, isRouteActive } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
 import type { EstateHealth } from "@/lib/health";
 import { describeHealth, HEALTH_PRESENTATION } from "@/lib/health-presentation";
@@ -30,6 +31,14 @@ import { describeHealth, HEALTH_PRESENTATION } from "@/lib/health-presentation";
  * the entire indicator. No test can catch a viewport-only regression here:
  * jsdom has no viewport.
  *
+ * # `aria-current` when it points at the page you are on
+ *
+ * This renders in the header on EVERY console page, including the health page
+ * itself, where it is a link to the current location. The sidebar already
+ * solves that — `isRouteActive(pathname, route, "console")` plus
+ * `aria-current="page"` — so this reuses that mechanism rather than inventing a
+ * second one that could disagree with it about what "active" means.
+ *
  * # A link, but `role="status"` stays off the link
  *
  * This now navigates to the health page (`platform.serviceHealth`, resolved
@@ -51,11 +60,18 @@ export function HealthIndicator({
 }): React.JSX.Element {
   const presentation = HEALTH_PRESENTATION[health.state];
   const description = describeHealth(health);
+  const pathname = usePathname();
+  const onHealthPage = isRouteActive(pathname ?? "", "platform.serviceHealth", "console");
 
   return (
     <Link
       href={consolePath("platform.serviceHealth")}
-      title={description}
+      // No `title`. It carried the same string as the inner span's
+      // `aria-label`, so a screen reader announced the sentence twice — once
+      // as the accessible name and once as the description. Harmless while the
+      // span was not focusable; this is a link in the tab order on every
+      // console page now. The `aria-label` is the accessible name.
+      aria-current={onHealthPage ? "page" : undefined}
       className={`flex items-center gap-1.5 text-xs ${presentation.text}`}
     >
       <NavIcon name="heart-pulse" className="size-3.5 shrink-0" />

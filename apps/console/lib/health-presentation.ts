@@ -9,10 +9,16 @@ import type { EstateHealth, HealthState } from "@/lib/health";
  * Two surfaces show this state: the header indicator (`components/nav/
  * health-indicator.tsx`) and the health page (`app/(console)/platform/
  * health/page.tsx`). Both need to agree on what "degraded" looks like — a
- * diamond, amber, "Degraded" — and on what it SAYS. Restating the mapping in
- * each surface is exactly the drift this codebase has already paid for once
- * (see the indicator's own history); extracting it here means there is one
- * place to get it right and one place a reviewer needs to check.
+ * diamond, amber, "Degraded" — and on what it SAYS. Extracting it here means
+ * there is one place to get it right and one place a reviewer needs to check,
+ * instead of two mappings free to drift apart the first time either surface
+ * gains a state.
+ *
+ * What is NOT shared is emphasis. `text` is tuned for the header, where the
+ * indicator is muted chrome; the page gives the state word its own class,
+ * because there `Healthy` and `Unmeasured` are the headline and rendering both
+ * in the section labels' grey makes the two states this feature exists to
+ * distinguish typographically identical.
  */
 
 export interface HealthPresentation {
@@ -30,6 +36,12 @@ export interface HealthPresentation {
 // (WCAG 2.1 AA, 1.4.1) and unreadable to a red/green-deficient operator —
 // exactly the reader who most needs it. Filled circle / rotated square (a
 // diamond) / hollow ring stay distinct in monochrome and at small sizes.
+//
+// The clause that makes that binding is the INDICATOR's condition, not the
+// page's: below the `sm` breakpoint the indicator hides its text label, so the
+// dot is the entire control and the shape is all that is left to read. On the
+// page the label is always visible beside the dot — but the shapes are shared,
+// so the weaker surface does not get to relax them for the stronger one.
 export const HEALTH_PRESENTATION: Record<HealthState, HealthPresentation> = {
   healthy: {
     label: "Healthy",
