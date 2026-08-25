@@ -19,8 +19,18 @@ type Product struct {
 	Slug string
 	// BaseURL is the product's platform admin front door, without a trailing
 	// slash.
+	//
+	// For mark8ly this must end in "/api/v1/platform", NOT "/api/v1". The
+	// difference is not cosmetic and does not fail anywhere you would look:
+	// an Istio AuthorizationPolicy in istio-ingress denies un-JWT'd requests
+	// to /api/v1/admin/*, and this surface authenticates by HMAC rather than
+	// by JWT. Point it at the wrong prefix and the mesh answers 403
+	// "RBAC: access denied" before the request reaches the application — so
+	// the product's own logs show nothing, and neither local dev nor CI
+	// reproduces it, because Istio is in neither.
 	BaseURL string
-	// Secret is the shared secret the request is signed with.
+	// Secret is the HMAC key the request is signed with. See signature.go —
+	// it is the key, not a bearer credential, and is never sent.
 	Secret string
 }
 
@@ -94,11 +104,11 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 				slug, prefix)
 		}
 		// Exactly as strict as BASE_URL, and for a stronger reason. An empty
-		// secret is not a missing feature: Client.Get sends
-		// `X-Internal-Auth: ""`, so a typo'd FEDERATION_<SLUG>_SECRET
-		// downgrades every federated call to an unauthenticated one that still
-		// carries operator identity headers. This client exists to carry
-		// signed operator identity; it fails closed at boot instead.
+		// secret is not a missing feature: it is a key that signs nothing, so
+		// a typo'd FEDERATION_<SLUG>_SECRET would make every federated call
+		// fail authentication at the far end with no local symptom beyond a
+		// 401. Sign refuses an empty secret too; this is the earlier of the
+		// two gates, and it fails closed at boot rather than per request.
 		secret := strings.TrimSpace(getenv(prefix + "SECRET"))
 		if secret == "" {
 			return nil, fmt.Errorf(
