@@ -85,6 +85,14 @@ func sanitize(err error) string {
 	if errors.Is(err, ErrRequestInvalid) || errors.Is(err, ErrProductNotConfigured) {
 		return "product misconfigured"
 	}
+	// Kept apart from "product misconfigured" because it is not always
+	// config: an empty secret is, but a newline in the operator identity or a
+	// dead entropy source is not, and sending an operator to check the wrong
+	// thing costs more than the extra arm does. Still a fixed string — an
+	// error from Sign can quote a field value back.
+	if errors.Is(err, ErrSigning) {
+		return "request could not be signed"
+	}
 	if statusErr, ok := errors.AsType[*statusError](err); ok {
 		return fmt.Sprintf("responded %d", statusErr.Status)
 	}
