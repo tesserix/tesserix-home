@@ -12,6 +12,7 @@ import {
   type SurfaceState,
 } from "@/components/kit/surface-state";
 import { fetchProductEntities } from "@/lib/platform-api";
+import { pagerLinks, readPage, type PagerLinks } from "../entity-page";
 import type { EntityPage } from "@/lib/entities";
 import { UserDirectory } from "./user-directory";
 
@@ -48,6 +49,9 @@ export const USER_FILTERS: FilterDescriptor[] = [
 
 export type UserSearchParams = Record<string, string | string[] | undefined>;
 
+/** Where this surface lives, for the pager's hrefs. */
+export const USER_PATH = "/kora/users";
+
 export interface UserFilters {
   q?: string;
 }
@@ -72,8 +76,7 @@ export function toFilterValues(filters: UserFilters): FilterValues {
 
 export const USER_EMPTY_MESSAGE = "Kora has no users yet.";
 
-export const USER_SCOPE_NOTE =
-  "The directory is asked for a bounded page, so it is not listed in full — search to narrow it.";
+export const USER_SCOPE_NOTE = "Search to narrow the directory, or page through it.";
 
 /**
  * Copy for the 501, which is NOT an error.
@@ -132,17 +135,21 @@ export default async function KoraUsers({
 }) {
   const resolved = await searchParams;
   const filters = readUserFilters(resolved);
+  const pageNumber = readPage(resolved);
 
   // Caught rather than allowed to reject: a 501 and a genuine failure are both
   // states this page renders, and an uncaught rejection would show the route
   // error boundary instead.
-  let page: EntityPage = EMPTY_PAGE;
+  let result: EntityPage = EMPTY_PAGE;
   let error: unknown = null;
   try {
-    page = await fetchProductEntities("kora", "users", filters.q);
+    result = await fetchProductEntities("kora", "users", filters.q, pageNumber);
   } catch (caught: unknown) {
     error = caught;
   }
+
+  // From the product's own total, not `rows.length === limit` — see pagerLinks.
+  const pager: PagerLinks = pagerLinks(USER_PATH, resolved, pageNumber, result.data.length, result.pagination.total);
 
   return (
     <div className="flex flex-col gap-6">
@@ -154,8 +161,9 @@ export default async function KoraUsers({
       <UserDirectory
         descriptors={USER_FILTERS}
         values={toFilterValues(filters)}
-        page={page}
-        state={directoryState({ error, rows: page.data, filtered: filters.q !== undefined })}
+        page={result}
+        pager={pager}
+        state={directoryState({ error, rows: result.data, filtered: filters.q !== undefined })}
         emptyMessage={USER_EMPTY_MESSAGE}
         scopeNote={USER_SCOPE_NOTE}
         reauthReturnTo={currentPath(resolved)}

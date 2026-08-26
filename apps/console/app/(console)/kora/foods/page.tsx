@@ -13,6 +13,7 @@ import {
   type SurfaceState,
 } from "@/components/kit/surface-state";
 import { fetchProductEntities } from "@/lib/platform-api";
+import { pagerLinks, readPage, type PagerLinks } from "../entity-page";
 import type { EntityPage } from "@/lib/entities";
 import { FoodIndex } from "./food-index";
 
@@ -51,6 +52,9 @@ export const FOOD_FILTERS: FilterDescriptor[] = [
 
 export type FoodSearchParams = Record<string, string | string[] | undefined>;
 
+/** Where this surface lives, for the pager's hrefs. */
+export const FOOD_PATH = "/kora/foods";
+
 export interface FoodFilters {
   q?: string;
 }
@@ -87,8 +91,7 @@ export const FOOD_EMPTY_MESSAGE = "Kora's food index is empty.";
  * No number is quoted: the bound is `platform-api.ts`'s to choose, and a
  * transcribed constant here is the copy that goes stale.
  */
-export const FOOD_SCOPE_NOTE =
-  "The index is asked for a bounded page, so it is not listed in full — search to narrow it.";
+export const FOOD_SCOPE_NOTE = "Search to narrow the index, or page through it.";
 
 /**
  * Copy for the 501, which is NOT an error and must not read as one.
@@ -156,17 +159,23 @@ export default async function KoraFoodIndex({
 }) {
   const resolved = await searchParams;
   const filters = readFoodFilters(resolved);
+  const page = readPage(resolved);
 
   // Caught rather than allowed to reject: a 501 and a genuine failure are both
   // states this page renders, and an uncaught rejection would show the route
   // error boundary instead.
-  let page: EntityPage = EMPTY_PAGE;
+  let result: EntityPage = EMPTY_PAGE;
   let error: unknown = null;
   try {
-    page = await fetchProductEntities("kora", "foods", filters.q);
+    result = await fetchProductEntities("kora", "foods", filters.q, page);
   } catch (caught: unknown) {
     error = caught;
   }
+
+  // Computed AFTER the read, from the product's own total — a pager derived
+  // from `rows.length === limit` offers one empty page past the end whenever
+  // the result set is an exact multiple of the page size.
+  const pager: PagerLinks = pagerLinks(FOOD_PATH, resolved, page, result.data.length, result.pagination.total);
 
   return (
     <div className="flex flex-col gap-6">
@@ -178,10 +187,11 @@ export default async function KoraFoodIndex({
       <FoodIndex
         descriptors={FOOD_FILTERS}
         values={toFilterValues(filters)}
-        page={page}
+        page={result}
+        pager={pager}
         state={indexState({
           error,
-          rows: page.data,
+          rows: result.data,
           filtered: filters.q !== undefined,
         })}
         emptyMessage={FOOD_EMPTY_MESSAGE}

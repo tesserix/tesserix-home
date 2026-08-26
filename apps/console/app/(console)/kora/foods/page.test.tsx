@@ -123,6 +123,9 @@ describe("currentPath", () => {
 });
 
 describe("FoodIndex", () => {
+  /** A first page with more behind it, so the pager renders both states. */
+  const pager = { precedingCount: 0, nextHref: "?page=2", previousHref: null };
+
   const common = {
     descriptors: [{ key: "q", label: "Search foods", type: "search" as const }],
     values: {},
@@ -136,6 +139,7 @@ describe("FoodIndex", () => {
       <FoodIndex
         {...common}
         page={page()}
+        pager={pager}
         state={indexState({ error: null, rows: [row], filtered: false })}
       />,
     );
@@ -143,29 +147,35 @@ describe("FoodIndex", () => {
     expect(screen.getByText("2026-08-22")).toBeInTheDocument();
   });
 
-  // Kora reports 6421 foods and the page asks for a bounded slice. Leaving
-  // someone to read a row count that stops at the bound as the whole index is
-  // the failure this line prevents.
-  it("says how many are shown of how many exist", () => {
+  // A RANGE, not a bare count: with a count alone every page reads the same
+  // and an operator cannot tell which one they are on. Kora reports 6421
+  // foods, so the index is emphatically more than one page.
+  it("shows the page's range within the whole index", () => {
     render(
       <FoodIndex
         {...common}
         page={page()}
+        pager={pager}
         state={indexState({ error: null, rows: [row], filtered: false })}
       />,
     );
-    expect(screen.getByText(/Showing 1 of 6421 foods/)).toBeInTheDocument();
+    expect(screen.getByText(/1–1 of 6421/)).toBeInTheDocument();
+    // And offers a way to reach row 51 — an index with no pager is a dead end.
+    expect(screen.getByRole("link", { name: /next page of foods/i })).toBeInTheDocument();
   });
 
-  it("does not say 'showing N of N' when the page is the whole index", () => {
+  // A dead "Next" promises a page that is not there, and an operator who
+  // clicks it concludes the surface is broken rather than finished.
+  it("offers no next link when the page is the whole index", () => {
     render(
       <FoodIndex
         {...common}
         page={page({ pagination: { page: 1, limit: 100, total: 1 } })}
+        pager={{ precedingCount: 0, nextHref: null, previousHref: null }}
         state={indexState({ error: null, rows: [row], filtered: false })}
       />,
     );
-    expect(screen.getByText(/1 foods\./)).toBeInTheDocument();
-    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1–1 of 1/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /next page/i })).toBeNull();
   });
 });

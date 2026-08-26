@@ -55,7 +55,7 @@ const DefaultLimit = 100
 // to believe a page is complete when it is not.
 const MaxLimit = 500
 
-var entityParameters = []string{"source", "q", "limit"}
+var entityParameters = []string{"source", "q", "limit", "page"}
 
 // Routes mounts the table behind the capability gate.
 func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
@@ -101,6 +101,12 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pageNumber, err := readPage(query.Get("page"))
+	if err != nil {
+		httpx.WriteError(w, r, err, h.log)
+		return
+	}
+
 	page, err := h.svc.Read(r.Context(), federation.Operator{
 		ID: principal.Subject, Capability: string(auth.CapPlatform),
 	}, source, entityType, service.Query{
@@ -108,6 +114,7 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		// rules and a copy of them would drift. See service.Query.Q.
 		Q:     strings.TrimSpace(query.Get("q")),
 		Limit: limit,
+		Page:  pageNumber,
 	})
 	if err != nil {
 		h.writeReadError(w, r, err)
@@ -141,6 +148,24 @@ func (h *Handler) writeReadError(w http.ResponseWriter, r *http.Request, err err
 		// hostnames, which is why the federation package sanitizes at all.
 		httpx.WriteError(w, r, httpx.Unavailable("the product could not be reached"), h.log)
 	}
+}
+
+// readPage parses the 1-based page number.
+//
+// Absent means the first page. Present but not a positive integer is a 400
+// rather than a silent fallback: `?page=0` and `?page=-1` are bugs in whatever
+// built the link, and answering them with page 1 hides a pager that has walked
+// off the start of its range.
+func readPage(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 1, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, httpx.BadRequest("page must be a positive integer")
+	}
+	return n, nil
 }
 
 func readLimit(raw string) (int, error) {

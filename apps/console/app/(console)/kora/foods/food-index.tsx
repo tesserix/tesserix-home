@@ -14,9 +14,11 @@ import {
   type FilterDescriptor,
   type FilterValues,
 } from "@/components/kit/filter-bar";
+import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { EntityPage } from "@/lib/entities";
+import type { PagerLinks } from "../entity-page";
 
 /**
  * The client half of Kora's food index.
@@ -43,6 +45,7 @@ export interface FoodIndexProps {
   descriptors: FilterDescriptor[];
   values: FilterValues;
   page: EntityPage;
+  pager: PagerLinks;
   state: SurfaceState;
   emptyMessage: string;
   scopeNote: string;
@@ -53,6 +56,7 @@ export function FoodIndex({
   descriptors,
   values,
   page,
+  pager,
   state,
   emptyMessage,
   scopeNote,
@@ -93,16 +97,19 @@ export function FoodIndex({
               ))}
             </TableBody>
           </Table>
-          <p className="text-xs text-muted-foreground">
-            {/* The product's own count, which is far larger than a page: Kora
-                reports 6421 foods. Saying "showing N of M" beats leaving
-                someone to read a row count that stops at the page bound as the
-                whole index. */}
-            {pagination.total === data.length
-              ? `${pagination.total} foods.`
-              : `Showing ${data.length} of ${pagination.total} foods.`}{" "}
-            {scopeNote}
-          </p>
+          {/* A RANGE ("51–100 of 6421"), not a bare count: with a count
+              alone every page reads the same and an operator cannot tell
+              which one they are on. ResultPager also carries aria-live, so a
+              screen-reader user hears the new position after paging. */}
+          <ResultPager
+            label="foods"
+            count={data.length}
+            total={pagination.total}
+            precedingCount={pager.precedingCount}
+            nextHref={pager.nextHref}
+            previousHref={pager.previousHref}
+          />
+          <p className="text-xs text-muted-foreground">{scopeNote}</p>
         </>
       ) : (
         <SurfaceStateView

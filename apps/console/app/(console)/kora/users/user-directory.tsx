@@ -14,10 +14,12 @@ import {
   type FilterDescriptor,
   type FilterValues,
 } from "@/components/kit/filter-bar";
+import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import { formatCreated } from "../foods/food-index";
 import type { EntityPage } from "@/lib/entities";
+import type { PagerLinks } from "../entity-page";
 
 /**
  * The client half of Kora's user directory.
@@ -32,6 +34,7 @@ export interface UserDirectoryProps {
   descriptors: FilterDescriptor[];
   values: FilterValues;
   page: EntityPage;
+  pager: PagerLinks;
   state: SurfaceState;
   emptyMessage: string;
   scopeNote: string;
@@ -42,6 +45,7 @@ export function UserDirectory({
   descriptors,
   values,
   page,
+  pager,
   state,
   emptyMessage,
   scopeNote,
@@ -86,12 +90,16 @@ export function UserDirectory({
               ))}
             </TableBody>
           </Table>
-          <p className="text-xs text-muted-foreground">
-            {pagination.total === data.length
-              ? `${pagination.total} users.`
-              : `Showing ${data.length} of ${pagination.total} users.`}{" "}
-            {scopeNote}
-          </p>
+          {/* A range, not a bare count — see the food index. */}
+          <ResultPager
+            label="users"
+            count={data.length}
+            total={pagination.total}
+            precedingCount={pager.precedingCount}
+            nextHref={pager.nextHref}
+            previousHref={pager.previousHref}
+          />
+          <p className="text-xs text-muted-foreground">{scopeNote}</p>
         </>
       ) : (
         <SurfaceStateView

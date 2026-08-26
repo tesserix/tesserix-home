@@ -776,8 +776,14 @@ export async function fetchEstateTrials(): Promise<import("./billing").TrialPage
   );
 }
 
-/** The page size the product-rail index pages ask for. */
-export const ENTITIES_LIMIT = 100;
+/**
+ * The page size the product-rail index pages ask for.
+ *
+ * 50, not 100: these surfaces page now, and a shorter page is a faster first
+ * paint and less to scan before deciding to search. The number is stated here
+ * rather than transcribed into page copy, so it cannot go stale in two places.
+ */
+export const ENTITIES_LIMIT = 50;
 
 /**
  * One product's §3.4 entity records — `foods`, `users`.
@@ -795,11 +801,15 @@ export async function fetchProductEntities(
   source: string,
   type: string,
   search?: string,
+  page = 1,
 ): Promise<import("./entities").EntityPage> {
   const { parseEntities } = await import("./entities");
 
   const query = new URLSearchParams({ source, limit: String(ENTITIES_LIMIT) });
   if (search) query.set("q", search);
+  // Omitted at 1: the platform API defaults to the first page, and sending it
+  // makes every first-page request differ from the default for no gain.
+  if (page > 1) query.set("page", String(page));
 
   return parseEntities(
     await platformRequest(

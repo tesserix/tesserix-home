@@ -35,6 +35,9 @@ const page = (over: Partial<EntityPage> = {}): EntityPage => ({
   ...over,
 });
 
+/** A first page with more behind it, so the pager renders both states. */
+const pager = { precedingCount: 0, nextHref: "?page=2", previousHref: null };
+
 const common = {
   descriptors: [{ key: "q", label: "Search users", type: "search" as const }],
   values: {},
@@ -85,6 +88,7 @@ describe("UserDirectory", () => {
       <UserDirectory
         {...common}
         page={page()}
+        pager={pager}
         state={directoryState({ error: null, rows: [withHandle], filtered: false })}
       />,
     );
@@ -100,6 +104,7 @@ describe("UserDirectory", () => {
       <UserDirectory
         {...common}
         page={page({ data: [bare] })}
+        pager={pager}
         state={directoryState({ error: null, rows: [bare], filtered: false })}
       />,
     );
@@ -107,15 +112,18 @@ describe("UserDirectory", () => {
     expect(container.textContent).not.toMatch(/—|unknown|n\/a/i);
   });
 
-  it("says how many are shown of how many exist", () => {
+  // A range, not a bare count — see the food index.
+  it("shows the page's range within the whole directory", () => {
     render(
       <UserDirectory
         {...common}
         page={page()}
+        pager={pager}
         state={directoryState({ error: null, rows: [withHandle], filtered: false })}
       />,
     );
-    expect(screen.getByText(/Showing 1 of 18 users/)).toBeInTheDocument();
+    expect(screen.getByText(/1–1 of 18/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /next page of users/i })).toBeInTheDocument();
   });
 
   // Kora serves DELETE /v1/admin/users/:id and this page deliberately does not
@@ -126,6 +134,7 @@ describe("UserDirectory", () => {
       <UserDirectory
         {...common}
         page={page()}
+        pager={pager}
         state={directoryState({ error: null, rows: [withHandle], filtered: false })}
       />,
     );
