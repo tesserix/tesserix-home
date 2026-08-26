@@ -655,6 +655,58 @@ export async function fetchEstateAuditLog(
   return parseEstateAuditLog(await readBody(response, "audit log"));
 }
 
+/** Rows asked of each product. The platform API defaults to 100; stated here
+ * so the window is set by the caller that renders it. */
+const TENANTS_LIMIT = 100;
+
+/**
+ * Every product's tenants, aggregated.
+ *
+ * **One transport, deliberately — no apps/web fallback**, unlike
+ * `fetchEstateAuditLog` above.
+ *
+ * That asymmetry is the point rather than an omission. The audit surface HAS
+ * an apps/web predecessor serving the same question, so unsetting
+ * `PLATFORM_API_ORIGIN` is a true rollback. This surface does not: apps/web's
+ * `/admin/tenants` reads and WRITES mark8ly's tenants table directly over the
+ * cross-database grant (#210), bypassing validation, domain events, cache
+ * invalidation and mark8ly's own audit row. Falling back to it would not be a
+ * rollback — it would be a return to the write path this replaces.
+ *
+ * So with no origin configured, this surface is unavailable, and says so.
+ *
+ * `platformRequest` throws on any non-2xx, so a 501 arrives as a
+ * `PlatformApiError` carrying `status: 501` — which the page maps to
+ * "not instrumented" rather than to an error worth retrying. That is why the
+ * status is kept rather than flattened into a message: an unconfigured estate
+ * and an empty one are different claims, and only one of them is actionable.
+ */
+export async function fetchEstateTenants(
+  filters: { product?: string; q?: string; status?: string } = {},
+): Promise<import("./tenants").EstateTenants> {
+  const { parseEstateTenants } = await import("./tenants");
+
+  if (!platformApiOrigin()) {
+    throw new PlatformApiError(
+      "tenants: PLATFORM_API_ORIGIN is not set, and this surface has no apps/web predecessor to fall back to",
+      501,
+    );
+  }
+
+  const query = new URLSearchParams({ limit: String(TENANTS_LIMIT) });
+  // `all` is the absence of a filter, not a source. Sending `source=all` would
+  // ask the API for a product it has never heard of, and it refuses an unknown
+  // source with a 400 rather than returning nothing — the behaviour that makes
+  // a typo visible instead of silent.
+  if (filters.product && filters.product !== "all") query.set("source", filters.product);
+  if (filters.q) query.set("q", filters.q);
+  if (filters.status) query.set("status", filters.status);
+
+  return parseEstateTenants(
+    await platformRequest("tenants", `/v1/tenants?${query.toString()}`),
+  );
+}
+
 /**
  * The AI cost and token usage ledger, from the platform API's `aiusage` module.
  *
