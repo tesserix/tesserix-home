@@ -1,6 +1,7 @@
 package federation
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -109,6 +110,66 @@ func randomNonce() (string, error) {
 
 // Get performs one federated read and returns the raw body.
 func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, slug, path, nil, op, nil)
+}
+
+// ErrIdempotencyKeyRequired is returned when a write is attempted without one.
+var ErrIdempotencyKeyRequired = errors.New("federation: an idempotency key is required for a write")
+
+// PostOptions carries what a write needs beyond its body.
+type PostOptions struct {
+	// IdempotencyKey is REQUIRED. See Post.
+	IdempotencyKey string
+}
+
+// Post performs one federated write.
+//
+// Deliberately not exposed through FanOut. Reading the same path from several
+// products and merging the answers is a sensible thing to want; writing the
+// same body to several products is not, and a partial failure across a fan-out
+// of mutations has no honest representation — some of it happened.
+//
+// An idempotency key is REQUIRED, and this refuses without one. A transport
+// error after the far end has committed is indistinguishable from one before
+// it, so any retry of a mutating call is a coin flip on double application,
+// and the caller does not always control the retry.
+//
+// The honest limit, worth knowing before relying on it: the key makes a retry
+// safe only where the far end honours it. On mark8ly today exactly one
+// endpoint does — POST /admin/billing/trials/{id}/extend, which refuses
+// without the header — while suspend, unsuspend and purge accept the header
+// and ignore it. Requiring it here is therefore necessary and not sufficient:
+// it costs one line, it is right wherever the far end implements it, and it
+// makes retry-safety a decision someone made rather than one nobody had.
+func (c *Client) Post(
+	ctx context.Context,
+	slug, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
+	if opts.IdempotencyKey == "" {
+		return nil, fmt.Errorf("%w: %s/%s", ErrIdempotencyKeyRequired, slug, path)
+	}
+	headers := map[string]string{
+		"Idempotency-Key": opts.IdempotencyKey,
+		"Content-Type":    "application/json",
+	}
+	return c.do(ctx, http.MethodPost, slug, path, body, op, headers)
+}
+
+// do is the one path every federated call takes.
+//
+// Get and Post share it so the signing, the operator check and the response
+// limit cannot drift apart between a read and a write — which is exactly the
+// kind of divergence that produces a scheme where reads work and writes 401.
+func (c *Client) do(
+	ctx context.Context,
+	method, slug, path string,
+	body []byte,
+	op Operator,
+	headers map[string]string,
+) ([]byte, error) {
 	if op.ID == "" || op.Capability == "" {
 		return nil, fmt.Errorf("federation: refusing to call %s/%s without an operator", slug, path)
 	}
@@ -117,14 +178,21 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 		return nil, fmt.Errorf("%w: %s", ErrProductNotConfigured, slug)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, product.BaseURL+path, nil)
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, product.BaseURL+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("federation: building request for %s: %w: %w", slug, ErrRequestInvalid, err)
 	}
-	if err := c.sign(req, product.Secret, op); err != nil {
+	if err := c.sign(req, product.Secret, op, body); err != nil {
 		return nil, fmt.Errorf("federation: signing request for %s: %w: %w", slug, ErrSigning, err)
 	}
 	req.Header.Set("Accept", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -134,14 +202,14 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 
 	// 1 MiB. A product answering with something enormous is a bug in that
 	// product; reading it all would make it this process's outage too.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("federation: reading %s response: %w: %w", slug, ErrTransport, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, &statusError{Slug: slug, Status: resp.StatusCode}
 	}
-	return body, nil
+	return respBody, nil
 }
 
 // sign attaches the five signed headers mark8ly's platform admin surface
@@ -156,10 +224,11 @@ func (c *Client) Get(ctx context.Context, slug, path string, op Operator) ([]byt
 // but it must be the query net/url parsed out rather than a substring someone
 // split off by hand.
 //
-// The body is always nil here because this client is read-only. That is not
-// an assumption baked into SignatureInput — it hashes whatever it is given —
-// and a future Post would pass the same bytes it sends.
-func (c *Client) sign(req *http.Request, secret string, op Operator) error {
+// body must be the exact bytes the request will carry. It is a parameter
+// rather than read back off req.Body because a consumed body cannot be
+// re-read: signing one set of bytes and sending another produces a signature
+// the far end rejects, with no local symptom.
+func (c *Client) sign(req *http.Request, secret string, op Operator, body []byte) error {
 	// Defaulted here as well as in NewClient: a Client built as a struct
 	// literal would otherwise panic on a nil func, and a panic in the signing
 	// path takes down a fan-out goroutine rather than degrading one source.
@@ -180,7 +249,7 @@ func (c *Client) sign(req *http.Request, secret string, op Operator) error {
 		Method:   req.Method,
 		Path:     req.URL.Path,
 		RawQuery: req.URL.RawQuery,
-		Body:     nil,
+		Body:     body,
 		// Unsigned decimal seconds. The far end rejects a leading '+' or '-'
 		// outright, and FormatInt of a positive int64 cannot produce either.
 		Timestamp:  strconv.FormatInt(now().Unix(), 10),
