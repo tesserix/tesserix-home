@@ -127,10 +127,13 @@ tesserix-social.
 
 ### 3.1 `GET /admin/kpis`
 
-Returns a flat map of headline business metrics.
+> **Amended 2026-08-26 (§8.6).** The metrics map is wrapped in `data`. The
+> shape below is current; the bare map it replaced is no longer conforming.
+
+Returns a flat map of headline business metrics, under `data`.
 
 ```
-{ "chefs_active": 412, "orders_today": 1877, "gmv_today": 984200 }
+{ "data": { "chefs_active": 412, "orders_today": 1877, "gmv_today": 984200 } }
 ```
 
 Feeds the Launchpad tile and the Business section. Keys are product-defined; the console
@@ -451,6 +454,45 @@ The limitation that remains, stated so it is not rediscovered: capabilities are
 estate-wide, not per-product. There is no way to express "may act on mark8ly but
 not on Fe3dr". That is a smaller open problem than §7's, and it is not blocking.
 
+### 8.6 `/admin/kpis` wraps its map in `data`
+
+§3.1 originally specified a bare flat map at the top level. It is now
+`{ "data": { ... } }`.
+
+Found by `@tesserix/admin-conformance`'s first run against production: mark8ly
+returns the wrapped shape, the contract said bare, and the suite reported the
+conflict rather than picking a side. Which is the point of having it — but the
+conflict still had to be resolved.
+
+**Resolved toward the implementation, for three reasons.**
+
+Every other contract endpoint already returns a `data` envelope: §4.1 is
+`{ data, pagination }`, and §3.4's entity detail is `{ data }`. A client that
+can always read `.data` is simpler than one that special-cases the single
+endpoint returning something else, and "flat" in §3.1 was always about the
+*metrics map* being flat — one level of scalars, no nesting — rather than about
+where that map sits.
+
+The migration cost is zero in both directions, so the decision is a design one
+rather than an economic one. mark8ly is the only implementer of this endpoint
+today, and **nothing consumes it**: there is no reader in `platform-api` or
+`apps/console`. (`apps/web`'s `/api/admin/apps/[product]/kpis` returns a bare
+map, but it is a different route with per-product branches, is not this
+contract, and is being retired.)
+
+Choosing the other way would have meant changing the one working
+implementation and its tests to match a document that no code had yet agreed
+with. That is the right call when a spec is load-bearing for multiple
+implementers. With one implementer and no consumers, it is ceremony.
+
+**What did NOT change:** §3.1's other rule stands unaltered — an uninstrumented
+product answers `501 not_implemented`, never `200 {}` and now never
+`200 {"data":{}}`. That rule exists because an empty object renders as
+em-dashes indistinguishable from real zeroes, and wrapping it changes nothing
+about that.
+
+---
+
 ### 8.5 Where a surface belongs
 
 The contract governs how a product exposes itself. It did not say where the
@@ -478,6 +520,9 @@ is justified only by a surface no other product could share.
 ## Changelog
 
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
+- **v2.1** (2026-08-26) — §8.6: `/admin/kpis` wraps its metrics map in `data`,
+  resolving the conflict `@tesserix/admin-conformance` found on its first run
+  against production. Enforced by that suite from v0.3.0.
 - **v2** (2026-08-22) — §8: transport moved off `apps/web`; billing endpoint,
   inbox action execution and domain writes added; §7 closed by the capability
   model; surface-placement rule stated. Derived from
