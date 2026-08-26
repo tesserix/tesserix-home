@@ -43,6 +43,17 @@ describe("koraNav", () => {
     ).toEqual([]);
   });
 
+  it("no longer carries Feedback", () => {
+    // Kora's `/admin/inbox` already merges feedback into the estate queue
+    // (tesserix/kora#474), so a rail entry would be a second door onto rows the
+    // platform rail serves — §8.5, and the same call #139 made for the audit
+    // trail. Named rather than counted so re-adding it fails with the reason.
+    const names = collectItems(koraNav).map((item) => item.name);
+    expect(names).not.toContain("Feedback");
+    // Guards the guard: an empty rail would satisfy the line above.
+    expect(names).toContain("Users");
+  });
+
   it("no longer carries the Audit trail", () => {
     // #139 folded Kora's trail into the estate-wide Audit log. Naming it rather
     // than relying on the count means re-adding it fails with the reason.
