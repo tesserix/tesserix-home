@@ -16,30 +16,19 @@ import {
 } from "@/components/kit/filter-bar";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
+import { formatCreated } from "../foods/food-index";
 import type { EntityPage } from "@/lib/entities";
 
 /**
- * The client half of Kora's food index.
+ * The client half of Kora's user directory.
  *
- * A client component because `FilterBar` takes callbacks a server component
- * cannot supply. The page stays a server component so the read happens on the
- * server and the search stays server-side — the same split as the tenant
- * directory.
+ * `formatCreated` is imported from the food index rather than copied: both
+ * render the same §4.3 timestamp from the same endpoint, and a second copy is
+ * a second place for the "render an unparseable date verbatim" rule to drift
+ * out of.
  */
 
-/** Renders a §4.3 timestamp, falling back to the raw value.
- *
- *  Verbatim rather than "unknown" on an unparseable date: the product sent
- *  something, and showing what it sent is how someone finds out what is wrong
- *  with it. Inventing a placeholder hides a contract deviation. */
-export function formatCreated(value: string | undefined): string {
-  if (!value) return "—";
-  const at = new Date(value);
-  if (Number.isNaN(at.getTime())) return value;
-  return at.toISOString().slice(0, 10);
-}
-
-export interface FoodIndexProps {
+export interface UserDirectoryProps {
   descriptors: FilterDescriptor[];
   values: FilterValues;
   page: EntityPage;
@@ -49,7 +38,7 @@ export interface FoodIndexProps {
   reauthReturnTo: string;
 }
 
-export function FoodIndex({
+export function UserDirectory({
   descriptors,
   values,
   page,
@@ -57,7 +46,7 @@ export function FoodIndex({
   emptyMessage,
   scopeNote,
   reauthReturnTo,
-}: FoodIndexProps) {
+}: UserDirectoryProps) {
   const { set, clear } = useUrlFilters(descriptors);
   const { data, pagination } = page;
 
@@ -67,11 +56,11 @@ export function FoodIndex({
 
       {state.kind === "ready" ? (
         <>
-          <Table aria-label="Foods">
+          <Table aria-label="Kora users">
             <TableHeader>
               <TableRow>
-                <TableHead>Food</TableHead>
-                <TableHead>Added</TableHead>
+                <TableHead>User</TableHead>
+                <TableHead>Joined</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -79,9 +68,13 @@ export function FoodIndex({
                 <TableRow key={row.id}>
                   <TableCell>
                     <div className="font-medium">{row.label}</div>
-                    {/* The brand, where Kora sends one. Rendered only when
-                        present: a placeholder would make "this product sends
-                        no sublabel" look like "this food has no brand". */}
+                    {/* The handle, or the email where there is no handle.
+                        THIS is why the sublabel is carried at all: display
+                        names are not unique, so two users called "Mahesh"
+                        render identically without it and an operator has no
+                        way to tell them apart. Rendered only when present —
+                        a placeholder would make "this product sends no
+                        sublabel" look like "this user has no handle". */}
                     {row.sublabel ? (
                       <div className="text-xs text-muted-foreground">{row.sublabel}</div>
                     ) : null}
@@ -94,13 +87,9 @@ export function FoodIndex({
             </TableBody>
           </Table>
           <p className="text-xs text-muted-foreground">
-            {/* The product's own count, which is far larger than a page: Kora
-                reports 6421 foods. Saying "showing N of M" beats leaving
-                someone to read a row count that stops at the page bound as the
-                whole index. */}
             {pagination.total === data.length
-              ? `${pagination.total} foods.`
-              : `Showing ${data.length} of ${pagination.total} foods.`}{" "}
+              ? `${pagination.total} users.`
+              : `Showing ${data.length} of ${pagination.total} users.`}{" "}
             {scopeNote}
           </p>
         </>

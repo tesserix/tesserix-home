@@ -87,7 +87,7 @@ describe("ConsoleSidebar", () => {
     expect(screen.queryByText("Operate")).toBeNull();
   });
 
-  it("links the food index and keeps Kora's unbuilt surfaces pending", () => {
+  it("links Kora's built pages and keeps Overview pending", () => {
     // This used to assert that EVERY Kora surface was pending — true when
     // Kora's IA was migrated and none of its pages were, and linking them
     // would have been 404s the previously-inert switcher was hiding.
@@ -103,9 +103,15 @@ describe("ConsoleSidebar", () => {
     expect(foodIndex).not.toBeNull();
     expect(foodIndex).toHaveAttribute("href", "/kora/foods");
 
-    // Users is still pending (#355), so the rail must still say so rather than
-    // linking a page that does not exist.
-    expect(screen.getByText("Users").closest("a")).toBeNull();
+    const users = screen.getByText("Users").closest("a");
+    expect(users).not.toBeNull();
+    expect(users).toHaveAttribute("href", "/kora/users");
+
+    // Overview is the one entry left, and it is pending for a reason that may
+    // never clear: Kora answers 501 on /admin/kpis and tesserix/kora#472 chose
+    // to keep it rather than invent a metric to fill a page. So the rail must
+    // still say "soon" for it — that is honest, not stale.
+    expect(screen.getByText("Overview").closest("a")).toBeNull();
     expect(screen.getAllByText("soon").length).toBeGreaterThan(0);
   });
 
