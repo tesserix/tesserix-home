@@ -25,6 +25,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
@@ -184,6 +185,18 @@ func run(log *slog.Logger) error {
 			// operator as a failed source — on the one surface where a red
 			// entry means "something is wrong with your estate".
 			Slugs:    cfg.Federation.SlugsImplementing("inbox"),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "kpis", func(m *http.ServeMux) {
+		kpis.Register(m, kpis.Config{
+			Fed: fed,
+			// Slugs, not SlugsImplementing: §3.1 is universal. A product with
+			// no metrics answers 501 rather than not mounting the route, and
+			// carrying that 501 to the console is the module's whole purpose.
+			Slugs:    cfg.Federation.Slugs(),
 			Verifier: verifier,
 			Log:      log,
 		})
