@@ -71,13 +71,19 @@ describe("console-native surfaces record no apps/web path", () => {
     // stop recording it. Every route that apps/web actually serves still says
     // where, and only a genuinely console-native surface may omit it.
     //
-    // Six ids now, each for its own reason, not one blanket "the CRM has no
+    // Seven ids now, each for its own reason, not one blanket "the CRM has no
     // predecessor". Listed here in the array's own order:
     //   - platform.tools: apps/web has no directory management surface and is
     //     being retired, so there is nothing here to point at either.
     //   - platform.auditLog: apps/web served three product-scoped audit pages
     //     and no estate-wide one — naming any single one would misrepresent
     //     it as the whole capability's home. See RouteEntry.web.
+    //   - platform.tenants: apps/web DOES serve /admin/tenants, but it is a
+    //     different surface, not this one's predecessor — it reads and WRITES
+    //     mark8ly's tenants table directly over the cross-database grant
+    //     (#210), which this replaces rather than succeeds. Recording it here
+    //     would make "fall back to web" read as a rollback, when it is a
+    //     return to the write path being removed.
     //   - platform.aiUsage: the gateway's spend ledger did not exist before
     //     the console, in apps/web or anywhere else.
     //   - platform.crmImport: the import flow has no distinct page in
@@ -92,6 +98,7 @@ describe("console-native surfaces record no apps/web path", () => {
     expect(missing).toEqual([
       "platform.tools",
       "platform.auditLog",
+      "platform.tenants",
       "platform.aiUsage",
       "platform.crmImport",
       "platform.crmSuppressions",
