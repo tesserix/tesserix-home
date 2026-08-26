@@ -30,6 +30,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // "Unknown".
 import { sourceLabel } from "@/lib/audit";
 import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
+import { TenantLifecycleAction } from "./tenant-lifecycle-controls";
 
 /**
  * The client half of the tenant directory.
@@ -225,6 +226,9 @@ export function TenantDirectory({
               <TableHead>Owner</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>Created</TableHead>
+            {/* Not "Actions" plural: there is exactly one, and which one it is
+                depends on the row's own status. */}
+            <TableHead>Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -258,6 +262,14 @@ export function TenantDirectory({
                   ) : (
                     <Absent />
                   )}
+                </TableCell>
+                {/* Last column, deliberately. Suspending is consequential
+                    enough that it should be read after the row, not before
+                    it — an operator scanning left to right meets the tenant,
+                    its status and its owner before the control that changes
+                    them. */}
+                <TableCell>
+                  <TenantLifecycleAction tenant={tenant} />
                 </TableCell>
               </TableRow>
             ))}
