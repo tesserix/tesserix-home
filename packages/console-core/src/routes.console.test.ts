@@ -200,10 +200,22 @@ describe("pending reflects what the console actually serves", () => {
     expect(webPath("kora.audit")).toBe("/admin/apps/kora/audit");
   });
 
-  it("still reports the unbuilt surfaces as pending", () => {
-    // Guards against a blanket un-pend: the rail must not offer navigation to
-    // pages that do not exist.
-    expect(isPending("kora.foods")).toBe(true);
+  it("serves the food index, and keeps Kora's unbuilt surfaces pending", () => {
+    // The food index is the console's first PRODUCT-rail page. It was pending
+    // until tesserix/kora#480 gave §3.4 a browse mode — before that an index
+    // page was impossible, because opening it with no query answered 400.
+    expect(isPending("kora.foods")).toBe(false);
+    expect(consolePath("kora.foods")).toBe("/kora/foods");
+
+    // Guards against a blanket un-pend, which is what this test was originally
+    // for: the rail must not offer navigation to pages that do not exist.
+    //
+    // `kora.users` is next (#355). `kora.overview` is pending for a different
+    // reason and may stay that way — Kora answers 501 on /admin/kpis and
+    // tesserix/kora#472 decided to keep it rather than invent a metric to fill
+    // a page, so there is nothing for an overview to show.
+    expect(isPending("kora.users")).toBe(true);
+    expect(isPending("kora.overview")).toBe(true);
   });
 
   it("keeps live chat pending", () => {

@@ -119,14 +119,27 @@ describe("routeEntries", () => {
   });
 
   it("keeps a pending route that a rail still advertises", () => {
-    // The rule is "pending AND unadvertised", not "pending". Kora's surfaces
-    // are pending and sit in koraNav; platform.liveChat is pending and sits in
+    // The rule is "pending AND unadvertised", not "pending". `kora.users` is
+    // pending and sits in koraNav; platform.liveChat is pending and sits in
     // Operate. The rail promises them, so the palette may say the same thing.
+    //
+    // `kora.foods` was the example here until it was built. It is now a LIVE
+    // entry rather than a pending-but-advertised one, which is a different
+    // case and is asserted below.
     const ids = routeEntries().map((e) => e.id);
-    expect(ids).toContain("route:kora.foods");
+    expect(ids).toContain("route:kora.users");
     expect(ids).toContain("route:platform.liveChat");
     // and they are still marked disabled rather than linked
-    expect(routeEntries().find((e) => e.id === "route:kora.foods")?.disabled).toBe(true);
+    expect(routeEntries().find((e) => e.id === "route:kora.users")?.disabled).toBe(true);
+  });
+
+  it("offers the built food index as a real destination", () => {
+    // The console's first product-rail page. The palette must link it rather
+    // than showing it disabled — the disabled state means "not here", and it
+    // is here now.
+    const foods = routeEntries().find((e) => e.id === "route:kora.foods");
+    expect(foods).toBeDefined();
+    expect(foods?.disabled).toBeFalsy();
   });
 
   it("keeps the estate health page, which is built and has no rail entry", () => {
