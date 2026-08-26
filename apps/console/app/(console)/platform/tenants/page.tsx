@@ -13,8 +13,9 @@ import {
   type SurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
-import { fetchEstateTenants } from "@/lib/platform-api";
-import type { EstateTenant, TenantSourceFailure } from "@/lib/tenants";
+import { fetchEstateTenants, fetchLifecycleReasonCodes } from "@/lib/platform-api";
+import type { ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
+import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
 import { TenantDirectory } from "./tenant-directory";
 
 /**
@@ -262,6 +263,58 @@ export function currentPath(searchParams: TenantSearchParams): string {
   return query ? `/platform/tenants?${query}` : "/platform/tenants";
 }
 
+/**
+ * Every product that actually has a row on screen.
+ *
+ * Derived from the ROWS rather than from `ESTATE`, and that is the cheaper
+ * direction as well as the honest one: a product with no tenants here needs no
+ * vocabulary, and asking for one would spend a federated round trip per
+ * configured product on every render of a page that might list two.
+ *
+ * The source comes out of the namespaced id — the same id the write is aimed
+ * at — so the codes offered and the product asked to apply them cannot
+ * disagree.
+ */
+export function productsOnScreen(tenants: readonly EstateTenant[]): string[] {
+  const sources = new Set<string>();
+  for (const tenant of tenants) sources.add(splitTenantId(tenant.id).source);
+  return [...sources].sort();
+}
+
+/**
+ * Read each product's lifecycle vocabulary, tolerating a product that fails.
+ *
+ * **Per product, and a failure is dropped rather than thrown.** One product
+ * being unreachable must not take out the directory — the page's whole
+ * argument is that a partial estate says so rather than rendering nothing —
+ * and a product missing from the returned catalog is exactly what the row's
+ * action renders as its visible gap. So the failure mode is a disabled button
+ * with a sentence beside it, not an error page and not a menu of another
+ * product's codes.
+ *
+ * Not logged here: `platformRequest` already logs the cause with the product,
+ * and a second line would double-report one failure.
+ */
+export async function fetchReasonCodeCatalog(
+  products: readonly string[],
+): Promise<ReasonCodeCatalog> {
+  const entries = await Promise.all(
+    products.map(async (product) => {
+      try {
+        return [product, await fetchLifecycleReasonCodes(product)] as const;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const catalog: Record<string, Awaited<ReturnType<typeof fetchLifecycleReasonCodes>>> = {};
+  for (const entry of entries) {
+    if (entry !== null) catalog[entry[0]] = entry[1];
+  }
+  return catalog;
+}
+
 export default async function EstateTenantDirectory({
   searchParams,
 }: {
@@ -286,6 +339,11 @@ export default async function EstateTenantDirectory({
     error = caught;
   }
 
+  // After the rows, because which products to ask depends on which are on
+  // screen. Sequential rather than parallel with the read for that reason, and
+  // it costs nothing when the read failed: there are no rows, so no products.
+  const reasonCodes = await fetchReasonCodeCatalog(productsOnScreen(tenants));
+
   return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
@@ -298,6 +356,7 @@ export default async function EstateTenantDirectory({
         values={toFilterValues(filters)}
         tenants={tenants}
         failures={failures}
+        reasonCodes={reasonCodes}
         state={directoryState({ error, rows: tenants, filtered })}
         emptyMessage={emptyMessageFor(failures)}
         scopeNote={DIRECTORY_SCOPE_NOTE}

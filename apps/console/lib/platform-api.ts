@@ -708,6 +708,40 @@ export async function fetchEstateTenants(
 }
 
 /**
+ * One product's lifecycle reason codes, from contract §8.8.
+ *
+ * Fetched per product and never merged, because the vocabularies are
+ * per-product and deliberately unequal — mark8ly declares seven suspend codes
+ * and four different unsuspend ones. A merged menu could offer a code the
+ * owning product refuses, or one both accept and mean differently, and the
+ * second lands a wrong reason on an audit row silently. The platform API
+ * refuses a request without `source` for exactly this reason.
+ *
+ * No apps/web fallback: that app never served this, and its `/admin/tenants`
+ * predecessor is gone (#210).
+ */
+export async function fetchLifecycleReasonCodes(
+  product: string,
+): Promise<import("./tenant-lifecycle").ProductReasonCodes> {
+  const { parseReasonCodes } = await import("./tenant-lifecycle");
+
+  if (!platformApiOrigin()) {
+    throw new PlatformApiError(
+      "reason codes: PLATFORM_API_ORIGIN is not set",
+      501,
+    );
+  }
+
+  const query = new URLSearchParams({ source: product });
+  return parseReasonCodes(
+    await platformRequest(
+      "tenants",
+      `/v1/tenants/lifecycle/reason-codes?${query.toString()}`,
+    ),
+  );
+}
+
+/**
  * The AI cost and token usage ledger, from the platform API's `aiusage` module.
  *
  * Server-side only, and deliberately: the console holds the operator's Zitadel

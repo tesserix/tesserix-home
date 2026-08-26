@@ -13,6 +13,8 @@ import {
   currentPath,
   directoryState,
   emptyMessageFor,
+  fetchReasonCodeCatalog,
+  productsOnScreen,
   readTenantFilters,
   tenantReadError,
   toFilterValues,
@@ -308,5 +310,79 @@ describe("TenantDirectory", () => {
   it("renders an em-dash for a tenant whose product supplied no owner or date", () => {
     renderDirectory({ tenants: [KORA_TENANT] });
     expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+});
+
+// `fetchLifecycleReasonCodes` is mocked per-test below rather than at module
+// scope: these cases differ only in what the fetch DOES, and a shared mock
+// would make each one's setup invisible at its call site.
+vi.mock("@/lib/platform-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform-api")>()),
+  fetchLifecycleReasonCodes: vi.fn(),
+}));
+
+const tenantRow = (id: string): EstateTenant => ({
+  id,
+  source: id.split(":")[0] ?? "",
+  name: `Tenant ${id}`,
+  status: "active",
+});
+
+describe("productsOnScreen", () => {
+  // Derived from the rows, not from ESTATE: a product with no tenants here
+  // needs no vocabulary, and asking anyway spends a federated round trip per
+  // configured product on every render.
+  it("names each product once, from the rows' namespaced ids", () => {
+    expect(
+      productsOnScreen([tenantRow("mark8ly:1"), tenantRow("mark8ly:2"), tenantRow("kora:9")]),
+    ).toEqual(["kora", "mark8ly"]);
+  });
+
+  it("asks for nothing when there are no rows", () => {
+    expect(productsOnScreen([])).toEqual([]);
+  });
+});
+
+describe("fetchReasonCodeCatalog", () => {
+  it("keys each product's vocabulary by its product id", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockImplementation(async (product: string) => ({
+      suspend: [{ code: `${product}_code`, label: "A reason" }],
+    }));
+
+    const catalog = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
+    expect(catalog.mark8ly?.suspend?.[0]?.code).toBe("mark8ly_code");
+    expect(catalog.kora?.suspend?.[0]?.code).toBe("kora_code");
+  });
+
+  // The page's whole argument is that a partial estate says so rather than
+  // rendering nothing. One product being unreachable must leave the other
+  // products' rows fully actionable — and leave its own rows showing the
+  // visible gap, which is what absence from the catalog produces.
+  it("drops a product that fails without losing the ones that answered", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockImplementation(async (product: string) => {
+      if (product === "kora") throw new PlatformApiError("unreachable", 503);
+      return { suspend: [{ code: "abuse", label: "Abuse" }] };
+    });
+
+    const catalog = await fetchReasonCodeCatalog(["mark8ly", "kora"]);
+    expect(catalog.mark8ly).toBeDefined();
+    expect("kora" in catalog).toBe(false);
+  });
+
+  it("returns an empty catalog when every product fails", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockRejectedValue(new PlatformApiError("down", 503));
+
+    expect(await fetchReasonCodeCatalog(["mark8ly"])).toEqual({});
+  });
+
+  it("asks nothing when there are no products", async () => {
+    const { fetchLifecycleReasonCodes } = await import("@/lib/platform-api");
+    vi.mocked(fetchLifecycleReasonCodes).mockClear();
+
+    expect(await fetchReasonCodeCatalog([])).toEqual({});
+    expect(fetchLifecycleReasonCodes).not.toHaveBeenCalled();
   });
 });

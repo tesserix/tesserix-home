@@ -17,9 +17,11 @@ import {
 } from "@tesserix/web";
 import { sourceLabel } from "@/lib/audit";
 import {
+  NO_REASON_CODES,
   hasReasonCodes,
   reasonCodesFor,
   type LifecycleVerb,
+  type ReasonCodeCatalog,
 } from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant } from "@/lib/tenants";
 import { setTenantLifecycleAction } from "./actions";
@@ -133,20 +135,26 @@ export function lifecycleOutcomeMessage(
 }
 
 /**
- * Why the action is unavailable for a product whose reason codes this build
- * does not carry.
+ * Why the action is unavailable for a product whose reason codes this render
+ * does not have.
  *
- * Exported so a test asserts the shipped sentence, and so it stays one
- * sentence rather than two copies. The gap is deliberate and visible: see
- * `lib/tenant-lifecycle.ts` for why borrowing another product's codes — or
- * offering a free-text code box — would be the worse failure. Both can write
- * a reason nobody meant onto an audit row that outlives the operator's memory
- * of the change.
+ * "This render", not "this build" — the codes are fetched per request from the
+ * product that owns them (contract §8.8), so the gap now means the product did
+ * not answer, or answered with no vocabulary for this verb. That is a
+ * different fact from the old one and the copy has to say so: telling an
+ * operator the console needs updating, when what actually happened is that
+ * mark8ly could not be reached, sends them to the wrong place.
+ *
+ * Exported so a test asserts the shipped sentence rather than a second copy.
+ * The gap is deliberate and visible: see `lib/tenant-lifecycle.ts` for why
+ * borrowing another product's codes — or offering a free-text code box — would
+ * be the worse failure. Both can write a reason nobody meant onto an audit row
+ * that outlives the operator's memory of the change.
  */
 export function unknownProductNotice(product: string): string {
   return (
-    `This console build does not know ${sourceLabel(product)}'s reason codes, ` +
-    "and a lifecycle change must carry one. Change it from that product's own admin until the console is updated."
+    `${sourceLabel(product)} did not supply its reason codes, and a lifecycle ` +
+    "change must carry one. Reload to try again, or change it from that product's own admin."
   );
 }
 
@@ -162,6 +170,18 @@ function consequence(tenantName: string, product: string, verb: LifecycleVerb): 
 export interface TenantLifecycleActionProps {
   tenant: EstateTenant;
   /**
+   * Every product's vocabulary this render fetched, keyed by product.
+   *
+   * Passed in rather than fetched here, and that is the point of the shape: a
+   * directory renders one of these per row, and a per-row fetch would ask the
+   * same product for the same constant list once per tenant. The page reads it
+   * once per product and hands it down.
+   *
+   * Defaulted to empty so a caller that has none degrades to the visible gap
+   * rather than to a menu with nothing in it.
+   */
+  reasonCodes?: ReasonCodeCatalog;
+  /**
    * Injected so the render tests can drive every result shape the seam
    * produces. Defaults to the real server action, which is what the directory
    * uses — the same shape `ToolsManager` passes its forms.
@@ -171,6 +191,7 @@ export interface TenantLifecycleActionProps {
 
 export function TenantLifecycleAction({
   tenant,
+  reasonCodes = NO_REASON_CODES,
   onSubmit = setTenantLifecycleAction,
 }: TenantLifecycleActionProps) {
   const router = useRouter();
@@ -187,9 +208,13 @@ export function TenantLifecycleAction({
   // so the codes offered and the product asked to apply them cannot disagree.
   const { source } = splitTenantId(tenant.id);
   const verb = lifecycleVerbFor(tenant.status);
-  const codes = reasonCodesFor(source, verb);
+  const codes = reasonCodesFor(reasonCodes, source, verb);
 
-  if (!hasReasonCodes(source)) {
+  // Keyed on the VERB, not just the product. A product may publish suspend
+  // codes and not unsuspend ones — §8.8 requires both, so that is a deviation,
+  // but the console must render it as the gap it is rather than open a dialog
+  // whose one required field has no options.
+  if (!hasReasonCodes(reasonCodes, source, verb)) {
     // Disabled, with the reason beside it. A control that silently vanishes
     // for some rows and not others reads as a rendering fault; one that is
     // present and explains itself reads as the deliberate gap it is.
