@@ -48,7 +48,10 @@ export const koraNav: readonly NavEntry[] = [
   // item would be a door onto a redirect. The route id is kept there because
   // mobile still serves that screen standalone, and it records the web path
   // this app's redirect points away from. Guarded in nav.test.ts.
-  { name: "Feedback", route: "kora.feedback", icon: "message-square" },
+  // No "Feedback" entry either, and for the same reason as Audit trail above:
+  // Kora's `/admin/inbox` already merges feedback into the estate queue, so a
+  // rail item here would be a second door onto rows the platform rail serves
+  // (§8.5). `kora.feedback` is `retired` in routes.ts. Guarded in nav.test.ts.
   { name: "Users", route: "kora.users", icon: "users" },
 ];
 

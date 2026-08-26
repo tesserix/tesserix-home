@@ -252,9 +252,15 @@ describe("pending reflects what the console actually serves", () => {
   it("retires nothing else", () => {
     // Guards the guard: `isRetired` returning true for everything would satisfy
     // the assertions above while quietly emptying both rails. Listed rather
-    // than counted so adding a third is a decision someone writes down here.
+    // than counted so adding one is a decision someone writes down here.
+    //
+    // `kora.feedback` is the third, added because Kora's own `/admin/inbox`
+    // already merges feedback into the estate queue (tesserix/kora#474) — so a
+    // Kora feedback page would be a second door onto rows the platform rail
+    // serves. Same rule as `kora.audit`, §8.5.
     expect(ROUTE_IDS.filter(isRetired)).toEqual([
       "kora.audit",
+      "kora.feedback",
       "platform.supportAnalytics",
     ]);
   });

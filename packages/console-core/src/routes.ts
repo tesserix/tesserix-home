@@ -125,7 +125,21 @@ export const ROUTES = {
   // `mobile` also stays: retirement is per-renderer, and expo-router still
   // serves that screen standalone.
   "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true, capability: "platform" },
-  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", pending: true, capability: "platform" },
+  // RETIRED, not pending — the same call #139 made for `kora.audit`, for the
+  // same reason and with more evidence behind it. §8.5: implementing
+  // `/admin/inbox` does not earn a product rail entry, it makes the product a
+  // source in a surface that already exists.
+  //
+  // This is not a plan, it is already true on Kora's side: its `/admin/inbox`
+  // MERGES feedback with unresolved-food items into one queue (verified in
+  // tesserix/kora#474). So a Kora "Feedback" page would be a second door onto
+  // rows Kora already serves through the estate queue — and an operator would
+  // have to know which door records the answer.
+  //
+  // `pending` would promise a Kora-scoped feedback page in the console. None is
+  // coming; the estate Inbox (#356) is where these land. `web` and `mobile`
+  // stay recorded for the same reasons they do on `kora.audit`.
+  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", retired: true, capability: "platform" },
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until
   // it is built — staff scoping is blocked on #134.
