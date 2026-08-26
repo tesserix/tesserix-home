@@ -6,7 +6,9 @@ import { sharedRules } from "@tesserix/eslint-config";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
+  // `dist/` is `build:cron`'s esbuild output — generated, gitignored, and not
+  // source anybody edits.
+  globalIgnores([".next/**", "out/**", "build/**", "dist/**", "next-env.d.ts"]),
   sharedRules,
   // The kit itself must compose the raw element; everything else uses the kit.
   // `@tesserix/web`'s <Table> is capitalised, so composing it is unaffected —
