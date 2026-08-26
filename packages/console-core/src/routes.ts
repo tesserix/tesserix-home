@@ -262,6 +262,21 @@ export const ROUTES = {
   // control that actually applies here; no capability value can express it.
   "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
 
+  // Every product's tenants in one shape, from platform-api's tenants module
+  // (#342), which federates §3.4's /admin/entities/tenants.
+  //
+  // No `web` predecessor is recorded, and that is not an omission. apps/web's
+  // /admin/tenants is a DIFFERENT surface — it reads and WRITES mark8ly's
+  // tenants table directly over the cross-database grant (#210), which is the
+  // thing this replaces rather than the thing it succeeds. Recording it as a
+  // predecessor would suggest the two are the same page under two transports,
+  // and would make "fall back to web" look like a rollback rather than a
+  // return to the write path being removed.
+  //
+  // `platform`, not `billing`: knowing a tenant exists is an Operate concern.
+  // Only what they pay is a Revenue one.
+  "platform.tenants": { mobile: "/platform/tenants", capability: "platform" },
+
   // The AI path's spend, token usage and guardrail activity, sourced from the
   // agentgateway data plane rather than from any one product. No `web`: apps/web
   // never had this surface — the gateway postdates it.

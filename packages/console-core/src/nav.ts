@@ -72,6 +72,20 @@ export const platformNav: readonly NavEntry[] = [
     items: [
       { name: "Dashboard", route: "platform.dashboard", icon: "layout-dashboard" },
       { name: "Apps", route: "platform.apps", icon: "cloud" },
+      // Directly after Apps, and deliberately NOT between Tickets and
+      // Identity lookup: nav.test.ts pins those two as adjacent because #134
+      // is a discoverability ticket, and pushing the lookup one row further
+      // from the ticket queue is the beginning of the problem it fixed.
+      //
+      // Here reads correctly anyway — Apps says which products exist, Tenants
+      // says who is on them. The two directories belong together.
+      //
+      // `globe` rather than a new "building" key: IconKey is consumed as
+      // `Record<IconKey, ...>` in every renderer, so adding one is a compile
+      // error in web, mobile and console until each maps it — three apps
+      // changed for an icon. `globe` is the closest existing sense: the
+      // estate-wide view of who is on the platform, not one product's.
+      { name: "Tenants", route: "platform.tenants", icon: "globe" },
       { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
       // No "Support analytics" entry: it is a tab on Tickets now (#133), so a
       // rail item would be a second door onto the same page. The route id is
