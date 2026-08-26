@@ -24,6 +24,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
@@ -168,6 +169,20 @@ func run(log *slog.Logger) error {
 		audit.Register(m, audit.Config{
 			Fed:      fed,
 			Slugs:    cfg.Federation.Slugs(),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "tenants", func(m *http.ServeMux) {
+		tenants.Register(m, tenants.Config{
+			Fed: fed,
+			// SlugsServing, not Slugs: §3.4's entity type is product-defined,
+			// so a product federating audit logs does not necessarily have
+			// tenants. Asking one that does not would answer 404 and surface
+			// to an operator as a failed source, when the honest answer is
+			// that the product has none.
+			Slugs:    cfg.Federation.SlugsServing("tenants"),
 			Verifier: verifier,
 			Log:      log,
 		})

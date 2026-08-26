@@ -120,3 +120,67 @@ func TestLoadRegistryRefusesADuplicateSlug(t *testing.T) {
 		t.Errorf("err = %v, want it to name the duplicated slug", err)
 	}
 }
+
+func TestSlugsServingReturnsOnlyProductsDeclaringThatEntity(t *testing.T) {
+	r := NewRegistry([]Product{
+		{Slug: "mark8ly", BaseURL: "http://m", Secret: "s", Entities: []string{"tenants"}},
+		{Slug: "kora", BaseURL: "http://k", Secret: "s", Entities: []string{"users", "foods"}},
+		{Slug: "quiet", BaseURL: "http://q", Secret: "s"},
+	})
+	if got := r.SlugsServing("tenants"); len(got) != 1 || got[0] != "mark8ly" {
+		t.Errorf("SlugsServing(tenants) = %v, want [mark8ly]", got)
+	}
+	if got := r.SlugsServing("users"); len(got) != 1 || got[0] != "kora" {
+		t.Errorf("SlugsServing(users) = %v, want [kora]", got)
+	}
+	// A product declaring nothing serves nothing. Absence means no, the same
+	// rule FEDERATION_PRODUCTS itself uses.
+	if got := r.SlugsServing("anything"); len(got) != 0 {
+		t.Errorf("SlugsServing(anything) = %v, want empty", got)
+	}
+}
+
+func TestSlugsServingIsSorted(t *testing.T) {
+	r := NewRegistry([]Product{
+		{Slug: "zeta", BaseURL: "http://z", Secret: "s", Entities: []string{"tenants"}},
+		{Slug: "alpha", BaseURL: "http://a", Secret: "s", Entities: []string{"tenants"}},
+	})
+	got := r.SlugsServing("tenants")
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "zeta" {
+		t.Errorf("SlugsServing = %v, want sorted [alpha zeta]", got)
+	}
+}
+
+func TestLoadRegistryReadsDeclaredEntities(t *testing.T) {
+	env := map[string]string{
+		"FEDERATION_PRODUCTS":         "mark8ly",
+		"FEDERATION_MARK8LY_BASE_URL": "http://m",
+		"FEDERATION_MARK8LY_SECRET":   "s",
+		"FEDERATION_MARK8LY_ENTITIES": " tenants , users ",
+	}
+	r, err := LoadRegistry(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("LoadRegistry: %v", err)
+	}
+	p, _ := r.Get("mark8ly")
+	if len(p.Entities) != 2 || p.Entities[0] != "tenants" || p.Entities[1] != "users" {
+		t.Errorf("Entities = %v, want [tenants users] trimmed", p.Entities)
+	}
+}
+
+// Entities is OPTIONAL, unlike BASE_URL and SECRET: a product that federates
+// audit logs but serves no entity type is a normal configuration, not an error.
+func TestLoadRegistryAcceptsAProductWithNoEntities(t *testing.T) {
+	env := map[string]string{
+		"FEDERATION_PRODUCTS":         "mark8ly",
+		"FEDERATION_MARK8LY_BASE_URL": "http://m",
+		"FEDERATION_MARK8LY_SECRET":   "s",
+	}
+	r, err := LoadRegistry(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("LoadRegistry: %v", err)
+	}
+	if p, _ := r.Get("mark8ly"); len(p.Entities) != 0 {
+		t.Errorf("Entities = %v, want none", p.Entities)
+	}
+}
