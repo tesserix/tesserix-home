@@ -741,6 +741,37 @@ export async function fetchLifecycleReasonCodes(
   );
 }
 
+/** The bound this surface asks each product for. Sent rather than left to the
+ *  API's default so the window is stated by the caller that renders it. */
+export const INBOX_LIMIT = 100;
+
+/**
+ * The estate inbox — contract §3.2, federated by the platform API's `inbox`
+ * module across every product declaring it.
+ *
+ * No apps/web fallback: that app never served an estate-wide queue. An unset
+ * `PLATFORM_API_ORIGIN` is a misconfiguration, and `platformRequest` says so.
+ *
+ * A `501` here means no product declares §3.2 — which is NOT the same as an
+ * empty queue, and the page must render the two differently. An empty queue is
+ * a real and reassuring answer; instrumentation that was never wired must not
+ * be able to produce that reassurance.
+ */
+export async function fetchEstateInbox(
+  source?: string,
+): Promise<import("./inbox").EstateInbox> {
+  const { parseInbox } = await import("./inbox");
+
+  const query = new URLSearchParams({ limit: String(INBOX_LIMIT) });
+  // `all` is the absence of a filter, not a source. Sending `source=all` would
+  // ask the API for a product it has never heard of, and it refuses an unknown
+  // source with a 400 rather than returning nothing — the behaviour that makes
+  // a typo visible instead of silent.
+  if (source && source !== "all") query.set("source", source);
+
+  return parseInbox(await platformRequest("inbox", `/v1/inbox?${query.toString()}`));
+}
+
 /**
  * The AI cost and token usage ledger, from the platform API's `aiusage` module.
  *
