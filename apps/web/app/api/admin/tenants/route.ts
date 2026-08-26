@@ -1,6 +1,12 @@
 // GET /api/admin/tenants — list tenants from mark8ly_platform_api.
-// Read-only on this endpoint. Status mutation goes through PATCH on
-// /api/admin/tenants/:id (not the same as mark8ly's own tenants UI).
+//
+// Read-only, and now read-only on BOTH tenant endpoints: the sibling PATCH on
+// /api/admin/tenants/:id was removed in #210. Changing a tenant's status
+// happens in the console, through mark8ly own API, so mark8ly enforces its own
+// invariants and writes its own audit row.
+//
+// This read stays until #272 retires the surface — see the note on
+// [id]/route.ts for why the read and the write were not removed together.
 
 import { NextResponse, type NextRequest } from "next/server";
 
