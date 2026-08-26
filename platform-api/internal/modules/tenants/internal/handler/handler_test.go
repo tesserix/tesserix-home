@@ -62,6 +62,15 @@ func serveSlugs(t *testing.T, slugs []string, roles ...string) *api {
 	asked := make(chan string, 4)
 	product := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked <- r.URL.String()
+		// The lifecycle verbs answer a DIFFERENT envelope from the directory
+		// read — `{data: {...}}` rather than `{data: [...], pagination}`. A
+		// stub that returned the list for every path would make a write look
+		// like a decode failure, which is how the first run of these tests
+		// reported a 503 for a request that had actually reached the product.
+		if strings.HasSuffix(r.URL.Path, "/suspend") || strings.HasSuffix(r.URL.Path, "/unsuspend") {
+			_, _ = w.Write([]byte(`{"data":{"tenant_id":"t1","status":"suspended","stores_affected":3,"changed":true}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"data":[{"id":"t1","name":"Acme","owner_email":"a@x.test","status":"active","created_at":"2026-08-12T09:31:00Z"}],"pagination":{"page":1,"limit":50,"total":1}}`))
 	}))
 	t.Cleanup(product.Close)

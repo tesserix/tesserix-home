@@ -15,7 +15,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -59,6 +61,107 @@ var estateParameters = []string{"source", "q", "status", "limit"}
 var RouteTable = []Route{
 	{Method: http.MethodGet, Pattern: "/v1/tenants",
 		handler: func(h *Handler) http.HandlerFunc { return h.estate }},
+	{Method: http.MethodPost, Pattern: "/v1/tenants/{id}/suspend",
+		handler: func(h *Handler) http.HandlerFunc { return h.suspend }},
+	{Method: http.MethodPost, Pattern: "/v1/tenants/{id}/unsuspend",
+		handler: func(h *Handler) http.HandlerFunc { return h.unsuspend }},
+}
+
+// maxLifecycleBody caps what will be read from a lifecycle request. The body
+// is two short strings; anything larger is a mistake or an attack, and reading
+// it would make someone else's bug this process's memory problem.
+const maxLifecycleBody = 8 << 10
+
+func (h *Handler) suspend(w http.ResponseWriter, r *http.Request) {
+	h.lifecycle(w, r, "suspend")
+}
+
+func (h *Handler) unsuspend(w http.ResponseWriter, r *http.Request) {
+	h.lifecycle(w, r, "unsuspend")
+}
+
+// lifecycle serves both verbs. They differ only in which service call runs.
+func (h *Handler) lifecycle(w http.ResponseWriter, r *http.Request, verb string) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, httpx.Unauthorized("no principal on an authenticated route"), h.log)
+		return
+	}
+
+	// Required, and refused rather than generated. A key this service invented
+	// would be fresh on every retry, which is the same as having none — the
+	// uniqueness that matters is of the CALLER's intent, and only the caller
+	// can assert it. The kernel's idempotency package makes the same argument.
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		httpx.WriteError(w, r, httpx.BadRequest("the Idempotency-Key header is required for this write"), h.log)
+		return
+	}
+
+	var in service.Lifecycle
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxLifecycleBody)).Decode(&in); err != nil {
+		httpx.WriteError(w, r, httpx.BadRequest("request body is not valid JSON"), h.log)
+		return
+	}
+	// Presence only. The VALUE is the product's vocabulary — mark8ly declares
+	// different sets for suspend and unsuspend — and validating it here would
+	// be a second list that drifts. An empty one never reaches the product,
+	// because a missing reason on a suspension is this surface's own concern:
+	// the audit row it produces is read later by someone asking why.
+	if strings.TrimSpace(in.ReasonCode) == "" {
+		httpx.WriteError(w, r, httpx.BadRequest("reason_code is required"), h.log)
+		return
+	}
+
+	op := federation.Operator{ID: principal.Subject, Capability: string(auth.CapPlatform)}
+	tenantID := r.PathValue("id")
+
+	var (
+		result service.LifecycleResult
+		err    error
+	)
+	if verb == "suspend" {
+		result, err = h.svc.Suspend(r.Context(), op, tenantID, in, key)
+	} else {
+		result, err = h.svc.Unsuspend(r.Context(), op, tenantID, in, key)
+	}
+	if err != nil {
+		h.writeLifecycleError(w, r, verb, tenantID, err)
+		return
+	}
+
+	httpx.WriteData(w, r, http.StatusOK, result, h.log)
+}
+
+// writeLifecycleError maps a failed write onto a status an operator can act on.
+//
+// The product's §4.4 code is passed through where there is one. That code is a
+// stable machine-readable identifier by contract, unlike its sibling
+// `message`, which is free text from another product and never rendered. The
+// alternative — collapsing every refusal to "responded 400" — leaves an
+// operator staring at a form with no idea which field was wrong.
+func (h *Handler) writeLifecycleError(w http.ResponseWriter, r *http.Request, verb, tenantID string, err error) {
+	// Logged with the unredacted error and the tenant, because a failed
+	// mutation is exactly what someone asks about afterwards.
+	h.log.ErrorContext(r.Context(), "tenants: lifecycle write failed",
+		"verb", verb, "tenant", tenantID, "error", err)
+
+	if errors.Is(err, service.ErrUnknownSource) {
+		httpx.WriteError(w, r, httpx.BadRequest(err.Error()), h.log)
+		return
+	}
+	if code, ok := federation.ErrorCode(err); ok {
+		httpx.WriteError(w, r, httpx.BadRequest("the product refused this change: "+code), h.log)
+		return
+	}
+	// No code to pass on. Deliberately NOT err.Error(): a transport failure's
+	// text carries hostnames and addresses, which is why the federation package
+	// sanitizes at all.
+	// Unavailable rather than a new BadGateway helper: the kernel has no 502,
+	// and "the owning product could not be reached" is what 503 already means
+	// on this surface. Adding a status to httpx for one call site would put a
+	// second way to say the same thing in the kernel.
+	httpx.WriteError(w, r, httpx.Unavailable("the product could not be reached to "+verb+" this tenant"), h.log)
 }
 
 // Routes mounts the table behind the capability gate.
