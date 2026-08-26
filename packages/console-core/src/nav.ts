@@ -74,6 +74,15 @@ export const platformNav: readonly NavEntry[] = [
     icon: "layout-dashboard",
     items: [
       { name: "Dashboard", route: "platform.dashboard", icon: "layout-dashboard" },
+      // Directly after Dashboard: the dashboard says how the estate IS, the
+      // inbox says what needs doing. Placed here rather than beside Tickets
+      // (the other queue) because nav.test.ts pins Identity lookup as
+      // Tickets + 1 — #134's fix — and inserting between them would reopen a
+      // discoverability bug to satisfy a grouping preference.
+      //
+      // `inbox` is an existing IconKey, so no renderer changes: adding a key
+      // is a compile error in web, mobile and console until each maps it.
+      { name: "Inbox", route: "platform.inbox", icon: "inbox" },
       { name: "Apps", route: "platform.apps", icon: "cloud" },
       // Directly after Apps, and deliberately NOT between Tickets and
       // Identity lookup: nav.test.ts pins those two as adjacent because #134

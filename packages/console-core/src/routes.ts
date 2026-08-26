@@ -276,6 +276,25 @@ export const ROUTES = {
   // control that actually applies here; no capability value can express it.
   "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
 
+  // Everything waiting on a human, across every product implementing §3.2,
+  // from platform-api's inbox module (#352).
+  //
+  // On the PLATFORM rail, not any product's, and §8.5 is explicit about why:
+  // implementing /admin/inbox does not earn a product a rail entry, it makes
+  // that product a source in a surface that already exists. This is that
+  // surface — the same call #139 made for the audit trail, and the reason
+  // `kora.feedback` above is `retired` rather than `pending`.
+  //
+  // `platform`, not a verb capability. Reading a queue changes nothing:
+  // §8.3's action execution exists on no product yet, and when it does it will
+  // be its own route with its own decision — the authority to see that work is
+  // waiting is not the authority to do it.
+  //
+  // No `web` predecessor. apps/web never had an estate-wide queue; each
+  // product's items were only ever visible on that product's own pages, which
+  // is the fragmentation this surface exists to end.
+  "platform.inbox": { mobile: "/platform/inbox", capability: "platform" },
+
   // Every product's tenants in one shape, from platform-api's tenants module
   // (#342), which federates §3.4's /admin/entities/tenants.
   //
