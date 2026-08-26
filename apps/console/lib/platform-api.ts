@@ -741,6 +741,39 @@ export async function fetchLifecycleReasonCodes(
   );
 }
 
+/** The page size the product-rail index pages ask for. */
+export const ENTITIES_LIMIT = 100;
+
+/**
+ * One product's §3.4 entity records — `foods`, `users`.
+ *
+ * `source` and `type` are both required by the API: an entity type is one
+ * product's records, and merging two products' `users` makes a table whose
+ * columns mean different things per row (§8.5).
+ *
+ * An absent `q` is a BROWSE, which is the contract's shape since §3.4 was
+ * clarified (tesserix/kora#473). It is omitted rather than sent blank — `q=`
+ * would filter on the empty string on a product that treats the param as
+ * present.
+ */
+export async function fetchProductEntities(
+  source: string,
+  type: string,
+  search?: string,
+): Promise<import("./entities").EntityPage> {
+  const { parseEntities } = await import("./entities");
+
+  const query = new URLSearchParams({ source, limit: String(ENTITIES_LIMIT) });
+  if (search) query.set("q", search);
+
+  return parseEntities(
+    await platformRequest(
+      "entities",
+      `/v1/entities/${encodeURIComponent(type)}?${query.toString()}`,
+    ),
+  );
+}
+
 /** The bound this surface asks each product for. Sent rather than left to the
  *  API's default so the window is stated by the caller that renders it. */
 export const INBOX_LIMIT = 100;

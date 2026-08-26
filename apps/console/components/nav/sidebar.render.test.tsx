@@ -87,13 +87,25 @@ describe("ConsoleSidebar", () => {
     expect(screen.queryByText("Operate")).toBeNull();
   });
 
-  it("marks Kora's surfaces pending too — its IA is migrated, its pages are not", () => {
-    // Linking these in-app would be five 404s, which the previously-inert
-    // switcher was hiding.
+  it("links the food index and keeps Kora's unbuilt surfaces pending", () => {
+    // This used to assert that EVERY Kora surface was pending — true when
+    // Kora's IA was migrated and none of its pages were, and linking them
+    // would have been 404s the previously-inert switcher was hiding.
+    //
+    // Food index is now built (the console's first product-rail page), so the
+    // assertion inverts for that one entry and holds for the rest. Named
+    // individually rather than counted, so the next page to land fails here
+    // and gets a decision rather than a silent pass.
     pathname.current = "/kora/foods";
     render(<ConsoleSidebar />);
 
-    expect(screen.getByText("Food index").closest("a")).toBeNull();
+    const foodIndex = screen.getByText("Food index").closest("a");
+    expect(foodIndex).not.toBeNull();
+    expect(foodIndex).toHaveAttribute("href", "/kora/foods");
+
+    // Users is still pending (#355), so the rail must still say so rather than
+    // linking a page that does not exist.
+    expect(screen.getByText("Users").closest("a")).toBeNull();
     expect(screen.getAllByText("soon").length).toBeGreaterThan(0);
   });
 

@@ -114,7 +114,14 @@ export const ROUTES = {
   // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
   // `pending` the rail links to in-app routes that are not there — five 404s.
   "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true, capability: "platform" },
-  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", pending: true, capability: "platform" },
+  // NOT pending: the console serves this page. The FIRST product-rail surface
+  // the console owns — every route it served before this was on the platform
+  // rail.
+  //
+  // No `console` path: `consolePath` falls back to `mobile`, and the two agree
+  // at /kora/foods. `web` stays recorded because apps/web still serves its own
+  // version until that app is retired.
+  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", capability: "platform" },
   // RETIRED, not pending (#139). Kora's audit trail is one source in the
   // console's estate-wide `platform.auditLog`, and there is no Kora-scoped audit
   // page coming to the console — `pending` would promise one. `/admin/apps/kora/audit`
