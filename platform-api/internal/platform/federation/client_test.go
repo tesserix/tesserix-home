@@ -254,3 +254,30 @@ func TestGetReproducesAGoldenVectorEndToEnd(t *testing.T) {
 		t.Errorf("X-Platform-Signature = %q, want the published vector %q", got, want.Signature)
 	}
 }
+
+// StatusOf must distinguish "the product answered N" from "we never got an
+// answer" — a transport failure has no status, and reading a missing one as 0
+// would report an outage as though the product had said something.
+func TestStatusOfDistinguishesARefusalFromAnOutage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotImplemented)
+		_, _ = w.Write([]byte(`{"error":"not_implemented","message":"no KPIs yet"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "kora", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+	_, err := c.Get(context.Background(), "kora", "/admin/kpis", Operator{ID: "op", Capability: "platform"})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	status, ok := StatusOf(err)
+	if !ok || status != http.StatusNotImplemented {
+		t.Fatalf("StatusOf = %d,%v; want 501,true", status, ok)
+	}
+
+	// An unconfigured product never reaches the wire, so it carries no status.
+	_, err = c.Get(context.Background(), "nosuch", "/admin/kpis", Operator{ID: "op", Capability: "platform"})
+	if _, ok := StatusOf(err); ok {
+		t.Error("StatusOf reported a status for an error that never reached a product")
+	}
+}

@@ -80,6 +80,29 @@ func ErrorCode(err error) (string, bool) {
 	return se.Code, true
 }
 
+// StatusOf reports the HTTP status a product answered a refusal with, if the
+// error came from a response at all.
+//
+// The second return distinguishes "the product answered N" from "we never got
+// an answer": a DNS failure, a TLS error and a timeout all produce an error
+// with no status, and a caller that read a missing status as 0 — or worse, as
+// a default — would report a transport outage as though the product had said
+// something.
+//
+// Needed because two refusals mean opposite things to a caller. §3.1's `501`
+// is a product SAYING "I am not instrumented", which is a legitimate contract
+// answer to pass on; a 502 is a product failing to say anything. Collapsing
+// them loses the distinction §3.1 exists to preserve — the console has to tell
+// "not instrumented" from "every metric is zero", and it can only do that if
+// the status survives the hop.
+func StatusOf(err error) (int, bool) {
+	var se *statusError
+	if !errors.As(err, &se) {
+		return 0, false
+	}
+	return se.Status, true
+}
+
 // Operator is who the call is being made on behalf of, and under what
 // authority.
 //
