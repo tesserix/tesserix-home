@@ -94,6 +94,22 @@ export const ESTATE: readonly EstateProduct[] = [
   {
     name: "Mark8ly",
     context: "mark8ly",
+    // 8 is apps/web's rail, which is what this field means while `migrated` is
+    // false — EstateMap renders it as "8 rail entries · still in apps/web", and
+    // apps/web really does ship eight.
+    //
+    // NOT revised to 3 yet, though the mark8ly integration design does revise
+    // it: that 3 is the console rail's target (CSM migration fast-path review,
+    // arbitrage appeals, app credentials), and none of the three has a contract
+    // endpoint to render from — the fast-path review route is written but
+    // unmounted upstream (tesserix/mark8ly#281), and the other two live on
+    // mark8ly's own admin surface rather than /admin/*. Writing 3 here today
+    // would put "3 rail entries · still in apps/web" on a status board whose
+    // whole job is being honest about what has actually moved.
+    //
+    // When `mark8lyNav` lands, this becomes `mark8lyNav.length` and gets the
+    // same test kora has — the count checked against the nav it actually ships
+    // rather than transcribed.
     entries: 8,
     migrated: false,
     summary: "Tenants, onboarding, subscriptions and leads.",
