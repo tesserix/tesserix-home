@@ -181,6 +181,9 @@ subscription clock.
 Paginated audit trail using the standard envelope (§4.1). Filters: `action`, `actor`,
 `resource_type`, `from`, `to`.
 
+**`metadata` is a STRING containing compact JSON of an object** — not prose, and
+not a JSON object on the wire. See §8.7.
+
 **Must be scoped to the calling product.** The existing shared route validates its
 `:product` parameter and then queries mark8ly's table regardless — so the HomeChef,
 DevAI, Dwellm8 and Kora overviews all display mark8ly's critical-event count. A route
@@ -454,6 +457,53 @@ The limitation that remains, stated so it is not rediscovered: capabilities are
 estate-wide, not per-product. There is no way to express "may act on mark8ly but
 not on Fe3dr". That is a smaller open problem than §7's, and it is not blocking.
 
+### 8.7 `/admin/audit-logs`: `metadata` is JSON-in-a-string
+
+The shape pinned on mark8ly#276 described `metadata` as `"optional free text"`.
+That reads as prose, and mark8ly — whose column is `jsonb` — asked twice which
+was meant before filing #313. Stated properly here so the next implementer does
+not have to ask.
+
+**`metadata` is a string. Its content is compact JSON of a flat-ish object.**
+
+```json
+"metadata": "{\"plan\":\"pro\",\"previous_plan\":\"starter\"}"
+```
+
+This is not an encoding anyone needs to invent — it is what the estate already
+produces, from two places:
+
+- `apps/web/lib/audit/entry.ts`'s `stringifyMetadata` —
+  `JSON.stringify(Object.fromEntries(kept))`, dropping `null`, `undefined` and
+  `""` values, returning `undefined` when nothing survives
+- `apps/console/lib/db/audit-repo.ts`'s `serialiseSummary`, for the console's
+  own rows
+
+Rules:
+
+- **Omit the field when there is nothing to say.** Not `"{}"`, not `""`.
+- **Drop empty values before stringifying**, as `stringifyMetadata` does.
+- **Nested values are fine.** kora's and homechef's `before`/`after` diffs
+  already arrive as nested objects inside the string.
+- **It must be a string.** `apps/console/lib/audit.ts`'s `optionalStr` throws on
+  anything else, and that failure is not scoped to the field — it fails the
+  parse of the entire page. An object does not degrade here; it takes the audit
+  log down.
+
+**Why a string, given the sources are all structured.** Because the console
+already reconstructs the structure: `audit-metadata.tsx` parses the string and
+renders every key as its own labelled field — no whitelist, no truncation,
+nested values as compact JSON behind their own label, and unparseable content
+verbatim rather than as an error. It handles keys it has never seen, on purpose,
+because products spread arbitrary per-event data in here.
+
+So the object-on-the-wire alternative would buy readability that already exists,
+at the cost of a breaking change to every product currently sending the string
+form. If that trade ever becomes worth making, it is a contract amendment
+applying to all products at once — never a per-product divergence.
+
+---
+
 ### 8.6 `/admin/kpis` wraps its map in `data`
 
 §3.1 originally specified a bare flat map at the top level. It is now
@@ -520,6 +570,10 @@ is justified only by a surface no other product could share.
 ## Changelog
 
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
+- **v2.2** (2026-08-26) — §8.7: `/admin/audit-logs`'s `metadata` is specified
+  as compact JSON in a string, resolving mark8ly#313. No implementation
+  changes; the shape was already what the estate produced and the console
+  rendered, but it was written down as "optional free text".
 - **v2.1** (2026-08-26) — §8.6: `/admin/kpis` wraps its metrics map in `data`,
   resolving the conflict `@tesserix/admin-conformance` found on its first run
   against production. Enforced by that suite from v0.3.0.
