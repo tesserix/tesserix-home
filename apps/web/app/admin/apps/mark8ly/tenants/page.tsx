@@ -4,14 +4,6 @@ import Link from "next/link";
 
 import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@tesserix/web";
-
 import { AdminHeader } from "@/components/admin/header";
 
 interface Tenant {
@@ -54,21 +46,6 @@ export default function TenantsPage() {
   }, [filter]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-
-  const updateStatus = useCallback(
-    async (id: string, status: string) => {
-      const ok = window.confirm(`Change tenant status to "${status}"?`);
-      if (!ok) return;
-      const res = await fetch(`/api/admin/tenants/${id}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (res.ok) await refresh();
-    },
-    [refresh],
-  );
 
   return (
     <div className="flex h-full flex-col">
@@ -155,20 +132,26 @@ export default function TenantsPage() {
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {new Date(t.created_at).toLocaleDateString()}
                     </td>
+                    {/* Read-only since #210.
+
+                        This cell used to be a status Select that PATCHed
+                        /api/admin/tenants/:id, which wrote straight into
+                        mark8ly's tenants table over the cross-database grant —
+                        bypassing mark8ly's validation, domain events, cache
+                        invalidation and its own audit row.
+
+                        Changing a tenant's status now happens in the console,
+                        through mark8ly's own API. A link rather than a silent
+                        removal: an operator who came here to suspend a tenant
+                        needs to be told where that moved, not left looking for
+                        a control that vanished. */}
                     <td className="px-4 py-3 text-right">
-                      <Select
-                        value={t.status}
-                        onValueChange={(v) => void updateStatus(t.id, v)}
+                      <a
+                        href="https://console.tesserix.app/platform/tenants"
+                        className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
                       >
-                        <SelectTrigger className="ml-auto h-7 w-32 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="active" className="text-xs">active</SelectItem>
-                          <SelectItem value="suspended" className="text-xs">suspended</SelectItem>
-                          <SelectItem value="archived" className="text-xs">archived</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        Manage in console
+                      </a>
                     </td>
                   </tr>
                 ))
