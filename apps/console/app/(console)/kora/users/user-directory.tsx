@@ -60,6 +60,16 @@ export function UserDirectory({
 
       {state.kind === "ready" ? (
         <>
+          {/* A range, not a bare count — see the food index. Above the
+              table, matching the food index and the two CRM surfaces. */}
+          <ResultPager
+            label="users"
+            count={data.length}
+            total={pagination.total}
+            precedingCount={pager.precedingCount}
+            nextHref={pager.nextHref}
+            previousHref={pager.previousHref}
+          />
           <Table aria-label="Kora users">
             <TableHeader>
               <TableRow>
@@ -90,15 +100,8 @@ export function UserDirectory({
               ))}
             </TableBody>
           </Table>
-          {/* A range, not a bare count — see the food index. */}
-          <ResultPager
-            label="users"
-            count={data.length}
-            total={pagination.total}
-            precedingCount={pager.precedingCount}
-            nextHref={pager.nextHref}
-            previousHref={pager.previousHref}
-          />
+          {/* Last, because it describes the result set rather than the
+              controls that shape it. */}
           <p className="text-xs text-muted-foreground">{scopeNote}</p>
         </>
       ) : (
