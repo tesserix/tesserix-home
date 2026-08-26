@@ -22,6 +22,18 @@ type Entity struct {
 	// merged client need not track which request produced which row.
 	Type  string `json:"type"`
 	Label string `json:"label"`
+	// Sublabel is what distinguishes two records sharing a Label — Kora sends
+	// a user's handle (falling back to their email) and a food's brand.
+	//
+	// OPTIONAL, and its absence is a legitimate shape rather than a deviation:
+	// §3.4 never defines the row at all, and mark8ly does not emit one. Two
+	// implementers have already diverged here, which is exactly the gap where
+	// a console grows a per-product branch if nobody writes it down.
+	//
+	// Carried because a directory without it is ambiguous in the one way a
+	// directory must not be: two users called "Mahesh" render identically and
+	// an operator has no way to tell them apart.
+	Sublabel string `json:"sublabel,omitempty"`
 	// CreatedAt is ISO 8601 with an offset per §4.3, kept as the string the
 	// product sent. Optional: not every entity type has a creation instant
 	// that means anything.

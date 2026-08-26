@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -23,7 +24,7 @@ func testLogger() *slog.Logger {
 
 // koraFoods is the shape Kora actually serves, verified live.
 const koraFoods = `{"data":[
-  {"id":"528ea893","type":"foods","label":"Veg kolhapuri","created_at":"2026-08-22T07:16:52Z"}
+  {"id":"528ea893","type":"foods","label":"Veg kolhapuri","sublabel":"Maggi","created_at":"2026-08-22T07:16:52Z"}
 ],"pagination":{"page":1,"limit":2,"total":6421}}`
 
 // svc builds a service over one product, recording the URL it was asked for.
@@ -57,6 +58,12 @@ func TestReadReturnsTheProductsRecords(t *testing.T) {
 	// Echoed, not recomputed: `total` is the product's count of matching
 	// records. Substituting len(data) would claim the first page is the whole
 	// result — here, 1 instead of 6421.
+	// Carried through: it is what distinguishes two records sharing a label,
+	// and a directory without it is ambiguous in the one way a directory must
+	// not be.
+	if page.Data[0].Sublabel != "Maggi" {
+		t.Errorf("sublabel = %q, want it carried through", page.Data[0].Sublabel)
+	}
 	if page.Pagination.Total != 6421 {
 		t.Errorf("total = %d, want the product's own 6421", page.Pagination.Total)
 	}
@@ -166,5 +173,26 @@ func TestReadNeverReturnsNilData(t *testing.T) {
 	}
 	if page.Data == nil {
 		t.Error("data is nil; the console iterates it")
+	}
+}
+
+// mark8ly does not emit a sublabel, and that is a legitimate shape — §3.4 never
+// defines the row. An absent one must not become an empty string in the JSON.
+func TestReadOmitsAnAbsentSublabel(t *testing.T) {
+	body := `{"data":[{"id":"t1","type":"tenants","label":"Acme"}],"pagination":{"page":1,"limit":1,"total":1}}`
+	s, _ := svc(t, body, map[string][]string{"kora": {"tenants"}})
+	page, err := s.Read(context.Background(), op(), "kora", "tenants", Query{Limit: 100})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if page.Data[0].Sublabel != "" {
+		t.Errorf("sublabel = %q, want empty for a product that sends none", page.Data[0].Sublabel)
+	}
+	raw, err := json.Marshal(page.Data[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(raw, []byte("sublabel")) {
+		t.Errorf("emitted %s; an absent sublabel is omitted, not sent empty", raw)
 	}
 }
