@@ -196,3 +196,39 @@ func TestReadOmitsAnAbsentSublabel(t *testing.T) {
 		t.Errorf("emitted %s; an absent sublabel is omitted, not sent empty", raw)
 	}
 }
+
+// `page=1` is the default on both implementers, so sending it makes every
+// first-page URL differ from the one a product would build itself — which
+// matters when comparing this service's requests against a product's own logs.
+func TestReadOmitsTheFirstPageRatherThanSendingItExplicitly(t *testing.T) {
+	s, asked := svc(t, koraFoods, koraTypes())
+	if _, err := s.Read(context.Background(), op(), "kora", "foods", Query{Limit: 50, Page: 1}); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if bytes.Contains([]byte(*asked), []byte("page=")) {
+		t.Errorf("asked %q; the first page must not be sent explicitly", *asked)
+	}
+}
+
+func TestReadForwardsALaterPage(t *testing.T) {
+	s, asked := svc(t, koraFoods, koraTypes())
+	if _, err := s.Read(context.Background(), op(), "kora", "foods", Query{Limit: 50, Page: 3}); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !bytes.Contains([]byte(*asked), []byte("page=3")) {
+		t.Errorf("asked %q, want page=3 forwarded", *asked)
+	}
+}
+
+// Paging and searching compose: an operator on page 2 of a search must stay in
+// that search.
+func TestReadForwardsAPageAlongsideASearch(t *testing.T) {
+	s, asked := svc(t, koraFoods, koraTypes())
+	if _, err := s.Read(context.Background(), op(), "kora", "foods", Query{Q: "ri", Limit: 50, Page: 2}); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	url := []byte(*asked)
+	if !bytes.Contains(url, []byte("q=ri")) || !bytes.Contains(url, []byte("page=2")) {
+		t.Errorf("asked %q, want both the search and the page", *asked)
+	}
+}

@@ -184,3 +184,27 @@ func TestEntitiesIsNotImplementedWhenNothingIsConfigured(t *testing.T) {
 		t.Fatalf("status = %d, want 501: %s", got.status, got.raw)
 	}
 }
+
+func TestEntitiesForwardsThePage(t *testing.T) {
+	a := serve(t)
+	a.get("/v1/entities/foods?source=" + productSlug + "&page=4")
+	select {
+	case url := <-a.asked:
+		if !strings.Contains(url, "page=4") {
+			t.Errorf("product asked %q, want page=4", url)
+		}
+	default:
+		t.Fatal("the product was never called")
+	}
+}
+
+// `?page=0` and `?page=-1` are bugs in whatever built the link. Answering them
+// with page 1 hides a pager that has walked off the start of its range.
+func TestEntitiesRefusesANonPositivePage(t *testing.T) {
+	a := serve(t)
+	for _, raw := range []string{"0", "-1", "abc"} {
+		if got := a.get("/v1/entities/foods?source=" + productSlug + "&page=" + raw); got.status != http.StatusBadRequest {
+			t.Errorf("page=%s: status = %d, want 400", raw, got.status)
+		}
+	}
+}

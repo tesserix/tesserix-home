@@ -57,6 +57,14 @@ type Query struct {
 	// for forwarding rather than validating, not a lucky escape.
 	Q     string
 	Limit int
+	// Page is 1-based, and forwarded only when above 1.
+	//
+	// Omitted at 1 rather than always sent, for the same reason an empty `q`
+	// is omitted: `page=1` is the default on both implementers, and sending it
+	// makes every first-page URL differ from the one a product would build
+	// itself — which matters when comparing this service's requests against a
+	// product's own logs.
+	Page int
 }
 
 func (q Query) path(entityType string) string {
@@ -64,6 +72,9 @@ func (q Query) path(entityType string) string {
 	params.Set("limit", strconv.Itoa(q.Limit))
 	if q.Q != "" {
 		params.Set("q", q.Q)
+	}
+	if q.Page > 1 {
+		params.Set("page", strconv.Itoa(q.Page))
 	}
 	// The type is escaped: it reaches here from a URL path segment, and an
 	// unescaped one would let a caller reshape the product-facing request.
