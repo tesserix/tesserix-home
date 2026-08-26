@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -234,5 +235,63 @@ func TestPostAppliesTheClientTimeout(t *testing.T) {
 
 	if _, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts()); err != nil {
 		t.Fatalf("Post: %v", err)
+	}
+}
+
+// A write's caller has to know WHY it was refused. §4.4 guarantees `error` is
+// a stable machine-readable code, so surfacing the code — never the free-text
+// `message` — is both safe and the only useful thing to pass on.
+func TestPostCarriesTheProductsErrorCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_reason_code","message":"reason_code is required and must be one of the declared codes"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+
+	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
+	code, ok := ErrorCode(err)
+	if !ok || code != "invalid_reason_code" {
+		t.Fatalf("ErrorCode = %q,%v; want invalid_reason_code,true", code, ok)
+	}
+}
+
+// The free-text message must NOT be reachable. It is written by another
+// product and this package's whole discipline is that such text never reaches
+// a browser.
+func TestPostDoesNotExposeTheProductsFreeTextMessage(t *testing.T) {
+	const secret = "leaked-internal-hostname-do-not-render"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_reason_code","message":"` + secret + `"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+
+	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("the product's free-text message reached the error: %v", err)
+	}
+}
+
+// A refusal with no parseable envelope must still be an error carrying its
+// status — the absence of a code is not the absence of a failure.
+func TestPostWithAnUnparseableErrorBodyStillFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`<html>gateway</html>`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+
+	_, err := c.Post(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
+	if err == nil {
+		t.Fatal("a 502 must surface as an error")
+	}
+	if code, ok := ErrorCode(err); ok {
+		t.Errorf("ErrorCode = %q; an unparseable body has no code to report", code)
 	}
 }

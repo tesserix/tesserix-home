@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants/internal/handler"
@@ -14,6 +15,17 @@ import (
 func TestEveryRouteNamesItsCapability(t *testing.T) {
 	want := map[string]auth.Capability{
 		"GET /v1/tenants": auth.CapPlatform,
+		// Suspension is reversible and operational, so `platform` alone —
+		// the same gate the directory read uses.
+		//
+		// The IRREVERSIBLE verb is deliberately not in this table, because it
+		// is deliberately not in RouteTable: tenant purge belongs behind
+		// `platform` AND `hard-delete`, and no route in this service requires
+		// a verb capability yet. Making purge the first one is a decision that
+		// deserves its own review rather than riding along with a reversible
+		// sibling.
+		"POST /v1/tenants/{id}/suspend":   auth.CapPlatform,
+		"POST /v1/tenants/{id}/unsuspend": auth.CapPlatform,
 	}
 	for _, r := range handler.RouteTable {
 		key := r.Method + " " + r.Pattern
@@ -28,15 +40,24 @@ func TestEveryRouteNamesItsCapability(t *testing.T) {
 	}
 }
 
-// Companion to the 403 test: proves every route answers once the capability IS
-// held, so the refusal proves something rather than being satisfied by a route
-// that never answers at all.
-func TestEveryRouteAnswersWhenTheCapabilityIsHeld(t *testing.T) {
+// Companion to the 403 test: proves every route is REACHED once the capability
+// is held, so the refusal proves something rather than being satisfied by a
+// route that never answers at all.
+//
+// "Reached", not "answers 200": the write routes have their own required
+// inputs, and a request with none of them is correctly a 400. What matters
+// here is that the capability gate let it through to the handler — a 403 would
+// mean the route is gated on something the operator does not hold, which is
+// the failure this test exists to catch. So 403 is the assertion, and any
+// other status passes.
+func TestEveryRouteIsReachedWhenTheCapabilityIsHeld(t *testing.T) {
 	a := serve(t)
 	for _, r := range handler.RouteTable {
-		got := a.do(r.Method, r.Pattern, "", nil)
-		if got.status != http.StatusOK {
-			t.Errorf("%s %s with platform = %d, want 200: %s", r.Method, r.Pattern, got.status, got.raw)
+		path := strings.ReplaceAll(r.Pattern, "{id}", "mark8ly:t1")
+		got := a.do(r.Method, path, "", nil)
+		if got.status == http.StatusForbidden {
+			t.Errorf("%s %s with platform = 403; the capability gate refused an operator who holds it: %s",
+				r.Method, path, got.raw)
 		}
 	}
 }

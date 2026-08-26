@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,10 +46,38 @@ var ErrRequestInvalid = errors.New("federation: request could not be built")
 type statusError struct {
 	Slug   string
 	Status int
+	// Code is the product's §4.4 `error` value, when the refusal carried a
+	// parseable envelope. Empty otherwise.
+	//
+	// Only the CODE is kept. §4.4 guarantees it is a stable machine-readable
+	// identifier, which makes it safe to pass on and useful to act on; the
+	// sibling `message` is free text written by another product, and this
+	// package's whole discipline is that such text never reaches a browser.
+	// See sanitize, which still renders a status and nothing else — a code
+	// helps a WRITE's caller choose a message, and has no business being
+	// interpolated into a fan-out's failure list.
+	Code string
 }
 
 func (e *statusError) Error() string {
+	// Deliberately does not interpolate Code. This string is not the channel
+	// the code travels on — ErrorCode is — and an error's text has a way of
+	// ending up rendered.
 	return fmt.Sprintf("federation: %s responded %d", e.Slug, e.Status)
+}
+
+// ErrorCode reports the product's §4.4 error code from a refusal, if it
+// carried one.
+//
+// The second return distinguishes "no code" from "the empty code": a refusal
+// with an unparseable body has nothing to report, and a caller mapping codes
+// to messages must not treat that as a code it failed to recognise.
+func ErrorCode(err error) (string, bool) {
+	var se *statusError
+	if !errors.As(err, &se) || se.Code == "" {
+		return "", false
+	}
+	return se.Code, true
 }
 
 // Operator is who the call is being made on behalf of, and under what
@@ -207,7 +236,7 @@ func (c *Client) do(
 		return nil, fmt.Errorf("federation: reading %s response: %w: %w", slug, ErrTransport, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, &statusError{Slug: slug, Status: resp.StatusCode}
+		return nil, &statusError{Slug: slug, Status: resp.StatusCode, Code: errorCodeOf(respBody)}
 	}
 	return respBody, nil
 }
@@ -269,4 +298,23 @@ func (c *Client) sign(req *http.Request, secret string, op Operator, body []byte
 	req.Header.Set(headerNonce, in.Nonce)
 	req.Header.Set(headerSignature, signature)
 	return nil
+}
+
+// errorCodeOf reads the §4.4 `error` code out of a refusal's body.
+//
+// Best-effort by design: a product that answers a 502 with an HTML gateway
+// page has no code to give, and that is not itself an error — the status is
+// still the failure. Returning "" lets ErrorCode report "no code" rather than
+// inventing one.
+func errorCodeOf(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Error
 }
