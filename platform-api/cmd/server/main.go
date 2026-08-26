@@ -24,6 +24,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
@@ -169,6 +170,20 @@ func run(log *slog.Logger) error {
 		audit.Register(m, audit.Config{
 			Fed:      fed,
 			Slugs:    cfg.Federation.Slugs(),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "inbox", func(m *http.ServeMux) {
+		inbox.Register(m, inbox.Config{
+			Fed: fed,
+			// SlugsImplementing, not Slugs: §3.2 is required of products that
+			// adopt it, not of every product at once. mark8ly does not mount
+			// /admin/inbox, so asking it would answer 404 and render to an
+			// operator as a failed source — on the one surface where a red
+			// entry means "something is wrong with your estate".
+			Slugs:    cfg.Federation.SlugsImplementing("inbox"),
 			Verifier: verifier,
 			Log:      log,
 		})
