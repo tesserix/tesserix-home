@@ -741,6 +741,41 @@ export async function fetchLifecycleReasonCodes(
   );
 }
 
+/** The page size the billing surfaces ask each product for. */
+export const BILLING_LIMIT = 100;
+
+/**
+ * The estate's recurring plans — contract §8.2.
+ *
+ * Gated on the `billing` capability at the platform API, not `platform`. A
+ * `403` here therefore means the operator holds platform but not billing,
+ * which is a real and intended outcome rather than a bug.
+ */
+export async function fetchEstateSubscriptions(): Promise<
+  import("./billing").SubscriptionPage
+> {
+  const { parseSubscriptions } = await import("./billing");
+  const query = new URLSearchParams({ limit: String(BILLING_LIMIT) });
+  return parseSubscriptions(
+    await platformRequest("subscriptions", `/v1/billing/subscriptions?${query.toString()}`),
+  );
+}
+
+/**
+ * The estate's expiring trials — contract §8.2.
+ *
+ * Stripe-managed trials are excluded by default on the product side and this
+ * does not opt them back in: they are not the rows anyone acts on, and §8.2's
+ * question is "which trials expire this week, with dunning state".
+ */
+export async function fetchEstateTrials(): Promise<import("./billing").TrialPage> {
+  const { parseTrials } = await import("./billing");
+  const query = new URLSearchParams({ limit: String(BILLING_LIMIT) });
+  return parseTrials(
+    await platformRequest("trials", `/v1/billing/trials?${query.toString()}`),
+  );
+}
+
 /** The page size the product-rail index pages ask for. */
 export const ENTITIES_LIMIT = 100;
 

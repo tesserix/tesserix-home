@@ -309,6 +309,28 @@ export const ROUTES = {
   // is the fragmentation this surface exists to end.
   "platform.inbox": { mobile: "/platform/inbox", capability: "platform" },
 
+  // §8.2's two reads — recurring plans and expiring trials — from
+  // platform-api's billing module (#358).
+  //
+  // `billing`, and this is the FIRST route in the console to use it.
+  // platform-auth's capabilities.ts has carried the capability since the
+  // vocabulary was written, marked RESERVED with the note that "the console
+  // has no billing surface today (0 of 28 routes)". That reservation ends
+  // here, and that note is updated.
+  //
+  // NOT `platform`, which every other estate read uses. §8.2 exists to make a
+  // product legible as a BUSINESS, and revenue is the one surface the
+  // capability vocabulary already drew a line for — using `platform` would
+  // have made that line decorative.
+  //
+  // The limitation worth stating: §7 records that capabilities are
+  // estate-wide, not per-product, so a grant of `billing` opens EVERY
+  // product's revenue rather than a chosen one.
+  //
+  // No `web` predecessor. apps/web never had an estate billing surface — each
+  // product's subscriptions were only ever visible inside that product.
+  "platform.billing": { mobile: "/platform/billing", capability: "billing" },
+
   // Every product's tenants in one shape, from platform-api's tenants module
   // (#342), which federates §3.4's /admin/entities/tenants.
   //

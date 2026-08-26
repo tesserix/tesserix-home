@@ -49,12 +49,19 @@ export const CAPABILITIES = [
   /**
    * Billing surfaces: wallets, refunds, payouts, subscription state.
    *
-   * RESERVED — the console has no billing surface today (0 of 28 routes), so
-   * nothing checks this yet. Declared now so the vocabulary is complete and the
-   * Zitadel role exists before a surface needs it, because renaming a
-   * capability later silently breaks every assignment while adding one does
-   * not. A grant of this currently confers nothing; treat it as a placeholder
-   * rather than evidence that a billing surface is gated.
+   * NO LONGER RESERVED. `platform.billing` gates on this — the estate's §8.2
+   * surface, its recurring plans and expiring trials — so a grant now confers
+   * real access rather than nothing.
+   *
+   * It was reserved from the day the vocabulary was written, on the reasoning
+   * that renaming a capability later silently breaks every assignment while
+   * adding one does not. That bet paid: the surface arrived and the role
+   * already existed.
+   *
+   * What a grant means, stated because it is broader than it looks: §7 records
+   * that capabilities are estate-wide, not per-product. So this opens EVERY
+   * product's revenue, not a chosen one. There is no way to express "may see
+   * mark8ly's billing but not Kora's" today.
    */
   "billing",
   /**
