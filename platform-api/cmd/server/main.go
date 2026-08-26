@@ -22,6 +22,7 @@ import (
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/billing"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
@@ -186,6 +187,19 @@ func run(log *slog.Logger) error {
 			// operator as a failed source — on the one surface where a red
 			// entry means "something is wrong with your estate".
 			Slugs:    cfg.Federation.SlugsImplementing("inbox"),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "billing", func(m *http.ServeMux) {
+		billing.Register(m, billing.Config{
+			Fed: fed,
+			// SlugsImplementing, not Slugs: §8.2 says a product with no
+			// billing concept implements none of these endpoints, so asking
+			// one that does not answers 404 and shows as a failed source on a
+			// revenue page — where red reads as lost money.
+			Slugs:    cfg.Federation.SlugsImplementing("billing"),
 			Verifier: verifier,
 			Log:      log,
 		})
