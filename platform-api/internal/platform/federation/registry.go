@@ -32,6 +32,17 @@ type Product struct {
 	// Secret is the HMAC key the request is signed with. See signature.go —
 	// it is the key, not a bearer credential, and is never sent.
 	Secret string
+	// Entities is the §3.4 entity types this product serves — `tenants`,
+	// `users`, `foods`. Product-defined, because `{type}` is: kora serving
+	// users and foods does not mean it has tenants, and asking it for them
+	// would produce a 404 reported to an operator as a failed source.
+	//
+	// OPTIONAL, unlike BaseURL and Secret. A product that federates audit logs
+	// and serves no entity type is a normal configuration. Absence means it
+	// serves none — the same absence-means-no rule FEDERATION_PRODUCTS uses,
+	// so a product stays out of an entity surface until someone declares it
+	// in rather than until someone remembers to exclude it.
+	Entities []string
 }
 
 // Registry is the set of products this deployment may call.
@@ -53,6 +64,27 @@ func NewRegistry(products []Product) *Registry {
 func (r *Registry) Get(slug string) (Product, bool) {
 	p, ok := r.byslug[slug]
 	return p, ok
+}
+
+// SlugsServing is every product declaring the given §3.4 entity type, sorted
+// for the same reason Slugs is.
+//
+// The caller is a module that reads one entity type across the estate; it must
+// not simply fan out over Slugs(), because a product without that type answers
+// 404 and the operator sees a failed source where the honest answer is that
+// the product has none.
+func (r *Registry) SlugsServing(entity string) []string {
+	out := make([]string, 0, len(r.byslug))
+	for slug, p := range r.byslug {
+		for _, e := range p.Entities {
+			if e == entity {
+				out = append(out, slug)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Slugs is sorted so a fan-out's failure list is stable across runs. An
@@ -119,7 +151,28 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 			Slug:    slug,
 			BaseURL: strings.TrimRight(base, "/"),
 			Secret:  secret,
+			// Optional. Empty means this product serves no entity type, which
+			// is why this is not checked the way BASE_URL and SECRET are: an
+			// absent declaration is a legitimate configuration, not a typo.
+			Entities: splitList(getenv(prefix + "ENTITIES")),
 		})
 	}
 	return NewRegistry(products), nil
+}
+
+// splitList parses a comma-separated env value, trimming each element and
+// dropping empties, so " tenants , users " and "tenants,users" agree.
+func splitList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
