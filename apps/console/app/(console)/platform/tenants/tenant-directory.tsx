@@ -29,6 +29,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // before the console's build knows its id must appear under its raw id, not as
 // "Unknown".
 import { sourceLabel } from "@/lib/audit";
+import { NO_REASON_CODES, type ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
 import { splitTenantId, type EstateTenant, type TenantSourceFailure } from "@/lib/tenants";
 import { TenantLifecycleAction } from "./tenant-lifecycle-controls";
 
@@ -179,6 +180,12 @@ export interface TenantDirectoryProps {
   tenants: readonly EstateTenant[];
   /** Products the fan-out could not read, from the response's own `failures`. */
   failures: readonly TenantSourceFailure[];
+  /**
+   * Each product's lifecycle reason codes, read once per product by the page
+   * (contract §8.8) rather than once per row. A product absent here renders
+   * its rows' action as the visible gap — never with another product's codes.
+   */
+  reasonCodes?: ReasonCodeCatalog;
   state: SurfaceState;
   emptyMessage: string;
   /** What the directory does and does not cover. */
@@ -193,6 +200,7 @@ export function TenantDirectory({
   values,
   tenants,
   failures,
+  reasonCodes = NO_REASON_CODES,
   state,
   emptyMessage,
   scopeNote,
@@ -269,7 +277,7 @@ export function TenantDirectory({
                     its status and its owner before the control that changes
                     them. */}
                 <TableCell>
-                  <TenantLifecycleAction tenant={tenant} />
+                  <TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />
                 </TableCell>
               </TableRow>
             ))}

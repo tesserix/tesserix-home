@@ -13,6 +13,7 @@ vi.mock("next/navigation", () => ({
 // drive every result shape the seam can produce.
 vi.mock("./actions", () => ({ setTenantLifecycleAction: vi.fn() }));
 
+import { parseReasonCodes, type ReasonCodeCatalog } from "@/lib/tenant-lifecycle";
 import type { EstateTenant } from "@/lib/tenants";
 import { setTenantLifecycleAction } from "./actions";
 import {
@@ -35,8 +36,29 @@ const ACTIVE: EstateTenant = {
 
 const SUSPENDED: EstateTenant = { ...ACTIVE, status: "suspended" };
 
-/** A product this build carries no reason codes for. `kora` is in `ESTATE`
- *  but not in `lib/tenant-lifecycle.ts`'s `BY_PRODUCT`. */
+/**
+ * mark8ly's vocabulary as the page would have fetched it (contract §8.8),
+ * built through the real parser rather than as a literal — a hand-written
+ * catalog here could hold a shape `parseReasonCodes` would never produce, and
+ * these tests would then be asserting against a fiction.
+ */
+const CATALOG: ReasonCodeCatalog = {
+  mark8ly: parseReasonCodes({
+    data: {
+      suspend: [
+        { code: "abuse", label: "Abuse — abusive content or behaviour" },
+        { code: "fraud", label: "Fraud — suspected fraudulent transactions" },
+      ],
+      unsuspend: [
+        { code: "resolved", label: "Resolved — the issue is settled" },
+        { code: "appeal_upheld", label: "Appeal upheld" },
+      ],
+    },
+  }),
+};
+
+/** A product this render has no reason codes for — it is absent from the
+ *  catalog, which is what a product that failed to answer looks like. */
 const UNKNOWN_PRODUCT: EstateTenant = {
   id: "kora:c-9",
   source: "kora",
@@ -44,9 +66,9 @@ const UNKNOWN_PRODUCT: EstateTenant = {
   status: "active",
 };
 
-function open(tenant: EstateTenant) {
+function open(tenant: EstateTenant, reasonCodes: ReasonCodeCatalog = CATALOG) {
   const user = userEvent.setup();
-  render(<TenantLifecycleAction tenant={tenant} />);
+  render(<TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />);
   return user;
 }
 
@@ -72,13 +94,17 @@ describe("which verb a status implies", () => {
   });
 
   it("labels the row control with the verb its status implies", () => {
-    const { unmount } = render(<TenantLifecycleAction tenant={SUSPENDED} />);
+    const { unmount } = render(
+      <TenantLifecycleAction tenant={SUSPENDED} reasonCodes={CATALOG} />,
+    );
     expect(
       screen.getByRole("button", { name: "Unsuspend Acme Stores" }),
     ).toBeInTheDocument();
     unmount();
 
-    render(<TenantLifecycleAction tenant={{ ...ACTIVE, status: "frozen" }} />);
+    render(
+      <TenantLifecycleAction tenant={{ ...ACTIVE, status: "frozen" }} reasonCodes={CATALOG} />,
+    );
     expect(
       screen.getByRole("button", { name: "Suspend Acme Stores" }),
     ).toBeInTheDocument();
@@ -219,9 +245,12 @@ describe("when the write is refused", () => {
   });
 });
 
-describe("a product whose reason codes this build does not know", () => {
+describe("a product that did not supply its reason codes", () => {
   it("disables the action and says why, rather than borrowing another product's codes", () => {
-    render(<TenantLifecycleAction tenant={UNKNOWN_PRODUCT} />);
+    // CATALOG deliberately, not an empty one: this must fail because kora is
+    // ABSENT from a populated catalog — a product that did not answer while
+    // others did — rather than because nothing was fetched at all.
+    render(<TenantLifecycleAction tenant={UNKNOWN_PRODUCT} reasonCodes={CATALOG} />);
 
     const button = screen.getByRole("button", { name: "Suspend" });
     expect(button).toBeDisabled();

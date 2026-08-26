@@ -1,88 +1,121 @@
 /**
  * The reason codes a tenant lifecycle change may carry.
  *
- * # Why these live here at all, which is not ideal
+ * # This file used to be the problem it now solves
  *
  * §8.3 requires reason codes on anything reversible-but-consequential, and the
- * product is the authority on its own set — mark8ly declares seven for suspend
- * and four DIFFERENT ones for unsuspend. But **no contract endpoint exposes
- * them**: they are a Go var in `platformadmin/tenant_lifecycle.go`, reachable
- * only by reading that file. A form cannot offer a menu it has no way to fetch.
+ * product is the authority on its own set. Until contract §8.8 there was no
+ * way to ASK for that set — mark8ly's lived in a Go var — so this module
+ * carried a hand-copied duplicate keyed by product, with a long comment
+ * arguing that the drift was safe in a specific direction (tesserix-home#345).
  *
- * So the console carries a copy, keyed by product rather than pretending the
- * vocabulary is universal. That is a real duplication and it will drift.
+ * The argument was true and the copy is still gone, because the safe direction
+ * was only half of it. Offering a RETIRED code is refused loudly with §4.4's
+ * `invalid_reason_code`. Missing an ADDED one is silent: the option is simply
+ * absent, and the operator picks the nearest wrong reason, which lands on an
+ * audit row and is never questioned again.
  *
- * # Why the drift is safe, which is the part that makes this acceptable
- *
- * The product validates authoritatively and refuses an unknown code with
- * §4.4's `invalid_reason_code`, which platform-api surfaces and this surface
- * renders. So a stale list here has exactly two failure modes:
- *
- *   - it offers a code the product has retired — the write is REFUSED, visibly
- *   - it omits a code the product has added — the option is missing
- *
- * Neither writes a wrong reason. A console-side list that could silently
- * record an unintended reason on an audit row would not be acceptable; one
- * that can only under-offer or be refused is.
- *
- * The proper fix is a contract endpoint declaring them. Filed separately —
- * this comment is the argument for why shipping the copy meanwhile is not
- * reckless, not an argument that the copy is correct.
+ * So the vocabulary is now fetched from the product that owns it, through
+ * `GET /v1/tenants/lifecycle/reason-codes?source=`. What is left here is the
+ * parsing and the lookup — no codes.
  */
 
+/** One reason a lifecycle change may carry. */
 export interface ReasonCode {
   readonly code: string;
   readonly label: string;
 }
 
-/**
- * Mirrors `SuspendReasonCodes` in mark8ly's
- * `internal/handlers/platformadmin/tenant_lifecycle.go`.
- *
- * Labels are the console's own words; the CODE is what crosses the wire and
- * must match exactly. Renaming a label is safe, renaming a code is not.
- */
-const MARK8LY_SUSPEND: readonly ReasonCode[] = [
-  { code: "abuse", label: "Abuse — abusive content or behaviour" },
-  { code: "fraud", label: "Fraud — suspected fraudulent transactions or identity" },
-  { code: "non_payment", label: "Non-payment — dunning exhausted" },
-  { code: "legal", label: "Legal — legal or regulatory demand" },
-  { code: "tos_violation", label: "Terms breach — not covered by abuse or fraud" },
-  { code: "security", label: "Security — compromised account or active incident" },
-  { code: "voluntary", label: "Voluntary — the merchant asked for a pause" },
-];
-
-/**
- * Mirrors `UnsuspendReasonCodes`. Deliberately a DIFFERENT set from suspend —
- * mark8ly says so in its own comment, and the asymmetry is the point: the
- * reason a suspension ends is not the reason it began.
- */
-const MARK8LY_UNSUSPEND: readonly ReasonCode[] = [
-  { code: "resolved", label: "Resolved — the issue is settled" },
-  { code: "appeal_upheld", label: "Appeal upheld — the suspension was contested and reversed" },
-  { code: "operator_error", label: "Operator error — suspended in error" },
-  { code: "voluntary_end", label: "Voluntary end — the merchant asked to resume" },
-];
-
-const BY_PRODUCT: Readonly<Record<string, { suspend: readonly ReasonCode[]; unsuspend: readonly ReasonCode[] }>> = {
-  mark8ly: { suspend: MARK8LY_SUSPEND, unsuspend: MARK8LY_UNSUSPEND },
-};
-
 export type LifecycleVerb = "suspend" | "unsuspend";
+
+/**
+ * One product's vocabulary, verb to codes.
+ *
+ * Deliberately not narrowed to `Record<LifecycleVerb, ...>`. A product's set of
+ * consequential verbs is its own — mark8ly publishes `purge` and `trial_extend`
+ * beside the two this surface uses — and a type that could not represent them
+ * would force this parser to drop what it does not recognise, which is how a
+ * console comes to decide what a product is allowed to say.
+ */
+export type ProductReasonCodes = Readonly<Record<string, readonly ReasonCode[]>>;
+
+/** Every product whose vocabulary this render has, keyed by product id. */
+export type ReasonCodeCatalog = Readonly<Record<string, ProductReasonCodes>>;
+
+/** The empty catalog, for a render that fetched nothing. */
+export const NO_REASON_CODES: ReasonCodeCatalog = Object.freeze({});
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Reads one entry, returning null for anything malformed.
+ *
+ * A bad entry is DROPPED rather than rendered with a placeholder label. A menu
+ * option reading "undefined" is one an operator can still select, and the
+ * write that follows carries whatever code was beside it.
+ */
+function parseEntry(value: unknown): ReasonCode | null {
+  if (!isRecord(value)) return null;
+  const { code, label } = value;
+  if (typeof code !== "string" || code === "") return null;
+  // The label is the product's words. An entry with none is dropped rather
+  // than falling back to the code: `tos_violation` is not a sentence to put in
+  // front of an operator, and §8.8 requires a label, so a missing one is the
+  // product deviating rather than something this file should paper over.
+  if (typeof label !== "string" || label.trim() === "") return null;
+  return { code, label };
+}
+
+/**
+ * Parses the `data` of a §8.8 response into one product's vocabulary.
+ *
+ * Throws for a body that is not the contract's shape, rather than returning an
+ * empty vocabulary. An empty menu and a malformed response must not arrive at
+ * the caller as the same value — the first is a product that published
+ * nothing, the second is a bug, and only one of them is worth retrying.
+ */
+export function parseReasonCodes(json: unknown): ProductReasonCodes {
+  if (!isRecord(json)) {
+    throw new Error("reason codes: response is not an object");
+  }
+  const data = isRecord(json.data) ? json.data : null;
+  if (data === null) {
+    throw new Error("reason codes: response has no data object");
+  }
+
+  const out: Record<string, readonly ReasonCode[]> = {};
+  for (const [verb, raw] of Object.entries(data)) {
+    if (!Array.isArray(raw)) continue;
+    const codes = raw.map(parseEntry).filter((entry): entry is ReasonCode => entry !== null);
+    // A verb whose entries were all malformed is left ABSENT, not empty — the
+    // caller renders an absent verb as a gap and an empty one as an empty menu.
+    if (codes.length > 0) out[verb] = codes;
+  }
+  return out;
+}
 
 /**
  * The codes to offer for one product's verb.
  *
- * An unknown product returns EMPTY rather than mark8ly's list. Offering one
- * product's vocabulary for another's tenant is how a wrong reason lands on an
- * audit row, and an empty menu is a visible gap where a borrowed one is an
- * invisible error. The caller renders the gap rather than guessing.
+ * A product missing from the catalog returns EMPTY rather than borrowing
+ * another's. Offering one product's vocabulary for another's tenant is how a
+ * wrong reason lands on an audit row, and an empty menu is a visible gap where
+ * a borrowed one is an invisible error. The caller renders the gap.
  */
-export function reasonCodesFor(product: string, verb: LifecycleVerb): readonly ReasonCode[] {
-  return BY_PRODUCT[product]?.[verb] ?? [];
+export function reasonCodesFor(
+  catalog: ReasonCodeCatalog,
+  product: string,
+  verb: LifecycleVerb,
+): readonly ReasonCode[] {
+  return catalog[product]?.[verb] ?? [];
 }
 
-/** Whether this console build knows any codes for a product. */
-export function hasReasonCodes(product: string): boolean {
-  return BY_PRODUCT[product] !== undefined;
+/** Whether this render holds any codes for a product's verb. */
+export function hasReasonCodes(
+  catalog: ReasonCodeCatalog,
+  product: string,
+  verb: LifecycleVerb,
+): boolean {
+  return reasonCodesFor(catalog, product, verb).length > 0;
 }
