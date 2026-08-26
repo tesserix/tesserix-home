@@ -67,6 +67,12 @@ func serveSlugs(t *testing.T, slugs []string, roles ...string) *api {
 		// stub that returned the list for every path would make a write look
 		// like a decode failure, which is how the first run of these tests
 		// reported a 503 for a request that had actually reached the product.
+		// §8.8 answers a third envelope again — `{data: {verb: [...]}}` — so
+		// it needs its own branch for the same reason the writes do.
+		if strings.HasSuffix(r.URL.Path, "/lifecycle/reason-codes") {
+			_, _ = w.Write([]byte(`{"data":{"suspend":[{"code":"fraud","label":"Fraud"}],"unsuspend":[{"code":"resolved","label":"Resolved"}]}}`))
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/suspend") || strings.HasSuffix(r.URL.Path, "/unsuspend") {
 			_, _ = w.Write([]byte(`{"data":{"tenant_id":"t1","status":"suspended","stores_affected":3,"changed":true}}`))
 			return

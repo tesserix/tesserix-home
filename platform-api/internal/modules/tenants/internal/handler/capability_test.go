@@ -26,6 +26,12 @@ func TestEveryRouteNamesItsCapability(t *testing.T) {
 		// sibling.
 		"POST /v1/tenants/{id}/suspend":   auth.CapPlatform,
 		"POST /v1/tenants/{id}/unsuspend": auth.CapPlatform,
+		// The vocabulary those two writes require, gated the same way. It
+		// reads nothing about a tenant and mutates nothing — but it is the
+		// menu on a `platform` write, and gating it lower would let an
+		// operator who cannot suspend enumerate the reasons one is suspended
+		// for, which is a small disclosure with no purpose behind it.
+		"GET /v1/tenants/lifecycle/reason-codes": auth.CapPlatform,
 	}
 	for _, r := range handler.RouteTable {
 		key := r.Method + " " + r.Pattern

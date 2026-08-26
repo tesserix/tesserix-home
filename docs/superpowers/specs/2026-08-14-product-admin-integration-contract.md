@@ -567,9 +567,88 @@ makes the product a source in a surface that already exists. A product rail entr
 is justified only by a surface no other product could share.
 
 
+### 8.8 `GET /admin/lifecycle/reason-codes` — the vocabulary must be fetchable
+
+§8.3 requires reason codes on anything reversible-but-consequential, and the
+product is the authority on its own set. mark8ly complied on the day it was
+written: seven suspend codes, four deliberately different unsuspend ones, and an
+unrecognised code refused with §4.4's `invalid_reason_code`.
+
+All correct, and all invisible. The codes were a Go var in
+`internal/handlers/platformadmin/tenant_lifecycle.go`, reachable only by opening
+that file. **A form cannot offer a menu it has no way to fetch**, so the console
+shipped a hand-copied duplicate (tesserix-home#345).
+
+A copied vocabulary drifts in two directions and only one of them is loud:
+
+- a code the product has **retired** is offered → the write is refused, visibly,
+  and someone acts on it;
+- a code the product has **added** is missing → the option is silently absent,
+  and the operator picks the nearest wrong one, which lands on an audit row and
+  is never questioned again.
+
+The second failure is the reason this is a required endpoint rather than a
+convenience. So:
+
+```
+GET /admin/lifecycle/reason-codes
+
+{
+  "data": {
+    "suspend":   [{ "code": "non_payment", "label": "Non-payment — dunning exhausted" }],
+    "unsuspend": [{ "code": "appeal_upheld", "label": "Appeal upheld" }]
+  }
+}
+```
+
+- **Required of any product implementing §8.3's lifecycle writes**, and of no
+  other. A product with no suspend endpoint owes nobody a vocabulary.
+- **Both verbs are always present**, even where a product's two sets are
+  identical. "The same codes apply" is a statement made by repeating them, not
+  by omitting the key — an absent key leaves the console unable to render that
+  form at all.
+- **`code` is snake_case.** It crosses the wire into an audit row and is matched
+  exactly by the product's own validator; a product serving `Non-Payment` would
+  pass its own tests and break the moment two products' rows were read together.
+- **`label` is required and human.** Without one the console renders the wire
+  value, and `tos_violation` appears in front of an operator as a menu option.
+- The product remains **authoritative**. This endpoint publishes the set; it does
+  not move validation. A write carrying an unlisted code is still refused with
+  `invalid_reason_code`, and a client that cached a stale list is still wrong in
+  the loud direction.
+
+Enforced by `@tesserix/admin-conformance` from v0.4.0, including the conditional:
+a product declaring `tenant-lifecycle` without `lifecycle/reason-codes` fails.
+That write endpoint is declarable but never called by the suite — a conformance
+run that suspended a live merchant's tenant to confirm the route conforms is a
+worse outcome than an unchecked route.
+
+**The general problem, stated but not yet solved.** Reason codes are one instance
+of "what vocabulary does this product use?", and they are the second instance to
+surface. `Tenant.status` is also the product's own vocabulary and is also
+rendered verbatim because the console has no way to know the valid set. That one
+is harmless — rendering an unknown status verbatim is honest, where rendering an
+unknown reason code as a *choice* is not — which is exactly why it does not
+justify a discovery endpoint on its own.
+
+`GET /admin/vocabulary`, covering statuses, entity types and inbox kinds
+alongside reason codes, is the shape this wants eventually. It is deliberately
+not built here. A discovery endpoint designed against one real consumer is
+designed wrong, and §8.8 is a route it can absorb later without a second
+migration: a product serving `/admin/vocabulary` would keep answering this path
+too.
+
+
 ## Changelog
 
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
+- **v2.3** (2026-08-26) — §8.8: `GET /admin/lifecycle/reason-codes`, required of
+  any product implementing §8.3's lifecycle writes. §8.3 required the codes and
+  said nothing about how anyone was meant to learn them, so the console
+  hand-copied mark8ly's out of a Go source file (#345). Enforced by
+  `@tesserix/admin-conformance` from v0.4.0, conditionally on the writes being
+  declared. The general "what vocabulary does this product use?" problem is
+  named and a discovery endpoint deliberately deferred.
 - **v2.2** (2026-08-26) — §8.7: `/admin/audit-logs`'s `metadata` is specified
   as compact JSON in a string, resolving mark8ly#313. No implementation
   changes; the shape was already what the estate produced and the console
