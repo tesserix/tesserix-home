@@ -23,6 +23,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
@@ -187,6 +188,21 @@ func run(log *slog.Logger) error {
 			Slugs:    cfg.Federation.SlugsImplementing("inbox"),
 			Verifier: verifier,
 			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "entities", func(m *http.ServeMux) {
+		// Built here rather than inside the module so the module never sees
+		// the registry: every other module takes plain slugs, and this one
+		// needs one fact more — which types each product declared.
+		types := make(map[string][]string)
+		for _, slug := range cfg.Federation.Slugs() {
+			if product, ok := cfg.Federation.Get(slug); ok {
+				types[slug] = product.Entities
+			}
+		}
+		entities.Register(m, entities.Config{
+			Fed: fed, Types: types, Verifier: verifier, Log: log,
 		})
 	})
 
