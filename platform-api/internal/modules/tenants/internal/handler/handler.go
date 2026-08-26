@@ -56,6 +56,10 @@ const MaxLimit = 500
 // filter that silently did nothing.
 var estateParameters = []string{"source", "q", "status", "limit"}
 
+// reasonCodesParameters is the §8.8 read's only parameter, and it is REQUIRED
+// — see the handler for why there is no fan-out to default to.
+var reasonCodesParameters = []string{"source"}
+
 // RouteTable is every route this module serves, and the ONLY place they are
 // declared. capability_test ranges over it.
 var RouteTable = []Route{
@@ -65,6 +69,10 @@ var RouteTable = []Route{
 		handler: func(h *Handler) http.HandlerFunc { return h.suspend }},
 	{Method: http.MethodPost, Pattern: "/v1/tenants/{id}/unsuspend",
 		handler: func(h *Handler) http.HandlerFunc { return h.unsuspend }},
+	// A literal segment where the write routes take {id}, so it cannot be
+	// mistaken for a tenant called "lifecycle": ServeMux prefers the literal.
+	{Method: http.MethodGet, Pattern: "/v1/tenants/lifecycle/reason-codes",
+		handler: func(h *Handler) http.HandlerFunc { return h.reasonCodes }},
 }
 
 // maxLifecycleBody caps what will be read from a lifecycle request. The body
@@ -242,4 +250,70 @@ func readLimit(raw string) (int, error) {
 		return 0, httpx.BadRequest("limit exceeds the maximum of " + strconv.Itoa(MaxLimit))
 	}
 	return n, nil
+}
+
+// reasonCodes serves contract §8.8 for ONE product.
+//
+// `source` is required and there is deliberately no fan-out. Every other read
+// in this module merges across products; this one answers a write form's menu,
+// and merging two products' vocabularies would offer an operator a code the
+// owning product refuses — or, worse, one both accept and mean differently.
+// tesserix-home#345 is the whole argument, and defaulting to "all products"
+// would rebuild the borrowed-vocabulary bug on the server side.
+func (h *Handler) reasonCodes(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		httpx.WriteError(w, r, httpx.Unauthorized("no principal on an authenticated route"), h.log)
+		return
+	}
+
+	query := r.URL.Query()
+	if err := httpx.RejectUnknownParameters(query, reasonCodesParameters); err != nil {
+		httpx.WriteError(w, r, err, h.log)
+		return
+	}
+
+	source := strings.TrimSpace(query.Get("source"))
+	if source == "" {
+		httpx.WriteError(w, r, httpx.BadRequest(
+			"source is required: reason codes are one product's vocabulary, not the estate's"), h.log)
+		return
+	}
+
+	codes, err := h.svc.ReasonCodes(r.Context(), federation.Operator{
+		ID: principal.Subject, Capability: string(auth.CapPlatform),
+	}, source)
+	if err != nil {
+		h.writeReasonCodesError(w, r, source, err)
+		return
+	}
+
+	httpx.WriteData(w, r, http.StatusOK, codes, h.log)
+}
+
+// writeReasonCodesError maps a failed read onto a status the console can act
+// on. Each branch renders differently: a gap the operator can do nothing about
+// must not look like a form they filled in wrong.
+func (h *Handler) writeReasonCodesError(w http.ResponseWriter, r *http.Request, source string, err error) {
+	h.log.ErrorContext(r.Context(), "tenants: reason codes read failed", "source", source, "error", err)
+
+	switch {
+	case errors.Is(err, service.ErrNotInstrumented):
+		httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
+	case errors.Is(err, service.ErrUnknownSource):
+		httpx.WriteError(w, r, httpx.BadRequest(err.Error()), h.log)
+	case errors.Is(err, service.ErrNoReasonCodes):
+		// 501, not 200-with-nothing and not 502. The product answered, and
+		// what it said is "I publish no vocabulary" — a contract gap on its
+		// side (§8.8), which is exactly what not_implemented means here. The
+		// console renders the action as unavailable rather than offering an
+		// empty menu on a write that requires a code.
+		httpx.WriteError(w, r, httpx.NotImplemented(
+			"the product publishes no lifecycle reason codes (contract §8.8)"), h.log)
+	default:
+		// Deliberately not err.Error(): a transport failure's text carries
+		// hostnames, which is why the federation package sanitizes at all.
+		httpx.WriteError(w, r, httpx.Unavailable(
+			"the product could not be reached for its lifecycle reason codes"), h.log)
+	}
 }
