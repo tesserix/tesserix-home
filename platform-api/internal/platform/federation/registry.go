@@ -43,6 +43,22 @@ type Product struct {
 	// so a product stays out of an entity surface until someone declares it
 	// in rather than until someone remembers to exclude it.
 	Entities []string
+	// Endpoints is the OPTIONAL contract endpoints this product implements
+	// beyond the ones every federating product serves — today only `inbox`.
+	//
+	// Needed for the same reason Entities is, one level up. §3.2 is a required
+	// contract endpoint, but "required" governs products that adopt it, not
+	// every product at once: mark8ly does not mount `/admin/inbox` at all, so
+	// asking it returns 404 and an operator sees a failed source where the
+	// honest answer is that the product has no queue.
+	//
+	// Absence means it implements none — the same absence-means-no rule
+	// FEDERATION_PRODUCTS and ENTITIES use. A product stays out of the estate
+	// queue until someone declares it in, rather than until someone remembers
+	// to exclude it. That direction is the safe one: an under-declared product
+	// is a visibly missing source, an over-declared one is a permanent red
+	// failure on a surface operators are meant to trust.
+	Endpoints []string
 }
 
 // Registry is the set of products this deployment may call.
@@ -78,6 +94,26 @@ func (r *Registry) SlugsServing(entity string) []string {
 	for slug, p := range r.byslug {
 		for _, e := range p.Entities {
 			if e == entity {
+				out = append(out, slug)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SlugsImplementing is every product declaring the given contract endpoint,
+// sorted for the same reason Slugs is.
+//
+// Distinct from SlugsServing, which answers a different question: that one is
+// about §3.4's product-defined entity TYPES beneath a single endpoint, this
+// one is about whether an endpoint exists at all.
+func (r *Registry) SlugsImplementing(endpoint string) []string {
+	out := make([]string, 0, len(r.byslug))
+	for slug, p := range r.byslug {
+		for _, e := range p.Endpoints {
+			if e == endpoint {
 				out = append(out, slug)
 				break
 			}
@@ -155,6 +191,10 @@ func LoadRegistry(getenv func(string) string) (*Registry, error) {
 			// is why this is not checked the way BASE_URL and SECRET are: an
 			// absent declaration is a legitimate configuration, not a typo.
 			Entities: splitList(getenv(prefix + "ENTITIES")),
+			// Optional, for the same reason Entities is: a product that
+			// federates audit logs and implements no further endpoint is a
+			// normal configuration, not a typo.
+			Endpoints: splitList(getenv(prefix + "ENDPOINTS")),
 		})
 	}
 	return NewRegistry(products), nil
