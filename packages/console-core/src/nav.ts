@@ -191,6 +191,22 @@ export const platformNav: readonly NavEntry[] = [
     // list will simply import without it. Ordered queue → do-not-contact →
     // import so the rail reads in the order the work has to happen.
     items: [
+      // Billing first in this group, ahead of the CRM cluster: the CRM is the
+      // pipeline BEFORE a sale and billing is what happens after, so the rail
+      // reads pipeline → customers → revenue only if revenue is not buried
+      // under three lead-management entries.
+      //
+      // Growth rather than Operate: §8.2's purpose is to make a product
+      // "legible as a business", which is this group's question. The trials
+      // tab is genuinely a work queue, which argued for Operate — but
+      // splitting the two §8.2 reads across two groups would put two doors on
+      // one capability, and #133 settled that argument the other way.
+      // `bar-chart` rather than a new "credit-card" key. IconKey is consumed
+      // as `Record<IconKey, ...>` in web, mobile and console, so adding one is
+      // a compile error in three apps until each maps it — the same trade the
+      // Tenants and Organisations entries above record. `bar-chart` is the
+      // closest existing sense: the business read of the estate.
+      { name: "Billing", route: "platform.billing", icon: "bar-chart" },
       { name: "CRM", route: "platform.crm", icon: "users" },
       // Second, not last: an imported lead sits on neither queue for its
       // first fourteen days (Due needs a next action, Drifting needs a
