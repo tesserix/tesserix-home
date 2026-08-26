@@ -150,7 +150,14 @@ export const ROUTES = {
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until
   // it is built — staff scoping is blocked on #134.
-  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", pending: true, capability: "platform" },
+  // NOT pending: the console serves this page. Read-only — Kora's DELETE
+  // exists but the console does not offer it, pending the verb-capability
+  // decision that mark8ly#288 (tenant purge) also waits on. See the page.
+  //
+  // Left at the `read` default deliberately, as the previous comment said:
+  // the list is readable, and whether this surface ever carries deletion
+  // (`hard-delete`) is that same open decision.
+  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", capability: "platform" },
 
   // Platform rail. The console owns their identity so the rail can be built
   // from one source; none of the surfaces is built here yet.

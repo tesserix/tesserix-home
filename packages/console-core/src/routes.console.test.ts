@@ -200,7 +200,7 @@ describe("pending reflects what the console actually serves", () => {
     expect(webPath("kora.audit")).toBe("/admin/apps/kora/audit");
   });
 
-  it("serves the food index, and keeps Kora's unbuilt surfaces pending", () => {
+  it("serves Kora's food index and users, and keeps Overview pending", () => {
     // The food index is the console's first PRODUCT-rail page. It was pending
     // until tesserix/kora#480 gave §3.4 a browse mode — before that an index
     // page was impossible, because opening it with no query answered 400.
@@ -210,11 +210,17 @@ describe("pending reflects what the console actually serves", () => {
     // Guards against a blanket un-pend, which is what this test was originally
     // for: the rail must not offer navigation to pages that do not exist.
     //
-    // `kora.users` is next (#355). `kora.overview` is pending for a different
-    // reason and may stay that way — Kora answers 501 on /admin/kpis and
-    // tesserix/kora#472 decided to keep it rather than invent a metric to fill
-    // a page, so there is nothing for an overview to show.
-    expect(isPending("kora.users")).toBe(true);
+    // Users is built too now (#355), read-only — Kora's DELETE exists and the
+    // console does not offer it, pending the verb-capability decision
+    // mark8ly#288 also waits on.
+    expect(isPending("kora.users")).toBe(false);
+    expect(consolePath("kora.users")).toBe("/kora/users");
+
+    // `kora.overview` is pending for a different reason and may stay that way
+    // indefinitely: Kora answers 501 on /admin/kpis, and tesserix/kora#472
+    // decided to KEEP that rather than invent a metric to fill a page. So
+    // there is nothing for an overview to show, and this is the one entry on
+    // Kora's rail that is honestly unbuilt rather than merely not-yet-built.
     expect(isPending("kora.overview")).toBe(true);
   });
 

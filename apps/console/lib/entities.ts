@@ -19,6 +19,17 @@ export interface EntityRecord {
   /** The product-defined type this row came from, echoed by the API. */
   readonly type: string;
   readonly label: string;
+  /**
+   * What distinguishes two records sharing a label — Kora sends a user's
+   * handle (falling back to their email) and a food's brand.
+   *
+   * OPTIONAL, and its absence is a legitimate shape rather than a deviation:
+   * §3.4 never defines the row, and mark8ly emits none. Rendered where
+   * present, omitted where not — never substituted with a placeholder, which
+   * would make "this product sends no sublabel" look like "this record has no
+   * brand".
+   */
+  readonly sublabel?: string;
   /** ISO 8601 with an offset per §4.3, kept as the string the product sent.
    *  Optional: not every entity type has a creation instant that means
    *  anything. */
@@ -75,6 +86,7 @@ function parseRecord(value: unknown, path: string): EntityRecord {
     source: str(row.source, `${path}.source`),
     type: str(row.type, `${path}.type`),
     label: str(row.label, `${path}.label`),
+    sublabel: optionalStr(row.sublabel, `${path}.sublabel`),
     createdAt: optionalStr(row.created_at, `${path}.created_at`),
   };
 }

@@ -123,23 +123,26 @@ describe("routeEntries", () => {
     // pending and sits in koraNav; platform.liveChat is pending and sits in
     // Operate. The rail promises them, so the palette may say the same thing.
     //
-    // `kora.foods` was the example here until it was built. It is now a LIVE
-    // entry rather than a pending-but-advertised one, which is a different
-    // case and is asserted below.
+    // `kora.foods` and then `kora.users` were the examples here in turn, until
+    // each was built. `kora.overview` is the durable one: Kora answers 501 on
+    // /admin/kpis and tesserix/kora#472 chose to keep it, so that entry is
+    // advertised-but-unbuilt by design rather than by backlog.
     const ids = routeEntries().map((e) => e.id);
-    expect(ids).toContain("route:kora.users");
+    expect(ids).toContain("route:kora.overview");
     expect(ids).toContain("route:platform.liveChat");
     // and they are still marked disabled rather than linked
-    expect(routeEntries().find((e) => e.id === "route:kora.users")?.disabled).toBe(true);
+    expect(routeEntries().find((e) => e.id === "route:kora.overview")?.disabled).toBe(true);
   });
 
-  it("offers the built food index as a real destination", () => {
-    // The console's first product-rail page. The palette must link it rather
-    // than showing it disabled — the disabled state means "not here", and it
-    // is here now.
-    const foods = routeEntries().find((e) => e.id === "route:kora.foods");
-    expect(foods).toBeDefined();
-    expect(foods?.disabled).toBeFalsy();
+  it("offers Kora's built pages as real destinations", () => {
+    // The console's product-rail pages. The palette must link these rather
+    // than showing them disabled — the disabled state means "not here", and
+    // they are here now.
+    for (const id of ["route:kora.foods", "route:kora.users"]) {
+      const entry = routeEntries().find((e) => e.id === id);
+      expect(entry, `${id} missing from the palette`).toBeDefined();
+      expect(entry?.disabled, `${id} should be linkable`).toBeFalsy();
+    }
   });
 
   it("keeps the estate health page, which is built and has no rail entry", () => {
