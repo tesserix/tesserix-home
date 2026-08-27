@@ -214,6 +214,13 @@ export const stripePriceReader: StripePriceReader = {
         // retired Price go on matching its catalog row forever. It is also
         // what makes `lookup_key` unique in the result, which the comparator
         // relies on.
+        //
+        // This is also why `parity.ts`'s `price_shape_mismatch("active")`
+        // branch cannot fire against a live read today: this filter never
+        // lets an archived Price reach the comparator in the first place. If
+        // this filter is ever relaxed, an archived Price is reported as
+        // `price_shape_mismatch`, NOT `price_missing_in_stripe` — see that
+        // branch's comment for why the two must not be conflated.
         active: true,
         limit: PAGE_SIZE,
         // WITHOUT THIS THE CHECK IS WRONG, SILENTLY. Stripe omits
