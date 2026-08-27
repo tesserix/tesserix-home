@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import { performParityCheck } from "@/lib/billing/parity-run";
+import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { recordParityRun } from "@/lib/db/plan-catalog-repo";
 import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
 
@@ -56,36 +57,62 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  * If either fact changes — a Next default, or `serverExternalPackages` in
  * `next.config.ts` — `--external:` in `build:cron` has to change with it.
  *
+ * # It covers BOTH Stripe modes, in one invocation
+ *
+ * One process, two comparisons, two rows — not two CronJobs. The modes share a
+ * catalog read's worth of nothing and a pool's worth of everything, and
+ * splitting them would double the schedule, the manifest and the number of
+ * places a `TESSERIX_DB_*` typo can hide.
+ *
+ * They are nonetheless INDEPENDENT where it counts: a mode that fails, or
+ * whose row cannot be written, must not cost the other mode its row. Live has
+ * no restricted key provisioned yet and may not for some time; if that took
+ * test down with it, one absent secret would put a hole in every day of the
+ * window rather than in live's half of it.
+ *
  * # Not in this repo
  *
- * The CronJob manifest itself lives in `tesserix-k8s`. It needs: the console
- * image, a `command` override pointing at the bundle, the `TESSERIX_DB_*`
- * environment the console already has, and `STRIPE_RESTRICTED_READ_KEY` from
- * Secret Manager.
+ * The CronJob manifest itself lives in `tesserix-k8s` (#653). It needs: the
+ * console image, a `command` override pointing at the bundle, the
+ * `TESSERIX_DB_*` environment the console already has, and BOTH
+ * `STRIPE_RESTRICTED_READ_KEY_TEST` and `STRIPE_RESTRICTED_READ_KEY_LIVE` from
+ * Secret Manager — each gated and each `optional: true`, because a mode
+ * without a key must produce a `failed` row rather than an unschedulable pod.
  */
 
 /**
- * The check ran and answered.
+ * Every mode ran and answered.
  *
- * `differences` IS SUCCESS. Drift is the check's output, not a crash, and it
- * must not be reported as one: a non-zero exit makes Kubernetes retry the job,
- * and the retry writes a SECOND row for the same finding — so a single drifted
- * day would be counted twice in the window that P2's decision rests on.
+ * `differences` IS SUCCESS, and so is `not_bootstrapped`. Both are the check's
+ * OUTPUT, not a crash, and neither must be reported as one: a non-zero exit
+ * makes Kubernetes retry the job, and the retry writes a SECOND row for the
+ * same finding — so a single day would be counted twice in the window that
+ * P2's decision rests on.
+ *
+ * `not_bootstrapped` is the one worth spelling out. Live has zero
+ * `mark8ly_*` prices and no date by which it will have any, so an exit code
+ * that paged for it would fire nightly for months — and an alert that fires
+ * nightly for months is an alert somebody mutes, taking the real failures with
+ * it.
  */
 export const EXIT_OK = 0;
 
 /**
- * The check could not run, and said so in a `failed` row.
+ * At least one mode could not run, and said so in a `failed` row.
  *
- * Non-zero so the CronJob's own alerting fires: an unreadable catalog or an
- * unreachable Stripe is an upstream problem, categorically different from
- * "the catalog has drifted", and the two must be distinguishable without
- * opening `psql`.
+ * Non-zero so the CronJob's own alerting fires: an unreadable catalog, an
+ * unreachable Stripe or a credential that names the wrong mode is an upstream
+ * problem, categorically different from "the catalog has drifted", and the two
+ * must be distinguishable without opening `psql`.
+ *
+ * KEPT DESPITE COVERING ONLY SOME MODES. One mode failing while the other is
+ * clean still means a day of the window has a `failed` row in it, and nobody
+ * finds that out by reading a green job list.
  */
 export const EXIT_CHECK_FAILED = 1;
 
 /**
- * There was nowhere to write the evidence.
+ * There was nowhere to write the evidence, for at least one mode.
  *
  * The one failure this design cannot record. Distinct from
  * {@link EXIT_CHECK_FAILED} on purpose: that code means a row EXISTS saying
@@ -93,6 +120,10 @@ export const EXIT_CHECK_FAILED = 1;
  * the window, indistinguishable from a clean day to whoever reads the table
  * next week. The CronJob's own failure is the only signal covering it, so it
  * has to be loud and separately identifiable.
+ *
+ * OUTRANKS {@link EXIT_CHECK_FAILED} when both happen in the same invocation:
+ * a `failed` row is evidence, a missing row is a gap that reads as agreement,
+ * and the worse of the two is the one that must reach the exit code.
  */
 export const EXIT_UNRECORDABLE = 2;
 
@@ -137,23 +168,31 @@ function log(line: Record<string, unknown>, stream: "out" | "err"): void {
 }
 
 /**
- * Run the check, record exactly one row, and report an exit code.
+ * Run the check for every mode, record exactly one row each, and report an
+ * exit code.
  *
  * Returns the code rather than calling `process.exit` so the whole thing is
- * testable — including the case a naive implementation gets wrong, which is
- * `differences` exiting 0.
+ * testable — including the cases a naive implementation gets wrong, which are
+ * `differences` exiting non-zero and one mode's failure swallowing the other's
+ * row.
  *
- * EXACTLY ONE ROW, ON EVERY PATH IT CAN REACH. Never zero: a run that dies
- * silently leaves a gap in the 7-day window. Never two: a duplicate makes a
- * single day's finding look like two.
+ * EXACTLY ONE ROW PER MODE, ON EVERY PATH IT CAN REACH. Never zero: a run that
+ * dies silently leaves a gap in the 7-day window. Never two: a duplicate makes
+ * a single day's finding look like two.
+ *
+ * Sequential rather than `Promise.all`, for three reasons that all point the
+ * same way: the log lines come out in a fixed order (test, then live), the two
+ * modes do not contend for the same small connection pool, and a rate limit hit
+ * on one account cannot be blamed on the other.
  */
 export async function runParityCheckJob(): Promise<number> {
   try {
     if (!isDatabaseConfigured()) {
-      // Refuse before the Stripe call. The stored row IS the deliverable, so a
-      // run that could not be recorded is not a run — and failing early keeps
-      // a misconfigured job from spending the restricted key's rate limit on
-      // every tick.
+      // Refuse before ANY Stripe call, and refuse once rather than per mode:
+      // nothing mode-specific has happened yet. The stored row IS the
+      // deliverable, so a run that could not be recorded is not a run — and
+      // failing early keeps a misconfigured job from spending both restricted
+      // keys' rate limits on every tick.
       log(
         {
           outcome: "unrecordable",
@@ -164,37 +203,55 @@ export async function runParityCheckJob(): Promise<number> {
       return EXIT_UNRECORDABLE;
     }
 
-    const run = await performParityCheck();
+    // Accumulated rather than returned early, which IS the independence
+    // property: an early return on the first mode's failure would cost the
+    // second its row, and a missing row is the day-shaped hole this whole
+    // design exists to prevent.
+    let unrecordable = false;
+    let checkFailed = false;
 
-    try {
-      await recordParityRun(run);
-    } catch (cause) {
+    for (const mode of STRIPE_MODES) {
+      // Never throws — every failure comes back as a `failed` run to record.
+      const run = await performParityCheck(mode);
+
+      try {
+        await recordParityRun(run);
+      } catch (cause) {
+        log(
+          {
+            mode,
+            outcome: "unrecordable",
+            reason: "the parity run could not be written to plan_catalog_parity_runs",
+            ...describeWriteFailure(cause),
+          },
+          "err",
+        );
+        unrecordable = true;
+        continue;
+      }
+
       log(
         {
-          outcome: "unrecordable",
-          reason: "the parity run could not be written to plan_catalog_parity_runs",
-          ...describeWriteFailure(cause),
+          mode,
+          outcome: run.outcome,
+          differenceCount: run.differences.length,
+          // Already redacted by `performParityCheck`; null on every outcome
+          // except `failed`.
+          error: run.error,
         },
-        "err",
+        run.outcome === "failed" ? "err" : "out",
       );
-      return EXIT_UNRECORDABLE;
+
+      if (run.outcome === "failed") checkFailed = true;
     }
 
-    log(
-      {
-        outcome: run.outcome,
-        differenceCount: run.differences.length,
-        // Already redacted by `performParityCheck`; null on a clean or
-        // drifted run.
-        error: run.error,
-      },
-      run.outcome === "failed" ? "err" : "out",
-    );
-
-    return run.outcome === "failed" ? EXIT_CHECK_FAILED : EXIT_OK;
+    // Precedence, worst first. See {@link EXIT_UNRECORDABLE}: a `failed` row is
+    // evidence and a missing row is a gap that reads as agreement.
+    if (unrecordable) return EXIT_UNRECORDABLE;
+    return checkFailed ? EXIT_CHECK_FAILED : EXIT_OK;
   } finally {
     // In `finally`, and swallowing its own error: by the time this runs the
-    // row is written and the outcome decided, so a teardown failure must not
+    // rows are written and the outcomes decided, so a teardown failure must not
     // turn a clean check into a failed job.
     await closeTesserixPool().catch(() => {});
   }

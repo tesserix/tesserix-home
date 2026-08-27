@@ -3,12 +3,13 @@ import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 
 import { checkOperatorCapability } from "@/lib/auth/operator";
 import { performParityCheck } from "@/lib/billing/parity-run";
+import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import { recordParityRun } from "@/lib/db/plan-catalog-repo";
 
 /**
- * The plan-catalog parity check: read the catalog, read live Stripe Prices,
- * compare, record one row — triggered by an OPERATOR.
+ * The plan-catalog parity check: read the catalog, read each mode's live
+ * Stripe Prices, compare, record one row per mode — triggered by an OPERATOR.
  *
  * # This is not what the schedule runs
  *
@@ -20,9 +21,18 @@ import { recordParityRun } from "@/lib/db/plan-catalog-repo";
  * without an operator — bad neighbours for the P2 argument that revokes
  * mark8ly's Stripe write key.
  *
- * Both runners get their `clean` / `differences` / `failed` decision from
- * `lib/billing/parity-run.ts`, so the 7-day window is one sequence of rows
- * under one definition rather than a mixture of two.
+ * Both runners get their `clean` / `differences` / `failed` /
+ * `not_bootstrapped` decision from `lib/billing/parity-run.ts`, so the 7-day
+ * window is one sequence of rows under one definition rather than a mixture of
+ * two.
+ *
+ * # Both modes, and they are independent
+ *
+ * One request runs test and live and writes a row for each. A failure in one
+ * must not cost the other its row: live has no restricted key provisioned yet,
+ * and a route that gave up on the first error would silently stop test's window
+ * too — turning one absent secret into a hole in every day of it rather than in
+ * live's half.
  *
  * # Every failure path writes a `failed` row
  *
@@ -80,6 +90,16 @@ async function authorize(): Promise<null | NextResponse> {
   return null;
 }
 
+/** One mode's result, as the response carries it. `differences` is the full
+ *  report so P1b can render it without a second query. */
+interface ParityRunBody {
+  readonly mode: (typeof STRIPE_MODES)[number];
+  readonly outcome: string;
+  readonly differenceCount: number;
+  readonly differences: readonly unknown[];
+  readonly error: string | null;
+}
+
 export async function POST(): Promise<NextResponse> {
   const refusal = await authorize();
   // A refusal is not a check that failed — it is a check that never started,
@@ -94,36 +114,69 @@ export async function POST(): Promise<NextResponse> {
     return NextResponse.json({ error: "not_configured" }, { status: 501 });
   }
 
-  // The comparison itself is shared with `scripts/parity-check.ts`, which is
-  // what the CronJob runs — see that module's header for why there must be
-  // exactly one definition of `clean` / `differences` / `failed`.
-  const { outcome, differences, error } = await performParityCheck();
+  const runs: ParityRunBody[] = [];
+  // Accumulated rather than returned early. Returning on the first problem is
+  // the bug this shape exists to prevent: it would cost every LATER mode its
+  // row, and a missing row reads as a clean day to whoever looks next week.
+  let unrecordable = false;
+  let checkFailed = false;
 
-  try {
-    await recordParityRun({ outcome, differences, error });
-  } catch {
-    // The one failure this design cannot record: with the database unreachable
-    // there is nowhere to put the evidence. Loud and non-2xx, so the CronJob's
-    // own alerting is what covers the gap — silence here would be the
-    // day-shaped hole the module header exists to prevent.
+  for (const mode of STRIPE_MODES) {
+    // The comparison itself is shared with `scripts/parity-check.ts`, which is
+    // what the CronJob runs — see that module's header for why there must be
+    // exactly one definition of the four outcomes.
+    const run = await performParityCheck(mode);
+
+    try {
+      await recordParityRun(run);
+    } catch {
+      // The one failure this design cannot record: with the database
+      // unreachable there is nowhere to put the evidence. Noted and carried
+      // on with, so the remaining modes still get their rows.
+      unrecordable = true;
+      continue;
+    }
+
+    if (run.outcome === "failed") checkFailed = true;
+    runs.push({
+      mode: run.mode,
+      outcome: run.outcome,
+      differenceCount: run.differences.length,
+      differences: run.differences,
+      // Already redacted by `performParityCheck`, which is why an error is
+      // safe to return here at all.
+      error: run.error,
+    });
+  }
+
+  if (unrecordable) {
+    // Loud and non-2xx, and deliberately saying NOTHING else: a `pg` error
+    // names the role and echoes the host. The CronJob's own alerting is what
+    // covers the gap — silence here would be the day-shaped hole the module
+    // header exists to prevent.
+    //
+    // Outranks the 502 below: a `failed` row is evidence, a missing row is a
+    // gap that reads as agreement, and the worse of the two is what the status
+    // code must report.
     return NextResponse.json({ error: "unavailable" }, { status: 500 });
   }
 
-  if (outcome === "failed") {
-    // 502, because the check could not run — an upstream problem, not a
-    // finding. Distinct from `differences` below on purpose: a CronJob's
-    // alerting must be able to tell "the catalog has drifted" from "the check
-    // did not happen", which is the same distinction the three-state outcome
-    // draws in the table.
-    return NextResponse.json({ outcome, error }, { status: 502 });
+  if (checkFailed) {
+    // 502, because a mode could not run — an upstream problem, not a finding.
+    // Distinct from the 200 below on purpose: alerting must be able to tell
+    // "the catalog has drifted" from "the check did not happen", which is the
+    // same distinction the four-state outcome draws in the table.
+    //
+    // The body still carries EVERY mode, including the ones that answered
+    // cleanly. A 502 that hid a clean result would send an operator looking
+    // for a fault in a mode that had just answered correctly.
+    return NextResponse.json({ runs }, { status: 502 });
   }
 
-  // 200 for `differences` as well as `clean`. Drift is a FINDING; the check
-  // ran and answered. Reporting it as an error would conflate the two states
-  // the whole design keeps apart.
-  return NextResponse.json({
-    outcome,
-    differenceCount: differences.length,
-    differences,
-  });
+  // 200 for `differences` and `not_bootstrapped` as well as `clean`. Both are
+  // FINDINGS; the check ran and answered. Reporting either as an error would
+  // conflate the states the whole design keeps apart — and in
+  // `not_bootstrapped`'s case it would do so nightly, for months, for a
+  // condition nobody intends to change this week.
+  return NextResponse.json({ runs });
 }
