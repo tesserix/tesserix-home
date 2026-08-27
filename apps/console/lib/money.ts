@@ -79,6 +79,26 @@ export function formatMoney(value: Money | undefined): string {
   });
   // The currency's OWN exponent, not a hardcoded /100: JPY has no minor unit
   // at all, so a constant would be wrong by a factor of a hundred there.
+  //
+  // KNOWN WRONG for a Stripe minor-unit amount, left as-is here — this
+  // function's blast radius (the federated billing surface, the stat tiles)
+  // is wider than any one caller's fix, and correcting it is being filed
+  // separately. `resolvedOptions().maximumFractionDigits` answers a CLDR
+  // question — how many decimals a LOCALE conventionally shows a currency
+  // with — and CLDR data disagrees with Stripe, and with ITSELF across
+  // runtimes: IDR resolves to 0 fraction digits under Chrome/en-US and to 2
+  // under Node's ICU, while Stripe treats IDR as an ordinary two-decimal
+  // currency regardless of any of that (`lib/billing/source-policy.ts`
+  // confirms this against live data). A caller that fed this function a real
+  // Stripe `unit_amount` for IDR rendered `IDR 1,198,800,000` in production —
+  // a hundredfold overstatement — while a Node test asserting the same value
+  // passed, because Node's ICU happened to agree with Stripe by accident. Any
+  // caller formatting a genuine Stripe amount should derive its exponent from
+  // Stripe's own zero-decimal-currency list (`ZERO_DECIMAL_CURRENCIES` in
+  // `lib/billing/source-policy.ts`) and pass `minimumFractionDigits` /
+  // `maximumFractionDigits` explicitly, the way
+  // `app/(console)/platform/billing/catalog/catalog-views.tsx`'s
+  // `formatCatalogAmount` now does — never trust this line's guess.
   const digits = format.resolvedOptions().maximumFractionDigits ?? 2;
   return format.format(value.amount / 10 ** digits);
 }

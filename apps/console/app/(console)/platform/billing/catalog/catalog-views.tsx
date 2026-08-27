@@ -3,19 +3,15 @@
 "use client";
 
 import Link from "next/link";
-import {
-  Badge,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@tesserix/web";
+import { Badge } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
+import { SurfaceTabs } from "@/components/kit/surface-tabs";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import { formatMoney } from "@/lib/money";
-import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
+import {
+  policyFor,
+  toStripeUnitAmount,
+  ZERO_DECIMAL_CURRENCIES,
+} from "@/lib/billing/source-policy";
 // Type-only imports throughout this file, deliberately: `lib/db/plan-catalog-repo.ts`
 // and `lib/billing/stripe-read.ts` both carry `import "server-only"`, so a
 // VALUE import from either would drag `pg` (and, for the latter, the `stripe`
@@ -106,15 +102,6 @@ export function groupCatalogRows(rows: readonly CatalogRow[]): GroupedCatalogPri
   return [...byKey.values()];
 }
 
-const CATALOG_COLUMNS: Array<{ key: string; header: string }> = [
-  { key: "plan", header: "Plan" },
-  { key: "period", header: "Period" },
-  { key: "tier", header: "Tier" },
-  { key: "source", header: "Source" },
-  { key: "lookupKey", header: "Lookup key" },
-  { key: "amounts", header: "Amounts" },
-];
-
 /** Title-cases a source id: the only source today is `mark8ly`, and a plain
  *  capitalisation is honest for whatever a second source (#381) turns out to
  *  be named, without inventing a lookup table for a union of one. */
@@ -122,12 +109,49 @@ export function catalogSourceLabel(source: CatalogSource): string {
   return source.charAt(0).toUpperCase() + source.slice(1);
 }
 
+/** Title-cases a plan or period id the same way `catalogSourceLabel` does —
+ *  both `plan` and `period` are open-ish vocabularies (0032's migration
+ *  comment: no CHECK on `plan` at all), so this is deliberately a
+ *  capitalisation, not a lookup table keyed on today's three plan names. */
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * How many Stripe minor units make one whole unit of `currency` — 1 for a
+ * zero-decimal currency (JPY, VND, ...), 100 for every other currency Stripe
+ * supports.
+ *
+ * NEVER derived from `Intl`. This is the second time this file has had to say
+ * that: `source-policy.ts`'s own header comment warns that `Intl` answers a
+ * question about the CURRENCY (how humans conventionally write it, per CLDR)
+ * and Stripe has repeatedly answered a different one about its own API. The
+ * exponent this function used to get from `formatMoney` ->
+ * `Intl.NumberFormat(...).resolvedOptions().maximumFractionDigits` is exactly
+ * that CLDR opinion, and it disagrees with Stripe for IDR depending on the
+ * RUNTIME: Chrome/en-US's CLDR data says IDR has 0 fraction digits (Indonesian
+ * retail convention omits cents), Node's ICU data says 2 — and Stripe treats
+ * IDR as an ordinary two-decimal currency, full stop (`source-policy.ts`
+ * confirms this against live data: "IDR IS NOT" zero-decimal, and is the one
+ * currency in the catalog `ZERO_DECIMAL_CURRENCIES` deliberately excludes).
+ * A test asserting the FORMATTED STRING for IDR therefore passed in Node
+ * while shipping `IDR 1,198,800,000` — a hundredfold overstatement — to every
+ * operator's actual browser. `ZERO_DECIMAL_CURRENCIES` is hard-coded and
+ * versioned against Stripe's own API, which is the only legitimate source for
+ * this decision; this function is a pure lookup against it, independent of
+ * `Intl` entirely, precisely so it can be tested without a runtime's ICU data
+ * able to hide a regression.
+ */
+export function stripeMinorUnitDivisor(currency: string): number {
+  return ZERO_DECIMAL_CURRENCIES.has(currency) ? 1 : 100;
+}
+
 /**
  * A catalog amount, as an operator should read it — never the raw stored
  * value.
  *
  * # Two defects this fixes, both instances of a bug this codebase has already
- * paid for twice
+ * paid for more than once
  *
  * `unitAmountMinor` is `plan_catalog_amounts.unit_amount_minor` verbatim,
  * which is wrong to print directly for two independent reasons:
@@ -138,19 +162,18 @@ export function catalogSourceLabel(source: CatalogSource): string {
  *  2. For a ZERO-DECIMAL currency it is 100x the real Stripe amount.
  *     `policyFor(source).amountsAreScaledBy100` is mark8ly's storage
  *     convention (see `source-policy.ts`), not a Stripe fact — the catalog
- *     stores VND, IDR, JPY etc. multiplied by 100 for internal consistency,
- *     and `toStripeUnitAmount` is the one function allowed to undo that
- *     before the value reaches anything that treats it as real money. This
- *     exact defect class was already found and fixed twice elsewhere (the
- *     parity comparator, 2026-08-27, and the Stripe write path before that,
- *     which would have charged people 100x wrong) — this display path was
- *     the third instance until this function existed.
+ *     stores VND, JPY etc. multiplied by 100 for internal consistency, and
+ *     `toStripeUnitAmount` is the one function allowed to undo that before
+ *     the value reaches anything that treats it as real money.
  *
- * `toStripeUnitAmount` is what makes the value real Stripe minor units;
- * `formatMoney` (via `Intl.NumberFormat`) is what turns real Stripe minor
- * units into a price a human reads correctly — it already knows which
- * currencies carry no minor unit at all, so there is no second table of
- * zero-decimal currencies to keep in sync here.
+ * This function owns its OWN Stripe-aware formatter rather than delegating to
+ * `lib/money.ts`'s `formatMoney` — see `stripeMinorUnitDivisor`'s doc comment
+ * for why `formatMoney`'s `Intl`-derived exponent is the wrong answer for a
+ * Stripe minor-unit amount. `Intl.NumberFormat` is still used here, but ONLY
+ * for the symbol and the digit grouping, with `minimumFractionDigits` /
+ * `maximumFractionDigits` passed explicitly so CLDR's opinion about how many
+ * decimals a currency conventionally shows can never override Stripe's own
+ * answer.
  */
 export function formatCatalogAmount(
   currency: string,
@@ -158,70 +181,253 @@ export function formatCatalogAmount(
   source: CatalogSource,
 ): string {
   const stripeUnitAmount = toStripeUnitAmount(currency, unitAmountMinor, policyFor(source));
-  // Uppercased ONLY here, at the `formatMoney` boundary — `toStripeUnitAmount`
-  // above and `ZERO_DECIMAL_CURRENCIES` it consults are keyed on the catalog's
-  // own lowercase convention (`plan_catalog_amounts_currency_is_lowercase_iso_4217`),
-  // so lower-casing earlier would break that lookup. `formatMoney`'s
-  // `isKnownCurrency` check, on the other hand, tests against
-  // `Intl.supportedValuesOf("currency")`, whose codes are always uppercase —
-  // pass the stored lowercase code straight through and every catalog
-  // currency reads as "unrecognised", falling back to `formatMoney`'s raw
-  // `amount currency` pair. That fallback is indistinguishable from this
-  // function never having run at all, which is exactly what shipped to prod.
-  return formatMoney({ amount: stripeUnitAmount, currency: currency.toUpperCase() });
-}
-
-function CatalogTable({ rows }: { rows: readonly CatalogRow[] }) {
-  const grouped = groupCatalogRows(rows);
-  return (
-    <div className="rounded-lg border">
-      <Table aria-label="Plan catalog">
-        <TableHeader>
-          <TableRow>
-            {CATALOG_COLUMNS.map((c) => (
-              <TableHead key={c.key}>{c.header}</TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {grouped.map((price) => (
-            <TableRow key={price.lookupKey}>
-              <TableCell className="font-medium capitalize">{price.plan}</TableCell>
-              <TableCell className="capitalize">{price.period}</TableCell>
-              <TableCell>
-                <Badge variant="outline" className="capitalize">
-                  {price.tier}
-                </Badge>
-                {/* One Price, `amounts.length` currencies — stated here so the
-                    row cannot be misread as `amounts.length` separate prices. */}
-                <span className="ml-1 text-xs text-muted-foreground">
-                  {price.amounts.length === 1
-                    ? "1 currency"
-                    : `${price.amounts.length} currencies, one price`}
-                </span>
-              </TableCell>
-              <TableCell>{catalogSourceLabel(price.source)}</TableCell>
-              <TableCell className="font-mono text-xs">{price.lookupKey}</TableCell>
-              <TableCell>
-                <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs tabular-nums">
-                  {price.amounts.map((amount) => (
-                    <span key={amount.currency} className="whitespace-nowrap">
-                      {formatCatalogAmount(amount.currency, amount.unitAmountMinor, price.source)}
-                    </span>
-                  ))}
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
+  const divisor = stripeMinorUnitDivisor(currency);
+  const fractionDigits = divisor === 1 ? 0 : 2;
+  const amount = stripeUnitAmount / divisor;
+  // Uppercased ONLY here, at the `Intl` boundary — `toStripeUnitAmount` above
+  // and `stripeMinorUnitDivisor` both consult tables keyed on the catalog's
+  // own lowercase convention
+  // (`plan_catalog_amounts_currency_is_lowercase_iso_4217`), so lower-casing
+  // earlier would break those lookups.
+  const isoCurrency = currency.toUpperCase();
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: isoCurrency,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
+    }).format(amount);
+  } catch {
+    // An unrecognised code is the product's problem to fix, not this
+    // renderer's to hide — the same fallback shape `formatMoney` uses, kept
+    // here rather than reused because reaching into `formatMoney` for this
+    // one branch would reintroduce the exact coupling this function exists
+    // to avoid.
+    return `${amount} ${isoCurrency}`;
+  }
 }
 
 /* ------------------------------------------------------------------------ *
  * Observation window
  * ------------------------------------------------------------------------ */
+
+/**
+ * `GroupedCatalogPrice` folded one level further: per plan, per period, split
+ * into the ONE `developed` price (if published) and the list of `ppp` prices
+ * — the shape the tabbed layout renders directly, one tab per plan.
+ */
+export interface PeriodSection {
+  readonly period: string;
+  /** `null` only if a period is published with ppp prices but no developed
+   *  one — not a state the catalog is expected to be in, but a component
+   *  that assumed non-null here would crash the whole tab on a data surprise
+   *  rather than rendering everything else it knows. */
+  readonly developed: GroupedCatalogPrice | null;
+  readonly ppp: readonly GroupedCatalogPrice[];
+}
+
+export interface PlanSection {
+  readonly plan: string;
+  readonly source: CatalogSource;
+  readonly periods: readonly PeriodSection[];
+}
+
+/** Preferred period order within a plan's tab. Not exhaustive on purpose —
+ *  `period` is CHECK-constrained today to exactly these two values, but a
+ *  period this list has never heard of is appended rather than dropped, so a
+ *  future third period is visible (out of the preferred order) instead of
+ *  silently missing. */
+const PREFERRED_PERIOD_ORDER: readonly string[] = ["annual", "monthly"];
+
+/**
+ * Groups `GroupedCatalogPrice[]` into one section per plan, each holding its
+ * periods in `PREFERRED_PERIOD_ORDER` — the shape #388's tabbed layout
+ * renders. `plan` is an open vocabulary (0032's migration: "a fourth plan is
+ * a product decision that should not also be a schema migration"), so the
+ * SET of tabs and their order comes from the data — first-seen order, which
+ * is alphabetical today because `readCatalogRows`' own `ORDER BY lookup_key`
+ * already sorts `mark8ly_pro_...` before `mark8ly_starter_...` before
+ * `mark8ly_studio_...` — never from a hardcoded plan list that would silently
+ * drop a fourth plan the day one ships.
+ */
+export function organizeCatalogByPlan(prices: readonly GroupedCatalogPrice[]): PlanSection[] {
+  const planOrder: string[] = [];
+  const byPlan = new Map<string, GroupedCatalogPrice[]>();
+  for (const price of prices) {
+    if (!byPlan.has(price.plan)) {
+      byPlan.set(price.plan, []);
+      planOrder.push(price.plan);
+    }
+    byPlan.get(price.plan)!.push(price);
+  }
+
+  return planOrder.map((plan) => {
+    const planPrices = byPlan.get(plan)!;
+    const byPeriod = new Map<string, GroupedCatalogPrice[]>();
+    for (const price of planPrices) {
+      const list = byPeriod.get(price.period) ?? [];
+      list.push(price);
+      byPeriod.set(price.period, list);
+    }
+    const periodsPresent = [...byPeriod.keys()];
+    const orderedPeriods = [
+      ...PREFERRED_PERIOD_ORDER.filter((p) => periodsPresent.includes(p)),
+      ...periodsPresent.filter((p) => !PREFERRED_PERIOD_ORDER.includes(p)),
+    ];
+    const periods: PeriodSection[] = orderedPeriods.map((period) => {
+      const periodPrices = byPeriod.get(period)!;
+      return {
+        period,
+        developed: periodPrices.find((p) => p.tier === "developed") ?? null,
+        ppp: periodPrices.filter((p) => p.tier === "ppp"),
+      };
+    });
+    // `source` is read off the plan's first price rather than threaded
+    // through separately: today every price in the catalog carries the same
+    // source, and this is the field that will need to change, visibly, the
+    // day #381 ships a second one — not a silent per-price average.
+    return { plan, source: planPrices[0].source, periods };
+  });
+}
+
+/**
+ * One price's one currency, as a small pill.
+ *
+ * The lookup key travels as `title` (and folded into the accessible label)
+ * rather than as visible text: it is what a parity finding is reported
+ * against (`summarizeDifferences` above lists differences BY lookup key), so
+ * an operator debugging a difference must be able to find it here — just not
+ * at the cost of six-column scaffolding around every price.
+ */
+function CurrencyChip({
+  currency,
+  unitAmountMinor,
+  source,
+  lookupKey,
+}: {
+  currency: string;
+  unitAmountMinor: number;
+  source: CatalogSource;
+  lookupKey: string;
+}) {
+  const formatted = formatCatalogAmount(currency, unitAmountMinor, source);
+  return (
+    <span
+      title={lookupKey}
+      aria-label={`${formatted} — lookup key ${lookupKey}`}
+      className="inline-flex items-center rounded-full border bg-muted/40 px-2.5 py-1 text-xs font-medium tabular-nums"
+    >
+      {formatted}
+    </span>
+  );
+}
+
+/**
+ * The `developed` descriptor: ONE Stripe Price, its currencies as chips.
+ *
+ * The "one price, N currencies" caption is load-bearing, not decoration — it
+ * is exactly the fact a flat per-currency table loses, which is the whole
+ * reason `groupCatalogRows` exists in the first place (see its own doc
+ * comment: "the exact bug the task warns against").
+ */
+function DevelopedCard({ price }: { price: GroupedCatalogPrice }) {
+  return (
+    <div className="rounded-lg border p-3">
+      <p className="mb-2 text-xs text-muted-foreground">
+        {price.amounts.length === 1
+          ? "One price, 1 currency"
+          : `One price, ${price.amounts.length} currencies`}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {price.amounts.map((amount) => (
+          <CurrencyChip
+            key={amount.currency}
+            currency={amount.currency}
+            unitAmountMinor={amount.unitAmountMinor}
+            source={price.source}
+            lookupKey={price.lookupKey}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The `ppp` descriptors for one period: each one its OWN Price with its own
+ * lookup key and a single currency — captioned "one price each" so this
+ * visibly reads as a different shape from `DevelopedCard`'s currency options
+ * on a single price, not as more currencies on the same one.
+ */
+function PppChips({ prices }: { prices: readonly GroupedCatalogPrice[] }) {
+  if (prices.length === 0) return null;
+  return (
+    <div>
+      <p className="mb-2 text-xs text-muted-foreground">One price each</p>
+      <div className="flex flex-wrap gap-1.5">
+        {prices.map((price) => (
+          <CurrencyChip
+            key={price.lookupKey}
+            currency={price.amounts[0].currency}
+            unitAmountMinor={price.amounts[0].unitAmountMinor}
+            source={price.source}
+            lookupKey={price.lookupKey}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PeriodSectionView({ section }: { section: PeriodSection }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">{titleCase(section.period)}</h3>
+      {section.developed ? (
+        <DevelopedCard price={section.developed} />
+      ) : (
+        <p className="text-xs text-muted-foreground">No developed-market price published.</p>
+      )}
+      <PppChips prices={section.ppp} />
+    </div>
+  );
+}
+
+/**
+ * One plan's tab content: `source` stated once per plan (see
+ * `organizeCatalogByPlan`'s own comment on why it is read off the first
+ * price), then a section per period.
+ */
+function PlanTabContent({ section }: { section: PlanSection }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-xs text-muted-foreground">Source: {catalogSourceLabel(section.source)}</p>
+      {section.periods.map((period) => (
+        <PeriodSectionView key={period.period} section={period} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The catalog, tabbed by plan — Pro | Starter | Studio today, though nothing
+ * here hardcodes those three names (see `organizeCatalogByPlan`). Built on
+ * `SurfaceTabs`, the same component the Billing page's Trials/Subscriptions
+ * split uses, rather than a second tab implementation.
+ */
+function PlanCatalogTabs({ rows }: { rows: readonly CatalogRow[] }) {
+  const sections = organizeCatalogByPlan(groupCatalogRows(rows));
+  return (
+    <SurfaceTabs
+      label="Plan catalog, by plan"
+      tabs={sections.map((section) => ({
+        id: section.plan,
+        label: titleCase(section.plan),
+        content: <PlanTabContent section={section} />,
+      }))}
+    />
+  );
+}
 
 /**
  * What one day's chip in the strip should say.
@@ -543,7 +749,7 @@ export function CatalogViews({
           <ModeToggle mode={mode} />
         </div>
         {catalogState.kind === "ready" ? (
-          <CatalogTable rows={catalog} />
+          <PlanCatalogTabs rows={catalog} />
         ) : (
           <SurfaceStateView
             state={catalogState}

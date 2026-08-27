@@ -10,8 +10,10 @@ import {
   formatCatalogAmount,
   formatRanAt,
   groupCatalogRows,
+  organizeCatalogByPlan,
   outcomeLabel,
   outcomeTone,
+  stripeMinorUnitDivisor,
   summarizeDifferences,
 } from "./catalog-views";
 
@@ -80,7 +82,120 @@ describe("groupCatalogRows", () => {
   });
 });
 
+describe("stripeMinorUnitDivisor — a pure decision, independent of Intl", () => {
+  // The coordinator's own instruction: a test on the FORMATTED STRING alone
+  // can pass in Node and be wrong in Chrome, because `Intl`'s CLDR-derived
+  // fraction-digit count for IDR genuinely differs by runtime (0 in
+  // Chrome/en-US, 2 in Node). This table asserts the DECISION directly
+  // against `ZERO_DECIMAL_CURRENCIES`, which is the only thing that is
+  // allowed to make it, so no runtime's `Intl` implementation can hide a
+  // regression here.
+  it.each([
+    ["idr", 100], // NOT zero-decimal in Stripe — the coordinator's headline bug
+    ["vnd", 1], // zero-decimal in Stripe
+    ["usd", 100],
+    ["jpy", 1], // zero-decimal in Stripe
+  ] as const)("resolves %s to a divisor of %i", (currency, divisor) => {
+    expect(stripeMinorUnitDivisor(currency)).toBe(divisor);
+  });
+});
+
+describe("organizeCatalogByPlan", () => {
+  it("splits one plan's period into a developed price and its ppp prices", () => {
+    const rows = [
+      catalogRow({ plan: "pro", period: "annual", tier: "developed", currency: "usd" }),
+      catalogRow({
+        plan: "pro",
+        period: "annual",
+        tier: "ppp",
+        lookupKey: "mark8ly_pro_annual_ppp_idr_v1",
+        currency: "idr",
+        unitAmountMinor: 1_198_800_000,
+      }),
+    ];
+
+    const sections = organizeCatalogByPlan(groupCatalogRows(rows));
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0].plan).toBe("pro");
+    expect(sections[0].periods).toHaveLength(1);
+    expect(sections[0].periods[0].developed?.lookupKey).toBe("mark8ly_pro_annual_developed_v1");
+    expect(sections[0].periods[0].ppp.map((p) => p.lookupKey)).toEqual([
+      "mark8ly_pro_annual_ppp_idr_v1",
+    ]);
+  });
+
+  it("orders annual before monthly regardless of input order", () => {
+    const rows = [
+      catalogRow({ plan: "pro", period: "monthly", lookupKey: "mark8ly_pro_monthly_developed_v1" }),
+      catalogRow({ plan: "pro", period: "annual", lookupKey: "mark8ly_pro_annual_developed_v1" }),
+    ];
+
+    const [pro] = organizeCatalogByPlan(groupCatalogRows(rows));
+    expect(pro.periods.map((p) => p.period)).toEqual(["annual", "monthly"]);
+  });
+
+  it("appends a period this list has never heard of, rather than dropping it", () => {
+    const rows = [catalogRow({ plan: "pro", period: "quarterly" })];
+    const [pro] = organizeCatalogByPlan(groupCatalogRows(rows));
+    expect(pro.periods.map((p) => p.period)).toEqual(["quarterly"]);
+  });
+
+  it("reports no developed price for a period that has none, rather than throwing", () => {
+    // Not a state the catalog is expected to be in, but `PeriodSectionView`
+    // must be able to render everything else it knows about a data surprise
+    // rather than crashing the whole tab on it.
+    const rows = [
+      catalogRow({
+        plan: "pro",
+        period: "annual",
+        tier: "ppp",
+        lookupKey: "mark8ly_pro_annual_ppp_idr_v1",
+        currency: "idr",
+      }),
+    ];
+    const [pro] = organizeCatalogByPlan(groupCatalogRows(rows));
+    expect(pro.periods[0].developed).toBeNull();
+    expect(pro.periods[0].ppp).toHaveLength(1);
+  });
+
+  it("derives plan tabs from the data, first-seen order — no hardcoded plan list", () => {
+    const rows = [
+      catalogRow({ plan: "studio", lookupKey: "mark8ly_studio_annual_developed_v1" }),
+      catalogRow({ plan: "pro", lookupKey: "mark8ly_pro_annual_developed_v1" }),
+      catalogRow({ plan: "gold", lookupKey: "mark8ly_gold_annual_developed_v1" }),
+    ];
+    const sections = organizeCatalogByPlan(groupCatalogRows(rows));
+    // "gold" is not any plan this file's code knows about — it must still
+    // appear, in the order its rows arrived.
+    expect(sections.map((s) => s.plan)).toEqual(["studio", "pro", "gold"]);
+  });
+
+  it("states the source per plan", () => {
+    const rows = [catalogRow({ source: "mark8ly" })];
+    const [pro] = organizeCatalogByPlan(groupCatalogRows(rows));
+    expect(pro.source).toBe("mark8ly");
+  });
+
+  it("returns nothing for no rows", () => {
+    expect(organizeCatalogByPlan([])).toEqual([]);
+  });
+});
+
 describe("formatCatalogAmount — never the raw stored minor units", () => {
+  it("divides IDR by 100, not by 1 — the coordinator's headline bug", () => {
+    // Live Stripe holds unit_amount = 1198800000 for
+    // mark8ly_pro_annual_ppp_idr_v1, and IDR is a two-decimal currency in
+    // Stripe (source-policy.ts: "IDR IS NOT" zero-decimal). The bug that
+    // shipped rendered `IDR 1,198,800,000` — undivided — because Chrome's
+    // `Intl` resolved IDR to 0 fraction digits. This must render the correct
+    // 11,988,000 and must never render the undivided integer.
+    const rendered = formatCatalogAmount("idr", 1_198_800_000, "mark8ly");
+    expect(rendered).toMatch(/11,988,000/);
+    expect(rendered).not.toMatch(/1,198,800,000/);
+    expect(rendered).not.toContain("1198800000");
+  });
+
   it("formats a non-zero-decimal currency as a human price, not the stored integer", () => {
     // 118800 stored minor units is $1,188.00 — printing the integer is the
     // whole bug this function replaces.
@@ -239,10 +354,58 @@ function renderViews(over: Partial<Parameters<typeof CatalogViews>[0]> = {}) {
 }
 
 describe("CatalogViews", () => {
-  it("renders the catalog table when rows are ready", () => {
+  it("renders a tab per plan, with the price and the lookup key attached to its chip", () => {
     const rows = [catalogRow()];
     renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
-    expect(screen.getByText("mark8ly_pro_annual_developed_v1")).toBeInTheDocument();
+    // "Pro" the plan tab, not the raw lookup key — the 42-vs-78 table is gone.
+    expect(screen.getByRole("tab", { name: "Pro" })).toBeInTheDocument();
+    // Node's ICU in this test runtime has no en-US symbol table loaded, so it
+    // renders "USD 1,188.00" rather than "$1,188.00" — the numeric content
+    // is what this test is actually about; the symbol is a locale detail
+    // `formatCatalogAmount` deliberately leaves to `Intl`.
+    expect(screen.getByText(/1,188\.00/)).toBeInTheDocument();
+    // The lookup key is not visible text any more; it travels as the chip's
+    // accessible name and its `title`, which is what an operator debugging a
+    // parity finding needs to find it by.
+    expect(screen.getByTitle("mark8ly_pro_annual_developed_v1")).toBeInTheDocument();
+  });
+
+  it("keeps a developed price's currencies distinct from a ppp price's own key", () => {
+    const rows = [
+      catalogRow({ currency: "usd", unitAmountMinor: 118_800 }),
+      catalogRow({ currency: "aud", unitAmountMinor: 178_800, taxBehavior: "exclusive" }),
+      catalogRow({
+        lookupKey: "mark8ly_pro_annual_ppp_idr_v1",
+        tier: "ppp",
+        currency: "idr",
+        unitAmountMinor: 1_198_800_000,
+      }),
+    ];
+    renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
+
+    expect(screen.getByText("One price, 2 currencies")).toBeInTheDocument();
+    expect(screen.getByText("One price each")).toBeInTheDocument();
+    expect(screen.getByTitle("mark8ly_pro_annual_ppp_idr_v1")).toBeInTheDocument();
+  });
+
+  it("states the source once per plan tab", () => {
+    const rows = [catalogRow()];
+    renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
+    expect(screen.getByText(/Source:\s*Mark8ly/)).toBeInTheDocument();
+  });
+
+  it("renders a period with no developed price without crashing", () => {
+    const rows = [
+      catalogRow({
+        tier: "ppp",
+        lookupKey: "mark8ly_pro_annual_ppp_idr_v1",
+        currency: "idr",
+        unitAmountMinor: 1_198_800_000,
+      }),
+    ];
+    renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
+    expect(screen.getByText(/no developed-market price published/i)).toBeInTheDocument();
+    expect(screen.getByText("One price each")).toBeInTheDocument();
   });
 
   it("says so, calmly, when no runs have ever been recorded", () => {
