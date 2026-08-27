@@ -1,5 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * A LOAD-SENSITIVE TIMEOUT, not a slow test.
+ *
+ * Every test here re-imports `./bootstrap` because `afterEach` calls
+ * `vi.resetModules()`, and the `stripe-write` mock spreads the ORIGINAL module
+ * (to keep `WRITE_KEY_ENV` and `StripeWriteUnavailableError` real while
+ * replacing only `stripeCatalogWriter`) — so each import re-evaluates a graph
+ * that reaches the Stripe SDK.
+ *
+ * Alone, all 22 tests finish in ~330ms. Inside the full 139-file suite the
+ * worker pool is saturated, and on roughly one run in four a single dynamic
+ * import is starved past vitest's 5s default — observed at 5875ms on
+ * 2026-08-28, failing `plans 3 products and 42 prices against an empty mode`.
+ *
+ * Raising this masks nothing: the assertions here are on `planBootstrap`, a
+ * PURE function, so a real regression fails an expectation immediately rather
+ * than hanging. The only thing a 5s ceiling catches in this file is how busy
+ * the machine was, which is not a fact about the code.
+ *
+ * If other suites start flaking the same way, the lever is vitest's global
+ * `testTimeout` rather than another copy of this block.
+ */
+vi.setConfig({ testTimeout: 20_000 });
+
 import type { CatalogAmount, StripePriceLike, TaxBehavior } from "./parity";
 
 /**
