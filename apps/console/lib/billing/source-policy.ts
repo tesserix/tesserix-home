@@ -1,10 +1,30 @@
 /**
- * Stripe's zero-decimal currencies — the ones with no minor unit, where a
- * `unit_amount` of 329000 means 329,000 of the currency.
+ * Stripe's zero-decimal currencies — the ones with no minor unit at all,
+ * where a `unit_amount` of 329000 means 329,000 of the currency and not
+ * 3,290.00.
+ *
+ * HARD-CODED, and hard-coded on purpose: this is a fact about Stripe's API,
+ * not about the catalog, and it is versioned — ISK was on this list until
+ * Stripe moved it to two decimals in 2021. Deriving it from `Intl` would be
+ * worse, not better: `Intl` answers a question about the CURRENCY, and Stripe
+ * has repeatedly answered a different one about its own API.
+ *
+ * VND IS HERE. IDR IS NOT, AND THAT IS NOT AN OMISSION. Confirmed against
+ * live data on 2026-08-27: six VND rows differed from Stripe by exactly 100x
+ * and zero IDR rows did, across the same 36 PPP amounts. IDR has two decimal
+ * places in Stripe, so mark8ly's x100 storage convention is simply correct
+ * there and needs no conversion; VND has none, so the x100 must be undone
+ * before comparing — see {@link toStripeUnitAmount}.
+ *
+ * Mirrors mark8ly's Go `zeroDecimalCurrencies` map
+ * (`internal/billing/stripe/price.go`) rather than importing it — the console
+ * deliberately does not depend on mark8ly's Go module. The two held the
+ * identical 16 currencies when last checked; if they ever diverge, this check
+ * REPORTS the difference rather than hiding it.
  *
  * MOVED HERE FROM `parity.ts`, and the direction matters: `parity.ts` imports
  * this module, so importing back would be a cycle. This is also the more
- * honest home — the SET is a Stripe fact and the SCALING is a product
+ * honest home — the SET is a Stripe fact and the SCALING (below) is a product
  * convention, and they belong in the same file precisely so the difference
  * between them stays visible.
  *
