@@ -68,6 +68,18 @@ import { readCatalogAmounts } from "@/lib/db/plan-catalog-repo";
  * Stripe cached under it — invisibly, because a cached idempotent response
  * looks exactly like success. A key namespaced to this codepath can only ever
  * collide with a run of this same code.
+ *
+ * That protection is NOT free of the same property it protects against,
+ * inherited rather than avoided: these keys carry no run-scoped component
+ * (no timestamp, no attempt counter), so Stripe's own 24-hour idempotency
+ * cache applies to THEM too. A Price rejected with a 4xx, then fixed and
+ * re-run within that window, replays the cached 4xx rather than retrying —
+ * but that failure is LOUD (the run reports it, non-zero exit, per-mode log
+ * line), never silent, which is the distinction that matters: a cached
+ * SUCCESS masquerading as a fresh one is invisible; a cached ERROR blocking a
+ * fix is merely confusing until someone reads this comment. The escape hatch
+ * is bumping the version segment — `console:bootstrap:v2` — which mints a
+ * whole new key space and forgets everything Stripe cached under `v1`.
  */
 const IDEMPOTENCY_PREFIX = "console:bootstrap:v1";
 
@@ -349,6 +361,26 @@ export async function runBootstrap(
   // Stripe request, and a thrown error names which side broke rather than
   // arriving as one of two racing rejections.
   const catalog = await readCatalogAmounts(mode);
+
+  // Mirrors `performParityCheck`'s (`parity-run.ts:150-161`) refusal to call
+  // an empty catalog against an empty Stripe "clean": `readCatalogAmounts`
+  // returns `[]` both when the catalog is genuinely empty AND when `mode` has
+  // no un-superseded publication yet (`plan-catalog-repo.ts`'s `WHERE pub.mode
+  // = $1 AND pub.superseded_at IS NULL`) — live is in exactly that state as of
+  // this writing, since the catalog has never been published there. Without
+  // this check, that read's own silence would make `runBootstrap` plan
+  // nothing and report `{productsCreated: 0, pricesCreated: 0, skipped: 0}`
+  // with no thrown error — a zero-filled "ok" line that is indistinguishable,
+  // to whoever reads it, from a bootstrap that had nothing left to do. The
+  // read side refuses to call that state `clean`; the write side refuses to
+  // call it `ok`, for the same reason.
+  if (catalog.length === 0) {
+    throw new Error(
+      `bootstrap: ${mode} mode's catalog read returned no amounts — most likely no publication has ` +
+        `reached ${mode} yet (see plan_catalog_publications); refusing to report success against nothing`,
+    );
+  }
+
   const existing = await stripePriceReader.listPrices(mode);
 
   const existingCount = existing.filter(

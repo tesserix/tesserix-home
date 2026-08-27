@@ -121,7 +121,11 @@ export async function runCatalogBootstrapJob(argv: readonly string[]): Promise<n
 
     try {
       const result = await runBootstrap(mode, { force });
-      log({ mode, outcome: "ok", ...result }, "out");
+      // `force` is logged alongside the result, not just consumed: whether
+      // the populated-mode guard was bypassed is the single most
+      // forensically useful bit for a live run, and this line is the only
+      // artefact the run leaves.
+      log({ mode, outcome: "ok", force, ...result }, "out");
       return EXIT_OK;
     } catch (cause) {
       // `sanitizeReason` — shared with `parity-run.ts` — redacts anything

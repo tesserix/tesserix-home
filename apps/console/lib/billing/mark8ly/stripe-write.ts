@@ -226,6 +226,16 @@ export interface StripeCatalogWriter {
    * in-place amount write Stripe allows, kept minimal on purpose: Task B
    * does not call it, and it is part of this surface only because the
    * four-method shape is what Plan 2 inherits.
+   *
+   * NO `taxBehavior` PARAMETER — unlike `CreatePriceSpec.currencyOptions`,
+   * which spec §1.6a requires alongside every entry's `unitAmount`. Any
+   * currency added through THIS method therefore lands with Stripe's own
+   * default, `unspecified`, and stays that way: there is no follow-up call
+   * this surface offers to set it afterward. If the catalog ever records a
+   * non-`unspecified` `tax_behavior` for a currency added this way, `../parity.ts`'s
+   * `coverageOf` reads `currency_options[cur].tax_behavior` and reports a
+   * PERMANENT `tax_behavior_mismatch` for it — not a transient one that a
+   * later sync clears, because nothing here ever writes that field.
    */
   addCurrencyOption(
     mode: StripeMode,

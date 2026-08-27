@@ -217,6 +217,16 @@ describe("planBootstrap", () => {
       ),
     ).toThrow(/single currency|one currency/i);
   });
+
+  it("fails loudly on a key that names neither annual nor monthly", async () => {
+    // `periodOf` is about to CREATE a Price with a specific billing cadence —
+    // guessing would mint one nobody asked for. This is the guard that stops
+    // a wrongly-cadenced Price being minted on live.
+    const { planBootstrap } = await import("./bootstrap");
+    expect(() => planBootstrap([amount("mark8ly_pro_weekly_ppp_vnd_v1", "vnd", 100)], [])).toThrow(
+      /annual|monthly/i,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -273,13 +283,19 @@ describe("runBootstrap", () => {
     await expect(runBootstrap("test", { force: true })).resolves.toBeDefined();
   });
 
-  it("does not let an injected count substitute for what Stripe actually returned", async () => {
-    // The guard is a live read, not a parameter a caller could lie to.
-    // `readerMock.listPrices` returning an empty array is the only thing
-    // that lets this resolve without `force`.
-    readerMock.listPrices.mockResolvedValue([]);
+  it("refuses an empty catalog read rather than reporting a zero-filled success", async () => {
+    // `readCatalogAmounts` returns `[]` both for a genuinely empty catalog and
+    // for a mode with no un-superseded publication yet — live is in exactly
+    // that state today, since the catalog has never been published there.
+    // Mirrors `performParityCheck`'s (`parity-run.ts`) refusal to call that
+    // same state "clean" on the read side; this is the write side's version
+    // of the same refusal.
+    catalogMock.readCatalogAmounts.mockResolvedValue([]);
     const { runBootstrap } = await import("./bootstrap");
-    await expect(runBootstrap("test")).resolves.toBeDefined();
+
+    await expect(runBootstrap("test")).rejects.toThrow(/no amounts|publication/i);
+    expect(writerMock.createProduct).not.toHaveBeenCalled();
+    expect(writerMock.createPrice).not.toHaveBeenCalled();
   });
 
   it("creates products before the prices that reference them", async () => {
@@ -296,7 +312,11 @@ describe("runBootstrap", () => {
     const { runBootstrap } = await import("./bootstrap");
     await runBootstrap("test");
 
-    expect(order.indexOf("product")).toBeLessThan(order.lastIndexOf("price"));
+    // The LAST product must precede the FIRST price — `indexOf`/`lastIndexOf`
+    // the other way round would also pass under an implementation that
+    // interleaved products and prices, which is exactly the ordering this
+    // test exists to rule out.
+    expect(order.lastIndexOf("product")).toBeLessThan(order.indexOf("price"));
     expect(order.filter((k) => k === "product")).toHaveLength(3);
     expect(order.filter((k) => k === "price")).toHaveLength(42);
   });
