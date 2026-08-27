@@ -12,6 +12,7 @@ vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
 
 import { stripePriceReader, StripeReadUnavailableError } from "@/lib/billing/stripe-read";
 import { readCatalogAmounts, readLivePublication } from "@/lib/db/plan-catalog-repo";
+import * as parityModule from "@/lib/billing/parity";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import { MAX_ERROR_LENGTH, performParityCheck, sanitizeReason } from "./parity-run";
 
@@ -232,6 +233,47 @@ describe("performParityCheck", () => {
     expect(run.outcome).toBe("failed");
     expect(run.error).toContain("a bare string");
   });
+
+  it(
+    "reads and compares mark8ly's own source, not a hardcoded call missing the axis — tesserix-home#381",
+    async () => {
+      // `readCatalogAmounts(mode)` and `compareCatalogToStripe(catalog,
+      // prices)` — the shape this call site had before #381 — both compile
+      // and both run: a missing `source` filter doesn't throw, it silently
+      // reads/compares every source at once. So this asserts the ARGUMENTS
+      // that actually arrive, not just that the outcome comes out `clean`
+      // for the one source that exists today (a wrong call that happens to
+      // agree with itself would still pass an outcome-only assertion).
+      await performParityCheck("test");
+
+      expect(readCatalogAmounts).toHaveBeenCalledWith("test", "mark8ly");
+    },
+  );
+
+  it(
+    "passes the source's own policy and lookup-key prefix into the comparator, not its defaults — tesserix-home#381",
+    async () => {
+      // `compareCatalogToStripe`'s `namespacePrefix` and `policy` parameters
+      // default to mark8ly's own values (see `parity.ts`), which is exactly
+      // what let this call site compile while forgetting to pass them at
+      // all. A spy on the REAL function catches that: calling it with only
+      // `(catalog, prices)` records a 2-argument call, and this asserts a
+      // 4-argument one naming mark8ly's policy and prefix explicitly.
+      const spy = vi.spyOn(parityModule, "compareCatalogToStripe");
+      try {
+        await performParityCheck("test");
+
+        expect(spy).toHaveBeenCalledWith(
+          catalog,
+          matching,
+          "mark8ly_",
+          { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_" },
+        );
+      } finally {
+        spy.mockRestore();
+      }
+    },
+  );
 });
 
 describe("a mode that has never been bootstrapped", () => {

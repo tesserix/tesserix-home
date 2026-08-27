@@ -360,7 +360,13 @@ export async function runBootstrap(
   // (`parity-run.ts`): a catalog read that fails should not also spend a
   // Stripe request, and a thrown error names which side broke rather than
   // arriving as one of two racing rejections.
-  const catalog = await readCatalogAmounts(mode);
+  //
+  // SINGLE-SOURCE ASSUMPTION, mirroring `parity-run.ts`'s `SINGLE_SOURCE`:
+  // every row `plan_catalog_prices` holds today is `source = 'mark8ly'`, and
+  // this bootstrap only ever populates mark8ly's own Stripe namespace
+  // (`MARK8LY_LOOKUP_KEY_PREFIX`, below). See #381's follow-up for what a
+  // second source needs before this can stop being hard-coded.
+  const catalog = await readCatalogAmounts(mode, "mark8ly");
 
   // Mirrors `performParityCheck`'s (`parity-run.ts:150-161`) refusal to call
   // an empty catalog against an empty Stripe "clean": `readCatalogAmounts`

@@ -37,6 +37,16 @@ const { readCatalogAmounts, readCatalogRows, readLivePublication } = await impor
   "./plan-catalog-repo"
 );
 
+/**
+ * `CatalogSource` is a union of one, deliberately — see `source-policy.ts`.
+ * This suite's silent-merge regression proves the SQL filter works for a
+ * second source's rows, which the type system does not admit yet. The cast
+ * is the test asserting past that type, not the production code lying about
+ * it: `insertPrice`/`readCatalogAmounts` accept any `text` at the SQL layer,
+ * exactly as the CHECK-free `source` column does.
+ */
+const ACME = "acme" as unknown as Parameters<typeof readCatalogAmounts>[1];
+
 const MIGRATIONS = [
   "0032_plan_catalog.sql",
   "0033_plan_catalog_parity_runs.sql",
@@ -227,15 +237,43 @@ describe("readCatalogAmounts / readLivePublication", () => {
     await insertPriceWithAmount(draft, "mark8ly_a_v1", "usd", 9999);
     await publish("test", published);
 
-    const rows = await readCatalogAmounts("test");
+    const rows = await readCatalogAmounts("test", "mark8ly");
     expect(rows).toHaveLength(1);
     expect(rows[0].unitAmountMinor).toBe(1000);
   });
 
+  it(
+    "does not merge a second source's rows into the report — tesserix-home#381",
+    async () => {
+      // The bug #381 exists for. 0035's constraint is `UNIQUE (revision_id,
+      // source, lookup_key)`, not `UNIQUE (revision_id, lookup_key)` — so two
+      // products sharing a naming convention CAN coexist in one published
+      // revision with the identical `lookup_key`, the way "draft" and
+      // "published" could before this function filtered by publication. An
+      // unfiltered-by-source read merges both products' amounts into one
+      // `lookup_key` entry: `policyFor("mark8ly")`'s x100 convention would
+      // then apply to a currency it does not own, and the comparator would
+      // report one row where two products exist.
+      const published = await insertRevision("published, two sources");
+      await insertPriceWithAmount(published, "mark8ly_a_v1", "usd", 1000);
+      const otherPriceId = await insertPrice(published, "acme", "mark8ly_a_v1");
+      await insertAmount(otherPriceId, "usd", 4200, "unspecified");
+      await publish("test", published);
+
+      const mark8lyRows = await readCatalogAmounts("test", "mark8ly");
+      expect(mark8lyRows).toHaveLength(1);
+      expect(mark8lyRows[0].unitAmountMinor).toBe(1000);
+
+      const acmeRows = await readCatalogAmounts("test", ACME);
+      expect(acmeRows).toHaveLength(1);
+      expect(acmeRows[0].unitAmountMinor).toBe(4200);
+    },
+  );
+
   it("returns nothing for a mode with no publication", async () => {
     // This is what `not_bootstrapped` is derived from. An empty read here must
     // not throw — live has never been published and that is a normal state.
-    await expect(readCatalogAmounts("live")).resolves.toEqual([]);
+    await expect(readCatalogAmounts("live", "mark8ly")).resolves.toEqual([]);
   });
 
   it("resolves the live publication's id and revision for a published mode", async () => {
@@ -280,7 +318,7 @@ describe("readCatalogRows", () => {
     await insertAmount(draftPriceId, "usd", 999_999, "unspecified");
     await publish("live", published);
 
-    const rows = await readCatalogRows("live");
+    const rows = await readCatalogRows("live", "mark8ly");
 
     expect(rows).toEqual([
       {
@@ -301,7 +339,44 @@ describe("readCatalogRows", () => {
     ]);
   });
 
+  it(
+    "does not merge a second source's rows into the catalog table — tesserix-home#381",
+    async () => {
+      // Same silent-merge bug as `readCatalogAmounts`'s regression test
+      // above, proved for the console's own display read: two products can
+      // share a `lookup_key` within one published revision (0035's UNIQUE is
+      // `(revision_id, source, lookup_key)`), and without `AND p.source = $2`
+      // both rows would render on the SAME catalog line.
+      const published = await insertRevision("published, two sources");
+      const priceId = await insertPriceWithPeriod(
+        published,
+        "mark8ly",
+        "mark8ly_a_v1",
+        "monthly",
+        "developed",
+      );
+      await insertAmount(priceId, "usd", 1000, "unspecified");
+      const otherPriceId = await insertPriceWithPeriod(
+        published,
+        "acme",
+        "mark8ly_a_v1",
+        "monthly",
+        "developed",
+      );
+      await insertAmount(otherPriceId, "usd", 4200, "unspecified");
+      await publish("test", published);
+
+      const mark8lyRows = await readCatalogRows("test", "mark8ly");
+      expect(mark8lyRows).toHaveLength(1);
+      expect(mark8lyRows[0]).toMatchObject({ source: "mark8ly", unitAmountMinor: 1000 });
+
+      const acmeRows = await readCatalogRows("test", ACME);
+      expect(acmeRows).toHaveLength(1);
+      expect(acmeRows[0]).toMatchObject({ source: "acme", unitAmountMinor: 4200 });
+    },
+  );
+
   it("returns nothing for a mode with no publication, and never throws", async () => {
-    await expect(readCatalogRows("test")).resolves.toEqual([]);
+    await expect(readCatalogRows("test", "mark8ly")).resolves.toEqual([]);
   });
 });

@@ -135,8 +135,14 @@ export interface StripePriceLike {
  * The Stripe account is shared. Without this filter every unrelated Price in
  * it is reported as `price_missing_in_catalog`, which is the same
  * signal-destroying false positive as any other, just louder.
+ *
+ * DERIVED from `policyFor("mark8ly").lookupKeyPrefix`, not a second literal:
+ * the prefix is a per-source catalog convention exactly like
+ * `amountsAreScaledBy100`, so `source-policy.ts`'s `SourcePolicy` is its one
+ * home. Kept here, and exported, purely so existing importers of this
+ * constant keep compiling.
  */
-export const MARK8LY_LOOKUP_KEY_PREFIX = "mark8ly_";
+export const MARK8LY_LOOKUP_KEY_PREFIX = policyFor("mark8ly").lookupKeyPrefix;
 
 // `ZERO_DECIMAL_CURRENCIES` and the per-source x100 conversion moved to
 // `source-policy.ts` on 2026-08-27 (see the import above): the SET is a

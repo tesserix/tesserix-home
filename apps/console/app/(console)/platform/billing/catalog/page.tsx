@@ -132,7 +132,11 @@ async function readWindow(): Promise<ParityWindowStatus> {
 
 async function readCatalog(mode: StripeMode): Promise<CatalogRow[]> {
   if (!isDatabaseConfigured()) notConfigured();
-  return readCatalogRows(mode);
+  // SINGLE-SOURCE ASSUMPTION, mirroring `parity-run.ts`'s `SINGLE_SOURCE`:
+  // every row this table holds today is `source = 'mark8ly'`. This surface
+  // has no mode-and-source picker yet, so there is nothing else to name here
+  // until a second source's rows exist to choose between.
+  return readCatalogRows(mode, "mark8ly");
 }
 
 async function readRuns(): Promise<ModeLatestRun[]> {
