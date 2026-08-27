@@ -75,6 +75,7 @@ describe("performParityCheck", () => {
       outcome: "clean",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 
@@ -210,6 +211,7 @@ describe("a mode that has never been bootstrapped", () => {
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 

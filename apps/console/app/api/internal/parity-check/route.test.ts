@@ -232,6 +232,7 @@ describe("a mode that has never been bootstrapped", () => {
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 

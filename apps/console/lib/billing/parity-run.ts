@@ -103,7 +103,7 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
     // Sequential, not `Promise.all`: a catalog read that fails should not also
     // spend a Stripe request, and the ordering makes "which side broke"
     // legible in the stored reason.
-    const catalog = await readCatalogAmounts();
+    const catalog = await readCatalogAmounts(mode);
     const prices = await stripePriceReader.listPrices(mode);
     const { differences, stripePriceCount } = compareCatalogToStripe(catalog, prices);
 
@@ -141,7 +141,12 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       // it would be the wrong answer. A catalog read that returned nothing is
       // a broken read, and letting it count a day towards the window is
       // exactly the false clean everything here is built to prevent.
-      return { mode, outcome: "not_bootstrapped", differences: [], error: null };
+      // `publicationId: null` here is mechanical, not a claim about which
+      // publication was read: wiring the actual id through is Task 5's job
+      // (it also has to call `readLivePublication`, which this task adds but
+      // does not yet consume). This task only has to keep `ParityRun`'s new
+      // field compiling.
+      return { mode, outcome: "not_bootstrapped", differences: [], error: null, publicationId: null };
     }
 
     return {
@@ -149,8 +154,15 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       outcome: differences.length === 0 ? "clean" : "differences",
       differences,
       error: null,
+      publicationId: null,
     };
   } catch (cause) {
-    return { mode, outcome: "failed", differences: [], error: sanitizeReason(cause) };
+    return {
+      mode,
+      outcome: "failed",
+      differences: [],
+      error: sanitizeReason(cause),
+      publicationId: null,
+    };
   }
 }

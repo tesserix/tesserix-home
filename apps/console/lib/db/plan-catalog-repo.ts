@@ -57,28 +57,86 @@ function toMinorUnits(raw: string, lookupKey: string, currency: string): number 
   return value;
 }
 
-/**
- * Every catalog amount, joined to the `lookup_key` it belongs to.
- *
- * 78 rows across 42 keys. The fan-out is not collapsed here — the comparator
- * groups them, because grouping is part of the comparison it is tested on.
- *
- * Ordered so a report reads the same way twice; the comparator sorts its own
- * output, but a deterministic read makes a `psql` session diffable too.
- */
-export async function readCatalogAmounts(): Promise<CatalogAmount[]> {
-  const rows = await tesserixQuery<AmountRow>(
-    `SELECT p.lookup_key, a.currency, a.unit_amount_minor, a.tax_behavior
-       FROM plan_catalog_amounts a
-       JOIN plan_catalog_prices p ON p.id = a.price_id
-      ORDER BY p.lookup_key, a.currency`,
-  );
-  return rows.map((row) => ({
+function toCatalogAmount(row: AmountRow): CatalogAmount {
+  return {
     lookupKey: row.lookup_key,
     currency: row.currency,
     unitAmountMinor: toMinorUnits(row.unit_amount_minor, row.lookup_key, row.currency),
     taxBehavior: row.tax_behavior,
-  }));
+  };
+}
+
+/**
+ * Every catalog amount currently published to `mode`, joined to the
+ * `lookup_key` it belongs to.
+ *
+ * # The bug this replaces
+ *
+ * 0035 made the catalog versioned: `plan_catalog_prices` now carries a
+ * `revision_id`, and a draft's rows and the published rows coexist in the
+ * same table with the same `lookup_key`. Reading every row — what this
+ * function did before 0035 — reads BOTH the moment a draft exists: duplicate
+ * lookup keys, and the comparator's grouping (`catalogCoverage` in
+ * `lib/billing/parity.ts`) silently merges a draft and the published catalog
+ * into one report. That is the same class of silent false positive 0032's
+ * `tax_behavior` normalisation was written to avoid, reintroduced by
+ * omission — so the filter lands with the schema, not after.
+ *
+ * # Joined through the publication, not a status column
+ *
+ * A status column on the revision cannot express "test is ahead of live",
+ * which is the NORMAL state here (see 0035): live has never been published.
+ * Publication is a fact about a `(mode, revision)` pair, so this joins
+ * through `plan_catalog_publications` rather than filtering prices by a flag
+ * that would have to live on the wrong table.
+ *
+ * # A mode with no publication returns empty, and never throws
+ *
+ * `not_bootstrapped` (see `performParityCheck` in `lib/billing/parity-run.ts`)
+ * is DERIVED from an empty catalog read plus an empty Stripe read. If this
+ * threw instead for a never-published mode, every unpublished mode would
+ * report `failed` forever rather than the accurate "nothing here yet".
+ *
+ * Ordered so a report reads the same way twice; the comparator sorts its own
+ * output, but a deterministic read makes a `psql` session diffable too.
+ */
+export async function readCatalogAmounts(mode: StripeMode): Promise<CatalogAmount[]> {
+  const rows = await tesserixQuery<AmountRow>(
+    `SELECT p.lookup_key, a.currency, a.unit_amount_minor, a.tax_behavior
+       FROM plan_catalog_publications pub
+       JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
+       JOIN plan_catalog_amounts a ON a.price_id = p.id
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL
+      ORDER BY p.lookup_key, a.currency`,
+    [mode],
+  );
+  return rows.map(toCatalogAmount);
+}
+
+interface PublicationRow {
+  id: string;
+  revision_id: string;
+}
+
+/**
+ * The publication currently live for `mode` — `null` if the mode has never
+ * been published.
+ *
+ * Same `WHERE` as {@link readCatalogAmounts}, because the two answer related
+ * questions ("what does this mode read as?" and "which publication is
+ * that?") and must never be able to disagree about which row is current.
+ */
+export async function readLivePublication(
+  mode: StripeMode,
+): Promise<{ id: string; revisionId: string } | null> {
+  const rows = await tesserixQuery<PublicationRow>(
+    `SELECT pub.id, pub.revision_id
+       FROM plan_catalog_publications pub
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL`,
+    [mode],
+  );
+  if (rows.length === 0) return null;
+  return { id: rows[0].id, revisionId: rows[0].revision_id };
 }
 
 /**
@@ -102,6 +160,17 @@ export interface ParityRun {
   readonly differences: readonly Difference[];
   /** Non-null exactly when `outcome` is `failed`, per 0033's CHECK. */
   readonly error: string | null;
+  /**
+   * Which publication (see 0035) the read side of this run was checked
+   * against — `null` for a mode with no publication yet, which is exactly
+   * `not_bootstrapped`.
+   *
+   * The shape lands here so callers compile against the field Task 5 fills
+   * in; `recordParityRun`'s INSERT does not write it yet — wiring it into
+   * `plan_catalog_parity_runs.publication_id` is Task 5's job, not this
+   * task's.
+   */
+  readonly publicationId: string | null;
 }
 
 /**
