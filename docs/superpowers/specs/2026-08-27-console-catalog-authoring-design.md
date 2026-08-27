@@ -59,6 +59,22 @@ This is load-bearing for the design, not housekeeping:
 - The marketing site's copy (§10).
 - Kora's catalog — see §13.
 
+## 0. Experiments run
+
+The three `[X]` items draft 3 deferred were run against a disposable sandbox
+(`catalog-bootstrap-rehearsal`, `acct_1U8wRZE0e9LEcqjJ`) on 2026-08-27, before
+any of Plan 2 was written. Two of three changed the design:
+
+| question | answer | effect |
+|---|---|---|
+| Does a partial `currency_options` update drop absent currencies? | **No — it merges** | the "resend all six" mitigation is withdrawn |
+| Can an existing currency's amount be updated? | **No — immutable** | **all 78 amount changes become replacements; the in-place path does not exist** |
+| Can `tax_behavior` move from `unspecified`? | **Yes, once** | the operation survives, narrowed |
+
+The third question draft 3 listed — whether an in-place change reprices a live
+subscriber — is now unanswerable and unnecessary: there is no in-place amount
+change to test. See §6.
+
 ## 1. Facts, with honest provenance
 
 A previous draft put inferences in a section headed "verified". Each item below
@@ -85,9 +101,11 @@ listable by `product` + `active`, which matters for §9.2.*
 
 **1.4 [V] `tax_behavior` cannot be changed once set** to `inclusive` or
 `exclusive`. All six `aud` cells are already `exclusive`.
-**[I]** That it *can* be set from `unspecified` is inferred from the
-restriction's wording; no source states it affirmatively. **[X]** Confirm in
-test mode before relying on the `update_tax_behavior` operation.
+**[V] It CAN be set from `unspecified`** — verified by experiment 2026-08-27:
+`unspecified -> exclusive` was accepted, and the following
+`exclusive -> inclusive` was refused with *"You cannot update `tax_behavior`
+field once it has been specified."* So the transition is one-way and
+single-use.
 Note `null` (never set) and `'unspecified'` are distinct states.
 
 **1.5 [V] The baseline currency is always `usd`, and `Options` holds all seven
@@ -96,15 +114,33 @@ rejects the create call if `currency_options` contains the top-level currency"* 
 a failure that stuck a bootstrap run once, recorded in that file's `price:v3:`
 idempotency key. The filter is needed on the **update** path too.
 
-**1.6 [X] Whether a partial `currency_options` update removes absent
-currencies is UNKNOWN.** Draft 2 asserted it does, reasoning from the field
-being `Emptyable`. That inference is invalid: `metadata` in the same interface
-is also `Emptyable` and is documented as **merging**. No source states either
-behaviour for `currency_options`.
+**1.6 [V] `currency_options` MERGES on update — RESOLVED BY EXPERIMENT.** Run
+against a sandbox on 2026-08-27: a price carrying `gbp`/`eur`/`aud`, updated
+with only `gbp`, kept all three. Draft 2 asserted it REPLACES, reasoning from
+the field being `Emptyable`; that inference was invalid (`metadata` is also
+`Emptyable` and merges). **The "always resend all six currencies" mitigation is
+unnecessary and is withdrawn.**
 
-**The mitigation is safe under both readings and stands regardless: always
-resend all six non-baseline currencies.** Settle it with a test-mode experiment
-anyway, because the answer decides whether a bug here is loud or silent.
+**1.6a [V] BUT AN EXISTING CURRENCY'S AMOUNT IS IMMUTABLE. This is the finding
+that reshapes the design.**
+
+```
+POST /v1/prices/{id}  currency_options[gbp][unit_amount]=800
+-> "You are attempting to update an immutable field for an existing currency
+    in currency_options."
+```
+
+Adding a currency NOT already in the map succeeds (`cad` went in cleanly).
+Changing one that is already there does not.
+
+**Consequence: there is no in-place amount edit at any cell.** Draft 3's §1.3
+claimed 36 developed non-`usd` cells could be updated in place and 42 needed
+replacement. That split does not exist — **all 78 amount changes require
+`replace_price`.**
+
+Setting `tax_behavior` on a currency option also requires `unit_amount` in the
+same call (`"If the billing scheme is set to per_unit, the amount parameter
+must be set"`), so it cannot be changed independently either.
 
 **1.7 [V] Zero-decimal currencies need converting on the write path too.**
 `toStripeUnitAmount` (currently module-private in `parity.ts`) divides by 100 for
@@ -114,6 +150,11 @@ comparator on 2026-08-27. Export the function; do not reimplement it.
 
 **1.8 [V] The arithmetic.** 78 amounts across 42 lookup keys: 36 developed
 non-`usd`, 6 developed `usd`, 36 PPP.
+
+**All 78 require replacement to change** (§1.6a). The 36/42 split still matters
+for a different reason — it is the difference between an amount that lives in
+`currency_options` and one that lives in the Price's own `unit_amount` — but it
+no longer distinguishes "in place" from "replace", because nothing is in place.
 
 **1.9 [V] Live has never been bootstrapped** — 0 prices, 0 products, 0
 subscriptions. **[V]** Both mark8ly billing secrets hold `sk_test_` keys despite
@@ -290,16 +331,21 @@ and an archive, and §9.2 needs the archived id specifically. Indexed on
 
 ## 4. The publish plan
 
-| operation | when | in place? |
+| operation | when | mechanism |
 |---|---|---|
-| `update_currency_options` | non-baseline amount changed | yes — **resend all six** (§1.6), **baseline filtered out** (§1.5) |
-| `replace_price` | `usd` or PPP amount changed | no — create+transfer, archive by captured id (§1.3) |
-| `replace_price` | `tax_behavior` changes from a set value (§1.4) | no |
-| `update_tax_behavior` | `tax_behavior` changes from `unspecified` [X] | yes |
-
+| `replace_price` | **any amount change**, baseline or currency option | create + `transfer_lookup_key`, archive old by captured id |
+| `replace_price` | `tax_behavior` changes from a value already set | same |
+| `add_currency_option` | a currency NOT already on the price | in place — the only in-place amount write there is |
+| `update_tax_behavior` | `unspecified` -> a value, on the price itself | in place, one-way, single-use (§1.4) |
 | `create_product` | no Product with `metadata.plan` for this plan | — |
 | `create_price` | lookup key absent from Stripe | — |
 | `archive_price` | lookup key absent from the catalog | — |
+
+**Draft 3 had two rows here that do not exist.** It listed
+`update_currency_options` as the in-place path for 36 of 78 cells. Experiment
+(§1.6a) shows an existing currency's amount cannot be updated at all, so that
+row is gone — replaced by `add_currency_option`, which covers only the case
+where the currency is genuinely new.
 
 `create_product` runs before any `create_price` referencing it, and the plan
 shows it as its own entry — bootstrapping a mode creates 3 products and 42
@@ -345,33 +391,37 @@ Stripe as the log knows it** — plus a direct link to re-plan. The orphan check
 (§9.2) runs automatically at the end of a failed publish rather than waiting for
 the nightly run.
 
-## 6. Existing subscribers
+## 6. Existing subscribers — the hazard does not exist
 
-**[V]** A subscription item stores no `unit_amount`; the amount resolves from the
-live Price at invoice time. **[V]** Archiving does not reprice existing
-subscriptions. **[I]** Therefore an in-place `currency_options` change reprices
-existing subscribers of that currency at renewal — this last step is not
-documented by Stripe and is **[X]** worth a test-mode experiment.
+Draft 2 said an edit never changes what a live customer pays. Draft 3 inverted
+that, having established that in-place `currency_options` edits reprice existing
+subscribers at renewal while replacements cannot. **Experiment settles it a
+third way, and this time by evidence rather than inference.**
 
-| operation | existing subscribers |
-|---|---|
-| `replace_price` | **unaffected** — `unit_amount` immutable, archiving does not reprice |
-| `update_currency_options` | **repriced at next renewal** |
+**[V] There is no in-place amount edit** (§1.6a). Every amount change is a
+`replace_price`. **[V]** `unit_amount` is immutable and archiving does not
+reprice an existing subscription. Therefore:
 
-Two calibrations draft 2 got wrong by overcorrecting:
+**No catalog edit this design can perform will reprice an existing subscriber.**
 
-- **Today this affects nobody.** Live has 0 subscriptions (§1.9) and test mode
-  has no real customers. It is a forward-looking invariant, not a present hazard.
-- **The blast radius is not "36 cells".** **[V]** A subscription's currency is
-  fixed at creation, so exposure is limited to currencies live subscribers were
-  actually created in.
+That is a stronger and simpler safety property than either earlier draft
+claimed, and it is now a consequence of Stripe's own constraints rather than of
+anything this design does carefully.
 
-**§6 cannot be fully honoured in v1.** Saying "which currencies have live
-subscribers" requires reading subscriptions, and `stripe-read.ts` states
-outright that it performs no Subscription reads and that the key must not be
-widened for it. v1 therefore **states the rule in the UI** — that in-place edits
-reprice existing subscribers at renewal — without claiming to know who. Widening
-the read scope is a deliberate decision for phase 2, not a side effect.
+Two things follow:
+
+- **§7 no longer needs a "this reprices live subscribers" confirmation.** The
+  path it was written to guard does not exist.
+- **The console does not need to read subscriptions.** Draft 3 flagged §6-vs-§8
+  as a direct conflict — the surface promising to say which currencies had live
+  subscribers, against a read client that performs no Subscription reads. The
+  conflict dissolves: there is nothing to warn about, so the read scope stays
+  narrow. **Do not widen it.**
+
+What an operator still needs told, and what the surface should say: a price
+change applies to **new** subscriptions only. Existing subscribers stay on the
+Price object they were created against until something migrates them
+deliberately, which is not in scope.
 
 ## 7. Guards
 
@@ -389,7 +439,12 @@ because it *is* clean.
 - **Currency coverage.** A developed price must carry exactly its seven
   currencies. A draft dropping `gbp` is not a Stripe error, it is checkout failing
   in the UK, and no operation in §4 catches it.
-- **Mode.** v1 is test-only, enforced in code. When live is enabled, publishing
+- **Mode.** v1 is test-only, enforced in code.
+
+**Removed from this list:** the "this reprices existing subscribers" warning
+draft 3 wanted loudest. §6 shows the path does not exist. A guard against an
+impossible action is noise that costs an operator's attention on every publish,
+and attention spent on a false warning is attention not spent on a real one. When live is enabled, publishing
   to it requires typing the mode name — the estate lost an hour to a live/test key
   mix-up on 2026-08-27, and live's first publish is the largest action this tool
   will ever take.
@@ -431,9 +486,17 @@ Runs after publishing, and nightly. Now takes a mode (#378).
 succeeded and whose archive failed leaves an active Price the check reports as
 `clean`, with the expected 42.
 
-Draft 2 proposed finding it by `product`; that is not implementable —
-`StripePriceLike` has no `product` field, it is not expanded, and the catalog
-stores no product ids.
+Draft 2 proposed finding it by `product`. A review called that unimplementable;
+**experiment shows the API supports it** — listing `?product=...&active=true`
+returns the orphan, and it is identifiable by its null `lookup_key`
+(verified 2026-08-27). The review's objection was about the CONSOLE's types, not
+Stripe's API: `StripePriceLike` has no `product` field and the catalog stores no
+product ids, both of which are ours to change.
+
+Either route works. The operation log remains the better one because it names
+the specific id the publish archived, so an orphan is identified rather than
+merely detected — but the product route is a valid cross-check and worth having
+when the log itself is what is in doubt.
 
 **The implementable rule: query the operation log for archived price ids and
 check whether they are still `active`.** The log is not what makes an orphan
