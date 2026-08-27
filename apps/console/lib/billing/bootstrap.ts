@@ -9,6 +9,7 @@ import "server-only";
 
 import {
   MARK8LY_LOOKUP_KEY_PREFIX,
+  expectedInterval,
   planOf,
   type CatalogAmount,
   type StripePriceLike,
@@ -126,31 +127,36 @@ export interface BootstrapPlan {
 }
 
 /**
- * `annual` -> `annual`, `monthly` -> `monthly` — read directly off the
- * lookup key's own segment, not derived through `parity.ts`'s
- * `expectedInterval`.
+ * `annual` -> `annual`, `monthly` -> `monthly` — composed from `parity.ts`'s
+ * `expectedInterval`, which is the ONE place the `_annual_`/`_monthly_`
+ * substring rule lives. `expectedInterval` answers a different question
+ * ("year" | "month", Stripe's `recurring.interval` value), and
+ * `mark8ly/stripe-write.ts`'s `intervalOf` already owns turning a
+ * `CreatePriceSpec.period` back into that — so the RETURNED VALUES differ on
+ * both sides of this function. The underlying substring rule does not: it is
+ * read here through `expectedInterval`, never re-tested against the key a
+ * second time. Two independent copies of that rule is exactly the drift
+ * `expectedInterval`'s own comment warns about — the next person to correct
+ * one of them would leave the other disagreeing, silently, about what
+ * `annual` means.
  *
- * This is NOT a second copy of that derivation: `expectedInterval` answers a
- * different question ("year" | "month", Stripe's `recurring.interval` value)
- * and `mark8ly/stripe-write.ts`'s `intervalOf` already owns turning a
- * `CreatePriceSpec.period` into that. This function answers "which `period`
- * does this key describe", which is what `CreatePriceSpec` asks the CALLER
- * to supply — see that type's doc for why `createPrice` takes `period` and
- * derives `interval` itself rather than the reverse.
- *
- * THROWS rather than defaulting, unlike `expectedInterval`'s intentional
- * default: that function is comparing what a live Price already has, so an
- * unrecognised key falls through and the finding is what a human notices.
- * This function is about to CREATE a Price with a specific billing cadence —
- * guessing `monthly` for a key that is neither would create a Price nobody
- * asked for.
+ * The explicit check below THROWS on an unrecognised key rather than
+ * reaching `expectedInterval`'s own default, and that is a deliberate layer
+ * ON TOP of the shared rule, not a second copy of it: `expectedInterval`'s
+ * silent "month" default exists for a COMPARATOR reading what a live Price
+ * already has, where an unrecognised key becomes a visible finding a human
+ * reviews. This function is about to CREATE a Price with a specific billing
+ * cadence — guessing `monthly` for a key that is neither would create a
+ * Price nobody asked for, so the unrecognised case is refused here, before
+ * `expectedInterval` ever gets a chance to default it away.
  */
 function periodOf(lookupKey: string): "monthly" | "annual" {
-  if (lookupKey.includes("_annual_")) return "annual";
-  if (lookupKey.includes("_monthly_")) return "monthly";
-  throw new Error(
-    `bootstrap: "${lookupKey}" contains neither "_annual_" nor "_monthly_"; cannot decide its billing period`,
-  );
+  if (!lookupKey.includes("_annual_") && !lookupKey.includes("_monthly_")) {
+    throw new Error(
+      `bootstrap: "${lookupKey}" contains neither "_annual_" nor "_monthly_"; cannot decide its billing period`,
+    );
+  }
+  return expectedInterval(lookupKey) === "year" ? "annual" : "monthly";
 }
 
 /**
