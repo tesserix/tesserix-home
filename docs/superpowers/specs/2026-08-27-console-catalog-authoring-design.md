@@ -442,9 +442,31 @@ identifiable — it is the only thing that makes it detectable.
 
 §P names three hand-maintained copies. v1 closes one and leaves one.
 
-**Closed:** `catalog.go` stops being the input to a bootstrap CLI, because §12
-retires that CLI once the console has converged a mode from empty. The console's
-tables become authoritative for what Stripe holds, in both modes.
+**Partly closed:** `catalog.go` stops being the input to a bootstrap CLI, because
+§12 retires that CLI once the console has converged a mode from empty. The
+console's tables become authoritative for **what Stripe holds**, in both modes.
+
+**But `catalog.go` does NOT go away, and an earlier draft was wrong to say it
+reduces to lookup-key constants.** The inventory BACKLOG.md:203 asks for was run
+on 2026-08-27 and found three **runtime** call sites outside the CLI:
+
+| file | reads |
+|---|---|
+| `internal/handlers/platformadmin/money.go:44,50` | `LookupPPPOption`, `DevelopedCurrencyOptions` — resolves the amount reported for a subscription, per currency and PPP tier |
+| `internal/billing/stripe/update.go:151-161` | `MustGetDescriptor`, `LookupPPPOption` — the subscription **update** path |
+| `cmd/marketplace-api/main.go:162` | `MustGetDescriptor` at startup |
+
+So after this ships, a price changed in the console updates Stripe while
+mark8ly's own runtime keeps reading the old hardcoded amount — `money.go`
+reports the stale number and `update.go` validates against it. That is a
+divergence on the **serving** side, not merely the marketing side.
+
+**Consequence for the roadmap: #328 is a prerequisite, not a follow-on.**
+"marketplace-api reads the plan catalog from the console, cached and fail-open"
+is precisely what closes this, and **the console is not genuinely authoritative
+until it lands.** Until then, v1's honest claim is narrower: the console is
+authoritative for what Stripe holds, and mark8ly still holds a second opinion at
+runtime.
 
 **Left open, and named rather than hidden:** `mark8ly/packages/ui/src/subscription/pricing-data.ts`
 is **what the marketing site renders**. A console publish that changes a price
@@ -509,9 +531,14 @@ followed by the real thing:
    working, and it costs nothing if it does not.
 6. **Editing + guards**, soaked in test.
 7. **Bootstrap live** through the same path, with the mode guard (§7).
-8. **Retire `billing-bootstrap`** — only now, and only after the §10 inventory.
-   It is a different repo, so it cannot be "the same change", and it must stay
-   available as the fallback until the console has actually converged live once.
+8. **Retire `billing-bootstrap`** — only now. It is a different repo, so it
+   cannot be "the same change", and it must stay available as the fallback until
+   the console has converged live once. **Note this does not retire
+   `catalog.go`** — §10's inventory found three runtime readers.
+9. **#328** — `marketplace-api` reads the catalog from the console, cached and
+   fail-open. **This is what makes the console authoritative**, and until it
+   lands mark8ly's runtime holds a second opinion on every price. It should be
+   planned alongside v1 rather than treated as a later phase.
 
 Realistically **4–5 weeks** for two people including review — creation and the
 widened comparator add roughly a week to draft 3's estimate. The earlier drafts'
