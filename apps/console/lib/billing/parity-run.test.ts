@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readCatalogAmounts: vi.fn(async () => []),
+  readLivePublication: vi.fn(async () => null),
   recordParityRun: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
@@ -10,9 +11,14 @@ vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
 }));
 
 import { stripePriceReader, StripeReadUnavailableError } from "@/lib/billing/stripe-read";
-import { readCatalogAmounts } from "@/lib/db/plan-catalog-repo";
+import { readCatalogAmounts, readLivePublication } from "@/lib/db/plan-catalog-repo";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import { MAX_ERROR_LENGTH, performParityCheck, sanitizeReason } from "./parity-run";
+
+// A fixture id, not a real publication — `readLivePublication` is mocked, so
+// nothing here has to be a valid uuid, only distinct enough to prove the id
+// travels from the mock through to the returned `ParityRun` unchanged.
+const KNOWN_TEST_PUBLICATION_ID = "11111111-1111-1111-1111-111111111111";
 
 // A key-shaped fixture, assembled at runtime rather than written as a
 // literal. `sanitizeReason` must be proved against a string that really
@@ -66,6 +72,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(readCatalogAmounts).mockResolvedValue(catalog);
   vi.mocked(stripePriceReader.listPrices).mockResolvedValue(matching);
+  // `clearAllMocks` clears call history but NOT a mock's resolved value, so a
+  // test that overrides this (via `mockResolvedValueOnce`, deliberately) does
+  // not leak its publication into the next test. The suite-wide default is
+  // "never published" — the same default `not_bootstrapped` describes.
+  vi.mocked(readLivePublication).mockResolvedValue(null);
 });
 
 describe("performParityCheck", () => {
@@ -75,6 +86,7 @@ describe("performParityCheck", () => {
       outcome: "clean",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 
@@ -92,6 +104,40 @@ describe("performParityCheck", () => {
   it("reads the mode it was asked for, and no other", async () => {
     await performParityCheck("live");
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
+  });
+
+  it("records which publication the run was clean against", async () => {
+    // A `clean` row is evidence in a 7-day window that gates a key
+    // revocation. Without this, a row from three days ago cannot say WHICH
+    // catalog it agreed with, and republishing invalidates it silently.
+    vi.mocked(readLivePublication).mockResolvedValueOnce({
+      id: KNOWN_TEST_PUBLICATION_ID,
+      revisionId: "22222222-2222-2222-2222-222222222222",
+    });
+
+    const run = await performParityCheck("test");
+
+    expect(run.outcome).toBe("clean");
+    expect(run.publicationId).toBe(KNOWN_TEST_PUBLICATION_ID);
+    // Mirrors "reads the mode it was asked for, and no other" above: asserting
+    // only the resulting `publicationId` would still pass if a refactor read
+    // the WRONG mode's publication and happened to get the same id back from
+    // the mock. This pins down which mode `readLivePublication` was actually
+    // called with.
+    expect(readLivePublication).toHaveBeenCalledWith("test");
+  });
+
+  it("records a null publication when the mode has never been published", async () => {
+    // `readLivePublication` defaults to `null` in this suite's mock — the
+    // normal state for a mode nobody has published yet (see the
+    // `not_bootstrapped` block below for why an empty Stripe namespace is a
+    // finding, not a failure).
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
+
+    const run = await performParityCheck("live");
+
+    expect(run.outcome).toBe("not_bootstrapped");
+    expect(run.publicationId).toBeNull();
   });
 
   it("reports differences, carrying the full report", async () => {
@@ -210,6 +256,7 @@ describe("a mode that has never been bootstrapped", () => {
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 

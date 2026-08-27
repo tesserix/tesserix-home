@@ -31,7 +31,7 @@ describe("readCatalogAmounts", () => {
     // — 78 false positives, the check dead on arrival.
     vi.mocked(tesserixQuery).mockResolvedValue([row()] as never);
 
-    const amounts = await readCatalogAmounts();
+    const amounts = await readCatalogAmounts("test");
 
     expect(amounts).toEqual([
       {
@@ -52,7 +52,7 @@ describe("readCatalogAmounts", () => {
       row({ unit_amount_minor: "1198800000" }),
     ] as never);
 
-    const [amount] = await readCatalogAmounts();
+    const [amount] = await readCatalogAmounts("test");
     expect(amount.unitAmountMinor).toBe(1_198_800_000);
   });
 
@@ -65,7 +65,7 @@ describe("readCatalogAmounts", () => {
       row({ unit_amount_minor: "9007199254740993" }),
     ] as never);
 
-    await expect(readCatalogAmounts()).rejects.toThrow(
+    await expect(readCatalogAmounts("test")).rejects.toThrow(
       /mark8ly_starter_monthly_ppp_idr_v1\/idr/,
     );
   });
@@ -76,11 +76,31 @@ describe("recordParityRun", () => {
     // Without this the row is unreadable the moment there are two accounts:
     // `clean` means nothing if you cannot tell which account it was clean
     // against, and #327's gate is "both modes clean".
-    await recordParityRun({ mode: "live", outcome: "clean", differences: [], error: null });
+    await recordParityRun({ mode: "live", outcome: "clean", differences: [], error: null, publicationId: null });
 
     const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(String(sql)).toContain("mode");
-    expect(params).toEqual(["live", "clean", 0, "[]", null]);
+    expect(params).toEqual(["live", "clean", 0, "[]", null, null]);
+  });
+
+  it("writes the publication a clean run was checked against", async () => {
+    // A `clean` row is evidence in #327's 7-day window. Without the
+    // publication travelling into the row, a row from three days ago cannot
+    // say WHICH catalog it agreed with, and republishing invalidates it
+    // silently while the row still reads `clean`.
+    const publicationId = "33333333-3333-3333-3333-333333333333";
+
+    await recordParityRun({
+      mode: "live",
+      outcome: "clean",
+      differences: [],
+      error: null,
+      publicationId,
+    });
+
+    const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("publication_id");
+    expect(params).toEqual(["live", "clean", 0, "[]", null, publicationId]);
   });
 
   it("derives difference_count from the report rather than trusting a caller", async () => {
@@ -89,7 +109,7 @@ describe("recordParityRun", () => {
         catalogUnitAmountMinor: 1, stripeUnitAmountMinor: 2, zeroDecimalSuspect: false },
     ];
 
-    await recordParityRun({ mode: "test", outcome: "differences", differences, error: null });
+    await recordParityRun({ mode: "test", outcome: "differences", differences, error: null, publicationId: null });
 
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(params).toEqual([
@@ -98,13 +118,14 @@ describe("recordParityRun", () => {
       1,
       JSON.stringify(differences),
       null,
+      null,
     ]);
   });
 
   it("writes an empty array and a null reason for a clean run", async () => {
-    await recordParityRun({ mode: "test", outcome: "clean", differences: [], error: null });
+    await recordParityRun({ mode: "test", outcome: "clean", differences: [], error: null, publicationId: null });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["test", "clean", 0, "[]", null]);
+    expect(params).toEqual(["test", "clean", 0, "[]", null, null]);
   });
 
   it("writes no differences for a not_bootstrapped run", async () => {
@@ -116,8 +137,9 @@ describe("recordParityRun", () => {
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
+      publicationId: null,
     });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["live", "not_bootstrapped", 0, "[]", null]);
+    expect(params).toEqual(["live", "not_bootstrapped", 0, "[]", null, null]);
   });
 });

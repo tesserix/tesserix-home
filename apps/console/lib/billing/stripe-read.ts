@@ -214,6 +214,13 @@ export const stripePriceReader: StripePriceReader = {
         // retired Price go on matching its catalog row forever. It is also
         // what makes `lookup_key` unique in the result, which the comparator
         // relies on.
+        //
+        // This is also why `parity.ts`'s `price_shape_mismatch("active")`
+        // branch cannot fire against a live read today: this filter never
+        // lets an archived Price reach the comparator in the first place. If
+        // this filter is ever relaxed, an archived Price is reported as
+        // `price_shape_mismatch`, NOT `price_missing_in_stripe` — see that
+        // branch's comment for why the two must not be conflated.
         active: true,
         limit: PAGE_SIZE,
         // WITHOUT THIS THE CHECK IS WRONG, SILENTLY. Stripe omits
@@ -222,6 +229,14 @@ export const stripePriceReader: StripePriceReader = {
         // would open with 36 phantom `currency_missing_in_stripe` findings —
         // 36 false positives on day one of a window that only means anything
         // if people read it.
+        //
+        // NO expand IS NEEDED for `active`, `product` or `recurring` — Stripe
+        // returns all three on every Price by default (`product` as a plain
+        // id string, since it is not expanded). `StripePriceLike` used to
+        // declare only the fields the comparator read and silently discard
+        // the rest; it now carries them so the shape check in `parity.ts` can
+        // catch a Price minted against the wrong Product or the wrong
+        // interval — a mistake that agrees on every amount.
         expand: ["data.currency_options"],
       })
       .autoPagingToArray({ limit: MAX_PRICES });

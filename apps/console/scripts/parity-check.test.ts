@@ -7,6 +7,7 @@ vi.mock("@/lib/db/tesserix", () => ({
 }));
 vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readCatalogAmounts: vi.fn(async () => []),
+  readLivePublication: vi.fn(async () => null),
   recordParityRun: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
@@ -242,6 +243,7 @@ describe("a mode that has never been bootstrapped", () => {
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
+      publicationId: null,
     });
   });
 
@@ -305,6 +307,7 @@ describe("a run with differences", () => {
         },
       ],
       error: null,
+      publicationId: null,
     });
   });
 
