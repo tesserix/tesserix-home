@@ -72,16 +72,28 @@ describe("readCatalogAmounts", () => {
 });
 
 describe("recordParityRun", () => {
+  it("writes the mode, so a row can be read a week later", async () => {
+    // Without this the row is unreadable the moment there are two accounts:
+    // `clean` means nothing if you cannot tell which account it was clean
+    // against, and #327's gate is "both modes clean".
+    await recordParityRun({ mode: "live", outcome: "clean", differences: [], error: null });
+
+    const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("mode");
+    expect(params).toEqual(["live", "clean", 0, "[]", null]);
+  });
+
   it("derives difference_count from the report rather than trusting a caller", async () => {
     const differences = [
       { kind: "amount_mismatch" as const, lookupKey: "k", currency: "vnd",
         catalogUnitAmountMinor: 1, stripeUnitAmountMinor: 2, zeroDecimalSuspect: false },
     ];
 
-    await recordParityRun({ outcome: "differences", differences, error: null });
+    await recordParityRun({ mode: "test", outcome: "differences", differences, error: null });
 
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(params).toEqual([
+      "test",
       "differences",
       1,
       JSON.stringify(differences),
@@ -90,8 +102,22 @@ describe("recordParityRun", () => {
   });
 
   it("writes an empty array and a null reason for a clean run", async () => {
-    await recordParityRun({ outcome: "clean", differences: [], error: null });
+    await recordParityRun({ mode: "test", outcome: "clean", differences: [], error: null });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["clean", 0, "[]", null]);
+    expect(params).toEqual(["test", "clean", 0, "[]", null]);
+  });
+
+  it("writes no differences for a not_bootstrapped run", async () => {
+    // 0034 refuses a `not_bootstrapped` row with a non-zero count. The state
+    // means "nothing here yet", and a report attached to it would be the
+    // incoherence the constraint exists to make unstorable.
+    await recordParityRun({
+      mode: "live",
+      outcome: "not_bootstrapped",
+      differences: [],
+      error: null,
+    });
+    const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(params).toEqual(["live", "not_bootstrapped", 0, "[]", null]);
   });
 });
