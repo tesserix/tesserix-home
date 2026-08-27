@@ -218,13 +218,13 @@ function baselineCurrencyOf(lookupKey: string, currencies: readonly string[]): s
  * makes (a `developed` descriptor is ONE Price carrying seven currencies).
  *
  * Every amount is converted through {@link toStripeUnitAmount} with
- * `policyFor("mark8ly")` before it reaches the returned plan — `CatalogAmount`
- * carries no `source` (see `plan-catalog-repo.ts`'s note on the same
- * single-source assumption), so this hard-codes mark8ly's policy at the
- * boundary exactly the way `parity.ts`'s `compareCatalogToStripe` defaults to
- * it. Skipping this sends every VND price 100x wrong, live, on the write
- * side — the read-side version of this bug was found in the comparator on
- * 2026-08-27.
+ * `policyFor(SINGLE_SOURCE)` before it reaches the returned plan —
+ * `CatalogAmount` carries no `source` (see `plan-catalog-repo.ts`'s note on
+ * the same single-source assumption), so this hard-codes mark8ly's policy at
+ * the boundary exactly the way `parity.ts`'s `compareCatalogToStripe`
+ * defaults to it. Skipping this sends every VND price 100x wrong, live, on
+ * the write side — the read-side version of this bug was found in the
+ * comparator on 2026-08-27.
  */
 export function planBootstrap(
   catalog: readonly CatalogAmount[],
@@ -247,7 +247,7 @@ export function planBootstrap(
     group.push(row);
   }
 
-  const policy = policyFor("mark8ly");
+  const policy = policyFor(SINGLE_SOURCE);
   const plans = new Set<string>();
   const prices: BootstrapPlanPrice[] = [];
 
