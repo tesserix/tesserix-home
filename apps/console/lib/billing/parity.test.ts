@@ -129,6 +129,11 @@ describe("the shape asymmetry", () => {
   });
 
   it("reports nothing at all for a fully matching catalog across both tiers", () => {
+    // The two `ppp` rows are the asymmetry in miniature, and the fixtures are
+    // the values each side really holds: VND is zero-decimal in Stripe, so the
+    // catalog's x100 becomes d329,000 there, while IDR is not, so its number
+    // crosses unchanged. A fixture that put the catalog's VND number on the
+    // Stripe side would be describing a system that does not exist.
     const catalog = [
       ...developedCatalog(STARTER_MONTHLY),
       catalogAmount(STARTER_VND, "vnd", 32_900_000),
@@ -136,7 +141,7 @@ describe("the shape asymmetry", () => {
     ];
     const prices = [
       developedStripePrice(STARTER_MONTHLY),
-      stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 32_900_000] }),
+      stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 329_000] }),
       stripePrice({ lookupKey: STARTER_IDR, base: ["idr", 19_900_000] }),
     ];
 
@@ -153,7 +158,7 @@ describe("the shape asymmetry", () => {
     // of them as covering nothing.
     const report = compareCatalogToStripe(
       [catalogAmount(STARTER_VND, "vnd", 32_900_000)],
-      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 32_900_000] })],
+      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 329_000] })],
     );
     expect(report.differences).toEqual([]);
   });
@@ -233,8 +238,12 @@ describe("currency-level differences", () => {
 
   it("reports a currency Stripe covers and the catalog does not", () => {
     const stripeSide = stripePrice({
+      // d329,000 is the catalog's 32,900,000 as Stripe stores it, so the only
+      // finding here is the uncovered currency. With the catalog's own number
+      // on this side the test would pass for the wrong reason: two differences
+      // where it asserts one.
       lookupKey: STARTER_VND,
-      base: ["vnd", 32_900_000],
+      base: ["vnd", 329_000],
       options: [["jpy", 2900, "inclusive"]],
     });
 
@@ -304,13 +313,37 @@ describe("the zero-decimal trap", () => {
     expect(ZERO_DECIMAL_CURRENCIES).not.toContain("idr");
   });
 
-  it("flags a VND mismatch that is exactly a factor of 100", () => {
-    // The catalog says d32,900,000 minor; Stripe says d329,000. VND has no
-    // minor unit, so the catalog's number is a hundred times the real price.
-    // Reported VERBATIM and flagged — never silently normalised.
+  it("reports NO difference when Stripe holds a VND catalog amount divided by 100", () => {
+    // THE MOST IMPORTANT ASSERTION IN THIS FILE. This is the live estate,
+    // verified against real data on 2026-08-27: the catalog holds VND
+    // 1,978,800,000 and Stripe holds 19,788,000 for the same Price, because
+    // mark8ly stores every amount in "minor units x100" and `billing-bootstrap`
+    // divides by 100 at the Stripe boundary (`stripeUnitAmount` in
+    // `internal/billing/stripe/price.go`). Nothing is wrong in billing.
+    //
+    // Comparing these raw is what the comparator used to do, and it produced a
+    // false positive on every one of the only six VND rows that exist — six
+    // findings, every night, none of them real. A window that never goes clean
+    // is a window nobody believes, and #327's key revocation hangs off it.
     const report = compareCatalogToStripe(
       [catalogAmount(STARTER_VND, "vnd", 32_900_000)],
       [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 329_000] })],
+    );
+
+    expect(report.differences).toEqual([]);
+  });
+
+  it("flags an UNCONVERTED VND amount in Stripe as a mismatch, and as suspect", () => {
+    // The other side of the same coin, and a genuine bug rather than a units
+    // difference: Stripe holds the catalog's x100 number verbatim, meaning
+    // something wrote a Price without dividing at the boundary — VND customers
+    // would be charged a hundred times the intended d329,000. The 100x gap
+    // survives the conversion the comparator already applied, which is exactly
+    // what `zeroDecimalSuspect` now means: not "probably a representation
+    // difference" but "a conversion is missing or has happened twice".
+    const report = compareCatalogToStripe(
+      [catalogAmount(STARTER_VND, "vnd", 32_900_000)],
+      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 32_900_000] })],
     );
 
     expect(report.differences).toEqual([
@@ -319,7 +352,7 @@ describe("the zero-decimal trap", () => {
         lookupKey: STARTER_VND,
         currency: "vnd",
         catalogUnitAmountMinor: 32_900_000,
-        stripeUnitAmountMinor: 329_000,
+        stripeUnitAmountMinor: 32_900_000,
         zeroDecimalSuspect: true,
       },
     ]);
@@ -347,23 +380,34 @@ describe("the zero-decimal trap", () => {
   });
 
   it("does not flag a zero-decimal mismatch that is not a factor of 100", () => {
+    // An ordinary VND price difference — d339,000 against an intended
+    // d329,000, both plausible values for Stripe to hold. Labelling this
+    // `zeroDecimalSuspect` would send an operator hunting for a conversion bug
+    // in a row where somebody simply changed a price.
     const report = compareCatalogToStripe(
       [catalogAmount(STARTER_VND, "vnd", 32_900_000)],
-      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 33_900_000] })],
+      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 339_000] })],
     );
     expect(report.differences[0]).toMatchObject({ zeroDecimalSuspect: false });
   });
 
-  it("normalises nothing — the amounts in the report are the amounts on both sides", () => {
+  it("compares normalised but reports verbatim — each side's own stored number", () => {
+    // The conversion belongs to the COMPARISON and must not leak into the
+    // REPORT. `catalogUnitAmountMinor` is the number written in
+    // `plan_catalog_amounts` (32,900,000), not the 329,000 the comparator comes
+    // up with internally, and `stripeUnitAmountMinor` is the number in the
+    // Stripe dashboard. Report the converted value and an operator queries the
+    // catalog for 329,000, finds nothing, and concludes the report is lying;
+    // whichever row they were sent to fix, they cannot find it.
     const report = compareCatalogToStripe(
       [catalogAmount(STARTER_VND, "vnd", 32_900_000)],
-      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 329_000] })],
+      [stripePrice({ lookupKey: STARTER_VND, base: ["vnd", 339_000] })],
     );
     const diff = report.differences[0];
     if (diff.kind !== "amount_mismatch") expect.unreachable("expected amount_mismatch");
     else {
       expect(diff.catalogUnitAmountMinor).toBe(32_900_000);
-      expect(diff.stripeUnitAmountMinor).toBe(329_000);
+      expect(diff.stripeUnitAmountMinor).toBe(339_000);
     }
   });
 });

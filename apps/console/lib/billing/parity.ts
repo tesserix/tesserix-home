@@ -115,10 +115,19 @@ export const MARK8LY_LOOKUP_KEY_PREFIX = "mark8ly_";
  *
  * VND IS HERE. IDR IS NOT, AND THAT IS NOT AN OMISSION. `catalog.go:159`
  * claims Stripe stores IDR and VND x100. IDR has two decimal places in Stripe,
- * so x100 is simply correct there. VND has none, so x100 means d32,900,000 for
- * a plan priced at d329,000. That open question is what
- * {@link AmountDifference.zeroDecimalSuspect} exists to surface — see the note
- * on {@link compareCatalogToStripe} about why this comparator does not fix it.
+ * so x100 is simply correct there and needs no conversion. VND has none, so
+ * the catalog's x100 must be undone before comparing — which is what
+ * {@link toStripeUnitAmount} does.
+ *
+ * Confirmed against live data on 2026-08-27: six VND rows differed by exactly
+ * 100x and zero IDR rows did, across the same 36 PPP amounts. `catalog.go`'s
+ * comment is wrong to group them; its CODE is right, because it keys off its
+ * own `zeroDecimalCurrencies` map, which also excludes IDR.
+ *
+ * This set mirrors that Go map (`internal/billing/stripe/price.go`) rather
+ * than importing it — the console does not depend on mark8ly's module. The two
+ * held the identical 16 currencies when last checked; if they ever diverge,
+ * this check reports the difference rather than hiding it.
  */
 export const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
   "bif",
@@ -273,8 +282,40 @@ function catalogCoverage(amounts: readonly CatalogAmount[]): Map<string, Map<str
 }
 
 /**
- * Exactly a factor of 100 apart, in either direction, on a currency Stripe
- * treats as zero-decimal.
+ * The catalog amount expressed the way Stripe stores it.
+ *
+ * THE CATALOG AND STRIPE USE DIFFERENT REPRESENTATIONS FOR THE SAME PRICE, and
+ * comparing them raw is wrong. mark8ly's catalog stores every amount in
+ * "minor units x 100" for internal consistency — including the currencies
+ * Stripe treats as zero-decimal, where `unit_amount` is the raw currency value.
+ * `billing-bootstrap` therefore divides by 100 at the Stripe boundary
+ * (`internal/billing/stripe/price.go`, `stripeUnitAmount`), and this mirrors
+ * that conversion so the comparison happens in one representation.
+ *
+ * Verified against live data on 2026-08-27: without this, all six VND rows
+ * report as `amount_mismatch` — catalog 1978800000 against Stripe 19788000 —
+ * and the check would have opened with six false positives every night. Six is
+ * enough. A window that never goes clean is a window nobody believes, and
+ * #327's key revocation hangs off it.
+ *
+ * Kept as a mirror of mark8ly's set rather than a shared import: the console
+ * deliberately does not depend on mark8ly's Go module, and a divergence here is
+ * exactly the kind of drift this check exists to REPORT. If the two sets ever
+ * disagree, the report says so instead of hiding it.
+ */
+function toStripeUnitAmount(currency: string, catalogMinor: number): number {
+  return ZERO_DECIMAL_CURRENCIES.has(currency) ? catalogMinor / 100 : catalogMinor;
+}
+
+/**
+ * Still exactly a factor of 100 apart AFTER {@link toStripeUnitAmount} has
+ * already reconciled the representations.
+ *
+ * Before that conversion existed this flag fired on every zero-decimal row and
+ * meant "probably a representation difference". It now means the opposite, and
+ * is a much stronger signal: the two sides disagree by 100x on a currency whose
+ * 100x is already accounted for, which is a real double- or missing conversion
+ * rather than a units mismatch.
  *
  * This function decides whether a difference is LABELLED, and nothing more.
  * The amounts themselves are reported verbatim; see
@@ -282,12 +323,18 @@ function catalogCoverage(amounts: readonly CatalogAmount[]): Map<string, Map<str
  */
 function isZeroDecimalSuspect(
   currency: string,
-  catalogMinor: number,
+  // ALREADY normalised by `toStripeUnitAmount`. Named for what it holds, not
+  // for where it came from: passing the RAW catalog amount here would make
+  // this fire on every zero-decimal row again, which is the old bug.
+  catalogAsStripeStores: number,
   stripeMinor: number | null,
 ): boolean {
   if (stripeMinor === null) return false;
   if (!ZERO_DECIMAL_CURRENCIES.has(currency)) return false;
-  return catalogMinor === stripeMinor * 100 || stripeMinor === catalogMinor * 100;
+  return (
+    catalogAsStripeStores === stripeMinor * 100 ||
+    stripeMinor === catalogAsStripeStores * 100
+  );
 }
 
 /** Rank for the deterministic ordering below. Stable across runs, so two
@@ -308,18 +355,26 @@ function currencyOf(difference: Difference): string {
 /**
  * Compare the local catalog against live Stripe Prices.
  *
- * # It does not normalise, scale, or special-case anything
+ * # It compares normalised, and reports verbatim
  *
- * Amounts are compared and reported VERBATIM. That is a decision, not an
- * oversight: the open VND question — whether mark8ly's x100 is wrong for a
- * zero-decimal currency — is a question about mark8ly's catalog, and a
- * comparator that "helpfully" scaled it would make the answer invisible in
- * exactly the report that exists to surface it. Instead the difference is
- * reported at full size and, when it is a factor of 100 on a zero-decimal
- * currency, labelled {@link AmountDifference.zeroDecimalSuspect} — so it lands
- * as a named, legible finding rather than an unexplained number.
+ * These are two different decisions and both matter.
  *
- * Fixing it is explicitly out of scope here and belongs to mark8ly.
+ * COMPARISON is done in Stripe's representation, via
+ * {@link toStripeUnitAmount}. The catalog and Stripe hold the same price as
+ * different numbers for zero-decimal currencies, and comparing them raw is
+ * simply wrong — see that function for the mechanism and the live evidence.
+ *
+ * REPORTING is verbatim: each side's own stored number, unconverted. A report
+ * that renamed the catalog's number would send a reader to `catalog.go`
+ * looking for a value that is not written there.
+ *
+ * An earlier version of this comment said the comparator deliberately did NOT
+ * normalise, on the theory that mark8ly's x100 might be a bug worth surfacing.
+ * It was not a bug — `billing-bootstrap` converts at the Stripe boundary and
+ * Stripe holds the right value. Not normalising produced six false positives a
+ * night on the only six VND rows in the catalog, which would have kept the
+ * observation window from ever going clean. If you are about to remove the
+ * conversion, that is what happens.
  *
  * # What it ignores
  *
@@ -384,7 +439,13 @@ export function compareCatalogToStripe(
       // Amount and tax behaviour are independent facts about the same row and
       // are reported separately. Collapsing them would mean correcting the
       // amount silently closes the tax finding.
-      if (catalogMinor !== stripeSide.unitAmountMinor) {
+      // Compared in STRIPE's representation, not the catalog's — see
+      // `toStripeUnitAmount`. Reported in the catalog's, because a report that
+      // renamed the catalog's own number would send someone to `catalog.go`
+      // looking for a value that is not written there.
+      const catalogAsStripeStores = toStripeUnitAmount(currency, catalogMinor);
+
+      if (catalogAsStripeStores !== stripeSide.unitAmountMinor) {
         differences.push({
           kind: "amount_mismatch",
           lookupKey,
@@ -393,7 +454,7 @@ export function compareCatalogToStripe(
           stripeUnitAmountMinor: stripeSide.unitAmountMinor,
           zeroDecimalSuspect: isZeroDecimalSuspect(
             currency,
-            catalogMinor,
+            catalogAsStripeStores,
             stripeSide.unitAmountMinor,
           ),
         });
