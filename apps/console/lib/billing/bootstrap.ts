@@ -233,10 +233,10 @@ export function planBootstrap(
   const plans = new Set<string>();
   const prices: BootstrapPlanPrice[] = [];
 
-  // Sorted iteration (Map preserves insertion order; the catalog read is
-  // itself ordered by `lookup_key` — see `plan-catalog-repo.ts`) so the plan
-  // is deterministic between runs, which is what makes
-  // `runBootstrapRecordingOrder`-style tests meaningful.
+  // Deterministic iteration order (Map preserves insertion order; the
+  // catalog read is itself ordered by `lookup_key` — see
+  // `plan-catalog-repo.ts`) so the plan is the same between runs and a test
+  // asserting call ORDER against a mock isn't asserting against a coin flip.
   for (const [lookupKey, rows] of byKey) {
     if (existingKeys.has(lookupKey)) continue;
 
@@ -338,7 +338,12 @@ export async function runBootstrap(
   mode: StripeMode,
   opts: BootstrapOptions = {},
 ): Promise<BootstrapResult> {
-  const [catalog, existing] = await Promise.all([readCatalogAmounts(mode), stripePriceReader.listPrices(mode)]);
+  // Sequential, not `Promise.all` — mirrors `performParityCheck`
+  // (`parity-run.ts`): a catalog read that fails should not also spend a
+  // Stripe request, and a thrown error names which side broke rather than
+  // arriving as one of two racing rejections.
+  const catalog = await readCatalogAmounts(mode);
+  const existing = await stripePriceReader.listPrices(mode);
 
   const existingCount = existing.filter(
     (p) => p.lookup_key && p.lookup_key.startsWith(MARK8LY_LOOKUP_KEY_PREFIX),
