@@ -205,10 +205,38 @@ export function dayVerdict(day: ParityWindowDay, latestRunDay: string | null): D
   return "not-clean";
 }
 
+/**
+ * The one tone vocabulary this file uses for anything that signals status —
+ * `outcomeTone` below returns the same four values. `DAY_VERDICT_CLASS`
+ * routes through it too, rather than reaching for a raw Tailwind colour
+ * (`bg-emerald-500` was here before review caught it): a day chip and an
+ * outcome badge are the same kind of signal and must draw from the same
+ * semantic tokens, or the two drift the first time the theme changes.
+ */
+export type SurfaceTone = "success" | "warning" | "error" | "neutral";
+
+/** Solid-fill class per tone, for a small dot/chip — as opposed to `Badge`'s
+ *  own variant prop, which `LatestRunSummary` uses directly for the outcome
+ *  badge. `neutral` renders as an outline rather than a filled `bg-muted`:
+ *  a gap is the ABSENCE of a run, and a hollow mark reads as "nothing here"
+ *  more honestly than a solid one would. */
+const TONE_DOT_CLASS: Record<SurfaceTone, string> = {
+  success: "bg-success",
+  warning: "bg-warning",
+  error: "bg-destructive",
+  neutral: "border border-dashed border-muted-foreground/50 bg-transparent",
+};
+
+const DAY_VERDICT_TONE: Record<DayVerdict, SurfaceTone> = {
+  clean: "success",
+  "not-clean": "error",
+  gap: "neutral",
+};
+
 const DAY_VERDICT_CLASS: Record<DayVerdict, string> = {
-  clean: "bg-emerald-500",
-  "not-clean": "bg-destructive",
-  gap: "border border-dashed border-muted-foreground/50 bg-transparent",
+  clean: TONE_DOT_CLASS[DAY_VERDICT_TONE.clean],
+  "not-clean": TONE_DOT_CLASS[DAY_VERDICT_TONE["not-clean"]],
+  gap: TONE_DOT_CLASS[DAY_VERDICT_TONE.gap],
 };
 
 const DAY_VERDICT_LABEL: Record<DayVerdict, string> = {
@@ -243,7 +271,7 @@ function DayStrip({ days, latestRunDay }: { days: readonly ParityWindowDay[]; la
   );
 }
 
-export function outcomeTone(outcome: ParityOutcome): "success" | "warning" | "error" | "neutral" {
+export function outcomeTone(outcome: ParityOutcome): SurfaceTone {
   switch (outcome) {
     case "clean":
       return "success";

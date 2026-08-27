@@ -98,6 +98,30 @@ const insertPrice = async (
   return rows[0].id;
 };
 
+/**
+ * Like `insertPrice`, but with an explicit `period` and `tier` rather than
+ * `insertPrice`'s hardcoded 'monthly'/'developed' — needed wherever a test's
+ * assertion depends on `period` matching what the lookup key itself claims
+ * (an `_annual_` key backed by a 'monthly' row is exactly the contradiction
+ * a real bug in `createPrice`'s Stripe billing-interval derivation would
+ * produce, and a fixture that quietly hardcodes 'monthly' cannot catch it).
+ */
+const insertPriceWithPeriod = async (
+  revisionId: string,
+  source: string,
+  lookupKey: string,
+  period: string,
+  tier: string,
+): Promise<string> => {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO plan_catalog_prices (revision_id, source, lookup_key, plan, period, tier)
+     VALUES ($1, $2, $3, 'pro', $4, $5)
+     RETURNING id`,
+    [revisionId, source, lookupKey, period, tier],
+  );
+  return rows[0].id;
+};
+
 const insertPriceWithoutSource = (revisionId: string): Promise<unknown> =>
   db.query(
     `INSERT INTO plan_catalog_prices (revision_id, lookup_key, plan, period, tier)
@@ -238,9 +262,21 @@ describe("readCatalogRows", () => {
     // parity report.
     const published = await insertRevision("published");
     const draft = await insertRevision("draft");
-    const priceId = await insertPrice(published, "mark8ly", "mark8ly_pro_annual_developed_v1");
+    const priceId = await insertPriceWithPeriod(
+      published,
+      "mark8ly",
+      "mark8ly_pro_annual_developed_v1",
+      "annual",
+      "developed",
+    );
     await insertAmount(priceId, "usd", 118_800, "unspecified");
-    const draftPriceId = await insertPrice(draft, "mark8ly", "mark8ly_pro_annual_developed_v1");
+    const draftPriceId = await insertPriceWithPeriod(
+      draft,
+      "mark8ly",
+      "mark8ly_pro_annual_developed_v1",
+      "annual",
+      "developed",
+    );
     await insertAmount(draftPriceId, "usd", 999_999, "unspecified");
     await publish("live", published);
 
@@ -250,7 +286,12 @@ describe("readCatalogRows", () => {
       {
         lookupKey: "mark8ly_pro_annual_developed_v1",
         plan: "pro",
-        period: "monthly",
+        // `annual`, matching the lookup key's own `_annual_` segment — not
+        // `insertPrice`'s hardcoded 'monthly' default, which would silently
+        // pass this projection test through exactly the bug it exists to
+        // catch (`period` is what `createPrice` derives the Stripe billing
+        // interval from).
+        period: "annual",
         tier: "developed",
         source: "mark8ly",
         currency: "usd",
