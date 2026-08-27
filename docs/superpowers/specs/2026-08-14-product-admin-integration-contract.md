@@ -639,8 +639,147 @@ migration: a product serving `/admin/vocabulary` would keep answering this path
 too.
 
 
+### 8.9 §3.4's entity row, named
+
+§3.4 specifies the **envelope** and never the **row**. "Searchable records" and
+§4.1's `{data, pagination}` say how many and how paged; they say nothing about
+what a record contains. So each implementer decided, and two of them decided
+differently:
+
+- **Kora** emits `{id, type, label, sublabel, created_at}`, with `sublabel`
+  documented in its own source as *"what distinguishes two records with the same
+  Label"* — a user's handle, falling back to their email; a food's brand.
+- **mark8ly** emits no `sublabel` at all.
+
+Neither is wrong, because the contract does not say.
+
+**What it cost.** platform-api's entities module modelled the row as
+`{id, source, type, label, created_at}` and dropped `sublabel` — the fields were
+read off Kora's *foods* response, and there was nothing to check them against. On
+a **user** directory that is not cosmetic: display names are not unique, so two
+users called "Mahesh" render identically and an operator cannot tell them apart.
+Fixed in tesserix-home#364, but only after a surface made it obvious.
+
+That is the shape of the failure. An underspecified row is invisible until a
+consumer needs a field nobody wrote down, and by then the field has been dropped
+somewhere in the middle.
+
+#### The row a product serves
+
+```
+GET /admin/entities/foods?q=paneer
+
+{
+  "data": [
+    { "id": "528ea893", "label": "Paneer butter masala",
+      "sublabel": "Aroma", "created_at": "2026-08-22T07:16:52+00:00" }
+  ],
+  "pagination": { "page": 1, "limit": 50, "total": 6421 }
+}
+```
+
+| field | required | note |
+|---|---|---|
+| `id` | **yes** | product-local; the platform namespaces it (below) |
+| `label` | **yes** | the human name |
+| `sublabel` | no | the disambiguator |
+| `created_at` | no | §4.3 when present |
+
+- **`id` is the product's own identifier**, not a namespaced one. The product
+  does not know its own slug in the estate's terms and must not guess it.
+- **`label` is required and human.** A row whose label is a UUID is a row the
+  Directory cannot render, and the ⌘K result it produces is unreadable.
+- **`type` is not required in the row.** See "what the platform stamps".
+
+#### `sublabel` is optional, and the optionality is the specification
+
+Absent is a legitimate shape, not a deviation — mark8ly sends none, and that is
+correct for a population whose labels are already unique.
+
+**A consumer must render an absent `sublabel` as nothing.** Never a dash, never
+"—", never "no brand". The two failures are not symmetric:
+
+- rendering nothing where the product sent nothing is **honest** — the row simply
+  has one line;
+- rendering a placeholder makes *"this product does not send sublabels"* look
+  identical to *"this record has no brand"*, which is a claim about the record
+  that the product never made.
+
+The second is the reason this is written down rather than left to each reader to
+infer. A rule that lives only in the first consumer's head is re-derived, and
+re-derived differently, by the second.
+
+An empty string is **not** a way to say "absent". Omit the key.
+
+#### What the platform stamps, and what it ignores
+
+The row a **consumer** receives from `GET /v1/entities/{type}?source={slug}` is
+not byte-identical to the row the product served. platform-api adds two fields
+and takes them **from the request, never from the response body**:
+
+| field | origin |
+|---|---|
+| `source` | the `source` query parameter |
+| `type` | the `{type}` path segment |
+| `id` | namespaced `slug:id` |
+
+This is deliberate and worth stating so no product tries to be helpful. A product
+that sends its own `type` has it overwritten; a product that sends the *wrong*
+`type` is not believed. A `source` a product asserted about itself would be a
+row's origin claimed by the row, which is precisely the field that must not be
+forgeable — two products' `users` are different people, and a mislabelled origin
+is worse than a failed read.
+
+So: products **may** send `type`; nothing depends on it. Products **must not**
+send `source`, and it is discarded if they do.
+
+#### Conformance
+
+**Not yet enforced.** `@tesserix/admin-conformance` declares `entities` and
+checks §4.1's envelope and §4.3's timestamps against it, but has no assertion for
+the row's own fields — which is how the divergence above survived a suite that
+was already running against both implementers.
+
+The assertion this needs is small and worth adding before a third product
+implements §3.4: every row carries a non-empty string `id` and `label`; where
+`sublabel` is present it is a non-empty string; `created_at`, where present,
+already falls under §4.3's check. Stated here so the amendment is not a paragraph
+nobody verifies — the failure §8.8 was written to avoid.
+
+#### Deferred, and named: there is no way to fetch one record
+
+§3.4 is a list endpoint with no by-id sibling, and nothing in this contract
+provides one. That is not an omission in a product's implementation; it is
+absent from the specification.
+
+The consequence is concrete. tesserix-home#370 shipped Kora's food index with
+rows that expand in place rather than linking to a detail page, because there is
+no detail page to link to — the six fields above are the **entire** record the
+console can hold, and a `/kora/foods/{id}` route would be a URL with nothing
+behind it. Any consumer that wants more than a name and a disambiguator is
+currently stuck.
+
+`GET /admin/entities/{type}/{id}` is the obvious shape and is **deliberately not
+specified here**, for §8.8's reason: an endpoint designed against no real
+consumer is designed wrong, and the interesting question — whether a single record
+is the same shape as a list row plus fields, or a product-defined document the
+console renders generically — cannot be answered by guessing. It wants its own
+amendment, written against a surface that has asked for specific fields.
+
+Naming the row first is the cheaper half and does not block that: a get-one that
+returns "the §8.9 row, plus product-defined detail" is a strictly easier thing to
+specify than one that must also settle what the row is.
+
+
 ## Changelog
 
+- **v2.4** (2026-08-27) — §8.9: §3.4's entity row is named. `id` and `label`
+  required, `sublabel` and `created_at` optional, and an absent `sublabel`
+  rendered as nothing rather than a placeholder. Kora and mark8ly had already
+  diverged and platform-api dropped the field in the middle (tesserix-home#364,
+  #365). Also records what the platform stamps from the request rather than the
+  body, and names the missing get-one as deferred. NOT yet enforced by
+  `@tesserix/admin-conformance` — the assertion it needs is described in §8.9.
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
 - **v2.3** (2026-08-26) — §8.8: `GET /admin/lifecycle/reason-codes`, required of
   any product implementing §8.3's lifecycle writes. §8.3 required the codes and
