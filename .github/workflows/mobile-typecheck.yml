@@ -38,10 +38,20 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-          registry-url: https://npm.pkg.github.com
+      # NO `registry-url`, deliberately. setup-node writes its own ~/.npmrc when
+      # given one, and that file WINS over this repo's `.npmrc` — which points
+      # @tesserix at the public registry and explains at length why. With the
+      # override in place this job resolved @tesserix/web from GitHub Packages,
+      # where the design system no longer publishes, and died on
+      #   ERR_PNPM_FETCH_404 .../@tesserix/web/-/web-2.3.0.tgz
+      # Every other workflow here passes PKG_READ_TOKEN without setting
+      # `registry-url`, so the token is simply unused and the install resolves
+      # publicly. This job was the only one that overrode the registry, and the
+      # only one that failed.
+      #
+      # It went unnoticed from 2026-08-22 because the path filter fires on
+      # `pnpm-lock.yaml`, and nothing touched the lockfile until #372.
       - name: Install locked dependencies
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.PKG_READ_TOKEN }}
         run: pnpm install --frozen-lockfile
       - name: Build shared package
         run: pnpm --filter @tesserix/homechef-shared build
