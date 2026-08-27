@@ -47,12 +47,17 @@ const catalog: CatalogAmount[] = [
   { lookupKey: KEY, currency: "vnd", unitAmountMinor: 32_900_000, taxBehavior: "unspecified" },
 ];
 
+// VND is zero-decimal in Stripe, so the live Price holds the catalog's
+// 32,900,000 divided by 100 — `billing-bootstrap` converts at the boundary.
+// These two rows agreeing is the real estate's steady state (verified against
+// live data on 2026-08-27), so this is the fixture a `clean` outcome has to be
+// proved against; the catalog's own number here would make `clean` unreachable.
 const matching: StripePriceLike[] = [
   {
     id: "price_1",
     lookup_key: KEY,
     currency: "vnd",
-    unit_amount: 32_900_000,
+    unit_amount: 329_000,
     tax_behavior: "unspecified",
   },
 ];
@@ -73,8 +78,14 @@ describe("performParityCheck", () => {
   });
 
   it("reports differences, carrying the full report", async () => {
+    // The live Price holds the catalog's x100 number un-converted, which is a
+    // real finding: a Price written without dividing at the Stripe boundary
+    // charges VND customers a hundred times d329,000. The whole difference
+    // object is asserted because it is what lands in the `differences` jsonb —
+    // an outcome of `differences` with a report an operator cannot act on is
+    // the same dead end as no run at all.
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([
-      { ...matching[0], unit_amount: 329_000 },
+      { ...matching[0], unit_amount: 32_900_000 },
     ]);
 
     const run = await performParityCheck();
@@ -87,7 +98,7 @@ describe("performParityCheck", () => {
         lookupKey: KEY,
         currency: "vnd",
         catalogUnitAmountMinor: 32_900_000,
-        stripeUnitAmountMinor: 329_000,
+        stripeUnitAmountMinor: 32_900_000,
         zeroDecimalSuspect: true,
       },
     ]);
