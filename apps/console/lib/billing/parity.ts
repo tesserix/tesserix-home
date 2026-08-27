@@ -344,6 +344,16 @@ const KIND_ORDER: Record<DifferenceKind, number> = {
  * `annual` -> `year`, everything else -> `month`. Mirrors mark8ly's own
  * derivation (`mark8ly/services/marketplace-api/internal/billing/stripe/price.go:53-55`);
  * there is no third period in the catalog.
+ *
+ * INTENTIONAL DEFAULT, not a fallback of convenience: a key containing neither
+ * `_annual_` nor `_monthly_` is treated as `month`. Today that default never
+ * fires — all 42 mark8ly keys carry one of the two segments — so it is
+ * currently a false negative waiting for a key shape it has never seen. A
+ * second source with a different naming convention (see
+ * `plan-catalog-repo.ts`'s note on `source`) could pass an unrecognised key
+ * straight through this default and have its interval mismatch silently
+ * approved. Do not "fix" this into a stricter check without a test that
+ * proves what the new key shapes actually look like.
  */
 function expectedInterval(lookupKey: string): "year" | "month" {
   return lookupKey.includes("_annual_") ? "year" : "month";
@@ -491,6 +501,12 @@ export function compareCatalogToStripe(
     // parameter doc above. The map comes from a Stripe Product lookup the
     // caller may not have made, and a wrong product finding is worse than no
     // product finding.
+    //
+    // The same silence applies when the map IS supplied but has no entry for
+    // this key's plan: `expectedProductId` is `undefined` and the check below
+    // is skipped for this key, not flagged. A plan absent from the map reads
+    // as "not checked", never as "missing product" — so whoever wires this map
+    // up next should expect silence, not a finding, for a plan they forgot.
     if (productsByPlan) {
       const plan = planOf(lookupKey, namespacePrefix);
       const expectedProductId = productsByPlan[plan];

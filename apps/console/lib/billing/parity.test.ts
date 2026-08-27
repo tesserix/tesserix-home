@@ -524,6 +524,27 @@ describe("price shape (interval, active, product)", () => {
     }
   });
 
+  it("treats a lookup key with neither `_annual_` nor `_monthly_` as monthly, deliberately", () => {
+    // All 42 mark8ly keys carry one of the two segments, so this default
+    // never fires today — it is documented behaviour, not dead code. This
+    // test pins the CURRENT direction of that default so a future contributor
+    // does not "fix" it the other way without first proving what the new key
+    // shape actually needs. See the comment on `expectedInterval` in
+    // `parity.ts`.
+    const UNRECOGNISED_KEY = `${MARK8LY_LOOKUP_KEY_PREFIX}pro_lifetime_developed_v1`;
+    const report = compareCatalogToStripe(
+      [catalogAmount(UNRECOGNISED_KEY, "usd", 10_700)],
+      [
+        stripePrice({
+          lookupKey: UNRECOGNISED_KEY,
+          base: ["usd", 10_700],
+          recurring: { interval: "month" },
+        }),
+      ],
+    );
+    expect(report.differences).toEqual([]);
+  });
+
   it("reports an archived price as a shape mismatch, not as missing", () => {
     // `active: false` is a different fact from "absent", and conflating them
     // would tell an operator to create a price that already exists.

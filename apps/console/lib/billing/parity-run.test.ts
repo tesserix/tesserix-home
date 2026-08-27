@@ -119,6 +119,12 @@ describe("performParityCheck", () => {
 
     expect(run.outcome).toBe("clean");
     expect(run.publicationId).toBe(KNOWN_TEST_PUBLICATION_ID);
+    // Mirrors "reads the mode it was asked for, and no other" above: asserting
+    // only the resulting `publicationId` would still pass if a refactor read
+    // the WRONG mode's publication and happened to get the same id back from
+    // the mock. This pins down which mode `readLivePublication` was actually
+    // called with.
+    expect(readLivePublication).toHaveBeenCalledWith("test");
   });
 
   it("records a null publication when the mode has never been published", async () => {

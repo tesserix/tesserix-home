@@ -168,6 +168,13 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       publicationId,
     };
   } catch (cause) {
+    // `publicationId: null` here, deliberately, and not the value read above:
+    // a run that failed before or during the read has no verified
+    // relationship to any published catalog — it may have failed reading the
+    // publication itself, or before comparing against it meant anything.
+    // Recording a publication id on a `failed` row would claim this run
+    // checked that catalog, which is exactly the fact a `failed` outcome
+    // says it cannot prove.
     return {
       mode,
       outcome: "failed",

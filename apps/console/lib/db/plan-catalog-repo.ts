@@ -99,6 +99,18 @@ function toCatalogAmount(row: AmountRow): CatalogAmount {
  *
  * Ordered so a report reads the same way twice; the comparator sorts its own
  * output, but a deterministic read makes a `psql` session diffable too.
+ *
+ * # Does not filter by `source`
+ *
+ * This query has no `AND p.source = ...`, and that is safe only because every
+ * row in `plan_catalog_prices` today has `source = 'mark8ly'`. It stops being
+ * safe the moment a second source exists: two products sharing a lookup-key
+ * convention would merge into one report exactly the way a draft and a
+ * published revision merged before this function filtered by publication —
+ * same bug, different axis. The fix when that day comes is `AND p.source =
+ * $2`, threading the source through as a second parameter; it is not added
+ * here because a parameter with exactly one legal value today is scope this
+ * function does not need yet.
  */
 export async function readCatalogAmounts(mode: StripeMode): Promise<CatalogAmount[]> {
   const rows = await tesserixQuery<AmountRow>(
