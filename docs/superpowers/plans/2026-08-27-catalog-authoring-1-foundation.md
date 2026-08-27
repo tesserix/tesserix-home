@@ -283,7 +283,22 @@ Expected: FAIL — cannot find module `./source-policy`.
 - [ ] **Step 3: Write the module**
 
 ```ts
-import { ZERO_DECIMAL_CURRENCIES } from "./parity";
+/**
+ * Stripe's zero-decimal currencies — the ones with no minor unit, where a
+ * `unit_amount` of 329000 means 329,000 of the currency.
+ *
+ * MOVED HERE FROM `parity.ts`, and the direction matters: `parity.ts` imports
+ * this module, so importing back would be a cycle. This is also the more
+ * honest home — the SET is a Stripe fact and the SCALING is a product
+ * convention, and they belong in the same file precisely so the difference
+ * between them stays visible.
+ *
+ * `parity.ts` re-exports it so existing importers keep working.
+ */
+export const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
+  "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga",
+  "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf",
+]);
 
 /**
  * Which product's catalog a row belongs to.
@@ -338,7 +353,15 @@ export function toStripeUnitAmount(
 
 - [ ] **Step 4: Point the comparator at it**
 
-In `apps/console/lib/billing/parity.ts`, delete the private `toStripeUnitAmount` and import the shared one. `compareCatalogToStripe` gains a `policy` parameter defaulting to `policyFor("mark8ly")`, so existing call sites keep compiling while the default is explicit rather than implied:
+In `apps/console/lib/billing/parity.ts`, delete the private `toStripeUnitAmount`
+AND the `ZERO_DECIMAL_CURRENCIES` declaration — both now live in
+`source-policy.ts`. Re-export the set so existing importers are unaffected:
+
+```ts
+export { ZERO_DECIMAL_CURRENCIES } from "./source-policy";
+```
+
+Then import the shared conversion. `compareCatalogToStripe` gains a `policy` parameter defaulting to `policyFor("mark8ly")`, so existing call sites keep compiling while the default is explicit rather than implied:
 
 ```ts
 import { policyFor, toStripeUnitAmount, type SourcePolicy } from "./source-policy";
@@ -492,7 +515,32 @@ function expectedInterval(lookupKey: string): "year" | "month" {
 }
 ```
 
-In `stripe-read.ts`, request the fields — Stripe returns `active`, `product` and `recurring` by default on a Price, so no new `expand` is needed, but the local type must stop discarding them.
+Extend the signature with the product map — Task 2 left it at four parameters,
+and the test above passes a fifth:
+
+```ts
+export function compareCatalogToStripe(
+  catalogAmounts: readonly CatalogAmount[],
+  stripePrices: readonly StripePriceLike[],
+  namespacePrefix: string = MARK8LY_LOOKUP_KEY_PREFIX,
+  policy: SourcePolicy = policyFor("mark8ly"),
+  /**
+   * plan name -> Stripe Product id, from `metadata.plan`. OPTIONAL, and its
+   * absence SKIPS the product check rather than guessing: the map comes from a
+   * Stripe lookup the caller may not have made, and a wrong product finding is
+   * worse than no product finding.
+   */
+  productsByPlan?: Readonly<Record<string, string>>,
+): ParityReport {
+```
+
+The plan segment of a lookup key gives the plan name —
+`mark8ly_pro_annual_developed_v1` -> `pro` — using the same split the
+conformance work uses, so no new vocabulary is introduced.
+
+In `stripe-read.ts`, request the fields — Stripe returns `active`, `product` and
+`recurring` by default on a Price, so no new `expand` is needed, but the local
+type must stop discarding them.
 
 - [ ] **Step 4: Run test to verify it passes**
 
