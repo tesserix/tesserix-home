@@ -5,6 +5,7 @@
 import "server-only";
 
 import type { Difference, CatalogAmount, TaxBehavior } from "@/lib/billing/parity";
+import type { CatalogSource } from "@/lib/billing/source-policy";
 import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { tesserixQuery } from "./tesserix";
 
@@ -123,6 +124,63 @@ export async function readCatalogAmounts(mode: StripeMode): Promise<CatalogAmoun
     [mode],
   );
   return rows.map(toCatalogAmount);
+}
+
+interface CatalogRowRaw extends AmountRow {
+  plan: string;
+  period: string;
+  tier: string;
+  source: CatalogSource;
+}
+
+/** {@link CatalogAmount} plus the descriptor columns the comparator has no use
+ *  for but a human reading the catalog needs. */
+export interface CatalogRow extends CatalogAmount {
+  readonly plan: string;
+  readonly period: string;
+  readonly tier: string;
+  readonly source: CatalogSource;
+}
+
+function toCatalogRow(row: CatalogRowRaw): CatalogRow {
+  return { ...toCatalogAmount(row), plan: row.plan, period: row.period, tier: row.tier, source: row.source };
+}
+
+/**
+ * Every catalog row currently published to `mode` — the console's read
+ * surface for #326, and a WIDER projection of the same join
+ * {@link readCatalogAmounts} runs.
+ *
+ * # Why this exists beside `readCatalogAmounts` rather than replacing it
+ *
+ * `readCatalogAmounts` is on the parity-check path (`lib/billing/parity-run.ts`
+ * -> `performParityCheck`), and its projection is deliberately narrow: the
+ * comparator only ever looks at `lookup_key`, `currency`, `unit_amount_minor`
+ * and `tax_behavior`. Widening THAT function's SELECT to add `plan`, `period`,
+ * `tier` and `source` would cost the comparator nothing today, but it would
+ * mean the query that gates a Stripe write-key revocation (#327) changes shape
+ * every time the console UI wants one more display column — coupling a
+ * read-only report to a credential decision for no reason. Two functions with
+ * the same `WHERE`, reading different columns off the same join, keep those
+ * changes independent.
+ *
+ * Every other property is identical to `readCatalogAmounts` — including that a
+ * mode with no publication returns `[]` rather than throwing, and that this
+ * does NOT filter by `source` yet (see that function's doc comment for why
+ * that is currently safe and what the fix looks like when it stops being so).
+ */
+export async function readCatalogRows(mode: StripeMode): Promise<CatalogRow[]> {
+  const rows = await tesserixQuery<CatalogRowRaw>(
+    `SELECT p.lookup_key, p.plan, p.period, p.tier, p.source,
+            a.currency, a.unit_amount_minor, a.tax_behavior
+       FROM plan_catalog_publications pub
+       JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
+       JOIN plan_catalog_amounts a ON a.price_id = p.id
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL
+      ORDER BY p.lookup_key, a.currency`,
+    [mode],
+  );
+  return rows.map(toCatalogRow);
 }
 
 interface PublicationRow {
@@ -352,4 +410,77 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
   });
 
   return { days, modes, satisfied: modes.every((m) => m.satisfied) };
+}
+
+interface LatestRunRow {
+  mode: StripeMode;
+  outcome: ParityOutcome;
+  /** `pg`/pglite hand a `timestamptz` back as a `Date`, not a string — see
+   *  {@link readLatestRuns}. */
+  ran_at: string | Date;
+  difference_count: number;
+  differences: unknown;
+}
+
+/** One mode's most recent run, or `null` when the mode has never run. */
+export interface LatestParityRun {
+  readonly outcome: ParityOutcome;
+  /** ISO 8601, UTC. */
+  readonly ranAt: string;
+  readonly differenceCount: number;
+  readonly differences: readonly Difference[];
+}
+
+/** One mode's answer — always present, per {@link readLatestRuns}. */
+export interface ModeLatestRun {
+  readonly mode: StripeMode;
+  readonly run: LatestParityRun | null;
+}
+
+function toLatestParityRun(row: LatestRunRow): LatestParityRun {
+  return {
+    outcome: row.outcome,
+    // `new Date(x).toISOString()` accepts both a driver-parsed `Date` and a
+    // plain string, so this does not care which one the connection in use
+    // hands back.
+    ranAt: new Date(row.ran_at).toISOString(),
+    differenceCount: row.difference_count,
+    // `differences` is jsonb; both `pg` and pglite parse it into real
+    // objects already, never a string that would need a second `JSON.parse`.
+    differences: row.differences as Difference[],
+  };
+}
+
+/**
+ * The most recent `plan_catalog_parity_runs` row for each mode.
+ *
+ * `readWindowStatus` answers "was the week clean?" as a single boolean per
+ * mode; it does not carry a single difference. Without this function, a red
+ * day is a dot on the strip nobody can interrogate — an operator deciding
+ * whether #327's revocation is safe has to open `psql` to see what actually
+ * differed. This is that read, and it exists purely for a human, unlike
+ * `readCatalogAmounts`/`readCatalogRows` which exist for a comparator and a
+ * table respectively.
+ *
+ * `DISTINCT ON (mode)` ordered by `ran_at DESC` per mode is Postgres's
+ * (and pglite's) native "top 1 per group" — cheaper and more direct here than
+ * a window function, since the whole result set is at most two rows.
+ *
+ * Same "both modes, always" discipline as {@link readWindowStatus}: a mode
+ * with zero rows is reported with `run: null` rather than omitted, so a
+ * caller iterating the result cannot mistake "never ran" for "not asked
+ * about". This is also the function that answers #326's "no runs recorded
+ * yet" state — `run === null` for a mode IS that state, not an error.
+ */
+export async function readLatestRuns(): Promise<ModeLatestRun[]> {
+  const rows = await tesserixQuery<LatestRunRow>(
+    `SELECT DISTINCT ON (mode) mode, outcome, ran_at, difference_count, differences
+       FROM plan_catalog_parity_runs
+      ORDER BY mode, ran_at DESC`,
+  );
+
+  return STRIPE_MODES.map((mode) => {
+    const row = rows.find((r) => r.mode === mode);
+    return { mode, run: row ? toLatestParityRun(row) : null };
+  });
 }

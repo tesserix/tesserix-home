@@ -33,7 +33,9 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { readCatalogAmounts, readLivePublication } = await import("./plan-catalog-repo");
+const { readCatalogAmounts, readCatalogRows, readLivePublication } = await import(
+  "./plan-catalog-repo"
+);
 
 const MIGRATIONS = [
   "0032_plan_catalog.sql",
@@ -92,6 +94,30 @@ const insertPrice = async (
      VALUES ($1, $2, $3, 'pro', 'monthly', 'developed')
      RETURNING id`,
     [revisionId, source, lookupKey],
+  );
+  return rows[0].id;
+};
+
+/**
+ * Like `insertPrice`, but with an explicit `period` and `tier` rather than
+ * `insertPrice`'s hardcoded 'monthly'/'developed' — needed wherever a test's
+ * assertion depends on `period` matching what the lookup key itself claims
+ * (an `_annual_` key backed by a 'monthly' row is exactly the contradiction
+ * a real bug in `createPrice`'s Stripe billing-interval derivation would
+ * produce, and a fixture that quietly hardcodes 'monthly' cannot catch it).
+ */
+const insertPriceWithPeriod = async (
+  revisionId: string,
+  source: string,
+  lookupKey: string,
+  period: string,
+  tier: string,
+): Promise<string> => {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO plan_catalog_prices (revision_id, source, lookup_key, plan, period, tier)
+     VALUES ($1, $2, $3, 'pro', $4, $5)
+     RETURNING id`,
+    [revisionId, source, lookupKey, period, tier],
   );
   return rows[0].id;
 };
@@ -224,5 +250,58 @@ describe("readCatalogAmounts / readLivePublication", () => {
 
   it("resolves null for a mode with no publication", async () => {
     await expect(readLivePublication("live")).resolves.toBeNull();
+  });
+});
+
+describe("readCatalogRows", () => {
+  it("projects plan, period, tier and source through the same publication filter", async () => {
+    // The bug `readCatalogAmounts` was written to prevent applies here too —
+    // it is the identical join with two more SELECT columns. If this ever
+    // stopped sharing the `WHERE`, a draft's rows would leak into the
+    // console's catalog table the same way they would have leaked into the
+    // parity report.
+    const published = await insertRevision("published");
+    const draft = await insertRevision("draft");
+    const priceId = await insertPriceWithPeriod(
+      published,
+      "mark8ly",
+      "mark8ly_pro_annual_developed_v1",
+      "annual",
+      "developed",
+    );
+    await insertAmount(priceId, "usd", 118_800, "unspecified");
+    const draftPriceId = await insertPriceWithPeriod(
+      draft,
+      "mark8ly",
+      "mark8ly_pro_annual_developed_v1",
+      "annual",
+      "developed",
+    );
+    await insertAmount(draftPriceId, "usd", 999_999, "unspecified");
+    await publish("live", published);
+
+    const rows = await readCatalogRows("live");
+
+    expect(rows).toEqual([
+      {
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        plan: "pro",
+        // `annual`, matching the lookup key's own `_annual_` segment — not
+        // `insertPrice`'s hardcoded 'monthly' default, which would silently
+        // pass this projection test through exactly the bug it exists to
+        // catch (`period` is what `createPrice` derives the Stripe billing
+        // interval from).
+        period: "annual",
+        tier: "developed",
+        source: "mark8ly",
+        currency: "usd",
+        unitAmountMinor: 118_800,
+        taxBehavior: "unspecified",
+      },
+    ]);
+  });
+
+  it("returns nothing for a mode with no publication, and never throws", async () => {
+    await expect(readCatalogRows("test")).resolves.toEqual([]);
   });
 });

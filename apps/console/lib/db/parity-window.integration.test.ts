@@ -20,6 +20,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
  *
  * Both of those pass any conceivable substring assertion. Only a real engine
  * with real rows tells them apart.
+ *
+ * `readLatestRuns` is added below rather than in its own file: it reads the
+ * same table through the same `record`/`cleanWeek` fixtures, and its own
+ * "both modes, always" discipline is the same property `readWindowStatus`
+ * asserts above — a second file would just re-declare the same helpers.
  */
 
 const MIGRATIONS = ["0033_plan_catalog_parity_runs.sql", "0034_parity_runs_mode.sql"].map(
@@ -39,7 +44,7 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { readWindowStatus } = await import("./plan-catalog-repo");
+const { readWindowStatus, readLatestRuns } = await import("./plan-catalog-repo");
 
 let db: PGlite;
 
@@ -258,5 +263,49 @@ describe("the window's own shape", () => {
     // about. A non-integer reaches `make_interval` and a huge one generates a
     // series nobody asked for.
     await expect(readWindowStatus(days)).rejects.toThrow(/window/i);
+  });
+});
+
+describe("readLatestRuns", () => {
+  const runOf = (runs: Awaited<ReturnType<typeof readLatestRuns>>, mode: string) =>
+    runs.find((r) => r.mode === mode)!.run;
+
+  it("picks the most recent run per mode, not merely a row", async () => {
+    // Older first, so a query that read insertion order rather than `ran_at`
+    // would report the wrong one.
+    await record("test", "failed", 3, { error: "stripe unreachable" });
+    await record("test", "clean", 0);
+
+    const runs = await readLatestRuns();
+
+    expect(runOf(runs, "test")?.outcome).toBe("clean");
+  });
+
+  it("reports both modes even when one has never run — the #326 empty state", async () => {
+    await record("test", "clean", 0);
+
+    const runs = await readLatestRuns();
+
+    expect(runs.map((r) => r.mode)).toEqual(["test", "live"]);
+    expect(runOf(runs, "live")).toBeNull();
+  });
+
+  it("returns both modes null on a table with no rows at all", async () => {
+    const runs = await readLatestRuns();
+    expect(runs).toEqual([
+      { mode: "test", run: null },
+      { mode: "live", run: null },
+    ]);
+  });
+
+  it("carries the stored differences report, so a red day can be read without psql", async () => {
+    await record("live", "differences", 0, { differenceCount: 2 });
+
+    const runs = await readLatestRuns();
+    const run = runOf(runs, "live");
+
+    expect(run?.differenceCount).toBe(2);
+    expect(run?.differences).toHaveLength(2);
+    expect(run?.differences[0]).toEqual({ kind: "amount_mismatch" });
   });
 });

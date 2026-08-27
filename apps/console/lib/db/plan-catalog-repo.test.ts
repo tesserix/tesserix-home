@@ -5,7 +5,7 @@ vi.mock("./tesserix", () => ({
 }));
 
 import { tesserixQuery } from "./tesserix";
-import { readCatalogAmounts, recordParityRun } from "./plan-catalog-repo";
+import { readCatalogAmounts, readCatalogRows, readLatestRuns, recordParityRun } from "./plan-catalog-repo";
 
 /**
  * The catalog read and the run write — specifically the two places where a
@@ -141,5 +141,116 @@ describe("recordParityRun", () => {
     });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(params).toEqual(["live", "not_bootstrapped", 0, "[]", null, null]);
+  });
+});
+
+const catalogRow = (over: Partial<Record<string, string>> = {}) => ({
+  lookup_key: "mark8ly_pro_annual_developed_v1",
+  plan: "pro",
+  period: "annual",
+  tier: "developed",
+  source: "mark8ly",
+  currency: "usd",
+  unit_amount_minor: "118800",
+  tax_behavior: "unspecified",
+  ...over,
+});
+
+describe("readCatalogRows", () => {
+  it("projects plan, period, tier and source alongside the amount", async () => {
+    // The console surface (P3) has to show which plan and cadence a lookup
+    // key belongs to and which product's catalog it came from — the exact
+    // columns `readCatalogAmounts` deliberately omits because the comparator
+    // has no use for them.
+    vi.mocked(tesserixQuery).mockResolvedValue([catalogRow()] as never);
+
+    const rows = await readCatalogRows("live");
+
+    expect(rows).toEqual([
+      {
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        plan: "pro",
+        period: "annual",
+        tier: "developed",
+        source: "mark8ly",
+        currency: "usd",
+        unitAmountMinor: 118_800,
+        taxBehavior: "unspecified",
+      },
+    ]);
+  });
+
+  it("narrows the bigint amount the same way readCatalogAmounts does", async () => {
+    // Same boundary, same reason: `pg` hands `unit_amount_minor` back as a
+    // string, and a row this function forgot to narrow would silently pass a
+    // string through to a caller expecting a number.
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      catalogRow({ unit_amount_minor: "1198800000" }),
+    ] as never);
+
+    const [row] = await readCatalogRows("live");
+    expect(row.unitAmountMinor).toBe(1_198_800_000);
+    expect(typeof row.unitAmountMinor).toBe("number");
+  });
+
+  it("reads the mode passed in, not a hardcoded one", async () => {
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    await readCatalogRows("test");
+    const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(params).toEqual(["test"]);
+  });
+});
+
+describe("readLatestRuns", () => {
+  it("returns both modes even when only one has ever run", async () => {
+    // Same discipline as `readWindowStatus`: a query that only returned the
+    // modes present in the table would omit live entirely the day live has
+    // never run, and a caller iterating "every mode returned" would never
+    // notice the gap.
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      {
+        mode: "test",
+        outcome: "clean",
+        ran_at: "2026-08-27T12:00:00.000Z",
+        difference_count: 0,
+        differences: [],
+      },
+    ] as never);
+
+    const runs = await readLatestRuns();
+
+    expect(runs.map((r) => r.mode)).toEqual(["test", "live"]);
+    expect(runs.find((r) => r.mode === "test")?.run).toEqual({
+      outcome: "clean",
+      ranAt: "2026-08-27T12:00:00.000Z",
+      differenceCount: 0,
+      differences: [],
+    });
+    expect(runs.find((r) => r.mode === "live")?.run).toBeNull();
+  });
+
+  it("carries the stored differences through untouched, so a red day is interrogable", async () => {
+    const differences = [
+      {
+        kind: "amount_mismatch",
+        lookupKey: "mark8ly_pro_annual_ppp_vnd_v1",
+        currency: "vnd",
+        catalogUnitAmountMinor: 1978800000,
+        stripeUnitAmountMinor: 19788000000,
+        zeroDecimalSuspect: true,
+      },
+    ];
+    vi.mocked(tesserixQuery).mockResolvedValue([
+      {
+        mode: "live",
+        outcome: "differences",
+        ran_at: "2026-08-27T03:00:00.000Z",
+        difference_count: 1,
+        differences,
+      },
+    ] as never);
+
+    const runs = await readLatestRuns();
+    expect(runs.find((r) => r.mode === "live")?.run?.differences).toEqual(differences);
   });
 });

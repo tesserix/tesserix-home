@@ -101,6 +101,19 @@ describe("routeEntries", () => {
     expect(new Set(entries.map((e) => e.id)).size).toBe(entries.length);
   });
 
+  it("finds the plan catalog even though no rail links to it", () => {
+    // `platform.billingCatalog` is deliberately NOT added to `nav.ts` — it is
+    // reached from a link on the Billing page, the same way `platform.crmImport`
+    // is reached from the CRM queue. `offeredInPalette` only hides a PENDING
+    // route with no rail entry (see the test above); this route is not
+    // pending, so it must still surface here even without one.
+    const entry = routeEntries().find((e) => e.id === "route:platform.billingCatalog");
+    expect(entry).toBeDefined();
+    expect(entry?.disabled).toBe(false);
+    expect(entry?.capability).toBe("billing");
+    expect(entry?.href).toBe("/platform/billing/catalog");
+  });
+
   it("drops a pending route no rail advertises any more", () => {
     // The rail's Health group (Uptime, Service health, Observability,
     // Databases, Custom domains) was deleted as unbuilt placeholders. These
