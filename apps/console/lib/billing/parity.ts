@@ -355,7 +355,7 @@ const KIND_ORDER: Record<DifferenceKind, number> = {
  * approved. Do not "fix" this into a stricter check without a test that
  * proves what the new key shapes actually look like.
  */
-function expectedInterval(lookupKey: string): "year" | "month" {
+export function expectedInterval(lookupKey: string): "year" | "month" {
   return lookupKey.includes("_annual_") ? "year" : "month";
 }
 
@@ -363,8 +363,14 @@ function expectedInterval(lookupKey: string): "year" | "month" {
  * The plan-name segment of a lookup key: `mark8ly_pro_annual_developed_v1`
  * `-> "pro"`. Same split the conformance work uses, so this introduces no new
  * vocabulary for "which plan does this key belong to".
+ *
+ * EXPORTED so `lib/billing/bootstrap.ts` (Task B) can group prices by plan to
+ * decide which Stripe Products it needs, the same way `mark8ly/stripe-write.ts`
+ * reuses this module's {@link expectedInterval} rather than re-deriving
+ * `annual -> year` a second time. Two derivations of "which plan does this key
+ * belong to" is exactly the kind of drift this comment is here to prevent.
  */
-function planOf(lookupKey: string, namespacePrefix: string): string {
+export function planOf(lookupKey: string, namespacePrefix: string): string {
   const withoutPrefix = lookupKey.startsWith(namespacePrefix)
     ? lookupKey.slice(namespacePrefix.length)
     : lookupKey;
