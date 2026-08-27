@@ -355,7 +355,7 @@ const KIND_ORDER: Record<DifferenceKind, number> = {
  * approved. Do not "fix" this into a stricter check without a test that
  * proves what the new key shapes actually look like.
  */
-function expectedInterval(lookupKey: string): "year" | "month" {
+export function expectedInterval(lookupKey: string): "year" | "month" {
   return lookupKey.includes("_annual_") ? "year" : "month";
 }
 
