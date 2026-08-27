@@ -735,16 +735,30 @@ send `source`, and it is discarded if they do.
 
 #### Conformance
 
-**Not yet enforced.** `@tesserix/admin-conformance` declares `entities` and
-checks §4.1's envelope and §4.3's timestamps against it, but has no assertion for
-the row's own fields — which is how the divergence above survived a suite that
-was already running against both implementers.
+Enforced by `@tesserix/admin-conformance` from **v0.5.0**. Until then the suite
+declared `entities` and checked §4.1's envelope and §4.3's timestamps against it
+but nothing about the row's own fields — which is how the divergence above
+survived a suite already running against both implementers.
 
-The assertion this needs is small and worth adding before a third product
-implements §3.4: every row carries a non-empty string `id` and `label`; where
-`sublabel` is present it is a non-empty string; `created_at`, where present,
-already falls under §4.3's check. Stated here so the amendment is not a paragraph
-nobody verifies — the failure §8.8 was written to avoid.
+What it asserts, per row and reported per row:
+
+- `id` and `label` are non-empty strings. A **numeric** `id` fails: it is a real
+  shape, and a consumer's `String(id)` papers over it until two products' ids are
+  compared. Whitespace-only counts as empty — a label of `"   "` renders as a
+  blank line an operator cannot click.
+- `sublabel`, **where the key is present**, is a non-empty string. Its absence is
+  never a finding; a row without the key passes. What fails is `null` or `""` —
+  absence signalled through a value, which is the shape that makes a consumer
+  draw a placeholder where nothing belongs.
+- `source` is absent. A row asserting its own origin is the one field that must
+  not be forgeable.
+- `created_at` is left to §4.3.
+
+Two reporting rules worth knowing before reading a report. A page with **no
+rows** is a `skip`, not a `pass` — a product with nothing to serve has
+demonstrated nothing about its row shape, and `pass` would claim coverage the run
+does not have. A `data` that is not an array is also a `skip`, because §4.1 and
+§4.5 already report that and failing twice shows one deviation as two.
 
 #### Deferred, and named: there is no way to fetch one record
 
@@ -778,8 +792,11 @@ specify than one that must also settle what the row is.
   rendered as nothing rather than a placeholder. Kora and mark8ly had already
   diverged and platform-api dropped the field in the middle (tesserix-home#364,
   #365). Also records what the platform stamps from the request rather than the
-  body, and names the missing get-one as deferred. NOT yet enforced by
-  `@tesserix/admin-conformance` — the assertion it needs is described in §8.9.
+  body, and names the missing get-one as deferred.
+- **v2.5** (2026-08-27) — §8.9's row is enforced by `@tesserix/admin-conformance`
+  from v0.5.0 (design-system#35). No contract change; the amendment landed a day
+  unenforced and this records that it no longer is. An absent `sublabel` passes —
+  only a present-but-empty one fails.
 - **v1** (2026-08-14) — initial draft, derived from the console redesign audits.
 - **v2.3** (2026-08-26) — §8.8: `GET /admin/lifecycle/reason-codes`, required of
   any product implementing §8.3's lifecycle writes. §8.3 required the codes and
