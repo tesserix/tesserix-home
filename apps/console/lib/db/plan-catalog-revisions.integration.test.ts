@@ -33,7 +33,9 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { readCatalogAmounts, readLivePublication } = await import("./plan-catalog-repo");
+const { readCatalogAmounts, readCatalogRows, readLivePublication } = await import(
+  "./plan-catalog-repo"
+);
 
 const MIGRATIONS = [
   "0032_plan_catalog.sql",
@@ -224,5 +226,41 @@ describe("readCatalogAmounts / readLivePublication", () => {
 
   it("resolves null for a mode with no publication", async () => {
     await expect(readLivePublication("live")).resolves.toBeNull();
+  });
+});
+
+describe("readCatalogRows", () => {
+  it("projects plan, period, tier and source through the same publication filter", async () => {
+    // The bug `readCatalogAmounts` was written to prevent applies here too —
+    // it is the identical join with two more SELECT columns. If this ever
+    // stopped sharing the `WHERE`, a draft's rows would leak into the
+    // console's catalog table the same way they would have leaked into the
+    // parity report.
+    const published = await insertRevision("published");
+    const draft = await insertRevision("draft");
+    const priceId = await insertPrice(published, "mark8ly", "mark8ly_pro_annual_developed_v1");
+    await insertAmount(priceId, "usd", 118_800, "unspecified");
+    const draftPriceId = await insertPrice(draft, "mark8ly", "mark8ly_pro_annual_developed_v1");
+    await insertAmount(draftPriceId, "usd", 999_999, "unspecified");
+    await publish("live", published);
+
+    const rows = await readCatalogRows("live");
+
+    expect(rows).toEqual([
+      {
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        plan: "pro",
+        period: "monthly",
+        tier: "developed",
+        source: "mark8ly",
+        currency: "usd",
+        unitAmountMinor: 118_800,
+        taxBehavior: "unspecified",
+      },
+    ]);
+  });
+
+  it("returns nothing for a mode with no publication, and never throws", async () => {
+    await expect(readCatalogRows("test")).resolves.toEqual([]);
   });
 });

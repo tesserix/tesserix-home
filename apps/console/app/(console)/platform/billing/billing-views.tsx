@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import {
   Badge,
+  Button,
   Callout,
   CalloutDescription,
   CalloutTitle,
@@ -13,6 +15,7 @@ import {
   TableRow,
 } from "@tesserix/web";
 import { AlertTriangle } from "lucide-react";
+import { consolePath } from "@tesserix/console-core";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
@@ -35,6 +38,24 @@ import type {
  * has to know which door records the answer. Subscriptions and trials are two
  * views of §8.2, not two capabilities.
  */
+
+/**
+ * The one door onto tesserix-home#326's plan catalog surface.
+ *
+ * A client component rather than a plain `<a>` in `page.tsx`: `page.tsx` is a
+ * server component, and `@tesserix/web`'s `Button` is a value export off a
+ * `"use client"` barrel — importing it there resolves to `undefined` at
+ * render, the same trap `page-header.tsx`'s comment documents. `BillingViews`
+ * is already `"use client"`, so this lives here and `page.tsx` renders it as
+ * a header action instead.
+ */
+export function CatalogLink() {
+  return (
+    <Button asChild size="sm" variant="outline">
+      <Link href={consolePath("platform.billingCatalog")}>View plan catalog</Link>
+    </Button>
+  );
+}
 
 /** A trial with no payment method is the row somebody acts on. */
 export function trialTone(paymentMethodOnFile: boolean): "warning" | "neutral" {

@@ -12,7 +12,7 @@ import {
 } from "@/components/kit/surface-state";
 import { fetchEstateSubscriptions, fetchEstateTrials } from "@/lib/platform-api";
 import type { SubscriptionPage, TrialPage } from "@/lib/billing";
-import { BillingViews } from "./billing-views";
+import { BillingViews, CatalogLink } from "./billing-views";
 
 /**
  * The estate's billing surface — contract §8.2, and the console's first
@@ -101,6 +101,7 @@ export default async function EstateBilling() {
       <ConsolePageHeader
         title="Billing"
         description="Every product's recurring revenue and expiring trials, in one place."
+        actions={<CatalogLink />}
       />
 
       <BillingViews

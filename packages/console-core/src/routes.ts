@@ -331,6 +331,31 @@ export const ROUTES = {
   // product's subscriptions were only ever visible inside that product.
   "platform.billing": { mobile: "/platform/billing", capability: "billing" },
 
+  // The plan catalog's read-only console surface, from
+  // tesserix-home#326/#380/#385/#386 — 42 lookup keys, 78 amounts, 3 plans,
+  // published per Stripe mode, plus the nightly parity check that gates
+  // #327's Stripe write-key revocation.
+  //
+  // A CHILD of `platform.billing`, not a sibling on the rail — same reasoning
+  // `platform.crmImport` recorded for `platform.crm`: this is a second door
+  // onto data the Billing page already introduces, reached from a link on
+  // that page rather than from its own rail entry. NOT added to `nav.ts` for
+  // that reason.
+  //
+  // `billing`, matching its parent: the catalog and the parity evidence
+  // behind #327's revocation are exactly the revenue-adjacent surface that
+  // capability exists to gate, and a reader who cannot see subscriptions has
+  // no business seeing the catalog they are billed from either.
+  //
+  // No `web`: apps/web never had a catalog surface — the catalog itself is
+  // console-native, versioned in tesserix-home's own Postgres since #380.
+  //
+  // NOT `pending`: this id's page is what this task builds.
+  "platform.billingCatalog": {
+    mobile: "/platform/billing/catalog",
+    capability: "billing",
+  },
+
   // Every product's tenants in one shape, from platform-api's tenants module
   // (#342), which federates §3.4's /admin/entities/tenants.
   //

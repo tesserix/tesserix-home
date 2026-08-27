@@ -103,12 +103,15 @@ describe("console-native surfaces record no apps/web path", () => {
     //   - platform.crmOrganisations: same as suppressions — the old leads
     //     page was a flat list of lead rows with no concept of a business
     //     distinct from the person, so there is no predecessor to record.
+    //   - platform.billingCatalog: the plan catalog is console-native since
+    //     #380 — apps/web never had a catalog surface at all.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "platform.tools",
       "platform.auditLog",
       "platform.inbox",
       "platform.billing",
+      "platform.billingCatalog",
       "platform.tenants",
       "platform.aiUsage",
       "platform.crmImport",
