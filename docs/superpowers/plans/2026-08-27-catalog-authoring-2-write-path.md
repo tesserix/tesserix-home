@@ -16,6 +16,12 @@
 - **Migrations applied to production BEFORE the PR merges.** This plan's migration is `0036`.
 - **A Zitadel role `publish-catalog` must exist AND be assigned before merge.** `capabilities.ts` strings are a contract with Zitadel; shipping the code first makes publishing dead for every operator, with a `CapabilityError` that names no cause.
 - **Test mode is wiped before this plan's Task 7 runs.** Stripe's Dashboard test-data reset. After it the console holds 42 prices and Stripe holds none, so the first publish is a real bootstrap.
+- **THE OPERATION TAXONOMY CHANGED. Three sandbox experiments were run on
+  2026-08-27, after this plan was written, and two of them invalidate parts of
+  it. Read spec §0 and §1.6a before Task 3.** In short: `currency_options`
+  MERGES (so "resend all six" is withdrawn), an existing currency's amount is
+  IMMUTABLE (so there is no in-place amount edit and all 78 changes are
+  replacements), and `tax_behavior` can move from `unspecified` exactly once.
 - **Every amount sent to Stripe passes through `toStripeUnitAmount`.** Skipping it sends every VND price 100× wrong — the same defect found in the comparator on 2026-08-27.
 - pnpm workspace; `npm ci` FAILS. Rebuild `console-core` before app tests. Scope vitest with `pnpm --filter console exec vitest run <path>`.
 - `tsc` is not a build; run `next build`.
@@ -193,6 +199,16 @@ it("sends transfer_lookup_key when creating a replacement price", async () => {
   expect(created).toMatchObject({ transfer_lookup_key: true, lookup_key: "mark8ly_pro_monthly_developed_v1" });
 });
 
+it("adds a currency that is not yet on the price, and refuses to change one that is", async () => {
+  // VERIFIED 2026-08-27, not assumed. Adding `cad` to a price carrying
+  // usd/gbp/eur/aud succeeds. Updating gbp's amount is refused outright:
+  // "You are attempting to update an immutable field for an existing currency
+  // in currency_options." So the writer exposes ADD, and the plan builder must
+  // never emit an amount change as an in-place update.
+  await expect(stripeCatalogWriter.addCurrencyOption("test", priceId, "cad", 1300, "k9"))
+    .resolves.toBeDefined();
+});
+
 it("never puts the baseline currency inside currency_options", async () => {
   // Stripe REJECTS the call outright. This exact rejection stuck a mark8ly
   // bootstrap run and is why its idempotency key is at v3.
@@ -298,9 +314,20 @@ it("labels a Stripe-side edit as drift-correction, and still publishes it", () =
   expect(plan.operations.map((o) => o.origin)).toEqual(["drift-correction"]);
 });
 
-it("classifies a non-baseline currency edit as an in-place update", () => {
+it("classifies a non-baseline currency edit as a REPLACEMENT, not an in-place update", () => {
+  // The single most important consequence of the 2026-08-27 experiments. An
+  // earlier draft of this plan expected `update_currency_options` here, for 36
+  // of 78 cells. Stripe refuses that outright — an existing currency's amount
+  // is immutable — so a plan builder emitting it would produce a publish that
+  // fails on every one of those cells at execution time.
   const plan = buildPublishPlan({ /* gbp differs; usd is the baseline */ });
-  expect(plan.operations[0].kind).toBe("update_currency_options");
+  expect(plan.operations[0].kind).toBe("replace_price");
+});
+
+it("classifies a currency the price does not yet carry as an in-place add", () => {
+  // The ONLY in-place amount write that exists.
+  const plan = buildPublishPlan({ /* draft has chf; Stripe's price has none */ });
+  expect(plan.operations[0].kind).toBe("add_currency_option");
 });
 
 it("classifies a baseline-currency edit as a replacement", () => {
@@ -324,11 +351,14 @@ it("emits create_product before any create_price that references it", () => {
   expect(plan.counts).toMatchObject({ create_product: 3, create_price: 42 });
 });
 
-it("carries all six non-baseline currencies on an in-place update", () => {
-  // Whether Stripe merges or replaces the map is UNVERIFIED (spec §1.6).
-  // Sending all six is correct under either, so it is not conditional.
-  const op = buildPublishPlan({ /* one gbp change */ }).operations[0];
-  expect(Object.keys(op.currencyOptions).sort()).toEqual(["aud", "cad", "eur", "gbp", "nzd", "sgd"]);
+it("sends only the currency being added, because the map merges", () => {
+  // VERIFIED 2026-08-27: `currency_options` MERGES — a price carrying
+  // gbp/eur/aud, updated with only gbp, kept all three. An earlier draft
+  // required resending all six on the theory that the map is replaced. That
+  // was inferred from the field being `Emptyable` and was wrong; `metadata` in
+  // the same interface is also `Emptyable` and merges.
+  const op = buildPublishPlan({ /* draft adds chf */ }).operations[0];
+  expect(Object.keys(op.currencyOptions)).toEqual(["chf"]);
 });
 
 it("fingerprints the observation it planned against", () => {
@@ -730,13 +760,14 @@ git commit -m "feat(console): atomic publication promotion and orphan detection"
 
 ---
 
-## The [X] experiments — run once, before Task 6 ships
+## The [X] experiments — DONE, 2026-08-27, before any of this was written
 
 Three facts this plan depends on are **inferences, not verified** (spec §1). Each is a cheap one-off against test mode; record the answers in the spec.
 
-- [ ] Does a partial `currency_options` update REMOVE absent currencies, or merge? (§1.6 — the mitigation is safe either way, but the answer decides whether a bug here is loud or silent.)
-- [ ] Can `tax_behavior` be set FROM `unspecified` via update? (§1.4 — if not, `update_tax_behavior` must be deleted from the plan's operations and every case becomes `replace_price`.)
-- [ ] Does an in-place `currency_options` change alter an existing subscription's next invoice? (§6 — this is the claim the whole "loudest confirmation on the in-place path" inversion rests on.)
+- [x] Does a partial `currency_options` update REMOVE absent currencies, or merge? **MERGES.** (§1.6 — the mitigation is safe either way, but the answer decides whether a bug here is loud or silent.)
+- [x] Can `tax_behavior` be set FROM `unspecified` via update? **YES, exactly once.** (§1.4 — if not, `update_tax_behavior` must be deleted from the plan's operations and every case becomes `replace_price`.)
+- [x] Does an in-place change alter an existing subscription's next invoice? **MOOT — no in-place amount change exists.**
+- [x] **NEW, and the one that reshaped the plan:** can an existing currency's amount be updated? **NO — immutable.** (§6 — this is the claim the whole "loudest confirmation on the in-place path" inversion rests on.)
 
 ## Definition of done
 
