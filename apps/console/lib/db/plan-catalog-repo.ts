@@ -165,10 +165,13 @@ export interface ParityRun {
    * against — `null` for a mode with no publication yet, which is exactly
    * `not_bootstrapped`.
    *
-   * The shape lands here so callers compile against the field Task 5 fills
-   * in; `recordParityRun`'s INSERT does not write it yet — wiring it into
-   * `plan_catalog_parity_runs.publication_id` is Task 5's job, not this
-   * task's.
+   * Set by `performParityCheck` from `readLivePublication(mode)`, read at the
+   * same moment as the catalog it names, and written by `recordParityRun`
+   * into `plan_catalog_parity_runs.publication_id`. This is the field that
+   * makes a `clean` row still mean something after the catalog it was checked
+   * against is superseded — without it, republishing invalidates every prior
+   * `clean` row silently, and #326's 7-day window loses the ability to say
+   * WHICH catalog it observed.
    */
   readonly publicationId: string | null;
 }
@@ -188,9 +191,19 @@ export interface ParityRun {
  */
 export async function recordParityRun(run: ParityRun): Promise<void> {
   await tesserixQuery(
-    `INSERT INTO plan_catalog_parity_runs (mode, outcome, difference_count, differences, error)
-     VALUES ($1, $2, $3, $4::jsonb, $5)`,
-    [run.mode, run.outcome, run.differences.length, JSON.stringify(run.differences), run.error],
+    `INSERT INTO plan_catalog_parity_runs (mode, outcome, difference_count, differences, error, publication_id)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+    [
+      run.mode,
+      run.outcome,
+      run.differences.length,
+      JSON.stringify(run.differences),
+      run.error,
+      // Nullable, and expected to be null for `not_bootstrapped`: 0035 puts
+      // no CHECK across this column, because "never published" is the
+      // ordinary state a run can be evidence of, not a defect in the row.
+      run.publicationId,
+    ],
   );
 }
 

@@ -8,7 +8,7 @@ import "server-only";
 
 import { compareCatalogToStripe } from "@/lib/billing/parity";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
-import { readCatalogAmounts, type ParityRun } from "@/lib/db/plan-catalog-repo";
+import { readCatalogAmounts, readLivePublication, type ParityRun } from "@/lib/db/plan-catalog-repo";
 
 /**
  * One parity check, decided but not yet recorded — the body both runners share.
@@ -100,6 +100,17 @@ export function sanitizeReason(cause: unknown): string {
  */
 export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
   try {
+    // Read first, and read once: `readCatalogAmounts` and `readLivePublication`
+    // answer related questions about the SAME row (see their shared `WHERE` in
+    // `plan-catalog-repo.ts`), and reading the publication here means the id
+    // that lands on the returned `ParityRun` is the one this run actually
+    // compared against — not a later publication that raced it. `null` is the
+    // normal answer for a mode that has never been published, not a failure;
+    // it flows straight through to every branch below, including
+    // `not_bootstrapped`.
+    const publication = await readLivePublication(mode);
+    const publicationId = publication ? publication.id : null;
+
     // Sequential, not `Promise.all`: a catalog read that fails should not also
     // spend a Stripe request, and the ordering makes "which side broke"
     // legible in the stored reason.
@@ -141,12 +152,12 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       // it would be the wrong answer. A catalog read that returned nothing is
       // a broken read, and letting it count a day towards the window is
       // exactly the false clean everything here is built to prevent.
-      // `publicationId: null` here is mechanical, not a claim about which
-      // publication was read: wiring the actual id through is Task 5's job
-      // (it also has to call `readLivePublication`, which this task adds but
-      // does not yet consume). This task only has to keep `ParityRun`'s new
-      // field compiling.
-      return { mode, outcome: "not_bootstrapped", differences: [], error: null, publicationId: null };
+      // `publicationId` here is `null` exactly when the mode has never been
+      // published — the ordinary shape of `not_bootstrapped` — but it is NOT
+      // hard-coded: a publication that exists with zero Stripe Prices behind
+      // it (a bootstrap that never ran) still names the catalog this run
+      // checked, so the read above's answer travels through unchanged.
+      return { mode, outcome: "not_bootstrapped", differences: [], error: null, publicationId };
     }
 
     return {
@@ -154,7 +165,7 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       outcome: differences.length === 0 ? "clean" : "differences",
       differences,
       error: null,
-      publicationId: null,
+      publicationId,
     };
   } catch (cause) {
     return {

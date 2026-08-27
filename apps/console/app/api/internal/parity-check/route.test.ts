@@ -10,6 +10,7 @@ vi.mock("@/lib/db/tesserix", () => ({
 }));
 vi.mock("@/lib/db/plan-catalog-repo", () => ({
   readCatalogAmounts: vi.fn(async () => []),
+  readLivePublication: vi.fn(async () => null),
   recordParityRun: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
