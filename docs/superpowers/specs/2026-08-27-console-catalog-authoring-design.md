@@ -1,426 +1,491 @@
 # The console as the plan catalog's authoring surface
 
-**Status:** design, second draft — first draft reviewed and substantially wrong
+**Status:** design, third draft — scope reduced after two review rounds
 **Date:** 2026-08-27
 **Issues:** tesserix-home#326 (P1a, landed), #327 (P2, gated), §P of `BACKLOG.md`
 
-## Why there is a second draft
+## Scope, and why it shrank
 
-Four specialist reviews of the first draft found errors serious enough to
-rewrite rather than patch. They are listed here rather than quietly fixed,
-because each one is a trap the implementation could fall back into:
+Two rounds of specialist review found that each earlier draft's central mechanism
+did not survive contact. The second round found a structural blocker:
 
-1. **The headline safety claim was inverted.** The first draft said an edit
-   never changes what a live customer pays. That is false for 36 of 78 cells —
-   see §6. The operation it called benign is the dangerous one.
-2. **The verification could not see its own worst failure.** A half-applied
-   `replace_price` leaves an orphan the parity check structurally cannot
-   report — see §9.2.
-3. **`tax_behavior` cannot be updated in place** once set, and six cells are
-   already set — see §1.4.
-4. **The schema could not hold a draft** at all — see §3.1.
-5. **Revision status and mode contradicted each other** — see §3.2.
-6. **Idempotency keys replay cached failures and expire in 24h**, so the resume
-   path deadlocked on the failure it existed for — see §5.3.
-7. **No guard against a correct mechanism publishing a wrong number** — §7.
-8. **It shipped a third source of truth** — §10.
+> **The catalog cannot express a price creation.** It stores `lookup_key, plan,
+> period, tier, currency, unit_amount_minor, tax_behavior`. A Stripe Price create
+> needs `product`, `recurring.interval`, `currency`, `unit_amount` and
+> `currency_options`. There is no product id anywhere in the catalog, `period`
+> maps to no interval, and in live mode the three Products do not exist at all.
 
-## Purpose
+So "bootstrapping live is convergence through the same executor" — the load-bearing
+justification for retiring `billing-bootstrap` — was not buildable.
 
-Make the console the place a mark8ly price is changed, so changing one does not
-mean opening the Stripe Dashboard, and so the catalog stops being maintained in
-places that can quietly disagree.
+**v1 therefore edits prices that already exist.** Amounts and tax behaviour, in
+test mode, with guards, an operation log and independent verification. That is
+the thing actually asked for: stop opening the Stripe Dashboard to change a
+price. Every gap the reviews found was about *creation* and *bootstrap
+retirement*, not editing.
 
-Intended as the reference pattern other products follow. §12 states what
-generalises and — more importantly — what does not.
+### In scope (v1)
 
-## Non-goals
+- Editing `unit_amount_minor` and `tax_behavior` on the 42 existing prices.
+- Test mode only. Live has no catalog to edit (§1.9).
+- Draft → plan → confirmed publish, with guards.
+- An operation log, orphan detection, and verification by the parity check.
 
-- Promo codes, global discounts (§P P4), per-tenant overrides (§P P5).
-- Kora's catalog. Kora is mid-migration: Cashfree is being removed (kora#479)
-  and StoreKit IAP becomes the rail before public launch (kora#487), putting
-  part of its catalog in App Store Connect where Apple owns the price tiers.
-  Designing for it now means guessing. See §12.
-- Migrating existing subscribers between prices.
+### Phase 2, deliberately deferred
 
-## 1. Established facts
+- Creating prices and products. Requires the catalog to carry `product` and
+  `recurring.interval`, and the comparator to check them.
+- Bootstrapping live through the console.
+- Retiring `billing-bootstrap`.
+- Promo codes, per-tenant overrides (§P P4/P5).
+- Kora's catalog — see §13.
 
-Verified against the running system and the installed SDK on 2026-08-27.
-**Corrections from the first draft are marked.**
+## 1. Facts, with honest provenance
 
-**1.1 Stripe Prices are mostly immutable.** `PriceUpdateParams` accepts exactly
-`active`, `currency_options`, `expand`, `lookup_key`, `metadata`, `nickname`,
-`tax_behavior`, `transfer_lookup_key`. `unit_amount`, `currency`, `recurring`
-and `product` cannot change. Altering a headline amount means creating a new
-Price and archiving the old.
+A previous draft put inferences in a section headed "verified". Each item below
+is marked **[V]** verified against a primary source, **[I]** inference from one,
+or **[X]** needs a cheap test-mode experiment before being relied on.
 
-**1.2 `transfer_lookup_key` is atomic, and available on create.**
-*"Will atomically remove the lookup key from the existing price, and assign it
-to this price."* So create-and-claim is one call and the key is never unclaimed
-under any ordering.
+**1.1 [V] Stripe Prices are mostly immutable.** `PriceUpdateParams` accepts
+exactly `active`, `currency_options`, `expand`, `lookup_key`, `metadata`,
+`nickname`, `tax_behavior`, `transfer_lookup_key`. `unit_amount`, `currency`,
+`recurring`, `product` are absent. Changing an amount means a new Price.
 
-**CORRECTION.** The first draft ordered creates before archives "so a lookup key
-is never unclaimed". That reasoning was wrong — atomicity already guarantees it.
-The real reason to capture the old Price first is §1.3.
+**1.2 [V] `transfer_lookup_key` is atomic and available on create.** *"Will
+atomically remove the lookup key from the existing price, and assign it to this
+price."* So the key is never unclaimed under any ordering.
 
-**1.3 The old Price is left with `lookup_key: null`,** addressable only by its
-Stripe id. Therefore **the archive step must carry the old Price id captured
-before the create.** Resolving the old price by lookup key at archive time
-resolves to the *new* price and archives what was just minted. mark8ly's
-existing `FindPriceByLookupKey` filters `Active: true` and would do exactly
+**1.3 [V] The old Price keeps `active: true` and loses its `lookup_key`.**
+Therefore **the archive step must carry the old Price id captured before the
+create** — resolving by lookup key at archive time resolves to the *new* price.
+mark8ly's `FindPriceByLookupKey` filters `Active: true` and would do exactly
 that.
 
-**1.4 `tax_behavior` cannot be changed once set.** The SDK: *"Once specified as
-either `inclusive` or `exclusive`, it cannot be changed."* All six `aud` cells
-are already `exclusive`.
+*Correction to draft 2: "addressable only by its Stripe id" was loose. It stays
+listable by `product` + `active`, which matters for §9.2.*
 
-**CORRECTION.** The first draft listed `update_tax_behavior` as an in-place
-operation. It is in-place **only from `unspecified`**; otherwise it is a
-replacement.
+**1.4 [V] `tax_behavior` cannot be changed once set** to `inclusive` or
+`exclusive`. All six `aud` cells are already `exclusive`.
+**[I]** That it *can* be set from `unspecified` is inferred from the
+restriction's wording; no source states it affirmatively. **[X]** Confirm in
+test mode before relying on the `update_tax_behavior` operation.
+Note `null` (never set) and `'unspecified'` are distinct states.
 
-**1.5 The baseline currency is always `usd`,** and `Options` holds **all seven**
-currencies including the baseline.
+**1.5 [V] The baseline currency is always `usd`, and `Options` holds all seven
+currencies including it.** `price.go` filters the baseline out because *"Stripe
+rejects the create call if `currency_options` contains the top-level currency"* —
+a failure that stuck a bootstrap run once, recorded in that file's `price:v3:`
+idempotency key. The filter is needed on the **update** path too.
 
-**CORRECTION.** The first draft said `Options` holds "the other six". It does
-not. `stripe/price.go` filters the baseline out at the Stripe boundary because
-*"Stripe rejects the create call if `currency_options` contains the top-level
-currency"* — a failure that already stuck a bootstrap run once. A plan builder
-that iterates `Options` naively reproduces it.
+**1.6 [X] Whether a partial `currency_options` update removes absent
+currencies is UNKNOWN.** Draft 2 asserted it does, reasoning from the field
+being `Emptyable`. That inference is invalid: `metadata` in the same interface
+is also `Emptyable` and is documented as **merging**. No source states either
+behaviour for `currency_options`.
 
-**1.6 `currency_options` updates replace the whole map.** The field is
-`Emptyable`. Sending only the changed currency **deletes the other five.** Every
-in-place update must resend all six non-baseline currencies.
+**The mitigation is safe under both readings and stands regardless: always
+resend all six non-baseline currencies.** Settle it with a test-mode experiment
+anyway, because the answer decides whether a bug here is loud or silent.
 
-**1.7 The arithmetic.** Of 78 amounts: 36 developed non-`usd`, 6 developed
-`usd`, 36 PPP — across 42 lookup keys. Confirmed against `pricing-dump`.
+**1.7 [V] Zero-decimal currencies need converting on the write path too.**
+`toStripeUnitAmount` (currently module-private in `parity.ts`) divides by 100 for
+the 16 zero-decimal currencies. **A write path that skips it sends every VND
+price 100× wrong.** This is the same defect class that was found and fixed in the
+comparator on 2026-08-27. Export the function; do not reimplement it.
 
-**1.8 The catalog matches Stripe test mode today** — 42 keys, 78 amounts, 0
-differences, correct intervals, three correctly-mapped products.
+**1.8 [V] The arithmetic.** 78 amounts across 42 lookup keys: 36 developed
+non-`usd`, 6 developed `usd`, 36 PPP.
 
-**1.9 Live has never been bootstrapped** — 0 prices, 0 products, 0
-subscriptions. Both mark8ly billing secrets hold `sk_test_` keys despite `prod-`
-prefixes.
+**1.9 [V] Live has never been bootstrapped** — 0 prices, 0 products, 0
+subscriptions. **[V]** Both mark8ly billing secrets hold `sk_test_` keys despite
+`prod-` prefixes.
 
-**1.10 `billing-bootstrap` is mode-agnostic but does not reconcile.** It is
-skip-if-exists: `FindPriceByLookupKey` → if found, log "reusing" and move on.
-Re-running it after an amount change is a **silent no-op**, not a sync.
+**1.10 [V] `billing-bootstrap` is skip-if-exists, not a sync.** Re-running it
+after an amount change is a silent no-op. It remains the only tool that can
+create a Price from a descriptor — which is why v1 does not retire it.
 
-## 2. The model: desired state, observed state, converge
+## 2. The model: three-way, not two-way
 
-The console's catalog is the **desired state**. Stripe is **observed state**.
-Publishing is convergence, and verification is an independent re-observation.
+Desired state is the draft. Observed state is Stripe. But a two-way diff cannot
+distinguish *what I changed* from *what drifted* — so publishing would silently
+revert a Dashboard edit without telling anyone, and §7's breadth guard would be
+meaningless ("40 entries" could be 40 intended changes or 1 intended plus 39
+drift corrections).
 
-The first draft planned by diffing draft against the published revision. That
-was wrong in a way worth naming: a `usd` edit mints a new Price carrying all
-seven currencies, six of them read from the draft. If Stripe had drifted on any
-of those six — the exact thing the parity check exists to catch — the replace
-would silently apply six changes the plan never showed.
+So the plan is computed from three inputs:
 
-So the plan is computed from **observed Stripe**, reusing `compareCatalogToStripe`:
+| input | role |
+|---|---|
+| the published revision | **ancestor** — what we last intended |
+| the draft | **desired** |
+| `listPrices(mode)` | **observed** |
 
-```
-plan = classify(compareCatalogToStripe(draftAmounts, listPrices(mode)), mode)
-```
+Each plan entry is labelled **`intended`** (draft differs from ancestor) or
+**`drift-correction`** (observed differs from ancestor, draft does not). Both are
+published; only the labelling differs, and the operator sees both counts.
 
-That function already solves the 42-vs-78 shape asymmetry, already reconciles
-zero-decimal currencies, and is exhaustively fixture-tested. A second diff
-implementation would have to solve all of it again and would disagree in ways
-nobody could adjudicate.
+Observed state is required — a `usd` edit mints a Price carrying all seven
+currencies, so drift in any of the other six would otherwise be applied silently
+under a plan that never showed it.
 
-**What this buys:**
+The comparison reuses `compareCatalogToStripe`, which already solves the 42-vs-78
+shape asymmetry and reconciles zero-decimal currencies. A second diff
+implementation would have to solve both again and would disagree unadjudicatably.
 
-- **Resume is re-observe and re-plan.** There is no pending-outcome to
-  reconcile, so §5.3's 24-hour idempotency window stops being load-bearing.
-- **Re-running a completed publish yields an empty plan** — a checkable
-  statement, stronger than "repeats nothing".
-- **A half-finished publish and ordinary drift are the same thing**, which is
-  correct: both are "Stripe does not match desired state".
-- **Bootstrapping live is not a special case** — it is convergence from an empty
-  observation, a 42-entry plan through the same executor. §10.
+**What "empty plan" means, stated precisely:** the amounts and tax behaviours
+agree. It does **not** mean Stripe matches desired state — the comparator ignores
+`product`, `recurring`, `nickname` and `active`. v1 does not create prices, so
+this is a bounded claim rather than a hole; phase 2 must widen the comparator
+before it can create anything.
 
-**The cost, stated honestly.** The write path and the verification now share a
-diff implementation, so a comparator bug makes both wrong in the same direction.
-That trade is worth taking; the independence that matters here is **credential
-and module** independence (§8), which is untouched. §9 does not claim
-algorithmic independence.
+### 2.1 The observation is fingerprinted
+
+The operator confirms a plan computed at T and it executes at T+n. Neither
+apply-as-shown nor re-plan-at-execution is safe alone: the first risks a stale
+captured price id, the second executes a plan nobody approved with guards
+evaluated against something unseen.
+
+So the plan persists a **fingerprint** — a hash over the observed
+`(lookup_key, currency, unit_amount, tax_behavior)` set. At execution the
+observation is retaken; if the fingerprint moved, the publish **aborts** and the
+operator re-plans. Confirmation then means something.
 
 ## 3. Data model
 
-### 3.1 The existing unique constraint must go
+### 3.1 The migration is bigger than a constraint swap
 
-`plan_catalog_prices.lookup_key` is currently `UNIQUE` globally. A draft and a
-published revision both hold `mark8ly_pro_annual_developed_v1`, so **draft
-creation fails on its first INSERT** until this is replaced by
-`UNIQUE (revision_id, lookup_key)`.
+`plan_catalog_prices` has **no `revision_id` column today**, and
+`lookup_key` is globally `UNIQUE` — so a draft and a published revision cannot
+both hold `mark8ly_pro_annual_developed_v1`. In order, in one transaction:
 
-This is not optional and must land in the same migration. Missed, it presents
-as an application bug for a reason the application cannot see.
+1. create `plan_catalog_revisions`
+2. add `revision_id` to `plan_catalog_prices`, nullable
+3. backfill all 42 rows to a synthetic baseline revision
+4. set `NOT NULL`
+5. **drop** `plan_catalog_prices_lookup_key_key`
+6. add `UNIQUE (revision_id, lookup_key)`
+7. create `plan_catalog_publications`, seed a `test` publication for the baseline
 
-### 3.2 Publication belongs on the (mode, revision) edge
+Skipping step 5 makes draft creation fail on its first INSERT, presenting as an
+application bug for a reason the application cannot see.
 
-The first draft put `status` on the revision and asserted "exactly one
-published". That contradicts publishing per mode — and test-ahead-of-live is the
-*normal* working state, not an edge case.
+### 3.2 Publication lives on the (mode, revision) edge
 
 ```
-plan_catalog_revisions      id, note, created_by, created_at        -- no status
-plan_catalog_publications   (mode, revision_id), published_at, published_by,
-                            superseded_at
-                            -- partial unique on (mode) WHERE superseded_at IS NULL
+plan_catalog_revisions     id, note, created_by, created_at,
+                           based_on_revision_id   -- the ancestor, §2
+plan_catalog_publications  id (surrogate PK), mode, revision_id,
+                           published_at, published_by,
+                           superseded_at, superseded_by
+                           partial unique on (mode) WHERE superseded_at IS NULL
 ```
 
 - **draft** = a revision with no publication
 - **published for a mode** = its current publication row
-- **superseded** = derivable, not a state anyone must remember to transition
-- **`not_bootstrapped`** = live has no publication row. The special case in the
-  first draft disappears.
+- **superseded** = derivable
+- **`not_bootstrapped`** = no publication row for that mode
 
-"At most one draft" is a UI constraint; enforce it in the authoring flow rather
-than spending an index on it.
+**The PK is a surrogate, not `(mode, revision_id)`** — re-publishing a previously
+superseded revision is a second row with the same pair.
 
-### 3.3 "Exactly one published" is not enforceable
+**`publications.revision_id` is `ON DELETE RESTRICT`**, not `CASCADE`. Copying
+the cascade from `prices.revision_id` would make "discard a stale revision"
+silently delete publish history.
 
-Postgres partial unique indexes enforce a **ceiling**, never a floor. "Never
-zero" needs a deferred constraint trigger, which is not worth it here.
+**`based_on_revision_id` answers draft provenance.** With test published ahead of
+live there is no single "the published revision" to copy from, and it is also the
+ancestor §2 needs.
 
-What is enforceable: at most one live publication per mode, plus an atomic
-retire-then-promote in one transaction so no reader observes zero. **The
-document must claim that and not more** — "exactly one" is a property of the
-publish transaction, not of the schema.
+### 3.3 "Exactly one published" is not enforceable, and the transaction needs a lock
 
-### 3.4 Two queries that go silently wrong
+Partial unique indexes enforce a ceiling, never a floor. What is enforceable is
+at most one live publication per mode.
 
-- **`readCatalogAmounts()` has no revision filter.** The moment a draft exists it
-  returns rows from every revision, duplicate lookup keys and all, and the
-  comparator's grouping merges them. It must join the published publication for
-  the mode, **in the same PR as the migration**.
-- **`plan_catalog_parity_runs` has no `revision_id`.** Once "published" is
-  mutable, a `clean` row three days old is ambiguous about *which* catalog it was
-  clean against — and that table exists precisely to be trustworthy after the
-  fact. Add the column.
+Retire-then-promote in one transaction is **not sufficient on its own**: under
+`READ COMMITTED`, two concurrent publishes race — B's
+`UPDATE … WHERE superseded_at IS NULL` targets whatever is live *now*, so if A
+committed in between, B silently retires A's brand-new publication. Take
+`pg_advisory_xact_lock` on the mode first.
 
-### 3.5 Snapshot, not deltas
+The document claims only what the transaction provides: no external reader
+observes zero. Not "exactly one" as a schema property.
 
-120 rows per revision. Deltas would solve a storage problem that does not exist
-while making every query walk a chain. Draft creation is `INSERT … SELECT` in a
-transaction — partial failure would otherwise leave a draft whose diff reads as
-"everything archived".
+### 3.4 At most one draft IS worth an index
 
-`ON DELETE CASCADE` on `amounts.price_id` already makes discarding a draft a
-single delete. A happy accident of the existing schema.
+Draft 2 called this a UI constraint. That is the same reasoning that produced
+§3.1's trap — two operators, two drafts, one silently lost. It is one partial
+index; spend it.
+
+### 3.5 The queries that go wrong without a mode
+
+`readCatalogAmounts()` takes no mode and no revision. It must become
+`readCatalogAmounts(mode)`, joining the live publication:
+
+```sql
+SELECT p.lookup_key, a.currency, a.unit_amount_minor, a.tax_behavior
+  FROM plan_catalog_publications pub
+  JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
+  JOIN plan_catalog_amounts a ON a.price_id = p.id
+ WHERE pub.mode = $1 AND pub.superseded_at IS NULL
+ ORDER BY p.lookup_key, a.currency
+```
+
+Covered by existing indexes; cheaper than today's unfiltered scan.
+
+`plan_catalog_parity_runs` gains **`publication_id`**, not `revision_id` — it
+carries both mode and revision, and it is what the run was actually clean
+against. (#378's `0034` adds `mode` to that table and must merge first.)
+
+### 3.6 The operation log
+
+Referenced by §5 and §9.2, so it is specified here rather than left to invention.
+
+```
+plan_catalog_publish_operations
+    id, publication_attempt_id, sequence,
+    kind,                  -- update_currency_options | replace_price | ...
+    lookup_key, currency,
+    status,                -- pending | succeeded | failed
+    stripe_call,           -- create | update | archive  (one row PER CALL:
+                           --  a replace_price is TWO rows)
+    stripe_price_id,       -- captured before create (§1.3); the archived id
+    idempotency_key,
+    error, started_at, finished_at
+```
+
+**One row per Stripe call, not per plan entry** — a `replace_price` is a create
+and an archive, and §9.2 needs the archived id specifically. Indexed on
+`lookup_key` so the 2am question — *what happened to this price* — is one query.
 
 ## 4. The publish plan
 
-One entry per operation, classified by §1:
-
 | operation | when | in place? |
 |---|---|---|
-| `update_currency_options` | non-baseline amounts changed | yes — **resend all six** (§1.6) |
-| `replace_price` | `usd` or PPP amount changed | no — create+transfer, then archive by **captured id** (§1.3) |
+| `update_currency_options` | non-baseline amount changed | yes — **resend all six** (§1.6), **baseline filtered out** (§1.5) |
+| `replace_price` | `usd` or PPP amount changed | no — create+transfer, archive by captured id (§1.3) |
 | `replace_price` | `tax_behavior` changes from a set value (§1.4) | no |
-| `update_tax_behavior` | `tax_behavior` changes from `unspecified` | yes |
-| `create_price` | key absent from Stripe | — |
-| `archive_price` | key absent from the catalog | — |
+| `update_tax_behavior` | `tax_behavior` changes from `unspecified` [X] | yes |
 
-The screen leads with counts and **flags the repricing ones loudest** (§6) —
-not the replacements, which is what the first draft got backwards.
+`create_price` and `archive_price` are phase 2. A catalog row with no Stripe
+price, or a Stripe price with no catalog row, is **reported as unpublishable** in
+v1 rather than silently skipped.
+
+Every amount sent to Stripe passes through `toStripeUnitAmount` (§1.7).
 
 ## 5. Execution
 
-### 5.1 Ordering
+### 5.1 Write-ahead, always
 
-Create-then-archive per replacement, with the old Price id captured before the
-create (§1.3). Not for lookup-key continuity — `transfer_lookup_key` is atomic
-(§1.2) — but because the old price becomes unaddressable by key.
+Each operation row is persisted with `status: pending` **before** the Stripe
+call, and updated after. If that order inverts, a crash between the two produces
+the "Stripe changed with no record" gap this design exists to prevent. §11 tests
+it with a mock that fails after the DB write and before the network call.
 
-### 5.2 The operation log is audit, not recovery
+### 5.2 Idempotency keys are a guard, not a guarantee
 
-Every operation is persisted **before** the Stripe call, with status `pending`,
-and updated with the outcome and any resulting Stripe ids. If that order ever
-inverts, a crash between the two produces exactly the "Stripe changed with no
-record" gap this design claims to prevent. §11 tests it explicitly.
+Keyed `(publication_attempt_id, sequence, attempt)`. The attempt counter is
+required: Stripe replays **cached failures**, and `price.go` already bumped a key
+v1→v3 for exactly that deadlock. Keys also expire after 24h.
 
-Recovery is §2's re-observe-and-re-plan. The log answers *what did we attempt
-and what did Stripe say* — including the archived price's id, so orphans (§9.2)
-are findable.
+Correctness comes from the fingerprint (§2.1) and re-planning, not from the keys.
 
-### 5.3 Idempotency keys are a guard, not a guarantee
+### 5.3 The draft locks, and the lock expires
 
-Keyed on `(revision_id, operation_id, attempt)`. The attempt counter is
-required: Stripe replays **cached failures**, and this codebase has already
-deadlocked on that — `price.go` bumped a key v1→v3 for it. Keys also expire
-after 24 hours, so they cannot carry a resume left overnight.
+A plan the operator approved must not execute against a draft they then changed.
 
-Correctness comes from convergence. The keys only prevent double-submit within
-one attempt.
+**The lock is derived, not a flag**: a draft is locked while it has a publish
+attempt whose operations are not all terminal. A crashed publish therefore
+cannot wedge it forever — the attempt is marked failed by a timeout
+(`activeDeadlineSeconds`-style), and the draft frees. A flag with no release
+path is worse than no lock.
 
-### 5.4 The draft locks while a publish is in flight
+### 5.4 What the operator sees when it half-fails
 
-Operation ids bind to persisted, immutable plan rows. A draft edited mid-publish
-could otherwise make a resumed operation reuse a key for a semantically
-different call — Stripe returns the cached result, the call never happens, and
-nothing errors.
+Not "logged, and detectable later". The publish action returns, synchronously,
+which operations succeeded, which failed, the reason, and **the current state of
+Stripe as the log knows it** — plus a direct link to re-plan. The orphan check
+(§9.2) runs automatically at the end of a failed publish rather than waiting for
+the nightly run.
 
-## 6. What this does to existing subscribers — corrected
+## 6. Existing subscribers
 
-**A subscription item stores no amount.** Its fields are `price`, `plan`,
-`quantity`, `discounts`, `tax_rates`; the amount resolves from the live Price at
-invoice time, including `currency_options`.
+**[V]** A subscription item stores no `unit_amount`; the amount resolves from the
+live Price at invoice time. **[V]** Archiving does not reprice existing
+subscriptions. **[I]** Therefore an in-place `currency_options` change reprices
+existing subscribers of that currency at renewal — this last step is not
+documented by Stripe and is **[X]** worth a test-mode experiment.
 
-| operation | cells | existing subscribers |
-|---|---|---|
-| `replace_price` | 42 | **unaffected** — `unit_amount` is immutable, and archiving does not reprice |
-| `update_currency_options` | 36 | **repriced at next renewal**, silently |
+| operation | existing subscribers |
+|---|---|
+| `replace_price` | **unaffected** — `unit_amount` immutable, archiving does not reprice |
+| `update_currency_options` | **repriced at next renewal** |
 
-The first draft had this exactly backwards, calling replacement the scary
-operation and in-place updates benign. **The confirmation must be loudest on the
-in-place path**, and the surface must say plainly which currencies have live
-subscribers on them.
+Two calibrations draft 2 got wrong by overcorrecting:
 
-The honest statement: *existing subscriptions keep their original Price object;
-that is not the same as keeping their original amount.*
+- **Today this affects nobody.** Live has 0 subscriptions (§1.9) and test mode
+  has no real customers. It is a forward-looking invariant, not a present hazard.
+- **The blast radius is not "36 cells".** **[V]** A subscription's currency is
+  fixed at creation, so exposure is limited to currencies live subscribers were
+  actually created in.
 
-## 7. Guards against a correct mechanism publishing a wrong number
+**§6 cannot be fully honoured in v1.** Saying "which currencies have live
+subscribers" requires reading subscriptions, and `stripe-read.ts` states
+outright that it performs no Subscription reads and that the key must not be
+widened for it. v1 therefore **states the rule in the UI** — that in-place edits
+reprice existing subscribers at renewal — without claiming to know who. Widening
+the read scope is a deliberate decision for phase 2, not a side effect.
 
-Every safety property in the first draft protected against mechanism failure.
-None protected against a dropped zero — which publishes cleanly, and which the
-parity check then confirms as `clean`, because it *is* clean: catalog and Stripe
-agree on the wrong price.
+## 7. Guards
 
-Pure functions in the plan builder, beside the classifier:
+Mechanism safety does not protect against a correct mechanism publishing a wrong
+number. A dropped zero publishes cleanly and the parity check confirms `clean`,
+because it *is* clean.
 
-- **Magnitude** — refuse or hard-confirm any amount moving more than a set
-  percentage.
-- **Breadth** — a routine edit touches 1–7 cells. A 40-entry plan is a bootstrap
-  or a mistake; make the operator say which.
-- **Currency coverage** — a developed price must carry exactly its seven
-  currencies. A draft that drops `gbp` is not a Stripe error, it is checkout
-  failing in the UK, and no operation in §4 catches it because "fewer
-  currencies" is a legitimate `update_currency_options`.
+- **Magnitude — measured against the ancestor**, not observed Stripe. A dropped
+  zero is a divergence from prior intent; against observed, correcting real drift
+  would trip it and a typo coinciding with drift would pass. Threshold: **±25%**
+  requires a typed confirmation naming the plan.
+- **Breadth — counted in plan entries, labelled.** "40 intended" and "1 intended,
+  39 drift" are different events. Over **10 intended entries** requires the same
+  confirmation.
+- **Currency coverage.** A developed price must carry exactly its seven
+  currencies. A draft dropping `gbp` is not a Stripe error, it is checkout failing
+  in the UK, and no operation in §4 catches it.
+- **Mode.** v1 is test-only, enforced in code. When live is enabled, publishing
+  to it requires typing the mode name — the estate lost an hour to a live/test key
+  mix-up on 2026-08-27, and live's first publish is the largest action this tool
+  will ever take.
 
-`0032`'s `unit_amount_minor > 0` CHECK is this instinct at the row level. These
-are its siblings at the plan level.
+Units are **plan entries** throughout — one `usd` edit is one entry that writes
+seven amounts. Draft 2 used cells, entries and amounts interchangeably.
 
 ## 8. Credentials and authorization
 
 `lib/billing/mark8ly/stripe-write.ts` — exactly `createPrice`, `updatePrice`,
-`archivePrice`. `server-only`, private Stripe instance never exported, its own
-credential (`STRIPE_WRITE_KEY_TEST` / `_LIVE`), mirroring `stripe-read.ts`'s
-construction and its guard test.
+`archivePrice`; `server-only`; private instance; own credential
+(`STRIPE_WRITE_KEY_TEST` / `_LIVE`), mirroring `stripe-read.ts` and its guard
+test. The parity check keeps the read-only key. Honestly: a CI-enforced boundary,
+not a privilege boundary — both keys live in the same pod.
 
-**The parity check keeps the read-only client and key.** #327 revokes mark8ly's
-write key on the strength of that window; a check that could write would
-undercut it.
+**Publishing requires `billing` + a new risk verb `publish-catalog`.**
+`capabilities.ts` separates surfaces from risk verbs precisely so a surface grant
+does not carry an unweighed blast radius.
 
-Note honestly: this is a CI- and review-enforced boundary, not a privilege
-boundary — both keys live in the same pod.
+**This is a deploy precondition, not one line.** Those strings are a contract
+with Zitadel — the role must exist on the *Platform Console* project **and be
+assigned** before merge, or publishing is dead for every operator with a
+`CapabilityError` that names no cause.
 
-**Publishing requires `billing` *and* a new risk verb `publish-catalog`.**
-`capabilities.ts` already separates surfaces from risk verbs, with its own
-rationale: *"Seeing a surface and being trusted with its destructive verb are
-different questions, and keeping them separate is what stops a surface grant
-quietly carrying a blast radius nobody weighed."* `hard-delete` + `crm` erases a
-contact; either alone does not. Gating publish on `billing` alone would upgrade
-every existing grant — anyone who can view subscription state could change what
-mark8ly charges — without one of those grants being re-reviewed.
-
-A review argued a second capability is process for its own sake in a two-person
-estate. The counter-argument taken here: the pattern exists, adding a verb is
-one line, and this is the surface #327's argument rests on.
+Why not `rotate-credentials`, which already covers *"Payment-gateway keys, Stripe
+settings"*: that verb is about credentials, and holding it should not imply the
+ability to change prices. Different blast radius, different grant.
 
 ## 9. Verification
 
 ### 9.1 The parity check
 
-After publishing, catalog and Stripe should agree, and the existing check says
-so on its next run or immediately via the operator-triggered route.
+Runs after publishing, and nightly. Now takes a mode (#378).
 
-### 9.2 Orphan detection — new, and required
+### 9.2 Orphan detection, via the operation log
 
-The parity check **cannot** see the worst failure this design can produce.
-`parity.ts:403` skips every price whose `lookup_key` is null or outside the
-namespace. A `replace_price` whose create succeeded and whose archive failed
-leaves an active Price with a null key — invisible, while the check reports
-`clean`.
+`parity.ts:403` skips every price with a null or non-namespaced `lookup_key`, and
+`stripePriceCount` counts the post-filter map — so a `replace_price` whose create
+succeeded and whose archive failed leaves an active Price the check reports as
+`clean`, with the expected 42.
 
-So a separate check: **an active Price in this Stripe account with no
-`lookup_key` and a `product` belonging to the catalog is an orphan.** Report it
-distinctly; it is a signal of a half-applied publish, not of drift.
+Draft 2 proposed finding it by `product`; that is not implementable —
+`StripePriceLike` has no `product` field, it is not expanded, and the catalog
+stores no product ids.
 
-The operation log (§5.2) carries the id, so an orphan is identifiable rather
-than merely detectable.
+**The implementable rule: query the operation log for archived price ids and
+check whether they are still `active`.** The log is not what makes an orphan
+identifiable — it is the only thing that makes it detectable.
 
-## 10. Retiring `billing-bootstrap`
+## 10. The sources of truth v1 does not fix
 
-After this ships there would otherwise be **two writers** to Stripe's catalog
-and **three sources of truth**: `catalog.go`, the console tables, and whatever
-the Dashboard holds. #326 exists to stop exactly that; shipping a third place is
-a regression dressed as progress.
+§P names three hand-maintained copies. v1 makes the console authoritative for
+**amounts in Stripe test mode** and leaves the others:
 
-Because bootstrapping live is convergence from an empty observation (§2),
-`billing-bootstrap` has no remaining job once this works. It is retired in the
-same change, and `catalog.go` reduces to lookup-key constants.
+- `catalog.go` — still the bootstrap's input. Not retired; see scope.
+- `pricing-data.ts` — **what the marketing site renders.** A console publish that
+  changes a price makes marketing advertise one number while checkout charges
+  another. Customer-visible, and invisible to both the parity check and the
+  orphan check because neither knows the marketing page exists.
 
-Stated explicitly because "we will delete it later", plus a working CLI, is not
-a combination that ends in deletion.
+**This is accepted, named, and must be filed as a follow-up** (§P P3b covers the
+snapshot approach). It is stated here because a design aimed at ending
+three-copy drift must not quietly leave one copy diverging further.
 
 ## 11. Testing
 
-- **The classifier, as a pure function** — every cell class in §4, including
-  `tax_behavior` from `unspecified` versus from a set value.
-- **Baseline filtering** — the plan never sends `usd` inside `currency_options`
-  (§1.5).
-- **Whole-map replacement** — an in-place update resends all six non-baseline
-  currencies (§1.6).
-- **Archive targets the captured id**, proven by a fixture where resolving by
-  lookup key would archive the wrong Price (§1.3).
-- **Write-ahead ordering** — a mock failing after the DB write but before the
-  network call leaves a `pending` row (§5.2).
-- **Convergence** — re-running a completed publish produces an empty plan.
-- **Guards** — magnitude, breadth and currency-coverage each refuse.
-- **Orphan detection** — an active null-key price is reported (§9.2).
-- **Read client still has no write methods.**
-- **Integration**: publish a draft against Stripe **test mode**, then run the
-  parity check and assert `clean`. Cheap, because test mode is where the catalog
-  already lives.
+- The classifier, pure, over every §4 row.
+- **`toStripeUnitAmount` on the write path** — publishing VND sends
+  `catalogMinor / 100` (§1.7).
+- Baseline filtered out of `currency_options` on update as well as create (§1.5).
+- All six non-baseline currencies resent (§1.6).
+- Archive targets the **captured** id, with a fixture where resolving by lookup
+  key would archive the wrong Price (§1.3).
+- Write-ahead: a mock failing between DB write and network call leaves `pending`.
+- Fingerprint mismatch aborts the publish (§2.1).
+- Guards refuse; the ancestor baseline is used, not observed.
+- Orphan detection finds an archived-but-still-active id (§9.2).
+- Read client still exposes no write method.
+- **Integration tests publish under a `ci_` `namespacePrefix`**, never
+  `mark8ly_`. The real test-mode catalog is where the 7-day window is being
+  measured; a test that mutates it certifies fiction.
+- **[X] experiments**, run once against test mode and recorded here: does a
+  partial `currency_options` update drop absent currencies (§1.6); can
+  `tax_behavior` move from `unspecified` (§1.4); does an in-place amount change
+  alter an existing subscription's next invoice (§6).
 
-## 12. What generalises
+## 12. Rollout
 
-**The transferable kernel** is *declared desired state + observed state +
-converge + verify independently*. That is storefront-agnostic and applies as
-readily to App Store Connect as to Stripe. The first draft named a UI-shaped
-kernel ("draft → typed plan → confirmed publish"), which does not transfer.
+The mode dimension already provides the phasing:
 
-**Not generic, and dangerous to copy:**
+1. Migration + schema, applied to prod before merge (estate convention).
+2. Zitadel role created and assigned (§8).
+3. Read-only revision UI — the catalog rendered per mode, no editing.
+4. Editing + plan + guards, publish disabled.
+5. Publish enabled for **test mode only**, soaked.
+6. Live enabled — only after live is bootstrapped by the existing CLI.
 
-- *What a price is.* mark8ly's is a Stripe Price with `currency_options` and PPP
-  siblings. Kora's is a credit pack in integer paise with 18% GST computed in
-  code, a 2% platform fee, 30-day validity and a quota grant — and after
-  kora#487 part of it lives in App Store Connect, where Apple owns the tiers and
-  takes 15–30%.
-- *How many storefronts.* mark8ly has one. Kora is heading for three.
-- *Stripe's immutability rules* (§1). The create-and-replace dance exists only
-  because of them.
+Realistically **3–4 weeks** for two people including review. The earlier drafts'
+confidence implied days; it is not days.
 
-**Cheap step to take now:** put mark8ly-specific code under
-`lib/billing/mark8ly/` rather than letting it accumulate in the shared
-namespace. Otherwise the second case begins with an unpicking exercise, which is
-where "we will generalise later" usually dies.
+## 13. What generalises
 
-**Named for later:** if Kora's price ends up expressed in Stripe *and* App Store
-Connect *and* Play Console, that is three hand-maintained copies of one catalog
-— #326's problem rebuilt somewhere new. A cross-storefront parity check is the
-same idea and is cheaper to design before the copies exist.
+The transferable kernel is **declared desired state + observed state + a common
+ancestor + converge + verify independently**. That is storefront-agnostic.
 
-## 13. Open questions
+Not generic, and dangerous to copy: *what a price is*, *how many storefronts*,
+and *Stripe's immutability rules* — the create-and-replace dance exists only
+because of them.
 
-1. **Rollback.** Publications make "re-publish the previous revision"
-   expressible, but it is not undo: a replaced Price is archived, and
-   re-publishing mints another new one. Decide whether to offer it rather than
-   implying an undo that does not exist.
-2. **Does `marketplace-api` read the catalog from the console?** The invariant
-   this design asserts: *nothing on the request path of a customer payment may
-   depend on the console being reachable.* The console is the authoring plane;
-   Stripe is the serving plane, and checkout should resolve prices from Stripe
-   by `lookup_key`. If §P's P3a means a synchronous read at checkout, it should
-   be rejected; a cached sync is fine.
+Kora is deferred with evidence rather than by preference: it sells credit packs
+in integer paise with 18% GST computed in code, a 2% platform fee, 30-day
+validity and a quota grant; Cashfree is being removed (kora#479) and StoreKit IAP
+becomes the rail before public launch (kora#487), putting part of its catalog in
+App Store Connect where Apple owns the tiers and takes 15–30%. An abstraction
+designed against mark8ly alone would be designed wrong.
+
+**Namespacing:** either move `parity.ts`, `parity-run.ts`, `stripe-read.ts` and
+`plan-catalog-repo.ts` into `lib/billing/mark8ly/` in the same change, or drop
+the recommendation. Half-namespaced is worse than either end state — the next
+reader cannot tell which convention is current. **Recommendation: drop it for
+v1**, and do it when a second product actually arrives, since the move is
+mechanical and the second case will reveal the right seam.
+
+## 14. Open questions
+
+1. **Rollback.** Publications make re-publishing a previous revision
+   expressible, but it is not undo — a replaced Price stays archived and
+   re-publishing mints another. **Recommendation: do not offer it in v1**, and
+   say so in the UI, rather than implying an undo that does not exist.
+2. **Discoverability.** Nothing tells the other operator a publish happened.
+   `published_by`/`published_at` exist but are rendered nowhere. For two people
+   this is tolerable; as a reference pattern it gets copied. v1: render them on
+   the catalog surface.
+3. **Does `marketplace-api` read the catalog from the console?** The invariant:
+   *nothing on the request path of a customer payment may depend on the console
+   being reachable.* Checkout resolves from Stripe by `lookup_key`. A synchronous
+   read at checkout should be rejected; a cached sync is fine.
