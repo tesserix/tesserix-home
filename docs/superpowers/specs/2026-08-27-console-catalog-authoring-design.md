@@ -190,11 +190,12 @@ both hold `mark8ly_pro_annual_developed_v1`. In order, in one transaction:
 
 1. create `plan_catalog_revisions`
 2. add `revision_id` to `plan_catalog_prices`, nullable
-3. backfill all 42 rows to a synthetic baseline revision
-4. set `NOT NULL`
-5. **drop** `plan_catalog_prices_lookup_key_key`
-6. add `UNIQUE (revision_id, lookup_key)`
-7. create `plan_catalog_publications`, seed a `test` publication for the baseline
+3. **add `source` to `plan_catalog_prices`**, defaulted to `'mark8ly'` — see §13.1
+4. backfill all 42 rows to a synthetic baseline revision
+5. set both `NOT NULL`, and drop `source`'s default so a future writer must state it
+6. **drop** `plan_catalog_prices_lookup_key_key`
+7. add `UNIQUE (revision_id, source, lookup_key)`
+8. create `plan_catalog_publications`, seed a `test` publication for the baseline
 
 Skipping step 5 makes draft creation fail on its first INSERT, presenting as an
 application bug for a reason the application cannot see.
@@ -544,7 +545,60 @@ Realistically **4–5 weeks** for two people including review — creation and t
 widened comparator add roughly a week to draft 3's estimate. The earlier drafts'
 confidence implied days; it is not days.
 
-## 13. What generalises
+## 13. Multi-product readiness
+
+Other products will use this Stripe integration. The question is not "should it
+be generic" but **which seams are real** — and one piece of the shipped code is
+actively dangerous to a second product.
+
+### 13.1 Coupling audit, as shipped today
+
+| coupling | verdict |
+|---|---|
+| `toStripeUnitAmount`'s ÷100 | **product policy disguised as a Stripe rule — must move** |
+| no `source` column on `plan_catalog_*` | **two catalogs cannot coexist — must add** |
+| `MARK8LY_LOOKUP_KEY_PREFIX` | already parameterised as `namespacePrefix`. Fine. |
+| `ZERO_DECIMAL_CURRENCIES` | a genuine Stripe fact. Fine shared. |
+
+**The ÷100 is the dangerous one.** It exists *only* because mark8ly's catalog
+stores every amount ×100 as an internal convention, and `billing-bootstrap`
+divides at the Stripe boundary. A second product storing genuine minor units
+would have every VND, JPY and KRW price **divided by 100 on write and
+mis-compared on read** — the same 100× defect found and fixed in the comparator
+on 2026-08-27, pre-installed for whoever comes second, and sitting in a shared
+module where it reads as a general rule.
+
+**Move it behind a per-source policy**, e.g. `{ amountsAreScaledBy100: true }`
+for mark8ly, so the comparator stops asserting something only one product
+believes. The 16-currency set stays shared; the *convention* does not.
+
+### 13.2 `source` costs nothing now and is expensive later
+
+Add it while there is one product and 42 rows. Retrofitting a discriminator
+after two catalogs already share a table means backfilling live data and
+auditing every query that assumed one product — including the parity check,
+whose window is the evidence #327 depends on.
+
+`source` mirrors how entity rows already carry theirs (contract §8.9), so it is
+the estate's existing habit rather than a new idea.
+
+### 13.3 What must NOT be forced generic
+
+The schema's `plan / period / tier` shape is **subscription-shaped**. A second
+subscription product fits it. Kora's does not: credit packs in integer paise
+with 18% GST computed in code, a 2% platform fee, 30-day validity and a quota
+grant — and after kora#487, part of its catalog lives in App Store Connect where
+Apple owns the price tiers and takes 15–30%.
+
+Forcing one table to serve both produces something that serves neither. Both
+review rounds reached the same conclusion independently: an abstraction designed
+against a single working example is designed wrong.
+
+**Resist adding knobs beyond `namespacePrefix` and the scaling policy** until a
+second product shows which seam is real. Two data points make a line; one makes
+a guess.
+
+## 14. What generalises
 
 The transferable kernel is **declared desired state + observed state + a common
 ancestor + converge + verify independently**. That is storefront-agnostic.
@@ -567,7 +621,7 @@ reader cannot tell which convention is current. **Recommendation: drop it for
 v1**, and do it when a second product actually arrives, since the move is
 mechanical and the second case will reveal the right seam.
 
-## 14. Open questions
+## 15. Open questions
 
 1. **Rollback.** Publications make re-publishing a previous revision
    expressible, but it is not undo — a replaced Price stays archived and
