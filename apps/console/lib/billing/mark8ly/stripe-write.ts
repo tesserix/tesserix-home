@@ -158,14 +158,26 @@ export interface CreatePriceSpec {
   readonly period: "monthly" | "annual";
   readonly taxBehavior: TaxBehavior;
   /**
-   * Every additional currency this Price should cover, keyed by ISO 4217.
+   * Every additional currency this Price should cover, keyed by ISO 4217,
+   * carrying that currency's own amount AND its own tax behaviour. The
+   * catalog holds `tax_behavior` per (lookup_key, currency) row, not per
+   * Price — in mark8ly's catalog all six `aud` currency options are
+   * `exclusive` while every other one of the 78 rows is `unspecified`, so a
+   * Price-level `taxBehavior` alone cannot express this. Sent per entry on
+   * create — see `createPrice` — because `../parity.ts`'s `coverageOf` reads
+   * `currency_options[cur].tax_behavior` for exactly this comparison, and an
+   * omitted value there reads as a `tax_behavior_mismatch` against those six
+   * `aud` rows, forever.
+   *
    * The BASELINE CURRENCY MUST NOT be a key here — Stripe rejects the create
    * call outright if it is, and that exact rejection once stuck a mark8ly
    * bootstrap run (mirrored in `createPrice`'s filter below, and the reason
    * mark8ly's own idempotency key reads `price:v3:`). `createPrice` filters
    * it out defensively regardless of what the caller passes.
    */
-  readonly currencyOptions: Readonly<Record<string, number>>;
+  readonly currencyOptions: Readonly<
+    Record<string, { readonly unitAmount: number; readonly taxBehavior: TaxBehavior }>
+  >;
   readonly idempotencyKey: string;
 }
 
@@ -262,10 +274,13 @@ export const stripeCatalogWriter: StripeCatalogWriter = {
     // Stripe rejects the create outright. Filtered here regardless of what
     // the caller passes, because the rejection this guards against once
     // stuck a live mark8ly bootstrap run.
-    const currencyOptions: Record<string, { unit_amount: number }> = {};
-    for (const [currency, unitAmount] of Object.entries(spec.currencyOptions)) {
+    const currencyOptions: Record<string, { unit_amount: number; tax_behavior: TaxBehavior }> = {};
+    for (const [currency, option] of Object.entries(spec.currencyOptions)) {
       if (currency === spec.currency) continue;
-      currencyOptions[currency] = { unit_amount: unitAmount };
+      currencyOptions[currency] = {
+        unit_amount: option.unitAmount,
+        tax_behavior: option.taxBehavior,
+      };
     }
 
     const created = await client(mode).prices.create(

@@ -58,7 +58,10 @@ const baseSpec: CreatePriceSpec = {
   unitAmount: 100,
   period: "monthly",
   taxBehavior: "unspecified",
-  currencyOptions: { usd: 100, gbp: 90 },
+  currencyOptions: {
+    usd: { unitAmount: 100, taxBehavior: "unspecified" },
+    gbp: { unitAmount: 90, taxBehavior: "unspecified" },
+  },
   idempotencyKey: "k1",
 };
 
@@ -205,6 +208,27 @@ describe("createPrice", () => {
 
     const params = stripeMock.pricesCreate.mock.calls[0][0];
     expect(params.tax_behavior).toBe("exclusive");
+  });
+
+  it("sends each currency option's own tax_behavior, not just the Price's", async () => {
+    // The catalog's `aud` rows are all `exclusive` while every other one of
+    // the 78 rows is `unspecified` — a Price-level tax_behavior cannot
+    // express this. `../parity.ts`'s `coverageOf` reads
+    // `currency_options[cur].tax_behavior` per currency, so a missing value
+    // here reports as a permanent `tax_behavior_mismatch` against `aud`.
+    await stripeCatalogWriter.createPrice("test", {
+      ...baseSpec,
+      currencyOptions: {
+        aud: { unitAmount: 150, taxBehavior: "exclusive" },
+        gbp: { unitAmount: 90, taxBehavior: "unspecified" },
+      },
+    });
+
+    const params = stripeMock.pricesCreate.mock.calls[0][0];
+    expect(params.currency_options).toEqual({
+      aud: { unit_amount: 150, tax_behavior: "exclusive" },
+      gbp: { unit_amount: 90, tax_behavior: "unspecified" },
+    });
   });
 
   it("passes the idempotency key through as a request option, never minting one", async () => {
