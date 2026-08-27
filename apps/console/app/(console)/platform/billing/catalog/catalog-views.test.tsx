@@ -1,19 +1,38 @@
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
+
+// A stand-in policy for a source `source-policy.ts`'s real `POLICIES` map
+// does not know about yet — CatalogSource is deliberately a union of one
+// today (see that module's own comment), so there is no genuine second
+// source to test against. This mock exists ONLY so the interaction test
+// below ("filters the catalog to the selected source when a second one is
+// clicked") can render a synthetic second source's price end to end and
+// prove the click-driven filtering actually swaps what's on screen — every
+// other test in this file exercises the REAL `policyFor("mark8ly")`
+// unmocked, via `importOriginal`.
+vi.mock("@/lib/billing/source-policy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/billing/source-policy")>();
+  return {
+    ...actual,
+    policyFor: (source: string) =>
+      source === "acme" ? { amountsAreScaledBy100: false } : actual.policyFor(source as never),
+  };
+});
 
 import type { CatalogRow, ModeLatestRun, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
 import type { Difference } from "@/lib/billing/parity";
 import { resolveState } from "@/components/kit/surface-state";
 import {
+  availableCatalogSources,
   CatalogViews,
   dayVerdict,
+  filterCatalogBySource,
   formatCatalogAmount,
   formatRanAt,
   groupCatalogRows,
   organizeCatalogByPlan,
   outcomeLabel,
   outcomeTone,
-  stripeMinorUnitDivisor,
   summarizeDifferences,
 } from "./catalog-views";
 
@@ -82,21 +101,34 @@ describe("groupCatalogRows", () => {
   });
 });
 
-describe("stripeMinorUnitDivisor — a pure decision, independent of Intl", () => {
-  // The coordinator's own instruction: a test on the FORMATTED STRING alone
-  // can pass in Node and be wrong in Chrome, because `Intl`'s CLDR-derived
-  // fraction-digit count for IDR genuinely differs by runtime (0 in
-  // Chrome/en-US, 2 in Node). This table asserts the DECISION directly
-  // against `ZERO_DECIMAL_CURRENCIES`, which is the only thing that is
-  // allowed to make it, so no runtime's `Intl` implementation can hide a
-  // regression here.
-  it.each([
-    ["idr", 100], // NOT zero-decimal in Stripe — the coordinator's headline bug
-    ["vnd", 1], // zero-decimal in Stripe
-    ["usd", 100],
-    ["jpy", 1], // zero-decimal in Stripe
-  ] as const)("resolves %s to a divisor of %i", (currency, divisor) => {
-    expect(stripeMinorUnitDivisor(currency)).toBe(divisor);
+describe("availableCatalogSources / filterCatalogBySource", () => {
+  it("lists sources in first-seen order, deduplicated", () => {
+    const rows = [
+      catalogRow({ source: "mark8ly", lookupKey: "a" }),
+      catalogRow({ source: "mark8ly", lookupKey: "b" }),
+    ];
+    expect(availableCatalogSources(rows)).toEqual(["mark8ly"]);
+  });
+
+  it("returns nothing for no rows", () => {
+    expect(availableCatalogSources([])).toEqual([]);
+  });
+
+  it("filters to only the rows for one source", () => {
+    // `source` is cast past the union-of-one type deliberately, the same way
+    // the render test below does — #381's second product does not exist in
+    // this codebase's types yet, but this function's runtime behaviour must
+    // already be correct for the day it does.
+    const rows = [
+      catalogRow({ source: "mark8ly", lookupKey: "a" }),
+      catalogRow({ source: "acme" as CatalogRow["source"], lookupKey: "b" }),
+    ];
+    expect(filterCatalogBySource(rows, "mark8ly").map((r) => r.lookupKey)).toEqual(["a"]);
+  });
+
+  it("returns every row, unfiltered, for a null selection", () => {
+    const rows = [catalogRow({ lookupKey: "a" }), catalogRow({ lookupKey: "b" })];
+    expect(filterCatalogBySource(rows, null)).toEqual(rows);
   });
 });
 
@@ -182,6 +214,11 @@ describe("organizeCatalogByPlan", () => {
   });
 });
 
+// The exponent DECISION (idr -> 2, vnd -> 0, ...) is pinned independently of
+// `Intl` in `lib/money.test.ts` now that `formatCatalogAmount` delegates to
+// the fixed `formatMoney` for it — this describe block is the composition
+// test: does the catalog's storage-to-Stripe conversion (`toStripeUnitAmount`)
+// feed the right value into a formatter that is, in turn, correct.
 describe("formatCatalogAmount — never the raw stored minor units", () => {
   it("divides IDR by 100, not by 1 — the coordinator's headline bug", () => {
     // Live Stripe holds unit_amount = 1198800000 for
@@ -388,10 +425,55 @@ describe("CatalogViews", () => {
     expect(screen.getByTitle("mark8ly_pro_annual_ppp_idr_v1")).toBeInTheDocument();
   });
 
-  it("states the source once per plan tab", () => {
+  it("shows the source filter, trivially satisfied, with the sole source today", () => {
+    // "Source: Mark8ly" as a static label is gone — the coordinator asked for
+    // this to become a filter sitting with the mode toggle. With one source
+    // present, the control still renders (visible before it is needed,
+    // rather than hidden until a second product exists) and that one option
+    // is the selection.
     const rows = [catalogRow()];
     renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
-    expect(screen.getByText(/Source:\s*Mark8ly/)).toBeInTheDocument();
+    const sourceTab = screen.getByRole("tab", { name: "Mark8ly" });
+    expect(sourceTab).toBeInTheDocument();
+    expect(sourceTab).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("builds the source filter from the rows actually present, not a hardcoded list", () => {
+    // Cast past the union-of-one `CatalogSource` type on purpose: #381's
+    // second product does not exist in this codebase's TYPES yet, but the
+    // control's runtime behaviour must already be correct for the day a
+    // second source's rows arrive — that is the entire point of building the
+    // options from data.
+    const rows = [
+      catalogRow({ source: "mark8ly", lookupKey: "mark8ly_pro_annual_developed_v1" }),
+      catalogRow({
+        source: "acme" as CatalogRow["source"],
+        lookupKey: "acme_pro_annual_developed_v1",
+      }),
+    ];
+    renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
+    expect(screen.getByRole("tab", { name: "Mark8ly" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Acme" })).toBeInTheDocument();
+  });
+
+  it("filters the catalog to the selected source when a second one is clicked", () => {
+    const rows = [
+      catalogRow({ source: "mark8ly", lookupKey: "mark8ly_pro_annual_developed_v1" }),
+      catalogRow({
+        source: "acme" as CatalogRow["source"],
+        lookupKey: "acme_pro_annual_developed_v1",
+      }),
+    ];
+    renderViews({ catalog: rows, catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }) });
+
+    // Defaults to the first source present — mark8ly's price is showing.
+    expect(screen.getByTitle("mark8ly_pro_annual_developed_v1")).toBeInTheDocument();
+    expect(screen.queryByTitle("acme_pro_annual_developed_v1")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Acme" }));
+
+    expect(screen.getByTitle("acme_pro_annual_developed_v1")).toBeInTheDocument();
+    expect(screen.queryByTitle("mark8ly_pro_annual_developed_v1")).not.toBeInTheDocument();
   });
 
   it("renders a period with no developed price without crashing", () => {
