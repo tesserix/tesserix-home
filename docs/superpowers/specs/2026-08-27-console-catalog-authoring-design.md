@@ -4,40 +4,59 @@
 **Date:** 2026-08-27
 **Issues:** tesserix-home#326 (P1a, landed), #327 (P2, gated), §P of `BACKLOG.md`
 
-## Scope, and why it shrank
+## Scope
 
-Two rounds of specialist review found that each earlier draft's central mechanism
-did not survive contact. The second round found a structural blocker:
+Three drafts and two review rounds. The second round reported a structural
+blocker — that the catalog could not express a price *creation* — and draft 3
+cut creation out on that basis. **That was an over-correction, and it is
+reversed here.**
 
-> **The catalog cannot express a price creation.** It stores `lookup_key, plan,
-> period, tier, currency, unit_amount_minor, tax_behavior`. A Stripe Price create
-> needs `product`, `recurring.interval`, `currency`, `unit_amount` and
-> `currency_options`. There is no product id anywhere in the catalog, `period`
-> maps to no interval, and in live mode the three Products do not exist at all.
+The blocker was literally true and materially false. mark8ly deliberately
+designed around it. `internal/billing/stripe/product.go`:
 
-So "bootstrapping live is convergence through the same executor" — the load-bearing
-justification for retiring `billing-bootstrap` — was not buildable.
+> *"CreateProduct calls POST /v1/products with `metadata[plan]` set so
+> subsequent FindProductByMetadata lookups succeed **without storing the Stripe
+> ID locally**."*
 
-**v1 therefore edits prices that already exist.** Amounts and tax behaviour, in
-test mode, with guards, an operation log and independent verification. That is
-the thing actually asked for: stop opening the Stripe Dashboard to change a
-price. Every gap the reviews found was about *creation* and *bootstrap
-retirement*, not editing.
+So the product resolves from `plan`, which the catalog already stores, and the
+interval is a two-case derivation from `period`, which it also stores
+(`price.go:53-55`). **Creation needs no schema change.** What it needs is a
+`createProduct` method, the same metadata lookup the bootstrap performs, and —
+the real work — a widened comparator, so that `clean` means Stripe matches
+desired state rather than merely agreeing on amounts.
 
 ### In scope (v1)
 
-- Editing `unit_amount_minor` and `tax_behavior` on the 42 existing prices.
-- Test mode only. Live has no catalog to edit (§1.9).
-- Draft → plan → confirmed publish, with guards.
-- An operation log, orphan detection, and verification by the parity check.
+- Creating products and prices, and editing amounts and `tax_behavior`.
+- **Bootstrapping a mode from empty**, through the same plan-and-confirm path.
+- Draft → three-way plan → confirmed publish, with guards.
+- An operation log, orphan detection, verification by the parity check.
+- Retiring `billing-bootstrap` — but only after the console has actually
+  converged a mode from empty (§12).
 
-### Phase 2, deliberately deferred
+### The clean slate
 
-- Creating prices and products. Requires the catalog to carry `product` and
-  `recurring.interval`, and the comparator to check them.
-- Bootstrapping live through the console.
-- Retiring `billing-bootstrap`.
+Test mode is being **wiped** before v1 lands, via Stripe's test-mode "delete all
+test data". Verified safe on 2026-08-27: the only subscriptions are three
+**canceled** `stripelive_task8_*` artefacts at $9.99 USD, unrelated to the
+`mark8ly_*` catalog. 41 customers and a stray `mark8ly-358-verify` product go
+with them.
+
+This is load-bearing for the design, not housekeeping:
+
+- The console's catalog keeps its 42 prices while Stripe holds none, so the
+  **first action of the new create path is a 42-entry bootstrap plan in test** —
+  precisely the action live will need, rehearsed where mistakes are free.
+- It removes the §11 hazard that integration tests would mutate a catalog the
+  7-day window is measured against. There is no window running until live is
+  bootstrapped anyway.
+- Stripe cannot delete Prices through the API — only archive. The Dashboard's
+  test-data reset is the only true wipe, and it exists for test mode alone.
+
+### Phase 2, deferred
+
 - Promo codes, per-tenant overrides (§P P4/P5).
+- The marketing site's copy (§10).
 - Kora's catalog — see §13.
 
 ## 1. Facts, with honest provenance
@@ -132,11 +151,22 @@ The comparison reuses `compareCatalogToStripe`, which already solves the 42-vs-7
 shape asymmetry and reconciles zero-decimal currencies. A second diff
 implementation would have to solve both again and would disagree unadjudicatably.
 
-**What "empty plan" means, stated precisely:** the amounts and tax behaviours
-agree. It does **not** mean Stripe matches desired state — the comparator ignores
-`product`, `recurring`, `nickname` and `active`. v1 does not create prices, so
-this is a bounded claim rather than a hole; phase 2 must widen the comparator
-before it can create anything.
+**The comparator must be widened before anything is created.** Today it checks
+amounts and tax behaviour only — it ignores `product`, `recurring` and `active`.
+That is safe while the console can only edit, because those fields cannot change
+under it. The moment it can *create*, a Price minted against the wrong Product or
+a monthly interval converges to `clean` and stays there, permanently and
+invisibly.
+
+So v1 extends `compareCatalogToStripe` to check, per lookup key:
+
+- `recurring.interval` matches `period` (`annual → year`, else `month`)
+- `product` resolves to the Product whose `metadata.plan` matches the row's
+  `plan`
+- the price is `active`
+
+Only then does "empty plan" mean *Stripe matches desired state*, which is what
+§12's retirement of `billing-bootstrap` rests on.
 
 ### 2.1 The observation is fingerprinted
 
@@ -266,9 +296,16 @@ and an archive, and §9.2 needs the archived id specifically. Indexed on
 | `replace_price` | `tax_behavior` changes from a set value (§1.4) | no |
 | `update_tax_behavior` | `tax_behavior` changes from `unspecified` [X] | yes |
 
-`create_price` and `archive_price` are phase 2. A catalog row with no Stripe
-price, or a Stripe price with no catalog row, is **reported as unpublishable** in
-v1 rather than silently skipped.
+| `create_product` | no Product with `metadata.plan` for this plan | — |
+| `create_price` | lookup key absent from Stripe | — |
+| `archive_price` | lookup key absent from the catalog | — |
+
+`create_product` runs before any `create_price` referencing it, and the plan
+shows it as its own entry — bootstrapping a mode creates 3 products and 42
+prices, and an operator should see both numbers.
+
+Product creation is idempotent by the same metadata lookup the bootstrap uses,
+so a resumed publish reuses rather than duplicating.
 
 Every amount sent to Stripe passes through `toStripeUnitAmount` (§1.7).
 
@@ -401,20 +438,31 @@ stores no product ids.
 check whether they are still `active`.** The log is not what makes an orphan
 identifiable — it is the only thing that makes it detectable.
 
-## 10. The sources of truth v1 does not fix
+## 10. Sources of truth
 
-§P names three hand-maintained copies. v1 makes the console authoritative for
-**amounts in Stripe test mode** and leaves the others:
+§P names three hand-maintained copies. v1 closes one and leaves one.
 
-- `catalog.go` — still the bootstrap's input. Not retired; see scope.
-- `pricing-data.ts` — **what the marketing site renders.** A console publish that
-  changes a price makes marketing advertise one number while checkout charges
-  another. Customer-visible, and invisible to both the parity check and the
-  orphan check because neither knows the marketing page exists.
+**Closed:** `catalog.go` stops being the input to a bootstrap CLI, because §12
+retires that CLI once the console has converged a mode from empty. The console's
+tables become authoritative for what Stripe holds, in both modes.
 
-**This is accepted, named, and must be filed as a follow-up** (§P P3b covers the
-snapshot approach). It is stated here because a design aimed at ending
-three-copy drift must not quietly leave one copy diverging further.
+**Left open, and named rather than hidden:** `mark8ly/packages/ui/src/subscription/pricing-data.ts`
+is **what the marketing site renders**. A console publish that changes a price
+makes marketing advertise one number while checkout charges another —
+customer-visible, and invisible to both the parity check and the orphan check
+because neither knows the marketing page exists.
+
+**This must be filed as a follow-up before v1 ships** (§P P3b covers the
+build-time snapshot approach). A design aimed at ending three-copy drift must not
+quietly leave one copy diverging further, and the risk goes UP once publishing is
+easy: today a price changes rarely and by someone editing Go; afterwards it
+changes from a web form.
+
+**Also verify before retiring anything** (BACKLOG.md:203 lists this as an unmet
+prerequisite): inventory every place mark8ly references `pricing/catalog.go`
+outside the bootstrap CLI. PPP-currency selection at checkout probably lives
+there. "`catalog.go` reduces to lookup-key constants" is an assumption until that
+inventory exists.
 
 ## 11. Testing
 
@@ -433,6 +481,13 @@ three-copy drift must not quietly leave one copy diverging further.
 - **Integration tests publish under a `ci_` `namespacePrefix`**, never
   `mark8ly_`. The real test-mode catalog is where the 7-day window is being
   measured; a test that mutates it certifies fiction.
+- **Creation**: interval derived from period; product resolved by
+  `metadata.plan` and created when absent; a second run reuses rather than
+  duplicating the product.
+- **The widened comparator**: a price on the wrong product, and a monthly price
+  with an annual interval, each report as a difference rather than `clean`.
+- **Bootstrap from empty**: an observation of zero prices yields a plan of 3
+  product creates and 42 price creates, and re-running it yields an empty plan.
 - **[X] experiments**, run once against test mode and recorded here: does a
   partial `currency_options` update drop absent currencies (§1.6); can
   `tax_behavior` move from `unspecified` (§1.4); does an in-place amount change
@@ -440,16 +495,26 @@ three-copy drift must not quietly leave one copy diverging further.
 
 ## 12. Rollout
 
-The mode dimension already provides the phasing:
+Test mode is wiped first (see Scope), which makes the sequence a rehearsal
+followed by the real thing:
 
-1. Migration + schema, applied to prod before merge (estate convention).
-2. Zitadel role created and assigned (§8).
-3. Read-only revision UI — the catalog rendered per mode, no editing.
-4. Editing + plan + guards, publish disabled.
-5. Publish enabled for **test mode only**, soaked.
-6. Live enabled — only after live is bootstrapped by the existing CLI.
+1. **Migration + schema**, applied to prod before merge (estate convention).
+2. **Zitadel role** `publish-catalog` created and assigned (§8) — a deploy
+   precondition, not a follow-up.
+3. **Read-only revision UI** — the catalog rendered per mode, no editing.
+4. **The `[X]` experiments** (§11) run against test mode and recorded in §1.
+   Cheap, and three facts this design leans on are currently inferences.
+5. **Bootstrap test from empty** — the first real publish is a 42-price,
+   3-product plan into a wiped test mode. Everything downstream depends on this
+   working, and it costs nothing if it does not.
+6. **Editing + guards**, soaked in test.
+7. **Bootstrap live** through the same path, with the mode guard (§7).
+8. **Retire `billing-bootstrap`** — only now, and only after the §10 inventory.
+   It is a different repo, so it cannot be "the same change", and it must stay
+   available as the fallback until the console has actually converged live once.
 
-Realistically **3–4 weeks** for two people including review. The earlier drafts'
+Realistically **4–5 weeks** for two people including review — creation and the
+widened comparator add roughly a week to draft 3's estimate. The earlier drafts'
 confidence implied days; it is not days.
 
 ## 13. What generalises
