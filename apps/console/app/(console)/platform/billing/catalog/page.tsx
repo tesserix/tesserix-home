@@ -20,6 +20,7 @@ import {
   type ModeLatestRun,
   type ParityWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
+import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { CatalogViews } from "./catalog-views";
 
@@ -132,11 +133,11 @@ async function readWindow(): Promise<ParityWindowStatus> {
 
 async function readCatalog(mode: StripeMode): Promise<CatalogRow[]> {
   if (!isDatabaseConfigured()) notConfigured();
-  // SINGLE-SOURCE ASSUMPTION, mirroring `parity-run.ts`'s `SINGLE_SOURCE`:
-  // every row this table holds today is `source = 'mark8ly'`. This surface
-  // has no mode-and-source picker yet, so there is nothing else to name here
-  // until a second source's rows exist to choose between.
-  return readCatalogRows(mode, "mark8ly");
+  // SINGLE-SOURCE ASSUMPTION: `SINGLE_SOURCE` (`source-policy.ts`) is every
+  // row this table holds today. This surface has no mode-and-source picker
+  // yet, so there is nothing else to name here until a second source's rows
+  // exist to choose between.
+  return readCatalogRows(mode, SINGLE_SOURCE);
 }
 
 async function readRuns(): Promise<ModeLatestRun[]> {

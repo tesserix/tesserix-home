@@ -15,7 +15,7 @@ import {
   type StripePriceLike,
   type TaxBehavior,
 } from "./parity";
-import { policyFor, toStripeUnitAmount } from "./source-policy";
+import { policyFor, SINGLE_SOURCE, toStripeUnitAmount } from "./source-policy";
 import { stripePriceReader, type StripeMode } from "./stripe-read";
 import { stripeCatalogWriter } from "./mark8ly/stripe-write";
 import { readCatalogAmounts } from "@/lib/db/plan-catalog-repo";
@@ -361,12 +361,12 @@ export async function runBootstrap(
   // Stripe request, and a thrown error names which side broke rather than
   // arriving as one of two racing rejections.
   //
-  // SINGLE-SOURCE ASSUMPTION, mirroring `parity-run.ts`'s `SINGLE_SOURCE`:
-  // every row `plan_catalog_prices` holds today is `source = 'mark8ly'`, and
-  // this bootstrap only ever populates mark8ly's own Stripe namespace
-  // (`MARK8LY_LOOKUP_KEY_PREFIX`, below). See #381's follow-up for what a
-  // second source needs before this can stop being hard-coded.
-  const catalog = await readCatalogAmounts(mode, "mark8ly");
+  // SINGLE-SOURCE ASSUMPTION: `SINGLE_SOURCE` (`source-policy.ts`) is every
+  // row `plan_catalog_prices` holds today, and this bootstrap only ever
+  // populates that source's own Stripe namespace (`MARK8LY_LOOKUP_KEY_PREFIX`,
+  // below). See #381's follow-up for what a second source needs before this
+  // can stop being hard-coded.
+  const catalog = await readCatalogAmounts(mode, SINGLE_SOURCE);
 
   // Mirrors `performParityCheck`'s (`parity-run.ts:150-161`) refusal to call
   // an empty catalog against an empty Stripe "clean": `readCatalogAmounts`
