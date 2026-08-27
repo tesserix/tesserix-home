@@ -33,6 +33,14 @@
  * reports 36 phantom missing Prices on its first run.
  */
 
+import {
+  policyFor,
+  toStripeUnitAmount,
+  ZERO_DECIMAL_CURRENCIES,
+  type SourcePolicy,
+} from "./source-policy";
+export { ZERO_DECIMAL_CURRENCIES } from "./source-policy";
+
 /**
  * Stripe's three tax behaviours, verbatim.
  *
@@ -103,50 +111,13 @@ export interface StripePriceLike {
  */
 export const MARK8LY_LOOKUP_KEY_PREFIX = "mark8ly_";
 
-/**
- * Stripe's zero-decimal currencies — the ones with no minor unit at all, where
- * a `unit_amount` of 329000 means 329,000 of the currency and not 3,290.00.
- *
- * HARD-CODED, and hard-coded on purpose: this is a fact about Stripe's API,
- * not about the catalog, and it is versioned — ISK was on this list until
- * Stripe moved it to two decimals in 2021. Deriving it from `Intl` would be
- * worse, not better: `Intl` answers a question about the CURRENCY, and Stripe
- * has repeatedly answered a different one about its own API.
- *
- * VND IS HERE. IDR IS NOT, AND THAT IS NOT AN OMISSION. `catalog.go:159`
- * claims Stripe stores IDR and VND x100. IDR has two decimal places in Stripe,
- * so x100 is simply correct there and needs no conversion. VND has none, so
- * the catalog's x100 must be undone before comparing — which is what
- * {@link toStripeUnitAmount} does.
- *
- * Confirmed against live data on 2026-08-27: six VND rows differed by exactly
- * 100x and zero IDR rows did, across the same 36 PPP amounts. `catalog.go`'s
- * comment is wrong to group them; its CODE is right, because it keys off its
- * own `zeroDecimalCurrencies` map, which also excludes IDR.
- *
- * This set mirrors that Go map (`internal/billing/stripe/price.go`) rather
- * than importing it — the console does not depend on mark8ly's module. The two
- * held the identical 16 currencies when last checked; if they ever diverge,
- * this check reports the difference rather than hiding it.
- */
-export const ZERO_DECIMAL_CURRENCIES: ReadonlySet<string> = new Set([
-  "bif",
-  "clp",
-  "djf",
-  "gnf",
-  "jpy",
-  "kmf",
-  "krw",
-  "mga",
-  "pyg",
-  "rwf",
-  "ugx",
-  "vnd",
-  "vuv",
-  "xaf",
-  "xof",
-  "xpf",
-]);
+// `ZERO_DECIMAL_CURRENCIES` and the per-source x100 conversion moved to
+// `source-policy.ts` on 2026-08-27 (see the import above): the SET is a
+// Stripe fact, but the x100 scaling was mark8ly's convention hard-coded into
+// a comparator meant to be shared. A second product storing genuine minor
+// units would have had every VND, JPY and KRW price divided by 100 on write
+// and mis-compared on read. Re-exported above so existing importers keep
+// working.
 
 /** A `lookup_key` present on exactly one side. */
 export interface PriceDifference {
@@ -282,32 +253,6 @@ function catalogCoverage(amounts: readonly CatalogAmount[]): Map<string, Map<str
 }
 
 /**
- * The catalog amount expressed the way Stripe stores it.
- *
- * THE CATALOG AND STRIPE USE DIFFERENT REPRESENTATIONS FOR THE SAME PRICE, and
- * comparing them raw is wrong. mark8ly's catalog stores every amount in
- * "minor units x 100" for internal consistency — including the currencies
- * Stripe treats as zero-decimal, where `unit_amount` is the raw currency value.
- * `billing-bootstrap` therefore divides by 100 at the Stripe boundary
- * (`internal/billing/stripe/price.go`, `stripeUnitAmount`), and this mirrors
- * that conversion so the comparison happens in one representation.
- *
- * Verified against live data on 2026-08-27: without this, all six VND rows
- * report as `amount_mismatch` — catalog 1978800000 against Stripe 19788000 —
- * and the check would have opened with six false positives every night. Six is
- * enough. A window that never goes clean is a window nobody believes, and
- * #327's key revocation hangs off it.
- *
- * Kept as a mirror of mark8ly's set rather than a shared import: the console
- * deliberately does not depend on mark8ly's Go module, and a divergence here is
- * exactly the kind of drift this check exists to REPORT. If the two sets ever
- * disagree, the report says so instead of hiding it.
- */
-function toStripeUnitAmount(currency: string, catalogMinor: number): number {
-  return ZERO_DECIMAL_CURRENCIES.has(currency) ? catalogMinor / 100 : catalogMinor;
-}
-
-/**
  * Still exactly a factor of 100 apart AFTER {@link toStripeUnitAmount} has
  * already reconciled the representations.
  *
@@ -384,11 +329,15 @@ function currencyOf(difference: Difference): string {
  *
  * @param namespacePrefix overridable for tests and for a future second
  *   product's catalog. It is the only knob, on purpose.
+ * @param policy which source's amount conventions apply — see
+ *   `source-policy.ts`. Defaults to mark8ly's so existing call sites keep
+ *   compiling, with the default made explicit rather than implied.
  */
 export function compareCatalogToStripe(
   catalogAmounts: readonly CatalogAmount[],
   stripePrices: readonly StripePriceLike[],
   namespacePrefix: string = MARK8LY_LOOKUP_KEY_PREFIX,
+  policy: SourcePolicy = policyFor("mark8ly"),
 ): ParityReport {
   const catalog = catalogCoverage(catalogAmounts);
 
@@ -443,7 +392,7 @@ export function compareCatalogToStripe(
       // `toStripeUnitAmount`. Reported in the catalog's, because a report that
       // renamed the catalog's own number would send someone to `catalog.go`
       // looking for a value that is not written there.
-      const catalogAsStripeStores = toStripeUnitAmount(currency, catalogMinor);
+      const catalogAsStripeStores = toStripeUnitAmount(currency, catalogMinor, policy);
 
       if (catalogAsStripeStores !== stripeSide.unitAmountMinor) {
         differences.push({
