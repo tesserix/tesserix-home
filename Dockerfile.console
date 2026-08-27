@@ -33,6 +33,20 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # time this file is touched.
 RUN pnpm --filter @tesserix/platform-auth build && pnpm --filter @tesserix/console-core build && pnpm --filter console build
 
+# The plan-catalog parity CronJob's entry point (#326 P1a), bundled by esbuild
+# to a single plain-JS module.
+#
+# Next's standalone output contains ONLY what the server needs, so
+# `apps/console/scripts/parity-check.ts` is not in the runtime image and the
+# CronJob cannot `node` a source file.
+#
+# `pg` is left external because it IS in the standalone output's node_modules
+# (Next externalises it by default). `stripe` is NOT — Next inlines it into the
+# route's server chunk and traces no package — so the bundle inlines it too.
+# Getting that backwards produces an image that builds green here and fails in
+# the cluster with `Cannot find package 'stripe'`.
+RUN pnpm --filter console build:cron
+
 # Production stage
 FROM node:22-alpine AS runner
 
@@ -53,6 +67,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/console/.next/static ./apps/
 # moment the sidebar logos landed there, and the failure is a silent 404 on an
 # image rather than anything that fails a build.
 COPY --from=builder --chown=nextjs:nodejs /app/apps/console/public ./apps/console/public
+# The parity CronJob's bundle. Placed INSIDE the standalone tree on purpose:
+# `pg` and `stripe` are external to it, so Node has to find them by walking up
+# from the file — which reaches this image's hoisted /app/node_modules only
+# from here. The CronJob in `tesserix-k8s` overrides `command` to run it.
+COPY --from=builder --chown=nextjs:nodejs /app/apps/console/dist/parity-check.mjs ./apps/console/scripts/parity-check.mjs
 
 USER nextjs
 EXPOSE 3000

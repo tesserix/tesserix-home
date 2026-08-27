@@ -114,6 +114,29 @@ function getPool(): Pool {
   return pool;
 }
 
+/**
+ * Release the pool, so a short-lived process can actually end.
+ *
+ * FOR ONE-SHOT PROCESSES ONLY — `scripts/parity-check.ts`, which the plan
+ * catalog CronJob runs. The console's server never calls this: closing the
+ * pool under a long-lived Next process would just make the next request
+ * rebuild it.
+ *
+ * It exists because an idle `pg` client holds the Node event loop open. A
+ * CronJob that has written its row and has nothing left to do would otherwise
+ * sit there until `activeDeadlineSeconds` kills it, and Kubernetes would
+ * report a successful check as a failed job.
+ *
+ * Idempotent, and safe to call when no pool was ever built — a run that failed
+ * before its first query still calls this on the way out.
+ */
+export async function closeTesserixPool(): Promise<void> {
+  const existing = pool;
+  if (!existing) return;
+  pool = undefined;
+  await existing.end();
+}
+
 export async function tesserixQuery<R extends QueryResultRow>(
   sql: string,
   params: readonly unknown[] = [],

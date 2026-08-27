@@ -2,14 +2,27 @@ import { NextResponse } from "next/server";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 
 import { checkOperatorCapability } from "@/lib/auth/operator";
-import { compareCatalogToStripe } from "@/lib/billing/parity";
-import { stripePriceReader } from "@/lib/billing/stripe-read";
+import { performParityCheck } from "@/lib/billing/parity-run";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
-import { readCatalogAmounts, recordParityRun } from "@/lib/db/plan-catalog-repo";
+import { recordParityRun } from "@/lib/db/plan-catalog-repo";
 
 /**
  * The plan-catalog parity check: read the catalog, read live Stripe Prices,
- * compare, record one row.
+ * compare, record one row — triggered by an OPERATOR.
+ *
+ * # This is not what the schedule runs
+ *
+ * The route is guarded by the console's operator-session convention, and a
+ * Kubernetes CronJob has no operator and cannot mint a session. So the
+ * schedule runs `scripts/parity-check.ts` instead, which does the same work
+ * directly against the same modules. Giving this route a shared-secret bypass
+ * would have meant a second auth scheme in the console AND a route reachable
+ * without an operator — bad neighbours for the P2 argument that revokes
+ * mark8ly's Stripe write key.
+ *
+ * Both runners get their `clean` / `differences` / `failed` decision from
+ * `lib/billing/parity-run.ts`, so the 7-day window is one sequence of rows
+ * under one definition rather than a mixture of two.
  *
  * # Every failure path writes a `failed` row
  *
@@ -29,49 +42,21 @@ import { readCatalogAmounts, recordParityRun } from "@/lib/db/plan-catalog-repo"
  *
  * # Not in this PR
  *
- * The Kubernetes CronJob that calls this route lives in `tesserix-k8s` and is
- * a separate change. Until it lands, nothing calls this on a schedule and the
- * window has not started.
+ * The Kubernetes CronJob that runs the script lives in `tesserix-k8s` and is a
+ * separate change. Until it lands, nothing runs the check on a schedule and
+ * the window has not started.
  */
 
 // A check whose whole output is "what is true right now". Caching it would be
 // a way to record the same minute seven times and call it a week.
 export const dynamic = "force-dynamic";
 
-/** The longest reason `plan_catalog_parity_runs.error` will hold. Long enough
- *  for a Stripe error plus its context, short enough that one pathological
- *  message cannot dominate the table an operator reads. */
-const MAX_ERROR_LENGTH = 512;
-
-/**
- * Anything that looks like a Stripe key, gone before it is stored.
- *
- * Stripe echoes request context into some error messages — "Invalid API Key
- * provided: rk_live_..." among them — and the `error` column is read by an
- * operator and lives as long as the row. Covers the live, test and restricted
- * prefixes; the trailing class is deliberately greedy about what counts as key
- * material, because over-redacting an error message costs nothing and
- * under-redacting one costs a credential.
- */
-const STRIPE_KEY_PATTERN = /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]+/g;
-
-/**
- * Turn a thrown value into a reason safe to store and useful to read.
- *
- * Named separately from the driver's own message for the same reason
- * `/api/notifications` refuses to return one: an error out of `pg` can echo
- * the connection string and the role name back.
- */
-export function sanitizeReason(cause: unknown): string {
-  const raw =
-    cause instanceof Error
-      ? `${cause.name}: ${cause.message}`
-      : `Unknown error: ${String(cause)}`;
-  const redacted = raw.replace(STRIPE_KEY_PATTERN, "[redacted]");
-  return redacted.length > MAX_ERROR_LENGTH
-    ? `${redacted.slice(0, MAX_ERROR_LENGTH - 1)}…`
-    : redacted;
-}
+// Re-exported, not defined here. It moved to `lib/billing/parity-run.ts` when
+// the CronJob's script needed the same redaction: the script cannot import it
+// from a route module without dragging `next/server` and the whole operator
+// auth stack into a plain-Node bundle, and a second copy of a redaction rule
+// is a second place for a credential to survive one.
+export { sanitizeReason } from "@/lib/billing/parity-run";
 
 async function authorize(): Promise<null | NextResponse> {
   const session = await getCurrentSession();
@@ -109,24 +94,10 @@ export async function POST(): Promise<NextResponse> {
     return NextResponse.json({ error: "not_configured" }, { status: 501 });
   }
 
-  let outcome: "clean" | "differences" | "failed";
-  let differences: ReturnType<typeof compareCatalogToStripe>["differences"] = [];
-  let error: string | null = null;
-
-  try {
-    // Sequential, not `Promise.all`: a catalog read that fails should not also
-    // spend a Stripe request, and the ordering makes "which side broke"
-    // legible in the stored reason.
-    const catalog = await readCatalogAmounts();
-    const prices = await stripePriceReader.listPrices();
-    const report = compareCatalogToStripe(catalog, prices);
-    differences = report.differences;
-    outcome = differences.length === 0 ? "clean" : "differences";
-  } catch (cause) {
-    outcome = "failed";
-    differences = [];
-    error = sanitizeReason(cause);
-  }
+  // The comparison itself is shared with `scripts/parity-check.ts`, which is
+  // what the CronJob runs — see that module's header for why there must be
+  // exactly one definition of `clean` / `differences` / `failed`.
+  const { outcome, differences, error } = await performParityCheck();
 
   try {
     await recordParityRun({ outcome, differences, error });

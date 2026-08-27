@@ -48,11 +48,16 @@ export default defineConfig({
           // drifted from the contract is worse than no stub, because local
           // development and e2e both keep passing against a shape production
           // no longer serves.
+          // `scripts/` holds the CronJob entry point (#326 P1a). It is not
+          // reachable from any route, so nothing else in this repo would ever
+          // notice it breaking: a scheduled job that fails only in production
+          // is exactly the shape of thing whose tests have to run in CI.
           include: [
             "lib/**/*.test.ts",
             "app/**/*.test.ts",
             "components/**/*.test.ts",
             "dev/**/*.test.ts",
+            "scripts/**/*.test.ts",
           ],
         },
       },
