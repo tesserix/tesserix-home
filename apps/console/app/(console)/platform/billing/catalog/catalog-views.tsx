@@ -2,16 +2,14 @@
 // are `undefined` inside a server component. This directive is load-bearing.
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import {
-  policyFor,
-  toStripeUnitAmount,
-  ZERO_DECIMAL_CURRENCIES,
-} from "@/lib/billing/source-policy";
+import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
+import { formatMoney } from "@/lib/money";
 // Type-only imports throughout this file, deliberately: `lib/db/plan-catalog-repo.ts`
 // and `lib/billing/stripe-read.ts` both carry `import "server-only"`, so a
 // VALUE import from either would drag `pg` (and, for the latter, the `stripe`
@@ -109,6 +107,34 @@ export function catalogSourceLabel(source: CatalogSource): string {
   return source.charAt(0).toUpperCase() + source.slice(1);
 }
 
+/**
+ * Every source actually present in `rows`, first-seen order, deduplicated.
+ *
+ * Read off the DATA, never hardcoded — `readCatalogRows` does not filter by
+ * source (see its own doc comment: it is safe today only because every row
+ * carries `source = 'mark8ly'`, and stops being safe the moment #381 lands a
+ * second one). This function is the console's half of "the dimension is
+ * visible before it is needed": a second product's rows make a second option
+ * appear here with no code change, rather than the filter control being
+ * retrofitted the day #381 ships.
+ */
+export function availableCatalogSources(rows: readonly CatalogRow[]): CatalogSource[] {
+  return [...new Set(rows.map((row) => row.source))];
+}
+
+/**
+ * Narrows `rows` to one source — `null` means "no filter applied", used when
+ * the catalog has not loaded a source list to filter against yet, and kept
+ * distinct from filtering to a source that happens to match everything so a
+ * caller can always tell the two states apart.
+ */
+export function filterCatalogBySource(
+  rows: readonly CatalogRow[],
+  source: CatalogSource | null,
+): readonly CatalogRow[] {
+  return source === null ? rows : rows.filter((row) => row.source === source);
+}
+
 /** Title-cases a plan or period id the same way `catalogSourceLabel` does —
  *  both `plan` and `period` are open-ish vocabularies (0032's migration
  *  comment: no CHECK on `plan` at all), so this is deliberately a
@@ -118,62 +144,31 @@ function titleCase(value: string): string {
 }
 
 /**
- * How many Stripe minor units make one whole unit of `currency` — 1 for a
- * zero-decimal currency (JPY, VND, ...), 100 for every other currency Stripe
- * supports.
- *
- * NEVER derived from `Intl`. This is the second time this file has had to say
- * that: `source-policy.ts`'s own header comment warns that `Intl` answers a
- * question about the CURRENCY (how humans conventionally write it, per CLDR)
- * and Stripe has repeatedly answered a different one about its own API. The
- * exponent this function used to get from `formatMoney` ->
- * `Intl.NumberFormat(...).resolvedOptions().maximumFractionDigits` is exactly
- * that CLDR opinion, and it disagrees with Stripe for IDR depending on the
- * RUNTIME: Chrome/en-US's CLDR data says IDR has 0 fraction digits (Indonesian
- * retail convention omits cents), Node's ICU data says 2 — and Stripe treats
- * IDR as an ordinary two-decimal currency, full stop (`source-policy.ts`
- * confirms this against live data: "IDR IS NOT" zero-decimal, and is the one
- * currency in the catalog `ZERO_DECIMAL_CURRENCIES` deliberately excludes).
- * A test asserting the FORMATTED STRING for IDR therefore passed in Node
- * while shipping `IDR 1,198,800,000` — a hundredfold overstatement — to every
- * operator's actual browser. `ZERO_DECIMAL_CURRENCIES` is hard-coded and
- * versioned against Stripe's own API, which is the only legitimate source for
- * this decision; this function is a pure lookup against it, independent of
- * `Intl` entirely, precisely so it can be tested without a runtime's ICU data
- * able to hide a regression.
- */
-export function stripeMinorUnitDivisor(currency: string): number {
-  return ZERO_DECIMAL_CURRENCIES.has(currency) ? 1 : 100;
-}
-
-/**
  * A catalog amount, as an operator should read it — never the raw stored
  * value.
  *
- * # Two defects this fixes, both instances of a bug this codebase has already
- * paid for more than once
+ * # The one thing this function still does that `formatMoney` cannot
  *
- * `unitAmountMinor` is `plan_catalog_amounts.unit_amount_minor` verbatim,
- * which is wrong to print directly for two independent reasons:
+ * `unitAmountMinor` is `plan_catalog_amounts.unit_amount_minor` verbatim —
+ * mark8ly's own STORAGE convention, not a Stripe minor-unit amount yet.
+ * `policyFor(source).amountsAreScaledBy100` records that the catalog stores
+ * zero-decimal currencies (VND, JPY, ...) multiplied by 100 for internal
+ * consistency, and `toStripeUnitAmount` is the one function allowed to undo
+ * that before the value reaches anything that treats it as real money. That
+ * conversion is specific to how THIS TABLE stores prices and has no
+ * equivalent in `formatMoney`'s world, where every caller already hands in a
+ * genuine Stripe minor-unit amount — so this function still exists, and still
+ * owns that one step.
  *
- *  1. It is minor units, not a price. `118800` is $1,188.00 — printing the
- *     integer defeats the entire reason this page exists, which is to make
- *     the catalog legible without a `psql` session and a mental division.
- *  2. For a ZERO-DECIMAL currency it is 100x the real Stripe amount.
- *     `policyFor(source).amountsAreScaledBy100` is mark8ly's storage
- *     convention (see `source-policy.ts`), not a Stripe fact — the catalog
- *     stores VND, JPY etc. multiplied by 100 for internal consistency, and
- *     `toStripeUnitAmount` is the one function allowed to undo that before
- *     the value reaches anything that treats it as real money.
- *
- * This function owns its OWN Stripe-aware formatter rather than delegating to
- * `lib/money.ts`'s `formatMoney` — see `stripeMinorUnitDivisor`'s doc comment
- * for why `formatMoney`'s `Intl`-derived exponent is the wrong answer for a
- * Stripe minor-unit amount. `Intl.NumberFormat` is still used here, but ONLY
- * for the symbol and the digit grouping, with `minimumFractionDigits` /
- * `maximumFractionDigits` passed explicitly so CLDR's opinion about how many
- * decimals a currency conventionally shows can never override Stripe's own
- * answer.
+ * Everything AFTER that step — dividing a genuine minor-unit amount by its
+ * currency's real exponent and rendering it for a human — used to be
+ * duplicated here (`stripeMinorUnitDivisor`, a local copy of the same
+ * `ZERO_DECIMAL_CURRENCIES` lookup `lib/money.ts`'s `minorUnitExponent` now
+ * also uses) because `formatMoney` got that step wrong from `Intl`. Now that
+ * `formatMoney` is fixed at the source, this function delegates to it rather
+ * than keeping a second, undifferentiated money formatter around — two
+ * formatters answering the same question is exactly the drift this pass
+ * exists to close.
  */
 export function formatCatalogAmount(
   currency: string,
@@ -181,30 +176,18 @@ export function formatCatalogAmount(
   source: CatalogSource,
 ): string {
   const stripeUnitAmount = toStripeUnitAmount(currency, unitAmountMinor, policyFor(source));
-  const divisor = stripeMinorUnitDivisor(currency);
-  const fractionDigits = divisor === 1 ? 0 : 2;
-  const amount = stripeUnitAmount / divisor;
-  // Uppercased ONLY here, at the `Intl` boundary — `toStripeUnitAmount` above
-  // and `stripeMinorUnitDivisor` both consult tables keyed on the catalog's
-  // own lowercase convention
-  // (`plan_catalog_amounts_currency_is_lowercase_iso_4217`), so lower-casing
-  // earlier would break those lookups.
-  const isoCurrency = currency.toUpperCase();
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency: isoCurrency,
-      minimumFractionDigits: fractionDigits,
-      maximumFractionDigits: fractionDigits,
-    }).format(amount);
-  } catch {
-    // An unrecognised code is the product's problem to fix, not this
-    // renderer's to hide — the same fallback shape `formatMoney` uses, kept
-    // here rather than reused because reaching into `formatMoney` for this
-    // one branch would reintroduce the exact coupling this function exists
-    // to avoid.
-    return `${amount} ${isoCurrency}`;
-  }
+  // Uppercased ONLY here, at the `formatMoney` boundary — `toStripeUnitAmount`
+  // above consults `ZERO_DECIMAL_CURRENCIES` keyed on the catalog's own
+  // lowercase convention (`plan_catalog_amounts_currency_is_lowercase_iso_4217`),
+  // so lower-casing earlier would break that lookup. `formatMoney`'s own
+  // `isKnownCurrency` check tests against `Intl.supportedValuesOf("currency")`,
+  // whose codes are always uppercase — pass the stored lowercase code straight
+  // through and every catalog currency reads as "unrecognised" and falls back
+  // to the raw `amount currency` pair, which is indistinguishable from this
+  // function never having run. This is the same fix the amounts defect
+  // originally needed; it survives the delegation to `formatMoney` because
+  // `formatMoney` never lower-cases anything itself.
+  return formatMoney({ amount: stripeUnitAmount, currency: currency.toUpperCase() });
 }
 
 /* ------------------------------------------------------------------------ *
@@ -394,14 +377,17 @@ function PeriodSectionView({ section }: { section: PeriodSection }) {
 }
 
 /**
- * One plan's tab content: `source` stated once per plan (see
- * `organizeCatalogByPlan`'s own comment on why it is read off the first
- * price), then a section per period.
+ * One plan's tab content: a section per period.
+ *
+ * No static "Source: X" line any more — the source filter next to the mode
+ * toggle (see `SourceFilter` / `CatalogViews`) says the same thing and lets
+ * an operator ACT on it, so restating it here would be the same fact printed
+ * twice for no reason. `rows` passed into `PlanCatalogTabs` are already
+ * filtered to the selected source by the time they reach this component.
  */
 function PlanTabContent({ section }: { section: PlanSection }) {
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-muted-foreground">Source: {catalogSourceLabel(section.source)}</p>
       {section.periods.map((period) => (
         <PeriodSectionView key={period.period} section={period} />
       ))}
@@ -709,6 +695,55 @@ function ModeToggle({ mode }: { mode: StripeMode }) {
   );
 }
 
+/**
+ * The product (source) filter, sitting beside `ModeToggle` and built in the
+ * SAME idiom on purpose — an exclusive row of pills, `role="tab"` /
+ * `aria-selected`, no separate "All" state — rather than a new control shape
+ * for what is, structurally, the same kind of choice `ModeToggle` already
+ * makes (which slice of the catalog am I looking at).
+ *
+ * Unlike `ModeToggle`, this does NOT drive the URL: `readCatalogRows` already
+ * returns every source for the selected mode in one read (see its own doc
+ * comment — it does not filter by source), so narrowing to one is a client-side
+ * slice of data already on the page, not a reason to round-trip the server.
+ *
+ * Renders even with exactly one source. One option, permanently selected, is
+ * a trivially-satisfied filter — not a reason to hide the control. The
+ * dimension is visible in the UI before a second product needs it (#381),
+ * rather than retrofitted the day one ships.
+ */
+function SourceFilter({
+  sources,
+  selected,
+  onChange,
+}: {
+  sources: readonly CatalogSource[];
+  selected: CatalogSource | null;
+  onChange: (source: CatalogSource) => void;
+}) {
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex gap-1" role="tablist" aria-label="Product">
+      {sources.map((source) => (
+        <button
+          key={source}
+          type="button"
+          role="tab"
+          aria-selected={source === selected}
+          onClick={() => onChange(source)}
+          className={
+            source === selected
+              ? "rounded-md bg-secondary px-3 py-1 text-sm font-medium capitalize"
+              : "rounded-md px-3 py-1 text-sm capitalize text-muted-foreground hover:bg-secondary/50"
+          }
+        >
+          {catalogSourceLabel(source)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export interface CatalogViewsProps {
   mode: StripeMode;
   windowDays: number;
@@ -730,6 +765,23 @@ export function CatalogViews({
   runs,
   runsState,
 }: CatalogViewsProps) {
+  // `null` until an operator picks one; the EFFECTIVE selection below always
+  // resolves to a real source (or null only when the catalog itself has
+  // none), so the rest of the section never has to reason about an unset
+  // filter. Re-derived on every render rather than synced with an effect —
+  // simpler than `SurfaceTabs`'s own re-sync effect, and correct for the same
+  // reason: if `catalog` changes (a mode toggle) and the previously chosen
+  // source is no longer present, this falls back to the first available one
+  // on its own, with no stale selection ever rendered.
+  const [requestedSource, setRequestedSource] = useState<CatalogSource | null>(null);
+  const sources = useMemo(() => availableCatalogSources(catalog), [catalog]);
+  const effectiveSource =
+    requestedSource !== null && sources.includes(requestedSource) ? requestedSource : (sources[0] ?? null);
+  const filteredCatalog = useMemo(
+    () => filterCatalogBySource(catalog, effectiveSource),
+    [catalog, effectiveSource],
+  );
+
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3" aria-label="Observation window">
@@ -746,10 +798,13 @@ export function CatalogViews({
       <section className="flex flex-col gap-3" aria-label="Plan catalog">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Plan catalog</h2>
-          <ModeToggle mode={mode} />
+          <div className="flex items-center gap-2">
+            <SourceFilter sources={sources} selected={effectiveSource} onChange={setRequestedSource} />
+            <ModeToggle mode={mode} />
+          </div>
         </div>
         {catalogState.kind === "ready" ? (
-          <PlanCatalogTabs rows={catalog} />
+          <PlanCatalogTabs rows={filteredCatalog} />
         ) : (
           <SurfaceStateView
             state={catalogState}
