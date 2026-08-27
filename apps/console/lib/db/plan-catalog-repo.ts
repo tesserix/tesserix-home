@@ -22,6 +22,9 @@ interface WindowRow {
   mode: StripeMode;
   day: string;
   clean: boolean;
+  /** Whether ANY run — clean or not — was recorded for this day. See
+   *  {@link ParityWindowDay.ran}. */
+  ran: boolean;
 }
 
 interface AmountRow {
@@ -281,6 +284,25 @@ export async function recordParityRun(run: ParityRun): Promise<void> {
 export interface ParityWindowDay {
   readonly day: string;
   readonly clean: boolean;
+  /**
+   * Was any run — clean, dirty, failed, or not_bootstrapped — recorded for
+   * this day at all?
+   *
+   * Added after the console surface shipped without it (P3's review, against
+   * prod data): `clean: false` alone cannot tell a day the check ran and
+   * found a problem apart from a day the check never ran, and the console
+   * rendered both in the same "not clean" red — the exact overstatement this
+   * function's own "absence of evidence, never evidence of agreement" comment
+   * exists to prevent, reintroduced one layer up. `ran` is what lets a caller
+   * draw that line for every day, not just the ones after the mode's most
+   * recent run.
+   *
+   * As far as this module's author could confirm, `page.tsx` in
+   * `platform/billing/catalog` is this function's only consumer, which is
+   * what made widening the type here — rather than adding a third query —
+   * the cheap fix.
+   */
+  readonly ran: boolean;
 }
 
 /** One mode's answer. `satisfied` means every day in the window is clean. */
@@ -382,7 +404,17 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
                    AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
                    AND r.outcome <> 'clean'
               )
-            ) AS clean
+            ) AS clean,
+            -- Any row at all for the day, regardless of outcome -- the fact
+            -- clean alone cannot carry. Same correlated-EXISTS shape as
+            -- clean above, deliberately: the day series and the join are
+            -- already built for it, so this is one more boolean column, not
+            -- a second query.
+            EXISTS (
+              SELECT 1 FROM plan_catalog_parity_runs r
+               WHERE r.mode = m.mode
+                 AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
+            ) AS ran
        FROM modes m
        CROSS JOIN window_days d
       ORDER BY d.day`,
@@ -398,7 +430,7 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
   const modes = STRIPE_MODES.map((mode) => {
     const modeDays = rows
       .filter((row) => row.mode === mode)
-      .map((row) => ({ day: row.day, clean: row.clean }));
+      .map((row) => ({ day: row.day, clean: row.clean, ran: row.ran }));
     return {
       mode,
       days: modeDays,

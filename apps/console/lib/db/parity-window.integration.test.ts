@@ -101,6 +101,58 @@ beforeEach(async () => {
   await db.query("DELETE FROM plan_catalog_parity_runs");
 });
 
+describe("ran — whether ANY run happened, independent of clean", () => {
+  it("is true for a clean day", async () => {
+    await record("test", "clean", 0);
+    const status = await readWindowStatus(7);
+    const today = modeOf(status, "test").days.at(-1)!;
+    expect(today.ran).toBe(true);
+    expect(today.clean).toBe(true);
+  });
+
+  it("is true for a dirty day — a day that ran and was not clean", async () => {
+    await record("test", "differences", 0, { differenceCount: 1 });
+    const status = await readWindowStatus(7);
+    const today = modeOf(status, "test").days.at(-1)!;
+    expect(today.ran).toBe(true);
+    expect(today.clean).toBe(false);
+  });
+
+  it("is false for a day with no rows at all — the gap the console must not paint red", async () => {
+    // The exact production bug this field exists to fix: a brand-new check
+    // with six days of silence and one clean day rendered as "a week of
+    // failure" because `clean: false` alone cannot be told apart from
+    // "never ran". `ran: false` is what lets a caller draw that line.
+    const status = await readWindowStatus(7);
+    for (const mode of status.modes) {
+      for (const day of mode.days) {
+        expect(day.ran).toBe(false);
+        expect(day.clean).toBe(false);
+      }
+    }
+  });
+
+  it("is false for a day the whole window skips over, even when other days in the window ran", async () => {
+    await cleanWeek("test");
+    await db.query(
+      "DELETE FROM plan_catalog_parity_runs WHERE mode = 'test' AND ran_at < $1",
+      [daysAgo(2)],
+    );
+
+    const status = await readWindowStatus(7);
+    const days = modeOf(status, "test").days;
+
+    // `ran_at < daysAgo(2)` deletes the four oldest of the seven rows
+    // `cleanWeek` wrote (n=3..6) and keeps the three most recent (n=0..2, kept
+    // because `<` is strict). The three most recent days must still read as
+    // ran; the four before them must read as gaps, not as dirty days.
+    const gapDays = days.slice(0, 4);
+    const ranDays = days.slice(4);
+    expect(gapDays.every((d) => !d.ran)).toBe(true);
+    expect(ranDays.every((d) => d.ran)).toBe(true);
+  });
+});
+
 describe("the gate #327 cites", () => {
   it("is satisfied only when BOTH modes are clean for the whole window", async () => {
     await cleanWeek("test");

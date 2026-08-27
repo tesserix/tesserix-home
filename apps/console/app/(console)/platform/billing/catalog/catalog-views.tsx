@@ -15,6 +15,7 @@ import {
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import { formatMoney } from "@/lib/money";
+import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
 // Type-only imports throughout this file, deliberately: `lib/db/plan-catalog-repo.ts`
 // and `lib/billing/stripe-read.ts` both carry `import "server-only"`, so a
 // VALUE import from either would drag `pg` (and, for the latter, the `stripe`
@@ -121,6 +122,55 @@ export function catalogSourceLabel(source: CatalogSource): string {
   return source.charAt(0).toUpperCase() + source.slice(1);
 }
 
+/**
+ * A catalog amount, as an operator should read it — never the raw stored
+ * value.
+ *
+ * # Two defects this fixes, both instances of a bug this codebase has already
+ * paid for twice
+ *
+ * `unitAmountMinor` is `plan_catalog_amounts.unit_amount_minor` verbatim,
+ * which is wrong to print directly for two independent reasons:
+ *
+ *  1. It is minor units, not a price. `118800` is $1,188.00 — printing the
+ *     integer defeats the entire reason this page exists, which is to make
+ *     the catalog legible without a `psql` session and a mental division.
+ *  2. For a ZERO-DECIMAL currency it is 100x the real Stripe amount.
+ *     `policyFor(source).amountsAreScaledBy100` is mark8ly's storage
+ *     convention (see `source-policy.ts`), not a Stripe fact — the catalog
+ *     stores VND, IDR, JPY etc. multiplied by 100 for internal consistency,
+ *     and `toStripeUnitAmount` is the one function allowed to undo that
+ *     before the value reaches anything that treats it as real money. This
+ *     exact defect class was already found and fixed twice elsewhere (the
+ *     parity comparator, 2026-08-27, and the Stripe write path before that,
+ *     which would have charged people 100x wrong) — this display path was
+ *     the third instance until this function existed.
+ *
+ * `toStripeUnitAmount` is what makes the value real Stripe minor units;
+ * `formatMoney` (via `Intl.NumberFormat`) is what turns real Stripe minor
+ * units into a price a human reads correctly — it already knows which
+ * currencies carry no minor unit at all, so there is no second table of
+ * zero-decimal currencies to keep in sync here.
+ */
+export function formatCatalogAmount(
+  currency: string,
+  unitAmountMinor: number,
+  source: CatalogSource,
+): string {
+  const stripeUnitAmount = toStripeUnitAmount(currency, unitAmountMinor, policyFor(source));
+  // Uppercased ONLY here, at the `formatMoney` boundary — `toStripeUnitAmount`
+  // above and `ZERO_DECIMAL_CURRENCIES` it consults are keyed on the catalog's
+  // own lowercase convention (`plan_catalog_amounts_currency_is_lowercase_iso_4217`),
+  // so lower-casing earlier would break that lookup. `formatMoney`'s
+  // `isKnownCurrency` check, on the other hand, tests against
+  // `Intl.supportedValuesOf("currency")`, whose codes are always uppercase —
+  // pass the stored lowercase code straight through and every catalog
+  // currency reads as "unrecognised", falling back to `formatMoney`'s raw
+  // `amount currency` pair. That fallback is indistinguishable from this
+  // function never having run at all, which is exactly what shipped to prod.
+  return formatMoney({ amount: stripeUnitAmount, currency: currency.toUpperCase() });
+}
+
 function CatalogTable({ rows }: { rows: readonly CatalogRow[] }) {
   const grouped = groupCatalogRows(rows);
   return (
@@ -156,7 +206,7 @@ function CatalogTable({ rows }: { rows: readonly CatalogRow[] }) {
                 <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs tabular-nums">
                   {price.amounts.map((amount) => (
                     <span key={amount.currency} className="whitespace-nowrap">
-                      {formatMoney({ amount: amount.unitAmountMinor, currency: amount.currency })}
+                      {formatCatalogAmount(amount.currency, amount.unitAmountMinor, price.source)}
                     </span>
                   ))}
                 </div>
@@ -176,33 +226,28 @@ function CatalogTable({ rows }: { rows: readonly CatalogRow[] }) {
 /**
  * What one day's chip in the strip should say.
  *
- * `readWindowStatus`'s `clean: boolean` conflates two very different days: one
- * where the check ran and found a problem, and one where the check never ran
- * at all — see that function's own "a missing day is NOT clean" doc comment,
- * which is correct for the SATISFIED gate (both must count as not-satisfied)
- * and wrong for a human reading the strip, who needs to know which one it was.
+ * `readWindowStatus`'s `clean: boolean` alone conflates two very different
+ * days: one where the check ran and found a problem, and one where the check
+ * never ran at all — see that function's own "a missing day is NOT clean" doc
+ * comment, which is correct for the SATISFIED gate (both must count as
+ * not-satisfied) and was, until `ParityWindowDay.ran` was added, wrong for a
+ * human reading the strip.
  *
- * This is derived, not queried: `readWindowStatus` does not carry per-day
- * outcomes, and adding a third repo function to get them was out of this
- * task's scope. What CAN be said honestly from data already on this page:
- *
- *  - A day strictly AFTER the mode's most recent recorded run is
- *    MATHEMATICALLY a gap — no run can exist for a mode after its own latest
- *    one, so if that day is not clean, nothing ran on it at all. This is the
- *    common case in practice: the check hasn't run yet today, or hasn't run
- *    in several days.
- *  - A not-clean day AT OR BEFORE the latest run could be a genuine failure
- *    OR an earlier gap the check later recovered from, and nothing on this
- *    page can tell those apart. Rather than guess, it renders as the neutral
- *    "not clean" — narrower than the task's ideal three-way split, but never
- *    overstating in either direction.
+ * PREVIOUSLY this was derived from whether a day fell before or after the
+ * mode's latest recorded run — a real but narrow inference (see git history),
+ * because `readWindowStatus` did not carry per-day outcomes. In production
+ * that inference covered only the trailing day or two; every earlier not-clean
+ * day fell through to a neutral "not clean" that was then styled the same red
+ * as a genuine failure — six of seven chips on a brand-new check's strip,
+ * which is the opposite of what "absence of evidence, never evidence of
+ * agreement" promises. `ran` closes that gap directly: every day now says
+ * definitively whether anything ran at all.
  */
-export type DayVerdict = "clean" | "gap" | "not-clean";
+export type DayVerdict = "clean" | "dirty" | "gap";
 
-export function dayVerdict(day: ParityWindowDay, latestRunDay: string | null): DayVerdict {
-  if (day.clean) return "clean";
-  if (latestRunDay === null || day.day > latestRunDay) return "gap";
-  return "not-clean";
+export function dayVerdict(day: ParityWindowDay): DayVerdict {
+  if (!day.ran) return "gap";
+  return day.clean ? "clean" : "dirty";
 }
 
 /**
@@ -229,34 +274,27 @@ const TONE_DOT_CLASS: Record<SurfaceTone, string> = {
 
 const DAY_VERDICT_TONE: Record<DayVerdict, SurfaceTone> = {
   clean: "success",
-  "not-clean": "error",
+  dirty: "error",
   gap: "neutral",
 };
 
 const DAY_VERDICT_CLASS: Record<DayVerdict, string> = {
   clean: TONE_DOT_CLASS[DAY_VERDICT_TONE.clean],
-  "not-clean": TONE_DOT_CLASS[DAY_VERDICT_TONE["not-clean"]],
+  dirty: TONE_DOT_CLASS[DAY_VERDICT_TONE.dirty],
   gap: TONE_DOT_CLASS[DAY_VERDICT_TONE.gap],
 };
 
 const DAY_VERDICT_LABEL: Record<DayVerdict, string> = {
   clean: "clean",
-  "not-clean": "not clean",
+  dirty: "ran, not clean",
   gap: "no run recorded",
 };
 
-/** `ranAt`'s UTC date, `YYYY-MM-DD` — comparable directly against
- *  `ParityWindowDay.day`, which `readWindowStatus` already formats the same
- *  way with `to_char(..., 'YYYY-MM-DD')`. */
-function utcDateOf(ranAt: string): string {
-  return ranAt.slice(0, 10);
-}
-
-function DayStrip({ days, latestRunDay }: { days: readonly ParityWindowDay[]; latestRunDay: string | null }) {
+function DayStrip({ days }: { days: readonly ParityWindowDay[] }) {
   return (
     <div className="flex gap-1" role="list" aria-label="Observation window, oldest to newest">
       {days.map((day) => {
-        const verdict = dayVerdict(day, latestRunDay);
+        const verdict = dayVerdict(day);
         return (
           <span
             key={day.day}
@@ -416,7 +454,6 @@ function ObservationWindow({
       </p>
       {windowStatus!.modes.map((mode) => {
         const modeRun = runs.find((r) => r.mode === mode.mode)?.run ?? null;
-        const latestRunDay = modeRun ? utcDateOf(modeRun.ranAt) : null;
         return (
           <div key={mode.mode} className="flex flex-col gap-2 rounded-lg border p-3">
             <div className="flex items-center justify-between">
@@ -425,7 +462,7 @@ function ObservationWindow({
                 {mode.satisfied ? "satisfied" : "not satisfied"}
               </Badge>
             </div>
-            <DayStrip days={mode.days} latestRunDay={latestRunDay} />
+            <DayStrip days={mode.days} />
             {runsState.kind === "ready" ? (
               <LatestRunSummary run={modeRun} mode={mode.mode} />
             ) : (

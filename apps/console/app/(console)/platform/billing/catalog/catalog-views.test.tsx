@@ -7,6 +7,7 @@ import { resolveState } from "@/components/kit/surface-state";
 import {
   CatalogViews,
   dayVerdict,
+  formatCatalogAmount,
   formatRanAt,
   groupCatalogRows,
   outcomeLabel,
@@ -79,6 +80,38 @@ describe("groupCatalogRows", () => {
   });
 });
 
+describe("formatCatalogAmount — never the raw stored minor units", () => {
+  it("formats a non-zero-decimal currency as a human price, not the stored integer", () => {
+    // 118800 stored minor units is $1,188.00 — printing the integer is the
+    // whole bug this function replaces.
+    const rendered = formatCatalogAmount("usd", 118_800, "mark8ly");
+    expect(rendered).not.toContain("118800");
+    expect(rendered).toMatch(/1,188(\.00)?/);
+  });
+
+  it("divides a zero-decimal currency by 100 rather than printing mark8ly's x100-scaled storage value", () => {
+    // The defect the coordinator's report named directly: mark8ly stores
+    // zero-decimal currencies (VND here) multiplied by 100 for internal
+    // consistency, and that is a storage convention, not a Stripe fact. The
+    // catalog's real VND annual amount is 197,880,000 stored minor units,
+    // which Stripe actually holds as 1,978,800 — printing the stored value
+    // verbatim is 100x the real price, the exact bug this codebase already
+    // fixed twice elsewhere (the comparator and the write path).
+    const rendered = formatCatalogAmount("vnd", 197_880_000, "mark8ly");
+    expect(rendered).not.toContain("197,880,000");
+    expect(rendered).not.toContain("197880000");
+    expect(rendered).toMatch(/1,978,800/);
+  });
+
+  it("does not touch a currency source-policy says is not scaled", () => {
+    // `toStripeUnitAmount` only divides zero-decimal currencies, and only
+    // under mark8ly's `amountsAreScaledBy100` policy — a currency with a real
+    // minor unit (AUD) must pass through unchanged before formatting.
+    const rendered = formatCatalogAmount("aud", 178_800, "mark8ly");
+    expect(rendered).toMatch(/1,788(\.00)?/);
+  });
+});
+
 describe("summarizeDifferences", () => {
   const amountMismatch = (lookupKey: string): Difference => ({
     kind: "amount_mismatch",
@@ -142,29 +175,28 @@ describe("formatRanAt", () => {
   });
 });
 
-describe("dayVerdict — a missing day must not read as a dirty one", () => {
-  it("is clean when the day is clean", () => {
-    expect(dayVerdict({ day: "2026-08-20", clean: true }, "2026-08-20")).toBe("clean");
+describe("dayVerdict — a day with no run must never read as a dirty one", () => {
+  it("is clean when the day ran and was clean", () => {
+    expect(dayVerdict({ day: "2026-08-20", clean: true, ran: true })).toBe("clean");
   });
 
-  it("is a gap when the day falls after the mode's latest recorded run", () => {
-    // Mathematically certain, not a guess: no run can exist for a mode after
-    // its own most recent run, so a not-clean day later than that is
-    // provably a day nothing ran at all.
-    expect(dayVerdict({ day: "2026-08-27", clean: false }, "2026-08-25")).toBe("gap");
+  it("is dirty when the day ran and was not clean", () => {
+    expect(dayVerdict({ day: "2026-08-20", clean: false, ran: true })).toBe("dirty");
   });
 
-  it("is a gap for every day when the mode has never run at all", () => {
-    expect(dayVerdict({ day: "2026-08-20", clean: false }, null)).toBe("gap");
+  it("is a gap when nothing ran that day — regardless of `clean`", () => {
+    // This is the production bug: `clean: false` alone cannot distinguish a
+    // day the check ran and failed from a day the check never ran, and both
+    // used to render the same red. `ran` settles it directly rather than by
+    // inference.
+    expect(dayVerdict({ day: "2026-08-20", clean: false, ran: false })).toBe("gap");
   });
 
-  it("is 'not clean' — not a confident 'dirty' — for a day at or before the latest run", () => {
-    // Honest degradation: a day this old might have been a genuine failure or
-    // an earlier gap the check recovered from, and the data available here
-    // cannot tell those apart. Overstating either way is worse than the
-    // neutral label.
-    expect(dayVerdict({ day: "2026-08-24", clean: false }, "2026-08-25")).toBe("not-clean");
-    expect(dayVerdict({ day: "2026-08-25", clean: false }, "2026-08-25")).toBe("not-clean");
+  it("trusts `ran` over any inference from position in the window", () => {
+    // No date comparison, no "latest run" lookup — a gap is a gap wherever it
+    // falls in the strip, including the very last (most recent) day.
+    expect(dayVerdict({ day: "2026-08-27", clean: false, ran: false })).toBe("gap");
+    expect(dayVerdict({ day: "2026-08-21", clean: false, ran: false })).toBe("gap");
   });
 });
 
@@ -175,12 +207,12 @@ const readyWindow: ParityWindowStatus = {
     {
       mode: "test",
       satisfied: true,
-      days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: true })),
+      days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: true, ran: true })),
     },
     {
       mode: "live",
       satisfied: false,
-      days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: false })),
+      days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: false, ran: true })),
     },
   ],
 };
