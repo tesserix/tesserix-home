@@ -94,6 +94,33 @@ export interface StripePriceLike {
   readonly currency: string;
   readonly unit_amount: number | null;
   readonly tax_behavior: TaxBehavior | null;
+  /**
+   * Whether Stripe still considers this Price usable.
+   *
+   * OPTIONAL so existing fixtures and call sites keep compiling, but Stripe
+   * itself always returns it. `stripe-read.ts` filters to `active: true`
+   * today, so in the live path this is only ever `true` — the check below
+   * exists for the day that filter is relaxed, and for fixtures that model an
+   * archived Price directly. An archived Price is a DIFFERENT fact from an
+   * absent one: reporting it as `price_missing_in_stripe` would tell an
+   * operator to create a Price that already exists.
+   */
+  readonly active?: boolean;
+  /**
+   * Stripe's Product id. Needed once the console can CREATE a price (Plan 2):
+   * a Price minted against the wrong Product agrees on every amount and
+   * every currency, and would converge to "clean" permanently and invisibly.
+   * Stripe does not expand this by default, so it is a plain id string unless
+   * a future caller asks for `expand: ["data.product"]`, in which case it
+   * carries at least an `id`. Optional for the same fixture-compatibility
+   * reason as `active`.
+   */
+  readonly product?: string | { readonly id: string } | null;
+  /**
+   * The billing interval. Only `interval` is read — mirrors mark8ly's own
+   * check, and the catalog has no opinion on `interval_count`.
+   */
+  readonly recurring?: { readonly interval: string } | null;
   readonly currency_options?: {
     readonly [currency: string]: {
       readonly unit_amount: number | null;
@@ -177,11 +204,30 @@ export interface TaxBehaviorDifference {
   readonly stripeTaxBehavior: TaxBehavior;
 }
 
+/**
+ * Same key, right amounts, wrong object.
+ *
+ * This is the check that matters once the console can CREATE a Price (Plan
+ * 2). Amount and tax-behaviour parity say nothing about whether a Price
+ * belongs to the right Product, renews on the right cadence, or is even
+ * still usable — a Price minted against the wrong Product, or with a monthly
+ * interval where the catalog says annual, agrees on every amount and every
+ * currency and would read as clean forever.
+ */
+export interface ShapeDifference {
+  readonly kind: "price_shape_mismatch";
+  readonly lookupKey: string;
+  readonly field: "interval" | "active" | "product";
+  readonly catalogValue: string;
+  readonly stripeValue: string;
+}
+
 export type Difference =
   | PriceDifference
   | CurrencyDifference
   | AmountDifference
-  | TaxBehaviorDifference;
+  | TaxBehaviorDifference
+  | ShapeDifference;
 
 export type DifferenceKind = Difference["kind"];
 
@@ -290,8 +336,43 @@ const KIND_ORDER: Record<DifferenceKind, number> = {
   currency_missing_in_stripe: 2,
   currency_missing_in_catalog: 3,
   amount_mismatch: 4,
-  tax_behavior_mismatch: 5,
+  price_shape_mismatch: 5,
+  tax_behavior_mismatch: 6,
 };
+
+/**
+ * `annual` -> `year`, everything else -> `month`. Mirrors mark8ly's own
+ * derivation (`mark8ly/services/marketplace-api/internal/billing/stripe/price.go:53-55`);
+ * there is no third period in the catalog.
+ */
+function expectedInterval(lookupKey: string): "year" | "month" {
+  return lookupKey.includes("_annual_") ? "year" : "month";
+}
+
+/**
+ * The plan-name segment of a lookup key: `mark8ly_pro_annual_developed_v1`
+ * `-> "pro"`. Same split the conformance work uses, so this introduces no new
+ * vocabulary for "which plan does this key belong to".
+ */
+function planOf(lookupKey: string, namespacePrefix: string): string {
+  const withoutPrefix = lookupKey.startsWith(namespacePrefix)
+    ? lookupKey.slice(namespacePrefix.length)
+    : lookupKey;
+  return withoutPrefix.split("_")[0] ?? "";
+}
+
+/**
+ * Stripe's `product` field, collapsed to an id.
+ *
+ * A plain string in the un-expanded response this estate actually requests;
+ * an object with at least an `id` if a future caller expands it. `null` and
+ * `undefined` both mean "nothing to check here" and are handled by the
+ * caller, not here, so this never has to invent an id.
+ */
+function productIdOf(product: StripePriceLike["product"]): string | null {
+  if (product === null || product === undefined) return null;
+  return typeof product === "string" ? product : product.id;
+}
 
 function currencyOf(difference: Difference): string {
   return "currency" in difference ? difference.currency : "";
@@ -332,12 +413,17 @@ function currencyOf(difference: Difference): string {
  * @param policy which source's amount conventions apply — see
  *   `source-policy.ts`. Defaults to mark8ly's so existing call sites keep
  *   compiling, with the default made explicit rather than implied.
+ * @param productsByPlan plan name -> Stripe Product id, from `metadata.plan`.
+ *   OPTIONAL, and its absence SKIPS the product check rather than guessing:
+ *   the map comes from a Stripe lookup the caller may not have made, and a
+ *   wrong product finding is worse than no product finding.
  */
 export function compareCatalogToStripe(
   catalogAmounts: readonly CatalogAmount[],
   stripePrices: readonly StripePriceLike[],
   namespacePrefix: string = MARK8LY_LOOKUP_KEY_PREFIX,
   policy: SourcePolicy = policyFor("mark8ly"),
+  productsByPlan?: Readonly<Record<string, string>>,
 ): ParityReport {
   const catalog = catalogCoverage(catalogAmounts);
 
@@ -364,6 +450,64 @@ export function compareCatalogToStripe(
         currencies: [...catalogCurrencies.keys()].sort(),
       });
       continue;
+    }
+
+    // Price-level facts, checked once per key rather than once per currency —
+    // unlike amount and tax behaviour, interval/active/product do not vary by
+    // currency_options entry. Safe under Task 1's EDIT-only console: none of
+    // these three fields can change underneath an edit. They stop being safe
+    // to ignore the moment the console can CREATE a Price (Plan 2), because a
+    // Price minted against the wrong Product or the wrong cadence agrees on
+    // every amount checked below and would read as clean forever.
+
+    if (price.recurring !== undefined && price.recurring !== null) {
+      const expected = expectedInterval(lookupKey);
+      if (price.recurring.interval !== expected) {
+        differences.push({
+          kind: "price_shape_mismatch",
+          lookupKey,
+          field: "interval",
+          catalogValue: expected,
+          stripeValue: price.recurring.interval,
+        });
+      }
+    }
+
+    // `active === false` is a different fact from "absent" (`price_missing_
+    // in_stripe`, above) and must not be conflated with it: reporting an
+    // archived Price as missing would tell an operator to create one that
+    // already exists.
+    if (price.active === false) {
+      differences.push({
+        kind: "price_shape_mismatch",
+        lookupKey,
+        field: "active",
+        catalogValue: "true",
+        stripeValue: "false",
+      });
+    }
+
+    // SKIPPED, not guessed, when `productsByPlan` is absent — see the
+    // parameter doc above. The map comes from a Stripe Product lookup the
+    // caller may not have made, and a wrong product finding is worse than no
+    // product finding.
+    if (productsByPlan) {
+      const plan = planOf(lookupKey, namespacePrefix);
+      const expectedProductId = productsByPlan[plan];
+      const actualProductId = productIdOf(price.product);
+      if (
+        expectedProductId !== undefined &&
+        actualProductId !== null &&
+        actualProductId !== expectedProductId
+      ) {
+        differences.push({
+          kind: "price_shape_mismatch",
+          lookupKey,
+          field: "product",
+          catalogValue: expectedProductId,
+          stripeValue: actualProductId,
+        });
+      }
     }
 
     const stripeCurrencies = coverageOf(price);

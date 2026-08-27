@@ -8,6 +8,7 @@ import {
   type CatalogAmount,
   type StripePriceLike,
 } from "./parity";
+import { policyFor } from "./source-policy";
 
 /**
  * The comparator's whole test surface — fixtures in, a structured report out.
@@ -79,6 +80,12 @@ function stripePrice(args: {
   options?: ReadonlyArray<
     readonly [currency: string, unitAmount: number | null, tax?: StripePriceLike["tax_behavior"]]
   >;
+  /** Omitted, not defaulted to `true` — see the "price shape" tests below, and
+   *  the field's own doc in `parity.ts`, for why an absent value must not be
+   *  read as either answer. */
+  active?: boolean;
+  product?: StripePriceLike["product"];
+  recurring?: StripePriceLike["recurring"];
 }): StripePriceLike {
   const [currency, unitAmount, tax] = args.base;
   const currency_options: Record<
@@ -95,6 +102,9 @@ function stripePrice(args: {
     unit_amount: unitAmount,
     tax_behavior: tax ?? "unspecified",
     currency_options: args.options ? currency_options : undefined,
+    active: args.active,
+    product: args.product,
+    recurring: args.recurring,
   };
 }
 
@@ -482,6 +492,68 @@ describe("tax_behavior", () => {
       "amount_mismatch",
       "tax_behavior_mismatch",
     ]);
+  });
+});
+
+describe("price shape (interval, active, product)", () => {
+  // A plan of its own rather than reusing STARTER_MONTHLY: the product test
+  // below needs a lookup key whose plan segment ("pro") differs from its
+  // wrong Product's plan ("starter"), so the mismatch is real rather than
+  // trivially true.
+  const PRO_MONTHLY = `${MARK8LY_LOOKUP_KEY_PREFIX}pro_monthly_developed_v1`;
+
+  it("reports a monthly lookup key whose Stripe price renews annually", () => {
+    const report = compareCatalogToStripe(
+      [catalogAmount(PRO_MONTHLY, "usd", 10_700)],
+      [
+        stripePrice({
+          lookupKey: PRO_MONTHLY,
+          base: ["usd", 10_700],
+          recurring: { interval: "year" }, // WRONG: the key says monthly
+        }),
+      ],
+    );
+
+    expect(report.differences).toHaveLength(1);
+    const d = report.differences[0];
+    if (d.kind !== "price_shape_mismatch") expect.unreachable("expected a shape mismatch");
+    else {
+      expect(d.field).toBe("interval");
+      expect(d.catalogValue).toBe("month");
+      expect(d.stripeValue).toBe("year");
+    }
+  });
+
+  it("reports an archived price as a shape mismatch, not as missing", () => {
+    // `active: false` is a different fact from "absent", and conflating them
+    // would tell an operator to create a price that already exists.
+    const report = compareCatalogToStripe(
+      [catalogAmount(PRO_MONTHLY, "usd", 10_700)],
+      [stripePrice({ lookupKey: PRO_MONTHLY, base: ["usd", 10_700], active: false })],
+    );
+    expect(report.differences.map((d) => d.kind)).toEqual(["price_shape_mismatch"]);
+  });
+
+  it("reports a price attached to the wrong product", () => {
+    const report = compareCatalogToStripe(
+      [catalogAmount(PRO_MONTHLY, "usd", 10_700)],
+      [stripePrice({ lookupKey: PRO_MONTHLY, base: ["usd", 10_700], product: "prod_starter" })],
+      MARK8LY_LOOKUP_KEY_PREFIX,
+      policyFor("mark8ly"),
+      { pro: "prod_pro", starter: "prod_starter", studio: "prod_studio" },
+    );
+    expect(report.differences.map((d) => d.kind)).toEqual(["price_shape_mismatch"]);
+  });
+
+  it("says nothing about product when no product map is supplied", () => {
+    // The map comes from a Stripe lookup the caller may not have made.
+    // Absent, the check is skipped rather than guessed — a wrong product
+    // finding is worse than no product finding.
+    const report = compareCatalogToStripe(
+      [catalogAmount(PRO_MONTHLY, "usd", 10_700)],
+      [stripePrice({ lookupKey: PRO_MONTHLY, base: ["usd", 10_700], product: "prod_anything" })],
+    );
+    expect(report.differences).toEqual([]);
   });
 });
 

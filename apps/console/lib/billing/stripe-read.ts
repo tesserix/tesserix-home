@@ -222,6 +222,14 @@ export const stripePriceReader: StripePriceReader = {
         // would open with 36 phantom `currency_missing_in_stripe` findings —
         // 36 false positives on day one of a window that only means anything
         // if people read it.
+        //
+        // NO expand IS NEEDED for `active`, `product` or `recurring` — Stripe
+        // returns all three on every Price by default (`product` as a plain
+        // id string, since it is not expanded). `StripePriceLike` used to
+        // declare only the fields the comparator read and silently discard
+        // the rest; it now carries them so the shape check in `parity.ts` can
+        // catch a Price minted against the wrong Product or the wrong
+        // interval — a mistake that agrees on every amount.
         expand: ["data.currency_options"],
       })
       .autoPagingToArray({ limit: MAX_PRICES });
