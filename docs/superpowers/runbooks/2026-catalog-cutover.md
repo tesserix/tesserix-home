@@ -185,7 +185,12 @@ refused outright and cannot be confirmed past), and publish.
 
 **Verify:** the publish outcome screen shows the plan executed with no
 unexpected orphans (see step 5a below), and the next nightly parity run reports
-`clean` for `test`.
+`clean` for `test`. One specific-looking failure is actually benign: if the
+Stripe writes land but `promotePublication` then throws, the operator sees
+`PUBLISH_INCOMPLETE_MESSAGE` even though the attempt log recorded `succeeded`
+— confusing, but self-healing, since re-publishing simply re-observes, plans
+zero operations, and succeeds (promoting this time), so this needs no separate
+recovery step.
 
 **Rollback:** publishing is not undo-able in the sense of reverting Stripe state
 automatically — a replaced Price stays archived and a re-publish of a prior
