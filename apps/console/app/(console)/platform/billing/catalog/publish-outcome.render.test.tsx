@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 
 import type { PublishAttemptOutcome } from "@/lib/db/publish-repo";
+import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import { PublishOutcome, type PublishOutcomeOperation, type PublishOutcomeOrphan } from "./publish-outcome";
 
@@ -35,6 +36,7 @@ interface OperationFixture {
 interface OrphanFixture {
   readonly priceId: string;
   readonly lookupKey: string;
+  readonly source?: string;
 }
 
 function buildOperations(fixtures: readonly OperationFixture[] | undefined): PublishOutcomeOperation[] {
@@ -48,9 +50,17 @@ function buildOperations(fixtures: readonly OperationFixture[] | undefined): Pub
 }
 
 function buildOrphans(fixtures: readonly OrphanFixture[] | undefined): PublishOutcomeOrphan[] {
+  // Same discipline `buildOperations` already applies to `error`: the
+  // brief's fixture is narrower than the production `Orphan` type
+  // (`orphans.ts`), and the fix belongs in the builder, not in a widened
+  // (optional) field on the component's own prop type. Every real orphan
+  // row carries a `source` — `findOrphans` always populates it — so a
+  // fixture that omits one gets the same constant `findOrphans` itself
+  // defaults to (`SINGLE_SOURCE`, `source-policy.ts`), not a magic string.
   return (fixtures ?? []).map((fixture) => ({
     priceId: fixture.priceId,
     lookupKey: fixture.lookupKey,
+    source: fixture.source ?? SINGLE_SOURCE,
   }));
 }
 
@@ -94,7 +104,19 @@ describe("PublishOutcome", () => {
       ],
     });
     expect(screen.getByText(/rate limited/)).toBeInTheDocument();
-    expect(screen.getAllByRole("row")).toHaveLength(3);
+    // Header row + one row per operation — but the count alone does not
+    // prove the two rows read differently, and a component that just prints
+    // `operation.error` whenever present (ignoring `status` entirely) would
+    // still pass a bare length assertion, since only the failed fixture
+    // supplies an error. Scope into each data row and require it to name
+    // its OWN status, so a component that renders every row identically
+    // fails here.
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[1]).getByText(/succeeded/i)).toBeInTheDocument();
+    expect(within(rows[2]).getByText(/failed/i)).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(/failed/i)).toBeNull();
+    expect(within(rows[2]).queryByText(/^succeeded$/i)).toBeNull();
   });
 
   it("surfaces orphans found by the automatic post-failure check", () => {

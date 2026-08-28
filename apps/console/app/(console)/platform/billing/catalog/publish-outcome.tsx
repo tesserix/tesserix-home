@@ -104,15 +104,16 @@ export interface PublishOutcomeOperation {
 }
 
 /**
- * What `findOrphans` reports, trimmed to what this surface shows. `source`
- * is optional here (real `Orphan` rows always carry one) because the fact
- * that matters to an operator reading this list is the price id and lookup
- * key — the source is provenance a caller may not always have to hand.
+ * What `findOrphans` reports, trimmed to what this surface shows.
+ * `source` stays REQUIRED, matching `Orphan` (`orphans.ts`) exactly:
+ * `findOrphans` always populates it from `entry.source`, so no real row
+ * ever lacks one, and narrowing it to optional here would be a type with no
+ * caller who benefits from the narrowing.
  */
 export interface PublishOutcomeOrphan {
   readonly priceId: string;
   readonly lookupKey: string | null;
-  readonly source?: string;
+  readonly source: string;
 }
 
 export interface PublishOutcomeProps {

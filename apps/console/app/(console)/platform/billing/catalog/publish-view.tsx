@@ -191,7 +191,12 @@ function outcomeMessage(
   return (
     `${failedOperations.length} operation(s) failed: ${failedOperations.join(", ")}. ` +
     "Others in this plan may already have been written to Stripe. The catalog was NOT promoted — " +
-    "read the publish log before retrying."
+    // NOT "retrying" (review 2026-08-28, controller ruling): a `replace_price`
+    // operation captures a Stripe Price id at plan time, and retrying this
+    // stale plan risks acting on an id that has since moved. Read the log,
+    // then re-plan — matching `publish-outcome.tsx`'s wording exactly, so
+    // this is one account of the event, not two.
+    "read the publish log, then re-plan against what Stripe holds now."
   );
 }
 
