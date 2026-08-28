@@ -1,8 +1,72 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 
 import { migrationsPendingMessage } from "@/lib/db-read-error";
 import { PlatformApiError } from "@/lib/platform-api";
-import {
+import type { CatalogRow, ParityWindowStatus, ModeLatestRun } from "@/lib/db/plan-catalog-repo";
+
+const getCurrentSession = vi.fn();
+
+// `hasCapability` itself is NOT mocked — same reasoning
+// `crm/[organisation]/page.test.tsx` gives: a passing test here is evidence
+// about the real capability decision, not a stand-in for it.
+vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tesserix/platform-auth")>()),
+  getCurrentSession: (...args: unknown[]) => getCurrentSession(...args),
+}));
+
+// Forces `canDraft`/`canPublish` to actually check roles rather than the
+// pre-cutover "every session holds every capability" bypass — same reason
+// `crm/[organisation]/page.test.tsx` does this.
+vi.mock("@/lib/internal-access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/internal-access")>()),
+  requiresCapability: () => true,
+}));
+
+vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/tesserix")>()),
+  isDatabaseConfigured: () => true,
+}));
+
+const readWindowStatus = vi.fn();
+const readCatalogRows = vi.fn();
+const readLatestRuns = vi.fn();
+const readLivePublication = vi.fn();
+const readRevisionRows = vi.fn();
+
+vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/plan-catalog-repo")>()),
+  readWindowStatus: (...args: unknown[]) => readWindowStatus(...args),
+  readCatalogRows: (...args: unknown[]) => readCatalogRows(...args),
+  readLatestRuns: (...args: unknown[]) => readLatestRuns(...args),
+  readLivePublication: (...args: unknown[]) => readLivePublication(...args),
+  readRevisionRows: (...args: unknown[]) => readRevisionRows(...args),
+}));
+
+const currentDraft = vi.fn();
+
+vi.mock("@/lib/db/publish-repo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/publish-repo")>()),
+  currentDraft: (...args: unknown[]) => currentDraft(...args),
+}));
+
+// The write path itself is exercised by `actions.test.ts`; this page's own
+// tests are about WHICH controls render for WHICH capability set, not about
+// what a click on one of them ultimately does to Stripe.
+const startDraftAction = vi.fn();
+const discardDraftAction = vi.fn();
+const planPublishAction = vi.fn();
+const publishAction = vi.fn();
+
+vi.mock("./actions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./actions")>()),
+  startDraftAction: (...args: unknown[]) => startDraftAction(...args),
+  discardDraftAction: (...args: unknown[]) => discardDraftAction(...args),
+  planPublishAction: (...args: unknown[]) => planPublishAction(...args),
+  publishAction: (...args: unknown[]) => publishAction(...args),
+}));
+
+import PlanCatalog, {
   CATALOG_SURFACE,
   PUBLICATION_SURFACE,
   RUNS_SURFACE,
@@ -85,5 +149,190 @@ describe("read errors — four independent surfaces, four independent narrowings
 
   it("passes null through for no error", () => {
     expect(windowReadError(null)).toBeNull();
+  });
+});
+
+/**
+ * Task 9's own tests: the mounted authoring surface. `catalog-views.tsx`,
+ * `draft-editor.tsx`, `publish-view.tsx` and `publish-outcome.tsx` are all
+ * exercised for real here — only the DATA layer (the six reads above, plus
+ * the four write-path actions) is stood in, the same split
+ * `crm/[organisation]/page.test.tsx` makes for its own page-level tests.
+ */
+describe("the mounted authoring surface", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const WINDOW_STATUS: ParityWindowStatus = {
+    days: 7,
+    satisfied: true,
+    modes: [
+      { mode: "test", satisfied: true, days: [] },
+      { mode: "live", satisfied: true, days: [] },
+    ],
+  };
+
+  const RUNS: ModeLatestRun[] = [
+    { mode: "test", run: null },
+    { mode: "live", run: null },
+  ];
+
+  const PUBLISHED_ROW: CatalogRow = {
+    lookupKey: "mark8ly_pro_monthly_developed_v1",
+    plan: "pro",
+    period: "monthly",
+    tier: "developed",
+    source: "mark8ly",
+    currency: "usd",
+    unitAmountMinor: 4900,
+    taxBehavior: "exclusive",
+  };
+
+  const DRAFT_ROW: CatalogRow = { ...PUBLISHED_ROW, unitAmountMinor: 5900 };
+
+  function setUpSuccessfulReads() {
+    readWindowStatus.mockResolvedValue(WINDOW_STATUS);
+    readCatalogRows.mockResolvedValue([PUBLISHED_ROW]);
+    readLatestRuns.mockResolvedValue(RUNS);
+    readLivePublication.mockResolvedValue(null);
+  }
+
+  function signIn(roles: readonly string[]) {
+    getCurrentSession.mockResolvedValue({
+      sub: "operator-1",
+      email: "op@tesserix.app",
+      roles,
+      iat: 0,
+      exp: 0,
+    });
+  }
+
+  async function renderCatalogPage(mode: "test" | "live" = "test") {
+    render(await PlanCatalog({ searchParams: Promise.resolve({ mode }) }));
+  }
+
+  const READY_PLAN = {
+    revisionId: "draft-1",
+    mode: "test" as const,
+    counts: {
+      create_product: 0,
+      create_price: 0,
+      replace_price: 1,
+      add_currency_option: 0,
+      update_tax_behavior: 0,
+      archive_price: 0,
+      total: 1,
+      intended: 1,
+      driftCorrection: 0,
+      unactionable: 0,
+    },
+    unactionable: [],
+    verdict: { ok: true as const },
+  };
+
+  it("mounts the draft editor for an operator holding billing but withholds the publish control without publish-catalog", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue({ id: "draft-1", basedOn: "rev-0" });
+    readRevisionRows.mockResolvedValue([DRAFT_ROW]);
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    // The read-only catalog table (`catalog-views.tsx`) still renders.
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    // The draft editor (`draft-editor.tsx`) is mounted and usable — its
+    // subscriber-safety note is the one thing it always renders.
+    expect(
+      screen.getByText(/existing subscribers stay on the price they were created against/i),
+    ).toBeInTheDocument();
+    // No usable publish control: `PublishView`'s own "Review changes" button
+    // never mounts, and `planPublishAction` — which would call Stripe — is
+    // never even attempted for an operator who cannot see its result.
+    expect(screen.queryByRole("button", { name: /review changes/i })).toBeNull();
+    expect(planPublishAction).not.toHaveBeenCalled();
+    // Withheld VISIBLY, with a reason — never silently hidden.
+    expect(screen.getByText(/publishing is withheld here/i)).toBeInTheDocument();
+    expect(screen.getByText(/publish-catalog capability/i)).toBeInTheDocument();
+  });
+
+  it("shows the publish control for an operator holding both billing and publish-catalog", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue({ id: "draft-1", basedOn: "rev-0" });
+    readRevisionRows.mockResolvedValue([DRAFT_ROW]);
+    planPublishAction.mockResolvedValue({ ok: true, plan: READY_PLAN });
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(await screen.findByRole("button", { name: /review changes/i })).toBeInTheDocument();
+    expect(planPublishAction).toHaveBeenCalledWith("draft-1", "test");
+  });
+
+  it("renders the whole surface when there is no draft at all — the common case", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /start a draft/i })).toBeInTheDocument();
+    expect(readRevisionRows).not.toHaveBeenCalled();
+    expect(planPublishAction).not.toHaveBeenCalled();
+  });
+
+  it("narrows a failed draft read independently — the catalog table and the observation window still render", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    // The catalog table and the observation window read cleanly and must
+    // not be dressed up as broken by the draft read's own failure.
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+    // The draft section itself shows a genuine failure — never a draft
+    // editor built on nothing, and never dressed up as "no draft yet".
+    expect(screen.queryByRole("button", { name: /start a draft/i })).toBeNull();
+    expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+  });
+
+  it("refuses live from the mounted surface, with the reason shown — never hidden", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue({ id: "draft-1", basedOn: "rev-0" });
+    readRevisionRows.mockResolvedValue([DRAFT_ROW]);
+    planPublishAction.mockResolvedValue({
+      ok: true,
+      plan: {
+        ...READY_PLAN,
+        mode: "live",
+        verdict: {
+          ok: false,
+          refused: [
+            {
+              rule: "mode",
+              message: 'Publishing to Stripe mode "live" is refused in v1.',
+            },
+          ],
+        },
+      },
+    });
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage("live");
+
+    expect(planPublishAction).toHaveBeenCalledWith("draft-1", "live");
+    // `PublishView`'s own live-refusal copy — shown, not hidden.
+    expect(
+      await screen.findByText(/live publishing is not enabled/i),
+    ).toBeInTheDocument();
+    const confirmButton = screen.getByRole("button", { name: /review changes/i });
+    expect(confirmButton).toBeInTheDocument();
+    // The control stays reachable (so the reason is announced to a
+    // screen-reader operator too) but the actual publish stays refused: the
+    // dialog it opens can never enable its own confirm button while `mode`
+    // is a refused rule — see `publish-view.tsx`'s `confirmDisabled`.
   });
 });

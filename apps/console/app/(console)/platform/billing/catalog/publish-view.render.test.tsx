@@ -221,9 +221,12 @@ describe("PublishView", () => {
   it("says nothing was written when the publish aborted", async () => {
     vi.mocked(publishAction).mockResolvedValueOnce({
       ok: true,
+      attemptId: "attempt-1",
       outcome: "aborted",
       promoted: false,
       failedOperations: [],
+      operations: [],
+      orphans: [],
     });
     renderPlan();
     await publishOnce();
@@ -238,9 +241,20 @@ describe("PublishView", () => {
   it("names the operations that failed, and says the others may already be in Stripe", async () => {
     vi.mocked(publishAction).mockResolvedValueOnce({
       ok: true,
+      attemptId: "attempt-1",
       outcome: "failed",
       promoted: false,
       failedOperations: ["archive_price mark8ly_pro_annual_ppp_v1"],
+      operations: [
+        {
+          sequence: 1,
+          kind: "archive_price",
+          lookupKey: "mark8ly_pro_annual_ppp_v1",
+          status: "failed",
+          error: "card_declined",
+        },
+      ],
+      orphans: [],
     });
     renderPlan();
     await publishOnce();

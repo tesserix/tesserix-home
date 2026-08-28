@@ -21,6 +21,7 @@ import { policyFor, SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { buildPublishPlan, type PublishPlanCounts, type UnactionableDifference } from "@/lib/billing/publish-plan";
 import { checkGuards, type GuardRule, type GuardVerdict } from "@/lib/billing/publish-guards";
 import { executePublish, scopeObserved } from "@/lib/billing/publish-executor";
+import { findOrphans, type Orphan } from "@/lib/billing/orphans";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
 
 /**
@@ -260,14 +261,46 @@ export interface PublishConfirmations {
   readonly acknowledged: readonly GuardRule[];
 }
 
+/** One row of the write-ahead operation log, numbered for
+ *  `publish-outcome.tsx`'s `PublishOutcomeOperation` — see task 9's mounting
+ *  of that component, the first caller that needs the FULL operation list
+ *  (not just the failed ones' names, which {@link PublishActionResult}
+ *  already carried before task 9 as `failedOperations`). */
+export interface PublishActionOperation {
+  readonly sequence: number;
+  readonly kind: string;
+  readonly lookupKey: string | null;
+  readonly status: "succeeded" | "failed";
+  readonly error: string | null;
+}
+
 export type PublishActionResult =
   | {
       readonly ok: true;
+      /** The attempt this call opened — `publish-outcome.tsx`'s `attemptId`
+       *  prop. Not returned before task 9: nothing mounted that component,
+       *  so nothing needed the id past this function's own log write. */
+      readonly attemptId: string;
       readonly outcome: "succeeded" | "failed" | "aborted";
       /** Whether `plan_catalog_publications` now names this revision — see
        *  {@link publishAction} on why a PARTIAL success does not promote. */
       readonly promoted: boolean;
       readonly failedOperations: readonly string[];
+      /** Every operation the write-ahead log recorded for this attempt, in
+       *  `sequence` order — `[]` for `"aborted"`, since `executePublish`
+       *  never enters `plan.operations` in that case. See
+       *  `publish-outcome.tsx`'s own doc comment on why the FULL list (not
+       *  just the failed ones) matters on a `"failed"` outcome. */
+      readonly operations: readonly PublishActionOperation[];
+      /** `findOrphans(mode)` — run here, automatically, ONLY on a `"failed"`
+       *  outcome. `orphans.ts`'s own header: the nightly parity check
+       *  structurally cannot see this failure mode (an incomplete
+       *  `replace_price` leaves the OLD Price active with no lookup key),
+       *  so this is the one place it becomes visible, and the check needs a
+       *  live Stripe read this action already has the mode and the
+       *  capability to make — `page.tsx` deliberately does not, per its own
+       *  "no Stripe" doc comment. */
+      readonly orphans: readonly Orphan[];
     }
   | { readonly ok: false; readonly message: string };
 
@@ -516,12 +549,32 @@ export async function publishAction(
         await promotePublication(mode, revisionId, actor.sub);
       }
 
+      // `orphans.ts`'s own header: this failure mode is invisible to the
+      // nightly parity check, so it is checked HERE, automatically, the one
+      // place task 5's `publish-outcome.tsx` can show it — never on a
+      // `"succeeded"` or `"aborted"` attempt, where nothing was left
+      // half-done for it to find.
+      const orphans = outcome.outcome === "failed" ? await findOrphans(mode) : [];
+
       return {
+        attemptId,
         outcome: outcome.outcome,
         promoted,
         failedOperations: outcome.operations
           .filter((operation) => operation.status === "failed")
           .map((operation) => `${operation.kind} ${operation.lookupKey ?? ""}`.trim()),
+        operations: outcome.operations.map((operation, index) => ({
+          // `executePublish`'s own `OperationResult` carries no `sequence` —
+          // it is reconstructed here from array order, which IS execution
+          // order (`publish-executor.ts` appends to `plan.operations` in the
+          // same order it executes them).
+          sequence: index + 1,
+          kind: operation.kind,
+          lookupKey: operation.lookupKey,
+          status: operation.status,
+          error: operation.error ?? null,
+        })),
+        orphans,
       };
     },
     (value) => ({
@@ -538,8 +591,11 @@ export async function publishAction(
   revalidatePath(CATALOG_SURFACE_PATH);
   return {
     ok: true,
+    attemptId: result.value.attemptId,
     outcome: result.value.outcome,
     promoted: result.value.promoted,
     failedOperations: result.value.failedOperations,
+    operations: result.value.operations,
+    orphans: result.value.orphans,
   };
 }

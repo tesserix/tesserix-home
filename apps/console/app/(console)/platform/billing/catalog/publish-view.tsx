@@ -20,7 +20,7 @@ import { BREADTH_THRESHOLD, MAGNITUDE_THRESHOLD } from "@/lib/billing/publish-gu
 import type { GuardBreach, GuardVerdict } from "@/lib/billing/publish-guards";
 import type { PublishPlanCounts, UnactionableDifference } from "@/lib/billing/publish-plan";
 import type { StripeMode } from "@/lib/billing/stripe-read";
-import { publishAction } from "./actions";
+import { publishAction, type PublishActionResult } from "./actions";
 
 /**
  * The publish screen: the surface that turns a draft revision into Stripe
@@ -83,6 +83,15 @@ export interface PublishViewProps {
    *  are deliberately NOT refused and would otherwise be invisible. */
   readonly unactionable: readonly UnactionableDifference[];
   readonly verdict: GuardVerdict;
+  /**
+   * Task 9's mounting hook: `publish-outcome.tsx` needs the FULL result of
+   * the attempt this view's own confirm just closed (`attemptId`, every
+   * operation, any orphan) to render "what just happened" — none of which
+   * this view keeps around itself once `done` is set. Optional so every
+   * existing render test (and any future caller with nowhere to route the
+   * outcome) is unaffected by its absence.
+   */
+  readonly onPublished?: (result: Extract<PublishActionResult, { readonly ok: true }>) => void;
 }
 
 const MAGNITUDE_PERCENT = `${Math.round(MAGNITUDE_THRESHOLD * 100)}%`;
@@ -221,7 +230,14 @@ function BreachList({ breaches, tone }: { breaches: readonly GuardBreach[]; tone
   );
 }
 
-export function PublishView({ revisionId, mode, counts, unactionable, verdict }: PublishViewProps) {
+export function PublishView({
+  revisionId,
+  mode,
+  counts,
+  unactionable,
+  verdict,
+  onPublished,
+}: PublishViewProps) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -268,6 +284,7 @@ export function PublishView({ revisionId, mode, counts, unactionable, verdict }:
       setOpen(false);
       reset();
       setDone(outcomeMessage(result.outcome, result.failedOperations));
+      onPublished?.(result);
     });
   };
 

@@ -31,6 +31,13 @@ vi.mock("@/lib/billing/publish-executor", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/billing/publish-executor")>()),
   executePublish: vi.fn(),
 }));
+// `findOrphans` itself does two more reads (`archivedStripePriceIds`,
+// `stripePriceReader.listPrices`) that have no place in a `publishAction`
+// unit test — stood in for directly, same as `executePublish` above.
+vi.mock("@/lib/billing/orphans", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/orphans")>()),
+  findOrphans: vi.fn(),
+}));
 // Same discipline `crm/[organisation]/actions.test.ts` applies (Ruling 15):
 // `auditedOperation` itself is NOT mocked — only its two leaf dependencies
 // are, so a passing test here is evidence about the real audit control this
@@ -53,6 +60,7 @@ import {
 import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-repo";
 import { stripePriceReader } from "@/lib/billing/stripe-read";
 import { executePublish } from "@/lib/billing/publish-executor";
+import { findOrphans } from "@/lib/billing/orphans";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   discardDraftAction,
@@ -286,6 +294,7 @@ describe("publishAction", () => {
     observeNothing();
     vi.mocked(startPublishAttempt).mockResolvedValue("attempt-1");
     vi.mocked(promotePublication).mockResolvedValue("publication-1");
+    vi.mocked(findOrphans).mockResolvedValue([]);
   });
 
   it("refuses a mistyped mode before any session, Stripe or database work", async () => {
@@ -316,7 +325,19 @@ describe("publishAction", () => {
 
     const result = await publishAction("draft-1", "test", CONFIRMED);
 
-    expect(result).toEqual({ ok: true, outcome: "succeeded", promoted: true, failedOperations: [] });
+    expect(result).toEqual({
+      ok: true,
+      attemptId: "attempt-1",
+      outcome: "succeeded",
+      promoted: true,
+      failedOperations: [],
+      operations: [],
+      orphans: [],
+    });
+    // Orphans are checked ONLY on a failed attempt — see `publishAction`'s
+    // own doc comment and `orphans.ts`'s header on why a succeeded attempt
+    // has nothing for `findOrphans` to find.
+    expect(findOrphans).not.toHaveBeenCalled();
     expect(startPublishAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ revisionId: "draft-1", mode: "test", startedBy: "operator-1" }),
     );
@@ -346,15 +367,25 @@ describe("publishAction", () => {
         { kind: "archive_price", lookupKey: "mark8ly_pro_annual_ppp_v1", status: "failed", error: "card_declined" },
       ],
     });
+    vi.mocked(findOrphans).mockResolvedValue([
+      { priceId: "price_stale", lookupKey: null, source: "mark8ly" },
+    ]);
 
     const result = await publishAction("draft-1", "test", CONFIRMED);
 
     expect(result).toEqual({
       ok: true,
+      attemptId: "attempt-1",
       outcome: "failed",
       promoted: false,
       failedOperations: ["archive_price mark8ly_pro_annual_ppp_v1"],
+      operations: [
+        { sequence: 1, kind: "replace_price", lookupKey: "mark8ly_pro_monthly_developed_v1", status: "succeeded", error: null },
+        { sequence: 2, kind: "archive_price", lookupKey: "mark8ly_pro_annual_ppp_v1", status: "failed", error: "card_declined" },
+      ],
+      orphans: [{ priceId: "price_stale", lookupKey: null, source: "mark8ly" }],
     });
+    expect(findOrphans).toHaveBeenCalledWith("test");
     expect(promotePublication).not.toHaveBeenCalled();
     expect(lastAuditInsert()).toEqual({
       action: "billing.catalog.publish",
