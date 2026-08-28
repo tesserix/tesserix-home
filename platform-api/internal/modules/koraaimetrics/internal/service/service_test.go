@@ -37,16 +37,70 @@ func answering(t *testing.T, status int, body string) *Service {
 	return New(fed, testLogger())
 }
 
-// THE case this module exists for: Kora's response bytes survive unparsed,
-// including a field this package never named — the §8.9 discipline.
-func TestReadForwardsTheResponseBytesUnparsed(t *testing.T) {
-	body := `{"data":{"users":[{"user_id":"u1","sublabel":"never modelled here"}]}}`
-	got, err := answering(t, http.StatusOK, body).Read(context.Background(), op(), url.Values{})
+// THE case this module exists for: the CONTENTS of Kora's `data` survive
+// unparsed, including a field this package never named — the §8.9
+// discipline. Only the §4.1 envelope's own `data` key is peeled off; nothing
+// inside it is decoded.
+func TestReadForwardsTheDataObjectUnparsed(t *testing.T) {
+	inner := `{"users":[{"user_id":"u1","sublabel":"never modelled here"}]}`
+	got, _, err := answering(t, http.StatusOK, `{"data":`+inner+`}`).Read(context.Background(), op(), url.Values{})
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
-	if string(got) != body {
-		t.Errorf("body = %s, want Kora's bytes forwarded verbatim", got)
+	if string(got) != inner {
+		t.Errorf("data = %s, want Kora's data object forwarded verbatim (%s)", got, inner)
+	}
+}
+
+// Pagination is the one thing this package DOES decode, because it is the
+// §4.1 contract's own fixed scalars, not anything Kora chose for this
+// endpoint — decoding it is not the modelling §8.9 warns against.
+func TestReadDecodesPagination(t *testing.T) {
+	body := `{"data":{"n":1},"pagination":{"page":2,"limit":50,"total":137}}`
+	_, pagination, err := answering(t, http.StatusOK, body).Read(context.Background(), op(), url.Values{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if pagination == nil {
+		t.Fatal("pagination = nil, want the decoded block")
+	}
+	if pagination.Page != 2 || pagination.Limit != 50 || pagination.Total != 137 {
+		t.Errorf("pagination = %+v, want {Page:2 Limit:50 Total:137}", pagination)
+	}
+}
+
+// A missing pagination block is not fatal: it describes a listing, and a
+// future non-listing shape at this same path could legitimately omit it.
+// Losing the payload is the dangerous failure; losing the page metadata is
+// not.
+func TestReadToleratesAMissingPagination(t *testing.T) {
+	data, pagination, err := answering(t, http.StatusOK, `{"data":{"n":1}}`).
+		Read(context.Background(), op(), url.Values{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if pagination != nil {
+		t.Errorf("pagination = %+v, want nil when Kora omits the block", pagination)
+	}
+	if string(data) != `{"n":1}` {
+		t.Errorf("data = %s, want the payload still forwarded", data)
+	}
+}
+
+// A missing `data` IS fatal, unlike a missing `pagination`: losing the
+// payload is the failure §8.6/§4.1 exist to prevent, mirroring how kpis
+// treats a missing `data` object.
+func TestReadRefusesAResponseWithNoDataObject(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent": `{"pagination":{"page":1,"limit":50,"total":0}}`,
+		"null":   `{"data":null,"pagination":{"page":1,"limit":50,"total":0}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := answering(t, http.StatusOK, body).Read(context.Background(), op(), url.Values{})
+			if err == nil {
+				t.Fatal("expected an error for a response with no data object")
+			}
+		})
 	}
 }
 
@@ -65,7 +119,7 @@ func TestReadForwardsTheQueryString(t *testing.T) {
 	}), srv.Client())
 
 	query := url.Values{"from": {"2026-08-01T00:00:00Z"}, "page": {"2"}, "limit": {"50"}}
-	if _, err := New(fed, testLogger()).Read(context.Background(), op(), query); err != nil {
+	if _, _, err := New(fed, testLogger()).Read(context.Background(), op(), query); err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -83,7 +137,7 @@ func TestReadForwardsTheQueryString(t *testing.T) {
 // A 404 from Kora — its admin group unmounted, in practice an empty
 // KORA_PLATFORM_ADMIN_SECRET — must be reported distinctly from a 501.
 func TestReadReportsA404Distinctly(t *testing.T) {
-	_, err := answering(t, http.StatusNotFound, `{"error":"not_found"}`).
+	_, _, err := answering(t, http.StatusNotFound, `{"error":"not_found"}`).
 		Read(context.Background(), op(), url.Values{})
 	if !errors.Is(err, ErrUpstreamNotFound) {
 		t.Fatalf("err = %v, want ErrUpstreamNotFound", err)
@@ -95,7 +149,7 @@ func TestReadReportsA404Distinctly(t *testing.T) {
 
 // A 501 from Kora must be reported distinctly from a 404.
 func TestReadReportsA501Distinctly(t *testing.T) {
-	_, err := answering(t, http.StatusNotImplemented, `{"error":"not_implemented"}`).
+	_, _, err := answering(t, http.StatusNotImplemented, `{"error":"not_implemented"}`).
 		Read(context.Background(), op(), url.Values{})
 	if !errors.Is(err, ErrUpstreamNotImplemented) {
 		t.Fatalf("err = %v, want ErrUpstreamNotImplemented", err)
@@ -114,7 +168,7 @@ func TestReadDoesNotReportAnOutageAsA404OrA501(t *testing.T) {
 		"unavailable":  http.StatusServiceUnavailable,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := answering(t, status, `{"error":"boom"}`).Read(context.Background(), op(), url.Values{})
+			_, _, err := answering(t, status, `{"error":"boom"}`).Read(context.Background(), op(), url.Values{})
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -130,7 +184,7 @@ func TestReadDoesNotReportAnOutageAsA404OrA501(t *testing.T) {
 // sentinel.
 func TestReadReturnsErrNotConfiguredWhenKoraIsNotInTheRegistry(t *testing.T) {
 	s := New(federation.NewClient(federation.NewRegistry(nil), nil), testLogger())
-	_, err := s.Read(context.Background(), op(), url.Values{})
+	_, _, err := s.Read(context.Background(), op(), url.Values{})
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err = %v, want ErrNotConfigured", err)
 	}

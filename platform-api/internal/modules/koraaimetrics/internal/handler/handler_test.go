@@ -123,32 +123,43 @@ func (a *api) do(method, path string) response {
 
 func (a *api) get(path string) response { a.t.Helper(); return a.do(http.MethodGet, path) }
 
-// THE assertion this module exists for: Kora's own response — envelope and
-// all — reaches the console unmodelled, including a field platform-api never
-// named. Kora's own {data, pagination} wrapper is itself opaque to this
-// proxy (ai-metrics is not a §3 contract endpoint, so that shape is not a
-// stable thing to decode either), which is why it lands nested one level
-// inside platform-api's own `data` rather than being unwrapped.
-func TestReadForwardsKorasResponseVerbatim(t *testing.T) {
+// THE assertion this module exists for: Kora's `data` object reaches the
+// console DIRECTLY under this service's own `data` — no double nesting —
+// including a field platform-api never named, and Kora's pagination lands in
+// this service's own `meta` channel rather than buried inside `data`.
+func TestReadForwardsKorasPayloadDirectlyAndProjectsPagination(t *testing.T) {
 	body := `{"data":{"window":{"from":"a","to":"b"},"outcomes":{"attempts":4,"by_kind":{"exact":3}},` +
 		`"users":[{"user_id":"u1","attempts":4,"sublabel":"unexpected but present"}]},"pagination":{"page":1,"limit":50,"total":1}}`
 	got := serveKora(t, http.StatusOK, body, true).get("/v1/kora/ai-metrics")
 	if got.status != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", got.status, got.raw)
 	}
-	outer, _ := got.body["data"].(map[string]any)
-	inner, _ := outer["data"].(map[string]any)
-	users, _ := inner["users"].([]any)
+
+	data, _ := got.body["data"].(map[string]any)
+	if _, nested := data["data"]; nested {
+		t.Fatalf("data.data is present, want Kora's payload unwrapped directly under data: %s", got.raw)
+	}
+	if _, ok := data["outcomes"]; !ok {
+		t.Fatalf("data.outcomes is missing, want Kora's payload directly under data: %s", got.raw)
+	}
+	users, _ := data["users"].([]any)
 	if len(users) != 1 {
-		t.Fatalf("data.data.users = %v, want Kora's one row carried through; raw=%s", inner["users"], got.raw)
+		t.Fatalf("data.users = %v, want Kora's one row carried through; raw=%s", data["users"], got.raw)
 	}
 	row, _ := users[0].(map[string]any)
 	if row["sublabel"] != "unexpected but present" {
 		t.Errorf("row = %v, want a field platform-api never modelled to survive the hop (§8.9)", row)
 	}
-	pagination, _ := outer["pagination"].(map[string]any)
-	if pagination["total"] != float64(1) {
-		t.Errorf("data.pagination = %v, want Kora's own pagination block carried through untouched", pagination)
+
+	meta, _ := got.body["meta"].(map[string]any)
+	if meta["total"] != float64(1) {
+		t.Errorf("meta.total = %v, want Kora's pagination.total projected into meta", meta["total"])
+	}
+	if meta["limit"] != float64(50) {
+		t.Errorf("meta.limit = %v, want Kora's pagination.limit projected into meta", meta["limit"])
+	}
+	if _, present := meta["page"]; present {
+		t.Errorf("meta.page is present; httpx.Meta is cursor-oriented and has no page field")
 	}
 }
 

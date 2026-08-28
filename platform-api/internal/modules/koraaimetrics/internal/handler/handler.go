@@ -75,7 +75,7 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := h.svc.Read(r.Context(), federation.Operator{
+	data, pagination, err := h.svc.Read(r.Context(), federation.Operator{
 		ID: principal.Subject, Capability: string(auth.CapPlatform),
 	}, query)
 	if err != nil {
@@ -83,7 +83,30 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httpx.WriteData(w, r, http.StatusOK, body, h.log)
+	httpx.WriteMeta(w, r, http.StatusOK, data, metaFrom(pagination), h.log)
+}
+
+// metaFrom projects Kora's §4.1 pagination block onto this service's own
+// pagination channel (httpx.Meta), so a caller reading `total`/`limit` here
+// finds them where every other module puts them, rather than buried inside
+// an opaque `data` blob.
+//
+// nil in, nil out: a missing pagination block is not this handler's problem
+// to invent — see service.Read's doc for why that is not fatal.
+//
+// `page` is deliberately NOT carried: httpx.Meta is cursor-oriented and has
+// no page field, and adding one here would be inventing a channel this
+// service does not otherwise have. More to the point, page is the one value
+// the caller already supplied — echoing it back carries no information the
+// client lacks — whereas total and limit do: Kora clamps limit to its own
+// MaxLimit, so the applied value can differ from the requested one, and
+// total is not something the caller could have computed itself.
+func metaFrom(p *service.Pagination) *httpx.Meta {
+	if p == nil {
+		return nil
+	}
+	total := p.Total
+	return &httpx.Meta{Total: &total, Limit: int(p.Limit)}
 }
 
 // writeReadError maps a failed read onto a status the console can act on.
