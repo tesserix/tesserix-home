@@ -70,8 +70,16 @@
  * DELIBERATELY not turned into operations here. There is no API call that
  * removes a currency from `currency_options`, and fixing a shape mismatch
  * (wrong Product, wrong interval) needs the comparator widening spec §2
- * describes as a prerequisite for creation — out of scope for this task. See
- * the report for what that means in practice.
+ * describes as a prerequisite for creation — out of scope for this task.
+ *
+ * Dropping them from the OPERATION union is right; dropping them from the
+ * PLAN's observability would not be. The nightly parity check will keep
+ * reporting these forever, and an operator who publishes expecting them to
+ * go away needs the tool to say why they didn't — a green publish with a
+ * silently-still-broken parity check is worse than one that says so. So both
+ * kinds are surfaced on {@link PublishPlan.unactionable}: publishing
+ * converges everything it CAN (`operations`); `unactionable` is what it
+ * cannot, and why. A caller building a confirmation UI should read both.
  */
 
 import {
@@ -197,6 +205,22 @@ export type PublishOperation =
   | ArchivePriceOperation;
 
 /**
+ * A diff `compareCatalogToStripe` found that NO operation kind can fix — see
+ * the module header's "Dropping them from the OPERATION union" note.
+ *
+ * `currency` is set for `currency_missing_in_catalog` (which currency Stripe
+ * carries that the draft doesn't want); `field` is set for
+ * `price_shape_mismatch` (which shape fact disagrees). Never both — the two
+ * source `Difference` kinds are mutually exclusive per `parity.ts`.
+ */
+export interface UnactionableDifference {
+  readonly kind: "currency_missing_in_catalog" | "price_shape_mismatch";
+  readonly lookupKey: string;
+  readonly currency?: string;
+  readonly field?: "interval" | "active" | "product";
+}
+
+/**
  * What Task 4's guards judge a plan by.
  *
  * Flat per-kind counts (not nested under a `byKind`) so a guard can read
@@ -214,6 +238,8 @@ export interface PublishPlanCounts {
   readonly total: number;
   readonly intended: number;
   readonly driftCorrection: number;
+  /** `unactionable.length` — how many diffs no operation kind can fix. See {@link PublishPlan.unactionable}. */
+  readonly unactionable: number;
 }
 
 export interface PublishPlan {
@@ -231,6 +257,15 @@ export interface PublishPlan {
    */
   readonly fingerprint: string;
   readonly counts: PublishPlanCounts;
+  /**
+   * Diffs between draft and Stripe that publishing CANNOT fix — a currency
+   * Stripe carries that the draft dropped, or a Price whose shape (interval /
+   * active / product) disagrees. See the module header. Never empty
+   * silently: an empty array here is a real claim ("nothing unactionable"),
+   * not "not checked" — the same discipline `parity.ts`'s
+   * `AmountDifference.zeroDecimalSuspect` uses.
+   */
+  readonly unactionable: readonly UnactionableDifference[];
 }
 
 export interface PublishPlanInput {
@@ -419,6 +454,13 @@ function taxBehaviorRequiresReplace(currency: string, price: StripePriceLike): b
  * is "did the observation this plan was computed against move", and it
  * covers exactly what the caller passed as `observed`, independent of which
  * of those rows ended up producing an operation.
+ *
+ * CALLER OBLIGATION: because there is no filter here, a caller that hands
+ * this a broader Stripe listing than the mode/source it's planning for —
+ * the account is shared, per `parity.ts`'s header — gets spurious
+ * fingerprint churn from Prices this plan never looked at. Scope `observed`
+ * before calling {@link buildPublishPlan}, the same way `stripe-read.ts`
+ * already scopes its `listPrices` call.
  */
 function observedTuples(observed: readonly StripePriceLike[]): string[] {
   const tuples: string[] = [];
@@ -549,9 +591,21 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
       // this key too, since the new Price is created with the complete
       // currency_options map from the start.
       const built = buildStripeReadyPrice(draftMap.get(lookupKey) ?? new Map(), policy, existing);
+      // Every cause folded into this ONE call must vote on its origin, not
+      // just the causes that forced the replace. `buildStripeReadyPrice`
+      // pulls the full draft row — including any brand-new currency from
+      // `newCurrencyDiffs` — into this same operation's `currencyOptions`,
+      // so an intended new-currency addition riding along on a
+      // drift-triggered replace must still mark the operation "intended".
+      // Omitting it here mislabels the opposite way from the collapse this
+      // module already documents: instead of hiding drift behind "intended",
+      // it hides intent behind "drift-correction".
       const origin = combineOrigins([
         ...amountDiffs.map((d) => cellOrigin(ancestorMap, draftMap, lookupKey, (d as { currency: string }).currency)),
         ...taxDiffsRequiringReplace.map((d) =>
+          cellOrigin(ancestorMap, draftMap, lookupKey, (d as { currency: string }).currency),
+        ),
+        ...newCurrencyDiffs.map((d) =>
           cellOrigin(ancestorMap, draftMap, lookupKey, (d as { currency: string }).currency),
         ),
       ]);
@@ -606,12 +660,33 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
   }
 
   const operations: PublishOperation[] = [...productOperations, ...restOperations];
+  const unactionable = collectUnactionable(diffs);
 
   return {
     operations,
     fingerprint: fingerprintObserved(observed),
-    counts: countOperations(operations),
+    counts: countOperations(operations, unactionable.length),
+    unactionable,
   };
+}
+
+/**
+ * Pulls out the two `Difference` kinds no operation can act on — see the
+ * module header. Built from `diffs` directly (draft-vs-observed), not from
+ * `byLookupKey`'s per-key classification loop above: these two kinds never
+ * coexist with an actionable diff's classification branches, so there is
+ * nothing to disambiguate by re-grouping.
+ */
+function collectUnactionable(diffs: readonly Difference[]): UnactionableDifference[] {
+  const found: UnactionableDifference[] = [];
+  for (const diff of diffs) {
+    if (diff.kind === "currency_missing_in_catalog") {
+      found.push({ kind: diff.kind, lookupKey: diff.lookupKey, currency: diff.currency });
+    } else if (diff.kind === "price_shape_mismatch") {
+      found.push({ kind: diff.kind, lookupKey: diff.lookupKey, field: diff.field });
+    }
+  }
+  return found;
 }
 
 /**
@@ -620,7 +695,7 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
  * per-kind zeroes and the running totals are computed the same way instead of
  * one being an initial value and the other an accumulator.
  */
-function countOperations(operations: readonly PublishOperation[]): PublishPlanCounts {
+function countOperations(operations: readonly PublishOperation[], unactionableCount: number): PublishPlanCounts {
   const byKind: Record<OperationKind, number> = {
     create_product: 0,
     create_price: 0,
@@ -638,5 +713,6 @@ function countOperations(operations: readonly PublishOperation[]): PublishPlanCo
     total: operations.length,
     intended,
     driftCorrection: operations.length - intended,
+    unactionable: unactionableCount,
   };
 }

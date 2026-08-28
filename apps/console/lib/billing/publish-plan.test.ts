@@ -40,6 +40,7 @@ function price(overrides: {
   id?: string;
   tax_behavior?: TaxBehavior;
   currency_options?: StripePriceLike["currency_options"];
+  recurring?: StripePriceLike["recurring"];
 }): StripePriceLike {
   return {
     id: overrides.id ?? `price_${overrides.lookup_key}`,
@@ -49,6 +50,7 @@ function price(overrides: {
     tax_behavior: overrides.tax_behavior ?? "unspecified",
     active: true,
     currency_options: overrides.currency_options,
+    recurring: overrides.recurring,
   };
 }
 
@@ -258,5 +260,65 @@ describe("buildPublishPlan", () => {
     const plan = buildPublishPlan({ ancestor: [], draft: [amount(key, "vnd", 100000)], observed: [] });
     const created = plan.operations.find((o) => o.kind === "create_price");
     expect(created).toMatchObject({ currency: "vnd", unitAmount: 1000 });
+  });
+
+  it("labels a replace as intended when an intended new-currency addition rides along with a drift-triggered replace", () => {
+    // Review finding, 2026-08-28: `combineOrigins` for `replace_price` only
+    // looked at `amountDiffs` and `taxDiffsRequiringReplace` — never
+    // `newCurrencyDiffs` — even though `buildStripeReadyPrice` folds every
+    // draft currency, new ones included, into that same operation's
+    // `currencyOptions`. Here usd drifted (nobody asked for it) while gbp is
+    // a genuinely new, operator-added currency; both land in ONE
+    // replace_price (drift forces the replace; the new currency rides along
+    // inside it). The label must reflect the intended contribution, not just
+    // the one that forced the replace.
+    const key = `${MARK8LY_LOOKUP_KEY_PREFIX}k_mixed`;
+    const plan = buildPublishPlan({
+      ancestor: [amount(key, "usd", 1000)],
+      draft: [amount(key, "usd", 1000), amount(key, "gbp", 800)],
+      observed: [price({ lookup_key: key, currency: "usd", unit_amount: 999 })],
+    });
+    expect(plan.operations).toEqual([
+      expect.objectContaining({ kind: "replace_price", origin: "intended" }),
+    ]);
+  });
+
+  it("surfaces diffs no operation can fix as unactionable, and counts them", () => {
+    // Neither kind has a Stripe API call that could act on it: there is no
+    // way to remove a currency from currency_options, and fixing a shape
+    // mismatch needs the comparator widening spec §2 describes as a
+    // prerequisite for creation. Dropping them from the operation union is
+    // right; dropping them from the plan's observability is not — the
+    // nightly parity check will keep reporting these regardless, and a
+    // publish that goes silent about them would look like it fixed
+    // something it didn't.
+    const extraCurrencyKey = `${MARK8LY_LOOKUP_KEY_PREFIX}k_extra_currency`;
+    const wrongShapeKey = `${MARK8LY_LOOKUP_KEY_PREFIX}k_shape_annual_v1`;
+    const plan = buildPublishPlan({
+      ancestor: [amount(extraCurrencyKey, "usd", 1000), amount(wrongShapeKey, "usd", 1000)],
+      draft: [amount(extraCurrencyKey, "usd", 1000), amount(wrongShapeKey, "usd", 1000)],
+      observed: [
+        price({
+          lookup_key: extraCurrencyKey,
+          currency: "usd",
+          unit_amount: 1000,
+          currency_options: { eur: { unit_amount: 700, tax_behavior: "unspecified" } },
+        }),
+        price({
+          lookup_key: wrongShapeKey,
+          currency: "usd",
+          unit_amount: 1000,
+          recurring: { interval: "month" },
+        }),
+      ],
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.counts.unactionable).toBe(2);
+    expect(plan.unactionable).toEqual(
+      expect.arrayContaining([
+        { kind: "currency_missing_in_catalog", lookupKey: extraCurrencyKey, currency: "eur" },
+        { kind: "price_shape_mismatch", lookupKey: wrongShapeKey, field: "interval" },
+      ]),
+    );
   });
 });
