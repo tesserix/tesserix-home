@@ -48,7 +48,14 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { createDraftFrom, discardDraft, currentDraft } = await import("./publish-repo");
+const { createDraftFrom, discardDraft, currentDraft, promotePublication } = await import("./publish-repo");
+// `readLivePublication` lives in `plan-catalog-repo.ts`, not this module —
+// but it imports the SAME "./tesserix", which this file's `vi.mock` above
+// intercepts by resolved path, not by importer. Importing it here proves
+// `promotePublication`'s write is visible through the read path the rest of
+// the app actually uses, not just through this file's own raw `db.query`
+// assertions.
+const { readLivePublication } = await import("./plan-catalog-repo");
 
 const MIGRATIONS = [
   "0032_plan_catalog.sql",
@@ -292,5 +299,98 @@ describe("currentDraft", () => {
     const draft = await createDraftFrom("live", "operator@tesserix");
 
     await expect(currentDraft()).resolves.toMatchObject({ id: draft });
+  });
+});
+
+describe("promotePublication", () => {
+  it("retires the previous publication and promotes the new one atomically", async () => {
+    const before = await publicationFor("test");
+    // A real second revision, not a bare INSERT — `createDraftFrom` is the
+    // one path this schema expects an unpublished revision to arrive by,
+    // and it is exactly what a finished publish attempt promotes in
+    // production (see `publish-executor.ts`'s header on why THIS function
+    // must be the one to close that gap).
+    const draft = await createDraftFrom("test", "operator@tesserix");
+
+    const newPublicationId = await promotePublication("test", draft, "operator@tesserix");
+
+    const after = await publicationFor("test");
+    expect(after.id).toBe(newPublicationId);
+    expect(after.id).not.toBe(before.id);
+    expect(after.revisionId).toBe(draft);
+
+    // `readLivePublication` is what `readCatalogAmounts` and the parity
+    // check actually read through — proving the write is visible there,
+    // not just in this file's own `db.query`, is the whole point of #327.
+    await expect(readLivePublication("test")).resolves.toEqual({
+      id: newPublicationId,
+      revisionId: draft,
+    });
+
+    const { rows: retiredRows } = await db.query<{
+      superseded_at: string | null;
+      superseded_by: string | null;
+    }>(`SELECT superseded_at, superseded_by FROM plan_catalog_publications WHERE id = $1`, [
+      before.id,
+    ]);
+    expect(retiredRows[0].superseded_at).not.toBeNull();
+    expect(retiredRows[0].superseded_by).toBe("operator@tesserix");
+  });
+
+  it("leaves the OTHER mode's live publication untouched", async () => {
+    const liveBefore = await publicationFor("live");
+    const draft = await createDraftFrom("test", "operator@tesserix");
+
+    await promotePublication("test", draft, "operator@tesserix");
+
+    await expect(readLivePublication("live")).resolves.toEqual(liveBefore);
+  });
+
+  // RULING (task-7 brief, overridden by the task's own dispatch instructions):
+  // the brief's second Step-1 test asks for two concurrent `promotePublication`
+  // calls to the same mode to "serialise". That is NOT provable here. pglite
+  // is a single embedded session — there is no second connection for a second
+  // transaction to contend with, so two sequential `await`s prove nothing
+  // about serialisation and a test that asserted it anyway would be
+  // asserting the absence of a race it structurally cannot create.
+  //
+  // What IS provable, and what this test asserts instead:
+  //   1. the advisory lock is genuinely issued INSIDE the promotion
+  //      transaction (a spy on the queries the transaction runs — the same
+  //      "does the SQL text say what the doc comment claims" technique this
+  //      file already relies on for the failure-injection trigger above);
+  //   2. the observable invariant promotion exists to guarantee — exactly one
+  //      live publication for the mode — actually holds afterward.
+  //
+  // TRUE concurrent serialisation of two `promotePublication` calls against
+  // the SAME mode is NOT covered by any test in this codebase. It rests on
+  // `pg_advisory_xact_lock` (asserted issued, below) plus 0035's
+  // `plan_catalog_publications_one_live_per_mode` partial unique index as the
+  // database-level backstop if the lock were ever removed — a real two-
+  // connection Postgres, not pglite, would be needed to exercise the race
+  // itself.
+  it("takes an advisory lock inside its own transaction, and leaves exactly one live publication for the mode", async () => {
+    const draft = await createDraftFrom("test", "operator@tesserix");
+    const issuedSql: string[] = [];
+    const rawQuery = db.query.bind(db);
+    const querySpy = vi
+      .spyOn(db, "query")
+      .mockImplementation(async (sql: string, params?: unknown[]) => {
+        issuedSql.push(sql);
+        return rawQuery(sql, params);
+      });
+
+    try {
+      await promotePublication("test", draft, "operator@tesserix");
+    } finally {
+      querySpy.mockRestore();
+    }
+
+    expect(issuedSql.some((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(true);
+
+    const { rows: liveRows } = await db.query(
+      `SELECT id FROM plan_catalog_publications WHERE mode = 'test' AND superseded_at IS NULL`,
+    );
+    expect(liveRows).toHaveLength(1);
   });
 });
