@@ -78,8 +78,19 @@ export interface DraftEditorRow {
    * calls this the "baseline". Carried here rather than re-derived, because
    * an existing Price's baseline is a Stripe fact (`existing.currency`), not
    * a convention this component is in a position to recompute.
+   *
+   * `null` when a caller has no way to know it without recomputing that
+   * convention itself — task 9's `buildDraftEditorRows`
+   * (`authoring-panel.tsx`) is exactly that caller: `readRevisionRows`'s
+   * flat (price x currency) projection carries no baseline flag, and a
+   * plausible-but-guessed currency here (review 2026-08-28, controller
+   * ruling) is worse than an absent one — the first consumer of this field
+   * would trust a value nothing actually resolved. Unused by this
+   * component today (grep confirms); typed `null`-able so the day a
+   * currency-adding control needs it, a caller that cannot supply a real
+   * one gets a type error instead of silently shipping a wrong string.
    */
-  readonly baselineCurrency: string;
+  readonly baselineCurrency: string | null;
   readonly amounts: readonly DraftEditorCell[];
 }
 

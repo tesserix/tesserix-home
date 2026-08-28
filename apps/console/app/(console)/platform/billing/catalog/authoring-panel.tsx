@@ -82,15 +82,17 @@ import { PublishOutcome } from "./publish-outcome";
  * price, not just its amounts), so there is nothing to infer from the
  * published side.
  *
- * `baselineCurrency`: `DraftEditorRow`'s own doc comment names this "the
- * Price's own currency" per `publish-plan.ts`'s `resolveBaselineCurrency` —
- * a concept `readRevisionRows`' flat (price x currency) projection does not
- * carry directly. `draft-editor.tsx` does not read this field today (grep
- * confirms — it is carried on the type for a currency-adding control this
- * task does not build), so the first currency this join encounters for a
- * lookup key is used rather than reimplementing the publish plan's own
- * baseline resolution here. Flagged in task 9's report as the one place
- * this composition takes a documented shortcut rather than a full answer.
+ * `baselineCurrency`: left `null`, deliberately (review 2026-08-28,
+ * controller ruling, promoted from Minor). `DraftEditorRow`'s own doc
+ * comment names this "a Stripe fact (`existing.currency`), not a
+ * convention this component is in a position to recompute" —
+ * `readRevisionRows`' flat (price x currency) projection carries no
+ * baseline flag, so THIS function is in exactly the position that comment
+ * warns against. A plausible-but-wrong guess (the first currency this join
+ * happened to see) is worse than an absent value: the first consumer to
+ * read it would trust it. `draft-editor.tsx` does not read this field
+ * today (grep confirms), so `null` costs nothing now and buys a type error
+ * for whoever adds the first reader, instead of a silently wrong string.
  */
 export function buildDraftEditorRows(
   draftRows: readonly CatalogRow[],
@@ -108,7 +110,7 @@ export function buildDraftEditorRows(
     plan: string;
     period: string;
     tier: string;
-    baselineCurrency: string;
+    baselineCurrency: string | null;
     amounts: DraftEditorCell[];
   }
 
@@ -122,7 +124,8 @@ export function buildDraftEditorRows(
         plan: row.plan,
         period: row.period,
         tier: row.tier,
-        baselineCurrency: row.currency,
+        // See this function's own doc comment — `null`, not a guess.
+        baselineCurrency: null,
         amounts: [],
       };
       byKey.set(row.lookupKey, entry);
@@ -308,6 +311,16 @@ export interface AuthoringPanelProps {
   /** The mode's currently published rows — already read by `page.tsx` for
    *  the read-only catalog table; reused here rather than read twice. */
   readonly catalog: readonly CatalogRow[];
+  /** Whether the PUBLISHED catalog read (`page.tsx`'s `catalogResult`)
+   *  succeeded. Review 2026-08-28 (Important, controller ruling): when it
+   *  fails, `catalog` falls back to `[]`, which used to reach
+   *  `buildDraftEditorRows` looking identical to "this mode genuinely has no
+   *  published prices yet" — every `publishedUnitAmountMinor` came back
+   *  `null`, which silently switches off `draft-editor.tsx`'s
+   *  implausible-edit warning with nothing on screen saying why. This prop
+   *  is what lets the editor say so, in words, instead of quietly running
+   *  with its guard disabled. */
+  readonly catalogState: SurfaceState;
   /** Whether `page.tsx`'s "does a draft exist" read succeeded — narrowed
    *  independently of every other read on that page (see its own module doc
    *  comment). A failure here shows a message for THIS section alone; the
@@ -326,21 +339,35 @@ export interface AuthoringPanelProps {
   readonly replanHref: string;
 }
 
-export function AuthoringPanel({
+/**
+ * The draft section's own body — everything ABOVE the publish-outcome
+ * section. Split out of {@link AuthoringPanel} so that component's `return`
+ * can render this conditionally while the outcome section below it never
+ * is — see that component's own comment on why the split matters.
+ */
+function DraftSection({
   mode,
   catalog,
+  catalogState,
   draftState,
   draftId,
   draftRows,
   draftRowsState,
   canDraft,
   canPublish,
-  replanHref,
-}: AuthoringPanelProps) {
-  const [outcome, setOutcome] = useState<Extract<PublishActionResult, { readonly ok: true }> | null>(
-    null,
-  );
-
+  onOutcome,
+}: {
+  mode: StripeMode;
+  catalog: readonly CatalogRow[];
+  catalogState: SurfaceState;
+  draftState: SurfaceState;
+  draftId: string | null;
+  draftRows: readonly CatalogRow[] | null;
+  draftRowsState: SurfaceState;
+  canDraft: boolean;
+  canPublish: boolean;
+  onOutcome: (result: Extract<PublishActionResult, { readonly ok: true }>) => void;
+}) {
   // `resolveState` resolves "no draft exists" (an ordinary, common outcome —
   // `readDraft` succeeded and simply found nothing) to `empty`, not `ready`
   // — see `surface-state.ts`. `ready` and `empty` are therefore BOTH
@@ -365,8 +392,15 @@ export function AuthoringPanel({
     );
   }
 
+  // The published catalog is the ONLY source `buildDraftEditorRows` has for
+  // `publishedUnitAmountMinor`, which `magnitudeWarning` (`draft-editor.tsx`)
+  // needs to warn about an implausible edit. A failed catalog read must not
+  // silently disable that guard — see `catalogState`'s own doc comment on
+  // `AuthoringPanelProps`.
+  const catalogUnavailable = catalogState.kind !== "ready" && catalogState.kind !== "empty";
+
   return (
-    <div className="flex flex-col gap-8">
+    <>
       <section className="flex flex-col gap-3" aria-label="Draft">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Draft</h2>
@@ -374,10 +408,20 @@ export function AuthoringPanel({
         </div>
         {draftRowsState.kind === "ready" && draftRows ? (
           canDraft ? (
-            <DraftEditor
-              revisionId={draftId}
-              rows={buildDraftEditorRows(draftRows, catalog)}
-            />
+            <>
+              {catalogUnavailable ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  The published catalog could not be read, so the implausible-edit warning
+                  below is unavailable for this render — every amount will look unchanged
+                  from what is published. Publishing still re-checks this guard
+                  server-side before anything reaches Stripe.
+                </p>
+              ) : null}
+              <DraftEditor
+                revisionId={draftId}
+                rows={buildDraftEditorRows(draftRows, catalogUnavailable ? [] : catalog)}
+              />
+            </>
           ) : (
             <CapabilityNotice>
               A draft is open, but editing it needs the billing capability.
@@ -397,9 +441,55 @@ export function AuthoringPanel({
           revisionId={draftId}
           mode={mode}
           canPublish={canPublish}
-          onOutcome={setOutcome}
+          onOutcome={onOutcome}
         />
       </section>
+    </>
+  );
+}
+
+export function AuthoringPanel({
+  mode,
+  catalog,
+  catalogState,
+  draftState,
+  draftId,
+  draftRows,
+  draftRowsState,
+  canDraft,
+  canPublish,
+  replanHref,
+}: AuthoringPanelProps) {
+  const [outcome, setOutcome] = useState<Extract<PublishActionResult, { readonly ok: true }> | null>(
+    null,
+  );
+
+  // CRITICAL fix, review 2026-08-28 (controller ruling): the outcome section
+  // is rendered HERE, unconditionally, never inside `DraftSection`'s
+  // draft-dependent branches. A SUCCESSFUL publish calls `promotePublication`
+  // (`actions.ts`), which moves the revision out of `UNPUBLISHED_REVISION`
+  // (`publish-repo.ts`) — so by the time `publishAction`'s own
+  // `revalidatePath` lands, `currentDraft()` correctly returns `null` and
+  // `draftId` becomes `null` too, in the SAME transition `onPublished` fires
+  // in. `DraftSection` would then take its "no draft is open" branch and
+  // never reach an outcome block nested inside it — exactly the bug this
+  // hoist fixes. A FAILED publish never promotes, so the draft (and
+  // `DraftSection`'s draft-editing branch) survives either way, which is why
+  // this was invisible in every failed-publish test written before this fix.
+  return (
+    <div className="flex flex-col gap-8">
+      <DraftSection
+        mode={mode}
+        catalog={catalog}
+        catalogState={catalogState}
+        draftState={draftState}
+        draftId={draftId}
+        draftRows={draftRows}
+        draftRowsState={draftRowsState}
+        canDraft={canDraft}
+        canPublish={canPublish}
+        onOutcome={setOutcome}
+      />
 
       {outcome ? (
         <section className="flex flex-col gap-3" aria-label="Publish outcome">

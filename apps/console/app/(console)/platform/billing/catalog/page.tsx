@@ -364,6 +364,7 @@ export default async function PlanCatalog({
       <AuthoringPanel
         mode={mode}
         catalog={catalog}
+        catalogState={catalogState}
         draftState={draftState}
         draftId={draft?.id ?? null}
         draftRows={draftRows}
