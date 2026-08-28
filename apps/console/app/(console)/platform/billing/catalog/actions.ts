@@ -3,12 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
-import {
-  auditedOperation,
-  AuditUnavailableError,
-  AuditWriteError,
-  type AuditDescription,
-} from "@/lib/db/audit-repo";
+import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
 import {
   createDraftFrom,
   discardDraft,
@@ -18,8 +13,13 @@ import {
 } from "@/lib/db/publish-repo";
 import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-repo";
 import { policyFor, SINGLE_SOURCE } from "@/lib/billing/source-policy";
-import { buildPublishPlan, type PublishPlanCounts, type UnactionableDifference } from "@/lib/billing/publish-plan";
-import { checkGuards, type GuardRule, type GuardVerdict } from "@/lib/billing/publish-guards";
+import {
+  buildPublishPlan,
+  type PublishPlan,
+  type PublishPlanCounts,
+  type UnactionableDifference,
+} from "@/lib/billing/publish-plan";
+import { checkGuards, checkMode, type GuardRule, type GuardVerdict } from "@/lib/billing/publish-guards";
 import { executePublish, scopeObserved } from "@/lib/billing/publish-executor";
 import { findOrphans, type Orphan } from "@/lib/billing/orphans";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
@@ -140,11 +140,11 @@ async function withDraftWrite<T>(
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION_MESSAGE };
     }
-    // `AuditUnavailableError` fires BEFORE the operation runs — nothing
-    // happened, so "not saved" is exactly true. `AuditWriteError` fires
-    // after a write that already committed; for a single-cell draft edit a
-    // retry is harmless (unlike CRM's erasure/delete paths), so the same
-    // conservative message is safe here too.
+    // `audit-repo`'s `AuditUnavailableError` fires BEFORE the operation runs
+    // — nothing happened, so "not saved" is exactly true. Its
+    // `AuditWriteError` fires after a write that already committed; for a
+    // single-cell draft edit a retry is harmless (unlike CRM's erasure/delete
+    // paths), so the same conservative message is safe here too.
     return { ok: false, message: actionableRefusal(cause) ?? NOT_SAVED_MESSAGE };
   }
 }
@@ -370,6 +370,24 @@ async function withPublishWrite<T>(
   }
 }
 
+/** Every count at zero, for the one case a plan is never built: see the
+ *  `checkMode` short-circuit in {@link observeAndPlan} below. Not fabricated
+ *  from an empty Stripe observation — that would show, say, "42 created" for
+ *  a mode nothing was actually read from, which is a worse lie than showing
+ *  nothing at all. */
+const UNOBSERVED_COUNTS: PublishPlanCounts = {
+  create_product: 0,
+  create_price: 0,
+  replace_price: 0,
+  add_currency_option: 0,
+  update_tax_behavior: 0,
+  archive_price: 0,
+  total: 0,
+  intended: 0,
+  driftCorrection: 0,
+  unactionable: 0,
+};
+
 /**
  * Observe, plan, and judge — the three steps both publish actions need.
  *
@@ -385,6 +403,29 @@ async function withPublishWrite<T>(
  */
 async function observeAndPlan(mode: StripeMode, revisionId: string) {
   const policy = policyFor(SINGLE_SOURCE);
+
+  // `checkMode` takes no observed data as input, so a mode it refuses stays
+  // refused no matter what `prices.list` returns — checking it first means
+  // a mode the guard can never let through (today, anything but "test")
+  // never spends the paid Stripe call finding that out. This is only ever
+  // reached from the mounted surface via `AuthoringPanel`'s `PublishSection`
+  // effect (which fires on every render of an open draft) and from
+  // `publishAction`, so avoiding it here is the fix for both. `operations`
+  // and `fingerprint` stay empty/inert here — neither caller reaches
+  // `plan.fingerprint` (only used past the "refused" check, which throws
+  // first in `publishAction`) or renders `plan.operations` once `verdict`
+  // carries a `refused` reason.
+  const modeRefusal = checkMode(mode);
+  if (modeRefusal.length > 0) {
+    const plan: PublishPlan = {
+      operations: [],
+      fingerprint: "",
+      counts: UNOBSERVED_COUNTS,
+      unactionable: [],
+    };
+    return { plan, verdict: { ok: false as const, refused: modeRefusal } };
+  }
+
   const [ancestor, draft, observedRaw] = await Promise.all([
     readCatalogAmounts(mode, SINGLE_SOURCE),
     readRevisionAmounts(revisionId, SINGLE_SOURCE),
