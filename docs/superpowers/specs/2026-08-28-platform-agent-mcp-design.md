@@ -215,10 +215,17 @@ tools over one endpoint, at two capabilities, rather than one tool with a flag.
 ### Known exposure to weigh
 
 `kora/api/internal/platformadmin/entities.go` renders a user's **email** into
-`sublabel` when they have no handle — contrary to that endpoint's own doc
-comment, which claims it never exposes an email. Pre-existing and not caused by
-this design, but it means `estate_entities_search` is an email-disclosing tool
-and is priced at `platform` accordingly.
+`sublabel` (and thence possibly `label`) when they have no handle. This is
+deliberate and documented — the endpoint's own comment reasons that a directory
+which cannot tell two people called "Alex" apart does not do its job — and it is
+the right call for a human operator paging a console.
+
+It is a different question for an agent. The console shows an operator one page
+at a time; a tool hands the same rows to a model, and from there to that model's
+context, logs and provider. So `estate_entities_search` is an email-disclosing
+tool, priced at `platform` accordingly, and is the clearest case for §5's
+per-principal row budget. Nothing here asks the product to change: the exposure
+is appropriate to its existing caller and merely needs pricing for a new one.
 
 ### Volume is a threat, not just permission
 
