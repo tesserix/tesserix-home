@@ -542,7 +542,13 @@ describe("it is a caller, not a second implementation", () => {
     await runParityCheckJob();
 
     expect(compareCatalogToStripe).toHaveBeenCalledTimes(STRIPE_MODES.length);
-    expect(compareCatalogToStripe).toHaveBeenCalledWith(catalog, matching);
+    // The full 4-argument call `performParityCheck` (`parity-run.ts`) makes as
+    // of tesserix-home#381 — mark8ly's own prefix and policy, threaded
+    // through explicitly rather than left to the comparator's defaults.
+    expect(compareCatalogToStripe).toHaveBeenCalledWith(catalog, matching, "mark8ly_", {
+      amountsAreScaledBy100: true,
+      lookupKeyPrefix: "mark8ly_",
+    });
   });
 
   it("takes the catalog from the repo and the prices from the read-only reader", async () => {

@@ -31,7 +31,7 @@ describe("readCatalogAmounts", () => {
     // — 78 false positives, the check dead on arrival.
     vi.mocked(tesserixQuery).mockResolvedValue([row()] as never);
 
-    const amounts = await readCatalogAmounts("test");
+    const amounts = await readCatalogAmounts("test", "mark8ly");
 
     expect(amounts).toEqual([
       {
@@ -52,7 +52,7 @@ describe("readCatalogAmounts", () => {
       row({ unit_amount_minor: "1198800000" }),
     ] as never);
 
-    const [amount] = await readCatalogAmounts("test");
+    const [amount] = await readCatalogAmounts("test", "mark8ly");
     expect(amount.unitAmountMinor).toBe(1_198_800_000);
   });
 
@@ -65,9 +65,21 @@ describe("readCatalogAmounts", () => {
       row({ unit_amount_minor: "9007199254740993" }),
     ] as never);
 
-    await expect(readCatalogAmounts("test")).rejects.toThrow(
+    await expect(readCatalogAmounts("test", "mark8ly")).rejects.toThrow(
       /mark8ly_starter_monthly_ppp_idr_v1\/idr/,
     );
+  });
+
+  it("reads the mode and source passed in, not a hardcoded one — tesserix-home#381", async () => {
+    // `source` used to have no parameter at all: this pins down that it is
+    // now threaded through to the query as a second bind param, alongside
+    // `mode`, rather than silently dropped. The behavioural half of #381's
+    // fix — that a second source's rows don't leak in — is proved against a
+    // real database in `plan-catalog-revisions.integration.test.ts`.
+    vi.mocked(tesserixQuery).mockResolvedValue([]);
+    await readCatalogAmounts("test", "mark8ly");
+    const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(params).toEqual(["test", "mark8ly"]);
   });
 });
 
@@ -164,7 +176,7 @@ describe("readCatalogRows", () => {
     // has no use for them.
     vi.mocked(tesserixQuery).mockResolvedValue([catalogRow()] as never);
 
-    const rows = await readCatalogRows("live");
+    const rows = await readCatalogRows("live", "mark8ly");
 
     expect(rows).toEqual([
       {
@@ -188,16 +200,16 @@ describe("readCatalogRows", () => {
       catalogRow({ unit_amount_minor: "1198800000" }),
     ] as never);
 
-    const [row] = await readCatalogRows("live");
+    const [row] = await readCatalogRows("live", "mark8ly");
     expect(row.unitAmountMinor).toBe(1_198_800_000);
     expect(typeof row.unitAmountMinor).toBe("number");
   });
 
-  it("reads the mode passed in, not a hardcoded one", async () => {
+  it("reads the mode and source passed in, not a hardcoded one", async () => {
     vi.mocked(tesserixQuery).mockResolvedValue([]);
-    await readCatalogRows("test");
+    await readCatalogRows("test", "mark8ly");
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["test"]);
+    expect(params).toEqual(["test", "mark8ly"]);
   });
 });
 

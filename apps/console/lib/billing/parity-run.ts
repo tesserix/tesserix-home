@@ -7,8 +7,28 @@
 import "server-only";
 
 import { compareCatalogToStripe } from "@/lib/billing/parity";
+import { policyFor, SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
 import { readCatalogAmounts, readLivePublication, type ParityRun } from "@/lib/db/plan-catalog-repo";
+
+// Re-exported so this module's own existing importers keep working — moved to
+// `source-policy.ts` (see that module's doc comment) so `bootstrap.ts` and
+// the catalog surface's `page.tsx` can share the one constant without
+// importing this module, which reaches `stripe-read.ts` and `pg` (through
+// `plan-catalog-repo.ts`).
+export { SINGLE_SOURCE };
+
+// SINGLE-SOURCE ASSUMPTION, used below. Every row `plan_catalog_prices` holds
+// today is `source = 'mark8ly'`, so `SINGLE_SOURCE` is currently the only
+// source there is to check.
+//
+// This is the exact thing tesserix-home#381 exists to fix threading, not to
+// remove: the moment a second source's rows land in the same revision, one
+// `mode`-keyed run can no longer speak for both catalogs at once, because
+// `plan_catalog_parity_runs` has no `source` column to record which one a row
+// checked. Making this check run per `(mode, source)` needs that column —
+// filed separately; this change deliberately does not add it or touch the
+// `plan_catalog_parity_runs` schema.
 
 /**
  * One parity check, decided but not yet recorded — the body both runners share.
@@ -114,9 +134,21 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
     // Sequential, not `Promise.all`: a catalog read that fails should not also
     // spend a Stripe request, and the ordering makes "which side broke"
     // legible in the stored reason.
-    const catalog = await readCatalogAmounts(mode);
+    const catalog = await readCatalogAmounts(mode, SINGLE_SOURCE);
     const prices = await stripePriceReader.listPrices(mode);
-    const { differences, stripePriceCount } = compareCatalogToStripe(catalog, prices);
+    // The source's own policy and lookup-key prefix, threaded through
+    // explicitly rather than left to `compareCatalogToStripe`'s defaults.
+    // Those defaults exist so a TEST fixture can omit them; this is the
+    // check #327 revokes a Stripe write key on the strength of, and it must
+    // say what it means rather than fall back to whatever the comparator
+    // assumes when nobody says.
+    const sourcePolicy = policyFor(SINGLE_SOURCE);
+    const { differences, stripePriceCount } = compareCatalogToStripe(
+      catalog,
+      prices,
+      sourcePolicy.lookupKeyPrefix,
+      sourcePolicy,
+    );
 
     // ZERO IS A DIFFERENT FACT, NOT A LARGER NUMBER OF DIFFERENCES.
     //

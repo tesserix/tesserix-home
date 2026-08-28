@@ -15,7 +15,7 @@ import {
   type StripePriceLike,
   type TaxBehavior,
 } from "./parity";
-import { policyFor, toStripeUnitAmount } from "./source-policy";
+import { policyFor, SINGLE_SOURCE, toStripeUnitAmount } from "./source-policy";
 import { stripePriceReader, type StripeMode } from "./stripe-read";
 import { stripeCatalogWriter } from "./mark8ly/stripe-write";
 import { readCatalogAmounts } from "@/lib/db/plan-catalog-repo";
@@ -218,13 +218,13 @@ function baselineCurrencyOf(lookupKey: string, currencies: readonly string[]): s
  * makes (a `developed` descriptor is ONE Price carrying seven currencies).
  *
  * Every amount is converted through {@link toStripeUnitAmount} with
- * `policyFor("mark8ly")` before it reaches the returned plan — `CatalogAmount`
- * carries no `source` (see `plan-catalog-repo.ts`'s note on the same
- * single-source assumption), so this hard-codes mark8ly's policy at the
- * boundary exactly the way `parity.ts`'s `compareCatalogToStripe` defaults to
- * it. Skipping this sends every VND price 100x wrong, live, on the write
- * side — the read-side version of this bug was found in the comparator on
- * 2026-08-27.
+ * `policyFor(SINGLE_SOURCE)` before it reaches the returned plan —
+ * `CatalogAmount` carries no `source` (see `plan-catalog-repo.ts`'s note on
+ * the same single-source assumption), so this hard-codes mark8ly's policy at
+ * the boundary exactly the way `parity.ts`'s `compareCatalogToStripe`
+ * defaults to it. Skipping this sends every VND price 100x wrong, live, on
+ * the write side — the read-side version of this bug was found in the
+ * comparator on 2026-08-27.
  */
 export function planBootstrap(
   catalog: readonly CatalogAmount[],
@@ -247,7 +247,7 @@ export function planBootstrap(
     group.push(row);
   }
 
-  const policy = policyFor("mark8ly");
+  const policy = policyFor(SINGLE_SOURCE);
   const plans = new Set<string>();
   const prices: BootstrapPlanPrice[] = [];
 
@@ -360,7 +360,13 @@ export async function runBootstrap(
   // (`parity-run.ts`): a catalog read that fails should not also spend a
   // Stripe request, and a thrown error names which side broke rather than
   // arriving as one of two racing rejections.
-  const catalog = await readCatalogAmounts(mode);
+  //
+  // SINGLE-SOURCE ASSUMPTION: `SINGLE_SOURCE` (`source-policy.ts`) is every
+  // row `plan_catalog_prices` holds today, and this bootstrap only ever
+  // populates that source's own Stripe namespace (`MARK8LY_LOOKUP_KEY_PREFIX`,
+  // below). See #381's follow-up for what a second source needs before this
+  // can stop being hard-coded.
+  const catalog = await readCatalogAmounts(mode, SINGLE_SOURCE);
 
   // Mirrors `performParityCheck`'s (`parity-run.ts:150-161`) refusal to call
   // an empty catalog against an empty Stripe "clean": `readCatalogAmounts`

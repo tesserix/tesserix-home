@@ -104,27 +104,34 @@ function toCatalogAmount(row: AmountRow): CatalogAmount {
  * Ordered so a report reads the same way twice; the comparator sorts its own
  * output, but a deterministic read makes a `psql` session diffable too.
  *
- * # Does not filter by `source`
+ * # `source` is required, not defaulted
  *
- * This query has no `AND p.source = ...`, and that is safe only because every
- * row in `plan_catalog_prices` today has `source = 'mark8ly'`. It stops being
- * safe the moment a second source exists: two products sharing a lookup-key
- * convention would merge into one report exactly the way a draft and a
- * published revision merged before this function filtered by publication —
- * same bug, different axis. The fix when that day comes is `AND p.source =
- * $2`, threading the source through as a second parameter; it is not added
- * here because a parameter with exactly one legal value today is scope this
- * function does not need yet.
+ * Filtered by `AND p.source = $2`, and `source` has no default — the same
+ * reasoning `stripe-read.ts` gives for `StripePriceReader.listPrices`'s
+ * `mode` parameter, one axis over: a default would make `readCatalogAmounts(
+ * mode)` compile at a call site that had simply forgotten which source it
+ * meant, and the resulting row would name a mode it did not check against
+ * the right catalog. Before this filter existed, every row in
+ * `plan_catalog_prices` happened to have `source = 'mark8ly'`, so an
+ * unfiltered read was accidentally correct — but `UNIQUE (revision_id,
+ * source, lookup_key)` means `lookup_key` is NOT unique within a revision
+ * once a second source exists, and two products sharing a naming convention
+ * would merge into one report exactly the way a draft and a published
+ * revision merged before this function filtered by publication. Same bug,
+ * different axis.
  */
-export async function readCatalogAmounts(mode: StripeMode): Promise<CatalogAmount[]> {
+export async function readCatalogAmounts(
+  mode: StripeMode,
+  source: CatalogSource,
+): Promise<CatalogAmount[]> {
   const rows = await tesserixQuery<AmountRow>(
     `SELECT p.lookup_key, a.currency, a.unit_amount_minor, a.tax_behavior
        FROM plan_catalog_publications pub
        JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
        JOIN plan_catalog_amounts a ON a.price_id = p.id
-      WHERE pub.mode = $1 AND pub.superseded_at IS NULL
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL AND p.source = $2
       ORDER BY p.lookup_key, a.currency`,
-    [mode],
+    [mode, source],
   );
   return rows.map(toCatalogAmount);
 }
@@ -168,20 +175,23 @@ function toCatalogRow(row: CatalogRowRaw): CatalogRow {
  * changes independent.
  *
  * Every other property is identical to `readCatalogAmounts` — including that a
- * mode with no publication returns `[]` rather than throwing, and that this
- * does NOT filter by `source` yet (see that function's doc comment for why
- * that is currently safe and what the fix looks like when it stops being so).
+ * mode with no publication returns `[]` rather than throwing, and that
+ * `source` is a required parameter with no default, for the identical reason
+ * (see that function's doc comment).
  */
-export async function readCatalogRows(mode: StripeMode): Promise<CatalogRow[]> {
+export async function readCatalogRows(
+  mode: StripeMode,
+  source: CatalogSource,
+): Promise<CatalogRow[]> {
   const rows = await tesserixQuery<CatalogRowRaw>(
     `SELECT p.lookup_key, p.plan, p.period, p.tier, p.source,
             a.currency, a.unit_amount_minor, a.tax_behavior
        FROM plan_catalog_publications pub
        JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
        JOIN plan_catalog_amounts a ON a.price_id = p.id
-      WHERE pub.mode = $1 AND pub.superseded_at IS NULL
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL AND p.source = $2
       ORDER BY p.lookup_key, a.currency`,
-    [mode],
+    [mode, source],
   );
   return rows.map(toCatalogRow);
 }

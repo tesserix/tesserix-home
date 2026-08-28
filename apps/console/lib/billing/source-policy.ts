@@ -60,11 +60,47 @@ export interface SourcePolicy {
    * and mis-compared on read.
    */
   readonly amountsAreScaledBy100: boolean;
+  /**
+   * The prefix that makes a live Stripe Price this source's, and that makes a
+   * `lookup_key` this source's within the shared `plan_catalog_prices` table.
+   *
+   * A catalog convention, exactly like `amountsAreScaledBy100` above — not a
+   * Stripe fact — so it lives on the same per-source record rather than
+   * behind a second `prefixFor()` lookup beside `policyFor`. `parity.ts`
+   * previously hard-coded `MARK8LY_LOOKUP_KEY_PREFIX` as the comparator's
+   * only default; that constant is now DERIVED from this field (see that
+   * module) so the string exists in exactly one place.
+   */
+  readonly lookupKeyPrefix: string;
 }
 
 const POLICIES: Record<CatalogSource, SourcePolicy> = {
-  mark8ly: { amountsAreScaledBy100: true },
+  mark8ly: { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_" },
 };
+
+/**
+ * The one source that exists today, exported so every real caller that must
+ * currently pick a source — `parity-run.ts`'s `performParityCheck`,
+ * `bootstrap.ts`'s `runBootstrap`, the catalog surface's `page.tsx` — shares
+ * ONE literal rather than each hardcoding `"mark8ly"` separately.
+ *
+ * That collapse matters here specifically: this module already collapsed
+ * `MARK8LY_LOOKUP_KEY_PREFIX` from a second literal into one derived value
+ * (see `parity.ts`), on the reasoning that a fact repeated in multiple files
+ * is a fact that can drift when only some of the copies are updated. A
+ * hardcoded `"mark8ly"` at three call sites is the identical risk one axis
+ * over — the day a second source lands, all three must be found and changed
+ * together, and a constant is the only way "found together" is guaranteed
+ * rather than hoped for.
+ *
+ * Lives beside `policyFor` rather than in `parity-run.ts`: it is a fact
+ * about the CATALOG (which source's rows exist), not about the parity
+ * runner, and `bootstrap.ts` / `page.tsx` have no reason to import
+ * `parity-run.ts` — a module that reaches `stripe-read.ts` and `pg` through
+ * `plan-catalog-repo.ts` — just to read a constant. `parity-run.ts`
+ * re-exports it so its own existing importers keep working.
+ */
+export const SINGLE_SOURCE: CatalogSource = "mark8ly";
 
 export function policyFor(source: CatalogSource): SourcePolicy {
   return POLICIES[source];
