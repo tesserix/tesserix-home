@@ -17,10 +17,15 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 
 // Forces `canDraft`/`canPublish` to actually check roles rather than the
 // pre-cutover "every session holds every capability" bypass — same reason
-// `crm/[organisation]/page.test.tsx` does this.
+// `crm/[organisation]/page.test.tsx` does this. A `vi.fn()`, not a bare
+// `() => true`, so the "pre-cutover bypass IS in effect" branch (the
+// `!requiresCapability() || ...` short-circuit itself) can also be
+// exercised, by overriding it back to `false` in an individual test.
+const requiresCapability = vi.fn((..._args: unknown[]) => true);
+
 vi.mock("@/lib/internal-access", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/internal-access")>()),
-  requiresCapability: () => true,
+  requiresCapability: (...args: unknown[]) => requiresCapability(...args),
 }));
 
 vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
@@ -162,6 +167,7 @@ describe("read errors — four independent surfaces, four independent narrowings
 describe("the mounted authoring surface", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    requiresCapability.mockReturnValue(true);
   });
 
   const WINDOW_STATUS: ParityWindowStatus = {
@@ -267,6 +273,27 @@ describe("the mounted authoring surface", () => {
 
     expect(await screen.findByRole("button", { name: /review changes/i })).toBeInTheDocument();
     expect(planPublishAction).toHaveBeenCalledWith("draft-1", "test");
+  });
+
+  it("grants both draft and publish for a role-less session under the pre-cutover bypass, exactly as canDraft does", async () => {
+    // The branch `requiresCapability: () => true` permanently hides: with
+    // the bypass actually in effect (`google` provider, no roles claim),
+    // `canPublish` must take the SAME `!requiresCapability() || ...`
+    // shortcut `canDraft` does — never gated behind `canDraft` first — so a
+    // role-less session sees publishing exactly like `crm/[organisation]`'s
+    // `canHardDelete` does.
+    requiresCapability.mockReturnValue(false);
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue({ id: "draft-1", basedOn: "rev-0" });
+    readRevisionRows.mockResolvedValue([DRAFT_ROW]);
+    planPublishAction.mockResolvedValue({ ok: true, plan: READY_PLAN });
+    signIn([]);
+
+    await renderCatalogPage();
+
+    expect(await screen.findByRole("button", { name: /review changes/i })).toBeInTheDocument();
+    expect(planPublishAction).toHaveBeenCalledWith("draft-1", "test");
+    expect(screen.queryByText(/publishing is withheld here/i)).toBeNull();
   });
 
   it("renders the whole surface when there is no draft at all — the common case", async () => {

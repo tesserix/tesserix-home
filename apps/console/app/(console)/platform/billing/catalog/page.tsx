@@ -337,9 +337,13 @@ export default async function PlanCatalog({
   // `crm/[organisation]/page.tsx`'s `canHardDelete` uses, for the identical
   // pre-cutover reason: a role-less `google`-provider session is treated as
   // holding every capability until roles actually arrive with Zitadel.
+  // `canDraft` and `canPublish` are each their own independent check — not
+  // `canPublish = canDraft && ...` — because `checkOperatorCapability` checks
+  // "billing" and "publish-catalog" independently too; nesting them here
+  // would make the UI stricter than the server it is meant to mirror.
   const session = await getCurrentSession();
   const canDraft = !requiresCapability() || hasCapability(session?.roles, "billing");
-  const canPublish = canDraft && hasCapability(session?.roles, "publish-catalog");
+  const canPublish = !requiresCapability() || hasCapability(session?.roles, "publish-catalog");
 
   return (
     <div className="flex flex-col gap-6">
