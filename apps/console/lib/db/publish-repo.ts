@@ -284,6 +284,72 @@ export async function currentDraft(): Promise<{ id: string; basedOn: string | nu
   });
 }
 
+/**
+ * Set one (lookup_key, currency) cell's amount within a draft revision —
+ * Task 3's write path (`setAmountAction`, `draft-editor.tsx`'s only caller),
+ * the first function in this module that is not part of the draft lifecycle
+ * or the publish log.
+ *
+ * # UPSERT, not UPDATE
+ *
+ * `createDraftFrom` copies every currency the ancestor published (0032's
+ * `plan_catalog_amounts`), so editing an amount an operator can already see
+ * hits the `DO UPDATE` branch. But that copy is not exhaustive forever — a
+ * `ppp` row is single-currency by the catalog's own convention, and an
+ * operator adding a currency that row does not carry yet is exactly the case
+ * `add_currency_option` exists for in `publish-plan.ts`. A bare `UPDATE`
+ * would silently affect zero rows for that case; `INSERT ... ON CONFLICT
+ * (price_id, currency) DO UPDATE` (0032's own unique constraint on that pair)
+ * handles both without the caller having to know which one it's in.
+ *
+ * # `tax_behavior` defaults to `unspecified` on INSERT only
+ *
+ * A cell that does not exist yet has no prior `tax_behavior` to preserve; a
+ * cell that already exists keeps whatever it had — the `DO UPDATE` clause
+ * below touches only `unit_amount_minor`. This function is the amount
+ * editor, not a tax_behavior editor; that stays untouched here.
+ *
+ * # Scoped by (revision, source, lookup_key), not by `plan_catalog_prices.id`
+ *
+ * The caller knows `revisionId`, `lookupKey`, `currency` — the same
+ * identifiers `readRevisionAmounts` reads by — not the internal price row
+ * id, so this resolves the price itself rather than asking the caller to
+ * look it up first. A `lookupKey` absent from this revision (a stale draft
+ * reference, a typo) is refused loudly, before any write: an INSERT against
+ * a price id that does not exist would otherwise violate the FK with a
+ * message that does not say which key was wrong.
+ */
+export async function setDraftAmount(input: {
+  revisionId: string;
+  source: string;
+  lookupKey: string;
+  currency: string;
+  unitAmountMinor: number;
+}): Promise<void> {
+  return tesserixTx(async (query) => {
+    const priceRows = await query<{ id: string }>(
+      `SELECT id
+         FROM plan_catalog_prices
+        WHERE revision_id = $1 AND source = $2 AND lookup_key = $3`,
+      [input.revisionId, input.source, input.lookupKey],
+    );
+    const price = priceRows[0];
+    if (!price) {
+      throw new Error(
+        `setDraftAmount: "${input.lookupKey}" is not a price in draft revision ${input.revisionId}`,
+      );
+    }
+
+    await query(
+      `INSERT INTO plan_catalog_amounts (price_id, currency, unit_amount_minor, tax_behavior)
+       VALUES ($1, $2, $3, 'unspecified')
+       ON CONFLICT (price_id, currency)
+       DO UPDATE SET unit_amount_minor = EXCLUDED.unit_amount_minor, updated_at = now()`,
+      [price.id, input.currency, input.unitAmountMinor],
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Publish attempts and the operation log (Task 5, `0038_publish_operations.sql`)
 //
