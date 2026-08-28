@@ -152,6 +152,49 @@ function typedModeMatches(typed: string, mode: StripeMode): boolean {
   return typed.trim().toLowerCase() === mode;
 }
 
+/**
+ * What the operator is told once the attempt closes — THREE outcomes, three
+ * different truths, never two.
+ *
+ * Review 2026-08-28 (promoted from Minor by controller ruling): an earlier
+ * version folded `"aborted"` into the failure branch, which told an operator
+ * that "0 operation(s) did not complete" and sent them to a publish log with
+ * nothing in it — implying Stripe may have been half-changed. On a surface
+ * that writes to a payment provider, misleading failure copy is not
+ * cosmetic.
+ *
+ *   - `"aborted"`: `executePublish` stopped BEFORE its first Stripe call —
+ *     the observation's fingerprint moved since planning, or a guard refused
+ *     on the re-check (see that module's steps 3 and 4). NOTHING was
+ *     written; `plan.operations` was never entered. The answer is to re-plan
+ *     against what Stripe holds now, not to inspect a log.
+ *   - `"failed"`: at least one operation failed — and, since the executor
+ *     continues past a single failure, others may well have SUCCEEDED. This
+ *     is the only case where the log matters and where Stripe may be partly
+ *     changed.
+ *   - `"succeeded"`: every operation landed, and `publishAction` promoted
+ *     the revision, so the catalog and Stripe now agree.
+ */
+function outcomeMessage(
+  outcome: "succeeded" | "failed" | "aborted",
+  failedOperations: readonly string[],
+): string {
+  if (outcome === "succeeded") {
+    return "Published. Stripe now matches this revision, and it is the mode's published catalog.";
+  }
+  if (outcome === "aborted") {
+    return (
+      "Nothing was written to Stripe. The publish stopped before its first call — the plan moved since it was " +
+      "built, or a guard refused on the re-check. Review the changes again to plan against what Stripe holds now."
+    );
+  }
+  return (
+    `${failedOperations.length} operation(s) failed: ${failedOperations.join(", ")}. ` +
+    "Others in this plan may already have been written to Stripe. The catalog was NOT promoted — " +
+    "read the publish log before retrying."
+  );
+}
+
 function BreachList({ breaches, tone }: { breaches: readonly GuardBreach[]; tone: "refused" | "confirm" }) {
   if (breaches.length === 0) return null;
   return (
@@ -205,12 +248,12 @@ export function PublishView({ revisionId, mode, counts, unactionable, verdict }:
     startTransition(async () => {
       const result = await publishAction(revisionId, mode, {
         typedMode: typed,
-        // The rules the operator was actually SHOWN. The server refuses if
-        // the plan it rebuilds breaches a rule that is not in this list —
-        // so a breach that appeared between planning and confirming (a
-        // second operator's edit, Stripe moving underneath) blocks the
-        // publish instead of riding through on a confirmation given for a
-        // different plan.
+        // The guard RULES the operator was actually shown. The server
+        // refuses if the plan it rebuilds breaches a rule missing from this
+        // list — so a NEWLY-breached rule blocks the publish. It does not,
+        // and does not claim to, detect a changed breach under a rule
+        // already acknowledged; see `publishAction`'s own comment on the
+        // exact scope of that check.
         acknowledged: confirmations.map((breach) => breach.rule),
       });
       if (!result.ok) {
@@ -219,12 +262,7 @@ export function PublishView({ revisionId, mode, counts, unactionable, verdict }:
       }
       setOpen(false);
       reset();
-      setDone(
-        result.outcome === "succeeded"
-          ? "Published. Stripe now matches this revision, and it is the mode's published catalog."
-          : `Publish finished with outcome "${result.outcome}" — ${result.failedOperations.length} operation(s) did not complete. ` +
-            "The catalog was NOT promoted; read the publish log before retrying.",
-      );
+      setDone(outcomeMessage(result.outcome, result.failedOperations));
     });
   };
 

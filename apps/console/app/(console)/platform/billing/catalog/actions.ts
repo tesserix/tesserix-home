@@ -476,13 +476,20 @@ export async function publishAction(
         const unacknowledged = verdict.requiresConfirmation.filter(
           (breach) => !confirmations.acknowledged.includes(breach.rule),
         );
-        // The plan the operator confirmed is not the plan this rebuilt — a
-        // second operator's edit, or Stripe moving underneath, added a
-        // breach they never saw. The executor's fingerprint abort catches
-        // that class of change for the plan's CONTENT; this catches it for
-        // the plan's JUDGEMENT, which the fingerprint does not cover
-        // (`checkGuards` reads the ancestor, which the fingerprint excludes
-        // by design — see `PublishPlan.fingerprint`).
+        // Matched by RULE NAME, and that is the whole of what this check
+        // claims: a rule that is breached now and was not shown to the
+        // operator when they typed their confirmation refuses the publish.
+        //
+        // What it does NOT claim, stated because a stronger claim was
+        // written here first: it does not detect a CHANGED breach under an
+        // already-acknowledged rule. A `magnitude` acknowledgement given for
+        // one lookup key at one percentage still matches a `magnitude`
+        // breach on a different key at a different percentage. Making that
+        // precise would mean acknowledging identified breaches, not rules,
+        // which the spec does not ask for — this is defence-in-depth on top
+        // of the executor's own fingerprint abort (which covers the plan's
+        // CONTENT: the observed Stripe state it was built from), not a
+        // complete guarantee that the judgement is unchanged.
         if (unacknowledged.length > 0) {
           throw new PublishRefused(
             `This plan changed since it was reviewed: ${unacknowledged

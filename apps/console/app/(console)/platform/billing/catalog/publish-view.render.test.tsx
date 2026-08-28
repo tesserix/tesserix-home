@@ -20,6 +20,7 @@ vi.mock("./actions", () => ({
 import { checkGuards, type GuardBreach, type GuardRule, type GuardVerdict } from "@/lib/billing/publish-guards";
 import type { PublishPlan, PublishPlanCounts } from "@/lib/billing/publish-plan";
 import type { StripeMode } from "@/lib/billing/stripe-read";
+import { publishAction } from "./actions";
 import { PublishView } from "./publish-view";
 
 /**
@@ -167,12 +168,25 @@ describe("PublishView", () => {
     renderPlan({ mode: "live" });
     expect(screen.getByRole("alert")).toHaveTextContent(/live publishing is not enabled/i);
     expect(screen.queryByRole("button", { name: /publish/i })).toBeDisabled();
+    // Review 2026-08-28: the assertion above holds for EVERY un-typed dialog,
+    // so on its own it does not distinguish a refusal from an empty field —
+    // an implementation that dropped the `refused.length > 0` term from
+    // `confirmDisabled` would pass it while making a live publish reachable
+    // by typing "live". This line is what pins the refusal as unbypassable.
+    fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "live" } });
+    expect(screen.getByRole("button", { name: /publish/i })).toBeDisabled();
   });
 
   it("blocks entirely on a refusal, and only warns on a confirmation breach", () => {
     renderPlan({ guards: { refused: [{ rule: "currency-coverage", detail: "gbp missing from pro monthly" }] } });
     expect(screen.getByRole("button", { name: /publish/i })).toBeDisabled();
     expect(screen.getByText(/gbp missing/i)).toBeInTheDocument();
+    // Same reasoning as the live case above: a refusal must survive the
+    // typed-mode gate being satisfied. The companion test below proves a
+    // CONFIRMATION breach does not, which is the other half of this test's
+    // own name.
+    fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "test" } });
+    expect(screen.getByRole("button", { name: /publish/i })).toBeDisabled();
   });
 
   it("names the plan in the confirmation dialog", () => {
@@ -191,6 +205,52 @@ describe("PublishView", () => {
    * exactly the refusal/confirmation collapse `publish-guards.ts`'s header
    * exists to prevent.
    */
+  /**
+   * Not in the brief. Controller ruling, 2026-08-28: `"aborted"` must not be
+   * rendered as a partial failure. An abort means `executePublish` stopped
+   * BEFORE its first Stripe call (a moved fingerprint, or a guard refusing on
+   * the re-check) — telling an operator that operations "did not complete"
+   * and sending them to an empty publish log implies Stripe may be
+   * half-changed, on a surface that writes to a payment provider.
+   */
+  async function publishOnce() {
+    fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "test" } });
+    fireEvent.click(screen.getByRole("button", { name: /publish/i }));
+  }
+
+  it("says nothing was written when the publish aborted", async () => {
+    vi.mocked(publishAction).mockResolvedValueOnce({
+      ok: true,
+      outcome: "aborted",
+      promoted: false,
+      failedOperations: [],
+    });
+    renderPlan();
+    await publishOnce();
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/nothing was written to stripe/i);
+    // The words that would be a lie here, and that the failure branch owns.
+    expect(status).not.toHaveTextContent(/publish log/i);
+    expect(status).not.toHaveTextContent(/0 operation/i);
+  });
+
+  it("names the operations that failed, and says the others may already be in Stripe", async () => {
+    vi.mocked(publishAction).mockResolvedValueOnce({
+      ok: true,
+      outcome: "failed",
+      promoted: false,
+      failedOperations: ["archive_price mark8ly_pro_annual_ppp_v1"],
+    });
+    renderPlan();
+    await publishOnce();
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/1 operation\(s\) failed: archive_price mark8ly_pro_annual_ppp_v1/i);
+    expect(status).toHaveTextContent(/may already have been written to Stripe/i);
+    expect(status).toHaveTextContent(/NOT promoted/i);
+  });
+
   it("still allows a confirmed publish through a confirmation breach", () => {
     renderPlan({ guards: { requiresConfirmation: [{ rule: "magnitude", detail: "pro monthly moves 90%" }] } });
     const confirm = screen.getByRole("button", { name: /publish/i });
