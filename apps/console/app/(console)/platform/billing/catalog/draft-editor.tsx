@@ -17,26 +17,39 @@ import type { TaxBehavior } from "@/lib/billing/parity";
  * nothing here talks to Stripe, and nothing here publishes. Publishing is a
  * separate task with its own guards and its own confirmation flow
  * (`publish-guards.ts`); this component's only job is to get a correct
- * number into the draft and to tell the operator, AT THE POINT OF EDIT, two
- * things a plan-level guard would only tell them much later:
+ * number into the draft and to tell the operator, AT THE POINT OF EDIT, the
+ * one thing a plan-level guard would only tell them much later: an amount
+ * that moved implausibly far from what is currently published (the early,
+ * cheap half of `publish-guards.ts`'s magnitude guard — see
+ * {@link MAGNITUDE_THRESHOLD}, imported rather than hardcoded so the two
+ * checks can never drift apart).
  *
- *   1. an amount that moved implausibly far from what is currently
- *      published (the early, cheap half of `publish-guards.ts`'s magnitude
- *      guard — see {@link MAGNITUDE_THRESHOLD}, imported rather than
- *      hardcoded so the two checks can never drift apart), and
- *   2. whether THIS edit, if published as-is, would be an in-place
- *      `currency_options` write that reprices existing subscribers at their
- *      next renewal, or a Price replacement that cannot touch them at all —
- *      see {@link repricingNote} for how that is derived from
- *      `publish-plan.ts`'s actual operation taxonomy, not from intuition.
+ * # No "reprices existing subscribers" warning — REMOVED ON PURPOSE
+ *
+ * An earlier version of this file classified each cell as an in-place
+ * `add_currency_option` write (claimed to reprice existing subscribers at
+ * their next renewal) or a `replace_price` write (claimed not to), following
+ * a stale reading of a superseded draft of the design spec. The spec's THIRD
+ * draft — `docs/superpowers/specs/2026-08-27-console-catalog-authoring-design.md`,
+ * §6, "Existing subscribers — the hazard does not exist" — settles this by
+ * SANDBOX EXPERIMENT, not inference: `[V]` there is no in-place amount edit
+ * at all (§1.6a) — every amount change, baseline or non-baseline currency,
+ * new or existing, is a `replace_price`, because `unit_amount` is immutable
+ * once a Price exists. §6's own words: "No catalog edit this design can
+ * perform will reprice an existing subscriber." §7 explicitly removes the
+ * "this reprices existing subscribers" confirmation for exactly this reason
+ * — "a guard against an impossible action is noise that costs an operator's
+ * attention on every publish, and attention spent on a false warning is
+ * attention not spent on a real one." Restoring any version of that warning
+ * here would be reintroducing the false claim the spec's own experiments
+ * disproved — see {@link SUBSCRIBER_SAFETY_NOTE} for what replaced it.
  *
  * # No Subscription read, anywhere in this file
  *
- * `stripe-read.ts` declares one Price-listing method and nothing else — this
- * component states the repricing RULE (`publish-plan.ts`'s own taxonomy), it
- * never claims to know which or how many subscribers a change would affect.
- * Widening the read client to answer that question is explicitly out of
- * scope for this task.
+ * `stripe-read.ts` declares one Price-listing method and nothing else, and
+ * spec §6 says explicitly: "Do not widen it." There is nothing to warn about
+ * per-cell (see above), so this component never claims to know which or how
+ * many subscribers exist at all.
  */
 
 /** One currency's draft-vs-published value for a single lookup key. */
@@ -46,9 +59,10 @@ export interface DraftEditorCell {
   readonly draftUnitAmountMinor: number;
   /**
    * The value in the revision the draft was based on — `null` when this
-   * currency does not exist there at all, which is the ONE case
-   * `publish-plan.ts` can execute in place (`add_currency_option`, a
-   * `currency_options` MERGE). See {@link repricingNote}.
+   * currency does not exist there at all (a brand-new currency, or a
+   * brand-new price). Shown beside the draft value so an operator can see
+   * what they are changing FROM; carries no repricing implication — see
+   * this file's header on why that distinction was removed.
    */
   readonly publishedUnitAmountMinor: number | null;
   readonly taxBehavior: TaxBehavior;
@@ -111,36 +125,19 @@ function magnitudeWarning(published: number | null, draft: number): string | nul
 }
 
 /**
- * States the repricing RULE this specific cell would trigger if published as
- * it stands now — derived from `publish-plan.ts`'s operation taxonomy, not
- * from intuition (see that module's header, "corrected after three sandbox
- * experiments"):
- *
- *   - The row does not exist in Stripe at all yet (no cell in it has a
- *     published amount): publishing CREATES the Price. There is no existing
- *     subscriber to affect, so no repricing note applies.
- *   - This cell's currency already carries a published amount (baseline or
- *     not): Stripe refuses an in-place write to an existing `currency_options`
- *     amount ("attempting to update an immutable field") — publishing this
- *     edit is a `replace_price` (mint a new Price, archive the old one under
- *     its `lookup_key`). The safety property here is the counter-intuitive
- *     one: a replacement CANNOT touch a subscriber already on the old Price.
- *   - This cell's currency has no published amount YET, on a row that
- *     otherwise already exists: publishing is `add_currency_option`, the one
- *     in-place amount write `publish-plan.ts` found survives — Stripe MERGES
- *     `currency_options` on update. That merge reaches every subscriber
- *     already on this Price at their next renewal.
+ * The one thing an operator needs told about who a publish affects — spec
+ * §6's own closing statement, quoted rather than paraphrased so this stays
+ * traceable to the experiment-settled source: "a price change applies to
+ * new subscriptions only. Existing subscribers stay on the Price object
+ * they were created against until something migrates them deliberately,
+ * which is not in scope." A constant, not a per-cell function: §6 (`[V]`,
+ * settled by sandbox experiment, not inference) establishes this holds for
+ * EVERY amount change — there is no in-place path at all, so there is
+ * nothing left to branch on per cell. See this file's header for why a
+ * per-cell classification used to exist here, and why it was wrong.
  */
-function repricingNote(row: DraftEditorRow, cell: DraftEditorCell): string {
-  const rowExistsInStripe = row.amounts.some((a) => a.publishedUnitAmountMinor !== null);
-  if (!rowExistsInStripe) {
-    return "This price does not exist in Stripe yet — publishing creates it.";
-  }
-  if (cell.publishedUnitAmountMinor === null) {
-    return "This adds a new currency to an existing Price. Stripe merges currency_options in place, which reprices existing subscribers at their next renewal.";
-  }
-  return "An existing currency's amount is immutable in Stripe. Publishing this replaces the Price (mint new, archive old) — current subscribers stay on their existing Price and are not repriced by this change.";
-}
+const SUBSCRIBER_SAFETY_NOTE =
+  "This applies to new subscriptions only. Existing subscribers stay on the Price they were created against until something migrates them deliberately (out of scope here).";
 
 interface AmountCellProps {
   readonly revisionId: string;
@@ -203,7 +200,7 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
       />
       {error && <span role="alert">{error}</span>}
       {!error && warning && <span role="status">{warning}</span>}
-      {!error && <p>{repricingNote(row, cell)}</p>}
+      <p>{SUBSCRIBER_SAFETY_NOTE}</p>
       {saveMessage && <span role="alert">{saveMessage}</span>}
     </div>
   );

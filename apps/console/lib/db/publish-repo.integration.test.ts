@@ -48,7 +48,7 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { createDraftFrom, discardDraft, currentDraft, promotePublication } = await import("./publish-repo");
+const { createDraftFrom, discardDraft, currentDraft, promotePublication, setDraftAmount } = await import("./publish-repo");
 // `readLivePublication` lives in `plan-catalog-repo.ts`, not this module —
 // but it imports the SAME "./tesserix", which this file's `vi.mock` above
 // intercepts by resolved path, not by importer. Importing it here proves
@@ -327,6 +327,83 @@ describe("discardDraft", () => {
 
     // Refused, not partially applied — the revision and its rows survive.
     expect(await countPricesFor(published.revisionId)).toBe(42);
+  });
+});
+
+describe("setDraftAmount", () => {
+  it("updates an existing cell's amount, leaving its tax_behavior untouched", async () => {
+    const draft = await createDraftFrom("test", "operator@tesserix");
+
+    await setDraftAmount({
+      revisionId: draft,
+      source: SINGLE_SOURCE,
+      lookupKey: "mark8ly_pro_monthly_developed_v1",
+      currency: "usd",
+      unitAmountMinor: 12_345,
+    });
+
+    const { rows } = await db.query<{ unit_amount_minor: string | number; tax_behavior: string }>(
+      `SELECT a.unit_amount_minor, a.tax_behavior
+         FROM plan_catalog_amounts a
+         JOIN plan_catalog_prices p ON p.id = a.price_id
+        WHERE p.revision_id = $1 AND p.lookup_key = 'mark8ly_pro_monthly_developed_v1' AND a.currency = 'usd'`,
+      [draft],
+    );
+    expect(Number(rows[0].unit_amount_minor)).toBe(12_345);
+    // Untouched: 0032's seed sets this row's tax_behavior to 'unspecified'
+    // already, so this only proves the UPDATE branch didn't overwrite it
+    // with something else — a currency whose seed value differs would be a
+    // stronger assertion, but every developed row's usd cell is
+    // 'unspecified' per 0032's seed.
+    expect(rows[0].tax_behavior).toBe("unspecified");
+  });
+
+  it("inserts a new currency cell when the draft's row does not carry it yet — the add_currency_option case", async () => {
+    const draft = await createDraftFrom("test", "operator@tesserix");
+    // A `ppp` row is single-currency by the catalog's own convention (0032's
+    // seed) — `idr` is the only currency `mark8ly_pro_monthly_ppp_idr_v1`
+    // carries, so adding `usd` here is a genuinely new cell, not an edit.
+    const lookupKey = "mark8ly_pro_monthly_ppp_idr_v1";
+
+    await setDraftAmount({
+      revisionId: draft,
+      source: SINGLE_SOURCE,
+      lookupKey,
+      currency: "usd",
+      unitAmountMinor: 999,
+    });
+
+    const { rows } = await db.query<{ unit_amount_minor: string | number; tax_behavior: string }>(
+      `SELECT a.unit_amount_minor, a.tax_behavior
+         FROM plan_catalog_amounts a
+         JOIN plan_catalog_prices p ON p.id = a.price_id
+        WHERE p.revision_id = $1 AND p.lookup_key = $2 AND a.currency = 'usd'`,
+      [draft, lookupKey],
+    );
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0].unit_amount_minor)).toBe(999);
+    // 78 seeded amounts (0032) plus this one new cell — proves the INSERT
+    // added a row rather than replacing the `idr` cell this lookup key
+    // already had (an UPSERT keyed on the wrong column would still pass the
+    // single-row assertion above, but would leave the total at 78, not 79).
+    expect(await countAmountsFor(draft)).toBe(79);
+  });
+
+  it("refuses a lookup_key that is not a price in this draft revision, before writing anything", async () => {
+    const draft = await createDraftFrom("test", "operator@tesserix");
+
+    await expect(
+      setDraftAmount({
+        revisionId: draft,
+        source: SINGLE_SOURCE,
+        lookupKey: "not_a_real_lookup_key",
+        currency: "usd",
+        unitAmountMinor: 100,
+      }),
+    ).rejects.toThrow(/not a price in draft revision/);
+
+    // Refused, not partially applied.
+    expect(await countAmountsFor(draft)).toBe(78);
   });
 });
 
