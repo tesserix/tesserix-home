@@ -284,6 +284,99 @@ export async function currentDraft(): Promise<{ id: string; basedOn: string | nu
   });
 }
 
+/**
+ * Set one (lookup_key, currency) cell's amount within a draft revision —
+ * Task 3's write path (`setAmountAction`, `draft-editor.tsx`'s only caller),
+ * the first function in this module that is not part of the draft lifecycle
+ * or the publish log.
+ *
+ * # UPSERT, not UPDATE
+ *
+ * `createDraftFrom` copies every currency the ancestor published (0032's
+ * `plan_catalog_amounts`), so editing an amount an operator can already see
+ * hits the `DO UPDATE` branch. But that copy is not exhaustive forever — a
+ * `ppp` row is single-currency by the catalog's own convention, and an
+ * operator adding a currency that row does not carry yet is exactly the case
+ * `add_currency_option` exists for in `publish-plan.ts`. A bare `UPDATE`
+ * would silently affect zero rows for that case; `INSERT ... ON CONFLICT
+ * (price_id, currency) DO UPDATE` (0032's own unique constraint on that pair)
+ * handles both without the caller having to know which one it's in.
+ *
+ * # `tax_behavior` defaults to `unspecified` on INSERT only
+ *
+ * A cell that does not exist yet has no prior `tax_behavior` to preserve; a
+ * cell that already exists keeps whatever it had — the `DO UPDATE` clause
+ * below touches only `unit_amount_minor`. This function is the amount
+ * editor, not a tax_behavior editor; that stays untouched here.
+ *
+ * # Scoped by (revision, source, lookup_key), not by `plan_catalog_prices.id`
+ *
+ * The caller knows `revisionId`, `lookupKey`, `currency` — the same
+ * identifiers `readRevisionAmounts` reads by — not the internal price row
+ * id, so this resolves the price itself rather than asking the caller to
+ * look it up first. A `lookupKey` absent from this revision (a stale draft
+ * reference, a typo) is refused loudly, before any write: an INSERT against
+ * a price id that does not exist would otherwise violate the FK with a
+ * message that does not say which key was wrong.
+ */
+export async function setDraftAmount(input: {
+  revisionId: string;
+  source: string;
+  lookupKey: string;
+  currency: string;
+  unitAmountMinor: number;
+}): Promise<void> {
+  return tesserixTx(async (query) => {
+    // CRITICAL, review 2026-08-28: without this check, `revisionId` reaching
+    // here off a client-supplied action argument (`setAmountAction`) could
+    // rewrite the amounts of a currently PUBLISHED revision — the rows the
+    // parity comparator and every future plan diff read as the ANCESTOR.
+    // That is silent corruption of the record of what was actually
+    // published, not a mere UX gap. Same shape `discardDraft` above already
+    // uses for the identical hazard: check first, refuse loudly, name which
+    // mode it's published to — before any lookup or write, not caught after
+    // the fact by a constraint that does not exist (0032 adds none).
+    const publishedRows = await query<{ mode: string }>(
+      `SELECT pub.mode
+         FROM plan_catalog_publications pub
+        WHERE pub.revision_id = $1 AND pub.superseded_at IS NULL`,
+      [input.revisionId],
+    );
+    const published = publishedRows[0];
+    if (published) {
+      throw new Error(
+        `setDraftAmount: revision ${input.revisionId} is published to ${published.mode} and cannot be edited`,
+      );
+    }
+
+    const priceRows = await query<{ id: string }>(
+      `SELECT id
+         FROM plan_catalog_prices
+        WHERE revision_id = $1 AND source = $2 AND lookup_key = $3`,
+      [input.revisionId, input.source, input.lookupKey],
+    );
+    const price = priceRows[0];
+    if (!price) {
+      // Not "draft revision" — this function does not verify `revisionId`
+      // IS the one open draft (see `currentDraft`'s own doc comment on why
+      // "at most one draft" is enforced by discipline, not by the schema),
+      // only that it is not published. Claiming "draft" here would be
+      // claiming a check this function does not make.
+      throw new Error(
+        `setDraftAmount: "${input.lookupKey}" is not a price in revision ${input.revisionId}`,
+      );
+    }
+
+    await query(
+      `INSERT INTO plan_catalog_amounts (price_id, currency, unit_amount_minor, tax_behavior)
+       VALUES ($1, $2, $3, 'unspecified')
+       ON CONFLICT (price_id, currency)
+       DO UPDATE SET unit_amount_minor = EXCLUDED.unit_amount_minor, updated_at = now()`,
+      [price.id, input.currency, input.unitAmountMinor],
+    );
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Publish attempts and the operation log (Task 5, `0038_publish_operations.sql`)
 //
@@ -636,5 +729,194 @@ export async function operationsForAttempt(attemptId: string): Promise<PublishOp
       [attemptId],
     );
     return rows.map(mapOperationRow);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Promotion and orphan detection (Task 7, `0037`/`0038`'s remaining gap)
+//
+// `executePublish` (`publish-executor.ts`) never writes a
+// `plan_catalog_publications` row — see that module's header, "A SUCCESSFUL
+// PUBLISH IS NOT A PROMOTION" — so a green `executePublish` alone leaves the
+// catalog agreeing with Stripe while `readCatalogAmounts` and the nightly
+// parity check still read the OLD revision. `promotePublication` below is
+// the write that closes that gap; `archivedStripePriceIds` is what lets
+// `orphans.ts` find the half of a `replace_price` that never got its
+// matching archive.
+// ---------------------------------------------------------------------------
+
+/**
+ * Retire whatever is currently live for `mode` and promote `revisionId` in
+ * its place — the write `executePublish` deliberately does not make, and
+ * which its caller (not yet wired; a later task) MUST make in the same
+ * transaction-shaped step immediately after a `"succeeded"` outcome.
+ *
+ * # One transaction, retire-then-insert, exactly 0035's own prescription
+ *
+ * 0035's `plan_catalog_publications_one_live_per_mode` partial unique index
+ * comment says it plainly: "exactly one published" is a property of the
+ * publish TRANSACTION (retire then promote, under an advisory lock on the
+ * mode), not of the schema. This function IS that transaction — the index
+ * is the ceiling that catches a bug here, not the mechanism that prevents
+ * one.
+ *
+ * # The advisory lock: same shape as `createDraftFrom` and
+ * `startPublishAttempt`, a THIRD namespace
+ *
+ * `pg_advisory_xact_lock(2, hashtext($1))` — transaction-scoped, released
+ * automatically on COMMIT or ROLLBACK, no matching unlock to forget. Scoped
+ * PER MODE (folds in `mode`), like `startPublishAttempt`'s lock and unlike
+ * `createDraftFrom`'s single global one: `test` and `live` promote
+ * independently, and a promotion racing another mode's promotion is not the
+ * hazard this guards against.
+ *
+ * The first component is `2`, not `0` (`createDraftFrom`) or `1`
+ * (`startPublishAttempt`) — a deliberate, distinct namespace so this
+ * invariant's lock can never collide with either of the other two in
+ * `pg_locks`, despite all three being `pg_advisory_xact_lock` calls against
+ * the same database. Taken BEFORE the retire-then-insert below, for the
+ * identical reason `createDraftFrom` takes its lock before its
+ * check-then-insert: without it, two concurrent promotions to the same mode
+ * can both read "whatever is live" under READ COMMITTED and the second
+ * retires what the first just promoted a moment ago, silently discarding it.
+ *
+ * # A CEILING, never a floor — restated here on purpose, same as the other
+ * two lock-guarded functions in this file
+ *
+ * This function serialises ITSELF, for every mode, against every other call
+ * to it. It does not, and cannot, stop a `plan_catalog_publications` row
+ * from being written by some OTHER path that skips this function — there is
+ * no schema constraint backing that narrower claim, only this function's own
+ * discipline (0038 has none for its own two lock-guarded functions either,
+ * for the identical reason).
+ *
+ * # `revisionId` is trusted, not re-validated here
+ *
+ * Whether `revisionId` is the draft that was actually just published, still
+ * unpublished, and belongs to `mode`'s catalog is the CALLER's
+ * responsibility (the not-yet-wired step after `executePublish` succeeds) —
+ * this function's only job is the retire-then-promote write, atomically. A
+ * `revisionId` that does not exist fails the INSERT's FK, loudly, rather
+ * than silently promoting nothing.
+ */
+export async function promotePublication(
+  mode: StripeMode,
+  revisionId: string,
+  by: string,
+): Promise<string> {
+  return tesserixTx(async (query) => {
+    await query(`SELECT pg_advisory_xact_lock(2, hashtext($1))`, [mode]);
+
+    // Retire whatever is live for THIS mode. Scoped by `mode`, not a bare
+    // `superseded_at IS NULL` — the identical scoping `readLivePublication`
+    // (`plan-catalog-repo.ts`) uses, so the two can never disagree about
+    // which row "live" names.
+    await query(
+      `UPDATE plan_catalog_publications
+          SET superseded_at = now(), superseded_by = $2
+        WHERE mode = $1 AND superseded_at IS NULL`,
+      [mode, by],
+    );
+
+    const rows = await query<{ id: string }>(
+      `INSERT INTO plan_catalog_publications (mode, revision_id, published_by)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [mode, revisionId, by],
+    );
+    return rows[0].id;
+  });
+}
+
+/** One archived Stripe Price this catalog's publish log recorded, as
+ *  `findOrphans` (`orphans.ts`) needs it — never more than the log actually
+ *  knows, which is why `lookupKey` stays nullable: `archive_price`'s and
+ *  `replace_price`'s write-ahead rows both carry the OLD id's lookup key at
+ *  the time of archiving, but nothing in this table's schema (0038) demands
+ *  one, and a future `stripe_call = 'archive'` row that omits it must not
+ *  make this query throw. */
+export interface ArchivedStripePrice {
+  readonly stripePriceId: string;
+  readonly lookupKey: string | null;
+  readonly source: string;
+}
+
+/**
+ * Every Stripe Price id this catalog's publish log has ever recorded an
+ * archive call against, for `mode` — the read half of orphan detection.
+ *
+ * # Why this belongs here, not in `orphans.ts`
+ *
+ * This module already owns every read and write of
+ * `plan_catalog_publish_operations` / `plan_catalog_publish_attempts` (see
+ * this file's section header above `PublishAttemptOutcome`) — `orphans.ts`
+ * asking Stripe whether an id is still active is the only part of orphan
+ * detection that is NOT a query against this log, and keeping the query here
+ * matches every other function in this file.
+ *
+ * # DISTINCT, and why a price id can legitimately appear more than once
+ *
+ * `stripe_call = 'archive'` rows come from two `OperationKind`s —
+ * `archive_price` (the whole operation) and `replace_price` (the archive
+ * half, see `plan_catalog_publish_operations`'s comment on the column) — and
+ * a retried publish after a crash is a NEW attempt with its own operation
+ * rows (see `startPublishAttempt`'s doc comment: recovery is a new attempt,
+ * never a replay), so the same Stripe Price id can be the target of an
+ * `archive` `stripe_call` in more than one attempt's log. `DISTINCT` on the
+ * id, key and source is what keeps `findOrphans` from reporting the same
+ * orphan twice for that reason alone.
+ *
+ * # NO `status` FILTER — every archive `stripe_call` row is a candidate
+ *
+ * A `pending` or `failed` archive attempt is exactly the case orphan
+ * detection exists to catch — the id may still be `active` in Stripe
+ * precisely BECAUSE the archive call never landed, or landed and this log
+ * never learned the outcome. Filtering on `status = 'succeeded'` would make
+ * `findOrphans` blind to the crash-mid-`replace_price` case that is this
+ * whole feature's reason to exist (0038's header): the write-ahead row for
+ * an `archive` `stripe_call` already carries the OLD id at INSERT time
+ * (0038's comment on `stripe_price_id`, lines ~143-153), before Stripe is
+ * ever called, so `pending` rows are exactly as usable as `succeeded` ones
+ * for this query.
+ *
+ * This is safe to over-include: Stripe's own `active: true` filter in
+ * `stripePriceReader.listPrices` (`stripe-read.ts`) is the AUTHORITATIVE
+ * answer to "is this Price still active", and `findOrphans` only reports an
+ * id that appears in BOTH this query's result and that active list.
+ * `op.status` records whether OUR call landed, which is a different
+ * question from whether the Price is active in Stripe — if the archive did
+ * land (`status = 'succeeded'` or not), Stripe reports the Price inactive
+ * and it is simply absent from the active list, costing nothing.
+ *
+ * `source` scopes to `SINGLE_SOURCE` — see `defaultOrphanDetectorDeps` in
+ * `orphans.ts`, which is this function's only caller today — rather than
+ * being hardcoded here, matching every other query in this codebase that
+ * reads `plan_catalog_prices`-adjacent rows (`readCatalogAmounts`,
+ * `createDraftFrom`'s copy).
+ */
+export async function archivedStripePriceIds(
+  mode: StripeMode,
+  source: string,
+): Promise<ArchivedStripePrice[]> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      stripe_price_id: string;
+      lookup_key: string | null;
+      source: string;
+    }>(
+      `SELECT DISTINCT op.stripe_price_id, op.lookup_key, op.source
+         FROM plan_catalog_publish_operations op
+         JOIN plan_catalog_publish_attempts att ON att.id = op.attempt_id
+        WHERE att.mode = $1
+          AND op.source = $2
+          AND op.stripe_call = 'archive'
+          AND op.stripe_price_id IS NOT NULL`,
+      [mode, source],
+    );
+    return rows.map((row) => ({
+      stripePriceId: row.stripe_price_id,
+      lookupKey: row.lookup_key,
+      source: row.source,
+    }));
   });
 }

@@ -137,8 +137,13 @@ export type GuardVerdict =
  * live/test key mix-up on 2026-08-27 (spec §7); live's first publish will
  * also be the largest single action this tool ever takes, so it stays behind
  * a code change, not a checkbox, until live is deliberately turned on.
+ *
+ * Exported so a caller (`actions.ts`'s `observeAndPlan`) can check this rule
+ * BEFORE reading Stripe: the rule takes no observed data as input, so a mode
+ * it refuses stays refused no matter what `prices.list` returns, and there
+ * is no reason to spend that call finding that out.
  */
-function checkMode(mode: StripeMode): GuardBreach[] {
+export function checkMode(mode: StripeMode): GuardBreach[] {
   if (mode === "test") return [];
   return [
     {

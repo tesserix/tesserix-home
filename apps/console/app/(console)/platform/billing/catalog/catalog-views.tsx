@@ -19,6 +19,7 @@ import { formatMoney } from "@/lib/money";
 // arrives as plain props instead.
 import type {
   CatalogRow,
+  LivePublication,
   ModeLatestRun,
   ParityOutcome,
   ParityWindowDay,
@@ -532,6 +533,47 @@ export function formatRanAt(ranAt: string): string {
   return `${new Date(ranAt).toISOString().slice(0, 16).replace("T", " ")} UTC`;
 }
 
+/**
+ * Who published the currently-live revision, and when — task 2R, the fifth
+ * assertion Plan 3 Task 2 described but tesserix-home#387-#390 never shipped.
+ * Nothing else on this surface tells a second operator that a publish
+ * happened; once Task 3 and Task 4 land a write path, this line is the first
+ * thing anyone reads when a price looks wrong.
+ *
+ * A mode with no publication at all (`live` before 0037, and any future
+ * second source or mode before its first publish) renders a calm sentence
+ * saying so, never a blank line or a "published by —" that could be mistaken
+ * for missing data.
+ */
+function PublicationAttribution({
+  mode,
+  publication,
+  publicationState,
+}: {
+  mode: StripeMode;
+  publication: LivePublication | null;
+  publicationState: SurfaceState;
+}) {
+  if (publicationState.kind === "ready" && publication) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Published by{" "}
+        <span className="font-medium text-foreground">{publication.publishedBy}</span> at{" "}
+        {/* Same `formatRanAt` a run's timestamp already renders with — one
+            UTC format for the whole surface, not a second one invented for
+            this line. */}
+        {formatRanAt(publication.publishedAt)}
+      </p>
+    );
+  }
+  return (
+    <SurfaceStateView
+      state={publicationState}
+      emptyMessage={`${titleCase(mode)} has not been published yet.`}
+    />
+  );
+}
+
 const DIFFERENCE_KIND_LABEL: Record<DifferenceKind, string> = {
   price_missing_in_stripe: "Missing in Stripe",
   price_missing_in_catalog: "Missing in catalog",
@@ -753,6 +795,11 @@ export interface CatalogViewsProps {
   catalogState: SurfaceState;
   runs: readonly ModeLatestRun[];
   runsState: SurfaceState;
+  /** Who published the mode's currently-live revision, and when — `null`
+   *  for a mode that has never been published. A fourth, independently
+   *  resolved read; see `page.tsx`'s module doc comment. */
+  publication: LivePublication | null;
+  publicationState: SurfaceState;
 }
 
 export function CatalogViews({
@@ -764,6 +811,8 @@ export function CatalogViews({
   catalogState,
   runs,
   runsState,
+  publication,
+  publicationState,
 }: CatalogViewsProps) {
   // `null` until an operator picks one; the EFFECTIVE selection below always
   // resolves to a real source (or null only when the catalog itself has
@@ -803,6 +852,7 @@ export function CatalogViews({
             <ModeToggle mode={mode} />
           </div>
         </div>
+        <PublicationAttribution mode={mode} publication={publication} publicationState={publicationState} />
         {catalogState.kind === "ready" ? (
           <PlanCatalogTabs rows={filteredCatalog} />
         ) : (

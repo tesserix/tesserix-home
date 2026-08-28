@@ -116,6 +116,7 @@ describe("the capability set is a contract with Zitadel", () => {
       "execute-refund",
       "mass-send",
       "hard-delete",
+      "publish-catalog",
     ]);
   });
 
@@ -176,5 +177,20 @@ describe("the surface/verb split (#261)", () => {
     // `hard-delete`, and holding `hard-delete` must not confer `crm`.
     expect(hasCapability(["crm"], "hard-delete")).toBe(false);
     expect(hasCapability(["hard-delete"], "crm")).toBe(false);
+  });
+});
+
+describe("publish-catalog capability", () => {
+  it("treats publish-catalog as a risk verb, not a surface", () => {
+    // Surfaces say WHERE, verbs say WHAT. Holding `billing` shows subscription
+    // state; changing what mark8ly charges the world is a different question,
+    // and gating publish on `billing` alone would silently upgrade every
+    // existing billing grant without one of them being re-reviewed.
+    expect(RISK_CAPABILITIES).toContain("publish-catalog");
+  });
+
+  it("does not admit a publish on the billing surface alone", () => {
+    expect(hasCapability(["billing"], "publish-catalog")).toBe(false);
+    expect(hasCapability(["billing", "publish-catalog"], "publish-catalog")).toBe(true);
   });
 });

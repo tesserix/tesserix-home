@@ -302,7 +302,7 @@ export function planBootstrap(
   return { products: [...plans].sort(), prices };
 }
 
-/** `runBootstrap`'s only knob. */
+/** `runBootstrap`'s knobs. */
 export interface BootstrapOptions {
   /**
    * Proceed even though `mode` already holds `mark8ly_` Prices.
@@ -313,6 +313,20 @@ export interface BootstrapOptions {
    * convergence property makes safe.
    */
   readonly force?: boolean;
+
+  /**
+   * Do every read and the same plan computation a real run does, then return
+   * without calling `stripeCatalogWriter.createProduct` or `.createPrice` —
+   * see `scripts/catalog-bootstrap.ts`'s `--dry-run`.
+   *
+   * Also bypasses the populated-mode guard below, `force` or not: the
+   * question a dry run answers is "what would a (forced, if needed) run do
+   * against this mode right now", not "is this mode allowed to run for
+   * real". An operator rehearsing against the live mode before the first
+   * bootstrap (#396) should never have to pass `--force` just to see the
+   * report — that flag is for authorising a WRITE, and a dry run makes none.
+   */
+  readonly dryRun?: boolean;
 }
 
 /** What one `runBootstrap` call did, by kind — the whole deliverable an
@@ -393,7 +407,7 @@ export async function runBootstrap(
     (p) => p.lookup_key && p.lookup_key.startsWith(MARK8LY_LOOKUP_KEY_PREFIX),
   ).length;
 
-  if (existingCount > 0 && !opts.force) {
+  if (existingCount > 0 && !opts.force && !opts.dryRun) {
     throw new Error(
       `bootstrap: ${mode} mode already holds ${existingCount} mark8ly_ price(s); refusing to run without force`,
     );
@@ -403,6 +417,22 @@ export async function runBootstrap(
 
   const distinctCatalogKeys = new Set(catalog.map((row) => row.lookupKey)).size;
   const skipped = distinctCatalogKeys - plan.prices.length;
+
+  if (opts.dryRun) {
+    // The same found-or-create DECISION the real loop below makes, but only
+    // its read half (`findProductByPlan`, never `createProduct`) — so
+    // `productsCreated` here means what it means in a real `BootstrapResult`:
+    // products this run would actually mint, not merely plans the computed
+    // `plan` mentions. A plan name can already have a Product from a prior
+    // partial or forced run; reporting `plan.products.length` unconditionally
+    // would overstate a dry run against exactly that mode.
+    let productsToCreate = 0;
+    for (const planName of plan.products) {
+      const found = await stripeCatalogWriter.findProductByPlan(mode, planName);
+      if (!found) productsToCreate += 1;
+    }
+    return { productsCreated: productsToCreate, pricesCreated: plan.prices.length, skipped };
+  }
 
   const productIds = new Map<string, string>();
   let productsCreated = 0;

@@ -385,6 +385,11 @@ function renderViews(over: Partial<Parameters<typeof CatalogViews>[0]> = {}) {
       catalogState={resolveState({ isLoading: false, error: null, rows: [], filtered: false })}
       runs={noRuns}
       runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
+      // Defaults to "never published" — the normal state for `live` before
+      // #037, and for any mode/source a future task adds before its first
+      // publish.
+      publication={null}
+      publicationState={resolveState({ isLoading: false, error: null, rows: [], filtered: false })}
       {...over}
     />,
   );
@@ -510,5 +515,70 @@ describe("CatalogViews", () => {
   it("renders the empty catalog state distinctly from an error", () => {
     renderViews({ catalog: [], catalogState: resolveState({ isLoading: false, error: null, rows: [], filtered: false }) });
     expect(screen.queryByText(/went wrong/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Publication attribution — task 2R, the residual assertion Plan 3 Task 2
+ * left out. `readLivePublication` is a fourth, independent read
+ * (see `page.tsx`'s module doc comment), so its failure must not blank the
+ * catalog table or the observation window, and its "never published" answer
+ * must say so in words rather than rendering an empty attribution line.
+ */
+describe("publication attribution", () => {
+  it("shows who published the current revision and when", () => {
+    const publication = { id: "pub-1", revisionId: "rev-1", publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00Z" };
+    renderViews({
+      mode: "test",
+      publication,
+      publicationState: resolveState({ isLoading: false, error: null, rows: [publication], filtered: false }),
+    });
+    expect(screen.getByText(/mahesh/)).toBeInTheDocument();
+  });
+
+  it("renders the publication timestamp in UTC, unambiguously — same approach as `formatRanAt`", () => {
+    const publication = { id: "pub-1", revisionId: "rev-1", publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00.000Z" };
+    renderViews({
+      publication,
+      publicationState: resolveState({ isLoading: false, error: null, rows: [publication], filtered: false }),
+    });
+    // `formatRanAt`'s own format, reused rather than a second date formatter
+    // invented for this line.
+    expect(screen.getByText(/2026-08-27 10:00 UTC/)).toBeInTheDocument();
+  });
+
+  it("says a mode has never been published, rather than rendering a blank or misleading attribution", () => {
+    // `live` was unpublished until #0037, and a future second source or mode
+    // can be in that state again — this must read as a normal fact, not a
+    // failure and not silence.
+    renderViews({
+      mode: "live",
+      publication: null,
+      publicationState: resolveState({ isLoading: false, error: null, rows: [], filtered: false }),
+    });
+    expect(screen.getByText(/not.*published/i)).toBeInTheDocument();
+    expect(screen.queryByText(/published by/i)).not.toBeInTheDocument();
+  });
+
+  it("narrows a failed publication read independently — the catalog table and the observation window still render", () => {
+    const rows = [catalogRow()];
+    renderViews({
+      catalog: rows,
+      catalogState: resolveState({ isLoading: false, error: null, rows, filtered: false }),
+      publicationState: resolveState({
+        isLoading: false,
+        error: { message: "could not load who published this" },
+        rows: [],
+        filtered: false,
+      }),
+    });
+    // The catalog table rendered from its own, independently-resolved state.
+    expect(screen.getByRole("tab", { name: "Pro" })).toBeInTheDocument();
+    // The observation window rendered from its own, independently-resolved
+    // state — untouched by the publication read failing.
+    expect(screen.getByText(/#327's gate is satisfied/)).toBeInTheDocument();
+    // The publication failure is visible, on its own, rather than silently
+    // dropped.
+    expect(screen.getByText("could not load who published this")).toBeInTheDocument();
   });
 });

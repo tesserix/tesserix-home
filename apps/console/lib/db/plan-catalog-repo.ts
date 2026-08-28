@@ -199,27 +199,60 @@ export async function readCatalogRows(
 interface PublicationRow {
   id: string;
   revision_id: string;
+  published_by: string;
+  /** `pg`/pglite hand a `timestamptz` back as a `Date`, not a string — see
+   *  {@link readLatestRuns}'s identical comment on `ran_at`. */
+  published_at: string | Date;
+}
+
+/** What {@link readLivePublication} resolves to for a published mode. Named
+ *  for the console surface that consumes it, not for the table —
+ *  `catalog-views.tsx` imports this as a type only (see that file's own
+ *  comment on why every import from this module there is `import type`). */
+export interface LivePublication {
+  readonly id: string;
+  readonly revisionId: string;
+  readonly publishedBy: string;
+  /** ISO 8601, UTC. */
+  readonly publishedAt: string;
 }
 
 /**
- * The publication currently live for `mode` — `null` if the mode has never
- * been published.
+ * The publication currently live for `mode`, and who published it and when —
+ * `null` if the mode has never been published. 0035's
+ * `plan_catalog_publications` has carried `published_by`/`published_at`
+ * since the baseline row `0035` itself inserted (`migration:0035` for
+ * `test`, `migration:0037` for `live`); the console's catalog surface
+ * (task 2R) is the first reader of either column.
+ *
+ * ONE query, ONE row, not a second read alongside this one for the extra
+ * columns: `id`/`revisionId` and `publishedBy`/`publishedAt` describe the
+ * SAME row, so a second function sharing this one's `WHERE` could disagree
+ * with it only by drifting out of sync with a comment — an invariant a
+ * second query cannot actually enforce. Widening this function's return is
+ * what keeps that impossible instead of merely documented.
  *
  * Same `WHERE` as {@link readCatalogAmounts}, because the two answer related
- * questions ("what does this mode read as?" and "which publication is
- * that?") and must never be able to disagree about which row is current.
+ * but DIFFERENT questions ("what does this mode read as?" and "which
+ * publication is that?") and must never be able to disagree about which row
+ * is current.
  */
-export async function readLivePublication(
-  mode: StripeMode,
-): Promise<{ id: string; revisionId: string } | null> {
+export async function readLivePublication(mode: StripeMode): Promise<LivePublication | null> {
   const rows = await tesserixQuery<PublicationRow>(
-    `SELECT pub.id, pub.revision_id
+    `SELECT pub.id, pub.revision_id, pub.published_by, pub.published_at
        FROM plan_catalog_publications pub
       WHERE pub.mode = $1 AND pub.superseded_at IS NULL`,
     [mode],
   );
   if (rows.length === 0) return null;
-  return { id: rows[0].id, revisionId: rows[0].revision_id };
+  return {
+    id: rows[0].id,
+    revisionId: rows[0].revision_id,
+    publishedBy: rows[0].published_by,
+    // Same normalisation as `toLatestParityRun`'s `ranAt`: accepts either a
+    // driver-parsed `Date` or a plain string.
+    publishedAt: new Date(rows[0].published_at).toISOString(),
+  };
 }
 
 /**
@@ -572,4 +605,37 @@ export async function readRevisionAmounts(
     [revisionId, source],
   );
   return rows.map(toCatalogAmount);
+}
+
+/**
+ * `readRevisionRows` is to `readRevisionAmounts` what `readCatalogRows`
+ * (above) is to `readCatalogAmounts`: the same `revision_id`-scoped `WHERE`
+ * as {@link readRevisionAmounts}, widened with `plan`/`period`/`tier`/
+ * `source` — the descriptor columns a human editing the draft needs and the
+ * publish plan builder (the narrow function's one caller) has no use for.
+ * Added for task 9 (`tesserix-home#396`): `draft-editor.tsx`'s
+ * `DraftEditorRow` needs plan/period/tier grouping for a DRAFT revision the
+ * same way `catalog-views.tsx`'s `organizeCatalogByPlan` needs it for a
+ * PUBLISHED one, and the published-only `readCatalogRows` cannot answer that
+ * — a draft's `revision_id` is never the one `plan_catalog_publications`
+ * currently names, by definition, until it is published.
+ *
+ * Same "empty is not an error" and "source is required, no default"
+ * discipline as {@link readRevisionAmounts} — see that function's doc
+ * comment for why both hold here unchanged.
+ */
+export async function readRevisionRows(
+  revisionId: string,
+  source: CatalogSource,
+): Promise<CatalogRow[]> {
+  const rows = await tesserixQuery<CatalogRowRaw>(
+    `SELECT p.lookup_key, p.plan, p.period, p.tier, p.source,
+            a.currency, a.unit_amount_minor, a.tax_behavior
+       FROM plan_catalog_prices  p
+       JOIN plan_catalog_amounts a ON a.price_id = p.id
+      WHERE p.revision_id = $1 AND p.source = $2
+      ORDER BY p.lookup_key, a.currency`,
+    [revisionId, source],
+  );
+  return rows.map(toCatalogRow);
 }

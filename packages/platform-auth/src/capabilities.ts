@@ -100,6 +100,20 @@ export const CAPABILITIES = [
   "mass-send",
   /** Hard delete: leads, users, tenant archival. */
   "hard-delete",
+  /**
+   * Publish the plan catalog to Stripe — create, replace or archive Prices.
+   *
+   * NOT `rotate-credentials`, which already covers "payment-gateway keys,
+   * Stripe settings": holding a credential verb should not imply the ability
+   * to change what customers are charged. Different blast radius, different
+   * grant.
+   *
+   * DEPLOY PRECONDITION: these strings are a contract with Zitadel. The role
+   * must exist on the Platform Console project AND be assigned before this
+   * ships, or publishing is dead for every operator — including whoever
+   * deployed it — with a CapabilityError that names no cause.
+   */
+  "publish-catalog",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -136,6 +150,7 @@ export const RISK_CAPABILITIES = [
   "execute-refund",
   "mass-send",
   "hard-delete",
+  "publish-catalog",
 ] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {

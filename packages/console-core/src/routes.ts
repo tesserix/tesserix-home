@@ -225,15 +225,15 @@ export const ROUTES = {
   //
   // CAPABILITY: left at the `read` default, deliberately.
   //
-  // Not because lookup is trivial, but because none of the seven capabilities
-  // describes it, and CAPABILITIES is a closed contract with Zitadel — adding
-  // an eighth is a role change on the `Platform Console` project, not an edit
-  // here. Of the six above `read`, every one names a MUTATION: respond,
-  // rotate-credentials, adjust-balance, execute-refund, mass-send,
-  // hard-delete. Borrowing one to mean "may look people up" would be a lie
-  // twice over — it would hide the lookup from support operators who should
-  // have it, and it would imply the surface can do the thing the capability
-  // actually names.
+  // Not because lookup is trivial, but because none of the twelve
+  // capabilities describes it, and CAPABILITIES is a closed contract with
+  // Zitadel — adding a thirteenth is a role change on the `Platform Console`
+  // project, not an edit here. Of the seven risk verbs, every one names a
+  // MUTATION: respond, rotate-credentials, adjust-balance, execute-refund,
+  // mass-send, hard-delete, publish-catalog. Borrowing one to mean "may look
+  // people up" would be a lie twice over — it would hide the lookup from
+  // support operators who should have it, and it would imply the surface can
+  // do the thing the capability actually names.
   //
   // The tempting one is `hard-delete`, because it is the other people-shaped
   // surface (`platform.gdprQueue`). It is wrong: erasure and lookup are not

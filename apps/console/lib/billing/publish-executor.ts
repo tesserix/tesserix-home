@@ -576,8 +576,17 @@ async function runOperation(
  * `observe` may return every active Price in a shared Stripe account; only
  * this source's own rows should ever reach `buildPublishPlan` or its
  * fingerprint.
+ *
+ * EXPORTED (2026-08-28, the task that gave this module its first caller):
+ * `startPublishAttempt` needs a plan's `fingerprint` BEFORE `executePublish`
+ * can be called with the attempt it opens, so the action in
+ * `app/(console)/platform/billing/catalog/actions.ts` builds a plan of its
+ * own — and a plan built from a DIFFERENTLY scoped observation has a
+ * different fingerprint, which this function's own caller below would then
+ * read as "the world moved" and abort on, every single time. There is
+ * exactly one correct scoping, so there is exactly one copy of it.
  */
-function scopeObserved(observed: readonly StripePriceLike[], prefix: string): StripePriceLike[] {
+export function scopeObserved(observed: readonly StripePriceLike[], prefix: string): StripePriceLike[] {
   return observed.filter((price) => (price.lookup_key ?? "").startsWith(prefix));
 }
 
