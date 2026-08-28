@@ -8,7 +8,7 @@ import "server-only";
 
 import { archivedStripePriceIds, type ArchivedStripePrice } from "@/lib/db/publish-repo";
 import type { StripePriceLike } from "./parity";
-import { SINGLE_SOURCE } from "./source-policy";
+import { SINGLE_SOURCE, type CatalogSource } from "./source-policy";
 import { stripePriceReader, type StripeMode } from "./stripe-read";
 
 /**
@@ -46,7 +46,7 @@ import { stripePriceReader, type StripeMode } from "./stripe-read";
 export interface Orphan {
   readonly priceId: string;
   readonly lookupKey: string | null;
-  readonly source: string;
+  readonly source: CatalogSource;
 }
 
 /**

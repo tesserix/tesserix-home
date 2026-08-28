@@ -389,6 +389,23 @@ const UNOBSERVED_COUNTS: PublishPlanCounts = {
 };
 
 /**
+ * The refused-mode path's plan, minus the one field it cannot honestly have.
+ *
+ * `PublishPlan.fingerprint` is a hash OVER AN OBSERVATION (its own doc
+ * comment: "a SHA-256 over ... the OBSERVED input") — the refused-mode path
+ * below never makes that observation, on purpose (see `observeAndPlan`'s
+ * comment on why). #411's minor 3: that path used to return `fingerprint:
+ * ""`, which type-checks as a normal (if empty) hash and reads as a
+ * plausible value rather than an absent one — the identical trap
+ * `baselineCurrency` avoided by going nullable rather than a guessed string
+ * (#396). `Omit` here does the same job more strongly: a future caller
+ * cannot even WRITE `plan.fingerprint` on this branch, let alone read a
+ * wrong one — a compile error instead of a silently-empty hash reaching
+ * `startPublishAttempt`.
+ */
+type UnobservedPlan = Omit<PublishPlan, "fingerprint">;
+
+/**
  * Observe, plan, and judge — the three steps both publish actions need.
  *
  * This is NOT a second copy of `executePublish`'s safety logic. The executor
@@ -400,8 +417,23 @@ const UNOBSERVED_COUNTS: PublishPlanCounts = {
  * rather than reimplemented for exactly that reason — see its doc comment: a
  * differently-scoped observation produces a different fingerprint, which the
  * executor would then read as "the world moved" and abort on, every time.
+ *
+ * # The return type is a discriminated union on `modeRefused`, not `PublishPlan`
+ *
+ * `verdict.refused` alone cannot be the discriminant: `checkGuards` below
+ * can ALSO return a `refused` verdict for a fully-observed mode (a currency
+ * coverage breach), and that plan carries a REAL fingerprint. Only the
+ * early-return path here — mode refused before any observation is made —
+ * produces a plan with no fingerprint at all, so `modeRefused` names that
+ * specific branch, and only that branch's `plan` is typed `UnobservedPlan`.
  */
-async function observeAndPlan(mode: StripeMode, revisionId: string) {
+async function observeAndPlan(
+  mode: StripeMode,
+  revisionId: string,
+): Promise<
+  | { readonly modeRefused: true; readonly plan: UnobservedPlan; readonly verdict: GuardVerdict }
+  | { readonly modeRefused: false; readonly plan: PublishPlan; readonly verdict: GuardVerdict }
+> {
   const policy = policyFor(SINGLE_SOURCE);
 
   // `checkMode` takes no observed data as input, so a mode it refuses stays
@@ -411,19 +443,17 @@ async function observeAndPlan(mode: StripeMode, revisionId: string) {
   // reached from the mounted surface via `AuthoringPanel`'s `PublishSection`
   // effect (which fires on every render of an open draft) and from
   // `publishAction`, so avoiding it here is the fix for both. `operations`
-  // and `fingerprint` stay empty/inert here — neither caller reaches
-  // `plan.fingerprint` (only used past the "refused" check, which throws
-  // first in `publishAction`) or renders `plan.operations` once `verdict`
-  // carries a `refused` reason.
+  // stays empty here — neither caller renders `plan.operations` once
+  // `verdict` carries a `refused` reason, and `fingerprint` does not exist
+  // on this branch's plan at all (see `UnobservedPlan`).
   const modeRefusal = checkMode(mode);
   if (modeRefusal.length > 0) {
-    const plan: PublishPlan = {
+    const plan: UnobservedPlan = {
       operations: [],
-      fingerprint: "",
       counts: UNOBSERVED_COUNTS,
       unactionable: [],
     };
-    return { plan, verdict: { ok: false as const, refused: modeRefusal } };
+    return { modeRefused: true, plan, verdict: { ok: false as const, refused: modeRefusal } };
   }
 
   const [ancestor, draft, observedRaw] = await Promise.all([
@@ -436,7 +466,7 @@ async function observeAndPlan(mode: StripeMode, revisionId: string) {
     draft,
     observed: scopeObserved(observedRaw, policy.lookupKeyPrefix),
   });
-  return { plan, verdict: checkGuards(plan, ancestor, mode) };
+  return { modeRefused: false, plan, verdict: checkGuards(plan, ancestor, mode) };
 }
 
 /**
@@ -534,14 +564,18 @@ export async function publishAction(
   const result = await withPublishWrite(
     `${mode} (${revisionId})`,
     async (actor) => {
-      const { plan, verdict } = await observeAndPlan(mode, revisionId);
+      const result = await observeAndPlan(mode, revisionId);
+      const { verdict } = result;
 
       if (!verdict.ok && "refused" in verdict) {
         // Guard messages are written to be shown verbatim — see
         // `GuardBreach.message`'s own doc comment. This is the surface's
         // early, legible refusal; `executePublish` refuses the identical
         // verdict again on its own, and would abort the attempt even if this
-        // check were deleted.
+        // check were deleted. Covers `observeAndPlan`'s mode-refused branch
+        // too — `checkMode`'s refusal is always surfaced as this same
+        // `refused` verdict shape — so nothing below this throw ever runs
+        // for a refused mode.
         throw new PublishRefused(
           `Publishing is refused: ${verdict.refused.map((breach) => breach.message).join(" ")}`,
         );
@@ -572,6 +606,25 @@ export async function publishAction(
           );
         }
       }
+
+      // Unreachable in practice — the `refused` throw above already covers
+      // `observeAndPlan`'s mode-refused branch, since `checkMode`'s refusal
+      // always surfaces as that same verdict shape. This check exists so
+      // TypeScript narrows `result.plan` to a real `PublishPlan` here: with
+      // `modeRefused` still `true`, `result.plan` is the `UnobservedPlan`
+      // that has no `fingerprint` field to read at all (#411's minor 3) —
+      // the compiler, not this comment, is what stops a future edit from
+      // reordering these checks and reaching a plan with no fingerprint.
+      if (result.modeRefused) {
+        // NOT the same string `checkMode` produces — that one names the mode
+        // ("Publishing to Stripe mode \"live\" is refused in v1 …") and this
+        // one cannot, because the guard verdict it would quote is exactly what
+        // is missing on this branch. Equivalent in effect, deliberately
+        // different in wording; reached only if the `refused` branch above is
+        // ever changed to stop covering `checkMode`'s refusal.
+        throw new PublishRefused("Publishing is refused: this mode is not enabled.");
+      }
+      const { plan } = result;
 
       const attemptId = await startPublishAttempt({
         revisionId,
