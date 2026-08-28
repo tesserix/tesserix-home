@@ -4,6 +4,7 @@
 // rather than `Can't resolve 'net'` from inside the driver.
 import "server-only";
 
+import type { OperationKind } from "@/lib/billing/publish-plan";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import { tesserixTx } from "./tesserix";
 
@@ -280,5 +281,293 @@ export async function currentDraft(): Promise<{ id: string; basedOn: string | nu
     const row = rows[0];
     if (!row) return null;
     return { id: row.id, basedOn: row.based_on_revision_id };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Publish attempts and the operation log (Task 5, `0038_publish_operations.sql`)
+//
+// Everything below writes and reads `plan_catalog_publish_attempts` /
+// `plan_catalog_publish_operations`. Task 6's executor is the only intended
+// caller: it starts an attempt, writes an operation row BEFORE every Stripe
+// call (write-ahead — see 0038's header), and completes that row once Stripe
+// answers. Nothing here talks to Stripe or knows what a `PublishOperation`
+// MEANS beyond its `kind` — this module stores the log, it does not execute
+// the plan.
+// ---------------------------------------------------------------------------
+
+export type PublishAttemptOutcome = "succeeded" | "failed" | "aborted";
+
+export interface PublishAttempt {
+  readonly id: string;
+  readonly revisionId: string;
+  readonly mode: StripeMode;
+  readonly fingerprint: string;
+  readonly startedBy: string;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly outcome: PublishAttemptOutcome | null;
+}
+
+function mapAttemptRow(row: {
+  id: string;
+  revision_id: string;
+  mode: string;
+  fingerprint: string;
+  started_by: string;
+  started_at: string;
+  finished_at: string | null;
+  outcome: string | null;
+}): PublishAttempt {
+  return {
+    id: row.id,
+    revisionId: row.revision_id,
+    mode: row.mode as StripeMode,
+    fingerprint: row.fingerprint,
+    startedBy: row.started_by,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    outcome: row.outcome as PublishAttemptOutcome | null,
+  };
+}
+
+/**
+ * Open a new publish attempt. One row, written once — `finishPublishAttempt`
+ * below is the only function that ever updates it again.
+ *
+ * `fingerprint` is the plan's own fingerprint (`PublishPlan.fingerprint`,
+ * `publish-plan.ts`), recorded so the executor's re-observe-and-compare step
+ * (Task 6) has something durable to compare against even if the process that
+ * started the attempt is not the one that resumes it.
+ */
+export async function startPublishAttempt(params: {
+  revisionId: string;
+  mode: StripeMode;
+  fingerprint: string;
+  startedBy: string;
+}): Promise<string> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{ id: string }>(
+      `INSERT INTO plan_catalog_publish_attempts (revision_id, mode, fingerprint, started_by)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [params.revisionId, params.mode, params.fingerprint, params.startedBy],
+    );
+    return rows[0].id;
+  });
+}
+
+/**
+ * Close an attempt with its terminal outcome.
+ *
+ * `outcome` and `finished_at` are set together, in the one UPDATE — 0038's
+ * `plan_catalog_publish_attempts_status_is_coherent` CHECK is what makes a
+ * partial version of this (outcome without finish time, or the reverse)
+ * impossible to write, not just something this function is careful about.
+ */
+export async function finishPublishAttempt(
+  attemptId: string,
+  outcome: PublishAttemptOutcome,
+): Promise<void> {
+  await tesserixTx(async (query) => {
+    await query(
+      `UPDATE plan_catalog_publish_attempts
+          SET outcome = $2, finished_at = now()
+        WHERE id = $1`,
+      [attemptId, outcome],
+    );
+  });
+}
+
+/** The one attempt this id names, or `null` if it does not (or no longer)
+ *  exist. */
+export async function publishAttemptById(attemptId: string): Promise<PublishAttempt | null> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      id: string;
+      revision_id: string;
+      mode: string;
+      fingerprint: string;
+      started_by: string;
+      started_at: string;
+      finished_at: string | null;
+      outcome: string | null;
+    }>(
+      `SELECT id, revision_id, mode, fingerprint, started_by, started_at, finished_at, outcome
+         FROM plan_catalog_publish_attempts
+        WHERE id = $1`,
+      [attemptId],
+    );
+    const row = rows[0];
+    return row ? mapAttemptRow(row) : null;
+  });
+}
+
+export type StripeCall = "create" | "update" | "archive";
+export type OperationStatus = "pending" | "succeeded" | "failed";
+
+export interface PublishOperationRow {
+  readonly id: string;
+  readonly attemptId: string;
+  readonly sequence: number;
+  readonly kind: OperationKind;
+  readonly stripeCall: StripeCall;
+  readonly source: string;
+  readonly lookupKey: string | null;
+  readonly currency: string | null;
+  readonly stripePriceId: string | null;
+  readonly idempotencyKey: string;
+  readonly status: OperationStatus;
+  readonly error: string | null;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+}
+
+function mapOperationRow(row: {
+  id: string;
+  attempt_id: string;
+  sequence: number;
+  kind: string;
+  stripe_call: string;
+  source: string;
+  lookup_key: string | null;
+  currency: string | null;
+  stripe_price_id: string | null;
+  idempotency_key: string;
+  status: string;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}): PublishOperationRow {
+  return {
+    id: row.id,
+    attemptId: row.attempt_id,
+    sequence: row.sequence,
+    kind: row.kind as OperationKind,
+    stripeCall: row.stripe_call as StripeCall,
+    source: row.source,
+    lookupKey: row.lookup_key,
+    currency: row.currency,
+    stripePriceId: row.stripe_price_id,
+    idempotencyKey: row.idempotency_key,
+    status: row.status as OperationStatus,
+    error: row.error,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+  };
+}
+
+/**
+ * Write-ahead: record an operation as `pending` BEFORE the executor makes
+ * the matching Stripe call. This is the insert 0038's header calls the whole
+ * reason the log exists — a crash between this returning and the Stripe call
+ * happening leaves exactly this row, `pending`, telling a resumed publish
+ * "this may have happened" instead of leaving no trace at all.
+ *
+ * `stripePriceId` here is the operation's KNOWN id at write-ahead time —
+ * populated for a `replace_price` archive call (the OLD id, captured before
+ * its create per 0038's comment on the column), `null` for a create call
+ * whose Stripe id does not exist yet and will only be known after the call
+ * (see `completeOperation`).
+ */
+export async function recordOperation(input: {
+  attemptId: string;
+  sequence: number;
+  kind: OperationKind;
+  stripeCall: StripeCall;
+  source: string;
+  lookupKey?: string | null;
+  currency?: string | null;
+  stripePriceId?: string | null;
+  idempotencyKey: string;
+}): Promise<string> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{ id: string }>(
+      `INSERT INTO plan_catalog_publish_operations
+         (attempt_id, sequence, kind, stripe_call, source, lookup_key, currency, stripe_price_id, idempotency_key, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')
+       RETURNING id`,
+      [
+        input.attemptId,
+        input.sequence,
+        input.kind,
+        input.stripeCall,
+        input.source,
+        input.lookupKey ?? null,
+        input.currency ?? null,
+        input.stripePriceId ?? null,
+        input.idempotencyKey,
+      ],
+    );
+    return rows[0].id;
+  });
+}
+
+/**
+ * A completion the schema's coherence CHECK admits: `succeeded` may learn a
+ * Stripe id it did not have at write-ahead time (a `create` call's newly
+ * minted price), `failed` must carry the reason. There is no third variant —
+ * an operation this function has not been called for stays `pending`, which
+ * is the resumable state Task 6's executor reasons about.
+ */
+export type OperationCompletion =
+  | { readonly status: "succeeded"; readonly stripePriceId?: string | null }
+  | { readonly status: "failed"; readonly error: string };
+
+export async function completeOperation(
+  operationId: string,
+  completion: OperationCompletion,
+): Promise<void> {
+  await tesserixTx(async (query) => {
+    if (completion.status === "succeeded") {
+      await query(
+        `UPDATE plan_catalog_publish_operations
+            SET status = 'succeeded',
+                finished_at = now(),
+                stripe_price_id = COALESCE($2, stripe_price_id)
+          WHERE id = $1`,
+        [operationId, completion.stripePriceId ?? null],
+      );
+    } else {
+      await query(
+        `UPDATE plan_catalog_publish_operations
+            SET status = 'failed', finished_at = now(), error = $2
+          WHERE id = $1`,
+        [operationId, completion.error],
+      );
+    }
+  });
+}
+
+/** Every operation this attempt has recorded, in execution order — the
+ *  order `PublishPlan.operations` was built in (`create_product` first, then
+ *  `lookup_key` order), reproduced here via `sequence` rather than insertion
+ *  time, since a caller may retry composing a plan out of order. */
+export async function operationsForAttempt(attemptId: string): Promise<PublishOperationRow[]> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      id: string;
+      attempt_id: string;
+      sequence: number;
+      kind: string;
+      stripe_call: string;
+      source: string;
+      lookup_key: string | null;
+      currency: string | null;
+      stripe_price_id: string | null;
+      idempotency_key: string;
+      status: string;
+      error: string | null;
+      started_at: string;
+      finished_at: string | null;
+    }>(
+      `SELECT id, attempt_id, sequence, kind, stripe_call, source, lookup_key, currency,
+              stripe_price_id, idempotency_key, status, error, started_at, finished_at
+         FROM plan_catalog_publish_operations
+        WHERE attempt_id = $1
+        ORDER BY sequence`,
+      [attemptId],
+    );
+    return rows.map(mapOperationRow);
   });
 }
