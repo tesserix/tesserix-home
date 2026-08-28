@@ -162,6 +162,26 @@ export type InboxSearchParams = Record<string, string | string[] | undefined>;
  * or last value: the endpoint takes one value per key, so guessing which one
  * was meant would silently filter on a param the URL did not clearly state.
  */
+/**
+ * The header's description, which must not claim a scope the page is not showing.
+ *
+ * Unfiltered, this queue genuinely is estate-wide and says so. Filtered, it is
+ * one product's rows — and the estate-wide sentence would then be false on a
+ * surface whose whole load-bearing property is that what it shows can be
+ * trusted (see `INBOX_EMPTY_MESSAGE`: an operator reading a short queue
+ * concludes the work is nearly done). Narrower-than-claimed is the gentler
+ * direction of that error, but it is still the surface asserting something the
+ * page does not do.
+ *
+ * The source is echoed verbatim because it is the operator's own URL value, and
+ * an unknown one never reaches here — `fetchEstateInbox` fails on the API's 400
+ * before this renders.
+ */
+export function describeScope(source: string | undefined): string {
+  if (source === undefined) return "Everything waiting on a human, across every product.";
+  return `Everything waiting on a human, from ${source} only.`;
+}
+
 export function readSource(searchParams: InboxSearchParams): string | undefined {
   const raw = searchParams.source;
   if (typeof raw !== "string") return undefined;
@@ -212,10 +232,7 @@ export default async function EstateInboxPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <ConsolePageHeader
-        title="Inbox"
-        description="Everything waiting on a human, across every product."
-      />
+      <ConsolePageHeader title="Inbox" description={describeScope(source)} />
 
       <InboxQueue
         inbox={inbox}

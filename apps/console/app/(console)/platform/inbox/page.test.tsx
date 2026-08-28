@@ -18,6 +18,7 @@ import EstateInboxPage, {
   emptyMessageFor,
   inboxReadError,
   queueState,
+  describeScope,
   readSource,
 } from "./page";
 import { InboxQueue, kindLabel, severityTone, waitedFor } from "./inbox-queue";
@@ -203,6 +204,24 @@ describe("InboxQueue", () => {
     );
     expect(screen.getByText(/1 waiting\./)).toBeInTheDocument();
     expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+});
+
+describe("describeScope", () => {
+  it("claims the whole estate only when nothing is filtered", () => {
+    expect(describeScope(undefined)).toBe(
+      "Everything waiting on a human, across every product.",
+    );
+  });
+
+  it("does not claim every product when one is filtered", () => {
+    // The defect this guards: the header asserted estate-wide scope while the
+    // queue below it showed one product's rows. Narrower-than-claimed is the
+    // gentler direction of that error, but this surface's whole property is
+    // that what it shows can be trusted.
+    const filtered = describeScope("kora");
+    expect(filtered).not.toMatch(/every product/);
+    expect(filtered).toContain("kora");
   });
 });
 
