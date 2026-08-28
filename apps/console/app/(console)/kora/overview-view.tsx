@@ -1,9 +1,15 @@
-// See page-header.tsx: `StatTile` and `SurfaceStateView` are themselves
-// re-exports of `@tesserix/web` client components, so a server component may
-// compose them as JSX without this directive — but this component also
-// decides `reauthRequired` from four independent states, which is exactly
-// the kind of composition the food index and support-analytics panel keep
-// in a client half. Consistent with `food-index.tsx`'s own directive.
+// `StatTile` and `SurfaceStateView` are NOT re-exports of `@tesserix/web` —
+// each is its own `"use client"` component that imports from that barrel
+// (see `stat-tile.tsx:1-4`, which explains why its own directive is
+// load-bearing: the barrel is `"use client"`, so its exports read as
+// `undefined` inside a server component). Because they carry the directive
+// themselves, a server component could compose them as JSX without this
+// file having one.
+//
+// This file has one anyway, deliberately: it decides `reauthRequired` from
+// four independent states, which is exactly the composition the food index
+// and the support-analytics panel keep in a client half. Consistent with
+// `food-index.tsx`'s own directive.
 "use client";
 
 import { StatTile } from "@/components/kit/stat-tile";
