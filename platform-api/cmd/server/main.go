@@ -27,6 +27,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/koraaimetrics"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
@@ -227,6 +228,19 @@ func run(log *slog.Logger) error {
 			// no metrics answers 501 rather than not mounting the route, and
 			// carrying that 501 to the console is the module's whole purpose.
 			Slugs:    cfg.Federation.Slugs(),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "koraaimetrics", func(m *http.ServeMux) {
+		// No Slugs: this is the one named federated route that is
+		// deliberately Kora-specific rather than filtered by a declaration —
+		// see the package doc on koraaimetrics for why (tesserix-home#403).
+		// If FEDERATION_PRODUCTS omits kora, service.Read reports that as
+		// ErrNotConfigured rather than the route not existing at all.
+		koraaimetrics.Register(m, koraaimetrics.Config{
+			Fed:      fed,
 			Verifier: verifier,
 			Log:      log,
 		})
