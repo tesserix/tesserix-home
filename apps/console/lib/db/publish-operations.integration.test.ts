@@ -3,6 +3,8 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { CatalogSource } from "@/lib/billing/source-policy";
+
 /**
  * Integration coverage for `0038_publish_operations.sql` and the repo
  * functions built on top of it (`publish-repo.ts`) — the same pglite
@@ -154,14 +156,19 @@ const insertArchiveRow = async (params: {
   source?: string;
   lookupKey?: string | null;
   idempotencyKey: string;
+  // Only set by the "two lookup keys, one price id" test below, which needs
+  // a deterministic `started_at` ORDER BY to prove WHICH row `DISTINCT ON`
+  // picks — `now()`'s default has no such guarantee across two inserts a
+  // fraction of a millisecond apart.
+  startedAt?: string;
 }): Promise<void> => {
   const status = params.status ?? "succeeded";
   const finishedAt = status === "pending" ? null : new Date().toISOString();
   const error = status === "failed" ? "boom" : null;
   await db.query(
     `INSERT INTO plan_catalog_publish_operations
-       (attempt_id, sequence, kind, stripe_call, source, lookup_key, stripe_price_id, idempotency_key, status, error, finished_at)
-     VALUES ($1, $2, 'archive_price', $3, $4, $5, $6, $7, $8, $9, $10)`,
+       (attempt_id, sequence, kind, stripe_call, source, lookup_key, stripe_price_id, idempotency_key, status, error, finished_at, started_at)
+     VALUES ($1, $2, 'archive_price', $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, now()))`,
     [
       params.attemptId,
       params.sequence,
@@ -173,6 +180,7 @@ const insertArchiveRow = async (params: {
       status,
       error,
       finishedAt,
+      params.startedAt ?? null,
     ],
   );
 };
@@ -627,8 +635,15 @@ describe("publish-repo.ts: archivedStripePriceIds", () => {
     });
 
     await expect(archivedStripePriceIds("test", "mark8ly")).resolves.toEqual([]);
+    // `"a-second-product"` is not a real `CatalogSource` — the union has
+    // exactly one member today (`source-policy.ts`) — but the SQL this
+    // proves scopes on is a plain `text` column (0038) with no such
+    // restriction, and won't gain one until a second product actually
+    // exists. The cast is this test reaching past the app-level type to
+    // exercise the query at the layer it actually runs, same as
+    // `insertArchiveRow`'s own `source` staying `string` above.
     await expect(
-      archivedStripePriceIds("test", "a-second-product"),
+      archivedStripePriceIds("test", "a-second-product" as CatalogSource),
     ).resolves.toMatchObject([{ stripePriceId: "price_other_source" }]);
   });
 
@@ -676,6 +691,52 @@ describe("publish-repo.ts: archivedStripePriceIds", () => {
       {
         stripePriceId: "price_with_key",
         lookupKey: "mark8ly_pro_annual_developed_v1",
+        source: "mark8ly",
+      },
+    ]);
+  });
+
+  // #411's minor 1: the ORIGINAL `DISTINCT` on the whole
+  // `(stripe_price_id, lookup_key, source)` tuple only collapses retries
+  // that logged the IDENTICAL tuple. It does not when the same old Price
+  // was archived under two DIFFERENT recorded lookup keys across attempts
+  // (a plan re-planned between a failed attempt and its retry — e.g. a
+  // lookup key renamed mid-draft) — the tuple differs, both rows survive a
+  // plain `DISTINCT`, and `findOrphans` would report the one Price TWICE.
+  // This case had no coverage before this test; see `archivedStripePriceIds`'s
+  // doc comment for why `DISTINCT ON (stripe_price_id)` is the fix and why
+  // the MOST RECENT attempt's key is the one shown.
+  it("collapses one price id recorded under two different lookup keys across retries, to the most recent key", async () => {
+    const firstAttempt = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId: firstAttempt,
+      sequence: 1,
+      stripePriceId: "price_relabeled",
+      status: "failed",
+      lookupKey: "mark8ly_pro_monthly_developed_v1",
+      idempotencyKey: "relabel-attempt-1",
+      startedAt: "2026-08-01T00:00:00Z",
+    });
+    const secondAttempt = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId: secondAttempt,
+      sequence: 1,
+      stripePriceId: "price_relabeled",
+      status: "succeeded",
+      lookupKey: "mark8ly_pro_monthly_developed_v2",
+      idempotencyKey: "relabel-attempt-2",
+      startedAt: "2026-08-02T00:00:00Z",
+    });
+
+    const archived = await archivedStripePriceIds("test", "mark8ly");
+
+    // ONE row, not two — a duplicated row is the actual defect this test
+    // guards against — carrying the SECOND (later) attempt's lookup key,
+    // not the first.
+    expect(archived).toMatchObject([
+      {
+        stripePriceId: "price_relabeled",
+        lookupKey: "mark8ly_pro_monthly_developed_v2",
         source: "mark8ly",
       },
     ]);

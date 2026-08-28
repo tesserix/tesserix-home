@@ -5,6 +5,7 @@
 import "server-only";
 
 import type { OperationKind } from "@/lib/billing/publish-plan";
+import type { CatalogSource } from "@/lib/billing/source-policy";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import { tesserixTx } from "./tesserix";
 
@@ -838,7 +839,7 @@ export async function promotePublication(
 export interface ArchivedStripePrice {
   readonly stripePriceId: string;
   readonly lookupKey: string | null;
-  readonly source: string;
+  readonly source: CatalogSource;
 }
 
 /**
@@ -854,7 +855,7 @@ export interface ArchivedStripePrice {
  * detection that is NOT a query against this log, and keeping the query here
  * matches every other function in this file.
  *
- * # DISTINCT, and why a price id can legitimately appear more than once
+ * # `DISTINCT ON (stripe_price_id)`, not `DISTINCT` on the whole tuple
  *
  * `stripe_call = 'archive'` rows come from two `OperationKind`s —
  * `archive_price` (the whole operation) and `replace_price` (the archive
@@ -862,9 +863,27 @@ export interface ArchivedStripePrice {
  * a retried publish after a crash is a NEW attempt with its own operation
  * rows (see `startPublishAttempt`'s doc comment: recovery is a new attempt,
  * never a replay), so the same Stripe Price id can be the target of an
- * `archive` `stripe_call` in more than one attempt's log. `DISTINCT` on the
- * id, key and source is what keeps `findOrphans` from reporting the same
- * orphan twice for that reason alone.
+ * `archive` `stripe_call` in more than one attempt's log.
+ *
+ * A plain `DISTINCT` over `(stripe_price_id, lookup_key, source)` — this
+ * query's original shape — only collapses that when every attempt logged
+ * the IDENTICAL tuple. It does not when the same old Price was archived
+ * under two different recorded `lookup_key`s (a plan re-planned between a
+ * failed attempt and its retry, e.g. a lookup key renamed mid-draft): the
+ * tuple differs, both rows survive `DISTINCT`, and `findOrphans` reports the
+ * one Price TWICE. That case had no test until this comment; it does now
+ * (see the "two lookup keys, one price id" case in
+ * `publish-operations.integration.test.ts`).
+ *
+ * A Stripe Price id is singular — there is exactly one Price to clean up,
+ * however many lookup keys this log recorded it under across retries — so
+ * this collapses to ONE row per `stripe_price_id`, via `DISTINCT ON`, and
+ * picks the row from the MOST RECENT attempt (`ORDER BY ... started_at
+ * DESC`) to display. That is a deliberate choice, not the only defensible
+ * one: showing every recorded key would be more complete and more
+ * confusing for the same operator action (archive one Price); the most
+ * recent key is the one that reflects the plan's current shape, which is
+ * more useful to an operator deciding whether the orphan is still expected.
  *
  * # NO `status` FILTER — every archive `stripe_call` row is a candidate
  *
@@ -896,27 +915,33 @@ export interface ArchivedStripePrice {
  */
 export async function archivedStripePriceIds(
   mode: StripeMode,
-  source: string,
+  source: CatalogSource,
 ): Promise<ArchivedStripePrice[]> {
   return tesserixTx(async (query) => {
     const rows = await query<{
       stripe_price_id: string;
       lookup_key: string | null;
-      source: string;
     }>(
-      `SELECT DISTINCT op.stripe_price_id, op.lookup_key, op.source
+      `SELECT DISTINCT ON (op.stripe_price_id) op.stripe_price_id, op.lookup_key
          FROM plan_catalog_publish_operations op
          JOIN plan_catalog_publish_attempts att ON att.id = op.attempt_id
         WHERE att.mode = $1
           AND op.source = $2
           AND op.stripe_call = 'archive'
-          AND op.stripe_price_id IS NOT NULL`,
+          AND op.stripe_price_id IS NOT NULL
+        ORDER BY op.stripe_price_id, op.started_at DESC`,
       [mode, source],
     );
+    // `source` is not re-read off the row: the WHERE clause above already
+    // scopes every returned row to this parameter, so echoing it back is the
+    // caller's own typed `CatalogSource`, not an unvalidated string off the
+    // database — see this function's doc comment and #411's minor 2, which
+    // is what made `ArchivedStripePrice.source` a `CatalogSource` in the
+    // first place.
     return rows.map((row) => ({
       stripePriceId: row.stripe_price_id,
       lookupKey: row.lookup_key,
-      source: row.source,
+      source,
     }));
   });
 }
