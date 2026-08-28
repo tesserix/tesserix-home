@@ -10,15 +10,19 @@ import { Button, Callout, CalloutDescription, CalloutTitle } from "@tesserix/web
 import Link from "next/link";
 import { ConsoleDataTable } from "@/components/kit/console-data-table";
 // Type-only across the server/client boundary, deliberately — and NOT
-// optional politeness, per `publish-view.tsx`'s identical note: `Orphan`
-// reaches `orphans.ts`, which is `server-only` and pulls in `pg` and
-// `stripe` through its default dependencies; `PublishAttemptOutcome` reaches
-// `publish-repo.ts`, which is `server-only` and pulls in `pg` through
-// `tesserixTx`. A VALUE import of either shape here would drag that graph
-// into the browser bundle — `tsc` and `vitest` both pass, only `next build`
-// catches it.
+// optional politeness, per `publish-view.tsx`'s identical note:
+// `PublishAttemptOutcome` reaches `publish-repo.ts`, which is `server-only`
+// and pulls in `pg` through `tesserixTx`. A VALUE import of that shape here
+// would drag the graph into the browser bundle — `tsc` and `vitest` both
+// pass, only `next build` catches it.
+//
+// `orphans.ts`'s own `Orphan` is deliberately NOT imported: this surface
+// declares `PublishOutcomeOrphan` (below) as the trimmed shape it renders,
+// and importing `Orphan` merely to restate the relationship in a type
+// position would put a `server-only` module on this file's import graph for
+// documentation's sake. The relationship is recorded in that interface's
+// doc comment instead.
 import type { PublishAttemptOutcome } from "@/lib/db/publish-repo";
-import type { Orphan } from "@/lib/billing/orphans";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 
 /**
