@@ -137,11 +137,23 @@ CREATE TABLE IF NOT EXISTS plan_catalog_publish_operations (
     lookup_key  text,
     currency    text,
 
-    -- Captured BEFORE the create for a replacement: once the new price
-    -- claims the lookup key, the old one is addressable only by id, and
-    -- resolving by key at archive time would archive the price this
-    -- operation just minted (`ReplacePriceOperation.oldPriceId`'s doc
-    -- comment in `publish-plan.ts` makes the identical point).
+    -- The Stripe Price id this row concerns — meaning depends on
+    -- `stripe_call`, not fixed across the column:
+    --   - `archive`: the OLD id, captured BEFORE the create for a
+    --     replacement. Once the new price claims the lookup key, the old one
+    --     is addressable only by id, and resolving by key at archive time
+    --     would archive the price this operation just minted
+    --     (`ReplacePriceOperation.oldPriceId`'s doc comment in
+    --     `publish-plan.ts` makes the identical point). Known and set at
+    --     write-ahead time, same as `create`'s row below is NOT.
+    --   - `create`: the NEW id — unknown when the write-ahead row is
+    --     inserted (Stripe hasn't been called yet) and populated only once
+    --     the call returns, via `completeOperation`'s `COALESCE` in
+    --     `publish-repo.ts`.
+    --   - `update`: the EXISTING id an `add_currency_option` or
+    --     `update_tax_behavior` call targets — already known at write-ahead
+    --     time, same as `archive`, but naming a price that is neither being
+    --     replaced nor newly created.
     stripe_price_id text,
 
     -- One idempotency key per Stripe call, unique across every attempt this

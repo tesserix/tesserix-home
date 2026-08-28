@@ -464,11 +464,15 @@ function mapOperationRow(row: {
  * happening leaves exactly this row, `pending`, telling a resumed publish
  * "this may have happened" instead of leaving no trace at all.
  *
- * `stripePriceId` here is the operation's KNOWN id at write-ahead time —
- * populated for a `replace_price` archive call (the OLD id, captured before
- * its create per 0038's comment on the column), `null` for a create call
- * whose Stripe id does not exist yet and will only be known after the call
- * (see `completeOperation`).
+ * `stripePriceId` here is the operation's KNOWN id at write-ahead time — its
+ * meaning depends on `stripeCall`, same three cases as 0038's comment on the
+ * column:
+ *   - `archive` (a `replace_price`'s second call): the OLD id, captured
+ *     before its create, per 0038's comment on the column.
+ *   - `update` (`add_currency_option` / `update_tax_behavior`): the EXISTING
+ *     id the call targets — already known, same as `archive`.
+ *   - `create`: leave this `null`. The Stripe id does not exist yet and will
+ *     only be known after the call returns (see `completeOperation`).
  */
 export async function recordOperation(input: {
   attemptId: string;
