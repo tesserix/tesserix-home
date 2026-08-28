@@ -15,8 +15,10 @@ import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   readCatalogRows,
   readLatestRuns,
+  readLivePublicationAttribution,
   readWindowStatus,
   type CatalogRow,
+  type LivePublicationAttribution,
   type ModeLatestRun,
   type ParityWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
@@ -39,14 +41,17 @@ import { CatalogViews } from "./catalog-views";
  * surface with its own guards and its own operation log — see the task that
  * built this page for why that surface is explicitly out of scope here.
  *
- * # THREE independent reads, not one
+ * # FOUR independent reads, not one
  *
  * Same discipline `../page.tsx` (estate billing) and `../../audit-log/page.tsx`
  * apply: `Promise.allSettled`, not `Promise.all`, so a failure in one read
  * (say, the parity-runs table) cannot blank the catalog table that read
  * cleanly. An operator deciding whether #327's revocation is safe needs the
  * catalog to render even on a day the runs table is having a bad time, and
- * vice versa.
+ * vice versa. The fourth read — task 2R — is who published the mode's
+ * currently-live revision and when; the same rule applies to it: a failed
+ * publication read must not take down the catalog table or the observation
+ * window.
  *
  * # Reads tesserix-postgres directly, like `audit-log`, unlike `billing`
  *
@@ -74,6 +79,7 @@ export const OBSERVATION_WINDOW_DAYS = 7;
 export const WINDOW_SURFACE = "the parity observation window";
 export const CATALOG_SURFACE = "the plan catalog";
 export const RUNS_SURFACE = "the latest parity runs";
+export const PUBLICATION_SURFACE = "the catalog's live publication";
 
 /** Query params this page reads. Matches `TenantSearchParams`'s shape —
  *  `string | string[] | undefined` is what Next actually hands a page. */
@@ -97,10 +103,10 @@ export function readCatalogMode(searchParams: CatalogSearchParams): StripeMode {
 /**
  * Narrow each read's rejection ONCE, at the point it is caught — `dbReadError`
  * logs the real error server-side, and calling it twice per failure would log
- * the same failure twice. Three functions, not one, so the log line and the
+ * the same failure twice. Four functions, not one, so the log line and the
  * migrations-pending copy each name the table that actually failed rather
  * than a generic "the plan catalog" that leaves an operator guessing which of
- * three reads broke.
+ * four reads broke.
  */
 export function windowReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, WINDOW_SURFACE);
@@ -110,6 +116,9 @@ export function catalogReadError(caught: unknown): SurfaceError | null {
 }
 export function runsReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, RUNS_SURFACE);
+}
+export function publicationReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, PUBLICATION_SURFACE);
 }
 
 /** Thrown by each guarded read below when the console has no database
@@ -145,6 +154,14 @@ async function readRuns(): Promise<ModeLatestRun[]> {
   return readLatestRuns();
 }
 
+async function readPublication(mode: StripeMode): Promise<LivePublicationAttribution | null> {
+  if (!isDatabaseConfigured()) notConfigured();
+  // `null` is the normal answer for a mode that has never been published —
+  // `live` before #0037, and any future second source or mode before its
+  // first publish. It is not a failure and must not be treated like one.
+  return readLivePublicationAttribution(mode);
+}
+
 export default async function PlanCatalog({
   searchParams,
 }: {
@@ -153,10 +170,11 @@ export default async function PlanCatalog({
   const mode = readCatalogMode(await searchParams);
 
   // `allSettled`, not `all`: see the module doc comment above.
-  const [windowResult, catalogResult, runsResult] = await Promise.allSettled([
+  const [windowResult, catalogResult, runsResult, publicationResult] = await Promise.allSettled([
     readWindow(),
     readCatalog(mode),
     readRuns(),
+    readPublication(mode),
   ]);
 
   const window = windowResult.status === "fulfilled" ? windowResult.value : null;
@@ -193,6 +211,19 @@ export default async function PlanCatalog({
     filtered: false,
   });
 
+  const publication =
+    publicationResult.status === "fulfilled" ? publicationResult.value : null;
+  const publicationState: SurfaceState = resolveState({
+    isLoading: false,
+    error: publicationResult.status === "rejected" ? publicationReadError(publicationResult.reason) : null,
+    // Genuinely can be `null`: a mode that has never been published (`live`
+    // before #0037) has no attribution to show, and that is `empty`, not a
+    // bug — `CatalogViews` renders it as a calm sentence rather than a blank
+    // or a misleading "published by —".
+    rows: publication ? [publication] : [],
+    filtered: false,
+  });
+
   return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
@@ -209,6 +240,8 @@ export default async function PlanCatalog({
         catalogState={catalogState}
         runs={runs}
         runsState={runsState}
+        publication={publication}
+        publicationState={publicationState}
       />
     </div>
   );

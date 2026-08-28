@@ -222,6 +222,58 @@ export async function readLivePublication(
   return { id: rows[0].id, revisionId: rows[0].revision_id };
 }
 
+interface PublicationAttributionRow {
+  published_by: string;
+  /** `pg`/pglite hand a `timestamptz` back as a `Date`, not a string — see
+   *  {@link readLatestRuns}'s identical comment on `ran_at`. */
+  published_at: string | Date;
+}
+
+/**
+ * Who published the revision currently live for `mode`, and when — `null` if
+ * the mode has never been published. 0035's `plan_catalog_publications` has
+ * carried `published_by`/`published_at` since the baseline row `0035` itself
+ * inserted (`migration:0035` for `test`, `migration:0037` for `live`); this
+ * is the console's first reader of either column.
+ *
+ * A second, narrow read alongside {@link readLivePublication} rather than an
+ * extra column on that function's return — its exact `{ id, revisionId }`
+ * shape is pinned with `toEqual` by
+ * `plan-catalog-revisions.integration.test.ts` and
+ * `publish-repo.integration.test.ts`, neither of which this task touches, so
+ * widening it would break coverage this task has no reason to fail. Same
+ * `WHERE` as {@link readLivePublication} for the same reason that function's
+ * own doc comment gives: this and `readLivePublication` must never be able to
+ * disagree about which row is current.
+ */
+export async function readLivePublicationAttribution(
+  mode: StripeMode,
+): Promise<LivePublicationAttribution | null> {
+  const rows = await tesserixQuery<PublicationAttributionRow>(
+    `SELECT pub.published_by, pub.published_at
+       FROM plan_catalog_publications pub
+      WHERE pub.mode = $1 AND pub.superseded_at IS NULL`,
+    [mode],
+  );
+  if (rows.length === 0) return null;
+  return {
+    publishedBy: rows[0].published_by,
+    // Same normalisation as `toLatestParityRun`'s `ranAt`: accepts either a
+    // driver-parsed `Date` or a plain string.
+    publishedAt: new Date(rows[0].published_at).toISOString(),
+  };
+}
+
+/** What {@link readLivePublicationAttribution} resolves to for a published
+ *  mode. Named for the console surface that consumes it, not for the table —
+ *  `catalog-views.tsx` imports this as a type only (see that file's own
+ *  comment on why every import from this module there is `import type`). */
+export interface LivePublicationAttribution {
+  readonly publishedBy: string;
+  /** ISO 8601, UTC. */
+  readonly publishedAt: string;
+}
+
 /**
  * The four states 0033 and 0034's CHECK admits.
  *
