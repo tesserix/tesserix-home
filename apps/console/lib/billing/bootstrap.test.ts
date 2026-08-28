@@ -411,4 +411,77 @@ describe("runBootstrap", () => {
 
     await expect(runBootstrap("test")).resolves.toMatchObject({ pricesCreated: 42 });
   });
+
+  // -------------------------------------------------------------------------
+  // runBootstrap — dryRun
+  // -------------------------------------------------------------------------
+  //
+  // The whole point of `dryRun` is a report an operator trusts BEFORE
+  // authorising the console's first live write — 3 products, 42 prices. So
+  // every assertion below is on `writerMock.createProduct` /
+  // `writerMock.createPrice` NEVER having been called, not on the shape of
+  // what `runBootstrap` returns. A dry run that returns the right numbers but
+  // still wrote would pass a test that only checked the return value, and
+  // this branch has already shipped that exact shape of bug (a comment or
+  // message asserting an invariant the code did not enforce) twice.
+
+  it("reports what an empty mode would create and calls no Stripe write", async () => {
+    const { runBootstrap } = await import("./bootstrap");
+
+    const r = await runBootstrap("test", { dryRun: true });
+
+    expect(r).toMatchObject({ productsCreated: 3, pricesCreated: 42, skipped: 0 });
+    expect(writerMock.createProduct).not.toHaveBeenCalled();
+    expect(writerMock.createPrice).not.toHaveBeenCalled();
+    expect(writerMock.addCurrencyOption).not.toHaveBeenCalled();
+  });
+
+  it("reports zero creations against a fully populated mode, rather than refusing", async () => {
+    readerMock.listPrices.mockResolvedValue(ALL_42_PRICES);
+    const { runBootstrap } = await import("./bootstrap");
+
+    const r = await runBootstrap("test", { dryRun: true });
+
+    expect(r).toMatchObject({ productsCreated: 0, pricesCreated: 0, skipped: 42 });
+    expect(writerMock.createProduct).not.toHaveBeenCalled();
+    expect(writerMock.createPrice).not.toHaveBeenCalled();
+  });
+
+  it("does not require --force against a populated mode, unlike a real run", async () => {
+    readerMock.listPrices.mockResolvedValue(ALL_42_PRICES);
+    const { runBootstrap } = await import("./bootstrap");
+
+    // No `force` passed alongside `dryRun` — a real run in this same fixture
+    // rejects (see "refuses to run against a mode that already holds
+    // prices, unless forced" above); a dry run must not.
+    await expect(runBootstrap("test", { dryRun: true })).resolves.toMatchObject({ skipped: 42 });
+    expect(writerMock.createProduct).not.toHaveBeenCalled();
+    expect(writerMock.createPrice).not.toHaveBeenCalled();
+  });
+
+  it("does not overstate productsCreated when a planned product already exists", async () => {
+    // A partially-populated mode from a prior run: one plan's Product exists
+    // already (`findProductByPlan` finds it), but it still has un-created
+    // Prices, so that plan name is still in `plan.products`. A dry run that
+    // reported `plan.products.length` unconditionally would say "3" here;
+    // the true number of Products a real (forced) run would CREATE is 2.
+    writerMock.findProductByPlan.mockImplementation(async (_mode: string, plan: string) =>
+      plan === "pro" ? { id: "prod_pro_existing" } : null,
+    );
+    const { runBootstrap } = await import("./bootstrap");
+
+    const r = await runBootstrap("test", { dryRun: true });
+
+    expect(r.productsCreated).toBe(2);
+    expect(writerMock.createProduct).not.toHaveBeenCalled();
+  });
+
+  it("still writes on a real run when dryRun is left unset — the flag defaults off", async () => {
+    const { runBootstrap } = await import("./bootstrap");
+
+    await runBootstrap("test");
+
+    expect(writerMock.createProduct).toHaveBeenCalledTimes(3);
+    expect(writerMock.createPrice).toHaveBeenCalledTimes(42);
+  });
 });

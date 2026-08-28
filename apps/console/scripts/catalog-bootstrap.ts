@@ -90,6 +90,16 @@ export function parseForce(argv: readonly string[]): boolean {
 }
 
 /**
+ * `--dry-run`, present or not — see `BootstrapOptions.dryRun` in
+ * `lib/billing/bootstrap.ts` for what it does. Composes with `--mode` and
+ * `--force`; it is not a third `--mode` value, so it gets its own parse
+ * function rather than a case inside `parseMode`.
+ */
+export function parseDryRun(argv: readonly string[]): boolean {
+  return argv.includes("--dry-run");
+}
+
+/**
  * Parse argv, run the bootstrap, log exactly one line, return an exit code.
  *
  * Returns the code rather than calling `process.exit` so the whole thing is
@@ -118,14 +128,20 @@ export async function runCatalogBootstrapJob(argv: readonly string[]): Promise<n
     }
 
     const force = parseForce(argv);
+    const dryRun = parseDryRun(argv);
 
     try {
-      const result = await runBootstrap(mode, { force });
-      // `force` is logged alongside the result, not just consumed: whether
-      // the populated-mode guard was bypassed is the single most
-      // forensically useful bit for a live run, and this line is the only
-      // artefact the run leaves.
-      log({ mode, outcome: "ok", force, ...result }, "out");
+      const result = await runBootstrap(mode, { force, dryRun });
+      // `force` and `dryRun` are logged alongside the result, not just
+      // consumed: whether the populated-mode guard was bypassed, and whether
+      // this run wrote anything at all, are the two most forensically useful
+      // bits this line carries, and this line is the only artefact the run
+      // leaves. `result`'s own field names (`productsCreated`,
+      // `pricesCreated`, `skipped`) are unchanged between a dry run and a
+      // real one — a dry run's numbers mean "would create", a real run's
+      // mean "did create" — so the two log lines are comparable field for
+      // field; `dryRun` is what tells them apart.
+      log({ mode, outcome: "ok", force, dryRun, ...result }, "out");
       return EXIT_OK;
     } catch (cause) {
       // `sanitizeReason` — shared with `parity-run.ts` — redacts anything

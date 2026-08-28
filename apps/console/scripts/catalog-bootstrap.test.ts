@@ -14,6 +14,7 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   EXIT_FAILED,
   EXIT_OK,
+  parseDryRun,
   parseForce,
   parseMode,
   runCatalogBootstrapJob,
@@ -65,6 +66,21 @@ describe("parseForce", () => {
   });
 });
 
+describe("parseDryRun", () => {
+  it("is false without --dry-run", () => {
+    expect(parseDryRun(["--mode=test"])).toBe(false);
+  });
+
+  it("is true with --dry-run", () => {
+    expect(parseDryRun(["--mode=test", "--dry-run"])).toBe(true);
+  });
+
+  it("composes with --force rather than replacing it", () => {
+    expect(parseDryRun(["--mode=test", "--force", "--dry-run"])).toBe(true);
+    expect(parseForce(["--mode=test", "--force", "--dry-run"])).toBe(true);
+  });
+});
+
 describe("runCatalogBootstrapJob", () => {
   it("refuses before touching Stripe when the database isn't configured", async () => {
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
@@ -79,13 +95,38 @@ describe("runCatalogBootstrapJob", () => {
     const code = await runCatalogBootstrapJob(["--mode=test"]);
 
     expect(code).toBe(EXIT_OK);
-    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("test", { force: false });
+    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("test", { force: false, dryRun: false });
   });
 
   it("forwards --force through to runBootstrap", async () => {
     await runCatalogBootstrapJob(["--mode=live", "--force"]);
 
-    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("live", { force: true });
+    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("live", { force: true, dryRun: false });
+  });
+
+  it("forwards --dry-run through to runBootstrap, and composes with --mode rather than replacing it", async () => {
+    const code = await runCatalogBootstrapJob(["--mode=test", "--dry-run"]);
+
+    expect(code).toBe(EXIT_OK);
+    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("test", { force: false, dryRun: true });
+  });
+
+  it("a real run (no --dry-run) still writes, so the flag defaults off", async () => {
+    // `runBootstrap` itself is mocked here (this file's job is the CLI
+    // layer, not the write path — see `bootstrap.test.ts`'s own `dryRun`
+    // suite for the structural "no write happened" proof against the
+    // injected Stripe writer), so this only proves the CLI wires the flag's
+    // default correctly: no `--dry-run` on argv means `dryRun: false` reaches
+    // `runBootstrap`.
+    await runCatalogBootstrapJob(["--mode=test"]);
+
+    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("test", { force: false, dryRun: false });
+  });
+
+  it("--dry-run composes with --force, reporting a forced run rather than refusing", async () => {
+    await runCatalogBootstrapJob(["--mode=live", "--force", "--dry-run"]);
+
+    expect(bootstrapMock.runBootstrap).toHaveBeenCalledWith("live", { force: true, dryRun: true });
   });
 
   it("exits non-zero, without throwing, when --mode is missing", async () => {
