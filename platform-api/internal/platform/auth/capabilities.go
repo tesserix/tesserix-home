@@ -47,6 +47,15 @@ const (
 	CapExecuteRefund     Capability = "execute-refund"
 	CapMassSend          Capability = "mass-send"
 	CapHardDelete        Capability = "hard-delete"
+	// CapPublishCatalog publishes the plan catalog to Stripe — creating,
+	// replacing or archiving Prices.
+	//
+	// Deliberately NOT folded into CapRotateCredentials, which already covers
+	// payment-gateway keys and Stripe settings: holding a credential verb
+	// should not imply the ability to change what customers are charged.
+	// Different blast radius, different grant. See capabilities.ts, which is
+	// the authority this mirrors.
+	CapPublishCatalog Capability = "publish-catalog"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -56,7 +65,7 @@ var Capabilities = []Capability{
 	CapRead,
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
 }
 
 // Surfaces say where a principal works.
@@ -65,7 +74,7 @@ var Surfaces = []Capability{CapCRM, CapSupport, CapBilling, CapPlatform}
 // Verbs say what a principal may do.
 var Verbs = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
-	CapExecuteRefund, CapMassSend, CapHardDelete,
+	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
 }
 
 func known(c Capability) bool {
