@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PlatformApiError,
   fetchDashboard,
+  fetchKoraAiMetricsPage,
   parseDashboard,
   fetchSupportAnalytics,
   fetchTicketDetail,
@@ -996,5 +997,58 @@ describe("the no-operator-token signal", () => {
     // And it must not borrow the marked case's copy either: this session may
     // well have a token row, and saying it does not would be a second untruth.
     expect(caught.message).not.toContain("carries no platform API access token");
+  });
+});
+
+describe("fetchKoraAiMetricsPage", () => {
+  const KORA_DATA = {
+    window: { from: "2026-08-01T00:00:00Z", to: "2026-08-28T00:00:00Z" },
+    outcomes: { attempts: 1, needs_human: 0, by_kind: {} },
+    users: [],
+  };
+
+  /**
+   * Pins the helper choice: this endpoint's pagination lives in the
+   * envelope's `meta`, a sibling of `data` — never inside `data` itself, and
+   * `KORA_DATA` above carries no `pagination` field to prove it. If this
+   * function were changed back to call `platformRequest` (which discards
+   * `meta` — see that function's own doc comment), `meta` would never reach
+   * `parseKoraAiMetricsPagination` and this assertion on the parsed pager
+   * would fail, not merely a log line saying the wrong helper ran.
+   */
+  it("reads pagination from the envelope's meta, not from data", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(envelope(KORA_DATA, { total: 2, limit: 50 })), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const result = await fetchKoraAiMetricsPage(1);
+
+    expect(result.pagination).toEqual({ page: 1, limit: 50, total: 2 });
+  });
+
+  it("reflects the requested page in the parsed pagination, since meta carries no page field", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(envelope(KORA_DATA, { total: 90, limit: 50 })), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    const result = await fetchKoraAiMetricsPage(2);
+
+    expect(result.pagination).toEqual({ page: 2, limit: 50, total: 90 });
   });
 });

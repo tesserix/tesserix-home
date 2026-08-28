@@ -70,8 +70,9 @@ export interface KoraAiMetrics {
    *  sends no `from`/`to`. */
   readonly window: KoraAiWindow;
   readonly outcomes: KoraAiOutcomes;
-  /** The page of users the caller asked for — see `parseKoraAiMetricsPagination`
-   *  for the sibling `pagination` object describing which page this is. */
+  /** The page of users the caller asked for — see `parseKoraAiMetricsPagination`,
+   *  which reads the envelope's `meta` (not a field of this object) to say
+   *  which page this is. */
   readonly users: readonly KoraAiUser[];
 }
 
@@ -177,10 +178,18 @@ export function parseKoraAiMetrics(json: unknown): KoraAiMetrics {
 }
 
 /**
- * Parse the SAME response's `pagination` object — a sibling of `window`,
- * `outcomes` and `users` in the object platform-api's `koraaimetrics` module
- * forwards, exactly as `entities.ts`'s `parseEntities` reads `data` and
- * `pagination` from one object for `/v1/entities/{type}`.
+ * Parse the SAME response's `meta` object — NOT a `pagination` sibling
+ * inside `data`. `WriteMeta` (`platform-api/internal/platform/httpx/response.go`)
+ * puts pagination in the envelope's top-level `meta`, alongside `data`, not
+ * inside it — see `platformRequestWithMeta`, which is what the caller must
+ * use to reach it at all; `platformRequest` discards `meta` before this
+ * function would ever see it.
+ *
+ * `meta` carries `total` and `limit` only. `page` is NOT read from it —
+ * `metaFrom` (`koraaimetrics/internal/handler/handler.go`) deliberately never
+ * emits one: `httpx.Meta` is cursor-oriented and has no page field, and page
+ * is the one value the caller already supplied, so it is taken here as an
+ * argument instead of being re-derived from a wire value that does not exist.
  *
  * Kept as its own function rather than folded into `parseKoraAiMetrics`
  * because the two calling surfaces want different shapes: the `/kora`
@@ -189,12 +198,11 @@ export function parseKoraAiMetrics(json: unknown): KoraAiMetrics {
  * user list. Both functions read the one response; neither re-derives the
  * other's fields.
  */
-export function parseKoraAiMetricsPagination(json: unknown): EntityPagination {
-  const body = obj(json, "response");
-  const pagination = obj(body.pagination, "pagination");
+export function parseKoraAiMetricsPagination(meta: unknown, page: number): EntityPagination {
+  const body = obj(meta, "meta");
   return {
-    page: counter(pagination.page, "pagination.page"),
-    limit: counter(pagination.limit, "pagination.limit"),
-    total: counter(pagination.total, "pagination.total"),
+    page,
+    limit: counter(body.limit, "meta.limit"),
+    total: counter(body.total, "meta.total"),
   };
 }

@@ -881,12 +881,17 @@ export async function fetchKoraAiMetrics(): Promise<import("./kora-ai-metrics").
  * The full `/kora/ai-metrics` surface's read — the SAME endpoint
  * `fetchKoraAiMetrics` calls, paged for the per-user table it adds. One HTTP
  * call, decoded twice by two small functions in `kora-ai-metrics.ts` rather
- * than two separate reads, because `window`/`outcomes`/`users`/`pagination`
- * all live in the one response body.
+ * than two separate reads: `window`/`outcomes`/`users` live in the envelope's
+ * `data`, and pagination (`total`/`limit`) lives in its `meta` — which is why
+ * this uses `platformRequestWithMeta`, not `platformRequest`; the latter
+ * discards `meta` before either parser would see it.
  *
  * `page` only — no `from`/`to`. The endpoint accepts a caller-chosen window,
  * but this surface states Kora's default window rather than offering a
- * picker; see the page's own doc comment for why.
+ * picker; see the page's own doc comment for why. Also passed straight
+ * through to `parseKoraAiMetricsPagination`: `meta` never carries a `page`
+ * field (see that function's doc comment), so this is the only place it
+ * comes from.
  */
 export async function fetchKoraAiMetricsPage(page = 1): Promise<{
   metrics: import("./kora-ai-metrics").KoraAiMetrics;
@@ -905,10 +910,10 @@ export async function fetchKoraAiMetricsPage(page = 1): Promise<{
     ? `/v1/kora/ai-metrics?${query.toString()}`
     : "/v1/kora/ai-metrics";
 
-  const body = await platformRequest("kora ai metrics", path);
+  const { data, meta } = await platformRequestWithMeta("kora ai metrics", path);
   return {
-    metrics: parseKoraAiMetrics(body),
-    pagination: parseKoraAiMetricsPagination(body),
+    metrics: parseKoraAiMetrics(data),
+    pagination: parseKoraAiMetricsPagination(meta, page),
   };
 }
 
