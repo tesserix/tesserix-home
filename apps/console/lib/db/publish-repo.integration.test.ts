@@ -244,6 +244,22 @@ describe("createDraftFrom", () => {
     expect(await countRevisions()).toBe(before);
     await expect(currentDraft()).resolves.toBeNull();
   });
+
+  it("refuses a second draft while one exists", async () => {
+    await createDraftFrom("test", "operator@tesserix");
+
+    await expect(createDraftFrom("live", "operator@tesserix")).rejects.toThrow(
+      /draft already exists/,
+    );
+  });
+
+  it("names the existing draft in the refusal", async () => {
+    const first = await createDraftFrom("test", "operator@tesserix");
+
+    await expect(createDraftFrom("live", "operator@tesserix")).rejects.toThrow(
+      new RegExp(first),
+    );
+  });
 });
 
 describe("discardDraft", () => {

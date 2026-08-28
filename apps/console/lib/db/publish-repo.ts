@@ -28,6 +28,38 @@ import { tesserixTx } from "./tesserix";
  * a second concurrent draft is not "a draft for a different mode", it is the
  * same ambiguity the design doc calls out for two operators sharing one
  * catalog.
+ *
+ * # At most one draft — enforced by a lock, not by the schema
+ *
+ * `plan_catalog_revisions` has no state column: `id`, `note`, `created_by`,
+ * `created_at`, `based_on_revision_id`, nothing else. "Is this revision a
+ * draft" is a cross-table condition — "no un-superseded row in
+ * `plan_catalog_publications` names it" — and a partial unique index cannot
+ * reference another table, so no index can express "at most one draft"
+ * however this table is shaped. (An earlier version of this task's brief
+ * claimed `0035` already had such an index; it does not, and the design
+ * doc's §3.4 — "it is one partial index; spend it" — is wrong about the
+ * mechanism, not just premature.)
+ *
+ * `0035` hit the identical wall for "exactly one published" and wrote down
+ * the answer this module follows:
+ *
+ * > A CEILING, never a floor. Postgres cannot express "at least one", so
+ * > "exactly one published" is a property of the publish TRANSACTION
+ * > (retire then promote, under an advisory lock on the mode), not of this
+ * > schema. Claiming otherwise would be claiming more than is enforced.
+ *
+ * `createDraftFrom` below takes `pg_advisory_xact_lock` on a fixed key before
+ * checking for an existing draft, exactly the same shape. What that
+ * guarantees, precisely: the check-then-insert is serialised, so two
+ * concurrent `createDraftFrom` calls cannot both observe "no draft" and both
+ * insert one — which is the design doc's own failure mode, "two operators,
+ * two drafts, one silently lost." What it does NOT guarantee: nothing stops
+ * a draft-shaped row from appearing by any path that does not go through
+ * this function — there is no schema constraint backing the invariant, only
+ * this function's discipline. `currentDraft` (below) is written accordingly:
+ * it tolerates finding more than one unpublished revision rather than
+ * throwing on data it can still legally encounter.
  */
 
 /** A revision counts as "the draft" once it has never been published — not
@@ -52,6 +84,23 @@ const UNPUBLISHED_REVISION = `
  * "creates the revision and its rows in ONE transaction" test, which forces
  * a failure on the price copy and asserts the revision insert did not
  * survive it either.
+ *
+ * # The advisory lock, and why it is `_xact`
+ *
+ * `pg_advisory_xact_lock` (the transaction-scoped variant, not
+ * `pg_advisory_lock`) is held for exactly this transaction's lifetime and
+ * released automatically on COMMIT or ROLLBACK — there is no matching
+ * `pg_advisory_unlock` call to forget, and a crash mid-transaction cannot
+ * leak the lock past the connection's own cleanup. The key is a fixed
+ * constant (`hashtext('plan_catalog_draft')`, folded into the two-int form
+ * so the key is legible in `pg_locks` rather than an opaque bigint) — every
+ * caller of `createDraftFrom`, for every mode, contends for the SAME lock,
+ * because "at most one draft" is a global invariant, not a per-mode one (see
+ * this module's top comment).
+ *
+ * Taken and checked BEFORE the "already has a draft" read below: the lock is
+ * what makes that read-then-decide safe against a second concurrent caller
+ * doing the identical thing a moment later on a different connection.
  *
  * # Reading the live publication INSIDE the transaction
  *
@@ -86,6 +135,25 @@ const UNPUBLISHED_REVISION = `
  */
 export async function createDraftFrom(mode: StripeMode, createdBy: string): Promise<string> {
   return tesserixTx(async (query) => {
+    // Serialises every `createDraftFrom` call, across every mode, against
+    // every other one — see this function's doc comment on why the key is
+    // fixed and shared rather than derived from `mode`.
+    await query(`SELECT pg_advisory_xact_lock(0, hashtext('plan_catalog_draft'))`);
+
+    const existingDraftRows = await query<{ id: string }>(
+      `SELECT r.id
+         FROM plan_catalog_revisions r
+        WHERE ${UNPUBLISHED_REVISION}
+        ORDER BY r.created_at DESC
+        LIMIT 1`,
+    );
+    const existingDraft = existingDraftRows[0];
+    if (existingDraft) {
+      throw new Error(
+        `createDraftFrom: a draft already exists (revision ${existingDraft.id}) — discard it before starting another`,
+      );
+    }
+
     const liveRows = await query<{ revision_id: string }>(
       `SELECT pub.revision_id
          FROM plan_catalog_publications pub
@@ -189,19 +257,16 @@ export async function discardDraft(revisionId: string): Promise<void> {
  *
  * # "Most recent" is a fallback, not the invariant
  *
- * At most one unpublished revision should exist at a time, but nothing in
- * THIS task's migrations (0032-0037) enforces that — the design doc's
- * section 3.4 partial unique index is scoped to a later migration, not this
- * one, and
- * `createDraftFrom` above does not duplicate that check in application code
- * for the same reason `plan-catalog-repo.ts` never duplicates a constraint
- * Postgres already owns (see 0035's comment on `one_live_per_mode`). Ordering
- * by `created_at DESC LIMIT 1` means that if two drafts are ever created
- * before that index lands, this answers with the newer one rather than
- * throwing on an ambiguity the schema does not yet forbid — recoverable
- * (an operator sees A when B also exists) rather than an outage, and the
- * cheaper of the two mistakes to leave open for one migration's worth of
- * time. See this task's report for why this is flagged, not fixed here.
+ * `createDraftFrom`'s advisory lock serialises *creation*, so two operators
+ * cannot both create a draft at once — but that lock is the only thing
+ * enforcing "at most one," and it only guards the one function that takes
+ * it. Nothing in the schema backs the invariant (see the top-of-file
+ * comment), so this read does not assume it holds: ordering by
+ * `created_at DESC LIMIT 1` means that if a second unpublished revision is
+ * ever found — created by a path this module doesn't control, or by a bug —
+ * this answers with the newer one rather than throwing on an ambiguity nothing
+ * here actually forbids. A read that throws on data it can still legally
+ * encounter would be worse than one that answers.
  */
 export async function currentDraft(): Promise<{ id: string; basedOn: string | null } | null> {
   return tesserixTx(async (query) => {
