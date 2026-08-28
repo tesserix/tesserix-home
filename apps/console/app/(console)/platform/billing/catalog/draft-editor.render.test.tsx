@@ -11,7 +11,7 @@ vi.mock("./actions", () => ({
   setAmountAction: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
-import { DraftEditor, type DraftEditorRow } from "./draft-editor";
+import { DraftEditor, type DraftEditorCell, type DraftEditorRow } from "./draft-editor";
 
 /**
  * task-3-brief.md's five tests, MODIFIED for two of them per a controller
@@ -63,7 +63,14 @@ function buildRow(overrides: {
     taxBehavior: "unspecified" as const,
   };
 
-  const amounts = [baselineCell];
+  // Typed explicitly against `DraftEditorCell`, not left to infer from
+  // `baselineCell`'s own literal shape. Without this, TS narrows
+  // `publishedUnitAmountMinor` to plain `number` from `baselineCell`'s
+  // `10_700` literal — the component's prop type has always been
+  // `number | null` (a currency with no published value yet, e.g. before
+  // `add_currency_option`, is a real state on this surface), so that was
+  // this fixture's own typing gap, not a signal to widen the component.
+  const amounts: DraftEditorCell[] = [baselineCell];
 
   if (overrides.currency && overrides.currency !== "usd") {
     amounts.push({
