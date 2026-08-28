@@ -101,6 +101,31 @@ beforeAll(async () => {
 
     ALTER TABLE plan_catalog_prices DISABLE TRIGGER publish_repo_test_inject_price_failure_trg;
   `);
+
+  // A second failure-injection trigger, same technique, for
+  // `promotePublication`'s OWN atomicity: it does a retire-then-insert pair
+  // (see its doc comment in `publish-repo.ts`), and asserting only the
+  // post-state (as the test above this comment did before review) cannot
+  // distinguish "one transaction" from "two independent statements that
+  // happen to both succeed" — only forcing the SECOND statement to fail and
+  // checking the FIRST one didn't survive can. Fires on a specific
+  // `published_by` marker, never a real operator's identity, so — unlike the
+  // price trigger above — nothing else in this suite needs it disabled by
+  // default: no other test promotes with this marker.
+  await db.exec(`
+    CREATE OR REPLACE FUNCTION publish_repo_test_inject_promotion_failure() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.published_by = 'zzz_poison_promotion' THEN
+        RAISE EXCEPTION 'injected failure for promotion atomicity test';
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    CREATE TRIGGER publish_repo_test_inject_promotion_failure_trg
+    BEFORE INSERT ON plan_catalog_publications
+    FOR EACH ROW EXECUTE FUNCTION publish_repo_test_inject_promotion_failure();
+  `);
 });
 
 afterAll(async () => {
@@ -335,6 +360,44 @@ describe("promotePublication", () => {
     ]);
     expect(retiredRows[0].superseded_at).not.toBeNull();
     expect(retiredRows[0].superseded_by).toBe("operator@tesserix");
+  });
+
+  it("rolls back the retire together with the promote — a failed INSERT leaves the previous publication un-retired", async () => {
+    // The test above only asserts POST-state, which a pair of independent
+    // statements (UPDATE that commits, then a separately-failing INSERT)
+    // would also satisfy in its failure case — it cannot tell "one
+    // transaction" from "two statements that happen to both run". This
+    // test can: the failure-injection trigger on `plan_catalog_publications`
+    // (see `beforeAll`) fires only on the SECOND statement `promotePublication`
+    // issues (the INSERT), forcing a failure strictly after the first
+    // statement (the UPDATE that retires `before`) has already run on this
+    // connection — the same "force a failure after the earlier write, prove
+    // it didn't survive either" shape `createDraftFrom`'s own atomicity test
+    // uses above with `zzz_poison_v1`.
+    const before = await publicationFor("test");
+    const draft = await createDraftFrom("test", "operator@tesserix");
+
+    await expect(
+      promotePublication("test", draft, "zzz_poison_promotion"),
+    ).rejects.toThrow(/injected failure for promotion atomicity test/);
+
+    // Not retired: if the UPDATE had committed on its own (no shared
+    // transaction with the INSERT that failed), this would read back
+    // `superseded_at` set and the mode would be left with ZERO live
+    // publications — a worse bug than the one promotion exists to prevent.
+    const { rows: stillLiveRows } = await db.query<{
+      superseded_at: string | null;
+      superseded_by: string | null;
+    }>(`SELECT superseded_at, superseded_by FROM plan_catalog_publications WHERE id = $1`, [
+      before.id,
+    ]);
+    expect(stillLiveRows[0].superseded_at).toBeNull();
+    expect(stillLiveRows[0].superseded_by).toBeNull();
+
+    await expect(readLivePublication("test")).resolves.toEqual({
+      id: before.id,
+      revisionId: before.revisionId,
+    });
   });
 
   it("leaves the OTHER mode's live publication untouched", async () => {

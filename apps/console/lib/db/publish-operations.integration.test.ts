@@ -45,6 +45,7 @@ const {
   recordOperation,
   completeOperation,
   operationsForAttempt,
+  archivedStripePriceIds,
 } = await import("./publish-repo");
 
 const MIGRATIONS = [
@@ -136,6 +137,44 @@ const insertOperation = async (
     ],
   );
   return rows[0].id;
+};
+
+/** Raw insert with full control over `stripe_call`, `status`, and
+ *  `stripe_price_id` — `insertOperation` above always sets `stripe_call` to
+ *  `create` by default and never sets `stripe_price_id` at all, neither of
+ *  which fits `archivedStripePriceIds`'s test surface, which needs to
+ *  distinguish archive rows from non-archive rows and vary status
+ *  (`pending`/`failed`/`succeeded`) while a price id is always present. */
+const insertArchiveRow = async (params: {
+  attemptId: string;
+  sequence: number;
+  stripePriceId: string | null;
+  status?: "pending" | "succeeded" | "failed";
+  stripeCall?: "create" | "update" | "archive";
+  source?: string;
+  lookupKey?: string | null;
+  idempotencyKey: string;
+}): Promise<void> => {
+  const status = params.status ?? "succeeded";
+  const finishedAt = status === "pending" ? null : new Date().toISOString();
+  const error = status === "failed" ? "boom" : null;
+  await db.query(
+    `INSERT INTO plan_catalog_publish_operations
+       (attempt_id, sequence, kind, stripe_call, source, lookup_key, stripe_price_id, idempotency_key, status, error, finished_at)
+     VALUES ($1, $2, 'archive_price', $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [
+      params.attemptId,
+      params.sequence,
+      params.stripeCall ?? "archive",
+      params.source ?? "mark8ly",
+      params.lookupKey ?? "mark8ly_pro_monthly_v1",
+      params.stripePriceId,
+      params.idempotencyKey,
+      status,
+      error,
+      finishedAt,
+    ],
+  );
 };
 
 describe("0038: plan_catalog_publish_attempts", () => {
@@ -494,3 +533,152 @@ describe("publish-repo.ts: operations", () => {
     expect(ops.map((o) => o.sequence)).toEqual([1, 2]);
   });
 });
+
+describe("publish-repo.ts: archivedStripePriceIds", () => {
+  // Task 7 review, finding 1: this query must NOT filter on `status`. A
+  // `pending` or `failed` archive row is exactly the crash-mid-`replace_price`
+  // case orphan detection exists to catch (0038's header) — Stripe's own
+  // `active: true` filter (`stripe-read.ts`) is the authoritative answer to
+  // whether the Price is still live, so over-including candidates here costs
+  // nothing (see `archivedStripePriceIds`'s doc comment in `publish-repo.ts`).
+  it("returns archive rows regardless of status — pending and failed archives are exactly the case this exists to catch", async () => {
+    const attemptId = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 1,
+      stripePriceId: "price_pending",
+      status: "pending",
+      idempotencyKey: "archive-pending",
+    });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 2,
+      stripePriceId: "price_failed",
+      status: "failed",
+      idempotencyKey: "archive-failed",
+    });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 3,
+      stripePriceId: "price_succeeded",
+      status: "succeeded",
+      idempotencyKey: "archive-succeeded",
+    });
+
+    const archived = await archivedStripePriceIds("test", "mark8ly");
+
+    expect(archived.map((a) => a.stripePriceId).sort()).toEqual(
+      ["price_failed", "price_pending", "price_succeeded"].sort(),
+    );
+  });
+
+  it("ignores stripe_call rows that are not archive — a create or update row is never a candidate", async () => {
+    const attemptId = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 1,
+      stripePriceId: "price_created",
+      stripeCall: "create",
+      idempotencyKey: "not-archive-create",
+    });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 2,
+      stripePriceId: "price_updated",
+      stripeCall: "update",
+      idempotencyKey: "not-archive-update",
+    });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 3,
+      stripePriceId: "price_archived",
+      stripeCall: "archive",
+      idempotencyKey: "not-archive-archive",
+    });
+
+    const archived = await archivedStripePriceIds("test", "mark8ly");
+
+    expect(archived.map((a) => a.stripePriceId)).toEqual(["price_archived"]);
+  });
+
+  it("scopes by mode — an archive logged under live is invisible to a test-mode query", async () => {
+    const liveAttempt = await insertAttempt({ mode: "live" });
+    await insertArchiveRow({
+      attemptId: liveAttempt,
+      sequence: 1,
+      stripePriceId: "price_live_only",
+      idempotencyKey: "mode-scope-live",
+    });
+
+    await expect(archivedStripePriceIds("test", "mark8ly")).resolves.toEqual([]);
+    await expect(archivedStripePriceIds("live", "mark8ly")).resolves.toMatchObject([
+      { stripePriceId: "price_live_only" },
+    ]);
+  });
+
+  it("scopes by source — a second product's archive never leaks into this catalog's orphan list", async () => {
+    const attemptId = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 1,
+      stripePriceId: "price_other_source",
+      source: "a-second-product",
+      idempotencyKey: "source-scope-other",
+    });
+
+    await expect(archivedStripePriceIds("test", "mark8ly")).resolves.toEqual([]);
+    await expect(
+      archivedStripePriceIds("test", "a-second-product"),
+    ).resolves.toMatchObject([{ stripePriceId: "price_other_source" }]);
+  });
+
+  it("DISTINCT collapses the same price id archived across two separate attempts", async () => {
+    // Recovery from a crash is a NEW attempt, never a replay of an old one
+    // (`startPublishAttempt`'s doc comment) — so the identical Stripe Price
+    // id can legitimately be the target of an `archive` `stripe_call` in more
+    // than one attempt's log. Without DISTINCT this would report the same
+    // orphan twice.
+    const firstAttempt = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId: firstAttempt,
+      sequence: 1,
+      stripePriceId: "price_retried",
+      status: "failed",
+      idempotencyKey: "retry-attempt-1",
+    });
+    const secondAttempt = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId: secondAttempt,
+      sequence: 1,
+      stripePriceId: "price_retried",
+      status: "succeeded",
+      idempotencyKey: "retry-attempt-2",
+    });
+
+    const archived = await archivedStripePriceIds("test", "mark8ly");
+
+    expect(archived.map((a) => a.stripePriceId)).toEqual(["price_retried"]);
+  });
+
+  it("carries the lookup key and source through for the row it found", async () => {
+    const attemptId = await insertAttempt({ mode: "test" });
+    await insertArchiveRow({
+      attemptId,
+      sequence: 1,
+      stripePriceId: "price_with_key",
+      lookupKey: "mark8ly_pro_annual_developed_v1",
+      idempotencyKey: "carries-fields",
+    });
+
+    const archived = await archivedStripePriceIds("test", "mark8ly");
+
+    expect(archived).toMatchObject([
+      {
+        stripePriceId: "price_with_key",
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        source: "mark8ly",
+      },
+    ]);
+  });
+});
+

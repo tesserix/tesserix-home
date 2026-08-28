@@ -773,16 +773,27 @@ export interface ArchivedStripePrice {
  * id, key and source is what keeps `findOrphans` from reporting the same
  * orphan twice for that reason alone.
  *
- * # `status = 'succeeded'` only
+ * # NO `status` FILTER — every archive `stripe_call` row is a candidate
  *
  * A `pending` or `failed` archive attempt is exactly the case orphan
  * detection exists to catch — the id may still be `active` in Stripe
- * precisely BECAUSE the archive call never landed. Filtering those rows out
- * here would make `findOrphans` blind to the crash-mid-`replace_price` case
- * that is this whole feature's reason to exist (0038's header). The filter
- * is `succeeded`, not "not failed": a `pending` row that never resolved
- * (crash before `completeOperation` ran) is exactly as informative as a
- * `failed` one here, and both are kept.
+ * precisely BECAUSE the archive call never landed, or landed and this log
+ * never learned the outcome. Filtering on `status = 'succeeded'` would make
+ * `findOrphans` blind to the crash-mid-`replace_price` case that is this
+ * whole feature's reason to exist (0038's header): the write-ahead row for
+ * an `archive` `stripe_call` already carries the OLD id at INSERT time
+ * (0038's comment on `stripe_price_id`, lines ~143-153), before Stripe is
+ * ever called, so `pending` rows are exactly as usable as `succeeded` ones
+ * for this query.
+ *
+ * This is safe to over-include: Stripe's own `active: true` filter in
+ * `stripePriceReader.listPrices` (`stripe-read.ts`) is the AUTHORITATIVE
+ * answer to "is this Price still active", and `findOrphans` only reports an
+ * id that appears in BOTH this query's result and that active list.
+ * `op.status` records whether OUR call landed, which is a different
+ * question from whether the Price is active in Stripe — if the archive did
+ * land (`status = 'succeeded'` or not), Stripe reports the Price inactive
+ * and it is simply absent from the active list, costing nothing.
  *
  * `source` scopes to `SINGLE_SOURCE` — see `defaultOrphanDetectorDeps` in
  * `orphans.ts`, which is this function's only caller today — rather than
@@ -806,7 +817,6 @@ export async function archivedStripePriceIds(
         WHERE att.mode = $1
           AND op.source = $2
           AND op.stripe_call = 'archive'
-          AND op.status = 'succeeded'
           AND op.stripe_price_id IS NOT NULL`,
       [mode, source],
     );
