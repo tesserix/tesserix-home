@@ -327,6 +327,28 @@ export async function setDraftAmount(input: {
   unitAmountMinor: number;
 }): Promise<void> {
   return tesserixTx(async (query) => {
+    // CRITICAL, review 2026-08-28: without this check, `revisionId` reaching
+    // here off a client-supplied action argument (`setAmountAction`) could
+    // rewrite the amounts of a currently PUBLISHED revision — the rows the
+    // parity comparator and every future plan diff read as the ANCESTOR.
+    // That is silent corruption of the record of what was actually
+    // published, not a mere UX gap. Same shape `discardDraft` above already
+    // uses for the identical hazard: check first, refuse loudly, name which
+    // mode it's published to — before any lookup or write, not caught after
+    // the fact by a constraint that does not exist (0032 adds none).
+    const publishedRows = await query<{ mode: string }>(
+      `SELECT pub.mode
+         FROM plan_catalog_publications pub
+        WHERE pub.revision_id = $1 AND pub.superseded_at IS NULL`,
+      [input.revisionId],
+    );
+    const published = publishedRows[0];
+    if (published) {
+      throw new Error(
+        `setDraftAmount: revision ${input.revisionId} is published to ${published.mode} and cannot be edited`,
+      );
+    }
+
     const priceRows = await query<{ id: string }>(
       `SELECT id
          FROM plan_catalog_prices
@@ -335,8 +357,13 @@ export async function setDraftAmount(input: {
     );
     const price = priceRows[0];
     if (!price) {
+      // Not "draft revision" — this function does not verify `revisionId`
+      // IS the one open draft (see `currentDraft`'s own doc comment on why
+      // "at most one draft" is enforced by discipline, not by the schema),
+      // only that it is not published. Claiming "draft" here would be
+      // claiming a check this function does not make.
       throw new Error(
-        `setDraftAmount: "${input.lookupKey}" is not a price in draft revision ${input.revisionId}`,
+        `setDraftAmount: "${input.lookupKey}" is not a price in revision ${input.revisionId}`,
       );
     }
 

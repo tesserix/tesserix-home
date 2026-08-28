@@ -179,3 +179,35 @@ describe("DraftEditor", () => {
     expect(screen.queryByText(/\d+ subscribers/)).toBeNull();
   });
 });
+
+/**
+ * Review item 2 (IMPORTANT): the single 10700->1070 case above (a 90% move)
+ * passes against a hardcoded 25%, a hardcoded 5%, or "warn on any change" —
+ * it cannot tell a wrong threshold from a right one. These two straddle the
+ * real 25% (`MAGNITUDE_THRESHOLD`) boundary on either side.
+ */
+describe("magnitude warning — the 25% boundary itself", () => {
+  it("stays silent just under the threshold (~12%)", () => {
+    renderEditor({ published: 10_000, draft: 11_200 });
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("warns just over the threshold (~26%)", () => {
+    renderEditor({ published: 10_000, draft: 12_600 });
+    expect(screen.queryByRole("status")).not.toBeNull();
+  });
+});
+
+/**
+ * Review item 3 (IMPORTANT): `Math.round` on the raw ratio rendered "That is
+ * 1x higher than the published amount" for any move between 25% and 49% —
+ * degenerate copy in exactly the near-boundary band this early warning most
+ * needs to be legible in. A 30% move is comfortably inside that band and
+ * below the 2x cutover `magnitudeWarning` now switches on.
+ */
+describe("magnitude warning — near-threshold copy", () => {
+  it("reads a 30% move as a percentage, not a degenerate '1x'", () => {
+    renderEditor({ published: 10_000, draft: 13_000 });
+    expect(screen.getByRole("status")).toHaveTextContent(/30% higher than the published amount/i);
+  });
+});

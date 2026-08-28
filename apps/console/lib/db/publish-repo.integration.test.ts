@@ -389,7 +389,7 @@ describe("setDraftAmount", () => {
     expect(await countAmountsFor(draft)).toBe(79);
   });
 
-  it("refuses a lookup_key that is not a price in this draft revision, before writing anything", async () => {
+  it("refuses a lookup_key that is not a price in this revision, before writing anything", async () => {
     const draft = await createDraftFrom("test", "operator@tesserix");
 
     await expect(
@@ -400,10 +400,63 @@ describe("setDraftAmount", () => {
         currency: "usd",
         unitAmountMinor: 100,
       }),
-    ).rejects.toThrow(/not a price in draft revision/);
+    ).rejects.toThrow(/not a price in revision/);
 
     // Refused, not partially applied.
     expect(await countAmountsFor(draft)).toBe(78);
+  });
+
+  // CRITICAL, review 2026-08-28: `revisionId` reaches `setAmountAction`
+  // straight off a client prop with no ownership check of its own — this is
+  // the ONE guard standing between that and silently rewriting the amounts
+  // of the revision the parity comparator and every future plan diff read as
+  // the ANCESTOR. Same hazard `discardDraft`'s "refuses to discard a
+  // revision that has been published" test above proves; this is its
+  // `setDraftAmount` twin.
+  it("refuses to edit a revision that is currently published, naming which mode", async () => {
+    // A revision promoted to ONLY `test` — not the shared baseline, which
+    // `beforeEach` publishes to BOTH modes at once and so cannot prove which
+    // mode's name landed in the message (`plan_catalog_publications` has no
+    // defined row order across two rows naming the same revision_id).
+    const testOnlyDraft = await createDraftFrom("test", "operator@tesserix");
+    await promotePublication("test", testOnlyDraft, "operator@tesserix");
+
+    await expect(
+      setDraftAmount({
+        revisionId: testOnlyDraft,
+        source: SINGLE_SOURCE,
+        lookupKey: "mark8ly_pro_monthly_developed_v1",
+        currency: "usd",
+        unitAmountMinor: 1,
+      }),
+    ).rejects.toThrow(/published to test/);
+
+    // Refused, not partially applied — the live catalog's own amount survives.
+    const { rows } = await db.query<{ unit_amount_minor: string | number }>(
+      `SELECT a.unit_amount_minor
+         FROM plan_catalog_amounts a
+         JOIN plan_catalog_prices p ON p.id = a.price_id
+        WHERE p.revision_id = $1 AND p.lookup_key = 'mark8ly_pro_monthly_developed_v1' AND a.currency = 'usd'`,
+      [testOnlyDraft],
+    );
+    expect(Number(rows[0].unit_amount_minor)).toBe(11_900);
+  });
+
+  it("refuses to edit a revision published to the OTHER mode too — the guard is not test-only", async () => {
+    const liveDraft = await createDraftFrom("live", "operator@tesserix");
+    // Promote it so it's a genuinely published (non-draft, non-superseded)
+    // revision for `live`, distinct from `test`'s.
+    await promotePublication("live", liveDraft, "operator@tesserix");
+
+    await expect(
+      setDraftAmount({
+        revisionId: liveDraft,
+        source: SINGLE_SOURCE,
+        lookupKey: "mark8ly_pro_monthly_developed_v1",
+        currency: "usd",
+        unitAmountMinor: 1,
+      }),
+    ).rejects.toThrow(/published to live/);
   });
 });
 

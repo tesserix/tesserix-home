@@ -113,6 +113,15 @@ function parseMinorUnits(raw: string): number | null {
  * that guard — `checkGuards` still runs, against the ancestor, at publish
  * time; this only gives the operator a chance to catch a fat-fingered digit
  * before it is even saved to the draft.
+ *
+ * # "Nx" only once it means something; a percentage below that
+ *
+ * Review 2026-08-28: `Math.round` on the ratio degenerated to "1x higher"
+ * (or "1x lower") for EVERY move between 25% and 49% — precisely the
+ * near-threshold band this warning exists to make legible, since that is
+ * the band a fat-fingered digit most often lands in. Below a 2x move, a
+ * rounded percentage stays precise and honest; at or above 2x, "Nx" is both
+ * true and easier to read at a glance than a four-digit percentage.
  */
 function magnitudeWarning(published: number | null, draft: number): string | null {
   if (published === null || published === 0) return null;
@@ -120,8 +129,10 @@ function magnitudeWarning(published: number | null, draft: number): string | nul
   if (change <= MAGNITUDE_THRESHOLD) return null;
 
   const lower = draft < published;
-  const multiplier = Math.round(lower ? published / draft : draft / published);
-  return `That is ${multiplier}x ${lower ? "lower" : "higher"} than the published amount (${published}).`;
+  const direction = lower ? "lower" : "higher";
+  const ratio = lower ? published / draft : draft / published;
+  const magnitude = ratio >= 2 ? `${Math.round(ratio)}x` : `${Math.round(change * 100)}%`;
+  return `That is ${magnitude} ${direction} than the published amount (${published}).`;
 }
 
 /**
@@ -135,6 +146,12 @@ function magnitudeWarning(published: number | null, draft: number): string | nul
  * EVERY amount change — there is no in-place path at all, so there is
  * nothing left to branch on per cell. See this file's header for why a
  * per-cell classification used to exist here, and why it was wrong.
+ *
+ * Rendered ONCE, at the {@link DraftEditor} surface level — not once per
+ * cell. Review 2026-08-28: spec §6 asks the SURFACE to say this, not every
+ * cell; a full catalog is 78 amount cells, and 78 repetitions of a safety
+ * statement is how a safety statement stops being read. Undercutting the
+ * very ruling this note exists to implement.
  */
 const SUBSCRIBER_SAFETY_NOTE =
   "This applies to new subscriptions only. Existing subscribers stay on the Price they were created against until something migrates them deliberately (out of scope here).";
@@ -155,6 +172,14 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
   const [isPending, startTransition] = useTransition();
 
   const inputLabel = `${row.lookupKey} ${cell.currency} amount`;
+  // A distinct DOM id (no spaces) from the accessible NAME above — `id`/
+  // `htmlFor` is plumbing, `inputLabel` is what a screen reader announces.
+  // Review 2026-08-28: these used to be the same string, rendered visibly
+  // inside the `<label>` — an operator editing PRICES saw a raw
+  // `lookup_key currency "amount"` string on screen. `sr-only` below keeps
+  // the full, uniquely-identifying label available to assistive tech
+  // without putting it in front of anyone's eyes.
+  const inputId = `${row.lookupKey}-${cell.currency}-amount`;
 
   function handleChange(raw: string) {
     setValue(raw);
@@ -188,10 +213,11 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
        *  the input edits, not a currency-formatted string that would only
        *  have to be mentally converted back. */}
       <span>{cell.publishedUnitAmountMinor === null ? "not yet published" : cell.publishedUnitAmountMinor}</span>
-      <label htmlFor={inputLabel}>{inputLabel}</label>
+      <label htmlFor={inputId} className="sr-only">
+        {inputLabel}
+      </label>
       <input
-        id={inputLabel}
-        aria-label={inputLabel}
+        id={inputId}
         inputMode="numeric"
         value={value}
         disabled={isPending}
@@ -200,7 +226,6 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
       />
       {error && <span role="alert">{error}</span>}
       {!error && warning && <span role="status">{warning}</span>}
-      <p>{SUBSCRIBER_SAFETY_NOTE}</p>
       {saveMessage && <span role="alert">{saveMessage}</span>}
     </div>
   );
@@ -228,6 +253,9 @@ function DraftEditorRowView({ revisionId, row }: { revisionId: string; row: Draf
 export function DraftEditor({ revisionId, rows }: DraftEditorProps) {
   return (
     <div>
+      {/* Once for the whole surface — see {@link SUBSCRIBER_SAFETY_NOTE}'s
+       *  doc comment on why this moved out of `AmountCell`. */}
+      <p>{SUBSCRIBER_SAFETY_NOTE}</p>
       {rows.map((row) => (
         <DraftEditorRowView key={row.lookupKey} revisionId={revisionId} row={row} />
       ))}
