@@ -616,9 +616,12 @@ export async function publishAction(
       // the compiler, not this comment, is what stops a future edit from
       // reordering these checks and reaching a plan with no fingerprint.
       if (result.modeRefused) {
-        // Same wording the `refused` branch above already threw for this
-        // exact case (`checkMode`'s refusal), reached here only if that
-        // branch is ever changed to stop covering it.
+        // NOT the same string `checkMode` produces — that one names the mode
+        // ("Publishing to Stripe mode \"live\" is refused in v1 …") and this
+        // one cannot, because the guard verdict it would quote is exactly what
+        // is missing on this branch. Equivalent in effect, deliberately
+        // different in wording; reached only if the `refused` branch above is
+        // ever changed to stop covering `checkMode`'s refusal.
         throw new PublishRefused("Publishing is refused: this mode is not enabled.");
       }
       const { plan } = result;
