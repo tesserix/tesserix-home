@@ -62,6 +62,11 @@ describe("koraNav", () => {
     // Guards the guard: an empty rail would satisfy the line above.
     expect(names).toContain("Food index");
   });
+
+  it("carries AI metrics — the full surface behind the overview's tiles", () => {
+    const names = collectItems(koraNav).map((item) => item.name);
+    expect(names).toContain("AI metrics");
+  });
 });
 
 describe("platformNav", () => {

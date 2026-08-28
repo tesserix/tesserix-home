@@ -106,7 +106,7 @@ export function KoraOverview({
             value={needsAttentionTotal ?? ""}
             delta="unresolved foods and feedback"
             state={needsAttentionState}
-            href="/platform/inbox"
+            href="/platform/inbox?source=kora"
           />
         </div>
       </section>
@@ -114,15 +114,20 @@ export function KoraOverview({
       <section className="flex flex-col gap-3" aria-label="AI resolution">
         <h3 className="text-sm font-medium">AI resolution</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* All three link to `/kora/ai-metrics` now that it exists — the
+              full surface behind these headline numbers, with the by-kind
+              breakdown and the per-user table these tiles have no room for. */}
           <StatTile
             label="Resolution attempts"
             value={aiMetrics ? aiMetrics.outcomes.attempts : ""}
             state={aiTileState}
+            href="/kora/ai-metrics"
           />
           <StatTile
             label="Needs human"
             value={aiMetrics ? aiMetrics.outcomes.needsHuman : ""}
             state={aiTileState}
+            href="/kora/ai-metrics"
           />
           {/* THE tile the plan calls out: `formatFirstTryRate` is the only
               place `firstTryRatePct` is turned into copy, and it never
@@ -131,6 +136,7 @@ export function KoraOverview({
             label="First-try rate"
             value={aiMetrics ? formatFirstTryRate(aiMetrics.outcomes.firstTryRatePct) : ""}
             state={aiTileState}
+            href="/kora/ai-metrics"
           />
         </div>
       </section>

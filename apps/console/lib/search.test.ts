@@ -147,10 +147,16 @@ describe("routeEntries", () => {
   });
 
   it("offers Kora's built pages as real destinations", () => {
-    // The console's product-rail pages, and now Overview too — the whole of
-    // koraNav is built. The palette must link these rather than showing them
-    // disabled — the disabled state means "not here", and they are here now.
-    for (const id of ["route:kora.overview", "route:kora.foods", "route:kora.users"]) {
+    // The console's product-rail pages, and now Overview and AI metrics too —
+    // the whole of koraNav is built. The palette must link these rather than
+    // showing them disabled — the disabled state means "not here", and they
+    // are here now.
+    for (const id of [
+      "route:kora.overview",
+      "route:kora.foods",
+      "route:kora.users",
+      "route:kora.aiMetrics",
+    ]) {
       const entry = routeEntries().find((e) => e.id === id);
       expect(entry, `${id} missing from the palette`).toBeDefined();
       expect(entry?.disabled, `${id} should be linkable`).toBeFalsy();

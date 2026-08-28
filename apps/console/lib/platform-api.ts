@@ -878,6 +878,41 @@ export async function fetchKoraAiMetrics(): Promise<import("./kora-ai-metrics").
 }
 
 /**
+ * The full `/kora/ai-metrics` surface's read — the SAME endpoint
+ * `fetchKoraAiMetrics` calls, paged for the per-user table it adds. One HTTP
+ * call, decoded twice by two small functions in `kora-ai-metrics.ts` rather
+ * than two separate reads, because `window`/`outcomes`/`users`/`pagination`
+ * all live in the one response body.
+ *
+ * `page` only — no `from`/`to`. The endpoint accepts a caller-chosen window,
+ * but this surface states Kora's default window rather than offering a
+ * picker; see the page's own doc comment for why.
+ */
+export async function fetchKoraAiMetricsPage(page = 1): Promise<{
+  metrics: import("./kora-ai-metrics").KoraAiMetrics;
+  pagination: import("./entities").EntityPagination;
+}> {
+  const { parseKoraAiMetrics, parseKoraAiMetricsPagination } = await import(
+    "./kora-ai-metrics"
+  );
+
+  const query = new URLSearchParams();
+  // Omitted at 1, matching `fetchProductEntities`: the platform API defaults
+  // to the first page, and sending it makes every first-page request differ
+  // from the default for no gain.
+  if (page > 1) query.set("page", String(page));
+  const path = query.toString()
+    ? `/v1/kora/ai-metrics?${query.toString()}`
+    : "/v1/kora/ai-metrics";
+
+  const body = await platformRequest("kora ai metrics", path);
+  return {
+    metrics: parseKoraAiMetrics(body),
+    pagination: parseKoraAiMetricsPagination(body),
+  };
+}
+
+/**
  * The AI cost and token usage ledger, from the platform API's `aiusage` module.
  *
  * Server-side only, and deliberately: the console holds the operator's Zitadel

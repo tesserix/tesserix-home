@@ -105,8 +105,11 @@ describe("console-native surfaces record no apps/web path", () => {
     //     distinct from the person, so there is no predecessor to record.
     //   - platform.billingCatalog: the plan catalog is console-native since
     //     #380 — apps/web never had a catalog surface at all.
+    //   - kora.aiMetrics: apps/web never served this — `/v1/kora/ai-metrics`
+    //     postdates it entirely. Console-native, like platform.aiUsage.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
+      "kora.aiMetrics",
       "platform.tools",
       "platform.auditLog",
       "platform.inbox",
@@ -239,6 +242,13 @@ describe("pending reflects what the console actually serves", () => {
     // invent a metric to fill the gap. Nothing here reads /v1/kpis.
     expect(isPending("kora.overview")).toBe(false);
     expect(consolePath("kora.overview")).toBe("/kora");
+  });
+
+  it("serves Kora's AI metrics — the full surface behind the overview's tiles", () => {
+    // The overview links its three AI-resolution tiles here now that the
+    // destination exists — see kora/overview-view.tsx.
+    expect(isPending("kora.aiMetrics")).toBe(false);
+    expect(consolePath("kora.aiMetrics")).toBe("/kora/ai-metrics");
   });
 
   it("keeps live chat pending", () => {

@@ -54,7 +54,9 @@ const INBOX = (total: number): EstateInbox => ({
 });
 
 const AI_METRICS = (firstTryRatePct?: number): KoraAiMetrics => ({
-  outcomes: { attempts: 10, needsHuman: 1, firstTryRatePct },
+  window: { from: "2026-08-01T00:00:00Z", to: "2026-08-28T00:00:00Z" },
+  outcomes: { attempts: 10, needsHuman: 1, byKind: { exact: 8, fuzzy: 2 }, firstTryRatePct },
+  users: [],
 });
 
 function setUpSuccessfulReads() {

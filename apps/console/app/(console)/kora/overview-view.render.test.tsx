@@ -10,7 +10,9 @@ const FAILED: KoraOverviewProps["foodsState"] = { kind: "error", message: "boom"
 const REAUTH: KoraOverviewProps["foodsState"] = { kind: "reauth-required" };
 
 const AI_METRICS = (firstTryRatePct?: number): KoraAiMetrics => ({
-  outcomes: { attempts: 42, needsHuman: 2, firstTryRatePct },
+  window: { from: "2026-08-01T00:00:00Z", to: "2026-08-28T00:00:00Z" },
+  outcomes: { attempts: 42, needsHuman: 2, byKind: { exact: 30, fuzzy: 12 }, firstTryRatePct },
+  users: [],
 });
 
 const BASE: KoraOverviewProps = {
@@ -80,11 +82,18 @@ describe("KoraOverview — the four independent tiles", () => {
     );
   });
 
-  it("links Needs attention to the estate inbox", () => {
+  it("links every AI resolution tile to the full ai-metrics surface", () => {
+    renderOverview();
+    for (const name of [/resolution attempts/i, /needs human/i, /first-try rate/i]) {
+      expect(screen.getByRole("link", { name })).toHaveAttribute("href", "/kora/ai-metrics");
+    }
+  });
+
+  it("links Needs attention to the kora-scoped estate inbox", () => {
     renderOverview();
     expect(screen.getByRole("link", { name: /needs attention/i })).toHaveAttribute(
       "href",
-      "/platform/inbox",
+      "/platform/inbox?source=kora",
     );
   });
 
