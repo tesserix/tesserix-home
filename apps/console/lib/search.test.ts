@@ -132,26 +132,25 @@ describe("routeEntries", () => {
   });
 
   it("keeps a pending route that a rail still advertises", () => {
-    // The rule is "pending AND unadvertised", not "pending". `kora.users` is
-    // pending and sits in koraNav; platform.liveChat is pending and sits in
-    // Operate. The rail promises them, so the palette may say the same thing.
+    // The rule is "pending AND unadvertised", not "pending". `platform.liveChat`
+    // is pending and sits in Operate — the rail promises it, so the palette may
+    // say the same thing.
     //
-    // `kora.foods` and then `kora.users` were the examples here in turn, until
-    // each was built. `kora.overview` is the durable one: Kora answers 501 on
-    // /admin/kpis and tesserix/kora#472 chose to keep it, so that entry is
-    // advertised-but-unbuilt by design rather than by backlog.
+    // `kora.foods`, then `kora.users`, then `kora.overview` were the examples
+    // here in turn, until each was built — see "offers Kora's built pages"
+    // below. `platform.liveChat` is the durable one left: no console-native
+    // live chat surface is planned.
     const ids = routeEntries().map((e) => e.id);
-    expect(ids).toContain("route:kora.overview");
     expect(ids).toContain("route:platform.liveChat");
-    // and they are still marked disabled rather than linked
-    expect(routeEntries().find((e) => e.id === "route:kora.overview")?.disabled).toBe(true);
+    // and it is still marked disabled rather than linked
+    expect(routeEntries().find((e) => e.id === "route:platform.liveChat")?.disabled).toBe(true);
   });
 
   it("offers Kora's built pages as real destinations", () => {
-    // The console's product-rail pages. The palette must link these rather
-    // than showing them disabled — the disabled state means "not here", and
-    // they are here now.
-    for (const id of ["route:kora.foods", "route:kora.users"]) {
+    // The console's product-rail pages, and now Overview too — the whole of
+    // koraNav is built. The palette must link these rather than showing them
+    // disabled — the disabled state means "not here", and they are here now.
+    for (const id of ["route:kora.overview", "route:kora.foods", "route:kora.users"]) {
       const entry = routeEntries().find((e) => e.id === id);
       expect(entry, `${id} missing from the palette`).toBeDefined();
       expect(entry?.disabled, `${id} should be linkable`).toBeFalsy();

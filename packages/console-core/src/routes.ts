@@ -111,9 +111,13 @@ interface RouteEntry {
 // `Record<string, RouteEntry>` would widen every key to `string` and collapse
 // `RouteId` to `string`, making the exported type meaningless.
 export const ROUTES = {
-  // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
-  // `pending` the rail links to in-app routes that are not there — five 404s.
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true, capability: "platform" },
+  // NOT pending: the console serves this page — a Foods/Users/Needs
+  // attention/AI resolution snapshot assembled entirely from routes that
+  // already existed (`kora.foods`, `kora.users`, `platform.inbox`, and the
+  // new `/v1/kora/ai-metrics` federation). `koraNav` still has 3 entries —
+  // this route was already one of them, just linking nowhere — so
+  // `estate.ts`'s `entries: 3` assertion is unaffected.
+  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, capability: "platform" },
   // NOT pending: the console serves this page. The FIRST product-rail surface
   // the console owns — every route it served before this was on the platform
   // rail.
