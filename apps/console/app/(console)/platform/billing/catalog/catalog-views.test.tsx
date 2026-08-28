@@ -520,14 +520,14 @@ describe("CatalogViews", () => {
 
 /**
  * Publication attribution — task 2R, the residual assertion Plan 3 Task 2
- * left out. `readLivePublicationAttribution` is a fourth, independent read
+ * left out. `readLivePublication` is a fourth, independent read
  * (see `page.tsx`'s module doc comment), so its failure must not blank the
  * catalog table or the observation window, and its "never published" answer
  * must say so in words rather than rendering an empty attribution line.
  */
 describe("publication attribution", () => {
   it("shows who published the current revision and when", () => {
-    const publication = { publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00Z" };
+    const publication = { id: "pub-1", revisionId: "rev-1", publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00Z" };
     renderViews({
       mode: "test",
       publication,
@@ -537,7 +537,7 @@ describe("publication attribution", () => {
   });
 
   it("renders the publication timestamp in UTC, unambiguously — same approach as `formatRanAt`", () => {
-    const publication = { publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00.000Z" };
+    const publication = { id: "pub-1", revisionId: "rev-1", publishedBy: "mahesh", publishedAt: "2026-08-27T10:00:00.000Z" };
     renderViews({
       publication,
       publicationState: resolveState({ isLoading: false, error: null, rows: [publication], filtered: false }),

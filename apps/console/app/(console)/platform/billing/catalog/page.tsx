@@ -15,10 +15,10 @@ import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   readCatalogRows,
   readLatestRuns,
-  readLivePublicationAttribution,
+  readLivePublication,
   readWindowStatus,
   type CatalogRow,
-  type LivePublicationAttribution,
+  type LivePublication,
   type ModeLatestRun,
   type ParityWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
@@ -154,12 +154,12 @@ async function readRuns(): Promise<ModeLatestRun[]> {
   return readLatestRuns();
 }
 
-async function readPublication(mode: StripeMode): Promise<LivePublicationAttribution | null> {
+async function readPublication(mode: StripeMode): Promise<LivePublication | null> {
   if (!isDatabaseConfigured()) notConfigured();
   // `null` is the normal answer for a mode that has never been published —
   // `live` before #0037, and any future second source or mode before its
   // first publish. It is not a failure and must not be treated like one.
-  return readLivePublicationAttribution(mode);
+  return readLivePublication(mode);
 }
 
 export default async function PlanCatalog({

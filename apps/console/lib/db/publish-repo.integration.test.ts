@@ -197,14 +197,29 @@ const countOrphanAmounts = async (): Promise<number> => {
   return Number(rows[0].n);
 };
 
+// Same four columns `readLivePublication` (`plan-catalog-repo.ts`) reads,
+// widened by task 2R — kept in lockstep here so `before`/`liveBefore`
+// snapshots below can be compared against that function's own return value
+// with a plain `toEqual`, publishedBy/publishedAt included, rather than only
+// the two columns this fixture used to check.
 const publicationFor = async (
   mode: "test" | "live",
-): Promise<{ id: string; revisionId: string }> => {
-  const { rows } = await db.query<{ id: string; revision_id: string }>(
-    "SELECT id, revision_id FROM plan_catalog_publications WHERE mode = $1 AND superseded_at IS NULL",
+): Promise<{ id: string; revisionId: string; publishedBy: string; publishedAt: string }> => {
+  const { rows } = await db.query<{
+    id: string;
+    revision_id: string;
+    published_by: string;
+    published_at: string | Date;
+  }>(
+    "SELECT id, revision_id, published_by, published_at FROM plan_catalog_publications WHERE mode = $1 AND superseded_at IS NULL",
     [mode],
   );
-  return { id: rows[0].id, revisionId: rows[0].revision_id };
+  return {
+    id: rows[0].id,
+    revisionId: rows[0].revision_id,
+    publishedBy: rows[0].published_by,
+    publishedAt: new Date(rows[0].published_at).toISOString(),
+  };
 };
 
 describe("createDraftFrom", () => {
@@ -347,10 +362,16 @@ describe("promotePublication", () => {
     // `readLivePublication` is what `readCatalogAmounts` and the parity
     // check actually read through — proving the write is visible there,
     // not just in this file's own `db.query`, is the whole point of #327.
-    await expect(readLivePublication("test")).resolves.toEqual({
+    const afterPublication = await readLivePublication("test");
+    expect(afterPublication).toMatchObject({
       id: newPublicationId,
       revisionId: draft,
+      // `promotePublication`'s own `by` argument, above.
+      publishedBy: "operator@tesserix",
     });
+    // `published_at` defaults to `now()` at INSERT time, so it is asserted as
+    // a well-formed ISO 8601 UTC string rather than a fixed value.
+    expect(afterPublication?.publishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
     const { rows: retiredRows } = await db.query<{
       superseded_at: string | null;
@@ -394,10 +415,11 @@ describe("promotePublication", () => {
     expect(stillLiveRows[0].superseded_at).toBeNull();
     expect(stillLiveRows[0].superseded_by).toBeNull();
 
-    await expect(readLivePublication("test")).resolves.toEqual({
-      id: before.id,
-      revisionId: before.revisionId,
-    });
+    // `before` now carries `publishedBy`/`publishedAt` too (see
+    // `publicationFor`'s own comment), so this still proves the un-retired
+    // row is EXACTLY the one that was live before the failed promotion, not
+    // merely one with a matching id and revision.
+    await expect(readLivePublication("test")).resolves.toEqual(before);
   });
 
   it("leaves the OTHER mode's live publication untouched", async () => {

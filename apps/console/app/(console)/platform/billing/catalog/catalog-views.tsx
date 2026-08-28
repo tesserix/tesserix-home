@@ -19,7 +19,7 @@ import { formatMoney } from "@/lib/money";
 // arrives as plain props instead.
 import type {
   CatalogRow,
-  LivePublicationAttribution,
+  LivePublication,
   ModeLatestRun,
   ParityOutcome,
   ParityWindowDay,
@@ -551,7 +551,7 @@ function PublicationAttribution({
   publicationState,
 }: {
   mode: StripeMode;
-  publication: LivePublicationAttribution | null;
+  publication: LivePublication | null;
   publicationState: SurfaceState;
 }) {
   if (publicationState.kind === "ready" && publication) {
@@ -798,7 +798,7 @@ export interface CatalogViewsProps {
   /** Who published the mode's currently-live revision, and when — `null`
    *  for a mode that has never been published. A fourth, independently
    *  resolved read; see `page.tsx`'s module doc comment. */
-  publication: LivePublicationAttribution | null;
+  publication: LivePublication | null;
   publicationState: SurfaceState;
 }
 

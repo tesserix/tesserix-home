@@ -114,6 +114,11 @@ describe("performParityCheck", () => {
     vi.mocked(readLivePublication).mockResolvedValueOnce({
       id: KNOWN_TEST_PUBLICATION_ID,
       revisionId: "22222222-2222-2222-2222-222222222222",
+      // Widened by task 2R (`readLivePublication` now carries who published
+      // and when) — irrelevant to this test's assertion, present only to
+      // satisfy the type.
+      publishedBy: "operator@tesserix",
+      publishedAt: "2026-08-01T00:00:00.000Z",
     });
 
     const run = await performParityCheck("test");

@@ -276,14 +276,25 @@ describe("readCatalogAmounts / readLivePublication", () => {
     await expect(readCatalogAmounts("live", "mark8ly")).resolves.toEqual([]);
   });
 
-  it("resolves the live publication's id and revision for a published mode", async () => {
+  it("resolves the live publication's id, revision, and who published it and when", async () => {
+    // Widened by task 2R: the console's catalog surface needs to say who
+    // published the live revision, and when — `readLivePublication` is the
+    // one place that answers both "which publication" and "who/when" about
+    // the SAME row, on purpose (see that function's own doc comment on why
+    // this is not a second, narrower query sharing its `WHERE`).
     const revision = await insertRevision("published");
     const publicationId = await publish("test", revision);
 
-    await expect(readLivePublication("test")).resolves.toEqual({
+    const result = await readLivePublication("test");
+    expect(result).toMatchObject({
       id: publicationId,
       revisionId: revision,
+      // `publish()`'s own fixture, above.
+      publishedBy: "test",
     });
+    // `published_at` defaults to `now()` at insert time, so it is asserted as
+    // a well-formed ISO 8601 UTC string rather than a fixed value.
+    expect(result?.publishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
 
   it("resolves null for a mode with no publication", async () => {
