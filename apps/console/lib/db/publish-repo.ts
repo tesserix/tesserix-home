@@ -339,6 +339,48 @@ function mapAttemptRow(row: {
  * `publish-plan.ts`), recorded so the executor's re-observe-and-compare step
  * (Task 6) has something durable to compare against even if the process that
  * started the attempt is not the one that resumes it.
+ *
+ * # At most one OPEN attempt per mode — enforced by a lock, not by the schema
+ *
+ * F3 (whole-branch fix wave, 2026-08-28). Before this fix, nothing stopped
+ * two concurrent attempts for the same mode: `UNIQUE (idempotency_key)`
+ * (0038) protects one attempt's own Stripe calls, but keys fold in
+ * `attemptId`, so a second attempt mints an entirely different key set. Both
+ * attempts re-observe stale state and both can create — for a
+ * `replace_price` that is two new Prices, the lookup key moving to whichever
+ * lands second, and the LOSER's Price left `active: true` with no lookup
+ * key, which the parity comparator structurally cannot see (spec §9.2).
+ *
+ * The same shape `createDraftFrom` already uses for the identically-shaped
+ * "at most one X" problem: `pg_advisory_xact_lock`, taken BEFORE the
+ * check-then-insert, so two concurrent callers cannot both observe "no open
+ * attempt" and both insert one. Two differences from `createDraftFrom`'s
+ * lock, both deliberate:
+ *
+ *   - SCOPED PER MODE, not global. A draft is a single shared working copy
+ *     (see this module's top comment on why ITS lock is one fixed key for
+ *     every mode) — an open publish attempt is not; `test` and `live`
+ *     publish independently and an open `test` attempt has no business
+ *     blocking a `live` one. The lock key folds in `hashtext(mode)` for
+ *     exactly this reason.
+ *   - A DIFFERENT first component (`1`, not `createDraftFrom`'s `0`) so the
+ *     two invariants never collide in `pg_locks` despite both being
+ *     `pg_advisory_xact_lock` calls against this same database.
+ *
+ * # A CEILING, never a floor — 0035's own words, restated here on purpose
+ *
+ * Exactly like 0035's `plan_catalog_publications_one_live_per_mode` note:
+ * Postgres cannot express "at most one open row" for THIS shape either (a
+ * partial unique index on `outcome IS NULL` would work for a boolean-ish
+ * state, but nothing stops a second `INSERT` racing this function's own
+ * check outside of the lock this function takes). This function SERIALISES
+ * ITSELF — every call, for every mode, that goes through
+ * `startPublishAttempt` — and enforces nothing beyond that. There is no
+ * schema constraint backing the invariant (0038 has none), so a row inserted
+ * by any path that does not go through this function is not caught by
+ * anything here. That is a narrower guarantee than "the schema forbids two
+ * open attempts", and claiming the wider one would be claiming more than is
+ * enforced.
  */
 export async function startPublishAttempt(params: {
   revisionId: string;
@@ -347,6 +389,27 @@ export async function startPublishAttempt(params: {
   startedBy: string;
 }): Promise<string> {
   return tesserixTx(async (query) => {
+    // Serialises every `startPublishAttempt` call FOR THIS MODE against
+    // every other one — see this function's doc comment on why the key
+    // folds in `mode` rather than being fixed, unlike `createDraftFrom`'s.
+    await query(`SELECT pg_advisory_xact_lock(1, hashtext($1))`, [params.mode]);
+
+    const openRows = await query<{ id: string }>(
+      `SELECT id
+         FROM plan_catalog_publish_attempts
+        WHERE mode = $1 AND outcome IS NULL
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [params.mode],
+    );
+    const open = openRows[0];
+    if (open) {
+      throw new Error(
+        `startPublishAttempt: an open publish attempt already exists for ${params.mode} ` +
+          `(attempt ${open.id}) — finish or abort it before starting another`,
+      );
+    }
+
     const rows = await query<{ id: string }>(
       `INSERT INTO plan_catalog_publish_attempts (revision_id, mode, fingerprint, started_by)
        VALUES ($1, $2, $3, $4)

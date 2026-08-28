@@ -489,7 +489,7 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
   const observed = input.observed ?? [];
 
   const policy = policyFor(SINGLE_SOURCE);
-  const namespacePrefix = policyFor(SINGLE_SOURCE).lookupKeyPrefix;
+  const namespacePrefix = policy.lookupKeyPrefix;
 
   // `compareCatalogToStripe` already solves the 42-vs-78 shape asymmetry and
   // the zero-decimal reconciliation (spec §2: "a second diff implementation
@@ -535,12 +535,25 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
     if (missingInCatalog) {
       // Draft no longer wants this lookup_key at all; the whole Price is
       // archived. `priceId` comes from the observation itself (`parity.ts`
-      // only sets it on this diff kind, for exactly this reason).
+      // only sets it on this diff kind, for exactly this reason) — a
+      // `price_missing_in_catalog` diff with no `priceId` is `parity.ts`
+      // violating its own contract, not a case this function can plan
+      // around. Minor, whole-branch fix wave 2026-08-28: `?? ""` used to
+      // paper over that with an empty string, which `stripe-write.ts`'s
+      // `archivePrice` would have sent straight to `prices.update("")` —
+      // unreachable today, but a malformed Stripe call waiting for the day
+      // `parity.ts` changes. Fail loudly here instead, at the boundary where
+      // the broken invariant is easy to point at.
+      if (!missingInCatalog.priceId) {
+        throw new Error(
+          `buildPublishPlan: price_missing_in_catalog diff for "${lookupKey}" carries no priceId`,
+        );
+      }
       restOperations.push({
         kind: "archive_price",
         origin: rowOrigin(ancestorMap, draftMap, lookupKey),
         lookupKey,
-        priceId: missingInCatalog.priceId ?? "",
+        priceId: missingInCatalog.priceId,
       });
       continue;
     }
@@ -581,7 +594,24 @@ export function buildPublishPlan(input: PublishPlanInput): PublishPlan {
       ? taxDiffs.filter((d) => "currency" in d && taxBehaviorRequiresReplace(d.currency, existing))
       : taxDiffs;
 
-    const needsReplace = amountDiffs.length > 0 || taxDiffsRequiringReplace.length > 0;
+    // F1 (whole-branch fix wave, 2026-08-28): a NEW currency the draft wants
+    // at a non-`unspecified` tax_behavior cannot go through
+    // `add_currency_option` — `stripeCatalogWriter.addCurrencyOption` sends
+    // only `unit_amount` (see that module's doc comment on why: Stripe lands
+    // the currency at its own default and there is no in-place call that can
+    // ever correct it afterward, per §1.6a). Left as `add_currency_option`,
+    // the operation would report `succeeded` while silently landing `aud` (or
+    // any other non-unspecified currency) `unspecified` in Stripe forever —
+    // dead data with a live, permanent consequence. `replace_price` uses
+    // `createPrice` instead, which DOES send `tax_behavior` alongside
+    // `unit_amount` for every `currencyOptions` entry on create, the one path
+    // §1.6a leaves open for setting it correctly the first time.
+    const newCurrenciesNeedingTaxBehavior = newCurrencyDiffs.some(
+      (d) => "taxBehavior" in d && d.taxBehavior !== "unspecified",
+    );
+
+    const needsReplace =
+      amountDiffs.length > 0 || taxDiffsRequiringReplace.length > 0 || newCurrenciesNeedingTaxBehavior;
 
     if (needsReplace && existing) {
       // ONE new Price replaces the old one entirely (create + archive), so

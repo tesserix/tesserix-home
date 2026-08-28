@@ -64,6 +64,24 @@ import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-r
  *    stopping the whole publish.
  * 6. Close the attempt with its terminal outcome.
  *
+ * # A SUCCESSFUL PUBLISH IS NOT A PROMOTION
+ *
+ * F4 (whole-branch fix wave, 2026-08-28). Stated here plainly because the
+ * six steps above stop at "close the attempt" and a wiring author reading
+ * only that list would reasonably assume a green publish is done: it is not.
+ * `executePublish` never writes a `plan_catalog_publications` row.
+ * `readCatalogAmounts` (`plan-catalog-repo.ts`) joins through THAT table, so
+ * after a `"succeeded"` outcome here, the nightly parity check's CATALOG side
+ * still reads the OLD revision while Stripe now holds the NEW one — the
+ * check goes red by construction, on the shared window #327's write-key
+ * revocation reads, until something promotes the published revision.
+ *
+ * Promotion (and orphan detection) is Task 7's, correctly deferred — this
+ * module does not build it. But Task 7 MUST land the promotion write in the
+ * SAME change that first gives this function a real caller; wiring
+ * `executePublish` up from this header alone, without also promoting on
+ * success, resets #327's window on the very first green publish.
+ *
  * # Recovery is re-observe-and-re-plan, NOT draining a stored queue
  *
  * There is no `PublishPlan` persisted anywhere — 0038 stores attempts and
@@ -342,7 +360,7 @@ async function runReplacePrice(
   // before the prices that reference them" / "create before archive" order
   // Task 6's brief requires, and the only safe response to a failed create:
   // there is nothing yet to make the old Price's replacement.
-  const created = await runCall({
+  await runCall({
     attempt,
     deps,
     kind: op.kind,
@@ -364,7 +382,6 @@ async function runReplacePrice(
         idempotencyKey,
       }),
   });
-  void created;
 
   // Archive the OLD id, captured by Task 3 BEFORE this create ran — see
   // `ReplacePriceOperation.oldPriceId`'s own doc comment and

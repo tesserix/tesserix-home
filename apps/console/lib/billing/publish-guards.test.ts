@@ -139,11 +139,28 @@ describe("checkGuards", () => {
     expect(checkGuards(planWithAmountChange(1000, 1100), ancestorAt(1000), "test")).toEqual({ ok: true });
   });
 
-  it("counts breadth in INTENDED entries, not drift corrections", () => {
-    // "40 entries" is meaningless. "1 intended, 39 drift" and "40 intended" are
-    // entirely different events.
-    expect(checkGuards(planWith({ intended: 1, drift: 39 }), ANY, "test")).toEqual({ ok: true });
+  it("counts breadth in INTENDED entries, not drift corrections, below the total threshold", () => {
+    // "40 entries" is meaningless on its own. "1 intended, 5 drift" and "11
+    // intended" are entirely different events — but see the next test for
+    // what happens once TOTAL entries, regardless of split, gets large: the
+    // intended-only count is fail-safe in one direction (see the header) and
+    // blind in the other, which is F2 below.
+    expect(checkGuards(planWith({ intended: 1, drift: 5 }), ANY, "test")).toEqual({ ok: true });
     expect(checkGuards(planWith({ intended: 11, drift: 0 }), ANY, "test")).toMatchObject({ ok: false });
+  });
+
+  it("requires confirmation for an all-drift plan once TOTAL entries cross the breadth threshold", () => {
+    // F2 (whole-branch fix wave, 2026-08-28): `checkBreadth` used to read
+    // ONLY `counts.intended`. `ancestor === draft` with an empty or wrong
+    // observation (a truncated `listPrices` page, the wrong account, a mode
+    // mix-up upstream) makes EVERY row a `price_missing_in_stripe` diff and
+    // EVERY operation `drift-correction` — so `counts.intended` stays 0 no
+    // matter how large the plan gets, and no guard ever fired. This is the
+    // largest blast radius the system can produce (spec §7's "a correct
+    // mechanism publishing a wrong number"), and it must at least require a
+    // confirmation, even though no single cell is "intended".
+    const v = checkGuards(planWith({ intended: 0, drift: 40 }), ANY, "test");
+    expect(v).toMatchObject({ ok: false, requiresConfirmation: expect.anything() });
   });
 
   it("refuses a developed price that does not carry all seven currencies", () => {

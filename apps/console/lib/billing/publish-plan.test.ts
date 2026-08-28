@@ -283,6 +283,34 @@ describe("buildPublishPlan", () => {
     ]);
   });
 
+  it("routes an added currency with a non-unspecified tax_behavior through replace_price, not add_currency_option", () => {
+    // F1 (whole-branch fix wave, 2026-08-28): `add_currency_option` ->
+    // `stripeCatalogWriter.addCurrencyOption` carries NO `taxBehavior`
+    // parameter (see `stripe-write.ts`) — Stripe lands the new currency at
+    // its own default, `unspecified`, and there is no follow-up call that can
+    // ever correct it (spec §1.6a: setting a currency option's tax_behavior
+    // requires resending unit_amount, which is immutable once set). All six
+    // `aud` currency options in mark8ly's catalog are `exclusive`
+    // (`stripe-write.ts`'s own comments). An `add_currency_option` op here
+    // would report `succeeded` and leave `aud` permanently `unspecified` in
+    // Stripe — a mismatch `parity.ts` cannot repair and the nightly check
+    // would report forever. Routing through `replace_price` instead uses
+    // `createPrice`, which DOES send `tax_behavior` alongside `unit_amount`
+    // for every `currencyOptions` entry (verified path, see
+    // `CreatePriceSpec.currencyOptions`'s own doc comment).
+    const key = `${MARK8LY_LOOKUP_KEY_PREFIX}k_aud_add`;
+    const plan = buildPublishPlan({
+      ancestor: [amount(key, "usd", 1000)],
+      draft: [amount(key, "usd", 1000), amount(key, "aud", 900, "exclusive")],
+      observed: [price({ lookup_key: key, currency: "usd", unit_amount: 1000 })],
+    });
+    expect(plan.operations[0]?.kind).toBe("replace_price");
+    const op = plan.operations[0] as unknown as {
+      currencyOptions: Record<string, { unitAmount: number; taxBehavior: TaxBehavior }>;
+    };
+    expect(op.currencyOptions.aud).toMatchObject({ taxBehavior: "exclusive" });
+  });
+
   it("surfaces diffs no operation can fix as unactionable, and counts them", () => {
     // Neither kind has a Stripe API call that could act on it: there is no
     // way to remove a currency from currency_options, and fixing a shape

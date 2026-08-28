@@ -33,10 +33,14 @@
 --
 -- Following 0033's and 0036's discipline: belt-and-braces CHECKs for every
 -- field an argument depends on, each commented with what silently goes wrong
--- without it. And following 0035's: `CREATE TABLE IF NOT EXISTS` plus
--- drop-then-add for constraints (Postgres has no `ADD CONSTRAINT IF NOT
--- EXISTS`), since this file, like every migration here, is applied by hand
--- and must survive being run twice.
+-- without it. Idempotency here is `CREATE TABLE IF NOT EXISTS` plus
+-- `CREATE INDEX IF NOT EXISTS` throughout, every constraint declared inline
+-- inside the `CREATE TABLE` rather than added after with a separate
+-- `ALTER TABLE ... ADD CONSTRAINT` — unlike 0035, which alters a
+-- pre-existing table and genuinely needs the drop-then-add dance (Postgres
+-- has no `ADD CONSTRAINT IF NOT EXISTS`). Re-running this file is idempotent
+-- because the tables and their constraints are created together or not at
+-- all, not because of that mechanism.
 
 CREATE TABLE IF NOT EXISTS plan_catalog_publish_attempts (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -216,5 +220,9 @@ CREATE INDEX IF NOT EXISTS plan_catalog_publish_operations_archived
 -- Attempt-scoped operation listing — the executor's own resume/report path
 -- ("what happened in attempt X, in order") and the audit trail an operator
 -- reads after the fact both filter on `attempt_id` and want `sequence` order.
-CREATE INDEX IF NOT EXISTS plan_catalog_publish_operations_attempt_sequence
-    ON plan_catalog_publish_operations (attempt_id, sequence);
+-- NO SEPARATE INDEX HERE: `plan_catalog_publish_operations_one_per_sequence`
+-- above is `UNIQUE (attempt_id, sequence)`, which Postgres already backs
+-- with a btree over exactly this column pair — a second, explicit
+-- `(attempt_id, sequence)` index would be redundant, maintained on every
+-- insert for no query this table needs it for. Minor, whole-branch fix wave
+-- 2026-08-28: this migration used to create one anyway.

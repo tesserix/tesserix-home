@@ -277,6 +277,73 @@ describe("publish-repo.ts: publish attempts", () => {
     expect(attempt?.outcome).toBe("succeeded");
     expect(attempt?.finishedAt).not.toBeNull();
   });
+
+  it("refuses a second open attempt for the same mode, naming the existing one", async () => {
+    // F3 (whole-branch fix wave, 2026-08-28): `startPublishAttempt` used to
+    // take no lock and check nothing. `UNIQUE (idempotency_key)` protects
+    // ONE attempt's own calls, but two open attempts each mint their own key
+    // set (keys fold in `attemptId`) and both re-observe stale state, so both
+    // can create — for a `replace_price` that means two new Prices, the
+    // lookup key moving to whichever lands second, and the loser's Price left
+    // ACTIVE with no lookup key, which the parity comparator structurally
+    // cannot see (spec §9.2).
+    const firstId = await startPublishAttempt({
+      revisionId: BASELINE_REVISION_ID,
+      mode: "test",
+      fingerprint: "fp-open-1",
+      startedBy: "operator-a@tesserix",
+    });
+
+    await expect(
+      startPublishAttempt({
+        revisionId: BASELINE_REVISION_ID,
+        mode: "test",
+        fingerprint: "fp-open-2",
+        startedBy: "operator-b@tesserix",
+      }),
+    ).rejects.toThrow(new RegExp(firstId));
+  });
+
+  it("allows a new attempt for the same mode once the open one is finished", async () => {
+    const firstId = await startPublishAttempt({
+      revisionId: BASELINE_REVISION_ID,
+      mode: "test",
+      fingerprint: "fp-seq-1",
+      startedBy: "operator@tesserix",
+    });
+    await finishPublishAttempt(firstId, "succeeded");
+
+    await expect(
+      startPublishAttempt({
+        revisionId: BASELINE_REVISION_ID,
+        mode: "test",
+        fingerprint: "fp-seq-2",
+        startedBy: "operator@tesserix",
+      }),
+    ).resolves.toEqual(expect.any(String));
+  });
+
+  it("scopes the open-attempt guard per mode, not globally", async () => {
+    // An open `test` attempt must not block starting a `live` attempt — the
+    // invariant is per-mode ("at most one open attempt per mode"), never
+    // global (unlike `createDraftFrom`'s single shared lock — see this
+    // function's own doc comment on why the two locks differ).
+    await startPublishAttempt({
+      revisionId: BASELINE_REVISION_ID,
+      mode: "test",
+      fingerprint: "fp-scope-1",
+      startedBy: "operator@tesserix",
+    });
+
+    await expect(
+      startPublishAttempt({
+        revisionId: BASELINE_REVISION_ID,
+        mode: "live",
+        fingerprint: "fp-scope-2",
+        startedBy: "operator@tesserix",
+      }),
+    ).resolves.toEqual(expect.any(String));
+  });
 });
 
 describe("publish-repo.ts: operations", () => {

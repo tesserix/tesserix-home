@@ -83,6 +83,31 @@ export const MAGNITUDE_THRESHOLD = 0.25;
  */
 export const BREADTH_THRESHOLD = 10;
 
+/**
+ * More than this many TOTAL plan entries — intended AND drift-correction
+ * together — requires a typed confirmation, independent of the
+ * intended-only rule above.
+ *
+ * F2 (whole-branch fix wave, 2026-08-28). `checkBreadth` used to read ONLY
+ * `plan.counts.intended`, which is fail-safe when a plan has SOME intent
+ * (see `checkBreadth`'s doc comment on `combineOrigins`) but says nothing
+ * about the plan this system can produce with NO intent at all:
+ * `ancestor === draft` with an empty or wrong observation (a truncated
+ * `listPrices` page, the wrong account, a mode mix-up upstream) turns every
+ * row into a `price_missing_in_stripe` diff and every operation
+ * `drift-correction` — `counts.intended` stays 0 no matter how large the
+ * plan gets, and the ONLY guard that could have caught "42 creates against a
+ * live billing account" never fires.
+ *
+ * 39, not 10: a CONFIRMATION, not a refusal — spec §7's own named bootstrap
+ * case is 42 legitimate creates into an empty mode and must remain possible
+ * without code changing. This threshold sits comfortably below that 42 (so
+ * the bootstrap still trips it and asks a human to look) and comfortably
+ * above `BREADTH_THRESHOLD` (so it does not duplicate the intended-only
+ * rule's job on an ordinary publish).
+ */
+export const BREADTH_TOTAL_THRESHOLD = 39;
+
 // ---------------------------------------------------------------------------
 // Verdict
 // ---------------------------------------------------------------------------
@@ -186,13 +211,27 @@ function checkCurrencyCoverage(plan: PublishPlan): GuardBreach[] {
  * header for what WOULD need a finer label.
  */
 function checkBreadth(plan: PublishPlan): GuardBreach[] {
-  if (plan.counts.intended <= BREADTH_THRESHOLD) return [];
-  return [
-    {
-      rule: "breadth",
-      message: `${plan.counts.intended} intended entries exceed the breadth threshold of ${BREADTH_THRESHOLD}; confirm before publishing.`,
-    },
-  ];
+  if (plan.counts.intended > BREADTH_THRESHOLD) {
+    return [
+      {
+        rule: "breadth",
+        message: `${plan.counts.intended} intended entries exceed the breadth threshold of ${BREADTH_THRESHOLD}; confirm before publishing.`,
+      },
+    ];
+  }
+
+  // F2: catches the all-drift (or mostly-drift) plan the rule above is
+  // structurally blind to — see `BREADTH_TOTAL_THRESHOLD`'s doc comment.
+  if (plan.counts.total > BREADTH_TOTAL_THRESHOLD) {
+    return [
+      {
+        rule: "breadth",
+        message: `${plan.counts.total} total entries exceed the breadth threshold of ${BREADTH_TOTAL_THRESHOLD}; confirm before publishing.`,
+      },
+    ];
+  }
+
+  return [];
 }
 
 // ---------------------------------------------------------------------------

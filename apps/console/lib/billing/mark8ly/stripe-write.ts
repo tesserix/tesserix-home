@@ -85,7 +85,7 @@ function announcedMode(key: string): StripeMode | null {
 }
 
 // Module-private and NEVER returned. Returning it hands every caller the
-// full write API and makes the four-method surface decorative. Keyed on
+// full write API and makes the six-method surface decorative. Keyed on
 // mode AND on the key's value — see `../stripe-read.ts`'s `clients` for why
 // a single slot is wrong: it would evict one mode's client on every call
 // that alternates modes.
@@ -183,9 +183,10 @@ export interface CreatePriceSpec {
 }
 
 /**
- * The entire Stripe WRITE surface this estate has. Six methods: the four
+ * The entire Stripe WRITE surface this estate has. Six methods: the three
  * matching mark8ly's own Go bootstrap (`billing/stripe/product.go`,
- * `billing/stripe/price.go`) one-for-one, plus `addCurrencyOption`,
+ * `billing/stripe/price.go`) one-for-one — `findProductByPlan`,
+ * `createProduct`, `createPrice` — plus `addCurrencyOption`,
  * `updatePriceTaxBehavior`, and `archivePrice` — the three in-place and
  * archive operations the publish plan (design spec §4) needs. See the
  * module header before adding a seventh.
@@ -228,7 +229,7 @@ export interface StripeCatalogWriter {
    * existing amount" is not an operation Stripe permits. This is the only
    * in-place amount write Stripe allows, kept minimal on purpose: Task B
    * does not call it, and it is part of this surface only because the
-   * four-method shape is what Plan 2 inherits.
+   * six-method shape is what Plan 2 inherits.
    *
    * NO `taxBehavior` PARAMETER — unlike `CreatePriceSpec.currencyOptions`,
    * which spec §1.6a requires alongside every entry's `unitAmount`. Any
