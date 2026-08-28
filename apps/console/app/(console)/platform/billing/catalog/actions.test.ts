@@ -10,6 +10,26 @@ vi.mock("@/lib/db/publish-repo", async (importOriginal) => ({
   createDraftFrom: vi.fn(),
   discardDraft: vi.fn(),
   setDraftAmount: vi.fn(),
+  startPublishAttempt: vi.fn(),
+  promotePublication: vi.fn(),
+}));
+// The publish half's three leaf dependencies. `buildPublishPlan`,
+// `checkGuards` and `scopeObserved` are deliberately NOT mocked — the plan
+// this action builds, and the verdict it acts on, are the real ones (the
+// same discipline Ruling 15 applies to `auditedOperation` above). Only the
+// database reads, the Stripe read and the Stripe WRITE are stood in for.
+vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/plan-catalog-repo")>()),
+  readCatalogAmounts: vi.fn(),
+  readRevisionAmounts: vi.fn(),
+}));
+vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/stripe-read")>()),
+  stripePriceReader: { listPrices: vi.fn() },
+}));
+vi.mock("@/lib/billing/publish-executor", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/publish-executor")>()),
+  executePublish: vi.fn(),
 }));
 // Same discipline `crm/[organisation]/actions.test.ts` applies (Ruling 15):
 // `auditedOperation` itself is NOT mocked — only its two leaf dependencies
@@ -23,9 +43,23 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { revalidatePath } from "next/cache";
-import { createDraftFrom, discardDraft, setDraftAmount } from "@/lib/db/publish-repo";
+import {
+  createDraftFrom,
+  discardDraft,
+  promotePublication,
+  setDraftAmount,
+  startPublishAttempt,
+} from "@/lib/db/publish-repo";
+import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-repo";
+import { stripePriceReader } from "@/lib/billing/stripe-read";
+import { executePublish } from "@/lib/billing/publish-executor";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { discardDraftAction, setAmountAction, startDraftAction } from "./actions";
+import {
+  discardDraftAction,
+  publishAction,
+  setAmountAction,
+  startDraftAction,
+} from "./actions";
 
 /**
  * Coordinator review item 4: `setAmountAction` (and its siblings) had zero
@@ -207,5 +241,168 @@ describe("discardDraftAction", () => {
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
     expect(discardDraft).not.toHaveBeenCalled();
     expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("maps a repo refusal an operator CAN act on to a sentence written for them", async () => {
+    // The allowlist this task added (`ACTIONABLE_REFUSALS`) — T3 left it
+    // empty because nothing surfaced could reach these refusals; the publish
+    // screen can. The repo's own wording (with its revision uuid and mode)
+    // is replaced, never passed through.
+    signIn(["billing"]);
+    vi.mocked(discardDraft).mockRejectedValue(
+      new Error("discardDraft: revision draft-1 is published to test and cannot be discarded"),
+    );
+
+    const result = await discardDraftAction("draft-1");
+
+    expect(result).toEqual({
+      ok: false,
+      message: "That revision is published. A published revision cannot be edited or discarded.",
+    });
+  });
+});
+
+/**
+ * The publish half. `buildPublishPlan`, `checkGuards` and `scopeObserved`
+ * run for real here (see the mock block at the top of this file) — only the
+ * two catalog reads, the Stripe read, the Stripe write (`executePublish`)
+ * and the two publish-log writes are stood in for.
+ */
+describe("publishAction", () => {
+  const NO_PUBLISH_PERMISSION = "You don't have permission to publish the plan catalog.";
+  const CONFIRMED = { typedMode: "test", acknowledged: [] as const };
+
+  function observeNothing() {
+    // An empty ancestor, an empty draft and an empty Stripe: a plan with no
+    // operations, which `checkGuards` passes in `test` and refuses in `live`
+    // on the MODE rule alone. Exactly the isolation these tests want — the
+    // plan's own construction is `publish-plan.test.ts`'s subject.
+    vi.mocked(readCatalogAmounts).mockResolvedValue([]);
+    vi.mocked(readRevisionAmounts).mockResolvedValue([]);
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
+  }
+
+  beforeEach(() => {
+    observeNothing();
+    vi.mocked(startPublishAttempt).mockResolvedValue("attempt-1");
+    vi.mocked(promotePublication).mockResolvedValue("publication-1");
+  });
+
+  it("refuses a mistyped mode before any session, Stripe or database work", async () => {
+    const result = await publishAction("draft-1", "test", { typedMode: "tset", acknowledged: [] });
+
+    expect(result).toEqual({ ok: false, message: 'Type "test" to confirm before publishing.' });
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+  });
+
+  it("refuses an operator holding billing but not publish-catalog", async () => {
+    // The whole point of the risk verb: `billing` is the surface, and every
+    // operator who can READ this catalog holds it.
+    signIn(["billing"]);
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({ ok: false, message: NO_PUBLISH_PERMISSION });
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+    expect(executePublish).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("publishes, then PROMOTES the revision, and audits both facts", async () => {
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(executePublish).mockResolvedValue({ outcome: "succeeded", operations: [] });
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({ ok: true, outcome: "succeeded", promoted: true, failedOperations: [] });
+    expect(startPublishAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ revisionId: "draft-1", mode: "test", startedBy: "operator-1" }),
+    );
+    expect(executePublish).toHaveBeenCalledWith("attempt-1");
+    // The write `executePublish` deliberately does not make. Without it a
+    // green publish leaves `plan_catalog_publications` naming the PREVIOUS
+    // revision, and 0036's clean-run-names-publication constraint turns the
+    // nightly parity check red — resetting #327's observation window.
+    expect(promotePublication).toHaveBeenCalledWith("test", "draft-1", "operator-1");
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.publish",
+      target: "test (draft-1)",
+      summary: { failed: 0, promoted: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
+  });
+
+  it("does NOT promote a partial success — a wrong claim in the record is worse than an incomplete one", async () => {
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(executePublish).mockResolvedValue({
+      // `executePublish` has no "partial" outcome: any failed operation
+      // closes the attempt "failed", even though the others already landed
+      // in Stripe.
+      outcome: "failed",
+      operations: [
+        { kind: "replace_price", lookupKey: "mark8ly_pro_monthly_developed_v1", status: "succeeded" },
+        { kind: "archive_price", lookupKey: "mark8ly_pro_annual_ppp_v1", status: "failed", error: "card_declined" },
+      ],
+    });
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({
+      ok: true,
+      outcome: "failed",
+      promoted: false,
+      failedOperations: ["archive_price mark8ly_pro_annual_ppp_v1"],
+    });
+    expect(promotePublication).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.publish",
+      target: "test (draft-1)",
+      summary: { failed: 1, promoted: 0 },
+    });
+  });
+
+  it("refuses live before opening an attempt, and says the guard's own reason", async () => {
+    signIn(["billing", "publish-catalog"]);
+
+    const result = await publishAction("draft-1", "live", { typedMode: "live", acknowledged: [] });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/refused in v1/);
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+    expect(executePublish).not.toHaveBeenCalled();
+    expect(promotePublication).not.toHaveBeenCalled();
+  });
+
+  it("maps a second concurrent publish to a sentence the operator can act on", async () => {
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(startPublishAttempt).mockRejectedValue(
+      new Error(
+        "startPublishAttempt: an open publish attempt already exists for test (attempt a1) — finish or abort it before starting another",
+      ),
+    );
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({
+      ok: false,
+      message: "A publish is already in progress for this mode. Wait for it to finish before starting another.",
+    });
+    expect(executePublish).not.toHaveBeenCalled();
+  });
+
+  it("never leaks internal failure text, and never claims nothing happened", async () => {
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(executePublish).mockRejectedValue(new Error("connect ECONNREFUSED 10.0.0.7:5432"));
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The publish could not be completed. Check the publish log before retrying — some operations may already have run.",
+    });
+    expect(promotePublication).not.toHaveBeenCalled();
   });
 });
