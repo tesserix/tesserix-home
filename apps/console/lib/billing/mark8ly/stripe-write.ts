@@ -21,9 +21,10 @@ import type { StripeMode } from "../stripe-read";
  * `../stripe-read.ts` exists because #326 needed a read-only comparator with
  * NO write path anywhere in that change. This module is the write path the
  * catalog bootstrap (Task B) actually needs, and the same discipline applies
- * in reverse: the surface is exactly the four operations mark8ly's own Go
- * bootstrap needed — `findProductByPlan`, `createProduct`, `createPrice`,
- * `addCurrencyOption` — and no more, so a fifth cannot arrive quietly:
+ * in reverse: the surface is exactly the six operations the publish plan
+ * (design spec §4) needs — `findProductByPlan`, `createProduct`,
+ * `createPrice`, `addCurrencyOption`, `updatePriceTaxBehavior`,
+ * `archivePrice` — and no more, so a seventh cannot arrive quietly:
  *
  *  - The `Stripe` instances below are PRIVATE to this module and are never
  *    returned, exported, or attached to anything that is. Handing one back
@@ -84,7 +85,7 @@ function announcedMode(key: string): StripeMode | null {
 }
 
 // Module-private and NEVER returned. Returning it hands every caller the
-// full write API and makes the four-method surface decorative. Keyed on
+// full write API and makes the six-method surface decorative. Keyed on
 // mode AND on the key's value — see `../stripe-read.ts`'s `clients` for why
 // a single slot is wrong: it would evict one mode's client on every call
 // that alternates modes.
@@ -182,10 +183,13 @@ export interface CreatePriceSpec {
 }
 
 /**
- * The entire Stripe WRITE surface this estate has. Four methods, matching
- * mark8ly's own Go bootstrap (`billing/stripe/product.go`,
- * `billing/stripe/price.go`) one-for-one, plus `addCurrencyOption` — see the
- * module header before adding a fifth.
+ * The entire Stripe WRITE surface this estate has. Six methods: the three
+ * matching mark8ly's own Go bootstrap (`billing/stripe/product.go`,
+ * `billing/stripe/price.go`) one-for-one — `findProductByPlan`,
+ * `createProduct`, `createPrice` — plus `addCurrencyOption`,
+ * `updatePriceTaxBehavior`, and `archivePrice` — the three in-place and
+ * archive operations the publish plan (design spec §4) needs. See the
+ * module header before adding a seventh.
  */
 export interface StripeCatalogWriter {
   /**
@@ -225,7 +229,7 @@ export interface StripeCatalogWriter {
    * existing amount" is not an operation Stripe permits. This is the only
    * in-place amount write Stripe allows, kept minimal on purpose: Task B
    * does not call it, and it is part of this surface only because the
-   * four-method shape is what Plan 2 inherits.
+   * six-method shape is what Plan 2 inherits.
    *
    * NO `taxBehavior` PARAMETER — unlike `CreatePriceSpec.currencyOptions`,
    * which spec §1.6a requires alongside every entry's `unitAmount`. Any
@@ -244,6 +248,52 @@ export interface StripeCatalogWriter {
     unitAmount: number,
     idempotencyKey: string,
   ): Promise<StripePriceRef>;
+
+  /**
+   * Moves an EXISTING Price's `tax_behavior` from `unspecified` to a value.
+   *
+   * This is a ONE-WAY DOOR — spec §1.4, verified by experiment on
+   * 2026-08-27: `unspecified -> exclusive` was accepted, and the following
+   * `exclusive -> inclusive` on the SAME price was refused outright with
+   * *"You cannot update `tax_behavior` field once it has been specified."*
+   * There is no third call that undoes the second. A caller that needs a
+   * different `tax_behavior` on a Price that already has one set must go
+   * through `replace_price` (create + `addCurrencyOption`/`archivePrice`),
+   * not this method a second time.
+   *
+   * `null` (never set) and the STRING `'unspecified'` are distinct states in
+   * Stripe's own model — see spec §1.4's closing note — so a caller checking
+   * "has this already moved" must not treat an absent value and an explicit
+   * `unspecified` as the same thing.
+   *
+   * This method does not itself enforce the one-way rule; Stripe does, by
+   * rejecting the second call. It exists so that enforcement happens against
+   * the live API, not against a local copy of the state machine that could
+   * drift from what Stripe actually allows.
+   */
+  updatePriceTaxBehavior(
+    mode: StripeMode,
+    priceId: string,
+    behavior: TaxBehavior,
+    idempotencyKey: string,
+  ): Promise<StripePriceRef>;
+
+  /**
+   * Sets `active: false` on the Price at `priceId`.
+   *
+   * `priceId` MUST be captured by the caller BEFORE it creates that price's
+   * replacement — spec §1.3, verified by experiment on 2026-08-27: an
+   * archived Price keeps `active: true` semantics for LOOKUP purposes only
+   * until it is actually archived here, and loses its `lookup_key` the
+   * moment it is. A caller that instead resolves "the price to archive" by
+   * looking up the plan's lookup key AT archive time — after the replacement
+   * has already been created and has claimed that lookup key via
+   * `transfer_lookup_key` — resolves to the NEW price and archives it
+   * instead, leaving the old one active and orphaned. This method trusts the
+   * id it is given and performs no lookup of its own; it cannot protect a
+   * caller that gets the ordering wrong.
+   */
+  archivePrice(mode: StripeMode, priceId: string, idempotencyKey: string): Promise<StripePriceRef>;
 }
 
 /**
@@ -312,6 +362,32 @@ export const stripeCatalogWriter: StripeCatalogWriter = {
     const updated = await client(mode).prices.update(
       priceId,
       { currency_options: { [currency]: { unit_amount: unitAmount } } },
+      { idempotencyKey },
+    );
+    return { id: updated.id };
+  },
+
+  async updatePriceTaxBehavior(mode, priceId, behavior, idempotencyKey) {
+    // Sends ONLY `tax_behavior` — no amount, no currency_options. See the
+    // interface doc: mixing an amount into this call would smuggle in the
+    // replace-price operation under a one-way-door call, and this method
+    // must stay distinguishable from `replace_price` in what it sends.
+    const updated = await client(mode).prices.update(
+      priceId,
+      { tax_behavior: behavior },
+      { idempotencyKey },
+    );
+    return { id: updated.id };
+  },
+
+  async archivePrice(mode, priceId, idempotencyKey) {
+    // `priceId` is used exactly as given — no lookup, no re-resolution. See
+    // the interface doc: resolving by lookup key here (instead of trusting
+    // the caller's captured id) would archive whatever price currently holds
+    // that key, which after a replacement is the NEW price, not the old one.
+    const updated = await client(mode).prices.update(
+      priceId,
+      { active: false },
       { idempotencyKey },
     );
     return { id: updated.id };

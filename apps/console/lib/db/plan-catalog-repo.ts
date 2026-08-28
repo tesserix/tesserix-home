@@ -526,3 +526,50 @@ export async function readLatestRuns(): Promise<ModeLatestRun[]> {
     return { mode, run: row ? toLatestParityRun(row) : null };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Revision amounts, read directly (Task 6 — `publish-executor.ts`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every catalog amount belonging to ONE revision — including a draft that has
+ * never been published — read by `revision_id` directly rather than through
+ * `plan_catalog_publications`.
+ *
+ * # Why this is not `readCatalogAmounts` with an extra parameter
+ *
+ * `readCatalogAmounts` answers "what does `mode` read as RIGHT NOW", joined
+ * through the publication so a draft's rows (same `lookup_key`s, a different
+ * `revision_id`, per 0035) can never leak into that answer — see that
+ * function's doc comment. The publish executor needs the opposite join: the
+ * DRAFT'S OWN rows, by the specific `revision_id` a `plan_catalog_publish_attempts`
+ * row names, whether or not that revision has ever been (or will ever be)
+ * published. Threading an "also allow a draft" flag through the existing
+ * function would let its one `WHERE` answer two different questions depending
+ * on a caller's flag — exactly the ambiguity 0035 introduced this table's
+ * `revision_id` column to remove. A second, narrower function keeps each
+ * `WHERE` honest about which question it answers.
+ *
+ * Same `source` discipline as `readCatalogAmounts`: required, no default, for
+ * the identical reason (`UNIQUE (revision_id, source, lookup_key)` stops
+ * being enough to keep `lookup_key` unique within a revision the moment a
+ * second source exists).
+ *
+ * A revision with no rows (a draft nobody has edited into yet) returns `[]`,
+ * not an error — the caller (`buildPublishPlan`) already treats an empty
+ * `draft` as a legitimate input (see that module's `PublishPlanInput`).
+ */
+export async function readRevisionAmounts(
+  revisionId: string,
+  source: CatalogSource,
+): Promise<CatalogAmount[]> {
+  const rows = await tesserixQuery<AmountRow>(
+    `SELECT p.lookup_key, a.currency, a.unit_amount_minor, a.tax_behavior
+       FROM plan_catalog_prices  p
+       JOIN plan_catalog_amounts a ON a.price_id = p.id
+      WHERE p.revision_id = $1 AND p.source = $2
+      ORDER BY p.lookup_key, a.currency`,
+    [revisionId, source],
+  );
+  return rows.map(toCatalogAmount);
+}

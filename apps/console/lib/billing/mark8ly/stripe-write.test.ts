@@ -29,7 +29,13 @@ const stripeMock = vi.hoisted(() => {
   const productsList = vi.fn();
   const productsCreate = vi.fn();
   const constructedWith: Array<{ key: string; config: unknown }> = [];
-  return { pricesCreate, pricesUpdate, productsList, productsCreate, constructedWith };
+  return {
+    pricesCreate,
+    pricesUpdate,
+    productsList,
+    productsCreate,
+    constructedWith,
+  };
 });
 
 vi.mock("stripe", () => ({
@@ -80,12 +86,18 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("exposes exactly four methods, named individually so this fails on the next change", () => {
+it("exposes exactly six methods, named individually so this fails on the next change", () => {
+  // Named individually, not counted, so this fails on the NEXT method added
+  // rather than merely on a count changing — see the module header.
+  // `updatePriceCurrencyOptions` is deliberately absent: §1.6a proved an
+  // existing currency's amount is immutable, so no such method can exist.
   expect(Object.keys(stripeCatalogWriter).sort()).toEqual([
     "addCurrencyOption",
+    "archivePrice",
     "createPrice",
     "createProduct",
     "findProductByPlan",
+    "updatePriceTaxBehavior",
   ]);
 });
 
@@ -267,6 +279,69 @@ describe("addCurrencyOption", () => {
       "eur",
       500,
       "opt:v1:eur",
+    );
+
+    expect(updated).toEqual({ id: "price_abc" });
+  });
+});
+
+describe("archivePrice", () => {
+  it("sets active: false on the price id it is given, not one it looks up", async () => {
+    // §1.3: the archived price keeps `active: true` semantics for lookup
+    // purposes until archived, and loses its `lookup_key` once archived — so
+    // resolving by lookup key AT archive time would resolve to the price
+    // that just replaced it. The caller must capture the old id before
+    // creating the replacement; this method must not re-derive it.
+    await stripeCatalogWriter.archivePrice("test", "price_old", "archive:v1:price_old");
+
+    expect(stripeMock.pricesUpdate).toHaveBeenCalledWith(
+      "price_old",
+      { active: false },
+      { idempotencyKey: "archive:v1:price_old" },
+    );
+  });
+
+  it("returns only the archived price's id", async () => {
+    stripeMock.pricesUpdate.mockResolvedValue({ id: "price_old", active: false });
+
+    const archived = await stripeCatalogWriter.archivePrice(
+      "test",
+      "price_old",
+      "archive:v1:price_old",
+    );
+
+    expect(archived).toEqual({ id: "price_old" });
+  });
+});
+
+describe("updatePriceTaxBehavior", () => {
+  it("sends tax_behavior as the sole field being changed", async () => {
+    // §1.4: unspecified -> a value is accepted, and only once. This method
+    // does not enforce the one-way rule itself — Stripe does, by rejecting
+    // the second call — but it must send nothing else that could smuggle in
+    // an amount change alongside it.
+    await stripeCatalogWriter.updatePriceTaxBehavior(
+      "test",
+      "price_abc",
+      "exclusive",
+      "taxbehavior:v1:price_abc",
+    );
+
+    expect(stripeMock.pricesUpdate).toHaveBeenCalledWith(
+      "price_abc",
+      { tax_behavior: "exclusive" },
+      { idempotencyKey: "taxbehavior:v1:price_abc" },
+    );
+  });
+
+  it("returns only the updated price's id", async () => {
+    stripeMock.pricesUpdate.mockResolvedValue({ id: "price_abc", tax_behavior: "exclusive" });
+
+    const updated = await stripeCatalogWriter.updatePriceTaxBehavior(
+      "test",
+      "price_abc",
+      "exclusive",
+      "taxbehavior:v1:price_abc",
     );
 
     expect(updated).toEqual({ id: "price_abc" });
