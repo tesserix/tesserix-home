@@ -64,6 +64,7 @@ import { findOrphans } from "@/lib/billing/orphans";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   discardDraftAction,
+  planPublishAction,
   publishAction,
   setAmountAction,
   startDraftAction,
@@ -404,6 +405,11 @@ describe("publishAction", () => {
     expect(startPublishAttempt).not.toHaveBeenCalled();
     expect(executePublish).not.toHaveBeenCalled();
     expect(promotePublication).not.toHaveBeenCalled();
+    // `checkMode` refuses "live" on its own, with no observed data — see
+    // `observeAndPlan`'s short-circuit in `actions.ts`. Nothing justifies
+    // spending a paid `prices.list` call to learn a refusal the mode string
+    // alone already carries.
+    expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
   });
 
   it("maps a second concurrent publish to a sentence the operator can act on", async () => {
@@ -435,5 +441,48 @@ describe("publishAction", () => {
         "The publish could not be completed. Check the publish log before retrying — some operations may already have run.",
     });
     expect(promotePublication).not.toHaveBeenCalled();
+  });
+});
+
+describe("planPublishAction", () => {
+  beforeEach(() => {
+    vi.mocked(readCatalogAmounts).mockResolvedValue([]);
+    vi.mocked(readRevisionAmounts).mockResolvedValue([]);
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
+  });
+
+  it("builds a real plan against Stripe for a mode that can actually publish", async () => {
+    signIn(["billing"]);
+
+    const result = await planPublishAction("draft-1", "test");
+
+    expect(result.ok).toBe(true);
+    expect(stripePriceReader.listPrices).toHaveBeenCalledWith("test");
+  });
+
+  // The bug this guards: `AuthoringPanel`'s `PublishSection` calls this
+  // action from a `useEffect` on every render of an open draft, including
+  // `mode=live` — and `checkGuards`' `mode` rule refuses "live"
+  // unconditionally (see `publish-guards.ts`), so that call's Stripe read
+  // could only ever confirm what the mode string alone already says. It
+  // must not run.
+  it("never reads Stripe for live — checkMode refuses it before any observation happens", async () => {
+    signIn(["billing"]);
+
+    const result = await planPublishAction("draft-1", "live");
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.plan.verdict).toEqual({
+      ok: false,
+      refused: [
+        {
+          rule: "mode",
+          message: 'Publishing to Stripe mode "live" is refused in v1 — only "test" is enabled.',
+        },
+      ],
+    });
+    expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
+    expect(readCatalogAmounts).not.toHaveBeenCalled();
+    expect(readRevisionAmounts).not.toHaveBeenCalled();
   });
 });
