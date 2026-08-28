@@ -53,6 +53,9 @@ export const koraNav: readonly NavEntry[] = [
   // rail item here would be a second door onto rows the platform rail serves
   // (§8.5). `kora.feedback` is `retired` in routes.ts. Guarded in nav.test.ts.
   { name: "Users", route: "kora.users", icon: "users" },
+  // Fourth entry, added alongside `kora.aiMetrics` in routes.ts — the full
+  // surface behind the overview's three AI-resolution tiles.
+  { name: "AI metrics", route: "kora.aiMetrics", icon: "bar-chart" },
 ];
 
 /**

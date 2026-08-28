@@ -796,16 +796,23 @@ export const ENTITIES_LIMIT = 50;
  * clarified (tesserix/kora#473). It is omitted rather than sent blank — `q=`
  * would filter on the empty string on a product that treats the param as
  * present.
+ *
+ * `limit` defaults to `ENTITIES_LIMIT` — the product-rail index pages' page
+ * size — but a caller that only wants `pagination.total` (the `/kora`
+ * overview's Foods/Users tiles) may pass `1`: the total is the product's own
+ * count regardless of how many rows were asked for, so there is no reason to
+ * fetch fifty rows just to discard them.
  */
 export async function fetchProductEntities(
   source: string,
   type: string,
   search?: string,
   page = 1,
+  limit = ENTITIES_LIMIT,
 ): Promise<import("./entities").EntityPage> {
   const { parseEntities } = await import("./entities");
 
-  const query = new URLSearchParams({ source, limit: String(ENTITIES_LIMIT) });
+  const query = new URLSearchParams({ source, limit: String(limit) });
   if (search) query.set("q", search);
   // Omitted at 1: the platform API defaults to the first page, and sending it
   // makes every first-page request differ from the default for no gain.
@@ -848,6 +855,61 @@ export async function fetchEstateInbox(
   if (source && source !== "all") query.set("source", source);
 
   return parseInbox(await platformRequest("inbox", `/v1/inbox?${query.toString()}`));
+}
+
+/**
+ * Kora's food-resolution accuracy metrics — platform-api's one named
+ * federated route for a product's own endpoint (`koraaimetrics.go`'s doc
+ * comment explains why this is a named route rather than a generic
+ * passthrough).
+ *
+ * No window or paging parameters are sent: the `/kora` overview's AI
+ * resolution tile shows the metrics as Kora's default window answers them,
+ * not a caller-chosen range — there is no picker on this surface to drive one.
+ *
+ * A `501` here means this deployment does not federate Kora at all
+ * (`FEDERATION_PRODUCTS` omits it) — a deployment fact, not something Kora
+ * said, and NOT the same as Kora measuring nothing. `platformRequest` says
+ * so via the same 501 contract every other federated read here uses.
+ */
+export async function fetchKoraAiMetrics(): Promise<import("./kora-ai-metrics").KoraAiMetrics> {
+  const { parseKoraAiMetrics } = await import("./kora-ai-metrics");
+  return parseKoraAiMetrics(await platformRequest("kora ai metrics", "/v1/kora/ai-metrics"));
+}
+
+/**
+ * The full `/kora/ai-metrics` surface's read — the SAME endpoint
+ * `fetchKoraAiMetrics` calls, paged for the per-user table it adds. One HTTP
+ * call, decoded twice by two small functions in `kora-ai-metrics.ts` rather
+ * than two separate reads, because `window`/`outcomes`/`users`/`pagination`
+ * all live in the one response body.
+ *
+ * `page` only — no `from`/`to`. The endpoint accepts a caller-chosen window,
+ * but this surface states Kora's default window rather than offering a
+ * picker; see the page's own doc comment for why.
+ */
+export async function fetchKoraAiMetricsPage(page = 1): Promise<{
+  metrics: import("./kora-ai-metrics").KoraAiMetrics;
+  pagination: import("./entities").EntityPagination;
+}> {
+  const { parseKoraAiMetrics, parseKoraAiMetricsPagination } = await import(
+    "./kora-ai-metrics"
+  );
+
+  const query = new URLSearchParams();
+  // Omitted at 1, matching `fetchProductEntities`: the platform API defaults
+  // to the first page, and sending it makes every first-page request differ
+  // from the default for no gain.
+  if (page > 1) query.set("page", String(page));
+  const path = query.toString()
+    ? `/v1/kora/ai-metrics?${query.toString()}`
+    : "/v1/kora/ai-metrics";
+
+  const body = await platformRequest("kora ai metrics", path);
+  return {
+    metrics: parseKoraAiMetrics(body),
+    pagination: parseKoraAiMetricsPagination(body),
+  };
 }
 
 /**

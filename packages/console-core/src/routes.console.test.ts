@@ -105,8 +105,11 @@ describe("console-native surfaces record no apps/web path", () => {
     //     distinct from the person, so there is no predecessor to record.
     //   - platform.billingCatalog: the plan catalog is console-native since
     //     #380 — apps/web never had a catalog surface at all.
+    //   - kora.aiMetrics: apps/web never served this — `/v1/kora/ai-metrics`
+    //     postdates it entirely. Console-native, like platform.aiUsage.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
+      "kora.aiMetrics",
       "platform.tools",
       "platform.auditLog",
       "platform.inbox",
@@ -224,12 +227,28 @@ describe("pending reflects what the console actually serves", () => {
     expect(isPending("kora.users")).toBe(false);
     expect(consolePath("kora.users")).toBe("/kora/users");
 
-    // `kora.overview` is pending for a different reason and may stay that way
-    // indefinitely: Kora answers 501 on /admin/kpis, and tesserix/kora#472
-    // decided to KEEP that rather than invent a metric to fill a page. So
-    // there is nothing for an overview to show, and this is the one entry on
-    // Kora's rail that is honestly unbuilt rather than merely not-yet-built.
-    expect(isPending("kora.overview")).toBe(true);
+    // `kora.overview` WAS pending, and the reason was good: Kora answers 501 on
+    // /admin/kpis, tesserix/kora#472 decided to KEEP that rather than invent a
+    // metric to fill a page, and an overview with nothing honest to show is
+    // worse than an absent one.
+    //
+    // That premise changed rather than being overridden. Kora shipped
+    // /v1/admin/ai-metrics (kora#507) — real resolution outcomes, not a
+    // manufactured headline — and tesserix-home#412 federated it as
+    // /v1/kora/ai-metrics. Together with entity totals and the kora-scoped
+    // inbox depth, the page now renders four things Kora actually measures.
+    //
+    // #472 still stands: /admin/kpis remains 501 and the overview does NOT
+    // invent a metric to fill the gap. Nothing here reads /v1/kpis.
+    expect(isPending("kora.overview")).toBe(false);
+    expect(consolePath("kora.overview")).toBe("/kora");
+  });
+
+  it("serves Kora's AI metrics — the full surface behind the overview's tiles", () => {
+    // The overview links its three AI-resolution tiles here now that the
+    // destination exists — see kora/overview-view.tsx.
+    expect(isPending("kora.aiMetrics")).toBe(false);
+    expect(consolePath("kora.aiMetrics")).toBe("/kora/ai-metrics");
   });
 
   it("keeps live chat pending", () => {

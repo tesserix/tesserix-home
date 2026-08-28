@@ -148,18 +148,21 @@ export const ESTATE: readonly EstateProduct[] = [
   {
     name: "Kora",
     context: "kora",
-    // 3, down from 4, down from 5. Both reductions are the same rule applied
-    // twice: #139 retired the audit trail into the estate-wide audit log, and
-    // Kora's feedback is now one half of what its own `/admin/inbox` already
-    // merges, so it belongs in the estate Inbox (§8.5, tesserix/kora#474).
+    // 4, up from 3, down from 5 before that. The two retirements are the
+    // same rule applied twice: #139 retired the audit trail into the
+    // estate-wide audit log, and Kora's feedback is now one half of what its
+    // own `/admin/inbox` already merges, so it belongs in the estate Inbox
+    // (§8.5, tesserix/kora#474). Neither capability LEFT the console — both
+    // moved to a platform surface, which is not counted in any product's
+    // rail.
     //
-    // Neither capability LEFT the console — both moved to a platform surface,
-    // which is not counted in any product's rail. A falling count here reads as
-    // loss and is the opposite: it is consolidation. Checked against
-    // koraNav.length in estate.test.ts.
-    entries: 3,
+    // The rise back to 4 is Kora's own: `kora.aiMetrics` is a real fourth
+    // page, the full surface behind the overview's AI-resolution tiles.
+    // Checked against koraNav.length in estate.test.ts, so this literal
+    // tracks the rail rather than needing to be remembered by hand.
+    entries: 4,
     migrated: true,
-    summary: "Food index and users; its audit trail and feedback are in the estate-wide audit log and inbox.",
+    summary: "Food index, users and AI metrics; its audit trail and feedback are in the estate-wide audit log and inbox.",
   },
   {
     name: "HMS",

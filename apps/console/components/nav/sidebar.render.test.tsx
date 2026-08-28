@@ -87,17 +87,22 @@ describe("ConsoleSidebar", () => {
     expect(screen.queryByText("Operate")).toBeNull();
   });
 
-  it("links Kora's built pages and keeps Overview pending", () => {
+  it("links every one of Kora's built pages", () => {
     // This used to assert that EVERY Kora surface was pending — true when
     // Kora's IA was migrated and none of its pages were, and linking them
     // would have been 404s the previously-inert switcher was hiding.
     //
-    // Food index is now built (the console's first product-rail page), so the
-    // assertion inverts for that one entry and holds for the rest. Named
-    // individually rather than counted, so the next page to land fails here
-    // and gets a decision rather than a silent pass.
+    // All three entries are now built: Food index and Users first, and
+    // Overview (this task) last — the promise `pending: true` made in
+    // `routes.ts` is now kept for the whole rail, not just two of its three
+    // entries. Named individually rather than counted, so the next entry to
+    // land fails here and gets a decision rather than a silent pass.
     pathname.current = "/kora/foods";
     render(<ConsoleSidebar />);
+
+    const overview = screen.getByText("Overview").closest("a");
+    expect(overview).not.toBeNull();
+    expect(overview).toHaveAttribute("href", "/kora");
 
     const foodIndex = screen.getByText("Food index").closest("a");
     expect(foodIndex).not.toBeNull();
@@ -106,13 +111,6 @@ describe("ConsoleSidebar", () => {
     const users = screen.getByText("Users").closest("a");
     expect(users).not.toBeNull();
     expect(users).toHaveAttribute("href", "/kora/users");
-
-    // Overview is the one entry left, and it is pending for a reason that may
-    // never clear: Kora answers 501 on /admin/kpis and tesserix/kora#472 chose
-    // to keep it rather than invent a metric to fill a page. So the rail must
-    // still say "soon" for it — that is honest, not stale.
-    expect(screen.getByText("Overview").closest("a")).toBeNull();
-    expect(screen.getAllByText("soon").length).toBeGreaterThan(0);
   });
 
   it("collapses a group from a real button, and says so", async () => {

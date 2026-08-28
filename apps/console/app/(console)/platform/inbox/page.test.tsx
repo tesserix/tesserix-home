@@ -1,21 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+
+const fetchEstateInbox = vi.fn();
+
+vi.mock("@/lib/platform-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform-api")>()),
+  fetchEstateInbox: (...args: unknown[]) => fetchEstateInbox(...args),
+}));
+
 import { PlatformApiError } from "@/lib/platform-api";
 import type { EstateInbox } from "@/lib/inbox";
-import {
+import EstateInboxPage, {
   INBOX_EMPTY_MESSAGE,
   INBOX_UNAVAILABLE_MESSAGE,
   INBOX_UNAVAILABLE_TITLE,
+  currentPath,
   emptyMessageFor,
   inboxReadError,
   queueState,
+  describeScope,
+  readSource,
 } from "./page";
 import { InboxQueue, kindLabel, severityTone, waitedFor } from "./inbox-queue";
 
-// The page is a server component and cannot be rendered by Testing Library, so
-// its own logic is exercised through its exported pure functions and the
-// client half is rendered directly — the same split the tenant directory's
-// tests use.
+// The page is a server component. Its default export is an async function
+// that can be awaited and the result rendered directly — the same pattern
+// `kora/page.test.tsx` uses for `KoraOverviewPage`. Its other logic is
+// exercised through its exported pure functions, and the client half is
+// rendered directly — the same split the tenant directory's tests use.
 
 const item = {
   id: "kora:u9",
@@ -192,5 +204,101 @@ describe("InboxQueue", () => {
     );
     expect(screen.getByText(/1 waiting\./)).toBeInTheDocument();
     expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+});
+
+describe("describeScope", () => {
+  it("claims the whole estate only when nothing is filtered", () => {
+    expect(describeScope(undefined)).toBe(
+      "Everything waiting on a human, across every product.",
+    );
+  });
+
+  it("does not claim every product when one is filtered", () => {
+    // The defect this guards: the header asserted estate-wide scope while the
+    // queue below it showed one product's rows. Narrower-than-claimed is the
+    // gentler direction of that error, but this surface's whole property is
+    // that what it shows can be trusted.
+    const filtered = describeScope("kora");
+    expect(filtered).not.toMatch(/every product/);
+    expect(filtered).toContain("kora");
+  });
+});
+
+describe("readSource", () => {
+  it("reads the URL's ?source= value", () => {
+    expect(readSource({ source: "kora" })).toBe("kora");
+  });
+
+  // Absence must round-trip to `undefined`, not `""` or `"all"` — that is
+  // what makes fetchEstateInbox's own no-filter branch fire.
+  it("is undefined when the URL carries no source", () => {
+    expect(readSource({})).toBeUndefined();
+  });
+
+  it("treats a blank source the same as an absent one", () => {
+    expect(readSource({ source: "" })).toBeUndefined();
+    expect(readSource({ source: "  " })).toBeUndefined();
+  });
+
+  it("ignores a repeated ?source= rather than guessing which one was meant", () => {
+    expect(readSource({ source: ["kora", "mark8ly"] })).toBeUndefined();
+  });
+});
+
+describe("currentPath", () => {
+  it("is the bare path with no params", () => {
+    expect(currentPath({})).toBe("/platform/inbox");
+  });
+
+  it("carries the source through for the reauth return URL", () => {
+    expect(currentPath({ source: "kora" })).toBe("/platform/inbox?source=kora");
+  });
+});
+
+describe("EstateInboxPage — the ?source filter", () => {
+  // THE non-negotiable: this is a shared surface every product's operators
+  // read. A default that quietly narrows it is a regression for every one of
+  // them, so the no-param path must ask for exactly what it always has.
+  it("passes no filter to fetchEstateInbox when the URL carries none — unchanged from before this task", async () => {
+    fetchEstateInbox.mockResolvedValue(inbox());
+    render(await EstateInboxPage({ searchParams: Promise.resolve({}) }));
+    expect(fetchEstateInbox).toHaveBeenCalledWith(undefined);
+  });
+
+  it("passes the URL's source straight through to the read", async () => {
+    fetchEstateInbox.mockResolvedValue(inbox());
+    render(await EstateInboxPage({ searchParams: Promise.resolve({ source: "kora" }) }));
+    expect(fetchEstateInbox).toHaveBeenCalledWith("kora");
+  });
+
+  it("keeps the source in the reauth return URL, so signing in again returns to the same filtered queue", async () => {
+    fetchEstateInbox.mockRejectedValue({ noOperatorToken: true, message: "no token" });
+    render(await EstateInboxPage({ searchParams: Promise.resolve({ source: "kora" }) }));
+    expect(screen.getByRole("link", { name: /sign in again/i })).toHaveAttribute(
+      "href",
+      `/auth/login?returnTo=${encodeURIComponent("/platform/inbox?source=kora")}`,
+    );
+  });
+
+  // DECISION: an unknown/garbage source is not validated or rejected by the
+  // page. `fetchEstateInbox` already treats "all" as the absence of a filter
+  // and sends anything else straight through; the platform API refuses a
+  // source it does not recognise with a 400 rather than an empty 200. That
+  // 400 is caught here exactly like any other read failure and rendered
+  // through the same `queueState`/`SurfaceStateView` error path — a legible
+  // error, never a silently empty queue. The console does not keep its own
+  // list of valid sources to pre-validate against; that vocabulary belongs to
+  // the API, the same reason `kind` and `severity` are rendered verbatim
+  // rather than enumerated console-side.
+  it("renders the API's 400 for an unknown source as a legible error, not an empty queue", async () => {
+    fetchEstateInbox.mockRejectedValue(
+      new PlatformApiError("inbox: UNKNOWN_SOURCE — no such product 'not-a-product'", 400),
+    );
+    render(
+      await EstateInboxPage({ searchParams: Promise.resolve({ source: "not-a-product" }) }),
+    );
+    expect(screen.getByText(/UNKNOWN_SOURCE/)).toBeInTheDocument();
+    expect(screen.queryByText(INBOX_EMPTY_MESSAGE)).toBeNull();
   });
 });

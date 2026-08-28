@@ -111,9 +111,23 @@ interface RouteEntry {
 // `Record<string, RouteEntry>` would widen every key to `string` and collapse
 // `RouteId` to `string`, making the exported type meaningless.
 export const ROUTES = {
-  // Kora's IA lives here; its SURFACES do not exist in the console yet. Without
-  // `pending` the rail links to in-app routes that are not there — five 404s.
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, pending: true, capability: "platform" },
+  // NOT pending: the console serves this page — a Foods/Users/Needs
+  // attention/AI resolution snapshot assembled entirely from routes that
+  // already existed (`kora.foods`, `kora.users`, `platform.inbox`, and the
+  // `/v1/kora/ai-metrics` federation). This route was already one of
+  // `koraNav`'s entries when it was pending, just linking nowhere — so
+  // un-pending it did not itself change the rail's entry count. The next
+  // route below (`kora.aiMetrics`) is the one that takes `koraNav` from 3 to
+  // 4; `estate.ts`'s Kora `entries` count is derived from `koraNav.length`,
+  // so it tracks the rail automatically either way.
+  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, capability: "platform" },
+  // NOT pending: the console serves this page — the full surface behind the
+  // overview's three AI-resolution tiles (§B of the kora-overview part 2
+  // plan). No `web` path: apps/web never served this, `/v1/kora/ai-metrics`
+  // postdates it. `koraNav` gains a fourth entry for this route; `estate.ts`'s
+  // Kora `entries` count is derived from `koraNav.length`, so it updates with
+  // the rail rather than needing a second hand-maintained number.
+  "kora.aiMetrics": { mobile: "/kora/ai-metrics", capability: "platform" },
   // NOT pending: the console serves this page. The FIRST product-rail surface
   // the console owns — every route it served before this was on the platform
   // rail.
