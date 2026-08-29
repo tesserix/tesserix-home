@@ -1,3 +1,10 @@
+// `server-only`: this reads the estate outbox through `platformRequestWithMeta`,
+// which resolves an operator's bearer token. A client component importing
+// this file must fail the BUILD with a message naming the cause, not ship
+// server code to the browser via a lazy chunk — see `./health.ts` and
+// `./tools-directory.ts` for the same guard on the same shape of surface.
+import "server-only";
+
 // Imported from `./platform-api-error`, NOT from `./platform-api` — see the
 // header of `./platform-api-error` and `./lib/audit.ts` for the failure mode
 // this avoids: a value import of `PlatformApiError` from `./platform-api` is
@@ -6,15 +13,12 @@ import { PlatformApiError } from "./platform-api-error";
 // `readOutbox` below DOES import a runtime value from `./platform-api`
 // (`platformApiOrigin`/`platformRequestWithMeta`), unlike `./lib/audit.ts` and
 // `./lib/inbox.ts`, which keep the parser entirely separate from the fetch.
-// That is safe ONLY because nothing else in this file is imported as a
-// runtime VALUE by a client component — the client-side table
-// (`outbox-table.tsx`) imports exclusively `import type { ... } from
-// "@/lib/outbox"`, which TypeScript erases completely, so this file's
-// dependency on `./platform-api` never reaches the client bundle. If a future
-// change adds a runtime helper here (a `sourceLabel`-style formatter, say)
-// that a client component needs, move the platform-api call out of this file
-// first — see `./lib/audit.ts`'s header for why doing it the other way round
-// broke the build once already.
+// The `server-only` import above is what actually enforces the boundary now:
+// a client component pulling in this file — even by accident, even for a
+// type it meant to import as a value — fails the build with `server-only`'s
+// own error naming this file, rather than silently succeeding via a lazy
+// chunk that happens not to be reached today.
+import { platformApiOrigin, platformRequestWithMeta } from "./platform-api";
 
 /**
  * The estate outbox — every federating product's `outbox_events` rows, read
@@ -226,8 +230,6 @@ export function parseEstateOutbox(json: unknown): EstateOutbox {
  * "federated and empty" (see the module doc above).
  */
 export async function readOutbox(): Promise<EstateOutbox> {
-  const { platformApiOrigin, platformRequestWithMeta } = await import("./platform-api");
-
   if (!platformApiOrigin()) {
     throw new PlatformApiError(
       "outbox: PLATFORM_API_ORIGIN is not set, and this surface has no apps/web predecessor to fall back to",

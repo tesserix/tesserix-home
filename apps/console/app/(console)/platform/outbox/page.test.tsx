@@ -12,7 +12,6 @@ import { PlatformApiError } from "@/lib/platform-api-error";
 import type { EstateOutbox } from "@/lib/outbox";
 import EstateOutboxPage, {
   OUTBOX_EMPTY_MESSAGE,
-  OUTBOX_UNAVAILABLE_MESSAGE,
   OUTBOX_UNAVAILABLE_TITLE,
   emptyMessageFor,
   outboxReadError,
@@ -52,10 +51,21 @@ describe("the three response states this surface must render differently", () =>
     expect(state.kind).toBe("instrumentation-unavailable");
   });
 
-  it("uses this surface's own copy for the 501, not the kit's observability default", () => {
-    const surfaced = outboxReadError(new PlatformApiError("outbox: not set", 501));
-    expect(surfaced?.unavailable?.title).toBe(OUTBOX_UNAVAILABLE_TITLE);
-    expect(OUTBOX_UNAVAILABLE_MESSAGE).toMatch(/nothing to retry/);
+  it("renders this surface's own 501 copy through the table, not the kit's observability default", () => {
+    // Asserted through a render rather than a constant checked against
+    // itself: `OUTBOX_UNAVAILABLE_MESSAGE` matching its own text would pass
+    // regardless of whether `outboxReadError`/`resolveState` ever wire it up.
+    const state = outboxState({ error: new PlatformApiError("outbox: not set", 501), rows: [] });
+    render(
+      <OutboxTable
+        outbox={outbox({ events: [] })}
+        state={state}
+        emptyMessage={OUTBOX_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/outbox"
+      />,
+    );
+    expect(screen.getByText(OUTBOX_UNAVAILABLE_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(/nothing to retry/)).toBeInTheDocument();
   });
 
   // State 2: 200 with `events: []`, nothing else missing — a genuinely
@@ -203,6 +213,22 @@ describe("EstateOutboxPage", () => {
   it("renders a legible error for a real failure, not an empty ledger", async () => {
     readOutbox.mockRejectedValue(new PlatformApiError("boom", 502));
     render(await EstateOutboxPage());
+    // Not just "the empty message is absent" — that would also pass if the
+    // page rendered nothing at all. The error surface itself must be present.
     expect(screen.queryByText(OUTBOX_EMPTY_MESSAGE)).toBeNull();
+    expect(screen.getByText(/boom/)).toBeInTheDocument();
+  });
+
+  // Response state 3, end-to-end: federated, but every configured product
+  // answered not-implemented for this request. Zero events, same as a
+  // genuinely clean outbox, so this is the shape most likely to be mistaken
+  // for it in production — an operator's first encounter with this surface
+  // is plausibly this one, not the plain-empty case.
+  it("renders response state 3 end-to-end: federated, every configured product answered not-implemented", async () => {
+    readOutbox.mockResolvedValue(outbox({ events: [], notImplemented: ["mark8ly", "kora"] }));
+    render(await EstateOutboxPage());
+    expect(screen.queryByText(OUTBOX_EMPTY_MESSAGE)).toBeNull();
+    expect(screen.getByText(/reported no outbox events/i)).toBeInTheDocument();
+    expect(screen.getByText(/mark8ly, kora/)).toBeInTheDocument();
   });
 });
