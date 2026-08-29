@@ -1,6 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
+// `AiMetricsView` (rendered inside this server page) now drives part C's
+// search + activity filters through `useUrlFilters`, which reads the
+// router — jsdom has no app-router context for it. Mocked exactly as
+// `ai-metrics-view.render.test.tsx` mocks it.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn() }),
+  usePathname: () => "/kora/ai-metrics",
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 const fetchKoraAiMetricsPage = vi.fn();
 const fetchProductEntities = vi.fn();
 

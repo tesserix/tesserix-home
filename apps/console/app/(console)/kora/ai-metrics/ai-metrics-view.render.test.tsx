@@ -1,5 +1,46 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// `useUrlFilters` (part C's search + activity toggles) reads the router,
+// which jsdom has no app-router context for. Mocked exactly as
+// `food-index.render.test.tsx` mocks it — this surface uses the same
+// FilterBar. `getSearchParams`/`setSearchParams` are hoisted so individual
+// tests can simulate a filtered URL without re-mocking the module.
+//
+// `router.replace` is a spy, NOT wired back into `getSearchParams` — same as
+// `filter-bar.url-filters.test.tsx`. Next.js itself is what turns a
+// `router.replace` call into a re-render with new `searchParams`; a jsdom
+// unit test has no router to do that, so a filter's effect on the rendered
+// table is asserted by pre-setting the URL via `setSearchParams` and
+// rendering fresh, while the search box's WIRING (typing produces the right
+// `router.replace` call) is asserted separately via the spy.
+const { getSearchParams, setSearchParams, replace } = vi.hoisted(() => {
+  let params = new URLSearchParams();
+  return {
+    getSearchParams: () => params,
+    setSearchParams: (next: URLSearchParams) => {
+      params = next;
+    },
+    replace: vi.fn(),
+  };
+});
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace }),
+  usePathname: () => "/kora/ai-metrics",
+  useSearchParams: () => getSearchParams(),
+}));
+
+afterEach(() => {
+  setSearchParams(new URLSearchParams());
+  replace.mockReset();
+});
+
+function pushedQuery(call = 0): URLSearchParams {
+  const [url] = replace.mock.calls[call] as [string];
+  return new URLSearchParams(url.split("?")[1] ?? "");
+}
 
 import type { EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
@@ -204,6 +245,160 @@ describe("AiMetricsView — user identity", () => {
     renderView({ metrics: MATCHED_METRICS, userDirectory: EMPTY_DIRECTORY });
     const link = screen.getByRole("link", { name: RAW_ID });
     expect(link).toHaveAttribute("href", expect.stringContaining("/kora/users"));
+  });
+});
+
+describe("AiMetricsView — user filters", () => {
+  const NAMED_METRICS: KoraAiMetrics = {
+    ...METRICS,
+    users: [
+      {
+        userId: "u1",
+        attempts: 4,
+        resolves: 3,
+        corrections: 1,
+        budgetRefusals: 0,
+        aiCalls: 4,
+      },
+      {
+        userId: "u2",
+        attempts: 1,
+        resolves: 1,
+        corrections: 0,
+        budgetRefusals: 1,
+        aiCalls: 0,
+      },
+    ],
+  };
+  const DIRECTORY: ReadonlyMap<string, EntityRecord> = new Map([
+    ["u1", { id: "u1", source: "kora", type: "users", label: "priya", sublabel: "priya@example.com" }],
+    ["u2", { id: "u2", source: "kora", type: "users", label: "arjun", sublabel: "arjun@example.com" }],
+  ]);
+
+  // The page-scoped limitation must be stated in the UI, not only a comment —
+  // kora's ai-metrics endpoint accepts no search param at all.
+  it("states in the UI that filters only search this page's users", () => {
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+    expect(screen.getByText(/only.*this page/i)).toBeInTheDocument();
+  });
+
+  // Typing commits to the URL via `router.replace` — asserted as a spy call,
+  // the same way `filter-bar.url-filters.test.tsx` asserts `set`/`clear`.
+  // Next.js itself is what turns that call into a re-render with new
+  // `searchParams`; jsdom has no router to do that, so the FILTERED RESULT is
+  // asserted separately below by pre-setting the URL and rendering fresh.
+  it("commits typed search text to the URL", async () => {
+    const user = userEvent.setup();
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    const search = screen.getByRole("searchbox", { name: /search/i });
+    await user.type(search, "priya");
+    await user.tab();
+
+    expect(pushedQuery().get("q")).toBe("priya");
+  });
+
+  it("narrows the table by the joined name, once the URL says so", () => {
+    setSearchParams(new URLSearchParams("q=priya"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    expect(screen.getByText("priya")).toBeInTheDocument();
+    expect(screen.queryByText("arjun")).toBeNull();
+  });
+
+  it("narrows the table by the raw id, so a pasted UUID still finds its row", () => {
+    setSearchParams(new URLSearchParams("q=u2"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: EMPTY_DIRECTORY });
+
+    expect(screen.getByText("u2")).toBeInTheDocument();
+    expect(screen.queryByText("u1")).toBeNull();
+  });
+
+  it("has activity toggles for corrections, budget refusals and AI calls, but not a needs-human toggle", () => {
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+    expect(screen.getByRole("combobox", { name: /corrections/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /budget refusals/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /ai calls/i })).toBeInTheDocument();
+    // "needs human" is an aggregate on `outcomes`, not a per-user field — the
+    // plan is explicit that inventing this toggle is out of bounds.
+    expect(screen.queryByRole("combobox", { name: /needs human/i })).toBeNull();
+  });
+
+  it("filters to users with corrections, once the URL says so", () => {
+    setSearchParams(new URLSearchParams("hasCorrections=yes"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    expect(screen.getByText("priya")).toBeInTheDocument();
+    expect(screen.queryByText("arjun")).toBeNull();
+  });
+
+  // Filters live in the URL: applied here via a pre-set URL rather than a
+  // simulated interaction, mirroring `mergeFiltersIntoQuery`'s own contract.
+  it("reads an active filter back out of the URL", () => {
+    setSearchParams(new URLSearchParams("hasBudgetRefusals=yes"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    expect(screen.getByText("arjun")).toBeInTheDocument();
+    expect(screen.queryByText("priya")).toBeNull();
+  });
+
+  // The load-bearing property: a filtered list must never sit beside a total
+  // that still counts every page. Unfiltered, the pager's real total shows.
+  it("shows the true cross-page total when no filter is active", () => {
+    renderView({
+      metrics: NAMED_METRICS,
+      userDirectory: DIRECTORY,
+      pagination: { page: 1, limit: 2, total: 500 },
+    });
+    expect(screen.getByText(/of 500/)).toBeInTheDocument();
+  });
+
+  // Filtered, the cross-page total must be gone — only a page-scoped count
+  // may appear, never "1 of 500" for a filter that only ever saw 2 rows.
+  it("replaces the cross-page total with a page-scoped count once filtered", () => {
+    setSearchParams(new URLSearchParams("q=priya"));
+    renderView({
+      metrics: NAMED_METRICS,
+      userDirectory: DIRECTORY,
+      pagination: { page: 1, limit: 2, total: 500 },
+    });
+
+    expect(screen.queryByText(/of 500/)).toBeNull();
+    expect(screen.getByText(/1 of 2 on this page/i)).toBeInTheDocument();
+  });
+
+  // `resolveState`'s `filtered` flag, not the plain empty-state copy: a
+  // filter that matches nothing on this page is a different fact from the
+  // page genuinely having no users.
+  it("renders 'no matches, clear filters' rather than 'no users in this window' for a filtered-empty page", () => {
+    setSearchParams(new URLSearchParams("q=does-not-exist"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    expect(screen.queryByText(/no users in this window/i)).toBeNull();
+    expect(screen.getByText(/no matches/i)).toBeInTheDocument();
+  });
+
+  // The clear button commits an empty query, the same way `set` does — the
+  // reactive round-trip (clicking actually restores the unfiltered table) is
+  // Next.js's job, not this component's; see the file's top-of-file note.
+  //
+  // Two "Clear filters" buttons are on screen at once here — the filter
+  // bar's own (it always offers one while a filter is active) and the
+  // filtered-empty state's — so this asserts EVERY one commits the same
+  // empty query rather than picking one arbitrarily.
+  it("commits an empty query when 'Clear filters' is clicked on a filtered-empty page", async () => {
+    const user = userEvent.setup();
+    setSearchParams(new URLSearchParams("q=does-not-exist"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+
+    for (const clear of screen.getAllByRole("button", { name: /clear filters/i })) {
+      await user.click(clear);
+    }
+
+    expect(replace).toHaveBeenCalled();
+    for (const call of replace.mock.calls as [string][]) {
+      expect(new URLSearchParams(call[0].split("?")[1] ?? "").get("q")).toBeNull();
+    }
   });
 });
 
