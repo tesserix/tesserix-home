@@ -560,6 +560,57 @@ export async function publishAttemptById(attemptId: string): Promise<PublishAtte
   });
 }
 
+/**
+ * The mode's most recent attempt, whatever became of it — or `null` if the
+ * mode has never been published.
+ *
+ * Unlike `publishAttemptById`, this reader exists for callers that have no
+ * attempt id: a page load, which knows only the mode. It therefore has to
+ * answer "what happened last here", which includes the case where nothing
+ * finished happening.
+ *
+ * # It can return an attempt whose `outcome` is still `null`
+ *
+ * That is not a filtering oversight. An attempt with no outcome is a publish
+ * that died between `startPublishAttempt` and `finishPublishAttempt` — the
+ * process went away before it could record a verdict — and that is precisely
+ * the crash that strands an archived-but-not-archived Stripe Price. Hiding it
+ * would hide the one attempt most worth seeing. What an unresolved attempt
+ * MEANS, and what to say about it, is the caller's decision; this function
+ * only reports what the log holds, and the log holds no verdict.
+ *
+ * `id DESC` is a tiebreaker, not a preference. Two attempts can share a
+ * `started_at` — `now()` is transaction time, so two transactions that commit
+ * within the same statement clock tick record the same instant — and without
+ * a second key the winner would be whichever the planner happened to return
+ * first, which is not stable across plans. This is the same reasoning
+ * `startPublishAttempt` applies to duplicate keys: pick a rule and let it
+ * decide, rather than letting page order decide.
+ */
+export async function latestPublishAttempt(mode: StripeMode): Promise<PublishAttempt | null> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      id: string;
+      revision_id: string;
+      mode: string;
+      fingerprint: string;
+      started_by: string;
+      started_at: string;
+      finished_at: string | null;
+      outcome: string | null;
+    }>(
+      `SELECT id, revision_id, mode, fingerprint, started_by, started_at, finished_at, outcome
+         FROM plan_catalog_publish_attempts
+        WHERE mode = $1
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1`,
+      [mode],
+    );
+    const row = rows[0];
+    return row ? mapAttemptRow(row) : null;
+  });
+}
+
 export type StripeCall = "create" | "update" | "archive";
 export type OperationStatus = "pending" | "succeeded" | "failed";
 

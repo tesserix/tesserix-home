@@ -44,6 +44,7 @@ const {
   startPublishAttempt,
   finishPublishAttempt,
   publishAttemptById,
+  latestPublishAttempt,
   recordOperation,
   completeOperation,
   operationsForAttempt,
@@ -81,17 +82,24 @@ beforeEach(async () => {
 });
 
 const insertAttempt = async (
-  overrides: Partial<{ revisionId: string; mode: string; fingerprint: string; startedBy: string }> = {},
+  overrides: Partial<{
+    revisionId: string;
+    mode: string;
+    fingerprint: string;
+    startedBy: string;
+    startedAt: string;
+  }> = {},
 ): Promise<string> => {
   const { rows } = await db.query<{ id: string }>(
-    `INSERT INTO plan_catalog_publish_attempts (revision_id, mode, fingerprint, started_by)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO plan_catalog_publish_attempts (revision_id, mode, fingerprint, started_by, started_at)
+     VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, now()))
      RETURNING id`,
     [
       overrides.revisionId ?? BASELINE_REVISION_ID,
       overrides.mode ?? "test",
       overrides.fingerprint ?? "fp-1",
       overrides.startedBy ?? "operator@tesserix",
+      overrides.startedAt ?? null,
     ],
   );
   return rows[0].id;
@@ -390,6 +398,69 @@ describe("publish-repo.ts: publish attempts", () => {
         startedBy: "operator@tesserix",
       }),
     ).resolves.toEqual(expect.any(String));
+  });
+});
+
+describe("publish-repo.ts: latestPublishAttempt", () => {
+  it("returns null when the mode has recorded no attempts", async () => {
+    await expect(latestPublishAttempt("live")).resolves.toBeNull();
+  });
+
+  it("returns the newest attempt for the mode", async () => {
+    await insertAttempt({
+      mode: "test",
+      fingerprint: "fp-old",
+      startedAt: "2026-08-28T09:00:00Z",
+    });
+    const newestId = await insertAttempt({
+      mode: "test",
+      fingerprint: "fp-new",
+      startedAt: "2026-08-30T09:00:00Z",
+    });
+    await insertAttempt({
+      mode: "test",
+      fingerprint: "fp-middle",
+      startedAt: "2026-08-29T09:00:00Z",
+    });
+
+    const attempt = await latestPublishAttempt("test");
+    expect(attempt?.id).toBe(newestId);
+    expect(attempt?.fingerprint).toBe("fp-new");
+  });
+
+  it("does not return an attempt recorded in the other mode", async () => {
+    const testId = await insertAttempt({
+      mode: "test",
+      fingerprint: "fp-test",
+      startedAt: "2026-08-28T09:00:00Z",
+    });
+    await insertAttempt({
+      mode: "live",
+      fingerprint: "fp-live",
+      startedAt: "2026-08-30T09:00:00Z",
+    });
+
+    const attempt = await latestPublishAttempt("test");
+    expect(attempt?.id).toBe(testId);
+    expect(attempt?.mode).toBe("test");
+  });
+
+  it("returns an unfinished attempt, outcome still null", async () => {
+    // The crash-between-start-and-finish case: this reader surfaces it rather
+    // than filtering it out, because it is exactly the shape that strands an
+    // orphaned Stripe Price. The caller decides what it means.
+    const id = await startPublishAttempt({
+      revisionId: BASELINE_REVISION_ID,
+      mode: "test",
+      fingerprint: "fp-in-flight",
+      startedBy: "operator@tesserix",
+    });
+
+    await expect(latestPublishAttempt("test")).resolves.toMatchObject({
+      id,
+      outcome: null,
+      finishedAt: null,
+    });
   });
 });
 
