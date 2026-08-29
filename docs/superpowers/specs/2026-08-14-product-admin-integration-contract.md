@@ -785,8 +785,106 @@ returns "the §8.9 row, plus product-defined detail" is a strictly easier thing 
 specify than one that must also settle what the row is.
 
 
+## 9. v3 amendments (2026-08-29)
+
+Derived from `2026-08-29-admin-contract-v3-console-federation-design.md`, which
+found eight mark8ly surfaces the console could not reach because their endpoints
+had no ids in this contract's closed vocabulary.
+
+**This is purely additive.** No v2 id changes shape, no envelope already in use
+is redefined, and a product that declares none of the ids below is unaffected —
+an undeclared endpoint is "not implemented," and the suite skips it, exactly as
+it always has. The closed vocabulary goes from nine ids to seventeen.
+
+### 9.1 `GET /admin/outbox`
+
+Envelope: `data-pagination` (§4.1). Probed.
+
+Undelivered and failed outbox rows — the estate's outgoing message queue,
+exposed for operator visibility.
+
+### 9.2 `GET /admin/email-sends`
+
+Envelope: `data-pagination` (§4.1). Probed.
+
+The transactional email delivery log.
+
+### 9.3 `GET /admin/notifications`
+
+Envelope: `data-pagination` (§4.1). Probed.
+
+The product's own, product-owned notification log. This is **not** the
+console's notification bell, which is derived from ticket rows and has no table
+behind it — two different things sharing one word. Do not wire one into the
+other on the strength of the name.
+
+### 9.4 `GET /admin/break-glass`
+
+Envelope: `data-pagination` (§4.1). Probed — but only usefully so once the
+signing identity holds the right capability.
+
+This is the first **read** in the estate gated on an exact capability *value*:
+`rotate-credentials` (`middleware.go:111`). A suite run without that capability
+gets a 403, which is the endpoint working correctly and would report as a
+failure if the runner did not account for it. The runner must send it, and the
+CronJob's signing identity must hold `rotate-credentials`.
+
+If the signing identity cannot be granted that capability, this id degrades to
+`probe: false` rather than shipping a check that is red for a reason unrelated
+to conformance. Record that decision in the changelog if it happens — do not
+quietly flip the flag.
+
+### 9.5 `GET /admin/conversions`
+
+Envelope: `free`. **Not probed.**
+
+`GET /admin/conversions` requires `?email=`. Every value the suite could send
+is either a real person's address — which makes the nightly run a scheduled PII
+lookup — or a synthetic one, which exercises only the `state: "none"` branch
+and asserts nothing about the endpoint's real behaviour. Neither is worth a
+check. Declared, never invoked by the suite.
+
+This is a distinct endpoint from `/internal/conversion-status`, which the CRM
+calls directly under RULING 27 for a single lead's own state. `/admin/
+conversions` is the same product's operator view of that data, federated the
+same way every other admin read is. Neither retires the other, and this
+amendment does not rewire one onto the other.
+
+### 9.6 `GET /admin/onboarding/funnel` and `GET /admin/onboarding/sessions`
+
+One surface, two endpoints — which is why they share a section number.
+
+- `GET /admin/onboarding/funnel` — envelope `data-flat-map` (§3.1's shape:
+  501 when uninstrumented, never `{}`). Probed.
+- `GET /admin/onboarding/sessions` — envelope `data-pagination` (§4.1).
+  Probed.
+
+The funnel is the headline counts; sessions are the individual records behind
+them. Both read, both probed, and there is no write on this surface.
+
+### 9.7 `POST /admin/tenants/{id}/purge`
+
+Envelope: `free`. **Not probed.**
+
+Identical reasoning to `tenant-lifecycle` (§8.8), and stronger. A conformance
+run that suspends a real tenant to check an envelope is already worse than no
+check; a run that *purges* one is unrecoverable, and there is no sandbox tenant
+to point the suite at. The id exists so the console can discover that a
+product supports purge at all — it is declarable and carries no wire check.
+
+`GET /admin/tenants/{id}/purge/preview` is **deliberately not a separate id.**
+It is the read half of one operation and is meaningless without the write;
+splitting them would let a product declare a preview it cannot execute.
+
+---
+
 ## Changelog
 
+- **v3** (2026-08-29) — §9: eight endpoint ids added across seven surfaces —
+  outbox, email-sends, notifications, break-glass, conversions,
+  onboarding/funnel, onboarding/sessions, tenant-purge. Additive; no v2 id
+  changed shape. `conversions` and `tenant-purge` are declarable but never
+  probed.
 - **v2.4** (2026-08-27) — §8.9: §3.4's entity row is named. `id` and `label`
   required, `sublabel` and `created_at` optional, and an absent `sublabel`
   rendered as nothing rather than a placeholder. Kora and mark8ly had already
