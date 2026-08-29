@@ -420,10 +420,11 @@ export interface AuditedOperation<T> {
  *    nothing went unaccounted for. See AuditUnavailableError.
  * 2. Run the operation.
  *    - It throws a DELIBERATE REFUSAL (`refusalDescription` recognises it)
- *      → write a row describing the refusal, then rethrow the original
- *      `cause` unchanged. A refusal is a decision, and belongs in the log:
- *      the highest-stakes action in this system is exactly the one most
- *      worth recording when it is refused, not only when it succeeds.
+ *      → best-effort write a row describing the refusal (see `writeRefusal`
+ *      — it never throws), then rethrow the original `cause` unchanged. A
+ *      refusal is a decision, and belongs in the log: the highest-stakes
+ *      action in this system is exactly the one most worth recording when
+ *      it is refused, not only when it succeeds.
  *    - It throws anything else (a FAILURE — not a decision: a bug, a
  *      dropped connection, `AuditWriteError`) → propagate unchanged,
  *      writing nothing. Recording it would put a database write exactly on
@@ -446,12 +447,10 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
   try {
     result = await spec.operation();
   } catch (cause) {
-    const refusal = refusalDescription(cause);
-    if (refusal) {
-      await writeRefusal(spec, refusal);
-    }
-    // Rethrow the ORIGINAL cause either way, refusal or failure: auditing
+    // `writeRefusal` never throws — see its doc comment — so this can never
+    // replace `cause`. Rethrown either way, refusal or failure: auditing
     // changes what is recorded, never what the caller sees.
+    await writeRefusal(spec, cause);
     throw cause;
   }
 
@@ -480,29 +479,42 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
 }
 
 /**
- * Write the row for a recognised refusal, on a best-effort basis.
+ * Recognise and write the row for a refusal, on a best-effort basis. Never
+ * throws — every failure this function can encounter is logged and
+ * swallowed, so it can never replace `cause` in the caller's catch block.
  *
- * THE SUBTLE CASE (#409): what if the refusal's own audit write fails? The
- * caller needs to know they were refused — that is the operation's real
- * outcome, and a truthful one. Letting `AuditWriteError` propagate instead
- * would tell them "audit failed" when what actually happened is "you were
- * refused", which is both a worse answer and a wrong one: `AuditWriteError`
- * is documented above as meaning the operation's *own* results are
- * unaccounted for, and a refusal has none to lose.
+ * THE SUBTLE CASE (#409): what if accounting for the refusal itself fails?
+ * That covers more than "the INSERT failed" — `cause.auditRefusal()` is
+ * caller code this function does not control (see `AuditableRefusal`), and
+ * it can throw or return a malformed action/summary that `writeAuditEntry`'s
+ * own validation rejects (`AuditActionError`/`AuditSummaryError`). Every one
+ * of those is caught by the single try below, deliberately wider than
+ * `writeAuditEntry`'s own try (which starts after its validation, see
+ * `validateActionName`/`serialiseSummary` above): a bug in a caller's
+ * `auditRefusal()` is exactly as unable to displace `cause` as a database
+ * outage is.
  *
- * So this failure is swallowed here, after being logged server-side, and
- * the caller in `auditedOperation` always rethrows the original refusal
- * regardless of whether this write succeeded. The row that should have
- * existed but doesn't is a real gap — exactly the class of gap #409 exists
- * to close — but it is a gap to notice in server logs and alerting, not one
- * to paper over with a false success or hide by reporting the wrong error
- * to the caller.
+ * This is NOT the same call as the success path's `describe`, on purpose.
+ * There, a bug is allowed to replace the result with `AuditSummaryError`,
+ * because nothing has been decided for the caller yet — the operation
+ * merely returned data, and describing it is still open. A refusal is
+ * different: `cause` already IS the decision, and requirement 1 is
+ * unconditional — "auditing changes what is recorded, never what the
+ * caller sees" carves out no exception for "unless recording the refusal
+ * is itself buggy". So nothing here is allowed to become what the caller
+ * receives; it can only be logged for someone to go look at.
+ *
+ * The row that should exist but doesn't, in either failure mode, is a real
+ * gap — exactly the class of gap #409 exists to close — but it is a gap to
+ * notice in server logs and alerting, not one to paper over with a false
+ * success or hide by reporting the wrong error to the caller.
  */
-async function writeRefusal<T>(
-  spec: AuditedOperation<T>,
-  refusal: AuditDescription,
-): Promise<void> {
+async function writeRefusal<T>(spec: AuditedOperation<T>, cause: unknown): Promise<void> {
   try {
+    const refusal = refusalDescription(cause);
+    if (!refusal) {
+      return;
+    }
     await writeAuditEntry({
       actor: spec.actor,
       action: refusal.action,

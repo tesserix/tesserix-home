@@ -609,8 +609,13 @@ describe("auditedOperation — deliberate refusals (#409)", () => {
 
     const [entry] = await recentAuditEntries(10);
     expect(entry).toBeDefined();
+    expect(entry.action).toBe("capability.refused");
     expect(entry.action).not.toBe("catalog.publish");
     expect(entry.target).toBe("plan-123");
+    // Pins the `required.replaceAll("-", "_")` line: SUMMARY_KEY rejects
+    // hyphens, so the hyphenated capability name must be translated, not
+    // dropped, to still name what was missing.
+    expect(entry.metadata).toBe('{"publish_catalog":1}');
   });
 
   // The subtle case: if the refusal's OWN audit write fails, the caller must
@@ -645,6 +650,71 @@ describe("auditedOperation — deliberate refusals (#409)", () => {
     expect(table).toHaveLength(0);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  // Important finding from review: `refusalDescription(cause)` calls
+  // `cause.auditRefusal()`, which is caller code this module does not
+  // control. If that throws, the throw must not displace the original
+  // refusal — the same guarantee requirement 1 makes for a failed
+  // audit WRITE must also hold for a failed audit DESCRIBE.
+  //
+  // Breaks if: `refusalDescription(cause)` (or the call to
+  // `cause.auditRefusal()`) is moved back outside `writeRefusal`'s try, so
+  // a throwing `auditRefusal()` propagates and replaces `cause`.
+  it("still rethrows the original refusal, not whatever auditRefusal() throws, when auditRefusal() itself throws", async () => {
+    class ThrowingRefusal extends Error implements AuditableRefusal {
+      constructor() {
+        super("refused, but describing it is buggy");
+        this.name = "ThrowingRefusal";
+      }
+      auditRefusal(): never {
+        throw new Error("bug in auditRefusal()");
+      }
+    }
+    const refusal = new ThrowingRefusal();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    expect(table).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  // The other half of "a failure writes nothing": an AuditWriteError is the
+  // one failure type that can only ever come from this module's own write
+  // path, never a caller decision, so it must be treated exactly like any
+  // other failure — not mistaken for a refusal because it happens to be an
+  // audit-shaped error.
+  //
+  // Breaks if: `refusalDescription()` starts recognising `AuditWriteError`
+  // (e.g. via a broadened `instanceof Error` check) instead of restricting
+  // itself to `AuditableRefusal`/`CapabilityError`.
+  it("writes nothing and propagates unchanged when the operation itself throws an AuditWriteError", async () => {
+    const failure = new AuditWriteError(new Error("57P01 admin shutdown"));
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw failure;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(failure);
+
+    expect(table).toHaveLength(0);
+    expect(vi.mocked(tesserixQuery)).not.toHaveBeenCalled();
   });
 
   // A successful operation is completely unaffected by any of the above:
