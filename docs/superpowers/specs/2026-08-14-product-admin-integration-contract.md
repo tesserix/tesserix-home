@@ -859,8 +859,12 @@ amendment does not rewire one onto the other.
 
 One surface, two endpoints — which is why they share a section number.
 
-- `GET /admin/onboarding/funnel` — envelope `data-flat-map` (§3.1's shape:
-  501 when uninstrumented, never `{}`). Probed.
+- `GET /admin/onboarding/funnel` — envelope `free`. The response nests
+  `last_24h` (a grouped sub-window of counts) and `window` (a `{from,to}`
+  pair) by design, which is neither a page nor a flat map of scalars.
+  Identical reasoning to `lifecycle/reason-codes` (§8.8): §4.1 correctly
+  reports a skip rather than asserting a shape the endpoint never had.
+  Probed.
 - `GET /admin/onboarding/sessions` — envelope `data-pagination` (§4.1).
   Probed.
 
@@ -885,6 +889,12 @@ splitting them would let a product declare a preview it cannot execute.
 
 ## Changelog
 
+- **v3.1** (2026-08-29) — §9.6 correction: `onboarding/funnel`'s envelope was
+  wrong in v3 as first published. It named `data-flat-map`, inferred from one
+  line without reading `toFunnelRow`; the endpoint's response nests `last_24h`
+  and `window` by design and was never a flat map of scalars. The envelope is
+  now `free`, same reasoning as `lifecycle/reason-codes` (§8.8). mark8ly's
+  handler was correct throughout — only the contract's declaration was wrong.
 - **v3** (2026-08-29) — §9: eight endpoint ids added across seven surfaces —
   outbox, email-sends, notifications, break-glass, conversions,
   onboarding/funnel, onboarding/sessions, tenant-purge. Additive; no v2 id
