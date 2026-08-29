@@ -408,7 +408,12 @@ export const ROUTES = {
   "platform.customDomains": { web: "/admin/custom-domains", mobile: "/platform/custom-domains", pending: true, capability: "platform" },
   // Left at `read`: the outbox is a log. Whether it also offers a re-send
   // (which would be `mass-send`) is undecided until the surface is built.
-  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", pending: true, capability: "platform" },
+  //
+  // NOT `pending`: the console serves this page at /platform/outbox, reading
+  // the platform API's federated `GET /v1/outbox` (task 3 of the v1 outbox
+  // federation plan). `pending` meant "the console has not kept this
+  // promise" — it now has.
+  "platform.outbox": { web: "/admin/outbox", mobile: "/platform/outbox", console: "/platform/outbox", capability: "platform" },
   "platform.notificationLog": { web: "/admin/notifications/log", mobile: "/platform/notifications", pending: true, capability: "platform" },
   // Left at `read`, though `mass-send` names "template test-sends": authoring a
   // template is not sending one, and the test-send action must assert
