@@ -62,6 +62,7 @@ import { stripePriceReader } from "@/lib/billing/stripe-read";
 import { executePublish } from "@/lib/billing/publish-executor";
 import { findOrphans } from "@/lib/billing/orphans";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
+import { MARK8LY_LOOKUP_KEY_PREFIX, type CatalogAmount, type StripePriceLike } from "@/lib/billing/parity";
 import {
   discardDraftAction,
   planPublishAction,
@@ -88,6 +89,30 @@ function signIn(roles: readonly string[] | undefined) {
     iat: 0,
     exp: 0,
   } as never);
+}
+
+/** Fixture builders matching `publish-plan.test.ts`'s own — a
+ *  `mark8ly_`-prefixed lookup key, because `compareCatalogToStripe` filters
+ *  the OBSERVED side by that prefix. */
+function amount(lookupKey: string, currency: string, unitAmountMinor: number): CatalogAmount {
+  return { lookupKey, currency, unitAmountMinor, taxBehavior: "unspecified" };
+}
+
+function price(overrides: {
+  lookup_key: string;
+  currency: string;
+  unit_amount: number;
+  currency_options?: StripePriceLike["currency_options"];
+}): StripePriceLike {
+  return {
+    id: `price_${overrides.lookup_key}`,
+    lookup_key: overrides.lookup_key,
+    currency: overrides.currency,
+    unit_amount: overrides.unit_amount,
+    tax_behavior: "unspecified",
+    active: true,
+    currency_options: overrides.currency_options,
+  };
 }
 
 /** The one write `writeAuditEntry` issues — `[actor, action, target,
@@ -400,6 +425,8 @@ describe("publishAction", () => {
 
     const result = await publishAction("draft-1", "live", { typedMode: "live", acknowledged: [] });
 
+    // The caller's own contract does not change (#409 task 2, requirement
+    // 3): same shape, same verbatim guard message, as before this task.
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/refused in v1/);
     expect(startPublishAttempt).not.toHaveBeenCalled();
@@ -410,6 +437,15 @@ describe("publishAction", () => {
     // spending a paid `prices.list` call to learn a refusal the mode string
     // alone already carries.
     expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
+
+    // #409 task 2: a refused LIVE attempt is the single most interesting row
+    // this whole change adds. The row must name the attempted mode — "live",
+    // not "test" — and which rule refused it, and must NOT reuse a
+    // successful publish's action name.
+    const insert = lastAuditInsert();
+    expect(insert.action).toBe("billing.catalog.publish.refused");
+    expect(insert.action).not.toBe("billing.catalog.publish");
+    expect(insert.summary).toEqual({ mode_live: 1, rule_mode: 1 });
   });
 
   it("maps a second concurrent publish to a sentence the operator can act on", async () => {
@@ -441,6 +477,80 @@ describe("publishAction", () => {
         "The publish could not be completed. Check the publish log before retrying — some operations may already have run.",
     });
     expect(promotePublication).not.toHaveBeenCalled();
+  });
+
+  // #409 task 2: the `"refused" in verdict` throw at actions.ts covers TWO
+  // guards, not one — `checkMode` (above) and `checkCurrencyCoverage` here.
+  // Both go through the same throw site, so the row is the only place they
+  // are told apart: the source change that would make this fail is deleting
+  // `verdict.refused.map((breach) => breach.rule)` from that throw (or
+  // hardcoding a fixed rule list), which would collapse this case's
+  // `rule_currency_coverage` back to whatever the mode test asserts.
+  it("refuses a plan that would drop a currency, and names currency-coverage as the rule", async () => {
+    signIn(["billing", "publish-catalog"]);
+    const key = `${MARK8LY_LOOKUP_KEY_PREFIX}k_currency_drop`;
+    // Draft matches the ancestor exactly (no intended change), but Stripe
+    // carries a currency the draft no longer wants — `checkCurrencyCoverage`
+    // refuses this unconditionally; there is no Stripe call that can remove
+    // a `currency_options` entry (`publish-guards.ts`'s own header).
+    vi.mocked(readCatalogAmounts).mockResolvedValue([amount(key, "usd", 1000)]);
+    vi.mocked(readRevisionAmounts).mockResolvedValue([amount(key, "usd", 1000)]);
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue([
+      price({
+        lookup_key: key,
+        currency: "usd",
+        unit_amount: 1000,
+        currency_options: { eur: { unit_amount: 700, tax_behavior: "unspecified" } },
+      }),
+    ]);
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringMatching(/lose currency "eur"/),
+    });
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+    expect(executePublish).not.toHaveBeenCalled();
+
+    const insert = lastAuditInsert();
+    expect(insert.action).toBe("billing.catalog.publish.refused");
+    expect(insert.action).not.toBe("billing.catalog.publish");
+    expect(insert.summary).toEqual({ mode_test: 1, rule_currency_coverage: 1 });
+  });
+
+  // #409 task 2: the second throw site (`"requiresConfirmation" in verdict`,
+  // an unacknowledged breach) — a plan the operator never had the chance to
+  // review before this exact breach appeared. Deleting `unacknowledged.map(
+  // (breach) => breach.rule)` from that throw, or reusing the mode test's
+  // rule list, would make this assertion fail while the mode test still
+  // passes — proof the two throw sites are independently covered.
+  it("refuses a plan that changed since it was reviewed, and names the guard rule that changed", async () => {
+    signIn(["billing", "publish-catalog"]);
+    const key = `${MARK8LY_LOOKUP_KEY_PREFIX}k_magnitude_drop`;
+    // Ancestor 1000, draft 200: an 80% move against the ancestor trips
+    // `checkMagnitude` (25% threshold) — a CONFIRMATION rule, not a refusal.
+    // `acknowledged: []` (via `CONFIRMED`) means the operator never
+    // acknowledged it, so `publishAction` refuses rather than proceeding.
+    vi.mocked(readCatalogAmounts).mockResolvedValue([amount(key, "usd", 1000)]);
+    vi.mocked(readRevisionAmounts).mockResolvedValue([amount(key, "usd", 200)]);
+    vi.mocked(stripePriceReader.listPrices).mockResolvedValue([
+      price({ lookup_key: key, currency: "usd", unit_amount: 1000 }),
+    ]);
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringMatching(/changed since it was reviewed/),
+    });
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+    expect(executePublish).not.toHaveBeenCalled();
+
+    const insert = lastAuditInsert();
+    expect(insert.action).toBe("billing.catalog.publish.refused");
+    expect(insert.action).not.toBe("billing.catalog.publish");
+    expect(insert.summary).toEqual({ mode_test: 1, rule_magnitude: 1 });
   });
 });
 

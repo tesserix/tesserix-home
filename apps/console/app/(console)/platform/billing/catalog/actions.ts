@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapability } from "@/lib/auth/operator";
-import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
+import {
+  auditedOperation,
+  type AuditDescription,
+  type AuditableRefusal,
+  type AuditSummary,
+} from "@/lib/db/audit-repo";
 import {
   createDraftFrom,
   discardDraft,
@@ -323,14 +328,57 @@ const PUBLISH_INCOMPLETE_MESSAGE =
   "The publish could not be completed. Check the publish log before retrying — some operations may already have run.";
 
 /**
+ * The audit action a refused publish records. Deliberately not
+ * `"billing.catalog.publish"` — the successful publish's own action, so a
+ * retention or alerting rule keyed on ACTION can tell "this ran" from "this
+ * was refused" without parsing `summary` or `target` first (#409).
+ */
+const PUBLISH_REFUSED_ACTION = "billing.catalog.publish.refused";
+
+/**
  * A refusal this action itself decided, with a message written to be shown
  * verbatim. Distinct from every other throw reaching {@link withPublishWrite},
  * whose text is internal and must not be — see {@link ACTIONABLE_REFUSALS}.
+ *
+ * `implements AuditableRefusal` (#409, task 2): every one of this action's
+ * own refusals is now a decision worth a row, including — especially — a
+ * refused LIVE attempt, which is the whole reason this issue exists.
+ * `auditRefusal` carries the two facts that make the row findable rather
+ * than merely present:
+ *
+ *   - the ATTEMPTED MODE, so "who tried to publish to live and was refused"
+ *     is a query against `summary`, not a grep through free-text `target`.
+ *   - WHICH RULE refused it (`mode`, `currency-coverage`, or a stale
+ *     confirmation naming the guard whose breach the operator never saw),
+ *     so the mode guard and the other two call sites in this file produce
+ *     visibly different rows.
+ *
+ * No catalog rows or amounts here — `AuditSummary` has nowhere for a row to
+ * go (`AuditedOperation.describe`'s own doc comment), and a refusal is not
+ * the place to start making room for one. Same shape `refusalDescription`'s
+ * `CapabilityError` branch already uses for the identical reason: an
+ * identifier-shaped key set to `1`, not a count of anything.
  */
-class PublishRefused extends Error {
-  constructor(message: string) {
+class PublishRefused extends Error implements AuditableRefusal {
+  constructor(
+    message: string,
+    private readonly mode: StripeMode,
+    /** Which guard rule(s) produced this refusal — `["mode"]` for the mode
+     *  guard, one or more of `checkGuards`' other `GuardRule`s otherwise. */
+    private readonly rules: readonly GuardRule[],
+  ) {
     super(message);
     this.name = "PublishRefused";
+  }
+
+  auditRefusal(): AuditDescription {
+    const summary: AuditSummary = {
+      [`mode_${this.mode}`]: 1,
+      ...Object.fromEntries(
+        this.rules.map((rule) => [`rule_${rule.replaceAll("-", "_")}`, 1] as const),
+      ),
+    };
+    return { action: PUBLISH_REFUSED_ACTION, summary };
   }
 }
 
@@ -578,6 +626,8 @@ export async function publishAction(
         // for a refused mode.
         throw new PublishRefused(
           `Publishing is refused: ${verdict.refused.map((breach) => breach.message).join(" ")}`,
+          mode,
+          verdict.refused.map((breach) => breach.rule),
         );
       }
       if (!verdict.ok && "requiresConfirmation" in verdict) {
@@ -603,6 +653,8 @@ export async function publishAction(
             `This plan changed since it was reviewed: ${unacknowledged
               .map((breach) => breach.message)
               .join(" ")} Review it again before publishing.`,
+            mode,
+            unacknowledged.map((breach) => breach.rule),
           );
         }
       }
@@ -622,7 +674,7 @@ export async function publishAction(
         // is missing on this branch. Equivalent in effect, deliberately
         // different in wording; reached only if the `refused` branch above is
         // ever changed to stop covering `checkMode`'s refusal.
-        throw new PublishRefused("Publishing is refused: this mode is not enabled.");
+        throw new PublishRefused("Publishing is refused: this mode is not enabled.", mode, ["mode"]);
       }
       const { plan } = result;
 
