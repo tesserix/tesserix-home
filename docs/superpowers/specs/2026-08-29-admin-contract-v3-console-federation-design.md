@@ -28,7 +28,7 @@ console at all — no platform-api module, no console page.
 | 3 | `GET /admin/notifications` | `data-pagination` | none | `platform.notificationLog` — `pending` |
 | 4 | `GET /admin/break-glass` | `data-pagination` | **`rotate-credentials`, exact** | `platform.breakGlass` — `pending` |
 | 5 | `GET /admin/conversions` | bare object, `?email=` | none | *no entry* |
-| 6 | `GET /admin/onboarding/funnel` | `{ data: {…scalars} }` | none | *no entry* |
+| 6 | `GET /admin/onboarding/funnel` | `{ data: {…} }`, nesting `last_24h` and `window` | none | *no entry* |
 | 7 | `GET /admin/onboarding/sessions` | `data-pagination` | none | *no entry* |
 | 8 | `GET /admin/tenants/{id}/purge/preview` + `POST /admin/tenants/{id}/purge` | `{ data: {…} }` | write, `hard-delete` | `platform.gdprQueue` — `pending` |
 
@@ -102,7 +102,7 @@ Eight new ids across seven surfaces — onboarding is two endpoints — taking t
 | `notifications` | `/admin/notifications` | `data-pagination` | yes | |
 | `break-glass` | `/admin/break-glass` | `data-pagination` | yes | requires a capability **value** to probe |
 | `conversions` | `/admin/conversions` | `free` | **no** | requires an `email` that identifies a real person |
-| `onboarding/funnel` | `/admin/onboarding/funnel` | `data-flat-map` | yes | |
+| `onboarding/funnel` | `/admin/onboarding/funnel` | `free` | yes | nests `last_24h` and `window`, not a flat map of scalars |
 | `onboarding/sessions` | `/admin/onboarding/sessions` | `data-pagination` | yes | |
 | `tenant-purge` | `POST /admin/tenants/{id}/purge` | `free` | **no** | destructive |
 
