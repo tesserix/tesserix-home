@@ -97,11 +97,18 @@ describe("the write path is absent, not merely unused", () => {
     // Returning it — from an export, a getter, or a `client` property — would
     // hand every caller the entire write API in one move, and no amount of
     // narrowing the reader's own surface would matter.
+    // `isStripeReadUnavailable` earns its place on this list the way every
+    // entry has to: it is a pure predicate over a caught value, holds no
+    // credential, reaches nothing, and hands back a boolean. It exists so a
+    // CALLER (`orphansReadError`, the plan catalog page) can tell "Stripe was
+    // never reached and no retry will change that" apart from a genuine
+    // failure without importing the error class into a worse position.
     expect(Object.keys(stripeRead).sort()).toEqual([
       "KEY_ENV",
       "MAX_PRICES",
       "STRIPE_MODES",
       "StripeReadUnavailableError",
+      "isStripeReadUnavailable",
       "stripePriceReader",
     ]);
     expect(

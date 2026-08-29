@@ -560,6 +560,72 @@ export async function publishAttemptById(attemptId: string): Promise<PublishAtte
   });
 }
 
+/**
+ * The mode's most recent attempt, whatever became of it — or `null` if the
+ * mode has never been published.
+ *
+ * Unlike `publishAttemptById`, this reader exists for callers that have no
+ * attempt id: a page load, which knows only the mode. It therefore has to
+ * answer "what happened last here", which includes the case where nothing
+ * finished happening.
+ *
+ * # It can return an attempt whose `outcome` is still `null`
+ *
+ * That is not a filtering oversight. An attempt with no outcome is a publish
+ * that died between `startPublishAttempt` and `finishPublishAttempt` — the
+ * process went away before it could record a verdict — and that is precisely
+ * the crash that strands an archived-but-not-archived Stripe Price. Hiding it
+ * would hide the one attempt most worth seeing. What an unresolved attempt
+ * MEANS, and what to say about it, is the caller's decision; this function
+ * only reports what the log holds, and the log holds no verdict.
+ *
+ * # The ordering is deterministic AND time-respecting, in that order
+ *
+ * Two attempts can share a `started_at` — `now()` is transaction time, so two
+ * transactions committing within the same statement clock tick record the
+ * same instant — so a second key is required or the winner is whichever the
+ * planner happened to return first, which is not stable across plans. That is
+ * the same reasoning `startPublishAttempt` applies to duplicate keys: pick a
+ * rule and let it decide, rather than letting page order decide.
+ *
+ * But determinism alone is not enough, which is what `ORDER BY started_at
+ * DESC, id DESC` got wrong: `id` is a random uuid, so on a tie it ordered
+ * with no relation to time at all and could hand back an older SUCCESS while
+ * a newer FAILURE sat behind it — the one mistake a reader whose whole job is
+ * "what happened here last" must never make. `finished_at DESC NULLS FIRST`
+ * settles the tie by the clock instead: the attempt that finished later is
+ * the later news, and an attempt that has NOT finished (null) is the latest
+ * news of all, since it is either still running or died without recording a
+ * verdict — never something older than a row that has already closed.
+ *
+ * `id DESC` stays as the FINAL arbiter only, for the residue where both
+ * timestamps agree: arbitrary, but stable, which is all that is left to want
+ * once time has had its say.
+ */
+export async function latestPublishAttempt(mode: StripeMode): Promise<PublishAttempt | null> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      id: string;
+      revision_id: string;
+      mode: string;
+      fingerprint: string;
+      started_by: string;
+      started_at: string;
+      finished_at: string | null;
+      outcome: string | null;
+    }>(
+      `SELECT id, revision_id, mode, fingerprint, started_by, started_at, finished_at, outcome
+         FROM plan_catalog_publish_attempts
+        WHERE mode = $1
+        ORDER BY started_at DESC, finished_at DESC NULLS FIRST, id DESC
+        LIMIT 1`,
+      [mode],
+    );
+    const row = rows[0];
+    return row ? mapAttemptRow(row) : null;
+  });
+}
+
 export type StripeCall = "create" | "update" | "archive";
 export type OperationStatus = "pending" | "succeeded" | "failed";
 

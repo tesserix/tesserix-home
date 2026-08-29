@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { migrationsPendingMessage } from "@/lib/db-read-error";
+import { migrationsPendingMessage, stripeUnavailableMessage } from "@/lib/db-read-error";
+import { StripeReadUnavailableError } from "@/lib/billing/stripe-read";
 import { PlatformApiError } from "@/lib/platform-api";
 import type { CatalogRow, ParityWindowStatus, ModeLatestRun } from "@/lib/db/plan-catalog-repo";
 
@@ -49,10 +50,26 @@ vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
 }));
 
 const currentDraft = vi.fn();
+const latestPublishAttempt = vi.fn();
+const operationsForAttempt = vi.fn();
 
 vi.mock("@/lib/db/publish-repo", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/publish-repo")>()),
   currentDraft: (...args: unknown[]) => currentDraft(...args),
+  latestPublishAttempt: (...args: unknown[]) => latestPublishAttempt(...args),
+  operationsForAttempt: (...args: unknown[]) => operationsForAttempt(...args),
+}));
+
+// The orphan check reaches Stripe for real (`stripePriceReader.listPrices`),
+// which is exactly why it is its own independently-narrowed read on the page
+// and exactly why it is stood in here: these tests are about WHEN the page
+// asks the question, not about what Stripe answers. `orphans.test.ts` covers
+// the answering.
+const findOrphans = vi.fn();
+
+vi.mock("@/lib/billing/orphans", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/orphans")>()),
+  findOrphans: (...args: unknown[]) => findOrphans(...args),
 }));
 
 // The write path itself is exercised by `actions.test.ts`; this page's own
@@ -72,16 +89,24 @@ vi.mock("./actions", async (importOriginal) => ({
 }));
 
 import PlanCatalog, {
+  ATTEMPT_SURFACE,
   CATALOG_SURFACE,
+  OPERATIONS_SURFACE,
+  ORPHANS_SURFACE,
   PUBLICATION_SURFACE,
   RUNS_SURFACE,
   WINDOW_SURFACE,
+  attemptReadError,
   catalogReadError,
+  operationsReadError,
+  orphansReadError,
   publicationReadError,
   readCatalogMode,
   runsReadError,
+  surfacedAttempt,
   windowReadError,
 } from "./page";
+import type { PublishAttempt } from "@/lib/db/publish-repo";
 
 /**
  * The server half's pure functions — the part that can be tested without
@@ -111,7 +136,7 @@ describe("readCatalogMode", () => {
  *  every environment where 0032-0035 have not been applied yet. */
 const undefinedTable = () => Object.assign(new Error("relation does not exist"), { code: "42P01" });
 
-describe("read errors — four independent surfaces, four independent narrowings", () => {
+describe("read errors — independent surfaces, independent narrowings", () => {
   // Each read goes through `dbReadError`, exactly like `audit-log`'s
   // `consoleReadError`: `tesserix-postgres`'s own messages are written for a
   // server log, not for an operator, and the un-migrated case must read as
@@ -152,8 +177,102 @@ describe("read errors — four independent surfaces, four independent narrowings
     expect(error?.unavailable).toBeUndefined();
   });
 
+  // The three surfaces this page grew when the publish outcome stopped living
+  // only in `AuthoringPanel`'s React state. Each narrows on its own, for the
+  // same reason the four above do: an operator staring at "something went
+  // wrong" needs to know WHICH of the nine reads went wrong.
+  it("names the latest attempt's own surface in the migrations-pending copy", () => {
+    const error = attemptReadError(undefinedTable());
+    expect(error?.unavailable?.message).toBe(migrationsPendingMessage(ATTEMPT_SURFACE));
+  });
+
+  it("names the orphan check's own surface in the migrations-pending copy", () => {
+    const error = orphansReadError(undefinedTable());
+    expect(error?.unavailable?.message).toBe(migrationsPendingMessage(ORPHANS_SURFACE));
+  });
+
+  it("names the operations' own surface in the migrations-pending copy", () => {
+    const error = operationsReadError(undefinedTable());
+    expect(error?.unavailable?.message).toBe(migrationsPendingMessage(OPERATIONS_SURFACE));
+  });
+
+  // I4 (review 2026-08-30). `findOrphans` throws `StripeReadUnavailableError`
+  // when the mode's restricted read key is unset or announces the wrong mode.
+  // It carries no `status`, so before this it fell through to the generic
+  // "Try again shortly" — advice that can never work, since no amount of
+  // waiting provisions a credential — and logged a database that was never
+  // contacted. `live` is this page's DEFAULT mode and has no restricted read
+  // key in this estate today, so this is the common path.
+  it("tells the operator retrying will not help when the mode's Stripe credential is unavailable", () => {
+    const error = orphansReadError(
+      new StripeReadUnavailableError("STRIPE_RESTRICTED_READ_KEY_LIVE is not set"),
+    );
+    expect(error?.message).toBe(stripeUnavailableMessage(ORPHANS_SURFACE));
+    // Not the un-migrated state either: the tables are fine.
+    expect(error?.unavailable).toBeUndefined();
+  });
+
+  it("does not blame tesserix-postgres for a Stripe credential failure", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      orphansReadError(new StripeReadUnavailableError("STRIPE_RESTRICTED_READ_KEY_LIVE is not set"));
+      const lines = logged.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes("tesserix-postgres"))).toBe(false);
+      expect(lines.some((line) => line.includes("from Stripe"))).toBe(true);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("still narrows a genuine Postgres failure of the same read", () => {
+    const error = orphansReadError(new PlatformApiError("connection reset", 503));
+    expect(error?.message).toBe("Could not load the orphaned Stripe price check. Try again shortly.");
+  });
+
   it("passes null through for no error", () => {
     expect(windowReadError(null)).toBeNull();
+  });
+});
+
+/**
+ * Decision 1 of the persisted-outcome plan, as a pure function: only an
+ * UNRESOLVED attempt is this surface's to tell. A succeeded one is already
+ * told, durably and more honestly, by `readLivePublication` — who published
+ * which revision, and when.
+ */
+describe("surfacedAttempt", () => {
+  const ATTEMPT: PublishAttempt = {
+    id: "attempt-1",
+    revisionId: "draft-1",
+    mode: "test",
+    fingerprint: "fp-1",
+    startedBy: "operator-1",
+    startedAt: "2026-08-30T00:00:00.000Z",
+    finishedAt: "2026-08-30T00:00:05.000Z",
+    outcome: "failed",
+  };
+
+  it("withholds a succeeded attempt — `readLivePublication` already tells that story", () => {
+    expect(surfacedAttempt({ ...ATTEMPT, outcome: "succeeded" })).toBeNull();
+  });
+
+  it("surfaces a failed attempt", () => {
+    expect(surfacedAttempt(ATTEMPT)?.id).toBe("attempt-1");
+  });
+
+  it("surfaces an aborted attempt", () => {
+    expect(surfacedAttempt({ ...ATTEMPT, outcome: "aborted" })?.id).toBe("attempt-1");
+  });
+
+  it("surfaces an attempt that never recorded a verdict at all", () => {
+    // The crash between `startPublishAttempt` and `finishPublishAttempt` —
+    // precisely the crash that strands an orphan, so precisely the attempt
+    // most worth showing.
+    expect(surfacedAttempt({ ...ATTEMPT, finishedAt: null, outcome: null })?.id).toBe("attempt-1");
+  });
+
+  it("has nothing to surface for a mode that has never been published", () => {
+    expect(surfacedAttempt(null)).toBeNull();
   });
 });
 
@@ -197,11 +316,26 @@ describe("the mounted authoring surface", () => {
 
   const DRAFT_ROW: CatalogRow = { ...PUBLISHED_ROW, unitAmountMinor: 5900 };
 
+  const FAILED_ATTEMPT: PublishAttempt = {
+    id: "attempt-1",
+    revisionId: "draft-1",
+    mode: "test",
+    fingerprint: "fp-1",
+    startedBy: "operator-1",
+    startedAt: "2026-08-30T00:00:00.000Z",
+    finishedAt: "2026-08-30T00:00:05.000Z",
+    outcome: "failed",
+  };
+
   function setUpSuccessfulReads() {
     readWindowStatus.mockResolvedValue(WINDOW_STATUS);
     readCatalogRows.mockResolvedValue([PUBLISHED_ROW]);
     readLatestRuns.mockResolvedValue(RUNS);
     readLivePublication.mockResolvedValue(null);
+    // The ordinary state of both new reads: nobody has published this mode,
+    // and Stripe holds no archived-but-active Price. Neither is a failure.
+    latestPublishAttempt.mockResolvedValue(null);
+    findOrphans.mockResolvedValue([]);
   }
 
   function signIn(roles: readonly string[]) {
@@ -361,5 +495,207 @@ describe("the mounted authoring surface", () => {
     // screen-reader operator too) but the actual publish stays refused: the
     // dialog it opens can never enable its own confirm button while `mode`
     // is a refused rule — see `publish-view.tsx`'s `confirmDisabled`.
+  });
+
+  /**
+   * The persisted publish outcome and the orphan check: two more independent
+   * reads and one dependent one. The narrowing rule is the same rule the
+   * other five obey — a failure in any of them must land in its own
+   * `SurfaceState` and leave the catalog table standing.
+   */
+  it("narrows a failed latest-attempt read independently — the catalog table and the window still render", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+    // No attempt means no id, so there is nothing to read operations FOR —
+    // the dependent read is simply never attempted, exactly as
+    // `readRevisionRows` is not attempted when there is no draft.
+    expect(operationsForAttempt).not.toHaveBeenCalled();
+  });
+
+  it("narrows a failed orphan read independently — the catalog renders and the attempt's outcome is still assembled", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockResolvedValue([]);
+    findOrphans.mockRejectedValue(new PlatformApiError("stripe unavailable", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    // A Stripe outage degrades to "orphan check unavailable" and nothing
+    // else: the attempt read is a sibling in the same `allSettled`, so it
+    // still resolved and its dependent operations read still ran.
+    expect(operationsForAttempt).toHaveBeenCalledWith("attempt-1");
+  });
+
+  it("narrows a failed operations read independently — it does not take the attempt read down with it", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+    // The attempt itself read cleanly, and the orphan check — a sibling, not
+    // a child — ran regardless.
+    expect(findOrphans).toHaveBeenCalledWith("test");
+  });
+
+  it("reads the operations of an unresolved latest attempt", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockResolvedValue([]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(latestPublishAttempt).toHaveBeenCalledWith("test");
+    expect(operationsForAttempt).toHaveBeenCalledWith("attempt-1");
+  });
+
+  it("reads no operations for a succeeded latest attempt — Decision 1", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue({ ...FAILED_ATTEMPT, outcome: "succeeded" });
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    // A succeeded attempt is not this surface's story to tell, so its
+    // operations are not even fetched — see `surfacedAttempt`.
+    expect(operationsForAttempt).not.toHaveBeenCalled();
+  });
+
+  it("checks for orphans even when the latest attempt succeeded — Decision 2", async () => {
+    // THE anti-regression test. `findOrphans` is mode-scoped, not
+    // attempt-scoped: an orphan outlives the attempt that stranded it and
+    // survives a later successful publish. Folding this read back under the
+    // attempt gate would make the exact failure this whole surface exists to
+    // reveal permanently invisible — and would look deliberate while doing
+    // it.
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue({ ...FAILED_ATTEMPT, outcome: "succeeded" });
+    findOrphans.mockResolvedValue([
+      { priceId: "price_stranded", lookupKey: null, source: "mark8ly" },
+    ]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(findOrphans).toHaveBeenCalledWith("test");
+  });
+
+  // The two tests below assert RENDERED OUTPUT, not that a mock was called.
+  // Every other test in this block proves the page READS the right things;
+  // none of them prove those reads reach the screen. That gap is not
+  // theoretical here: all five props `page.tsx` hands `AuthoringPanel`
+  // (`persistedOutcome`, `attemptState`, `operationsState`, `orphans`,
+  // `orphansState`) are OPTIONAL, so a renamed or mistyped key in the
+  // `persistedOutcomeProps` bundle would typecheck, lint, build, and leave
+  // every call-assertion above green while the operator saw nothing at all.
+  // These two close the seam between "the page read it" and "an operator can
+  // see it", which is the entire point of tesserix-home#410.
+
+  it("renders the persisted failed attempt, end to end, with no session publish", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockResolvedValue([
+      {
+        id: "op-1",
+        attemptId: "attempt-1",
+        sequence: 1,
+        kind: "replace_price",
+        stripeCall: "archive",
+        source: "mark8ly",
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        currency: null,
+        stripePriceId: "price_old",
+        idempotencyKey: "idem-1",
+        status: "failed",
+        error: "Stripe said no",
+        startedAt: "2026-08-30T00:00:01.000Z",
+        finishedAt: "2026-08-30T00:00:02.000Z",
+      },
+    ]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByText(/Publish attempt attempt-1/i)).toBeInTheDocument();
+    // The failed operation's own row — the per-operation detail that is the
+    // whole reason this surface exists rather than a summary count.
+    expect(screen.getByText("mark8ly_pro_annual_developed_v1")).toBeInTheDocument();
+    expect(screen.getByText("Stripe said no")).toBeInTheDocument();
+  });
+
+  it("renders an orphan the operator can act on when the latest attempt succeeded", async () => {
+    // Decision 2, asserted where it actually matters: not "findOrphans was
+    // called" but "the operator sees the orphan". A successful publish after
+    // the one that stranded the price must not blank this out.
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue({ ...FAILED_ATTEMPT, outcome: "succeeded" });
+    findOrphans.mockResolvedValue([
+      { priceId: "price_stranded", lookupKey: "mark8ly_pro_annual_developed_v1", source: "mark8ly" },
+    ]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByText(/Orphaned Stripe prices/i)).toBeInTheDocument();
+    expect(screen.getByText(/price_stranded/)).toBeInTheDocument();
+  });
+
+  // C1 (review 2026-08-30), at page level and asserted on RENDERED TEXT. The
+  // test above it ("narrows a failed operations read independently") proves
+  // the catalog survives and nothing more, which is exactly how a status line
+  // that told the operator "0 operation(s) failed" — over a table saying "No
+  // operations were recorded for this attempt", under a callout saying the
+  // read failed — reached main.
+  it("does not tell the operator zero operations failed when it could not read them", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.queryByText(/0 operation\(s\) failed/)).toBeNull();
+    expect(screen.queryByText(/No operations were recorded for this attempt/i)).toBeNull();
+    expect(screen.getByText(/what it did to Stripe cannot be shown here/i)).toBeInTheDocument();
+  });
+
+  // I4 (review 2026-08-30). The DEFAULT mode is `live`, whose restricted read
+  // key is not provisioned in this estate, so this is the ordinary path — not
+  // an edge case — and "Try again shortly" is advice that can never work.
+  it("says the orphan check could not run, and that retrying will not help, when Stripe's credential is missing", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    findOrphans.mockRejectedValue(
+      new StripeReadUnavailableError(
+        "STRIPE_RESTRICTED_READ_KEY_LIVE is not set; the plan catalog parity check cannot read live mode Stripe Prices",
+      ),
+    );
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage("live");
+
+    expect(screen.getByText(stripeUnavailableMessage(ORPHANS_SURFACE))).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load the orphaned Stripe price check\. Try again shortly\./)).toBeNull();
   });
 });

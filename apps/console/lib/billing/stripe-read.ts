@@ -118,6 +118,28 @@ export class StripeReadUnavailableError extends Error {
 }
 
 /**
+ * True when a caught value is this module refusing to read a mode.
+ *
+ * Matched STRUCTURALLY on `name`, never with `instanceof`, and walking one
+ * `cause` chain — the same discipline `isUndefinedTable` (`db-read-error.ts`)
+ * applies to a SQLSTATE, for the same two reasons: a caller may wrap this
+ * error to add context, and `instanceof` is a lie across two module instances
+ * (a mocked module in a test, a re-bundled copy in a server component).
+ *
+ * Exists so a CALLER can tell "Stripe was never reached, and no retry will
+ * change that" apart from a genuine failure, without importing the class into
+ * a position where it has to reason about this module's `stripe` dependency.
+ */
+export function isStripeReadUnavailable(caught: unknown): boolean {
+  for (let value = caught, depth = 0; value !== null && value !== undefined && depth < 4; depth++) {
+    if (typeof value !== "object") return false;
+    if ((value as { name?: unknown }).name === "StripeReadUnavailableError") return true;
+    value = (value as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+/**
  * The mode a key announces in its own prefix, or null if it announces none.
  *
  * Stripe puts the mode in the same position for every key class — `sk_live_`,
