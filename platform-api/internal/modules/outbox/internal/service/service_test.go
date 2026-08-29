@@ -346,3 +346,79 @@ func TestPageMarshalsTheShapeExpected(t *testing.T) {
 		t.Fatalf("not_implemented = %v, want an empty array, never null", body["not_implemented"])
 	}
 }
+
+// TestEstateSortsByInstantNotByStringOrder pins the ordering behaviour and
+// proves it is a real chronological sort, not a string comparison that
+// happens to agree with one today.
+//
+// mark8ly's timestamp — from an event whose local clock reads 23:00 with a
+// -05:00 offset — is 04:00 UTC on the 23rd, which is LATER than a second
+// event's 01:00 UTC on the 23rd. But as raw text, "2026-08-22T23:00:00-05:00"
+// sorts BEFORE "2026-08-23T01:00:00Z" (the day digit "2" precedes "3"), so a
+// `>` string compare would rank the earlier instant as newer. Deleting the
+// time.Parse in favour of a string compare turns this red without touching
+// anything else — see the fix report for the exact one-line revert.
+func TestEstateSortsByInstantNotByStringOrder(t *testing.T) {
+	later := productServing(t, `{"data":[{"id":"later","tenant_id":"t1","aggregate":"order","aggregate_id":"o1","event_type":"order.created","status":"pending","created_at":"2026-08-22T23:00:00-05:00"}],"pagination":{"page":1,"limit":50,"total":1}}`)
+	defer later.Close()
+	earlier := productServing(t, `{"data":[{"id":"earlier","tenant_id":"t2","aggregate":"order","aggregate_id":"o2","event_type":"order.created","status":"pending","created_at":"2026-08-23T01:00:00Z"}],"pagination":{"page":1,"limit":50,"total":1}}`)
+	defer earlier.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "mark8ly", BaseURL: later.URL, Secret: "test-secret"},
+		{Slug: "kora", BaseURL: earlier.URL, Secret: "test-secret"},
+	}), http.DefaultClient)
+
+	log, _ := testLogger()
+	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), Query{})
+	if err != nil {
+		t.Fatalf("Estate: %v", err)
+	}
+	if len(page.Events) != 2 {
+		t.Fatalf("events = %d, want 2", len(page.Events))
+	}
+	if got := page.Events[0].ID; got != "mark8ly:later" {
+		t.Fatalf("Events[0] = %q, want %q — the -05:00 event is the later INSTANT even though its text sorts first lexically", got, "mark8ly:later")
+	}
+	if got := page.Events[1].ID; got != "kora:earlier" {
+		t.Fatalf("Events[1] = %q, want %q", got, "kora:earlier")
+	}
+}
+
+// TestEstateWhenEveryConfiguredProductAnswers501 is the shape the console
+// most needs to render distinctly from a real outage or a genuinely empty
+// outbox: every declared source says "nothing to report", so the request
+// succeeds with an empty (never nil) events list and every slug named in
+// NotImplemented, and none in Failures.
+func TestEstateWhenEveryConfiguredProductAnswers501(t *testing.T) {
+	notImplemented := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotImplemented)
+			_, _ = w.Write([]byte(`{"error":"not_implemented","message":"no outbox to report"}`))
+		}))
+	}
+	mark8ly := notImplemented()
+	defer mark8ly.Close()
+	kora := notImplemented()
+	defer kora.Close()
+
+	fed := federation.NewClient(federation.NewRegistry([]federation.Product{
+		{Slug: "mark8ly", BaseURL: mark8ly.URL, Secret: "test-secret"},
+		{Slug: "kora", BaseURL: kora.URL, Secret: "test-secret"},
+	}), http.DefaultClient)
+
+	log, _ := testLogger()
+	page, err := New(fed, []string{"kora", "mark8ly"}, log).Estate(context.Background(), op(), Query{})
+	if err != nil {
+		t.Fatalf("Estate must not fail whole when every source answers 501: %v", err)
+	}
+	if page.Events == nil || len(page.Events) != 0 {
+		t.Fatalf("events = %v, want a non-nil empty slice", page.Events)
+	}
+	if len(page.Failures) != 0 {
+		t.Fatalf("failures = %v, want none — every source made a contract statement, none failed", page.Failures)
+	}
+	if len(page.NotImplemented) != 2 || page.NotImplemented[0] != "kora" || page.NotImplemented[1] != "mark8ly" {
+		t.Fatalf("not_implemented = %v, want exactly [kora mark8ly]", page.NotImplemented)
+	}
+}

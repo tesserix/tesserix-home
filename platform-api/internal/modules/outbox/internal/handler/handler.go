@@ -15,6 +15,20 @@
 // is the console surface this serves and is gated the same way as the audit
 // log and the tenant directory: this is a governance surface an operator
 // opens deliberately, not one rendered on every page.
+//
+// # `page` and `limit` are per-product, not per-estate
+//
+// This route has no `?source=` to narrow a read to one product — unlike
+// audit and inbox, the six accepted filters are exactly mark8ly's own
+// (outbox.go:173-201), and that list has no source concept. `page` and
+// `limit` are forwarded to EVERY federated product as-is and each product's
+// `pagination` envelope is then discarded (see the service's reasoning for
+// why merging it would be meaningless): `?page=2` means "page 2 of each
+// product's own outbox", not "page 2 of the merged estate list". An operator
+// paging past a product with fewer rows than others will see that product's
+// contribution shrink or vanish from the page while others keep contributing
+// theirs — a real gap in this surface today, with no filter available to
+// work around it.
 package handler
 
 import (
@@ -138,7 +152,19 @@ func (h *Handler) estate(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
 			return
 		}
-		httpx.WriteError(w, r, httpx.Internal(err.Error()), h.log)
+		// Estate promises only ErrNotInstrumented today — every other
+		// failure a federated source can produce is absorbed into
+		// page.Failures rather than returned as an error — so this branch is
+		// unreachable in practice. Kept as a hard failure-closed path rather
+		// than deleted, and deliberately does NOT echo err.Error() to the
+		// client the way the ErrNotInstrumented branch above does: that
+		// error's text is a fixed, safe sentinel this package controls, but
+		// a future second error case reaching this arm might not be, and
+		// httpx.Internal's own doc is explicit that its message must never
+		// be the cause. Log the real cause server-side; tell the caller only
+		// that the request failed.
+		h.log.Error("outbox: estate read failed", "error", err)
+		httpx.WriteError(w, r, httpx.Internal("could not read the estate outbox"), h.log)
 		return
 	}
 

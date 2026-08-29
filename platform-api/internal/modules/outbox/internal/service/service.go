@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/outbox/internal/domain"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/federation"
@@ -142,6 +143,22 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	// tells an operator a source is broken when it has simply said it has
 	// none, which is the more dangerous of the two mistakes on a page used
 	// to judge estate health.
+	//
+	// Deliberately narrower than kpis, which folds 404 into the same
+	// "not instrumented" bucket alongside 501 (kpis/internal/service/
+	// service.go:89-91) — there, kpis.Slugs() fans out to EVERY product, so a
+	// product that never mounted /admin/kpis at all is a normal, expected
+	// configuration and 404 is the honest way it says so. This module is
+	// different: s.slugs here comes from SlugsImplementing("outbox"), which
+	// means every slug reaching this loop already DECLARED it serves this
+	// endpoint. A 404 from one of them is not a product saying "I have
+	// none" — it is the registry's declaration being stale (the route was
+	// removed, or was never mounted despite the declaration), and silently
+	// reclassifying that as "not implemented" would hide a real
+	// misconfiguration behind a legitimate-looking answer. Only 501 — the
+	// product ITSELF, at the endpoint it declared, saying it has nothing
+	// this time — earns that treatment. A 404 here stays a Failure, loud on
+	// purpose.
 	realFailures := make([]federation.Failure, 0, len(failures))
 	notImplemented := make([]string, 0, len(failures))
 	for _, f := range failures {
@@ -171,8 +188,32 @@ func (s *Service) Estate(ctx context.Context, op federation.Operator, q Query) (
 	// Newest first, matching the audit timeline: a governance surface exists
 	// to show what happened most recently, and a merged list is not ordered
 	// on its own even though each source returns its own rows in order.
+	//
+	// Parsed as a real instant rather than compared as a string. A naive
+	// string compare only agrees with chronological order when every
+	// product emits the exact same textual form — UTC, `Z`, no fractional
+	// seconds, which is what mark8ly's toOutboxRow happens to produce today
+	// (time.RFC3339 via .UTC().Format) — and silently disagrees the moment
+	// any product sends an offset (`+05:30`) or a fractional second: RFC
+	// 3339 permits both, and TestEstateSortsByInstantNotByStringOrder pins
+	// an example where the lexical order and the chronological order are
+	// opposite. A row whose CreatedAt fails to parse sorts last: it cannot
+	// be placed correctly, and last is less misleading than treating an
+	// unparsable string as "oldest" or "newest" by accident of ASCII order.
 	sort.SliceStable(events, func(i, j int) bool {
-		return events[i].CreatedAt > events[j].CreatedAt
+		ti, ierr := time.Parse(time.RFC3339, events[i].CreatedAt)
+		tj, jerr := time.Parse(time.RFC3339, events[j].CreatedAt)
+		switch {
+		case ierr == nil && jerr == nil:
+			return ti.After(tj)
+		case ierr == nil:
+			// i parsed, j did not: i sorts first (j is pushed to the end).
+			return true
+		default:
+			// Either j parsed and i did not, or neither parsed: i does not
+			// sort before j in either case.
+			return false
+		}
 	})
 
 	domainFailures := make([]domain.Failure, len(realFailures))
