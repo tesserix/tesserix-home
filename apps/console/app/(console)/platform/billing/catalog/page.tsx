@@ -66,10 +66,11 @@ import type {
  * task 9 (tesserix-home#396), the authoring surface `AuthoringPanel` mounts
  * beside it.
  *
- * # This page itself still imports nothing from Stripe
+ * # This page reads Stripe once, and writes to it never
  *
- * That claim no longer holds unqualified, and the honest version is worth
- * stating rather than quietly dropping: six of this file's seven reads touch
+ * This heading used to read "imports nothing from Stripe". That claim no
+ * longer holds, and the honest version is worth stating rather than quietly
+ * dropping: six of this file's seven reads touch
  * only `tesserix-postgres` and never publish anything, but the SEVENTH —
  * `readOrphans` — does read Stripe, through `findOrphans`. It is still a
  * read: it lists active Prices and cross-references them against what this
