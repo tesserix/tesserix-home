@@ -191,6 +191,15 @@ describe("pending reflects what the console actually serves", () => {
     expect(isPending("platform.auditLog")).toBe(false);
   });
 
+  it("has the estate outbox built", () => {
+    // Task 3 of the v1 outbox federation plan built /platform/outbox, reading
+    // the platform API's federated GET /v1/outbox. If this flips back to
+    // pending without the page being removed, the rail renders a working
+    // surface as an inert SOON badge.
+    expect(isPending("platform.outbox")).toBe(false);
+    expect(consolePath("platform.outbox")).toBe("/platform/outbox");
+  });
+
   it("reports kora.audit as retired rather than pending", () => {
     // The other half of the test this replaces, which held `kora.audit` pending
     // "until Task 3 retires it" so the sequencing was visible from here. Task 3

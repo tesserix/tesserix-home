@@ -29,6 +29,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/koraaimetrics"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/outbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
@@ -241,6 +242,20 @@ func run(log *slog.Logger) error {
 		// ErrNotConfigured rather than the route not existing at all.
 		koraaimetrics.Register(m, koraaimetrics.Config{
 			Fed:      fed,
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "outbox", func(m *http.ServeMux) {
+		outbox.Register(m, outbox.Config{
+			Fed: fed,
+			// SlugsImplementing, not Slugs: an outbox is not universal. A
+			// product without one has no outbox, and asking it would 404 and
+			// surface to an operator as a failed source when the honest
+			// answer is that the product has none. Same distinction the
+			// tenants block draws for SlugsServing.
+			Slugs:    cfg.Federation.SlugsImplementing("outbox"),
 			Verifier: verifier,
 			Log:      log,
 		})
