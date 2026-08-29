@@ -48,6 +48,59 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
+// Routes that authenticate a MACHINE caller (a Zitadel service user) rather
+// than a console operator's browser session. NOT the same thing as
+// PUBLIC_PATHS above: those are open to anyone, this is reachable by anyone
+// but answers 401/403 itself — the console's session cookie / bearer-JWE
+// check this middleware otherwise enforces has no way to accept a Zitadel
+// machine access token (a real signed JWT, not this app's encrypted session),
+// so a route on this list must do its OWN full auth
+// (`verifyMachineAuthHeader` + `assertCapability`) rather than delegating any
+// part of it to the matcher. Sending mark8ly's service-user token through
+// `verifySession` here would reject every valid call before the route ever
+// ran, presenting as an unconditional 401 no matter how correctly mark8ly
+// authenticated.
+//
+// EXACT MATCH ONLY — deliberately not `pathname.startsWith(p + "/")` the way
+// `isPublicPath` above matches a subtree. Two reasons, both found in review:
+//
+// 1. A subtree match fails OPEN on a normalisation shape `isPublicPath`
+//    doesn't need to worry about: `%2f` survives whatever path normalisation
+//    happens upstream of this middleware (dot-segments, `%2e%2e`, case
+//    variation and a literal double slash all fail closed here; a literal
+//    `%2f` does not), so `/api/v1/plan-catalog/..%2fadmin` would satisfy a
+//    prefix match and be exempted from the session gate entirely. An exact
+//    match has no subtree to smuggle a segment into.
+// 2. This list is a deliberate hole in the console's global auth gate. A
+//    prefix match means any FUTURE route filed under
+//    `/api/v1/plan-catalog/*` inherits that hole by default, with no
+//    action required from whoever adds it. Exact match makes every new
+//    sub-resource opt into the hole explicitly, by adding its own literal
+//    entry, rather than opt out of the session gate by accident.
+//
+// BOTH forms below are still exact-match entries, not a prefix — this is not
+// a contradiction of point 1. Confirmed empirically (`new
+// NextRequest(".../api/v1/plan-catalog/").nextUrl.pathname` ===
+// `"/api/v1/plan-catalog/"`, trailing slash intact): Next has no
+// `trailingSlash` config here, and whatever redirect would normally fold
+// `/plan-catalog/` onto `/plan-catalog` is applied by the ROUTER, which runs
+// AFTER middleware — this middleware sees the raw incoming pathname, slash
+// and all. Without the second literal, a caller whose HTTP client appends a
+// trailing slash (a normalisation some clients do on their own) would fall
+// through to the session-cookie branch and get an unconditional 401 from
+// `unauthorized()` before `route.ts` ever runs, no matter how correctly it
+// authenticated. `/api/v1/plan-catalog/..%2fadmin` still equals neither
+// literal, so that shape stays closed, and no future sub-resource is exempt
+// by default — the allowlist is exactly as narrow as before, just complete.
+const MACHINE_AUTH_PATHS: ReadonlyArray<string> = [
+  "/api/v1/plan-catalog",
+  "/api/v1/plan-catalog/",
+];
+
+function isMachineAuthPath(pathname: string): boolean {
+  return MACHINE_AUTH_PATHS.includes(pathname);
+}
+
 function unauthorized(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) {
@@ -124,6 +177,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   if (isPublicPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  if (isMachineAuthPath(pathname)) {
     return NextResponse.next();
   }
 
