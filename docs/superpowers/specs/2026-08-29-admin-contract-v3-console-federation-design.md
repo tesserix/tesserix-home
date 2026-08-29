@@ -265,3 +265,48 @@ exist in the code. `middleware.go:367-385` checks exact string equality against 
 value and a non-empty operator only — no grant, no identity check. `--operator` and
 `--capability rotate-credentials` were added to the CronJob's `npx` args in Plan 0 itself, and
 `break-glass` is declared in both copies alongside the other seven ids.
+
+---
+
+## 11. V1 outbox, verified against production (2026-08-29)
+
+The gate is a live-system state, not a merge. Recorded so V2 starts from a known-good
+foundation instead of an assumption.
+
+**The federation variable reached the pod.**
+
+    FEDERATION_MARK8LY_ENDPOINTS=outbox
+
+Polled by reading the value, not by trusting ArgoCD's status. For the second time today
+the Application reported `Synced` against a revision that predated the merge — `1ebf584a`
+while main was `3a8f17bc`. A status field is a claim about a revision; the env var is the
+thing the process actually reads.
+
+**The rollout was waited for before probing.** The previous pods were 27h old and carried
+neither the module nor the variable. Probing then would have returned 404 meaning "old
+binary", indistinguishable afterwards from 404 meaning "module never mounted".
+
+**The route answers.**
+
+    401  /v1/outbox                        mounted, auth rejecting
+    401  /v1/outbox?status=failed&limit=5  query parameters accepted
+    404  /v1/definitely-not-a-route        control — the probe discriminates
+
+401 is the honest success here: the route exists and refused an unauthenticated caller.
+
+One correction to a wrong expectation while probing: `/v1/audit-logs` returned 404 because
+the audit module mounts at `/v1/audit`. The module is fine; the guess was not. Worth
+recording because a 404 on a path you assumed reads exactly like a broken module.
+
+### What V1 established that V2-V8 inherit
+
+- Federating a contract endpoint takes **four** changes, not three. `FEDERATION_<SLUG>_ENDPOINTS`
+  is read from the environment by `registry.go`'s `LoadRegistry`, never from the product's
+  `admin-conformance.json`. It is the only step with no compiler and no test behind it, and
+  its failure mode is a page that renders as healthy and empty.
+- A console reader for a federated surface belongs behind `import "server-only"` with a
+  static import, matching `lib/health.ts`. A dynamic import passes today's build and defers
+  the bug to whoever next calls it from a client component.
+- Three response states must stay distinguishable: 501 with no rows (not federated),
+  200 with an empty array (genuinely empty), and 200 with `not_implemented` populated
+  (federated, every product declining). Only the middle one is good news.
