@@ -5,6 +5,7 @@
 // export of another client component.
 "use client";
 
+import Link from "next/link";
 import {
   Table,
   TableBody,
@@ -23,13 +24,32 @@ import { SurfaceStateView } from "@/components/kit/states";
 // component importing a VALUE from either would drag that chain into the
 // browser bundle.
 import type { SurfaceState } from "@/components/kit/surface-state";
-import type { EntityPagination } from "@/lib/entities";
+import type { EntityPagination, EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
 import type { PagerLinks } from "../entity-page";
 // The ONE place `first_try_rate_pct` becomes copy — reused here rather than
 // re-derived, per the plan's explicit instruction. Both surfaces share the
 // exact same non-negotiable: absent must never render as 0%.
 import { formatFirstTryRate } from "../overview-view";
+
+/** `id -> EntityRecord`, one page of kora users — see `page.tsx`'s
+ *  `buildUserDirectory`, which is the only place this is built. */
+export type UserDirectory = ReadonlyMap<string, EntityRecord>;
+
+// Hardcoded rather than imported from `../users/page`: that module is a
+// server component pulling `fetchProductEntities` (a value import reaching
+// `lib/auth/platform-token` -> `pg`), and this file must not acquire that
+// chain — see the `import type` note above. `users/page.tsx`'s own
+// `USER_PATH` is the same literal; keep the two in sync by eye.
+const USERS_PATH = "/kora/users";
+
+/** Where an operator goes to find this person — the search box on
+ *  `/kora/users` narrows by the same id/label Kora sent, matched or not. A
+ *  user this table cannot name is exactly the case an operator most needs
+ *  the link for. */
+function userHref(userId: string): string {
+  return `${USERS_PATH}?q=${encodeURIComponent(userId)}`;
+}
 
 /**
  * The full `/kora/ai-metrics` surface — the destination behind the
@@ -46,6 +66,11 @@ export interface AiMetricsViewProps {
   pagination: EntityPagination;
   state: SurfaceState;
   reauthReturnTo: string;
+  /** One page of kora users, keyed by id — see `page.tsx`'s
+   *  `buildUserDirectory`. Only ids inside that one fetched page can be
+   *  named; an id not in this map renders as the raw id, never a
+   *  placeholder — see `userCell`. */
+  userDirectory: UserDirectory;
 }
 
 /**
@@ -58,12 +83,50 @@ function kindLabel(kind: string): string {
   return kind.replace(/_/g, " ");
 }
 
+/**
+ * A user's cell in the table: the joined name where the id was found in
+ * `userDirectory`, the raw id where it was not.
+ *
+ * The raw id is NOT a fallback of last resort dressed up as an error — it is
+ * the honest answer when the join can only cover one fetched page of users.
+ * "Outside the fetched page" and "does not exist" are different facts, and a
+ * placeholder like "Unknown user" would render them identically. Same rule
+ * `formatFirstTryRate` and the `lastActivityAt` cell already apply on this
+ * surface: absence renders as absence, never as an invented certainty.
+ */
+function userCell(userId: string, userDirectory: UserDirectory) {
+  const entity = userDirectory.get(userId);
+  if (!entity) {
+    return (
+      <Link
+        href={userHref(userId)}
+        className="underline underline-offset-2 hover:text-foreground"
+      >
+        {userId}
+      </Link>
+    );
+  }
+  return (
+    <Link href={userHref(userId)} className="hover:underline">
+      <div>{entity.label}</div>
+      {/* Rendered only when present — see `EntityRecord.sublabel`'s doc
+          comment. A placeholder here would make "Kora sent no sublabel" look
+          like "this user has no handle", which `user-directory.tsx` already
+          takes care not to do. */}
+      {entity.sublabel ? (
+        <div className="text-xs text-muted-foreground">{entity.sublabel}</div>
+      ) : null}
+    </Link>
+  );
+}
+
 export function AiMetricsView({
   metrics,
   pager,
   pagination,
   state,
   reauthReturnTo,
+  userDirectory,
 }: AiMetricsViewProps) {
   if (state.kind !== "ready" || !metrics) {
     return (
@@ -158,7 +221,9 @@ export function AiMetricsView({
               <TableBody>
                 {metrics.users.map((user) => (
                   <TableRow key={user.userId}>
-                    <TableCell className="font-medium">{user.userId}</TableCell>
+                    <TableCell className="font-medium">
+                      {userCell(user.userId, userDirectory)}
+                    </TableCell>
                     <TableCell className="tabular-nums">{user.attempts}</TableCell>
                     <TableCell className="tabular-nums">{user.resolves}</TableCell>
                     <TableCell className="tabular-nums">{user.corrections}</TableCell>

@@ -5,9 +5,9 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // runtime while tsc, `next build` and jsdom tests all pass. See
 // `platform/billing/catalog/page.tsx`'s identical comment.
 import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
-import { fetchKoraAiMetricsPage } from "@/lib/platform-api";
+import { fetchKoraAiMetricsPage, fetchProductEntities } from "@/lib/platform-api";
 import { pagerLinks, readPage, type PagerLinks } from "../entity-page";
-import type { EntityPagination } from "@/lib/entities";
+import type { EntityPagination, EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
 import { AiMetricsView } from "./ai-metrics-view";
 
@@ -18,10 +18,29 @@ import { AiMetricsView } from "./ai-metrics-view";
  * everything the endpoint returns rather than only the three numbers a stat
  * tile can show.
  *
- * ONE read (`fetchKoraAiMetricsPage`), decoded twice by `kora-ai-metrics.ts`
- * — the metrics and the pagination live in the same response body, so there
- * is nothing to fan out with `Promise.allSettled` the way the overview's
- * four independent tiles do.
+ * # TWO independent reads
+ *
+ * `fetchKoraAiMetricsPage` (the metrics, decoded twice by `kora-ai-metrics.ts`
+ * for `data` and `meta` — see that module) and `fetchProductEntities("kora",
+ * "users")` (one page of kora users, joined against the metrics rows to show
+ * a name instead of a raw id — see `buildUserDirectory`). `Promise.allSettled`,
+ * not sequential `await`s: the join is a courtesy on top of the metrics
+ * table, not a dependency of it, so a failed name lookup must not blank a
+ * metrics table that loaded fine, and the two round trips should not pay for
+ * each other's latency in series.
+ *
+ * # The name join is one extra read, not N
+ *
+ * There is no id-filtered entity lookup on `/v1/entities/users` — the
+ * documented params are `source, q, limit, page`, and an unknown one is
+ * refused. So this can only name users inside the ONE page of kora users
+ * fetched here (`fetchProductEntities`'s own `ENTITIES_LIMIT` default, 50).
+ * Kora is small today, but at scale some rows will still show a raw id, which
+ * is why `AiMetricsView` renders the id rather than a placeholder when no
+ * match is found: "outside the fetched page" and "does not exist" are
+ * different facts, and only one of them is true here. The clean long-term fix
+ * is Kora returning a label on `ai-metrics` itself — a different repo, out of
+ * scope for this surface.
  *
  * # No window picker
  *
@@ -84,6 +103,21 @@ export function currentPath(searchParams: AiMetricsSearchParams): string {
 
 const EMPTY_PAGINATION: EntityPagination = { page: 1, limit: 0, total: 0 };
 
+/**
+ * One page of kora users, keyed by id, for `AiMetricsView` to look a user's
+ * row up by the raw id `kora-ai-metrics.ts` carries. A `Map`, not a plain
+ * object: entity ids are opaque strings from another product and must never
+ * collide with `Object.prototype` keys (`"toString"`, `"constructor"`, ...).
+ *
+ * Built once per read rather than searched per row — the join this page does
+ * is O(users on this page), not O(metrics rows × users on this page).
+ */
+export function buildUserDirectory(
+  entities: readonly EntityRecord[],
+): ReadonlyMap<string, EntityRecord> {
+  return new Map(entities.map((entity) => [entity.id, entity]));
+}
+
 export default async function KoraAiMetricsPage({
   searchParams,
 }: {
@@ -92,19 +126,31 @@ export default async function KoraAiMetricsPage({
   const resolved = await searchParams;
   const page = readPage(resolved);
 
-  // Caught rather than allowed to reject: a 501 and a genuine failure are
-  // both states this page renders, and an uncaught rejection would show the
-  // route error boundary instead.
+  // `allSettled`, not sequential `await`s — see the module doc comment's
+  // "TWO independent reads" section. A failed name join must not blank a
+  // metrics table that loaded fine, and vice versa.
+  const [metricsResult, usersResult] = await Promise.allSettled([
+    fetchKoraAiMetricsPage(page),
+    fetchProductEntities("kora", "users"),
+  ]);
+
   let metrics: KoraAiMetrics | null = null;
   let pagination: EntityPagination = EMPTY_PAGINATION;
   let error: unknown = null;
-  try {
-    const result = await fetchKoraAiMetricsPage(page);
-    metrics = result.metrics;
-    pagination = result.pagination;
-  } catch (caught: unknown) {
-    error = caught;
+  if (metricsResult.status === "fulfilled") {
+    metrics = metricsResult.value.metrics;
+    pagination = metricsResult.value.pagination;
+  } else {
+    error = metricsResult.reason;
   }
+
+  // Best-effort: an empty directory on a failed or rejected read is not an
+  // error state of its own — `AiMetricsView` already renders "no match" as
+  // the raw id, which is the correct rendering for both "the join read
+  // failed" and "this id is outside the fetched page".
+  const userDirectory = buildUserDirectory(
+    usersResult.status === "fulfilled" ? usersResult.value.data : [],
+  );
 
   // From the product's own total, not `rows.length === limit` — see
   // `pagerLinks`. `ENTITIES_LIMIT` (this pager's implicit page size) is 50,
@@ -130,6 +176,7 @@ export default async function KoraAiMetricsPage({
         pagination={pagination}
         state={aiMetricsState({ error, metrics })}
         reauthReturnTo={currentPath(resolved)}
+        userDirectory={userDirectory}
       />
     </div>
   );
