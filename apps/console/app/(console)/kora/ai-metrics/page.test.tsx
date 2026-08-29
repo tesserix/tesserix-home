@@ -126,21 +126,34 @@ describe("KoraAiMetricsPage", () => {
 
 describe("KoraAiMetricsPage — user name join", () => {
   it("fetches one page of kora users to join names, not a request per row", async () => {
+    // TWO rows, deliberately — with `METRICS(1)`'s single row, a call count
+    // of 1 cannot distinguish "one read for the whole table" from "one read
+    // per row", since both would produce exactly one call.
     fetchKoraAiMetricsPage.mockResolvedValue({
-      metrics: METRICS(1),
-      pagination: { page: 1, limit: 50, total: 1 },
+      metrics: {
+        ...METRICS(1),
+        users: [
+          { userId: "u1", attempts: 4, resolves: 3, corrections: 1, budgetRefusals: 0, aiCalls: 4 },
+          { userId: "u2", attempts: 1, resolves: 1, corrections: 0, budgetRefusals: 0, aiCalls: 1 },
+        ],
+      },
+      pagination: { page: 1, limit: 50, total: 2 },
     });
     fetchProductEntities.mockResolvedValue({
-      data: [{ id: "u1", source: "kora", type: "users", label: "mahesh" }],
-      pagination: { page: 1, limit: 50, total: 1 },
+      data: [
+        { id: "u1", source: "kora", type: "users", label: "mahesh" },
+        { id: "u2", source: "kora", type: "users", label: "priya" },
+      ],
+      pagination: { page: 1, limit: 50, total: 2 },
     });
 
     await renderPage();
 
-    // ONE read for the whole table, not one per row — the page has one user.
+    // ONE read for the whole table, not one per row — the page has two users.
     expect(fetchProductEntities).toHaveBeenCalledTimes(1);
     expect(fetchProductEntities).toHaveBeenCalledWith("kora", "users");
     expect(screen.getByText("mahesh")).toBeInTheDocument();
+    expect(screen.getByText("priya")).toBeInTheDocument();
   });
 
   // The join read is independent of the metrics read: a failure here must

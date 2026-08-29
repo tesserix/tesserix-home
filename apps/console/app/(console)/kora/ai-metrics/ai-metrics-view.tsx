@@ -9,6 +9,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import {
   Badge,
+  Button,
   Table,
   TableBody,
   TableCell,
@@ -56,12 +57,21 @@ export type UserDirectory = ReadonlyMap<string, EntityRecord>;
 // `USER_PATH` is the same literal; keep the two in sync by eye.
 const USERS_PATH = "/kora/users";
 
-/** Where an operator goes to find this person — the search box on
- *  `/kora/users` narrows by the same id/label Kora sent, matched or not. A
- *  user this table cannot name is exactly the case an operator most needs
- *  the link for. */
-function userHref(userId: string): string {
-  return `${USERS_PATH}?q=${encodeURIComponent(userId)}`;
+/**
+ * Where an operator goes to find a MATCHED user — kora's `/kora/users`
+ * search (`SearchEntities`, kora's `api/internal/platformadmin/entities.go`)
+ * matches `display_name`, `email` and `handle` only, never `id`. `label` is
+ * one of those fields (kora sends the handle, per `entities.ts`'s own doc
+ * comment), so searching by it lands the operator on this person's row.
+ *
+ * There is deliberately no equivalent for an UNMATCHED row: a query built
+ * from the raw id would search a field kora's directory does not match on
+ * and return nothing, in exactly the case — no name, only an id — where an
+ * operator most needs the link to work. See `userCell`, which sends an
+ * unmatched row to the plain, unfiltered directory instead.
+ */
+function matchedUserHref(label: string): string {
+  return `${USERS_PATH}?q=${encodeURIComponent(label)}`;
 }
 
 /**
@@ -191,6 +201,11 @@ const KIND_SEVERITY: Readonly<Record<string, "high" | "normal">> = {
   below_floor: "normal",
 };
 
+// Linkable is expressed as "has a `KIND_SEVERITY` entry" rather than a
+// second list, because the two are the SAME two kinds by definition —
+// `KIND_SEVERITY`'s keys are exactly `Kind.NeedsHuman()`'s kinds. Keep it
+// that way: adding a severity for a kind that is not triageable would
+// silently make it linkable too.
 function kindHref(kind: string): string | null {
   return kind in KIND_SEVERITY ? NEEDS_HUMAN_INBOX_HREF : null;
 }
@@ -309,9 +324,14 @@ export function matchesUserFilter(
 function userCell(userId: string, userDirectory: UserDirectory) {
   const entity = userDirectory.get(userId);
   if (!entity) {
+    // The plain, unfiltered directory — NOT `?q=<userId>`. kora's search
+    // does not match on `id` (see `matchedUserHref`), so a query built from
+    // the raw id is a search that structurally cannot find this person.
+    // Sending the operator to a filtered result that is guaranteed empty is
+    // worse than sending them to the directory honestly unfiltered.
     return (
       <Link
-        href={userHref(userId)}
+        href={USERS_PATH}
         className="underline underline-offset-2 hover:text-foreground"
       >
         {userId}
@@ -319,7 +339,7 @@ function userCell(userId: string, userDirectory: UserDirectory) {
     );
   }
   return (
-    <Link href={userHref(userId)} className="hover:underline">
+    <Link href={matchedUserHref(entity.label)} className="hover:underline">
       <div>{entity.label}</div>
       {/* Rendered only when present — see `EntityRecord.sublabel`'s doc
           comment. A placeholder here would make "Kora sent no sublabel" look
@@ -329,6 +349,40 @@ function userCell(userId: string, userDirectory: UserDirectory) {
         <div className="text-xs text-muted-foreground">{entity.sublabel}</div>
       ) : null}
     </Link>
+  );
+}
+
+/**
+ * The users table's next/previous links, WITHOUT the range/total text
+ * `ResultPager` also renders.
+ *
+ * Split out because the two halves have different honesty requirements once
+ * a filter is active: `pagination.total` counts every page unfiltered, so
+ * pairing it with a client-filtered list is the exact "short queue" lie this
+ * surface exists to avoid — but the links themselves stay correct even while
+ * filtered, because `pageHref` (`entity-page.ts`) preserves every filter
+ * param across the page change. Paging while filtered is legitimate; only
+ * the total is the part that would lie. See the "Users" section's render.
+ */
+function UserPagerNav({ pager, label }: { pager: PagerLinks; label: string }) {
+  if (!pager.previousHref && !pager.nextHref) return null;
+  return (
+    <nav aria-label={`${label} pagination`} className="flex items-center gap-2">
+      {pager.previousHref ? (
+        <Button asChild size="sm" variant="outline">
+          <Link href={pager.previousHref} aria-label={`Previous page of ${label}`}>
+            Previous
+          </Link>
+        </Button>
+      ) : null}
+      {pager.nextHref ? (
+        <Button asChild size="sm" variant="outline">
+          <Link href={pager.nextHref} aria-label={`Next page of ${label}`}>
+            Next
+          </Link>
+        </Button>
+      ) : null}
+    </nav>
   );
 }
 
@@ -462,23 +516,36 @@ export function AiMetricsView({
             {/* The page-scoped limitation, stated in the UI rather than left
                 for a comment nobody reading the page will see: kora's
                 `ai-metrics` endpoint takes only `from`/`to`/`page`/`limit`,
-                so these filters can only narrow the page already fetched. */}
+                so these filters can only narrow the page already fetched.
+                "Use the pager to reach the rest" lives ONLY in the unfiltered
+                branch below — while filtered, the pager is still on screen
+                (see `UserPagerNav`), but this sentence is specifically about
+                the total the filtered branch deliberately does not show, not
+                a claim that paging is unavailable. */}
             <p className="text-xs text-muted-foreground">
               These filters search only the {metrics.users.length} users on this page — kora has
-              no server-side search here, so use the pager to reach the rest.
+              no server-side search here.
+              {filtersActive ? null : " Use the pager to reach the rest."}
             </p>
             {usersSectionState.kind === "ready" ? (
               <>
                 {filtersActive ? (
-                  // NEVER the cross-page `pagination.total` beside a filtered
-                  // list — that total counts every page, unfiltered, and
-                  // pairing it with a narrowed list is the exact defect this
-                  // surface exists to avoid (see the plan's "short queue"
-                  // trap). A page-scoped count instead.
-                  <p aria-live="polite" className="text-sm text-muted-foreground">
-                    {filteredUsers.length} of {metrics.users.length} on this page match these
-                    filters.
-                  </p>
+                  // NEVER the cross-page `pagination.total` beside a
+                  // filtered list — that total counts every page,
+                  // unfiltered, and pairing it with a narrowed list is the
+                  // exact defect this surface exists to avoid (see the
+                  // plan's "short queue" trap). A page-scoped count instead,
+                  // alongside next/prev links that keep working: paging
+                  // while filtered is legitimate (`pageHref` carries the
+                  // filter query to the next page), and only the total was
+                  // the lie.
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p aria-live="polite" className="text-sm text-muted-foreground">
+                      {filteredUsers.length} of {metrics.users.length} on this page match these
+                      filters.
+                    </p>
+                    <UserPagerNav pager={pager} label="users" />
+                  </div>
                 ) : (
                   <ResultPager
                     label="users"

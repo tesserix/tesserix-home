@@ -149,7 +149,8 @@ describe("AiMetricsView — by kind", () => {
   // Kora zero-fills `by_kind` across every kind it measures. A kind dropped
   // because its count is 0 would hide that Kora measured it and found none —
   // a different fact from not measuring it at all.
-  it("renders every kind, including three with a zero count", () => {
+  // The fixture zero-fills four: decomposed, budget, error, transcript_blank.
+  it("renders every kind, including four with a zero count", () => {
     renderView();
     const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
     expect(within(kindsSection).getByText("cache")).toBeInTheDocument();
@@ -303,19 +304,27 @@ describe("AiMetricsView — user identity", () => {
     expect(screen.queryByText(/unknown/i)).toBeNull();
   });
 
-  it("links a matched user's row to /kora/users so an operator can find them", () => {
+  // kora's `/kora/users` search matches `display_name`/`email`/`handle`,
+  // never `id` (`SearchEntities`, kora's `platformadmin/entities.go`) — so a
+  // matched row searches by the joined LABEL, which is one of those fields
+  // and actually finds the person.
+  it("links a matched user's row to a /kora/users search by their name", () => {
     renderView({
       metrics: MATCHED_METRICS,
       userDirectory: new Map([[RAW_ID, MATCHED_ENTITY]]),
     });
     const link = screen.getByRole("link", { name: /mahesh/i });
-    expect(link).toHaveAttribute("href", expect.stringContaining("/kora/users"));
+    expect(link).toHaveAttribute("href", "/kora/users?q=mahesh");
   });
 
-  it("links an unmatched user's row to /kora/users too", () => {
+  // The important case, and the one the finding was about: `?q=<uuid>` would
+  // be a search kora structurally cannot match (it never searches `id`), so
+  // an unmatched row links to the PLAIN, unfiltered directory instead of a
+  // query guaranteed to return nothing.
+  it("links an unmatched user's row to the plain directory, never a dead id search", () => {
     renderView({ metrics: MATCHED_METRICS, userDirectory: EMPTY_DIRECTORY });
     const link = screen.getByRole("link", { name: RAW_ID });
-    expect(link).toHaveAttribute("href", expect.stringContaining("/kora/users"));
+    expect(link).toHaveAttribute("href", "/kora/users");
   });
 });
 
@@ -436,6 +445,49 @@ describe("AiMetricsView — user filters", () => {
 
     expect(screen.queryByText(/of 500/)).toBeNull();
     expect(screen.getByText(/1 of 2 on this page/i)).toBeInTheDocument();
+  });
+
+  // The scope note's "use the pager" clause must not appear while filtered —
+  // it names a total that the filtered branch deliberately does not show,
+  // and it must never be read as "paging is unavailable here" (it is not;
+  // see the next test).
+  it("mentions the pager in the unfiltered scope note", () => {
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+    expect(screen.getByText(/use the pager/i)).toBeInTheDocument();
+  });
+
+  it("drops the 'use the pager' clause once filtered", () => {
+    setSearchParams(new URLSearchParams("q=priya"));
+    renderView({ metrics: NAMED_METRICS, userDirectory: DIRECTORY });
+    expect(screen.queryByText(/use the pager/i)).toBeNull();
+  });
+
+  // The load-bearing fix: a filtered operator can still page. Only the
+  // cross-page TOTAL is withheld while filtered (asserted above) — the
+  // next/prev links themselves keep working, because `pageHref` carries the
+  // filter query to the next page.
+  it("keeps working next/prev links while filtered, with no total beside them", () => {
+    setSearchParams(new URLSearchParams("q=priya"));
+    renderView({
+      metrics: NAMED_METRICS,
+      userDirectory: DIRECTORY,
+      pager: {
+        precedingCount: 2,
+        nextHref: "/kora/ai-metrics?page=2&q=priya",
+        previousHref: "/kora/ai-metrics?q=priya",
+      },
+      pagination: { page: 2, limit: 2, total: 500 },
+    });
+
+    expect(screen.getByRole("link", { name: /next page of users/i })).toHaveAttribute(
+      "href",
+      "/kora/ai-metrics?page=2&q=priya",
+    );
+    expect(screen.getByRole("link", { name: /previous page of users/i })).toHaveAttribute(
+      "href",
+      "/kora/ai-metrics?q=priya",
+    );
+    expect(screen.queryByText(/of 500/)).toBeNull();
   });
 
   // `resolveState`'s `filtered` flag, not the plain empty-state copy: a

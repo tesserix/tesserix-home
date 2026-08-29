@@ -42,6 +42,18 @@ import { AiMetricsView } from "./ai-metrics-view";
  * is Kora returning a label on `ai-metrics` itself — a different repo, out of
  * scope for this surface.
  *
+ * **That "one page" is always entities page 1** — `fetchProductEntities`
+ * below is called with no page argument, while the metrics read a few lines
+ * later IS paged by `?page=`. The two are unrelated result sets (the entities
+ * directory's page 1 and the metrics table's page N are not the same 50
+ * users), so on metrics page 1 the join is likely to hit; on page 2 and
+ * beyond it is increasingly likely to miss entirely, and most rows fall back
+ * to a raw id. Safe — the raw id IS the honest answer — but it is the
+ * practical limit of this feature, stated here rather than left for a reader
+ * to discover by noticing every row on page 3 is a UUID. Fetching every user
+ * to cover every metrics page is deliberately not the fix — see "Do not fetch
+ * every user" in part 1's plan.
+ *
  * # No window picker
  *
  * `/v1/kora/ai-metrics` accepts a caller-chosen `from`/`to`, but this surface
@@ -129,6 +141,12 @@ export default async function KoraAiMetricsPage({
   // `allSettled`, not sequential `await`s — see the module doc comment's
   // "TWO independent reads" section. A failed name join must not blank a
   // metrics table that loaded fine, and vice versa.
+  //
+  // `fetchProductEntities` below takes NO page — it always reads entities
+  // page 1, while `fetchKoraAiMetricsPage(page)` reads whichever metrics
+  // page the operator is on. The join only ever matches against that one
+  // fixed page of users, so it degrades on metrics page 2+ — see the module
+  // doc comment's "one page" note.
   const [metricsResult, usersResult] = await Promise.allSettled([
     fetchKoraAiMetricsPage(page),
     fetchProductEntities("kora", "users"),
