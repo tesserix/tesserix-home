@@ -194,7 +194,11 @@ describe("changeStage", () => {
     });
   });
 
-  it("refuses without console entry, before any transport or audit call", async () => {
+  it("refuses without console entry, before the repo is touched, and audits the refusal", async () => {
+    // #409 task 3: `withCrmWrite`'s capability check now runs inside
+    // `auditedOperation`, so this refusal writes a `capability.refused` row
+    // instead of writing nothing (it used to run before `auditedOperation`
+    // even started). The repo itself is still never touched.
     signIn(undefined);
     const result = await changeStage({
       organisationId: ORG_ID,
@@ -206,7 +210,7 @@ describe("changeStage", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(advanceStage).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an unrecognised stage without calling the session or the repo", async () => {
@@ -530,7 +534,9 @@ describe("linkConversion", () => {
     expect(linkConversionRow).not.toHaveBeenCalled();
   });
 
-  it("refuses without console entry, before any transport or audit call", async () => {
+  it("refuses without console entry, before the repo is touched, and audits the refusal", async () => {
+    // #409 task 3 — see the identical note on `changeStage`'s equivalent test
+    // above.
     signIn(undefined);
     const result = await linkConversion({
       organisationId: ORG_ID,
@@ -543,7 +549,7 @@ describe("linkConversion", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(linkConversionRow).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -6,6 +6,8 @@ vi.mock("./tesserix", async (importOriginal) => ({
   isDatabaseConfigured: vi.fn(() => true),
 }));
 
+import { CapabilityError } from "@tesserix/platform-auth";
+
 import { isDatabaseConfigured, tesserixQuery } from "./tesserix";
 import {
   AuditActionError,
@@ -13,9 +15,11 @@ import {
   AuditUnavailableError,
   AuditWriteError,
   auditedOperation,
+  isAuditableRefusal,
   recentAuditEntries,
   serialiseSummary,
   writeAuditEntry,
+  type AuditableRefusal,
 } from "./audit-repo";
 
 /**
@@ -467,5 +471,264 @@ describe("auditedOperation", () => {
 
     expect(operation).not.toHaveBeenCalled();
     expect(vi.mocked(tesserixQuery)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A minimal stand-in for `PublishRefused` (Task 2 implements the real one):
+ * an error that opts into being audited by declaring its own description,
+ * rather than the call site declaring it. Exercises the interface's shape,
+ * not any one caller.
+ */
+class FakeRefusal extends Error implements AuditableRefusal {
+  constructor(
+    message: string,
+    private readonly description: { action: string; summary: Record<string, number>; target?: string },
+  ) {
+    super(message);
+    this.name = "FakeRefusal";
+  }
+
+  auditRefusal(): { action: string; summary: Record<string, number>; target?: string } {
+    return this.description;
+  }
+}
+
+describe("auditedOperation — deliberate refusals (#409)", () => {
+  it("recognises a refusal by its auditRefusal method, not by name or instanceof", () => {
+    const refusal = new FakeRefusal("nope", {
+      action: "catalog.publish.refused",
+      summary: { rules_breached: 1 },
+    });
+    expect(isAuditableRefusal(refusal)).toBe(true);
+    expect(isAuditableRefusal(new Error("plain"))).toBe(false);
+    expect(isAuditableRefusal(null)).toBe(false);
+    expect(isAuditableRefusal("not an error")).toBe(false);
+  });
+
+  // The headline case: a refused publish must leave a row, and the caller
+  // must still see the refusal — auditing changes what is recorded, never
+  // what the caller sees.
+  it("writes a row for a deliberate refusal AND rethrows the original error", async () => {
+    const refusal = new FakeRefusal("Publishing is refused: price mismatch", {
+      action: "catalog.publish.refused",
+      summary: { rules_breached: 1 },
+      target: "plan-123",
+    });
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry).toBeDefined();
+    expect(entry.action).toBe("catalog.publish.refused");
+    expect(entry.target).toBe("plan-123");
+    expect(entry.metadata).toBe('{"rules_breached":1}');
+  });
+
+  // If the row read like the success action, a reviewer scanning the trail
+  // would misread a refusal as a completed publish — the highest-stakes
+  // action in this system.
+  it("gives the refusal row a distinct action from the operation's success action", async () => {
+    const refusal = new FakeRefusal("refused", {
+      action: "catalog.publish.refused",
+      summary: {},
+    });
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.action).not.toBe("catalog.publish");
+    expect(entry.action).toBe("catalog.publish.refused");
+  });
+
+  // The other half of the decision: a FAILURE (not a decision — a bug, a
+  // dropped connection) must write NOTHING. Recording it would put a
+  // database write exactly where the database is the likely cause, and
+  // would bury the deliberate refusals — the rows worth reading — in
+  // operational noise.
+  //
+  // Breaks if: refusalDescription() is changed to treat every thrown error
+  // as a refusal (e.g. by removing the isAuditableRefusal/CapabilityError
+  // gate and calling describe-like logic on any cause).
+  it("writes NOTHING for a plain Error (a failure, not a refusal) and rethrows it unchanged", async () => {
+    const failure = new Error("connection terminated unexpectedly");
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw failure;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(failure);
+
+    expect(table).toHaveLength(0);
+    expect(vi.mocked(tesserixQuery)).not.toHaveBeenCalled();
+  });
+
+  // Recognised via a real class import, not `err.name === "CapabilityError"`
+  // string matching — CapabilityError lives in @tesserix/platform-auth and
+  // cannot implement a console-local interface, so it needs its own adapter
+  // branch rather than opting in via AuditableRefusal.
+  //
+  // Breaks if: the CapabilityError branch in refusalDescription() is removed,
+  // or changed to match on `cause.name` instead of `instanceof CapabilityError`.
+  it("recognises CapabilityError as a refusal via instanceof, and audits it", async () => {
+    const refusal = new CapabilityError("publish-catalog");
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    const [entry] = await recentAuditEntries(10);
+    expect(entry).toBeDefined();
+    expect(entry.action).toBe("capability.refused");
+    expect(entry.action).not.toBe("catalog.publish");
+    expect(entry.target).toBe("plan-123");
+    // Pins the `required.replaceAll("-", "_")` line: SUMMARY_KEY rejects
+    // hyphens, so the hyphenated capability name must be translated, not
+    // dropped, to still name what was missing.
+    expect(entry.metadata).toBe('{"publish_catalog":1}');
+  });
+
+  // The subtle case: if the refusal's OWN audit write fails, the caller must
+  // still be told "you were refused", never "audit failed" — an
+  // AuditWriteError here would be a strictly worse answer than the truth the
+  // operation already knows. The failure is logged server-side (see the
+  // implementation) so the gap is not silent, but it must not replace what
+  // reaches the caller.
+  //
+  // Breaks if: the catch around the refusal's own writeAuditEntry call is
+  // removed, letting AuditWriteError propagate instead of the refusal.
+  it("still rethrows the original refusal, not AuditWriteError, when the audit write for the refusal itself fails", async () => {
+    const refusal = new FakeRefusal("refused", {
+      action: "catalog.publish.refused",
+      summary: { rules_breached: 1 },
+    });
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("57P01 admin shutdown"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    // Not AuditWriteError, and not a generic wrapper — the exact refusal.
+    expect(table).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  // Important finding from review: `refusalDescription(cause)` calls
+  // `cause.auditRefusal()`, which is caller code this module does not
+  // control. If that throws, the throw must not displace the original
+  // refusal — the same guarantee requirement 1 makes for a failed
+  // audit WRITE must also hold for a failed audit DESCRIBE.
+  //
+  // Breaks if: `refusalDescription(cause)` (or the call to
+  // `cause.auditRefusal()`) is moved back outside `writeRefusal`'s try, so
+  // a throwing `auditRefusal()` propagates and replaces `cause`.
+  it("still rethrows the original refusal, not whatever auditRefusal() throws, when auditRefusal() itself throws", async () => {
+    class ThrowingRefusal extends Error implements AuditableRefusal {
+      constructor() {
+        super("refused, but describing it is buggy");
+        this.name = "ThrowingRefusal";
+      }
+      auditRefusal(): never {
+        throw new Error("bug in auditRefusal()");
+      }
+    }
+    const refusal = new ThrowingRefusal();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw refusal;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(refusal);
+
+    expect(table).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  // The other half of "a failure writes nothing": an AuditWriteError is the
+  // one failure type that can only ever come from this module's own write
+  // path, never a caller decision, so it must be treated exactly like any
+  // other failure — not mistaken for a refusal because it happens to be an
+  // audit-shaped error.
+  //
+  // Breaks if: `refusalDescription()` starts recognising `AuditWriteError`
+  // (e.g. via a broadened `instanceof Error` check) instead of restricting
+  // itself to `AuditableRefusal`/`CapabilityError`.
+  it("writes nothing and propagates unchanged when the operation itself throws an AuditWriteError", async () => {
+    const failure = new AuditWriteError(new Error("57P01 admin shutdown"));
+
+    await expect(
+      auditedOperation({
+        actor: "op-1",
+        target: "plan-123",
+        operation: async () => {
+          throw failure;
+        },
+        describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+      }),
+    ).rejects.toBe(failure);
+
+    expect(table).toHaveLength(0);
+    expect(vi.mocked(tesserixQuery)).not.toHaveBeenCalled();
+  });
+
+  // A successful operation is completely unaffected by any of the above:
+  // the refusal-detection path is only ever consulted from the catch block.
+  it("leaves a successful operation's audit write unchanged", async () => {
+    const result = await auditedOperation({
+      actor: "op-1",
+      target: "plan-123",
+      operation: async () => ({ published: true }),
+      describe: () => ({ action: "catalog.publish", summary: { published: 1 } }),
+    });
+
+    expect(result).toEqual({ published: true });
+    const [entry] = await recentAuditEntries(10);
+    expect(entry.action).toBe("catalog.publish");
   });
 });

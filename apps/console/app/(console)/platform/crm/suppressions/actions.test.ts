@@ -237,13 +237,32 @@ describe("removeSuppressionAction", () => {
     expect(audit.target).toBe("missing");
   });
 
-  it("refuses without console entry, before any transport or audit call", async () => {
+  it("refuses without console entry, before the repo is touched, and audits the refusal", async () => {
+    // #409 task 3 — see `crm-write.test.ts` for the full rationale: the
+    // capability check now runs inside `auditedOperation`, so this refusal
+    // writes a `capability.refused` row instead of writing nothing.
     signIn(undefined);
     const result = await removeSuppressionAction("s1");
     expect(result).toEqual({
       ok: false,
       message: "You don't have permission to edit the CRM.",
     });
+    expect(removeSuppression).not.toHaveBeenCalled();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
+  });
+
+  // The `isDatabaseConfigured` short-circuit still runs before ANY operation
+  // logic — see the ordering decision documented in `crm-write.ts`'s
+  // `withCrmWrite`: with no database, the capability check inside `operation`
+  // never runs either, so nothing is written even for an operator who would
+  // have been refused.
+  it("with no database configured, refuses before the capability check runs, and writes nothing", async () => {
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+    signIn(undefined);
+
+    const result = await removeSuppressionAction("s1");
+
+    expect(result).toEqual({ ok: false, message: "That change was not saved." });
     expect(removeSuppression).not.toHaveBeenCalled();
     expect(tesserixQuery).not.toHaveBeenCalled();
   });
