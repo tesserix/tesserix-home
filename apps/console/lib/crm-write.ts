@@ -79,15 +79,40 @@ export async function withCrmWrite<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, options.capability);
     const actor = {
       sub: session?.sub ?? "unknown",
       email: session?.email ?? session?.sub ?? "unknown",
     };
+    // The gate is INSIDE `operation`, not before this call, so it is still
+    // "before the work, where a reader meets it" (the comment on the
+    // parameter above), but now runs on `auditedOperation`'s own path: a
+    // `CapabilityError` thrown here is caught by `auditedOperation`,
+    // recognised by `refusalDescription` (#409), and written as a
+    // `capability.refused` row before being rethrown unchanged. Checking it
+    // OUTSIDE, as before, meant the throw never reached `auditedOperation`
+    // at all — a deliberate refusal indistinguishable, on paper, from a
+    // request that was simply never made. See `audit-repo.ts`'s
+    // `refusalDescription` for the other half of this fix.
+    //
+    // CONSEQUENCE, decided rather than accidental: `auditedOperation` checks
+    // `isDatabaseConfigured()` before running `operation` at all, so with no
+    // database configured this capability check now never runs, and the
+    // caller sees `AuditUnavailableError` (mapped below to
+    // `NOT_SAVED_MESSAGE`) instead of `CapabilityError` (mapped to
+    // `NO_PERMISSION_MESSAGE`) even when the capability would have been
+    // refused. That is fail-closed on auditability, which is the right
+    // default for the exact gap #409 exists to close: an unaudited capability
+    // refusal is worse than a generic "not saved" that sends the operator
+    // to check back later — and "you don't have permission" would also be
+    // wrong to show, since the permission check never actually ran. Pinned
+    // by crm-write.test.ts.
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => run(actor),
+      operation: () => {
+        checkOperatorCapability(session, options.capability);
+        return run(actor);
+      },
       describe,
     });
     return { ok: true, value };

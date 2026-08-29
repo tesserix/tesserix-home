@@ -36,6 +36,10 @@ beforeEach(() => {
   } as never);
   vi.mocked(isDatabaseConfigured).mockReturnValue(true);
   vi.mocked(tesserixQuery).mockResolvedValue([]);
+  // `vi.clearAllMocks()` clears call history, not a mock's implementation —
+  // a throwing `mockImplementation` set by one test would otherwise leak
+  // into the next. Reset to "capability granted" explicitly every time.
+  vi.mocked(checkOperatorCapability).mockImplementation(() => undefined);
 });
 
 describe("withCrmWrite", () => {
@@ -65,5 +69,71 @@ describe("withCrmWrite", () => {
     const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
     expect(run).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, message: "You don't have permission to edit the CRM." });
+  });
+
+  // #409 task 3: the gap this task closes. Before this change,
+  // `checkOperatorCapability` ran BEFORE `auditedOperation`, so a thrown
+  // `CapabilityError` never reached it and no row was written — a deliberate
+  // refusal indistinguishable, on paper, from a request that was never made.
+  // Breaks if the capability check in `withCrmWrite` moves back outside
+  // `operation`.
+  it("writes an audit row for a CapabilityError refusal, naming the required capability", async () => {
+    vi.mocked(checkOperatorCapability).mockImplementation(() => {
+      throw new CapabilityError("hard-delete");
+    });
+    const run = vi.fn();
+
+    const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
+
+    // The caller's own contract is unchanged: same shape, same message, as
+    // before this task. Auditing changes what is RECORDED, never what the
+    // caller sees.
+    expect(result).toEqual({ ok: false, message: "You don't have permission to edit the CRM." });
+    expect(run).not.toHaveBeenCalled();
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
+    const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
+    const [actor, action, target, , metadata] = params as [
+      string,
+      string,
+      string | null,
+      string,
+      string | null,
+    ];
+    expect(actor).toBe("sub-1");
+    expect(action).toBe("capability.refused");
+    expect(target).toBe("crm:org");
+    expect(JSON.parse(metadata as string)).toEqual({ hard_delete: 1 });
+  });
+
+  // Pins the ordering decision (#409 task 3): `auditedOperation` refuses
+  // BEFORE running `operation` at all when the database is not configured,
+  // so a capability check that now lives inside `operation` never runs
+  // either. The caller sees `AuditUnavailableError`'s message, not
+  // `CapabilityError`'s — fail-closed on auditability, even though the
+  // capability itself would also have been refused. Breaks if the capability
+  // check moves back outside `operation`, which would run it regardless of
+  // whether a database is configured.
+  it("fails closed on AuditUnavailableError before the capability check runs, when no database is configured", async () => {
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+    vi.mocked(checkOperatorCapability).mockImplementation(() => {
+      throw new CapabilityError("hard-delete");
+    });
+    const run = vi.fn();
+
+    const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
+
+    expect(checkOperatorCapability).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, message: "That change was not saved." });
+  });
+
+  // Breaks if a second write (of the audit row, or of anything else) sneaks
+  // into the success path.
+  it("writes exactly one audit row for a successful write", async () => {
+    const result = await withCrmWrite("crm:org", { capability: "crm" }, async () => "ok", () => description);
+
+    expect(result).toEqual({ ok: true, value: "ok" });
+    expect(tesserixQuery).toHaveBeenCalledTimes(1);
   });
 });

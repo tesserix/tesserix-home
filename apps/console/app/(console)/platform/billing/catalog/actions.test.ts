@@ -161,15 +161,41 @@ describe("startDraftAction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
   });
 
-  it("refuses without billing, before any repo or audit call", async () => {
+  it("refuses without billing, before the repo is touched, and audits the refusal", async () => {
+    // #409 task 3: the capability check now runs INSIDE `auditedOperation`
+    // (`withDraftWrite`), so a refusal writes a `capability.refused` row
+    // instead of writing nothing — before this task, `checkOperatorCapability`
+    // ran before `auditedOperation` and this refusal was silent. The repo is
+    // still never touched: the audit write is `auditedOperation`'s own, not
+    // `createDraftFrom`'s.
     signIn(undefined);
 
     const result = await startDraftAction("test");
 
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
     expect(createDraftFrom).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "capability.refused",
+      target: "test",
+      summary: { billing: 1 },
+    });
+  });
+
+  // Pins the ordering decision (#409 task 3): `auditedOperation` refuses
+  // BEFORE running `operation` at all when the database is not configured,
+  // so the capability check inside it never runs either — the caller sees
+  // "not saved", not "no permission", even though the capability would also
+  // have been refused. Breaks if the capability check moves back outside
+  // `operation`.
+  it("fails closed on AuditUnavailableError before the capability check, when no database is configured", async () => {
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+    signIn(undefined);
+
+    const result = await startDraftAction("test");
+
+    expect(createDraftFrom).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, message: "That change was not saved." });
   });
 });
 
@@ -222,14 +248,18 @@ describe("setAmountAction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
   });
 
-  it("refuses without billing, before the repo is touched", async () => {
+  it("refuses without billing, before the repo is touched, and audits the refusal", async () => {
     signIn(undefined);
 
     const result = await setAmountAction("draft-1", "mark8ly_pro_monthly_developed_v1", "usd", 11_900);
 
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
     expect(setDraftAmount).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "capability.refused",
+      target: "mark8ly_pro_monthly_developed_v1 (usd)",
+      summary: { billing: 1 },
+    });
   });
 
   it("maps a repo refusal (e.g. a stale/published revisionId) to the generic not-saved message", async () => {
@@ -267,14 +297,18 @@ describe("discardDraftAction", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
   });
 
-  it("refuses without billing, before the repo is touched", async () => {
+  it("refuses without billing, before the repo is touched, and audits the refusal", async () => {
     signIn(undefined);
 
     const result = await discardDraftAction("draft-1");
 
     expect(result).toEqual({ ok: false, message: NO_PERMISSION });
     expect(discardDraft).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "capability.refused",
+      target: "draft-1",
+      summary: { billing: 1 },
+    });
   });
 
   it("maps a repo refusal an operator CAN act on to a sentence written for them", async () => {
@@ -332,9 +366,14 @@ describe("publishAction", () => {
     expect(startPublishAttempt).not.toHaveBeenCalled();
   });
 
-  it("refuses an operator holding billing but not publish-catalog", async () => {
+  it("refuses an operator holding billing but not publish-catalog, and audits the refusal", async () => {
     // The whole point of the risk verb: `billing` is the surface, and every
     // operator who can READ this catalog holds it.
+    //
+    // #409 task 3: publishing's own capability refusal is the highest-stakes
+    // one in this file, and it used to write nothing — `checkOperatorCapability`
+    // ran before `auditedOperation`. It now runs inside `operation`
+    // (`withPublishWrite`), so this row exists.
     signIn(["billing"]);
 
     const result = await publishAction("draft-1", "test", CONFIRMED);
@@ -342,7 +381,32 @@ describe("publishAction", () => {
     expect(result).toEqual({ ok: false, message: NO_PUBLISH_PERMISSION });
     expect(startPublishAttempt).not.toHaveBeenCalled();
     expect(executePublish).not.toHaveBeenCalled();
-    expect(tesserixQuery).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "capability.refused",
+      target: "test (draft-1)",
+      summary: { publish_catalog: 1 },
+    });
+  });
+
+  // Pins the ordering decision (#409 task 3) for the publish half too: with
+  // no database configured, `auditedOperation` refuses before `operation`
+  // runs, so neither capability check inside it runs — the caller sees "the
+  // publish could not be completed", not "no permission", even though the
+  // capability would also have been refused. Breaks if either capability
+  // check moves back outside `operation`.
+  it("fails closed on AuditUnavailableError before either capability check, when no database is configured", async () => {
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+    signIn(undefined);
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(startPublishAttempt).not.toHaveBeenCalled();
+    expect(executePublish).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The publish could not be completed. Check the publish log before retrying — some operations may already have run.",
+    });
   });
 
   it("publishes, then PROMOTES the revision, and audits both facts", async () => {

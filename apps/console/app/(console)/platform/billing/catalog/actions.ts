@@ -132,12 +132,23 @@ async function withDraftWrite<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "billing");
     const actor = { sub: session?.sub ?? "unknown" };
+    // The gate runs INSIDE `operation`, not before this call, so a
+    // `CapabilityError` reaches `auditedOperation` and is written as a
+    // `capability.refused` row (#409) instead of never entering the audit
+    // path at all — see `crm-write.ts`'s `withCrmWrite` for the identical
+    // change and its full rationale, including the decided consequence for
+    // `AuditUnavailableError` (fail closed on auditability: with no
+    // database, this check never runs and the caller sees "not saved"
+    // rather than "no permission", even when the capability would have
+    // been refused). Pinned by actions.test.ts.
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => run(actor),
+      operation: () => {
+        checkOperatorCapability(session, "billing");
+        return run(actor);
+      },
       describe,
     });
     return { ok: true, value };
@@ -395,15 +406,23 @@ async function withPublishWrite<T>(
 ): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
   try {
     const session = await getCurrentSession();
-    // BOTH, in this order. `billing` is the surface; `publish-catalog` is
-    // the risk verb — see this module's header.
-    checkOperatorCapability(session, "billing");
-    checkOperatorCapability(session, "publish-catalog");
     const actor = { sub: session?.sub ?? "unknown" };
+    // BOTH, in this order, and both INSIDE `operation` — see
+    // `withDraftWrite`'s identical change just above (and `crm-write.ts`'s
+    // `withCrmWrite`) for why: a `CapabilityError` thrown outside
+    // `auditedOperation` never reaches `refusalDescription`, so publishing's
+    // own capability refusal — the highest-stakes one in this file — used to
+    // write nothing. `billing` is still the surface and `publish-catalog`
+    // still the risk verb checked in addition to it; only where they run
+    // moved.
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => run(actor),
+      operation: () => {
+        checkOperatorCapability(session, "billing");
+        checkOperatorCapability(session, "publish-catalog");
+        return run(actor);
+      },
       describe,
     });
     return { ok: true, value };
