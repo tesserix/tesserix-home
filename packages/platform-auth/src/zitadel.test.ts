@@ -90,6 +90,13 @@ async function signToken(
     flatRoles?: Record<string, unknown>;
     /** Opt-in: the flat org claim, absent from real machine tokens. */
     orgIdClaim?: string;
+    /**
+     * `client_id` — what a real `mark8ly-catalog-reader` machine token
+     * carries (there is no `azp` on it at all).
+     */
+    clientIdClaim?: string;
+    /** Opt-in: `azp`, for the operator/ID-token shape that carries it instead. */
+    azpClaim?: string;
     expiresAtSeconds?: number;
   },
 ): Promise<string> {
@@ -100,6 +107,8 @@ async function signToken(
   }
   if (overrides.flatRoles) claims["urn:zitadel:iam:org:project:roles"] = overrides.flatRoles;
   if (overrides.orgIdClaim) claims["urn:zitadel:iam:org:id"] = overrides.orgIdClaim;
+  if (overrides.clientIdClaim) claims.client_id = overrides.clientIdClaim;
+  if (overrides.azpClaim) claims.azp = overrides.azpClaim;
 
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid })
@@ -240,6 +249,31 @@ describe("verifyMachineAuthHeader", () => {
     expect(identity.sub).toBe("service-user-1");
     expect(identity.roles).toEqual(["read-plan-catalog"]);
     expect(identity.orgId).toBe(REAL_ORG_ID);
+  });
+
+  it("populates clientId from a real machine token's shape: `client_id`, no `azp`", async () => {
+    // A real `mark8ly-catalog-reader` access token carries `client_id` and
+    // has no `azp` claim at all — confirmed against the same decoded token
+    // that exposed the roles-claim bug. `clientId` is not used for any auth
+    // decision (nothing reads it to authorize), but it is what a caller
+    // would want attributed in a log, so it must actually be populated for
+    // a real token rather than permanently `undefined`.
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      sub: "service-user-1",
+      clientIdClaim: "mark8ly-catalog-reader",
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
+    });
+
+    const identity = await verifyMachineAuthHeader(`Bearer ${token}`, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      projectId: MACHINE_PROJECT_ID,
+    });
+
+    expect(identity.clientId).toBe("mark8ly-catalog-reader");
   });
 
   it("does NOT pick up roles carried under a different project's claim", () => {

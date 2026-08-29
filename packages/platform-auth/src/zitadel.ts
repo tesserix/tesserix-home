@@ -238,7 +238,19 @@ export function isInternal(
 
 export interface MachineIdentity {
   readonly sub: string;
-  /** `azp` claim — the client the token was issued to, when present. */
+  /**
+   * The client the token was issued to, for log attribution — not read for
+   * any auth decision.
+   *
+   * A real `mark8ly-catalog-reader` access token carries this as `client_id`
+   * and has NO `azp` claim at all (confirmed against a real decoded token —
+   * the same one that exposed the roles-claim bug this module fixes
+   * elsewhere). `azp` is an OIDC ID-token concept; a client_credentials
+   * access token is the OAuth2 shape, which names the client as `client_id`
+   * instead. `client_id` is read first for that reason; `azp` is kept as a
+   * fallback in case some other machine-token shape carries it instead, but
+   * it is not the claim a real token here actually has.
+   */
   readonly clientId?: string;
   /** Raw role keys from the token. Narrow with `toCapabilities`. */
   readonly roles: readonly string[];
@@ -434,7 +446,12 @@ export async function verifyMachineAuthHeader(
 
     const identity: MachineIdentity = {
       sub: payload.sub,
-      clientId: typeof payload.azp === "string" ? payload.azp : undefined,
+      clientId:
+        typeof payload.client_id === "string"
+          ? payload.client_id
+          : typeof payload.azp === "string"
+            ? payload.azp
+            : undefined,
       roles: extractRoles(rolesClaimValue),
       // `ORG_ID_CLAIM` (`urn:zitadel:iam:org:id`) is ALSO absent from a real
       // machine token — the granting org appears only nested inside the
