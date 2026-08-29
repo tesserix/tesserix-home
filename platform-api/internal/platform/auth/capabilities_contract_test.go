@@ -105,8 +105,11 @@ export const CAPABILITIES = [
 	}
 }
 
-// The surface/verb split must hold on this side too, and every capability must
-// be accounted for — an unclassified one is one nobody has decided the shape of.
+// The surface/verb/machine split must hold on this side too, and every
+// capability must be accounted for — an unclassified one is one nobody has
+// decided the shape of. Machines is a third bucket, not a subset of Surfaces
+// or Verbs: it holds capabilities granted to a service identity rather than
+// an operator, mirroring MACHINE_CAPABILITIES in capabilities.ts.
 func TestEveryCapabilityIsEntryOrSurfaceOrVerb(t *testing.T) {
 	seen := map[Capability]int{CapRead: 1}
 	for _, c := range Surfaces {
@@ -115,14 +118,17 @@ func TestEveryCapabilityIsEntryOrSurfaceOrVerb(t *testing.T) {
 	for _, c := range Verbs {
 		seen[c]++
 	}
+	for _, c := range Machines {
+		seen[c]++
+	}
 
 	for _, c := range Capabilities {
 		switch seen[c] {
 		case 0:
-			t.Errorf("%q is in neither the entry, surface nor verb bucket", c)
+			t.Errorf("%q is in neither the entry, surface, verb nor machine bucket", c)
 		case 1: // exactly one bucket, as it should be
 		default:
-			t.Errorf("%q appears in more than one bucket — surfaces and verbs must be disjoint", c)
+			t.Errorf("%q appears in more than one bucket — entry, surfaces, verbs and machines must be disjoint", c)
 		}
 	}
 }

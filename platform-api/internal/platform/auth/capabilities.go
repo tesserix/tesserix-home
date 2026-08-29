@@ -56,6 +56,15 @@ const (
 	// Different blast radius, different grant. See capabilities.ts, which is
 	// the authority this mirrors.
 	CapPublishCatalog Capability = "publish-catalog"
+
+	// CapReadPlanCatalog reads the PUBLISHED plan catalog. Held by a Zitadel
+	// service user (a machine), never an operator — a machine enters no
+	// console session and works in no surface, so it belongs in neither
+	// Surfaces nor Verbs. Granting it must not carry CapBilling's wallets,
+	// refunds, payouts and subscription state: a machine created to read
+	// prices should not thereby hold the console's entire billing surface.
+	// See capabilities.ts, which is the authority this mirrors.
+	CapReadPlanCatalog Capability = "read-plan-catalog"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -66,6 +75,7 @@ var Capabilities = []Capability{
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
+	CapReadPlanCatalog,
 }
 
 // Surfaces say where a principal works.
@@ -76,6 +86,15 @@ var Verbs = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
 }
+
+// Machines are capabilities held by a service identity, never an operator.
+//
+// A third bucket, not a subset of Surfaces or Verbs: those two describe an
+// operator's console session — where they work, what they may do there. A
+// machine holds neither concept, so forcing it into one would misstate what
+// it is rather than clarify it. Mirrors MACHINE_CAPABILITIES in
+// capabilities.ts.
+var Machines = []Capability{CapReadPlanCatalog}
 
 func known(c Capability) bool {
 	return slices.Contains(Capabilities, c)
