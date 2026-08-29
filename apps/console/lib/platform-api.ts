@@ -262,6 +262,27 @@ async function platformCall(
   return unwrapEnvelope(label, response.status, body);
 }
 
+/**
+ * Which of these two functions a caller needs depends entirely on where the
+ * PRODUCER puts pagination — platform-api has two conventions, not one, and
+ * guessing wrong is exactly how #421 shipped: `/kora/ai-metrics`'s fixture
+ * and parser both assumed the `entities` shape for an endpoint that actually
+ * uses the other one, so every test passed while production 500'd.
+ *
+ * | Module                                                     | Where pagination lives          | Read with |
+ * |--------------------------------------------------------------|----------------------------------|-------------------------|
+ * | `entities` (`service.go:137`, `json:"pagination"`)          | inside `data`, as `data.pagination` | `platformRequest`, then the parser reads `body.pagination` itself (see `parseEntities`) |
+ * | `koraaimetrics` (`handler.go:86`, `httpx.WriteMeta`)        | in the envelope's `meta`, a sibling of `data` | `platformRequestWithMeta` (see `parseKoraAiMetricsPagination`) |
+ *
+ * Before adding a new paged read: check the Go producer's own response
+ * construction (`WriteMeta` vs. a hand-built `data` object carrying its own
+ * `pagination` field) rather than pattern-matching an existing console
+ * caller — `/kora/ai-metrics` was written by pattern-matching its working
+ * siblings `/kora/foods` and `/kora/users`, which use the first convention,
+ * and its producer used the second. `lib/test-support/pagination-envelope.ts`
+ * has fixture builders for both shapes, named so a test has to choose one on
+ * purpose.
+ */
 async function platformRequest(
   label: string,
   path: string,
@@ -270,7 +291,8 @@ async function platformRequest(
   return (await platformCall(label, path, init)).data;
 }
 
-/** As `platformRequest`, but keeps `meta` — pagination lives there. */
+/** As `platformRequest`, but keeps `meta` — see the table on `platformRequest`
+ *  for which producers need this instead. */
 export async function platformRequestWithMeta(
   label: string,
   path: string,

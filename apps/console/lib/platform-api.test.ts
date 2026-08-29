@@ -3,6 +3,7 @@ import {
   PlatformApiError,
   fetchDashboard,
   fetchKoraAiMetricsPage,
+  fetchProductEntities,
   parseDashboard,
   fetchSupportAnalytics,
   fetchTicketDetail,
@@ -11,6 +12,15 @@ import {
   patchTicketStatus,
   ticketsQuery,
 } from "./platform-api";
+// Named explicitly — see the helper's own doc comment (#421). Every fixture
+// below that stands in for a paged platform-api response uses one of these
+// rather than a bare object literal, so the shape it asserts is a deliberate
+// choice, not a guess that happens to match the parser under test.
+import {
+  paginationCursorMeta,
+  paginationInMeta,
+  paginationInsideData,
+} from "./test-support/pagination-envelope";
 
 const VALID = {
   tenants: { total: 12, active: 9 },
@@ -914,7 +924,12 @@ describe("platformRequestWithMeta", () => {
         JSON.stringify({
           success: true,
           data: { opportunities: [] },
-          meta: { total: 7, preceding_count: 0, limit: 100 },
+          // `paginationCursorMeta` for the CRM queues' own shape, plus a
+          // `limit` this test also round-trips: `platformRequestWithMeta`
+          // hands `meta` back untouched, whatever fields the producer sent,
+          // so this fixture is not asserting the shape is EXACTLY the cursor
+          // convention — it is asserting the transport drops nothing.
+          meta: { ...paginationCursorMeta({ total: 7, preceding_count: 0 }), limit: 100 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -1022,7 +1037,7 @@ describe("fetchKoraAiMetricsPage", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify(envelope(KORA_DATA, { total: 2, limit: 50 })), {
+        new Response(JSON.stringify(envelope(KORA_DATA, paginationInMeta({ total: 2, limit: 50 }))), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -1040,7 +1055,7 @@ describe("fetchKoraAiMetricsPage", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
-        new Response(JSON.stringify(envelope(KORA_DATA, { total: 90, limit: 50 })), {
+        new Response(JSON.stringify(envelope(KORA_DATA, paginationInMeta({ total: 90, limit: 50 }))), {
           status: 200,
           headers: { "content-type": "application/json" },
         }),
@@ -1050,5 +1065,40 @@ describe("fetchKoraAiMetricsPage", () => {
     const result = await fetchKoraAiMetricsPage(2);
 
     expect(result.pagination).toEqual({ page: 2, limit: 50, total: 90 });
+  });
+});
+
+/**
+ * The `entities` module's counterpart to the `fetchKoraAiMetricsPage` pin
+ * above: this producer's pagination lives INSIDE `data`, not in `meta` — the
+ * opposite convention, exercised at the same transport level so both halves
+ * of the table in `platformRequest`'s doc comment are pinned by a test, not
+ * only asserted in prose.
+ */
+describe("fetchProductEntities", () => {
+  it("reads pagination from data.pagination, not from meta", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify(
+            envelope(
+              paginationInsideData(
+                { data: [{ id: "u1", source: "kora", type: "users", label: "mahesh" }] },
+                { page: 1, limit: 50, total: 1 },
+              ),
+            ),
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const result = await fetchProductEntities("kora", "users");
+
+    expect(result.pagination).toEqual({ page: 1, limit: 50, total: 1 });
+    expect(result.data[0]?.label).toBe("mahesh");
   });
 });

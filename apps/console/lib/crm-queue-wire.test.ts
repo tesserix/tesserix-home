@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseQueuePage } from "./crm-queue-wire";
+import { paginationCursorMeta } from "./test-support/pagination-envelope";
 
 const row = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -17,7 +18,10 @@ const row = {
 
 describe("parseQueuePage", () => {
   it("maps the platform API's snake_case row onto QueueRow", () => {
-    const page = parseQueuePage({ opportunities: [row] }, { total: 4, preceding_count: 2 });
+    const page = parseQueuePage(
+      { opportunities: [row] },
+      paginationCursorMeta({ total: 4, preceding_count: 2 }),
+    );
     expect(page.rows).toEqual([
       {
         id: "11111111-1111-4111-8111-111111111111",
@@ -38,15 +42,25 @@ describe("parseQueuePage", () => {
   });
 
   it("defaults cursors to null when meta omits them", () => {
-    const page = parseQueuePage({ opportunities: [] }, { total: 0, preceding_count: 0 });
+    const page = parseQueuePage(
+      { opportunities: [] },
+      paginationCursorMeta({ total: 0, preceding_count: 0 }),
+    );
     expect(page.nextCursor).toBeNull();
     expect(page.previousCursor).toBeNull();
     expect(page.rows).toEqual([]);
   });
 
   it("carries cursors through when meta has them", () => {
-    const page = parseQueuePage({ opportunities: [] },
-      { total: 0, preceding_count: 0, next_cursor: "abc", previous_cursor: "xyz" });
+    const page = parseQueuePage(
+      { opportunities: [] },
+      paginationCursorMeta({
+        total: 0,
+        preceding_count: 0,
+        next_cursor: "abc",
+        previous_cursor: "xyz",
+      }),
+    );
     expect(page.nextCursor).toBe("abc");
     expect(page.previousCursor).toBe("xyz");
   });

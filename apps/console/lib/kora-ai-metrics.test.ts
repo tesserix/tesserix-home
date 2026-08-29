@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { parseKoraAiMetrics, parseKoraAiMetricsPagination } from "./kora-ai-metrics";
+// Named explicitly rather than a bare `{ total, limit }` literal: this is
+// the `koraaimetrics` module's convention — pagination lives in the
+// envelope's `meta`, never nested inside `data` the way `entities` does
+// (see `entities.test.ts`). This is the exact distinction #421 got backwards.
+import { paginationInMeta } from "./test-support/pagination-envelope";
 
 /** Kora's `data` object as platform-api forwards it — the shape
  *  tesserix/kora#507's `aiMetricsData` documents. */
@@ -46,7 +51,7 @@ const body = {
  * `pagination` key platform-api has never produced) shipped the production
  * bug this file now guards against.
  */
-const meta = { total: 2, limit: 50 };
+const meta = paginationInMeta({ total: 2, limit: 50 });
 
 describe("parseKoraAiMetrics", () => {
   it("reads attempts, needs_human and first_try_rate_pct", () => {
