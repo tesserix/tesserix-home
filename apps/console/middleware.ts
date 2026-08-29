@@ -60,12 +60,27 @@ function isPublicPath(pathname: string): boolean {
 // `verifySession` here would reject every valid call before the route ever
 // ran, presenting as an unconditional 401 no matter how correctly mark8ly
 // authenticated.
+//
+// EXACT MATCH ONLY — deliberately not `pathname.startsWith(p + "/")` the way
+// `isPublicPath` above matches a subtree. Two reasons, both found in review:
+//
+// 1. A subtree match fails OPEN on a normalisation shape `isPublicPath`
+//    doesn't need to worry about: `%2f` survives whatever path normalisation
+//    happens upstream of this middleware (dot-segments, `%2e%2e`, case
+//    variation and a literal double slash all fail closed here; a literal
+//    `%2f` does not), so `/api/v1/plan-catalog/..%2fadmin` would satisfy a
+//    prefix match and be exempted from the session gate entirely. An exact
+//    match has no subtree to smuggle a segment into.
+// 2. This list is a deliberate hole in the console's global auth gate. A
+//    prefix match means any FUTURE route filed under
+//    `/api/v1/plan-catalog/*` inherits that hole by default, with no
+//    action required from whoever adds it. Exact match makes every new
+//    sub-resource opt into the hole explicitly, by adding its own literal
+//    entry, rather than opt out of the session gate by accident.
 const MACHINE_AUTH_PATHS: ReadonlyArray<string> = ["/api/v1/plan-catalog"];
 
 function isMachineAuthPath(pathname: string): boolean {
-  return MACHINE_AUTH_PATHS.some(
-    (p) => pathname === p || pathname.startsWith(p + "/"),
-  );
+  return MACHINE_AUTH_PATHS.includes(pathname);
 }
 
 function unauthorized(request: NextRequest): NextResponse {

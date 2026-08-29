@@ -110,6 +110,44 @@ describe("authentication: 401", () => {
     expect(res.status).toBe(401);
     expect(readCatalogRows).not.toHaveBeenCalled();
   });
+
+  it("answers 401, not 400, when the request is BOTH unauthenticated and carries an invalid mode", async () => {
+    // Auth is checked before mode validation. If that order ever inverts, an
+    // unauthenticated caller would learn something about the accepted `mode`
+    // values before proving who it is — this pins the order, not just the
+    // individual outcomes.
+    vi.mocked(verifyMachineAuthHeader).mockRejectedValue(
+      new MachineTokenError("missing-token", "zitadel: missing or malformed Authorization header"),
+    );
+
+    const res = await GET(request(URL_BAD_MODE));
+
+    expect(res.status).toBe(401);
+    expect(res.status).not.toBe(400);
+  });
+
+  it("never surfaces the underlying jose failure carried on MachineTokenError.cause", async () => {
+    // `cause` can hold a `jose` error such as `JWTClaimValidationFailed`,
+    // which itself carries the token's DECODED CLAIMS. Prove none of that —
+    // nor any other verification detail — reaches the response body.
+    const cause = Object.assign(new Error("JWT claim validation failed"), {
+      code: "ERR_JWT_CLAIM_VALIDATION_FAILED",
+      claim: "aud",
+      payload: { sub: "service-user-1", aud: "wrong-audience" },
+    });
+    vi.mocked(verifyMachineAuthHeader).mockRejectedValue(
+      new MachineTokenError("invalid-token", "zitadel: machine token failed verification", cause),
+    );
+
+    const res = await GET(request(URL_TEST, AUTHED_HEADERS));
+    const raw = JSON.stringify(await res.json());
+
+    expect(res.status).toBe(401);
+    expect(raw).not.toContain("wrong-audience");
+    expect(raw).not.toContain("service-user-1");
+    expect(raw).not.toContain("ERR_JWT_CLAIM_VALIDATION_FAILED");
+    expect(raw).not.toContain("claim");
+  });
 });
 
 describe("authorization: 403, distinct from 401", () => {

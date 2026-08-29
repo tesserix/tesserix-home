@@ -121,6 +121,32 @@ function ifNoneMatchHits(header: string, etag: string): boolean {
     .some((candidate) => candidate === "*" || candidate === etag || candidate.replace(/^W\//, "") === etag);
 }
 
+/**
+ * Pull a short, known-safe error code off an unknown thrown value, for
+ * logging.
+ *
+ * Deliberately returns a STRING, never the error (or its `.cause`) itself.
+ * Nothing here reaches `jose` today — the catch site below only wraps
+ * database reads — but `JWTClaimValidationFailed` (thrown deep inside
+ * `verifyMachineAuthHeader`, which this route also calls) carries the
+ * DECODED TOKEN CLAIMS on the error object, so logging "whatever lands in
+ * this catch" wholesale would be one refactor away from dumping a caller's
+ * claims to the log. A `.code` field, when present, is always a short
+ * machine-readable string by convention (`pg`'s SQLSTATE codes, Node's
+ * `ECONNREFUSED` and friends) — never a payload.
+ */
+function safeErrorCode(err: unknown): string | undefined {
+  if (
+    err &&
+    typeof err === "object" &&
+    "code" in err &&
+    typeof (err as { code: unknown }).code === "string"
+  ) {
+    return (err as { code: string }).code;
+  }
+  return undefined;
+}
+
 interface CatalogPriceBody {
   readonly lookup_key: string;
   readonly plan: string;
@@ -231,12 +257,22 @@ export async function GET(request: Request): Promise<NextResponse> {
       status: 200,
       headers: { ETag: etag, "Cache-Control": "no-cache" },
     });
-  } catch {
-    // Deliberately not the driver's message: it can carry the connection
-    // string and the role name, and this response crosses into another
-    // product's runtime path. Nothing partial is ever returned here — every
-    // read above either fully succeeds or lands in this catch with no body
-    // written yet.
+  } catch (err) {
+    // Logged server-side so a database outage on a cross-repo contract isn't
+    // invisible to an operator — but only `name`/`code`, never the error (or
+    // `.cause`) itself: the driver's own message can carry the connection
+    // string and the role name (see `readCatalogRows`'s callers elsewhere for
+    // the same rule), and `safeErrorCode`'s doc comment explains why this
+    // stays safe even against an error shape this catch doesn't see today.
+    console.error("[api/v1/plan-catalog] failed to read the catalog", {
+      mode,
+      name: err instanceof Error ? err.name : typeof err,
+      code: safeErrorCode(err),
+    });
+    // The response itself says nothing more than "unavailable": this crosses
+    // into another product's runtime path. Nothing partial is ever returned
+    // here — every read above either fully succeeds or lands in this catch
+    // with no body written yet.
     return NextResponse.json({ error: "unavailable" }, { status: 500 });
   }
 }
