@@ -37,7 +37,16 @@ const body = {
   ],
 };
 
-const pagination = { page: 1, limit: 50, total: 2 };
+/**
+ * platform-api's `meta` object as it is ACTUALLY emitted for this endpoint
+ * (`handler.go`'s `metaFrom`) — `total` and `limit`, no `page`. `page` is
+ * never on the wire: `metaFrom` deliberately omits it, since it is the one
+ * value the caller already supplied. This is the shape whose absence from
+ * the old fixtures (a `{ page, limit, total }` object nested under a
+ * `pagination` key platform-api has never produced) shipped the production
+ * bug this file now guards against.
+ */
+const meta = { total: 2, limit: 50 };
 
 describe("parseKoraAiMetrics", () => {
   it("reads attempts, needs_human and first_try_rate_pct", () => {
@@ -168,21 +177,37 @@ describe("parseKoraAiMetrics", () => {
 });
 
 describe("parseKoraAiMetricsPagination", () => {
-  it("reads page, limit and total", () => {
-    expect(parseKoraAiMetricsPagination({ ...body, pagination })).toEqual({
+  it("reads total and limit from meta, exactly as platform-api emits it — no pagination sibling, no page field", () => {
+    expect(parseKoraAiMetricsPagination(meta, 1)).toEqual({
       page: 1,
       limit: 50,
       total: 2,
     });
   });
 
-  it("refuses a response with no pagination", () => {
-    expect(() => parseKoraAiMetricsPagination(body)).toThrow(/pagination/);
+  it("reflects the requested page back, since meta never carries one", () => {
+    expect(parseKoraAiMetricsPagination(meta, 3)).toEqual({
+      page: 3,
+      limit: 50,
+      total: 2,
+    });
+  });
+
+  it("refuses a malformed meta — missing entirely", () => {
+    expect(() => parseKoraAiMetricsPagination(undefined, 1)).toThrow(/meta/);
+  });
+
+  it("refuses a meta missing total", () => {
+    const { total: _omitted, ...withoutTotal } = meta;
+    expect(() => parseKoraAiMetricsPagination(withoutTotal, 1)).toThrow(/total/);
+  });
+
+  it("refuses a meta missing limit", () => {
+    const { limit: _omitted, ...withoutLimit } = meta;
+    expect(() => parseKoraAiMetricsPagination(withoutLimit, 1)).toThrow(/limit/);
   });
 
   it("refuses a non-whole or negative total", () => {
-    expect(() =>
-      parseKoraAiMetricsPagination({ ...body, pagination: { ...pagination, total: -1 } }),
-    ).toThrow(/total/);
+    expect(() => parseKoraAiMetricsPagination({ ...meta, total: -1 }, 1)).toThrow(/total/);
   });
 });
