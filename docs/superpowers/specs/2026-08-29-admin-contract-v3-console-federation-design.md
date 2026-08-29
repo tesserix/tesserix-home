@@ -127,12 +127,18 @@ endpoint's real behaviour. Neither is worth a check. Declared, not probed.
 ### 3.3 Why `break-glass` probes but needs configuration
 
 It is the first **read** in the estate gated on an exact capability *value*
-(`rotate-credentials`, `middleware.go:111`). A suite run without that capability gets a 403,
-which is the endpoint working correctly and would report as a failure. The runner must send it,
-and the CronJob's signing identity must hold it. If the identity cannot be granted
-`rotate-credentials`, this id degrades to `probe: false` rather than shipping a check that is
-red for a reason unrelated to conformance — record that decision in the changelog if it
-happens; do not quietly flip the flag.
+(`rotate-credentials`, `middleware.go:367-385`). A suite run without that capability gets a 403,
+which is the endpoint working correctly and would report as a failure. The runner must send
+`--operator` and `--capability rotate-credentials`.
+
+**Correction (2026-08-29):** an earlier version of this section claimed the CronJob's signing
+identity must "hold" `rotate-credentials`, and that the id should degrade to `probe: false` if
+it could not be granted that capability. Neither is true. `middleware.go:367-385` gates the
+read on exact string equality between the presented `Capability` field and the literal value
+`"rotate-credentials"`, plus a non-empty `Operator` — there is no grant list, no identity
+verification, and nothing to hold. Any signer that already reaches this surface (i.e. holds the
+shared HMAC secret) can send any operator string and the literal capability value and pass.
+`break-glass` is declared in Plan 0 alongside the other seven; nothing needs verifying first.
 
 ### 3.4 The two-copy declaration stays two copies
 
@@ -244,11 +250,18 @@ one the estate is being held to.
 
 ### 9.1 `break-glass` needs a CronJob change, and it is the only one that does
 
-The suite sends a single capability for the whole run, via `--capability` (`cli.ts:60`). The
-mark8ly CronJob passes `--base`, `--slug` and `--declaration` and nothing else today, so a
-`break-glass` probe would arrive with no capability and get a 403 — the endpoint working
-correctly, reported as a failure.
+The suite sends a single capability for the whole run, via `--capability` (`cli.ts:60`), and
+needs `--operator` for the same run. The mark8ly CronJob passed `--base`, `--slug` and
+`--declaration` and nothing else before this landed. The CLI defaults `--operator` to
+`admin-conformance` and `--capability` to `platform` (`cli.ts:150-151`), so the operator was
+never actually missing; the resulting `break-glass` probe got a 403 `capability_insufficient` —
+the default capability `platform` failing exact-string-equality against `rotate-credentials` —
+the endpoint working correctly, reported as a failure.
 
-Adding `--capability rotate-credentials` to the job's args is therefore part of V4, not Plan 0,
-and it must be verified against the signing identity before `break-glass` is declared. If the
-identity cannot hold `rotate-credentials`, the id degrades to `probe: false` per §3.3.
+**Correction (2026-08-29):** this section previously said the flag addition needed to wait for
+V4 pending verification against the "signing identity," and that the id would degrade to
+`probe: false` if that identity could not "hold" `rotate-credentials`. That premise does not
+exist in the code. `middleware.go:367-385` checks exact string equality against the capability
+value and a non-empty operator only — no grant, no identity check. `--operator` and
+`--capability rotate-credentials` were added to the CronJob's `npx` args in Plan 0 itself, and
+`break-glass` is declared in both copies alongside the other seven ids.

@@ -820,19 +820,24 @@ other on the strength of the name.
 
 ### 9.4 `GET /admin/break-glass`
 
-Envelope: `data-pagination` (§4.1). Probed — but only usefully so once the
-signing identity holds the right capability.
+Envelope: `data-pagination` (§4.1). Probed.
 
 This is the first **read** in the estate gated on an exact capability *value*:
-`rotate-credentials` (`middleware.go:111`). A suite run without that capability
-gets a 403, which is the endpoint working correctly and would report as a
-failure if the runner did not account for it. The runner must send it, and the
-CronJob's signing identity must hold `rotate-credentials`.
+`rotate-credentials` (`middleware.go:367-385`). A suite run without that
+capability gets a 403, which is the endpoint working correctly and would
+report as a failure if the runner did not account for it. The runner sends
+`--operator` and `--capability rotate-credentials`.
 
-If the signing identity cannot be granted that capability, this id degrades to
-`probe: false` rather than shipping a check that is red for a reason unrelated
-to conformance. Record that decision in the changelog if it happens — do not
-quietly flip the flag.
+**Correction (2026-08-29):** an earlier version of this section claimed the
+CronJob's signing identity must "hold" `rotate-credentials`, with a fallback
+to `probe: false` if it could not be granted. That is false — there is no
+grant to hold. `middleware.go:367-385` checks exact string equality between
+the presented capability value and the literal string
+`"rotate-credentials"`, plus a non-empty operator; no identity verification
+of any kind sits behind it. Any caller that already holds the shared HMAC
+secret used to sign requests can send the literal capability string and an
+arbitrary operator identifier and pass. `break-glass` is declared and probed
+like the other seven new ids.
 
 ### 9.5 `GET /admin/conversions`
 
