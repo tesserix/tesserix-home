@@ -30,11 +30,35 @@ import {
 // `server-only`; see that module's header for why a client component
 // reaching it is exactly the mistake this page's own comments warn every
 // client sibling (`catalog-views.tsx`, `authoring-panel.tsx`) away from.
-import { currentDraft } from "@/lib/db/publish-repo";
+import {
+  currentDraft,
+  latestPublishAttempt,
+  operationsForAttempt,
+  type PublishAttempt,
+  type PublishOperationRow,
+} from "@/lib/db/publish-repo";
+// A VALUE import for the same reason `currentDraft` above is one, and with
+// one extra thing at stake: `orphans.ts` is `server-only` and reaches BOTH
+// `pg` (through `archivedStripePriceIds`) and `stripe` (through
+// `stripe-read.ts`). Calling it HERE, in a server component, is correct;
+// letting the module — or its `Orphan` type — travel on to `AuthoringPanel`
+// would put both drivers on the browser bundle's import graph, and `tsc`
+// and `vitest` would both stay green while `next build` failed with
+// `Can't resolve 'net'`. What crosses that boundary below is
+// `PublishOutcomeOrphan`, the trimmed shape `publish-outcome.tsx` declares
+// precisely so `Orphan` never has to.
+import { findOrphans } from "@/lib/billing/orphans";
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { CatalogViews } from "./catalog-views";
 import { AuthoringPanel } from "./authoring-panel";
+// Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
+// `"use client"`, and these two are the display shapes this page maps its
+// server-side rows INTO — never a value this server component calls.
+import type {
+  PublishOutcomeOperation,
+  PublishOutcomeOrphan,
+} from "./publish-outcome";
 
 /**
  * The plan catalog's console surface — tesserix-home#326's read-only half
@@ -44,10 +68,13 @@ import { AuthoringPanel } from "./authoring-panel";
  *
  * # This page itself still imports nothing from Stripe
  *
- * That claim now needs to be precise about WHO it covers: this file's own
- * five reads (below) touch only `tesserix-postgres`, never Stripe, and never
- * publish anything — the fifth (`readDraft`) reads only whether a draft
- * exists, not Stripe. `AuthoringPanel` and its children are a different
+ * That claim no longer holds unqualified, and the honest version is worth
+ * stating rather than quietly dropping: six of this file's seven reads touch
+ * only `tesserix-postgres` and never publish anything, but the SEVENTH —
+ * `readOrphans` — does read Stripe, through `findOrphans`. It is still a
+ * read: it lists active Prices and cross-references them against what this
+ * catalog's own log believes it archived. Nothing on this page writes to
+ * Stripe. `AuthoringPanel` and its children are a different
  * story on purpose: `DraftEditor`, `PublishView` and `PublishOutcome` are
  * CLIENT components whose server actions (`actions.ts`) are the write path
  * — Stripe reads, Stripe writes, the guards, the operation log — with their
@@ -56,7 +83,7 @@ import { AuthoringPanel } from "./authoring-panel";
  * what it needs to decide what its OWN controls may do; it does not do any
  * of that deciding itself.
  *
- * # FIVE independent reads, not one
+ * # SEVEN independent reads, not one
  *
  * Same discipline `../page.tsx` (estate billing) and `../../audit-log/page.tsx`
  * apply: `Promise.allSettled`, not `Promise.all`, so a failure in one read
@@ -70,6 +97,26 @@ import { AuthoringPanel } from "./authoring-panel";
  * all; a failed draft read must not take down any of the other four either,
  * and is narrowed into its own `SurfaceState` (`draftState`) that
  * `AuthoringPanel` alone reacts to.
+ *
+ * The SIXTH and SEVENTH arrived with tesserix-home#410, when the publish
+ * outcome stopped living only in `AuthoringPanel`'s React state — where it
+ * survived exactly one page load:
+ *
+ * - `readAttempt` is the mode's most recent publish attempt. It exists so an
+ *   operator who publishes, closes the tab, and comes back still learns that
+ *   the publish failed, instead of finding a page that looks like nothing
+ *   ever happened. It must not take the catalog down, because the catalog is
+ *   what they came back to look at.
+ * - `readOrphans` is the archived-in-our-log-but-still-active-in-Stripe
+ *   check. It is the one failure the nightly parity run STRUCTURALLY cannot
+ *   see (`orphans.ts`'s header explains why), so this page is its only
+ *   surface. It is also the only read here that leaves the estate, which is
+ *   exactly why it is isolated: a Stripe outage must degrade to "the orphan
+ *   check is unavailable" and touch nothing else on the page.
+ *
+ * And an eighth read, `readOperations`, sits OUTSIDE the `allSettled` array
+ * because it depends on the attempt read having named an id first — the same
+ * shape, and the same reasoning, as `readDraft` → `readDraftRows`.
  *
  * # Reads tesserix-postgres directly, like `audit-log`, unlike `billing`
  *
@@ -106,6 +153,24 @@ export const PUBLICATION_SURFACE = "the catalog's live publication";
  *  through `publicationReadError` already apply. */
 export const DRAFT_SURFACE = "the current draft";
 export const DRAFT_ROWS_SURFACE = "the draft's priced rows";
+/** The mode's most recent publish attempt — tesserix-home#410's sixth
+ *  surface. Named for the attempt, not for the outcome it carries: the read
+ *  can fail while the mode has a perfectly good attempt to report, and the
+ *  copy an operator sees has to say which of those two happened. */
+export const ATTEMPT_SURFACE = "the latest publish attempt";
+/** The seventh, and the only surface on this page whose failure is not a
+ *  `tesserix-postgres` failure: `findOrphans` reaches Stripe as well. Named
+ *  as the CHECK rather than as "Stripe" so an unavailable message says what
+ *  the operator has lost — the orphan check — rather than naming a
+ *  dependency they cannot act on. */
+export const ORPHANS_SURFACE = "the orphaned Stripe price check";
+/** The dependent eighth, standing to `ATTEMPT_SURFACE` exactly as
+ *  `DRAFT_ROWS_SURFACE` stands to `DRAFT_SURFACE`: "which attempt was last"
+ *  and "what did it actually do" are two reads, and a failure in the second
+ *  must name itself distinctly from the first — an operator who can see the
+ *  attempt but not its operations is in a different position from one who
+ *  can see neither. */
+export const OPERATIONS_SURFACE = "the publish attempt's operations";
 
 /** Query params this page reads. Matches `TenantSearchParams`'s shape —
  *  `string | string[] | undefined` is what Next actually hands a page. */
@@ -129,10 +194,10 @@ export function readCatalogMode(searchParams: CatalogSearchParams): StripeMode {
 /**
  * Narrow each read's rejection ONCE, at the point it is caught — `dbReadError`
  * logs the real error server-side, and calling it twice per failure would log
- * the same failure twice. Six functions, not one, so the log line and the
+ * the same failure twice. Nine functions, not one, so the log line and the
  * migrations-pending copy each name the table that actually failed rather
  * than a generic "the plan catalog" that leaves an operator guessing which of
- * six reads broke.
+ * nine reads broke.
  */
 export function windowReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, WINDOW_SURFACE);
@@ -151,6 +216,23 @@ export function draftReadError(caught: unknown): SurfaceError | null {
 }
 export function draftRowsReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, DRAFT_ROWS_SURFACE);
+}
+export function attemptReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, ATTEMPT_SURFACE);
+}
+/** Goes through `dbReadError` like the other eight even though this read can
+ *  also fail at Stripe rather than at `tesserix-postgres`. That is not an
+ *  oversight: `dbReadError`'s un-migrated branch only fires on `pg`'s own
+ *  `42P01`, so a Stripe failure falls through to the same generic
+ *  "something went wrong" every other non-migration failure gets, and
+ *  `ORPHANS_SURFACE` names the check either way. The alternative — a second
+ *  narrowing helper for the Stripe half — would have to guess which half
+ *  failed from an error this module never sees. */
+export function orphansReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, ORPHANS_SURFACE);
+}
+export function operationsReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, OPERATIONS_SURFACE);
 }
 
 /** Thrown by each guarded read below when the console has no database
@@ -231,6 +313,120 @@ async function readDraftRows(revisionId: string): Promise<CatalogRow[]> {
   return readRevisionRows(revisionId, SINGLE_SOURCE);
 }
 
+/**
+ * The mode's most recent publish attempt, whatever became of it. `null` is
+ * the ordinary answer for a mode nobody has published — `live`, most days —
+ * and is never treated as a failure, the same discipline `readPublication`
+ * and `readDraft` apply to their own absent rows.
+ *
+ * Reads the LATEST attempt rather than a named one on purpose: a page load
+ * has a mode and no attempt id, and "what happened here last" is the
+ * question an operator returning to this page is actually asking.
+ */
+async function readAttempt(mode: StripeMode): Promise<PublishAttempt | null> {
+  if (!isDatabaseConfigured()) notConfigured();
+  return latestPublishAttempt(mode);
+}
+
+/**
+ * Archived-in-our-log-but-still-active-in-Stripe Prices for the mode. An
+ * empty list is the ordinary, hoped-for answer and is not a failure.
+ *
+ * # DELIBERATELY NOT gated on the attempt's outcome. Do not "optimise" it.
+ *
+ * The obvious-looking saving — only check for orphans when the latest
+ * attempt failed — reintroduces the exact bug this read exists to fix, one
+ * level down. `findOrphans` is MODE-scoped, not attempt-scoped: it
+ * cross-references every archived id in the log for the mode
+ * (`archivedStripePriceIds`) against Stripe's active set, so an orphan
+ * OUTLIVES the attempt that stranded it and survives a later successful
+ * publish. Under that gate the sequence "publish fails and strands a Price →
+ * operator re-plans → publish succeeds" would make the stranded Price
+ * permanently invisible, and nothing else in the estate can see it: the
+ * nightly parity run structurally cannot (`orphans.ts`'s header), so this is
+ * its only surface. Worse than the state before this read existed, because
+ * it would look deliberate.
+ *
+ * The cost is one paged Stripe `prices.list` per page load. Accepted: this
+ * is an internal console with a handful of operators, it is the same call
+ * the nightly parity run already makes, and it is isolated here so a Stripe
+ * outage degrades to "the orphan check is unavailable" without touching
+ * anything else on the page.
+ */
+async function readOrphans(mode: StripeMode): Promise<readonly PublishOutcomeOrphan[]> {
+  if (!isDatabaseConfigured()) notConfigured();
+  // Mapped to the display shape HERE, at the last server-side moment, so
+  // `Orphan` — and with it `orphans.ts` — never reaches a prop passed to a
+  // client component. See this file's import block for what that costs when
+  // it does.
+  const found = await findOrphans(mode);
+  return found.map((orphan) => ({
+    priceId: orphan.priceId,
+    lookupKey: orphan.lookupKey,
+    source: orphan.source,
+  }));
+}
+
+/**
+ * The attempt's own write-ahead operation log, once `readAttempt` has named
+ * an id — the only place an operator can see, per operation, what actually
+ * landed in Stripe versus what did not. A `"failed"` attempt has `succeeded`
+ * rows in it (the executor continues past a single failure), which is why a
+ * summary count would hide exactly the fact that matters.
+ *
+ * Called OUTSIDE the seven-way `Promise.allSettled` below, for precisely the
+ * reason `readDraftRows` is: it depends on another read's result — there is
+ * no id to read operations for until `readAttempt` resolves — so it cannot
+ * be a sibling in the same array. It is still independently settled, in its
+ * own `try`/`catch`, so its failure narrows into `operationsState` alone and
+ * never touches `catalogState`, `windowState`, `runsState`,
+ * `publicationState`, `draftState`, `orphansState`, or even `attemptState`
+ * (which has already succeeded by the time this runs — an operator can see
+ * THAT the publish failed even on a day they cannot see what it did).
+ */
+async function readOperations(attemptId: string): Promise<PublishOutcomeOperation[]> {
+  if (!isDatabaseConfigured()) notConfigured();
+  const rows = await operationsForAttempt(attemptId);
+  // `PublishOperationRow` carries more than this surface shows (idempotency
+  // keys, Stripe price ids, timestamps); the display type is deliberately
+  // narrower, and narrowing it here keeps that decision on the server side.
+  return rows.map((row: PublishOperationRow) => ({
+    sequence: row.sequence,
+    kind: row.kind,
+    lookupKey: row.lookupKey,
+    status: row.status,
+    error: row.error,
+  }));
+}
+
+/**
+ * Which attempts this surface has any business showing: the UNRESOLVED ones
+ * only — `failed`, `aborted`, or an attempt that never recorded a verdict at
+ * all. A `succeeded` latest attempt returns `null`.
+ *
+ * Not a filter for tidiness. A success is ALREADY durably surfaced on this
+ * page, by `readPublication` → `CatalogViews`'s publication block: who
+ * published which revision, and when. Showing a second, persisted success
+ * banner beside it would be two accounts of one event, which
+ * `publish-outcome.tsx`'s own "Consistency with `publish-view.tsx`" note
+ * treats as a defect. And it would be the WORSE of the two accounts:
+ * `PublishOutcome`'s success copy claims "Stripe now matches this revision",
+ * a statement about Stripe's CURRENT state that was true at publish time and
+ * decays silently as the catalog drifts. Pinning that above the catalog
+ * permanently is a stale-success banner, which is its own bug.
+ *
+ * "Unresolved" needs no extra bookkeeping precisely because this reads only
+ * the LATEST attempt: a subsequent successful publish resolves a prior
+ * failure automatically, without anything having to go back and clear it.
+ *
+ * An operator who has just published successfully still gets their receipt —
+ * `AuthoringPanel` keeps the live session outcome from `publishAction`, and
+ * that wins over this. This only governs what comes BACK on a reload.
+ */
+export function surfacedAttempt(attempt: PublishAttempt | null): PublishAttempt | null {
+  return attempt && attempt.outcome !== "succeeded" ? attempt : null;
+}
+
 export default async function PlanCatalog({
   searchParams,
 }: {
@@ -239,14 +435,26 @@ export default async function PlanCatalog({
   const mode = readCatalogMode(await searchParams);
 
   // `allSettled`, not `all`: see the module doc comment above.
-  const [windowResult, catalogResult, runsResult, publicationResult, draftResult] =
-    await Promise.allSettled([
-      readWindow(),
-      readCatalog(mode),
-      readRuns(),
-      readPublication(mode),
-      readDraft(),
-    ]);
+  const [
+    windowResult,
+    catalogResult,
+    runsResult,
+    publicationResult,
+    draftResult,
+    attemptResult,
+    orphansResult,
+  ] = await Promise.allSettled([
+    readWindow(),
+    readCatalog(mode),
+    readRuns(),
+    readPublication(mode),
+    readDraft(),
+    readAttempt(mode),
+    // A SIBLING of the attempt read, never a child of it — see
+    // `readOrphans`'s doc comment for the bug that gating it would
+    // reintroduce.
+    readOrphans(mode),
+  ]);
 
   const window = windowResult.status === "fulfilled" ? windowResult.value : null;
   const windowState: SurfaceState = resolveState({
@@ -303,6 +511,96 @@ export default async function PlanCatalog({
     rows: draft ? [draft] : [],
     filtered: false,
   });
+
+  // Decision 1, applied to the read's result rather than to the query: the
+  // reader returns the latest attempt whatever became of it (that is the
+  // log's business), and this page decides what it has any business showing
+  // (that is the surface's business). See `surfacedAttempt`.
+  const attempt = surfacedAttempt(
+    attemptResult.status === "fulfilled" ? attemptResult.value : null,
+  );
+  const attemptState: SurfaceState = resolveState({
+    isLoading: false,
+    error: attemptResult.status === "rejected" ? attemptReadError(attemptResult.reason) : null,
+    // `empty` covers two different-looking cases that want the same
+    // treatment — nobody has ever published this mode, and the last publish
+    // succeeded — because both mean the same thing here: this surface has
+    // nothing of its own to say, and `CatalogViews`'s publication block says
+    // whatever there is to say instead.
+    rows: attempt ? [attempt] : [],
+    filtered: false,
+  });
+
+  const orphans = orphansResult.status === "fulfilled" ? orphansResult.value : [];
+  const orphansState: SurfaceState = resolveState({
+    isLoading: false,
+    error: orphansResult.status === "rejected" ? orphansReadError(orphansResult.reason) : null,
+    // An empty list is the hoped-for answer, not a bug and not a
+    // not-bootstrapped state: it means every Price this catalog's log
+    // believes it archived is in fact archived in Stripe.
+    rows: orphans,
+    filtered: false,
+  });
+
+  // The attempt's OWN operations — a dependent read, only attempted once
+  // `readAttempt` has actually named an unresolved attempt. See
+  // `readOperations`'s doc comment for why this cannot be a sibling inside
+  // the `Promise.allSettled` above, and why its failure still cannot touch
+  // anything else on this page.
+  let operations: readonly PublishOutcomeOperation[] = [];
+  let operationsState: SurfaceState = resolveState({
+    isLoading: false,
+    error: null,
+    rows: [],
+    filtered: false,
+  });
+  if (attemptState.kind === "ready" && attempt) {
+    try {
+      operations = await readOperations(attempt.id);
+      operationsState = resolveState({ isLoading: false, error: null, rows: operations, filtered: false });
+    } catch (caught) {
+      operationsState = resolveState({
+        isLoading: false,
+        error: operationsReadError(caught),
+        rows: [],
+        filtered: false,
+      });
+    }
+  }
+
+  /**
+   * Everything the persisted-outcome surface needs, assembled server-side and
+   * handed to `AuthoringPanel` by the task that widens its props. Kept as one
+   * named bundle rather than five loose locals so the boundary is obvious:
+   * every field here is a plain display shape, and neither `Orphan` nor
+   * `PublishOperationRow` — nor the `server-only` modules they come from —
+   * appears in it.
+   *
+   * `promoted` mirrors `actions.ts`'s own `outcome.outcome === "succeeded"`
+   * verbatim rather than deriving the same fact a second way. Under Decision
+   * 1 a surfaced attempt is never `succeeded`, so this is always `false` in
+   * practice; writing it as the mirror anyway means the two cannot drift if
+   * that decision is ever revisited.
+   */
+  // Deliberately not yet passed anywhere: widening `AuthoringPanel`'s props
+  // is the next step, and this bundle is assembled here so that step is a
+  // prop spread rather than a second pass over the reads. Grep for this
+  // directive when it is time to delete it.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- see above
+  const persistedOutcomeProps = {
+    persistedOutcome: attempt
+      ? {
+          attemptId: attempt.id,
+          outcome: attempt.outcome,
+          promoted: attempt.outcome === "succeeded",
+          operations,
+        }
+      : null,
+    attemptState,
+    operationsState,
+    orphans,
+    orphansState,
+  };
 
   // The draft's OWN rows — a second, independent read, only attempted once
   // `readDraft` has actually named an id. See `readDraftRows`'s own doc
