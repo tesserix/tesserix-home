@@ -16,6 +16,7 @@
  */
 
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { bearerToken } from "./bearer";
 
 /**
  * Zitadel's role claim. Shaped as:
@@ -161,6 +162,183 @@ export async function verifyIdToken(
  * coinciding the moment `apps/web` admits any other kind of user, and at that
  * point a customer's cookie would otherwise be accepted by the console.
  */
+// ---------------------------------------------------------------------
+// MACHINE TOKENS
+//
+// A Zitadel service user (a machine, e.g. mark8ly reading the plan catalog)
+// authenticates the same way an operator's browser does — a bearer token
+// verified against this issuer's JWKS — but two of the assumptions above do
+// not hold for it:
+//
+// 1. `ZitadelIdentity.email` is required. A service user need not have one,
+//    and this module will not fabricate a placeholder: a synthetic email in
+//    an audit trail is worse than an absent field. Machine identities are
+//    therefore a distinct shape (`MachineIdentity`) rather than widening
+//    `ZitadelIdentity` and forcing every operator call site to re-check for
+//    an email that, for operators, always exists.
+//
+// 2. `ZitadelConfig.clientId` is documented as "OIDC client id of the
+//    `apps/web` application" and is what an operator's ID token carries as
+//    `aud`. A service-user access token is minted for a different
+//    application/API resource and will carry a DIFFERENT audience. This
+//    module does not know that value — establishing it requires looking at
+//    a real token issued by the live Zitadel instance for the service user
+//    that will call the catalog-read route, which this package cannot do.
+//    Rather than relax or skip the audience check (the one thing that proves
+//    the token was minted for THIS route and not reused from elsewhere), a
+//    separate `ZitadelMachineConfig.audience` is required, sourced from its
+//    own environment variable. See `getZitadelMachineConfig` below for
+//    exactly which variable must be provisioned before this can verify a
+//    real token.
+// ---------------------------------------------------------------------
+
+export interface MachineIdentity {
+  readonly sub: string;
+  /** `azp` claim — the client the token was issued to, when present. */
+  readonly clientId?: string;
+  /** Raw role keys from the token. Narrow with `toCapabilities`. */
+  readonly roles: readonly string[];
+  /** Granting organization id, when the token carries one. */
+  readonly orgId?: string;
+}
+
+export interface ZitadelMachineConfig {
+  /** Issuer origin, e.g. `https://auth.tesserix.app`. Same IdP as operators. */
+  readonly issuer: string;
+  /**
+   * Expected `aud` on a machine access token.
+   *
+   * Deliberately NOT `ZitadelConfig.clientId` — that is `apps/web`'s OIDC
+   * client id and is what an operator's ID token carries, not what a service
+   * user's access token carries. Defaulting this to `clientId` would let a
+   * browser-flow token that happens to reach this code path pass as a
+   * machine credential.
+   */
+  readonly audience: string;
+  /**
+   * Organization id that denotes an INTERNAL service user. Optional: when
+   * unset, org is not checked and role possession alone gates access.
+   */
+  readonly internalOrgId?: string;
+}
+
+/**
+ * Build machine-token verification config from the environment.
+ *
+ * REQUIRES A NEW ENVIRONMENT VARIABLE NOT YET PROVISIONED ANYWHERE:
+ * `ZITADEL_MACHINE_AUDIENCE`. This package cannot determine the correct
+ * value on its own — it is whatever `aud` Zitadel puts on an access token
+ * issued to the specific service user/API application that calls the
+ * catalog-read route, and that can only be read off a real token from the
+ * live instance. Do not fill this in with a guess (e.g. reusing
+ * `ZITADEL_CLIENT_ID`'s value): a wrong-but-present value fails closed
+ * (every token rejected), which is safe; a value that accidentally matches
+ * something else would silently widen who this route accepts.
+ */
+export function getZitadelMachineConfig(): ZitadelMachineConfig {
+  const issuer = process.env.ZITADEL_ISSUER;
+  if (!issuer) throw new Error("ZITADEL_ISSUER is not set");
+  const audience = process.env.ZITADEL_MACHINE_AUDIENCE;
+  if (!audience) throw new Error("ZITADEL_MACHINE_AUDIENCE is not set");
+  return {
+    issuer: issuer.replace(/\/$/, ""),
+    audience,
+    internalOrgId: process.env.ZITADEL_INTERNAL_ORG_ID || undefined,
+  };
+}
+
+/** Why a machine credential was rejected, distinctly from "not authorized". */
+export type MachineTokenRejectionReason = "missing-token" | "invalid-token";
+
+/**
+ * Thrown by `verifyMachineAuthHeader`. Distinct from `CapabilityError`
+ * (capabilities.ts): this class means "not a usable identity at all" —
+ * `CapabilityError` means "a usable identity that lacks the capability it
+ * needs", thrown separately once the caller checks `identity.roles` with
+ * `toCapabilities`/`assertCapability`.
+ */
+export class MachineTokenError extends Error {
+  readonly reason: MachineTokenRejectionReason;
+  /**
+   * The underlying `jose` verification failure, for logging. Not exposed via
+   * the standard `Error.cause` (this package's target lib predates it) — read
+   * it directly as `err.cause`.
+   */
+  readonly cause?: unknown;
+
+  constructor(
+    reason: MachineTokenRejectionReason,
+    message: string,
+    cause?: unknown,
+  ) {
+    super(message);
+    this.name = "MachineTokenError";
+    this.reason = reason;
+    this.cause = cause;
+  }
+}
+
+/**
+ * Turn an `Authorization` header into a verified machine identity, or throw
+ * a typed `MachineTokenError`.
+ *
+ * `reason === "missing-token"`: the header was absent, empty, or not a
+ * well-formed `Bearer <token>` value. No verification was attempted.
+ *
+ * `reason === "invalid-token"`: a token was present but failed verification
+ * — bad signature, wrong issuer, wrong audience, expired, or missing a
+ * subject. `err.cause` carries the underlying `jose` error for logging;
+ * treat the message shown to a caller as opaque, since (as with
+ * `verifyIdToken`) partial claims from a failed verification must never be
+ * trusted or surfaced.
+ *
+ * Capability is NOT checked here. A valid machine identity that lacks
+ * `read-plan-catalog` is a separate, later failure — call
+ * `assertCapability(identity.roles, "read-plan-catalog")` (capabilities.ts)
+ * once this resolves, and let its `CapabilityError` distinguish "no token" /
+ * "bad token" (this function) from "valid but lacking the capability"
+ * (`CapabilityError`).
+ */
+export async function verifyMachineAuthHeader(
+  authHeader: string | null | undefined,
+  config: ZitadelMachineConfig,
+): Promise<MachineIdentity> {
+  const token = bearerToken(authHeader);
+  if (!token) {
+    throw new MachineTokenError(
+      "missing-token",
+      "zitadel: missing or malformed Authorization header",
+    );
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, jwks(config.issuer), {
+      issuer: config.issuer,
+      audience: config.audience,
+    });
+
+    if (typeof payload.sub !== "string" || payload.sub.length === 0) {
+      throw new Error("zitadel: machine token has no subject");
+    }
+
+    return {
+      sub: payload.sub,
+      clientId: typeof payload.azp === "string" ? payload.azp : undefined,
+      roles: extractRoles(payload[ROLES_CLAIM]),
+      orgId:
+        typeof payload[ORG_ID_CLAIM] === "string"
+          ? (payload[ORG_ID_CLAIM] as string)
+          : undefined,
+    };
+  } catch (err) {
+    throw new MachineTokenError(
+      "invalid-token",
+      "zitadel: machine token failed verification",
+      err,
+    );
+  }
+}
+
 export function isInternal(
   identity: Pick<ZitadelIdentity, "roles" | "orgId">,
   config: Pick<ZitadelConfig, "internalOrgId">,
