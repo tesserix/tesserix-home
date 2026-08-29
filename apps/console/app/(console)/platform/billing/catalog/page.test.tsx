@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { migrationsPendingMessage } from "@/lib/db-read-error";
+import { migrationsPendingMessage, stripeUnavailableMessage } from "@/lib/db-read-error";
+import { StripeReadUnavailableError } from "@/lib/billing/stripe-read";
 import { PlatformApiError } from "@/lib/platform-api";
 import type { CatalogRow, ParityWindowStatus, ModeLatestRun } from "@/lib/db/plan-catalog-repo";
 
@@ -179,7 +180,7 @@ describe("read errors — independent surfaces, independent narrowings", () => {
   // The three surfaces this page grew when the publish outcome stopped living
   // only in `AuthoringPanel`'s React state. Each narrows on its own, for the
   // same reason the four above do: an operator staring at "something went
-  // wrong" needs to know WHICH of seven reads went wrong.
+  // wrong" needs to know WHICH of the nine reads went wrong.
   it("names the latest attempt's own surface in the migrations-pending copy", () => {
     const error = attemptReadError(undefinedTable());
     expect(error?.unavailable?.message).toBe(migrationsPendingMessage(ATTEMPT_SURFACE));
@@ -193,6 +194,39 @@ describe("read errors — independent surfaces, independent narrowings", () => {
   it("names the operations' own surface in the migrations-pending copy", () => {
     const error = operationsReadError(undefinedTable());
     expect(error?.unavailable?.message).toBe(migrationsPendingMessage(OPERATIONS_SURFACE));
+  });
+
+  // I4 (review 2026-08-30). `findOrphans` throws `StripeReadUnavailableError`
+  // when the mode's restricted read key is unset or announces the wrong mode.
+  // It carries no `status`, so before this it fell through to the generic
+  // "Try again shortly" — advice that can never work, since no amount of
+  // waiting provisions a credential — and logged a database that was never
+  // contacted. `live` is this page's DEFAULT mode and has no restricted read
+  // key in this estate today, so this is the common path.
+  it("tells the operator retrying will not help when the mode's Stripe credential is unavailable", () => {
+    const error = orphansReadError(
+      new StripeReadUnavailableError("STRIPE_RESTRICTED_READ_KEY_LIVE is not set"),
+    );
+    expect(error?.message).toBe(stripeUnavailableMessage(ORPHANS_SURFACE));
+    // Not the un-migrated state either: the tables are fine.
+    expect(error?.unavailable).toBeUndefined();
+  });
+
+  it("does not blame tesserix-postgres for a Stripe credential failure", () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      orphansReadError(new StripeReadUnavailableError("STRIPE_RESTRICTED_READ_KEY_LIVE is not set"));
+      const lines = logged.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes("tesserix-postgres"))).toBe(false);
+      expect(lines.some((line) => line.includes("from Stripe"))).toBe(true);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("still narrows a genuine Postgres failure of the same read", () => {
+    const error = orphansReadError(new PlatformApiError("connection reset", 503));
+    expect(error?.message).toBe("Could not load the orphaned Stripe price check. Try again shortly.");
   });
 
   it("passes null through for no error", () => {
@@ -567,7 +601,7 @@ describe("the mounted authoring surface", () => {
   // The two tests below assert RENDERED OUTPUT, not that a mock was called.
   // Every other test in this block proves the page READS the right things;
   // none of them prove those reads reach the screen. That gap is not
-  // theoretical here: all four props `page.tsx` hands `AuthoringPanel`
+  // theoretical here: all five props `page.tsx` hands `AuthoringPanel`
   // (`persistedOutcome`, `attemptState`, `operationsState`, `orphans`,
   // `orphansState`) are OPTIONAL, so a renamed or mistyped key in the
   // `persistedOutcomeProps` bundle would typecheck, lint, build, and leave
@@ -624,5 +658,44 @@ describe("the mounted authoring surface", () => {
 
     expect(screen.getByText(/Orphaned Stripe prices/i)).toBeInTheDocument();
     expect(screen.getByText(/price_stranded/)).toBeInTheDocument();
+  });
+
+  // C1 (review 2026-08-30), at page level and asserted on RENDERED TEXT. The
+  // test above it ("narrows a failed operations read independently") proves
+  // the catalog survives and nothing more, which is exactly how a status line
+  // that told the operator "0 operation(s) failed" — over a table saying "No
+  // operations were recorded for this attempt", under a callout saying the
+  // read failed — reached main.
+  it("does not tell the operator zero operations failed when it could not read them", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.queryByText(/0 operation\(s\) failed/)).toBeNull();
+    expect(screen.queryByText(/No operations were recorded for this attempt/i)).toBeNull();
+    expect(screen.getByText(/what it did to Stripe cannot be shown here/i)).toBeInTheDocument();
+  });
+
+  // I4 (review 2026-08-30). The DEFAULT mode is `live`, whose restricted read
+  // key is not provisioned in this estate, so this is the ordinary path — not
+  // an edge case — and "Try again shortly" is advice that can never work.
+  it("says the orphan check could not run, and that retrying will not help, when Stripe's credential is missing", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    findOrphans.mockRejectedValue(
+      new StripeReadUnavailableError(
+        "STRIPE_RESTRICTED_READ_KEY_LIVE is not set; the plan catalog parity check cannot read live mode Stripe Prices",
+      ),
+    );
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage("live");
+
+    expect(screen.getByText(stripeUnavailableMessage(ORPHANS_SURFACE))).toBeInTheDocument();
+    expect(screen.queryByText(/Could not load the orphaned Stripe price check\. Try again shortly\./)).toBeNull();
   });
 });

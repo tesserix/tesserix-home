@@ -10,7 +10,7 @@ import {
   type SurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
-import { dbReadError } from "@/lib/db-read-error";
+import { dbReadError, stripeUnavailableMessage } from "@/lib/db-read-error";
 import { requiresCapability } from "@/lib/internal-access";
 import { PlatformApiError } from "@/lib/platform-api";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -49,7 +49,11 @@ import {
 // precisely so `Orphan` never has to.
 import { findOrphans } from "@/lib/billing/orphans";
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
-import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
+// `isStripeReadUnavailable` is a VALUE import, and safely: this module is
+// already on this server component's value graph (`STRIPE_MODES`), and a
+// server component is the correct side of the boundary for it. Nothing
+// below hands it, or anything from it, to `AuthoringPanel`.
+import { isStripeReadUnavailable, STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { CatalogViews } from "./catalog-views";
 import { AuthoringPanel } from "./authoring-panel";
 // Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
@@ -70,10 +74,10 @@ import type {
  *
  * This heading used to read "imports nothing from Stripe". That claim no
  * longer holds, and the honest version is worth stating rather than quietly
- * dropping: six of this file's seven reads touch
- * only `tesserix-postgres` and never publish anything, but the SEVENTH —
- * `readOrphans` — does read Stripe, through `findOrphans`. It is still a
- * read: it lists active Prices and cross-references them against what this
+ * dropping: eight of this file's NINE reads (seven independent, two
+ * dependent — see below) touch only `tesserix-postgres` and never publish
+ * anything, but the ninth — `readOrphans` — does read Stripe, through
+ * `findOrphans`. It is still a read: it lists active Prices and cross-references them against what this
  * catalog's own log believes it archived. Nothing on this page writes to
  * Stripe. `AuthoringPanel` and its children are a different
  * story on purpose: `DraftEditor`, `PublishView` and `PublishOutcome` are
@@ -115,9 +119,12 @@ import type {
  *   exactly why it is isolated: a Stripe outage must degrade to "the orphan
  *   check is unavailable" and touch nothing else on the page.
  *
- * And an eighth read, `readOperations`, sits OUTSIDE the `allSettled` array
- * because it depends on the attempt read having named an id first — the same
- * shape, and the same reasoning, as `readDraft` → `readDraftRows`.
+ * Two further reads sit OUTSIDE the `allSettled` array, because each depends
+ * on one of the seven having named an id first: `readDraftRows` (on
+ * `readDraft`) and `readOperations` (on `readAttempt`). They are the same
+ * shape as each other and settle independently in their own `try`/`catch`,
+ * which is what makes the total NINE reads and nine narrowing functions —
+ * seven siblings and two dependents — not seven.
  *
  * # Reads tesserix-postgres directly, like `audit-log`, unlike `billing`
  *
@@ -154,19 +161,20 @@ export const PUBLICATION_SURFACE = "the catalog's live publication";
  *  through `publicationReadError` already apply. */
 export const DRAFT_SURFACE = "the current draft";
 export const DRAFT_ROWS_SURFACE = "the draft's priced rows";
-/** The mode's most recent publish attempt — tesserix-home#410's sixth
- *  surface. Named for the attempt, not for the outcome it carries: the read
+/** The mode's most recent publish attempt — tesserix-home#410's first new
+ *  surface, and the sixth of the seven INDEPENDENT reads. Named for the attempt, not for the outcome it carries: the read
  *  can fail while the mode has a perfectly good attempt to report, and the
  *  copy an operator sees has to say which of those two happened. */
 export const ATTEMPT_SURFACE = "the latest publish attempt";
-/** The seventh, and the only surface on this page whose failure is not a
- *  `tesserix-postgres` failure: `findOrphans` reaches Stripe as well. Named
+/** The seventh independent read, and the only surface on this page whose
+ *  failure is not always a `tesserix-postgres` failure: `findOrphans` reaches Stripe as well. Named
  *  as the CHECK rather than as "Stripe" so an unavailable message says what
  *  the operator has lost — the orphan check — rather than naming a
  *  dependency they cannot act on. */
 export const ORPHANS_SURFACE = "the orphaned Stripe price check";
-/** The dependent eighth, standing to `ATTEMPT_SURFACE` exactly as
- *  `DRAFT_ROWS_SURFACE` stands to `DRAFT_SURFACE`: "which attempt was last"
+/** The second of the two DEPENDENT reads — the ninth surface in all —
+ *  standing to `ATTEMPT_SURFACE` exactly as `DRAFT_ROWS_SURFACE` (the first
+ *  dependent one) stands to `DRAFT_SURFACE`: "which attempt was last"
  *  and "what did it actually do" are two reads, and a failure in the second
  *  must name itself distinctly from the first — an operator who can see the
  *  attempt but not its operations is in a different position from one who
@@ -221,15 +229,47 @@ export function draftRowsReadError(caught: unknown): SurfaceError | null {
 export function attemptReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, ATTEMPT_SURFACE);
 }
-/** Goes through `dbReadError` like the other eight even though this read can
- *  also fail at Stripe rather than at `tesserix-postgres`. That is not an
- *  oversight: `dbReadError`'s un-migrated branch only fires on `pg`'s own
- *  `42P01`, so a Stripe failure falls through to the same generic
- *  "something went wrong" every other non-migration failure gets, and
- *  `ORPHANS_SURFACE` names the check either way. The alternative — a second
- *  narrowing helper for the Stripe half — would have to guess which half
- *  failed from an error this module never sees. */
+/**
+ * The one read here that can fail at Stripe rather than at
+ * `tesserix-postgres`, and the only narrowing function that has to ask WHICH.
+ *
+ * This used to hand everything to `dbReadError` on the reasoning that a
+ * Stripe failure is unknowable from here. It is not: `findOrphans` reaches
+ * Stripe through `stripe-read.ts`, which refuses a mode whose restricted read
+ * key is unset or announces the other mode by throwing
+ * `StripeReadUnavailableError` — a named, recognisable class. Falling through
+ * produced two wrong things at once, and `live` is this page's DEFAULT mode
+ * with no restricted read key provisioned in this estate, so both were the
+ * COMMON case rather than an edge:
+ *
+ * - "Try again shortly", which can never work. No amount of waiting
+ *   provisions a credential. Same class of useless-retry copy
+ *   `invalidCursorMessage` was written to replace, and this follows its
+ *   shape.
+ * - A server log reading "failed to read ... from tesserix-postgres" for a
+ *   read that never contacted the database at all, sending the next engineer
+ *   to the wrong system.
+ *
+ * The Stripe branch is checked FIRST and logs its own line, for the reason
+ * `dbReadError` checks `noOperatorToken` ahead of its own log: the database
+ * must not be named for a failure it had no part in.
+ */
 export function orphansReadError(caught: unknown): SurfaceError | null {
+  if (caught !== null && caught !== undefined && isStripeReadUnavailable(caught)) {
+    // Server-side only, same as `dbReadError`'s own: this runs in a React
+    // Server Component, so it lands in the app's logs and never in the
+    // response. The credential's own message names the variable; this line
+    // names the surface an operator lost.
+    console.error(`[console] failed to read ${ORPHANS_SURFACE} from Stripe`, caught);
+    // No `status`: nothing here is a 501 park (the tables are fine) and
+    // nothing is a transport failure worth a code. `resolveState` turns a
+    // bare message into the `error` state, which is the honest one — the
+    // check genuinely cannot answer.
+    return { message: stripeUnavailableMessage(ORPHANS_SURFACE) };
+  }
+  // Everything else — including a genuine `tesserix-postgres` failure inside
+  // `archivedStripePriceIds`, which is the other half of this same read —
+  // narrows exactly like the other eight.
   return dbReadError(caught, ORPHANS_SURFACE);
 }
 export function operationsReadError(caught: unknown): SurfaceError | null {
@@ -285,9 +325,9 @@ async function readPublication(mode: StripeMode): Promise<LivePublication | null
  *
  * Deliberately does NOT read the draft's amounts here — that is
  * `readDraftRows` below, a SECOND, independent read `AuthoringPanel` alone
- * reacts to, so a broken draft-rows read cannot take this read (or the four
- * above it) down with it. See the module doc comment's "FIVE independent
- * reads" section.
+ * reacts to, so a broken draft-rows read cannot take this read (or the six
+ * others beside it) down with it. See the module doc comment's "SEVEN
+ * independent reads" section.
  */
 async function readDraft(): Promise<{ id: string; basedOn: string | null } | null> {
   if (!isDatabaseConfigured()) notConfigured();
@@ -301,13 +341,15 @@ async function readDraft(): Promise<{ id: string; basedOn: string | null } | nul
  * `authoring-panel.tsx`'s `buildDraftEditorRows` for why that distinction
  * matters the moment an edit has been saved and the page re-renders).
  *
- * Called OUTSIDE the five-way `Promise.allSettled` below, on purpose: it
+ * Called OUTSIDE the seven-way `Promise.allSettled` below, on purpose — the
+ * same shape, and the same reasoning, `readOperations` records for itself: it
  * depends on `readDraft`'s own result (there is no id to read rows for until
  * that read resolves), so it cannot be a sibling in the same array — but it
- * is still independently `allSettled`, in its own `try`/`catch`, so its
- * failure narrows into `draftRowsState` alone and never touches
- * `catalogState`, `windowState`, `runsState`, `publicationState` or even
- * `draftState` (which already succeeded by the time this runs).
+ * is still independently settled, in its own `try`/`catch`, so its failure
+ * narrows into `draftRowsState` alone and never touches `catalogState`,
+ * `windowState`, `runsState`, `publicationState`, `attemptState`,
+ * `orphansState` or even `draftState` (which already succeeded by the time
+ * this runs).
  */
 async function readDraftRows(revisionId: string): Promise<CatalogRow[]> {
   if (!isDatabaseConfigured()) notConfigured();

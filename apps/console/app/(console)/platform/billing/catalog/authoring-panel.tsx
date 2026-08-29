@@ -635,7 +635,17 @@ export function AuthoringPanel({
                 mode={mode}
                 outcome={shown.outcome}
                 promoted={shown.promoted}
-                operations={shown.operations}
+                // `null`, not `[]`, when the dependent operations read
+                // failed: page.tsx has nothing to pass, and an empty array
+                // there is a CLAIM — "this attempt did nothing" — that the
+                // status line then counts (`0 operation(s) failed`) and the
+                // table then restates ("No operations were recorded for this
+                // attempt"), both under the callout above saying the read
+                // failed. Same predicate the callout itself is gated on, so
+                // the two can never disagree.
+                operations={
+                  outcome === null && readFailed(operationsState) ? null : shown.operations
+                }
                 orphans={shownOrphans}
                 replanHref={replanHref}
               />

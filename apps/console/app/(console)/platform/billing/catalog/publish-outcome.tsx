@@ -9,6 +9,10 @@
 import { Button, Callout, CalloutDescription, CalloutTitle } from "@tesserix/web";
 import Link from "next/link";
 import { ConsoleDataTable } from "@/components/kit/console-data-table";
+// From `states`, not `surface-state`: this file is already a client
+// component, and `SurfaceStateView` is the estate's one renderer for a
+// surface that cannot answer right now — see `OperationsTable` below.
+import { SurfaceStateView } from "@/components/kit/states";
 // Type-only across the server/client boundary, deliberately — and NOT
 // optional politeness, per `publish-view.tsx`'s identical note:
 // `PublishAttemptOutcome` reaches `publish-repo.ts`, which is `server-only`
@@ -47,8 +51,10 @@ import type { StripeMode } from "@/lib/billing/stripe-read";
  *
  * # Orphans — the ONE failure the nightly parity check cannot see
  *
- * `findOrphans` (`orphans.ts`) is run automatically here (by the caller, on
- * a failed attempt) rather than waiting for the nightly run, because the
+ * `findOrphans` (`orphans.ts`) is run automatically by the caller on EVERY
+ * page load — mode-scoped, never gated on this attempt's outcome, since an
+ * orphan outlives the attempt that stranded it — rather than waiting for the
+ * nightly run, because the
  * nightly parity check STRUCTURALLY cannot see this failure mode:
  * `compareCatalogToStripe` only ever looks at Prices carrying a
  * `lookup_key`, and a `replace_price` whose `archive` call never landed
@@ -162,10 +168,28 @@ export interface PublishOutcomeProps {
    *  order — empty for `"aborted"`, since `executePublish` never entered
    *  `plan.operations` in that case. An unresolved (`null`) attempt is NOT
    *  that case: it entered the loop and its rows are the only record of
-   *  what reached Stripe. */
-  readonly operations: readonly PublishOutcomeOperation[];
-  /** Orphans found by the automatic post-failure check. Empty on anything
-   *  other than a failed attempt with an incomplete `replace_price`. */
+   *  what reached Stripe.
+   *
+   *  `null` is a THIRD thing, and the distinction is the point: the
+   *  operations are UNKNOWN, because the read that would have fetched them
+   *  failed (`operationsState` on the page, narrowed independently of the
+   *  attempt read itself). An empty array asserts "this attempt did
+   *  nothing"; `null` asserts nothing at all. Conflating them made this
+   *  surface say "0 operation(s) failed" and "No operations were recorded
+   *  for this attempt" underneath a callout saying the read had failed —
+   *  three claims, two of them false, about the one attempt most likely to
+   *  have left Stripe half-changed. */
+  readonly operations: readonly PublishOutcomeOperation[] | null;
+  /** Prices this catalog's log for the MODE believes it archived that Stripe
+   *  still reports active — not this attempt's orphans, and not only a
+   *  failed attempt's. `findOrphans` is mode-scoped: it cross-references
+   *  every archived id in the log for the mode against Stripe's active set,
+   *  so an orphan outlives the attempt that stranded it and survives a later
+   *  successful publish. The caller re-derives this on EVERY page load,
+   *  whatever the latest attempt's outcome was — see `readOrphans` in
+   *  `page.tsx`, whose doc comment records the bug that gating it on a
+   *  failed attempt would reintroduce. Empty is the hoped-for answer, not a
+   *  statement about this attempt. */
   readonly orphans: readonly PublishOutcomeOrphan[];
   /** Where "Re-plan" sends the operator — the catalog surface, so it is a
    *  prop rather than a hardcoded path. */
@@ -178,19 +202,37 @@ export interface PublishOutcomeProps {
  * `outcomeMessage` documents, and the `"succeeded"` / `"aborted"` sentences
  * below are worded to match it rather than restate the same fact
  * differently.
+ *
+ * `operations === null` is a fifth truth crossing the other four: "we could
+ * not find out what this attempt did", which is not "it did nothing". No
+ * branch below may report a COUNT derived from a list it never read.
  */
 function outcomeSummary(
   outcome: PublishAttemptOutcome | null,
-  operations: readonly PublishOutcomeOperation[],
+  operations: readonly PublishOutcomeOperation[] | null,
 ): string {
   if (outcome === null) {
+    // "has not recorded", never "never recorded", and never "stopped" as a
+    // flat assertion: `latestPublishAttempt` returns the newest row for the
+    // mode, so a publish RUNNING RIGHT NOW arrives here identically to one
+    // that crashed — same null outcome, same null `finished_at`. Operator B
+    // loading this page during operator A's live publish must not be told
+    // the attempt stopped, was not promoted as a settled fact, and should go
+    // archive prices in Stripe. Both possibilities are named because the log
+    // genuinely holds no way to tell them apart, and inventing one from
+    // elapsed time would be a guess dressed as a fact.
     return (
-      "This attempt never recorded an outcome. The log does not say it failed — it says nothing at all about how " +
-      "it ended, which is what a publish that stopped between starting and finishing leaves behind. Some of its " +
-      "operations may already have been written to Stripe; the table below is the write-ahead log's record of " +
-      "which. This attempt was NOT promoted — the previous revision is still published. An attempt that stops " +
+      "This attempt has not recorded an outcome. The log does not say it failed, and it does not say it " +
+      "finished: an attempt in this state may still be running right now, or may have stopped between starting " +
+      "and finishing without recording a verdict, and nothing here can tell those two apart. " +
+      (operations === null
+        ? "Some of its operations may already have been written to Stripe, and its operation log could not be " +
+          "read, so nothing here can say which. "
+        : "Some of its operations may already have been written to Stripe; the table below is the write-ahead " +
+          "log's record of which. ") +
+      "This attempt was NOT promoted — the previous revision is still published. An attempt that stops " +
       "mid-flight is the shape that can strand an orphaned Stripe price, so read any orphan warning above with " +
-      "that in mind. Re-plan against what Stripe holds now."
+      "that in mind. If it has stopped, re-plan against what Stripe holds now."
     );
   }
   if (outcome === "succeeded") {
@@ -202,6 +244,21 @@ function outcomeSummary(
       "built, or a guard refused on the re-check. Review the changes again to plan against what Stripe holds now."
     );
   }
+  // A COUNT is only honest when the list was actually read. `[].filter(...)`
+  // on an unread log yields zero, and "0 operation(s) failed" on a FAILED
+  // attempt is the worst sentence this surface could produce: it tells an
+  // operator nothing went wrong on the one attempt where something demonstrably
+  // did. The truthful answer names the gap instead — and names the pairing as
+  // the dangerous one, because a failure whose effects cannot be enumerated is
+  // exactly the state that hides a half-applied publish.
+  if (operations === null) {
+    return (
+      "This attempt failed, and its operation log could not be read — so what it did to Stripe cannot be shown " +
+      "here. That is the dangerous combination: some of its operations may already have landed in Stripe, and " +
+      "nothing on this page can say which. This attempt was NOT promoted — the previous revision is still " +
+      "published. Check Stripe directly before assuming nothing changed, then re-plan against what it holds now."
+    );
+  }
   const failed = operations.filter((operation) => operation.status === "failed");
   const names = failed.map((operation) => `${operation.kind} ${operation.lookupKey ?? ""}`.trim());
   return (
@@ -211,7 +268,34 @@ function outcomeSummary(
   );
 }
 
-function OperationsTable({ operations }: { operations: readonly PublishOutcomeOperation[] }) {
+/** Copy for an operation log that could not be read. Deliberately says what
+ *  is NOT known rather than what was found: "no operations" and "we could not
+ *  read the operations" are opposite facts about a failed publish, and only
+ *  one of them means Stripe is certainly untouched. */
+const OPERATIONS_UNAVAILABLE_TITLE = "Operations unavailable";
+const OPERATIONS_UNAVAILABLE_MESSAGE =
+  "This attempt's write-ahead operation log could not be read, so what it did to Stripe cannot be listed here. " +
+  "That is not a record of an attempt that did nothing.";
+
+function OperationsTable({ operations }: { operations: readonly PublishOutcomeOperation[] | null }) {
+  // `ready` on an unknown list is what produced "No operations were recorded
+  // for this attempt" underneath an error callout saying the read had failed.
+  // The unavailable state is the calm, honest one the estate already has for
+  // "this is not answerable right now", and it carries its own copy because
+  // the default parked-data-plane wording points at an observability doc that
+  // has nothing to do with a publish log.
+  if (operations === null) {
+    return (
+      <SurfaceStateView
+        state={{
+          kind: "instrumentation-unavailable",
+          title: OPERATIONS_UNAVAILABLE_TITLE,
+          message: OPERATIONS_UNAVAILABLE_MESSAGE,
+        }}
+        emptyMessage={OPERATIONS_UNAVAILABLE_MESSAGE}
+      />
+    );
+  }
   return (
     <ConsoleDataTable<PublishOutcomeOperation>
       label="Publish operations"
@@ -263,9 +347,10 @@ export function OrphansCallout({ orphans }: { orphans: readonly PublishOutcomeOr
     <Callout role="alert" variant="destructive">
       <CalloutTitle>Orphaned Stripe prices</CalloutTitle>
       <CalloutDescription>
-        This attempt&apos;s log believes these Prices were archived, but Stripe still reports them active. The
-        nightly parity check cannot see this on its own — it only compares Prices with a lookup key, and these no
-        longer carry one. Archive them directly in Stripe, or re-plan and publish again once you have confirmed
+        This catalog&apos;s log for this mode believes these Prices were archived, but Stripe still reports them
+        active. Any publish this mode has ever run could have left one behind, not necessarily the latest attempt.
+        The nightly parity check cannot see this on its own — it only compares Prices with a lookup key, and these
+        no longer carry one. Archive them directly in Stripe, or re-plan and publish again once you have confirmed
         nothing is still subscribed to them.
       </CalloutDescription>
       <ul className="mt-2">

@@ -4,7 +4,12 @@ import { render, screen, within } from "@testing-library/react";
 import type { PublishAttemptOutcome } from "@/lib/db/publish-repo";
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import type { StripeMode } from "@/lib/billing/stripe-read";
-import { PublishOutcome, type PublishOutcomeOperation, type PublishOutcomeOrphan } from "./publish-outcome";
+import {
+  OrphansCallout,
+  PublishOutcome,
+  type PublishOutcomeOperation,
+  type PublishOutcomeOrphan,
+} from "./publish-outcome";
 
 /**
  * task-5-brief.md's four tests, VERBATIM. Everything below the tests is the
@@ -39,7 +44,13 @@ interface OrphanFixture {
   readonly source?: string;
 }
 
-function buildOperations(fixtures: readonly OperationFixture[] | undefined): PublishOutcomeOperation[] {
+// `null` in, `null` out: "the operation log could not be read" is a state
+// this surface must be able to express, and it is NOT the same state as "the
+// attempt recorded no operations" — see `PublishOutcomeProps.operations`.
+function buildOperations(
+  fixtures: readonly OperationFixture[] | undefined | null,
+): PublishOutcomeOperation[] | null {
+  if (fixtures === null) return null;
   return (fixtures ?? []).map((fixture) => ({
     sequence: fixture.sequence,
     kind: fixture.kind,
@@ -72,7 +83,7 @@ function renderOutcome(
     // fixture builder has to be able to express it.
     outcome?: PublishAttemptOutcome | null;
     promoted?: boolean;
-    operations?: readonly OperationFixture[];
+    operations?: readonly OperationFixture[] | null;
     orphans?: readonly OrphanFixture[];
   } = {},
 ) {
@@ -155,7 +166,9 @@ describe("PublishOutcome", () => {
     // assert more than the log knows.
     renderOutcome({ outcome: null });
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent(/never recorded an outcome/i);
+    // "has not recorded", not "never recorded": the latter reads as a
+    // settled past, and this row can equally be a publish running right now.
+    expect(status).toHaveTextContent(/has not recorded an outcome/i);
     expect(status).toHaveTextContent(/does not say it failed/i);
     // The same truthful claim the failed branch makes, worded the same way.
     expect(status).toHaveTextContent(/NOT promoted/);
@@ -195,5 +208,64 @@ describe("PublishOutcome", () => {
     renderOutcome({ outcome: null });
     expect(screen.getByRole("link", { name: /re-plan/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^retry$/i })).toBeNull();
+  });
+
+  // C1 (review 2026-08-30). The operations read is INDEPENDENTLY narrowed on
+  // the page, so a failed attempt can arrive here with its operation log
+  // unreadable. Before this, that case computed `[].filter(...)` and told the
+  // operator "0 operation(s) failed" — a count of a list nobody could read —
+  // while the table beneath it said "No operations were recorded for this
+  // attempt". Two false claims, under an error callout contradicting both.
+  it("does not count failed operations it could not read", () => {
+    renderOutcome({ outcome: "failed", operations: null });
+    expect(screen.queryByText(/0 operation\(s\) failed/)).toBeNull();
+    expect(screen.queryByText(/No operations were recorded for this attempt/i)).toBeNull();
+    expect(screen.getByText(/what it did to Stripe cannot be shown here/i)).toBeInTheDocument();
+    // The one claim that stays true either way, worded exactly as the sibling
+    // branch words it.
+    expect(screen.getByText(/previous revision is still published/i)).toBeInTheDocument();
+    // And it says out loud why this pairing is the dangerous one.
+    expect(screen.getByText(/may already have landed/i)).toBeInTheDocument();
+  });
+
+  it("does not point an unreadable operation log at a table that is not there", () => {
+    // The `outcome: null` copy tells the reader to consult "the table below".
+    // With the operations unknown there is no such table, so the sentence
+    // that names one must not be the sentence they get.
+    renderOutcome({ outcome: null, operations: null });
+    // By text, not by role: the unavailable state this now renders in the
+    // table's place is itself a `role="status"` callout, so there are two.
+    const status = screen.getByText(/has not recorded an outcome/i);
+    expect(status).not.toHaveTextContent(/table below/i);
+    expect(status).toHaveTextContent(/could not be read/i);
+    expect(screen.queryByText(/No operations were recorded for this attempt/i)).toBeNull();
+  });
+
+  it("admits an attempt with no verdict may still be running", () => {
+    // I3 (review 2026-08-30): `latestPublishAttempt` returns the newest row
+    // for the mode, and a publish RUNNING RIGHT NOW is indistinguishable
+    // here from one that crashed. Operator B loading this page during
+    // operator A's live publish must not be told it "stopped".
+    renderOutcome({ outcome: null });
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/still be running/i);
+    expect(status).toHaveTextContent(/may have stopped/i);
+  });
+});
+
+describe("OrphansCallout", () => {
+  it("attributes the archived-price belief to the mode's log, not to one attempt", () => {
+    // I1 (review 2026-08-30): `findOrphans` is MODE-scoped, so this callout
+    // renders standalone with no attempt at all, and inside attempt N for an
+    // orphan stranded by attempt N-3. "This attempt's log believes..." was
+    // wrong in both of those cases, which are the cases Decision 2 exists
+    // for.
+    render(<OrphansCallout orphans={buildOrphans([{ priceId: "price_old", lookupKey: "b" }])} />);
+    const callout = screen.getByRole("alert");
+    expect(callout).not.toHaveTextContent(/this attempt's log/i);
+    expect(callout).toHaveTextContent(/this mode/i);
+    // The urgency is deliberate and stays.
+    expect(callout).toHaveTextContent(/Stripe still reports them active/i);
+    expect(callout).toHaveTextContent(/nightly parity check cannot see this/i);
   });
 });

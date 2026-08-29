@@ -87,6 +87,30 @@ export function invalidCursorMessage(surface: string): string {
   );
 }
 
+/**
+ * Copy for a read that could not reach Stripe at all, because the mode's
+ * restricted read credential is absent or announces the other mode
+ * (`StripeReadUnavailableError`, `lib/billing/stripe-read.ts`).
+ *
+ * The same shape, and the same reason, as `invalidCursorMessage` above: the
+ * generic copy says "try again shortly", which is right for a dropped
+ * connection and useless here — a credential that is not provisioned fails
+ * identically on every load, so "shortly" never arrives. `live` is the plan
+ * catalog page's DEFAULT mode and has no restricted read key in this estate
+ * today, so this is the ordinary path rather than an exotic one, and an
+ * operator reading it needs to know the remedy is provisioning, not patience.
+ *
+ * Names the credential as the missing thing without naming the variable: the
+ * variable is a deployment detail (`stripe-read.ts` owns that message, for a
+ * server log), and this string is for a console reader.
+ */
+export function stripeUnavailableMessage(surface: string): string {
+  return (
+    `Could not load ${surface}: this mode's Stripe read credential is unavailable, so the check could not run. ` +
+    "Retrying will not help — the credential has to be provisioned for this mode before this check can answer."
+  );
+}
+
 /** Copy for a genuine, possibly transient failure. */
 export function readFailedMessage(surface: string): string {
   return `Could not load ${surface}. Try again shortly.`;

@@ -83,23 +83,38 @@ beforeEach(async () => {
 
 const insertAttempt = async (
   overrides: Partial<{
+    // Set only by the started_at-tie test below, which needs the ORDER BY's
+    // last tiebreaker (`id`) to be a KNOWN value: `gen_random_uuid()` would
+    // make that test pass or fail at random, which is the very property the
+    // tie test exists to remove from the query.
+    id: string;
     revisionId: string;
     mode: string;
     fingerprint: string;
     startedBy: string;
     startedAt: string;
+    // 0038 constrains these two to move together — an attempt is either
+    // running (both null) or done (both set) — so the helper takes them as a
+    // pair and the caller cannot write an incoherent row by accident.
+    finishedAt: string;
+    outcome: "succeeded" | "failed" | "aborted";
   }> = {},
 ): Promise<string> => {
   const { rows } = await db.query<{ id: string }>(
-    `INSERT INTO plan_catalog_publish_attempts (revision_id, mode, fingerprint, started_by, started_at)
-     VALUES ($1, $2, $3, $4, COALESCE($5::timestamptz, now()))
+    `INSERT INTO plan_catalog_publish_attempts
+       (id, revision_id, mode, fingerprint, started_by, started_at, finished_at, outcome)
+     VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5,
+             COALESCE($6::timestamptz, now()), $7::timestamptz, $8)
      RETURNING id`,
     [
+      overrides.id ?? null,
       overrides.revisionId ?? BASELINE_REVISION_ID,
       overrides.mode ?? "test",
       overrides.fingerprint ?? "fp-1",
       overrides.startedBy ?? "operator@tesserix",
       overrides.startedAt ?? null,
+      overrides.finishedAt ?? null,
+      overrides.outcome ?? null,
     ],
   );
   return rows[0].id;
@@ -443,6 +458,68 @@ describe("publish-repo.ts: latestPublishAttempt", () => {
     const attempt = await latestPublishAttempt("test");
     expect(attempt?.id).toBe(testId);
     expect(attempt?.mode).toBe("test");
+  });
+
+  it("prefers the attempt that finished LAST when two share a started_at", async () => {
+    // M3 (review 2026-08-30). `started_at` is transaction time, so two
+    // attempts genuinely can share one — and the old tiebreaker was `id`, a
+    // random uuid, which orders with no relation to time. On a tie it could
+    // hand back an older SUCCESS and hide a newer FAILURE, which is the one
+    // mistake this reader must never make.
+    //
+    // The ids are written explicitly, larger one on the row that must LOSE:
+    // under `ORDER BY started_at DESC, id DESC` alone this test fails every
+    // run rather than half of them, so it is evidence rather than a coin
+    // toss.
+    const tie = "2026-08-30T09:00:00Z";
+    await insertAttempt({
+      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      mode: "test",
+      fingerprint: "fp-earlier-success",
+      startedAt: tie,
+      finishedAt: "2026-08-30T09:00:10Z",
+      outcome: "succeeded",
+    });
+    await insertAttempt({
+      id: "00000000-0000-4000-8000-000000000000",
+      mode: "test",
+      fingerprint: "fp-later-failure",
+      startedAt: tie,
+      finishedAt: "2026-08-30T09:00:20Z",
+      outcome: "failed",
+    });
+
+    await expect(latestPublishAttempt("test")).resolves.toMatchObject({
+      fingerprint: "fp-later-failure",
+      outcome: "failed",
+    });
+  });
+
+  it("prefers an attempt still in flight over a finished one that started at the same instant", async () => {
+    // `NULLS FIRST` under `finished_at DESC`: an attempt with no finish time
+    // has not finished yet, so it is the LATEST news about the mode, not the
+    // oldest. Same id discipline as the test above — the row that must lose
+    // carries the larger uuid.
+    const tie = "2026-08-30T09:00:00Z";
+    await insertAttempt({
+      id: "ffffffff-ffff-4fff-8fff-fffffffffffe",
+      mode: "test",
+      fingerprint: "fp-finished",
+      startedAt: tie,
+      finishedAt: "2026-08-30T09:00:10Z",
+      outcome: "succeeded",
+    });
+    await insertAttempt({
+      id: "00000000-0000-4000-8000-000000000001",
+      mode: "test",
+      fingerprint: "fp-in-flight",
+      startedAt: tie,
+    });
+
+    await expect(latestPublishAttempt("test")).resolves.toMatchObject({
+      fingerprint: "fp-in-flight",
+      outcome: null,
+    });
   });
 
   it("returns an unfinished attempt, outcome still null", async () => {

@@ -579,13 +579,28 @@ export async function publishAttemptById(attemptId: string): Promise<PublishAtte
  * MEANS, and what to say about it, is the caller's decision; this function
  * only reports what the log holds, and the log holds no verdict.
  *
- * `id DESC` is a tiebreaker, not a preference. Two attempts can share a
- * `started_at` — `now()` is transaction time, so two transactions that commit
- * within the same statement clock tick record the same instant — and without
- * a second key the winner would be whichever the planner happened to return
- * first, which is not stable across plans. This is the same reasoning
- * `startPublishAttempt` applies to duplicate keys: pick a rule and let it
- * decide, rather than letting page order decide.
+ * # The ordering is deterministic AND time-respecting, in that order
+ *
+ * Two attempts can share a `started_at` — `now()` is transaction time, so two
+ * transactions committing within the same statement clock tick record the
+ * same instant — so a second key is required or the winner is whichever the
+ * planner happened to return first, which is not stable across plans. That is
+ * the same reasoning `startPublishAttempt` applies to duplicate keys: pick a
+ * rule and let it decide, rather than letting page order decide.
+ *
+ * But determinism alone is not enough, which is what `ORDER BY started_at
+ * DESC, id DESC` got wrong: `id` is a random uuid, so on a tie it ordered
+ * with no relation to time at all and could hand back an older SUCCESS while
+ * a newer FAILURE sat behind it — the one mistake a reader whose whole job is
+ * "what happened here last" must never make. `finished_at DESC NULLS FIRST`
+ * settles the tie by the clock instead: the attempt that finished later is
+ * the later news, and an attempt that has NOT finished (null) is the latest
+ * news of all, since it is either still running or died without recording a
+ * verdict — never something older than a row that has already closed.
+ *
+ * `id DESC` stays as the FINAL arbiter only, for the residue where both
+ * timestamps agree: arbitrary, but stable, which is all that is left to want
+ * once time has had its say.
  */
 export async function latestPublishAttempt(mode: StripeMode): Promise<PublishAttempt | null> {
   return tesserixTx(async (query) => {
@@ -602,7 +617,7 @@ export async function latestPublishAttempt(mode: StripeMode): Promise<PublishAtt
       `SELECT id, revision_id, mode, fingerprint, started_by, started_at, finished_at, outcome
          FROM plan_catalog_publish_attempts
         WHERE mode = $1
-        ORDER BY started_at DESC, id DESC
+        ORDER BY started_at DESC, finished_at DESC NULLS FIRST, id DESC
         LIMIT 1`,
       [mode],
     );
