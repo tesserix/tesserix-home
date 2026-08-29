@@ -48,6 +48,26 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
+// Routes that authenticate a MACHINE caller (a Zitadel service user) rather
+// than a console operator's browser session. NOT the same thing as
+// PUBLIC_PATHS above: those are open to anyone, this is reachable by anyone
+// but answers 401/403 itself — the console's session cookie / bearer-JWE
+// check this middleware otherwise enforces has no way to accept a Zitadel
+// machine access token (a real signed JWT, not this app's encrypted session),
+// so a route on this list must do its OWN full auth
+// (`verifyMachineAuthHeader` + `assertCapability`) rather than delegating any
+// part of it to the matcher. Sending mark8ly's service-user token through
+// `verifySession` here would reject every valid call before the route ever
+// ran, presenting as an unconditional 401 no matter how correctly mark8ly
+// authenticated.
+const MACHINE_AUTH_PATHS: ReadonlyArray<string> = ["/api/v1/plan-catalog"];
+
+function isMachineAuthPath(pathname: string): boolean {
+  return MACHINE_AUTH_PATHS.some(
+    (p) => pathname === p || pathname.startsWith(p + "/"),
+  );
+}
+
 function unauthorized(request: NextRequest): NextResponse {
   const { pathname, search } = request.nextUrl;
   if (pathname.startsWith("/api/")) {
@@ -124,6 +144,10 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   }
 
   if (isPublicPath(pathname)) {
+    return NextResponse.next();
+  }
+
+  if (isMachineAuthPath(pathname)) {
     return NextResponse.next();
   }
 
