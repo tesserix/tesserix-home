@@ -16,7 +16,11 @@ import {
 // below that stands in for a paged platform-api response uses one of these
 // rather than a bare object literal, so the shape it asserts is a deliberate
 // choice, not a guess that happens to match the parser under test.
-import { paginationInMeta, paginationInsideData } from "./test-support/pagination-envelope";
+import {
+  paginationCursorMeta,
+  paginationInMeta,
+  paginationInsideData,
+} from "./test-support/pagination-envelope";
 
 const VALID = {
   tenants: { total: 12, active: 9 },
@@ -920,7 +924,12 @@ describe("platformRequestWithMeta", () => {
         JSON.stringify({
           success: true,
           data: { opportunities: [] },
-          meta: { total: 7, preceding_count: 0, limit: 100 },
+          // `paginationCursorMeta` for the CRM queues' own shape, plus a
+          // `limit` this test also round-trips: `platformRequestWithMeta`
+          // hands `meta` back untouched, whatever fields the producer sent,
+          // so this fixture is not asserting the shape is EXACTLY the cursor
+          // convention — it is asserting the transport drops nothing.
+          meta: { ...paginationCursorMeta({ total: 7, preceding_count: 0 }), limit: 100 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),

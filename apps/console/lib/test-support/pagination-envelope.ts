@@ -1,5 +1,5 @@
 /**
- * The two shapes platform-api sends paged results in, named so a test
+ * The three shapes platform-api sends paged results in, named so a test
  * fixture author must pick one on purpose rather than guessing which
  * convention a given producer uses.
  *
@@ -12,17 +12,26 @@
  * 500'd. A passing test named "refuses a response with no pagination" was
  * asserting production's own failure as correct behaviour.
  *
- * Two producers, two shapes, confirmed against the Go source:
+ * Three producers, three shapes, confirmed against the Go source:
  *
  * | Module                          | Where pagination lives  |
  * |----------------------------------|--------------------------|
  * | `entities` (`service.go:137`, `json:"pagination"`)         | inside `data`, as `data.pagination` |
  * | `koraaimetrics` (`handler.go:86`, `httpx.WriteMeta`)       | in the envelope's `meta`, a sibling of `data` |
+ * | CRM queues (`GET /v1/crm/queues/*`, see `platform-api.ts`'s `unwrapEnvelope` doc comment) | cursor-based `meta`: `total`, `preceding_count`, `next_cursor`, `previous_cursor` — see `parseQueuePage` |
  *
- * `paginationInsideData` and `paginationInMeta` below are not a bare object
- * literal because a literal does not force the author to say which
- * convention they mean — these do, by name, at the call site. Neither
- * function does anything clever; the value is entirely in the name a
+ * All three are covered here — this file's own header claiming "two" while
+ * the CRM queues' cursor shape stayed hand-written in `crm-queue-wire.test.ts`
+ * and `platform-api.test.ts` was the exact defect this file exists to catch,
+ * committed inside the file itself: a fixture author reading "two shapes"
+ * would reasonably conclude `paginationInMeta` covers a CRM queue producer,
+ * and it does not — that shape carries `preceding_count` and two cursors
+ * `paginationInMeta`'s `MetaPaginationCounters` has no room for.
+ *
+ * `paginationInsideData`, `paginationInMeta` and `paginationCursorMeta` below
+ * are not bare object literals because a literal does not force the author to
+ * say which convention they mean — these do, by name, at the call site. None
+ * of the three does anything clever; the value is entirely in the name a
  * fixture's author has to choose.
  */
 
@@ -41,6 +50,22 @@ export interface DataPaginationCounters {
 export interface MetaPaginationCounters {
   readonly limit: number;
   readonly total: number;
+}
+
+/**
+ * The CRM queues' counters — cursor-based, not offset-based. `total` and
+ * `preceding_count` place the page; `next_cursor`/`previous_cursor` are
+ * opaque tokens for the next request, and are omittable because the queue
+ * legitimately has no next or previous page. See `parseQueuePage`
+ * (`lib/crm-queue-wire.ts`), which reads exactly this shape out of the
+ * envelope's `meta` — structurally distinct from `MetaPaginationCounters`
+ * above, which is why it is its own interface rather than an extension.
+ */
+export interface CursorPaginationMeta {
+  readonly total: number;
+  readonly preceding_count: number;
+  readonly next_cursor?: string | null;
+  readonly previous_cursor?: string | null;
 }
 
 /**
@@ -63,5 +88,15 @@ export function paginationInsideData(
  * directly is the name at the call site, not any transformation.
  */
 export function paginationInMeta(meta: MetaPaginationCounters): MetaPaginationCounters {
+  return meta;
+}
+
+/**
+ * The envelope's `meta` object in the CRM queues' cursor convention —
+ * `GET /v1/crm/queues/*`, read via `platformRequestWithMeta` and parsed by
+ * `parseQueuePage`. Returned as-is, like `paginationInMeta` above: the value
+ * is the name at the call site, not any transformation.
+ */
+export function paginationCursorMeta(meta: CursorPaginationMeta): CursorPaginationMeta {
   return meta;
 }
