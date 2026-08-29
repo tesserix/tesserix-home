@@ -243,3 +243,132 @@ describe("buildDraftEditorRows", () => {
     expect(rows.map((r) => r.lookupKey)).toEqual([second.lookupKey, PUBLISHED_ROW.lookupKey]);
   });
 });
+
+/**
+ * tesserix-home#410's half of this suite: everything above needs a session
+ * `publishAction` result to put an outcome on screen, which is exactly the
+ * state that does not survive a reload. These mount the panel cold, with
+ * only the props `page.tsx` reads back out of the database, and assert the
+ * operator still learns what happened.
+ */
+describe("AuthoringPanel — the outcome that survives a reload", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planPublishAction.mockResolvedValue({ ok: true, plan: READY_PLAN });
+  });
+
+  const PERSISTED_FAILURE = {
+    attemptId: "attempt-9",
+    outcome: "failed" as const,
+    promoted: false,
+    operations: [
+      {
+        sequence: 1,
+        kind: "archive_price",
+        lookupKey: "mark8ly_pro_annual_ppp_v1",
+        status: "failed" as const,
+        error: "rate_limit",
+      },
+    ],
+  };
+
+  it("renders a persisted failed outcome on a cold mount, with no session publish at all", () => {
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={PERSISTED_FAILURE}
+        attemptState={READY}
+        operationsState={READY}
+        orphans={[]}
+        orphansState={EMPTY}
+      />,
+    );
+
+    expect(publishAction).not.toHaveBeenCalled();
+    const section = screen.getByText("Publish attempt attempt-9").closest("section")!;
+    expect(within(section).getByText(/1 operation\(s\) failed/i)).toBeInTheDocument();
+    expect(within(section).getByText("archive_price")).toBeInTheDocument();
+  });
+
+  it("lets the session outcome win over the persisted one", async () => {
+    publishAction.mockResolvedValue({
+      ok: true,
+      attemptId: "attempt-10",
+      outcome: "succeeded",
+      promoted: true,
+      failedOperations: [],
+      operations: [
+        { sequence: 1, kind: "replace_price", lookupKey: "mark8ly_pro_monthly_developed_v1", status: "succeeded", error: null },
+      ],
+      orphans: [],
+    });
+
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={PERSISTED_FAILURE}
+        attemptState={READY}
+        operationsState={READY}
+        orphans={[]}
+        orphansState={EMPTY}
+      />,
+    );
+
+    expect(screen.getByText("Publish attempt attempt-9")).toBeInTheDocument();
+    await reviewAndConfirm();
+
+    expect(await screen.findByText("Publish attempt attempt-10")).toBeInTheDocument();
+    expect(screen.queryByText("Publish attempt attempt-9")).toBeNull();
+  });
+
+  it("surfaces orphans even when there is no attempt to attach them to", () => {
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={null}
+        attemptState={EMPTY}
+        operationsState={EMPTY}
+        orphans={[{ priceId: "price_stranded", lookupKey: null, source: "mark8ly" }]}
+        orphansState={READY}
+      />,
+    );
+
+    expect(screen.getByText(/orphaned stripe prices/i)).toBeInTheDocument();
+    expect(screen.getByText(/price_stranded/)).toBeInTheDocument();
+    // No attempt means no attempt heading, no operations table and no
+    // re-plan control — there is nothing to re-plan.
+    expect(screen.queryByText(/^Publish attempt /)).toBeNull();
+    expect(screen.queryByRole("link", { name: /re-plan/i })).toBeNull();
+  });
+
+  it("renders no outcome section at all when there is neither a persisted attempt nor an orphan", () => {
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={null}
+        attemptState={EMPTY}
+        operationsState={EMPTY}
+        orphans={[]}
+        orphansState={EMPTY}
+      />,
+    );
+
+    expect(screen.queryByText(/latest publish attempt/i)).toBeNull();
+    expect(screen.queryByText(/orphaned stripe prices/i)).toBeNull();
+  });
+
+  it("says the orphan check is unavailable rather than rendering a page that looks clean", () => {
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={null}
+        attemptState={EMPTY}
+        operationsState={EMPTY}
+        orphans={[]}
+        orphansState={{ kind: "error", message: "stripe timed out" }}
+      />,
+    );
+
+    expect(screen.getByText(/stripe timed out/i)).toBeInTheDocument();
+  });
+});

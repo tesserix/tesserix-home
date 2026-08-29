@@ -571,7 +571,7 @@ export default async function PlanCatalog({
 
   /**
    * Everything the persisted-outcome surface needs, assembled server-side and
-   * handed to `AuthoringPanel` by the task that widens its props. Kept as one
+   * handed to `AuthoringPanel` below. Kept as one
    * named bundle rather than five loose locals so the boundary is obvious:
    * every field here is a plain display shape, and neither `Orphan` nor
    * `PublishOperationRow` — nor the `server-only` modules they come from —
@@ -583,11 +583,6 @@ export default async function PlanCatalog({
    * practice; writing it as the mirror anyway means the two cannot drift if
    * that decision is ever revisited.
    */
-  // Deliberately not yet passed anywhere: widening `AuthoringPanel`'s props
-  // is the next step, and this bundle is assembled here so that step is a
-  // prop spread rather than a second pass over the reads. Grep for this
-  // directive when it is time to delete it.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- see above
   const persistedOutcomeProps = {
     persistedOutcome: attempt
       ? {
@@ -675,6 +670,7 @@ export default async function PlanCatalog({
         canDraft={canDraft}
         canPublish={canPublish}
         replanHref={`/platform/billing/catalog?mode=${mode}`}
+        {...persistedOutcomeProps}
       />
     </div>
   );

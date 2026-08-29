@@ -17,6 +17,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 // task 9's brief, which names this exact trap as the one this file is most
 // likely on the whole branch to trip.
 import type { CatalogRow } from "@/lib/db/plan-catalog-repo";
+import type { PublishAttemptOutcome } from "@/lib/db/publish-repo";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import {
   discardDraftAction,
@@ -27,7 +28,17 @@ import {
 } from "./actions";
 import { DraftEditor, type DraftEditorCell, type DraftEditorRow } from "./draft-editor";
 import { PublishView } from "./publish-view";
-import { PublishOutcome } from "./publish-outcome";
+// `PublishOutcome` and `OrphansCallout` are VALUE imports, safely:
+// `publish-outcome.tsx` is itself a `"use client"` module and imports
+// nothing `server-only`. Its two display shapes below are type-only for the
+// usual reason — they are the trimmed forms that exist precisely so
+// `PublishOperationRow` and `Orphan` never cross this boundary.
+import {
+  OrphansCallout,
+  PublishOutcome,
+  type PublishOutcomeOperation,
+  type PublishOutcomeOrphan,
+} from "./publish-outcome";
 
 /**
  * Task 9's composition root — the one caller that mounts `DraftEditor`
@@ -141,6 +152,37 @@ export function buildDraftEditorRows(
   }
 
   return order.map((key) => byKey.get(key)!);
+}
+
+/**
+ * A publish outcome as `page.tsx` reads it back out of
+ * `plan_catalog_publish_attempts` — the durable half of what
+ * `publishAction` returns in-session, and deliberately only that half.
+ *
+ * `outcome` is nullable here and not in `PublishActionResult` because the
+ * log genuinely stores `PublishAttemptOutcome | null`: an attempt that
+ * crashed between `startPublishAttempt` and `finishPublishAttempt` never
+ * recorded a verdict. An action's return value can never be in that state;
+ * a row read back can.
+ *
+ * No `orphans` field, on purpose. `findOrphans` is MODE-scoped, so an orphan
+ * outlives the attempt that stranded it and belongs to the page, not to this
+ * attempt — see {@link AuthoringPanelProps.orphans}.
+ */
+export interface PersistedPublishOutcome {
+  readonly attemptId: string;
+  readonly outcome: PublishAttemptOutcome | null;
+  readonly promoted: boolean;
+  readonly operations: readonly PublishOutcomeOperation[];
+}
+
+/** A read that FAILED, as opposed to one that succeeded and found nothing.
+ *  `resolveState` resolves an ordinary absent row to `empty`, so `ready` and
+ *  `empty` are both successes here — the same distinction `DraftSection`
+ *  makes on `draftState`, extracted so the three reads this file now reacts
+ *  to cannot each spell it differently. */
+function readFailed(state: SurfaceState): boolean {
+  return state.kind !== "ready" && state.kind !== "empty";
 }
 
 interface CapabilityNoticeProps {
@@ -337,6 +379,40 @@ export interface AuthoringPanelProps {
   /** Path the "Re-plan" control inside a mounted `PublishOutcome` returns
    *  the operator to — this surface, with `mode` preserved. */
   readonly replanHref: string;
+  /** The mode's latest UNRESOLVED publish attempt, read back from the log by
+   *  `page.tsx` (tesserix-home#410). It exists because the session outcome
+   *  below survives exactly one page load: before this prop, an operator who
+   *  published, closed the tab and came back found a page that looked as
+   *  though nothing had ever happened. `page.tsx` has already applied
+   *  Decision 1 (`surfacedAttempt`) — a `succeeded` latest attempt arrives
+   *  here as `null`, because success is durably surfaced by the publication
+   *  block instead. Optional so the many callers that mount this panel
+   *  without a persisted read (every test above #410's) stay valid. */
+  readonly persistedOutcome?: PersistedPublishOutcome | null;
+  /** Whether the attempt read itself succeeded — narrowed independently of
+   *  every other read on the page. Distinguishes "no unresolved attempt"
+   *  (nothing to say) from "we could not find out", which are opposite
+   *  facts an operator must never see conflated. */
+  readonly attemptState?: SurfaceState;
+  /** Whether the attempt's operation log could be read. Separate from
+   *  `attemptState` because an operator who can see THAT a publish failed
+   *  but not WHAT it did is in a different position from one who can see
+   *  neither, and the copy has to say which. */
+  readonly operationsState?: SurfaceState;
+  /** Prices this catalog's log believes it archived that Stripe still
+   *  reports active. A PAGE-level fact, not an attempt-level one:
+   *  `findOrphans` is mode-scoped, so an orphan outlives the attempt that
+   *  stranded it and survives a later successful publish. That is why these
+   *  are rendered on the union with `persistedOutcome` rather than nested
+   *  inside it — an orphan with no unresolved attempt still gets a surface,
+   *  and nothing else in the estate can see one (the nightly parity check
+   *  structurally cannot; see `publish-outcome.tsx`'s header). */
+  readonly orphans?: readonly PublishOutcomeOrphan[];
+  /** Whether the orphan check ran. The only read behind this panel that
+   *  leaves the estate (`findOrphans` reaches Stripe), and the one whose
+   *  failure most needs saying out loud: silently rendering no orphans on a
+   *  Stripe outage would read exactly like a clean check. */
+  readonly orphansState?: SurfaceState;
 }
 
 /**
@@ -459,10 +535,49 @@ export function AuthoringPanel({
   canDraft,
   canPublish,
   replanHref,
+  persistedOutcome = null,
+  attemptState = { kind: "empty" },
+  operationsState = { kind: "empty" },
+  orphans = [],
+  orphansState = { kind: "empty" },
 }: AuthoringPanelProps) {
   const [outcome, setOutcome] = useState<Extract<PublishActionResult, { readonly ok: true }> | null>(
     null,
   );
+
+  // Decision 3 (tesserix-home#410): the SESSION outcome wins, and the
+  // persisted read is a fallback rather than a replacement. An operator who
+  // has just published performed the action and deserves the receipt for it
+  // — including a success, which `page.tsx` deliberately never reads back
+  // (`surfacedAttempt`). On a RELOAD that success does not return, because
+  // by then `readLivePublication` -> `CatalogViews`'s publication block is
+  // the honest surface for it: a persisted success banner would be a second
+  // account of one event, and the worse of the two, since "Stripe now
+  // matches this revision" is a claim about Stripe's CURRENT state that
+  // decays silently as the catalog drifts. A FAILURE shows both ways, from
+  // two sources that agree.
+  const shown: PersistedPublishOutcome | null = outcome ?? persistedOutcome;
+
+  // Which observation of the mode-scoped orphan check to trust. Both are the
+  // same `findOrphans(mode)` call, so when the session ran one it is simply
+  // the later of the two and supersedes the page's load-time list. But
+  // `actions.ts` only runs it on a FAILED outcome, so on any other session
+  // outcome there is no session observation at all — falling back to the
+  // page's list there is what stops a successful publish from hiding a
+  // pre-existing orphan it never looked for.
+  const shownOrphans: readonly PublishOutcomeOrphan[] =
+    outcome && outcome.outcome === "failed" ? outcome.orphans : orphans;
+
+  // The UNION, per Decision 2: an orphan outlives the attempt that stranded
+  // it, so a page with orphans and no unresolved attempt still mounts this
+  // section. So does a page where one of the two reads FAILED — silently
+  // rendering nothing on a Stripe outage would look exactly like a clean
+  // check, which is the failure this surface exists to make visible.
+  const showOutcomeSection =
+    shown !== null ||
+    shownOrphans.length > 0 ||
+    readFailed(attemptState) ||
+    readFailed(orphansState);
 
   // CRITICAL fix, review 2026-08-28 (controller ruling): the outcome section
   // is rendered HERE, unconditionally, never inside `DraftSection`'s
@@ -491,18 +606,47 @@ export function AuthoringPanel({
         onOutcome={setOutcome}
       />
 
-      {outcome ? (
+      {showOutcomeSection ? (
         <section className="flex flex-col gap-3" aria-label="Publish outcome">
           <h2 className="text-sm font-medium">Latest publish attempt</h2>
-          <PublishOutcome
-            attemptId={outcome.attemptId}
-            mode={mode}
-            outcome={outcome.outcome}
-            promoted={outcome.promoted}
-            operations={outcome.operations}
-            orphans={outcome.orphans}
-            replanHref={replanHref}
-          />
+          {readFailed(attemptState) ? (
+            <SurfaceStateView state={attemptState} emptyMessage="No publish attempt to report." />
+          ) : null}
+          {readFailed(orphansState) ? (
+            <SurfaceStateView
+              state={orphansState}
+              emptyMessage="No orphaned Stripe prices."
+            />
+          ) : null}
+          {shown ? (
+            <>
+              {/* Only for a PERSISTED outcome: a session outcome carries its
+                  own operations back from the action and never went through
+                  the dependent `readOperations` read that this state
+                  narrows. */}
+              {outcome === null && readFailed(operationsState) ? (
+                <SurfaceStateView
+                  state={operationsState}
+                  emptyMessage="This attempt recorded no operations."
+                />
+              ) : null}
+              <PublishOutcome
+                attemptId={shown.attemptId}
+                mode={mode}
+                outcome={shown.outcome}
+                promoted={shown.promoted}
+                operations={shown.operations}
+                orphans={shownOrphans}
+                replanHref={replanHref}
+              />
+            </>
+          ) : (
+            // No attempt to hang them off — `PublishOutcome` is an attempt's
+            // surface and has nothing to say without one, so its orphan
+            // callout is mounted directly rather than faking an attempt
+            // around it.
+            <OrphansCallout orphans={shownOrphans} />
+          )}
         </section>
       ) : null}
     </div>

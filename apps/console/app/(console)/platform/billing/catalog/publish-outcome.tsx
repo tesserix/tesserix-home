@@ -123,7 +123,14 @@ export interface PublishOutcomeOrphan {
 export interface PublishOutcomeProps {
   readonly attemptId: string;
   readonly mode: StripeMode;
-  readonly outcome: PublishAttemptOutcome;
+  /** `null` when the attempt never recorded a verdict — a publish that
+   *  crashed between `startPublishAttempt` and `finishPublishAttempt`. The
+   *  session path (`publishAction`'s return value) can never produce one;
+   *  reading a PERSISTED attempt back (tesserix-home#410) can, because
+   *  `PublishAttemptOutcome | null` is what the log actually stores. The
+   *  status line below is omitted for that case rather than coerced into a
+   *  verdict the log never recorded. */
+  readonly outcome: PublishAttemptOutcome | null;
   /** Whether `publishAction` promoted the revision — always `false` for a
    *  `"failed"` or `"aborted"` outcome; see this module's header. */
   readonly promoted: boolean;
@@ -202,11 +209,18 @@ function OperationsTable({ operations }: { operations: readonly PublishOutcomeOp
 
 /**
  * The orphan list — see this module's header on why the parity check cannot
- * find these on its own. Rendered as a destructive `Callout`, not a plain
+ * find these on its own.
+ *
+ * Exported, unlike this file's other internal parts, because an orphan
+ * OUTLIVES the attempt that stranded it: `findOrphans` is mode-scoped, so a
+ * page load can have orphans to show and no unresolved attempt to hang them
+ * off (tesserix-home#410, Decision 2). `authoring-panel.tsx` mounts this on
+ * its own for exactly that case, rather than inventing a second orphan
+ * rendering that could drift from this one. Rendered as a destructive `Callout`, not a plain
  * list: an orphan is a Price that is ACTIVE and billing right now, not a
  * cosmetic inconsistency, and the visual weight should say so.
  */
-function OrphansCallout({ orphans }: { orphans: readonly PublishOutcomeOrphan[] }) {
+export function OrphansCallout({ orphans }: { orphans: readonly PublishOutcomeOrphan[] }) {
   if (orphans.length === 0) return null;
   return (
     <Callout role="alert" variant="destructive">
@@ -242,7 +256,7 @@ export function PublishOutcome({
     <section className="flex flex-col gap-4">
       <div>
         <h2>Publish attempt {attemptId}</h2>
-        <p role="status">{outcomeSummary(outcome, operations)}</p>
+        {outcome === null ? null : <p role="status">{outcomeSummary(outcome, operations)}</p>}
       </div>
 
       <OrphansCallout orphans={orphans} />
