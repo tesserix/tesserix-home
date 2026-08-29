@@ -161,7 +161,22 @@ export async function verifyIdToken(
  * staff session, so "valid session" and "internal user" coincide. They stop
  * coinciding the moment `apps/web` admits any other kind of user, and at that
  * point a customer's cookie would otherwise be accepted by the console.
+ *
+ * Reused as-is by `verifyMachineAuthHeader` below to enforce `internalOrgId`
+ * on machine identities too — `MachineIdentity` carries the same `roles` /
+ * `orgId` shape this function needs, so there is no separate machine check.
  */
+export function isInternal(
+  identity: Pick<ZitadelIdentity, "roles" | "orgId">,
+  config: Pick<ZitadelConfig, "internalOrgId">,
+): boolean {
+  if (identity.roles.length === 0) return false;
+  if (config.internalOrgId && identity.orgId !== config.internalOrgId) {
+    return false;
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------
 // MACHINE TOKENS
 //
@@ -311,6 +326,19 @@ export async function verifyMachineAuthHeader(
     );
   }
 
+  // `jose` skips the `aud` comparison entirely when `audience` is falsy
+  // (empty string included), so a config built with `audience: ""` would
+  // accept a token minted for ANY audience. Fail closed here rather than
+  // relying solely on `getZitadelMachineConfig` rejecting an unset env var —
+  // this function is exported and a future caller can construct a config
+  // directly, bypassing that reader.
+  if (!config.audience) {
+    throw new MachineTokenError(
+      "invalid-token",
+      "zitadel: machine config has no audience configured",
+    );
+  }
+
   try {
     const { payload } = await jwtVerify(token, jwks(config.issuer), {
       issuer: config.issuer,
@@ -321,7 +349,7 @@ export async function verifyMachineAuthHeader(
       throw new Error("zitadel: machine token has no subject");
     }
 
-    return {
+    const identity: MachineIdentity = {
       sub: payload.sub,
       clientId: typeof payload.azp === "string" ? payload.azp : undefined,
       roles: extractRoles(payload[ROLES_CLAIM]),
@@ -330,22 +358,23 @@ export async function verifyMachineAuthHeader(
           ? (payload[ORG_ID_CLAIM] as string)
           : undefined,
     };
+
+    // Enforced, not merely documented: a service user holding the project
+    // role but belonging to the wrong organization must not pass. Reuses
+    // `isInternal` rather than a second ad hoc check — `MachineIdentity`
+    // structurally satisfies the `Pick<ZitadelIdentity, "roles" | "orgId">`
+    // it expects.
+    if (!isInternal(identity, config)) {
+      throw new Error("zitadel: machine token is not from the internal organization");
+    }
+
+    return identity;
   } catch (err) {
+    if (err instanceof MachineTokenError) throw err;
     throw new MachineTokenError(
       "invalid-token",
       "zitadel: machine token failed verification",
       err,
     );
   }
-}
-
-export function isInternal(
-  identity: Pick<ZitadelIdentity, "roles" | "orgId">,
-  config: Pick<ZitadelConfig, "internalOrgId">,
-): boolean {
-  if (identity.roles.length === 0) return false;
-  if (config.internalOrgId && identity.orgId !== config.internalOrgId) {
-    return false;
-  }
-  return true;
 }

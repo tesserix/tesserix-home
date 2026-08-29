@@ -337,12 +337,78 @@ describe("verifyMachineAuthHeader", () => {
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
 
-    // And the same token verifies fine as an operator identity when checked
-    // against the audience it was actually minted for — proving the failure
+    // And the same token, checked against the audience it was actually
+    // minted for, gets PAST signature/issuer/audience verification and fails
+    // only on the email check `verifyIdToken` applies afterwards (this token
+    // has no `email` claim — it was built with `signToken`'s machine-token
+    // defaults). That later, different failure is what proves the rejection
     // above is specifically the audience mismatch, not something wrong with
-    // the token itself.
+    // the token's signature or issuer.
     await expect(
       verifyIdToken(operatorToken, { issuer, clientId: operatorClientId }),
     ).rejects.toThrow(/email/);
+  });
+
+  it("rejects when the config carries no audience at all", async () => {
+    // jose skips the `aud` comparison entirely when `audience` is falsy, so
+    // a config built with `audience: ""` must be rejected by this function
+    // itself rather than silently accepting any audience.
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: "some-other-resource",
+    });
+
+    await expect(
+      verifyMachineAuthHeader(`Bearer ${token}`, { issuer, audience: "" }),
+    ).rejects.toMatchObject({ reason: "invalid-token" });
+  });
+
+  it("rejects a token whose issuer does not match, even with a correct audience", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer: "https://not-our-issuer.example.com",
+      audience: MACHINE_AUDIENCE,
+    });
+
+    await expect(
+      verifyMachineAuthHeader(`Bearer ${token}`, { issuer, audience: MACHINE_AUDIENCE }),
+    ).rejects.toMatchObject({ reason: "invalid-token" });
+  });
+
+  it("rejects when the identity's org does not match a configured internalOrgId", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      roles: { "read-plan-catalog": { "999": "other-org.tesserix.app" } },
+      orgId: "999",
+    });
+
+    await expect(
+      verifyMachineAuthHeader(`Bearer ${token}`, {
+        issuer,
+        audience: MACHINE_AUDIENCE,
+        internalOrgId: "123456789",
+      }),
+    ).rejects.toMatchObject({ reason: "invalid-token" });
+  });
+
+  it("admits a matching internalOrgId", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      roles: { "read-plan-catalog": { "123456789": "tesserix.tesserix.app" } },
+      orgId: "123456789",
+    });
+
+    const identity = await verifyMachineAuthHeader(`Bearer ${token}`, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      internalOrgId: "123456789",
+    });
+
+    expect(identity.orgId).toBe("123456789");
   });
 });
