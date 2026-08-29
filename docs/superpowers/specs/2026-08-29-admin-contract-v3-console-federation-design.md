@@ -252,9 +252,11 @@ one the estate is being held to.
 
 The suite sends a single capability for the whole run, via `--capability` (`cli.ts:60`), and
 needs `--operator` for the same run. The mark8ly CronJob passed `--base`, `--slug` and
-`--declaration` and nothing else before this landed, so a `break-glass` probe arrived with no
-operator or capability and got a 401/403 — the endpoint working correctly, reported as a
-failure.
+`--declaration` and nothing else before this landed. The CLI defaults `--operator` to
+`admin-conformance` and `--capability` to `platform` (`cli.ts:150-151`), so the operator was
+never actually missing; the resulting `break-glass` probe got a 403 `capability_insufficient` —
+the default capability `platform` failing exact-string-equality against `rotate-credentials` —
+the endpoint working correctly, reported as a failure.
 
 **Correction (2026-08-29):** this section previously said the flag addition needed to wait for
 V4 pending verification against the "signing identity," and that the id would degrade to
