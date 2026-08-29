@@ -58,6 +58,12 @@ export default defineConfig({
             "components/**/*.test.ts",
             "dev/**/*.test.ts",
             "scripts/**/*.test.ts",
+            // `middleware.ts` lives at the app root (Next's own convention),
+            // outside every glob above. Its test — the machine-auth
+            // exemption's coverage — has to be named explicitly rather than
+            // moved under `lib/` just to satisfy a glob it does not belong
+            // under.
+            "middleware.test.ts",
           ],
         },
       },

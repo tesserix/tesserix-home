@@ -77,7 +77,25 @@ function isPublicPath(pathname: string): boolean {
 //    action required from whoever adds it. Exact match makes every new
 //    sub-resource opt into the hole explicitly, by adding its own literal
 //    entry, rather than opt out of the session gate by accident.
-const MACHINE_AUTH_PATHS: ReadonlyArray<string> = ["/api/v1/plan-catalog"];
+//
+// BOTH forms below are still exact-match entries, not a prefix — this is not
+// a contradiction of point 1. Confirmed empirically (`new
+// NextRequest(".../api/v1/plan-catalog/").nextUrl.pathname` ===
+// `"/api/v1/plan-catalog/"`, trailing slash intact): Next has no
+// `trailingSlash` config here, and whatever redirect would normally fold
+// `/plan-catalog/` onto `/plan-catalog` is applied by the ROUTER, which runs
+// AFTER middleware — this middleware sees the raw incoming pathname, slash
+// and all. Without the second literal, a caller whose HTTP client appends a
+// trailing slash (a normalisation some clients do on their own) would fall
+// through to the session-cookie branch and get an unconditional 401 from
+// `unauthorized()` before `route.ts` ever runs, no matter how correctly it
+// authenticated. `/api/v1/plan-catalog/..%2fadmin` still equals neither
+// literal, so that shape stays closed, and no future sub-resource is exempt
+// by default — the allowlist is exactly as narrow as before, just complete.
+const MACHINE_AUTH_PATHS: ReadonlyArray<string> = [
+  "/api/v1/plan-catalog",
+  "/api/v1/plan-catalog/",
+];
 
 function isMachineAuthPath(pathname: string): boolean {
   return MACHINE_AUTH_PATHS.includes(pathname);
