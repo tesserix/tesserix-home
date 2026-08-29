@@ -1,248 +1,287 @@
-# The platform-agent MCP surface
+# Kora's MCP surface for platform agents
 
-How a platform-level AI agent authenticates to the estate's admin data, what it
-may read, and what is recorded about it.
+How a platform agent reads Kora's admin data over MCP: where the server lives,
+what the platform already does for it, and the narrow set of things its author
+must still build.
 
-Status: **design, approved 2026-08-28. Not implemented.**
-Origin: `tesserix/kora#511` (the blocking child of kora's "Platform agent MCP"
-milestone, epic `kora#515`). That milestone is deprioritised; this document is
-the decision it said was "worth thinking about early" because it "gets worse if
-rushed later".
+Status: **design, rewritten 2026-08-29 against the running platform. Not implemented.**
+Origin: `tesserix/kora#511`.
 
-Companion to `2026-08-14-product-admin-integration-contract.md`, which defines
-the HTTP surface this reads through. Where the two disagree, the contract wins.
+> **This document was wrong once, in a way worth recording.** The first version
+> put the MCP server inside `platform-api` and gave it its own principal model,
+> capability intersection and principal-scoped `tools/list`. All of that already
+> exists as platform infrastructure — a gateway, a registry and a rate limiter
+> that were running while it was being written. The rewrite deletes what the
+> platform owns and keeps only what it does not. §10 lists what changed and why,
+> because the failure mode (designing against a diagram instead of the cluster)
+> is more instructive than the conclusion.
 
 ## Contents
 
-1. [What this is for](#1-what-this-is-for)
-2. [Topology: one gateway, not N servers](#2-topology-one-gateway-not-n-servers)
-3. [The principal](#3-the-principal)
-4. [Authorization](#4-authorization)
-5. [The tool set](#5-the-tool-set)
-6. [Untrusted content](#6-untrusted-content)
-7. [Protocol](#7-protocol)
-8. [Failure semantics](#8-failure-semantics)
-9. [Audit](#9-audit)
-10. [Evidence](#10-evidence)
-11. [Rejected alternatives](#11-rejected-alternatives)
-12. [Open items](#12-open-items)
+1. [The platform this fits into](#1-the-platform-this-fits-into)
+2. [Where the code lives](#2-where-the-code-lives)
+3. [Division of responsibility](#3-division-of-responsibility)
+4. [Publishing and reachability](#4-publishing-and-reachability)
+5. [Identity](#5-identity)
+6. [The tool set and its ceiling](#6-the-tool-set-and-its-ceiling)
+7. [What the server must still build](#7-what-the-server-must-still-build)
+8. [Untrusted content](#8-untrusted-content)
+9. [Evidence](#9-evidence)
+10. [What changed from the first version](#10-what-changed-from-the-first-version)
+11. [Open items](#11-open-items)
 
 ---
 
-## 1. What this is for
+## 1. The platform this fits into
 
-A platform agent should be able to answer *what is waiting on a human, is the
-estate healthy, and is its AI working* by calling the platform directly over
-MCP, without product-specific glue inside any agent.
+Running in `tesseract-prod-in-gke` today, verified by cluster read:
 
-**Read-only.** Every write is out of scope, including the §8.3 inbox triage
-actions products now declare. Revisiting that posture is a later decision with
-its own evidence.
+| Component | What it is |
+|---|---|
+| `agentgateway-system/agentgateway-mcp` | **Solo.io agentgateway v1.4.1**, a Gateway API `Gateway` (`gatewayClassName: agentgateway`) reconciled to XDS. The data plane for every `/mcp/...` request. |
+| `agentgateway-system/agentgateway-ratelimit` | `envoyproxy/ratelimit` behind Valkey, attached to the MCP listener, keyed by `jwt.sub`, `failureMode: FailClosed`. |
+| `agentregistry-system/agentregistry` | The catalog (`tesserix/agentic-registry`) — MCP server manifests, tool metadata, versions, visibility. |
+| `mcp.tesserix.app` | Browser catalog UI and machine API, on separate trust boundaries (registry ADR-0001). |
 
-**This is distinct from a product's own agent surface.** `kora#380`'s governed
-AI pilot serves a product's own reviewed agent on behalf of an authenticated
-END USER, and re-authorizes that subject at the data boundary. Here there is no
-end user. That mechanism does not transfer and its protections must be replaced
-rather than assumed.
+The registry's own invariant governs everything below:
 
-### Two callers, both real
+> It is deliberately **a catalog, not a proxy** … It never authenticates
+> end-user traffic, mints tokens, proxies requests, or runs the artifacts it
+> catalogs.
 
-| | operator-initiated | autonomous |
+**Do not confuse two gateways.** `kora-ai` (which Kora's model calls already
+traverse) and `agentgateway-mcp` are separate Gateway objects. Kora ADR-0002
+governs the first and is about **A2A**, not MCP.
+
+**There is no Kora MCP server today.** A recursive search of `tesserix/kora`
+for `mcp` returns nothing, and no `kora-*` MCP backend exists in the cluster.
+This is a from-scratch build, not an extension.
+
+---
+
+## 2. Where the code lives
+
+**A new dedicated repository — `tesserix/kora-mcp`.** All MCP code lives there:
+the server, its tool definitions, its Dockerfile, its deployment manifests and
+its registry manifest.
+
+### This is a new precedent, not existing practice
+
+Stated plainly so nobody reads it as a restatement of what the org already does.
+Neither existing pattern is a dedicated repo:
+
+- **devai's** MCP servers (`analyst-mcp`, `gitops-mcp`, `sre-mcp`, `scm-mcp`)
+  are domains mounted inside `devai-api`, in `tesserix/devai`.
+- **homechef, mark8ly and platform** MCPs are one multi-tenant image,
+  `services/mcp-gateway/` in `tesserix/slm-support-platform`, deployed three
+  times with `MCP_TENANT` selecting the tool set.
+
+What makes a server independently addressable and authorizable in both cases is
+the **registry manifest and the gateway export**, not repo separation. A
+dedicated repo therefore buys clarity of ownership and a clean blast radius, not
+a capability. It is a deliberate choice to make the MCP surface's dependency on
+Kora one-directional and explicit: `kora-mcp` calls Kora's public admin API and
+holds no Kora source.
+
+Anyone migrating the existing servers to this shape should treat this section as
+the argument to weigh, not a mandate they have already violated.
+
+---
+
+## 3. Division of responsibility
+
+The single most useful table in this document. Everything the platform owns is a
+thing the server must **not** implement.
+
+| Concern | Owner | Mechanism |
 |---|---|---|
-| trigger | a person asks in the console | schedule or event |
-| acting for | an operator | **nobody** |
-| watched | yes | no |
-| credential at rest | no | **yes** |
+| Routing, the request path | **Gateway** | Gateway API `HTTPRoute` → `AgentgatewayBackend` |
+| Caller authentication | **Gateway** | `AgentgatewayPolicy.traffic.jwtAuthentication`, Zitadel JWKS |
+| Coarse admission | **Gateway** | `traffic.authorization` CEL over Zitadel project roles |
+| **Per-caller tool filtering** | **Gateway** | `backend.mcp.authorization` — see below |
+| Rate limiting | **Gateway** | `agentgateway-ratelimit`, keyed by `jwt.sub` |
+| Upstream credential injection | **Gateway** | `backend.auth.secretRef`, from a `credentialRef` in the manifest |
+| Catalog, versions, visibility, discovery | **Registry** | `MCPServer` artifacts, content-addressed tags |
+| Desired state for the three routing GVKs | **Registry** | `GET /v0/export/agentgateway` → reconciler |
+| **Tool implementations** | **Server** | §7 |
+| **Object-level authorization** | **Server** | §7 — nothing else can do it |
+| Schema honesty, limits, provenance | **Server** | §7 |
 
-Both exist. A model that cannot represent "acting for nobody" forces every
-scheduled run to name a fictional operator — the placeholder failure this estate
-legislates against elsewhere (a UUID header omitted rather than zeroed, an
-absent `sublabel` kept distinct from `""`).
+### Tool filtering is a gateway primitive, and it is unused
 
----
+`AgentgatewayPolicy.backend.mcp.authorization` is a CEL rule set evaluated per
+JWT claim. From the CRD's own schema:
 
-## 2. Topology: one gateway, not N servers
+> List operations, such as `list_tools`, will have each item evaluated. **Items
+> that do not meet the rule will be filtered.** Get or call operations, such as
+> `call_tool`, will evaluate the specific item and reject requests that do not
+> meet the rule.
 
-**The MCP server is a module in `platform-api`. Products implement nothing.**
+That is precisely what the first version of this document implemented inside the
+server. **No deployed MCP server sets it today** — the capability is
+unconfigured, not delegated away. Kora's should be the first to use it, and §11
+records that as the open item it is.
 
-```
-agent ──MCP (Zitadel JWT)──▶ platform-api MCP module ──federation (HMAC)──▶ product
-                             │
-                             └── principal, capabilities, tool set, agent audit
-```
-
-### Why not a server per product
-
-The tool surface is a 1:1 re-skin of federation: health, kpis, inbox, entities,
-audit-logs, plus kora's ai-metrics. Not one datum is reachable that federation
-does not already serve over an authenticated, nonce-protected,
-operator-attributed, conformance-checked path.
-
-Two paths to the same rows would also disagree about who owns authorization.
-`kora/api/internal/platformauth/middleware.go` states the current rule plainly:
-
-> The VALUE of the capability gates nothing. Kora does not own the privilege
-> model: the console asserts what it is exercising, this surface records it and
-> refuses its absence.
-
-A per-product MCP server that gated on capability would reverse that, leaving
-the estate with two answers to "who may see this row" — and **the looser one
-wins by construction**, since a caller refused on one path can be handed the
-same data through the other.
-
-Centralising also means product #2 adopts this by appearing in
-`FEDERATION_PRODUCTS`: no OIDC verifier, no issuer dependency, no second
-privilege model, no new secret. And the issuer stays on exactly one critical
-path during an identity migration rather than N.
-
-### The cost, stated
-
-Product-side audit records the **operator**, not the agent: federation's
-canonical string has no agent channel. Day one, agent attribution lives in
-platform-api's audit. Carrying it downstream means one versioned, additive
-change to a scheme that already has golden vectors and a CI conformance
-checker — against N products each growing an auth stack. Deferred deliberately.
+The registry's export also has a `requireServerScope` flag (default `false`)
+that renders a per-route policy requiring an `mcp:<tenant>:<server>` scope. Both
+are opt-in and must be requested by whoever registers the server; nothing turns
+them on automatically.
 
 ---
 
-## 3. The principal
+## 4. Publishing and reachability
 
-**A Zitadel-issued JWT, audience-bound to this MCP server, using RFC 8693
-delegation semantics.**
+Publication and reachability are the same act, which resolves a question
+`kora#513` raised.
 
-| kind | `sub` | `act` | meaning |
-|---|---|---|---|
-| delegated | the operator | `{sub: agent}` | agent acting for operator |
-| autonomous | the agent | **absent** | agent acting as itself |
+1. Author an `MCPServer` manifest — `apiVersion: registry.agentic.dev/v1alpha1`.
+   Its `spec` **is** the MCP-Registry `server.json`, so it round-trips with the
+   upstream registry.
+2. Publish: `agentic apply -f`, or CI `POST /v0/apply` with a tenant-scoped
+   deploy key.
+3. The registry renders `AgentgatewayBackend` + `HTTPRoute` (+ policy) via
+   `GET /v0/export/agentgateway`; a namespace-scoped reconciler applies them.
+4. The gateway converts them to XDS and begins serving
+   `/mcp/<tenant>/<server>`.
 
-Autonomous agents are Zitadel machine users authenticating by client
-credentials — the shape MCP's own auth extension defines for "background
-services … without a user present".
+**The registry is the sole writer** of those three GVKs in `agentgateway-system`
+(registry ADR-0003). Hand-applied YAML fights the reconciler's prune loop — so
+routing for this server is never configured by hand, and never by Kora.
 
-### Delegation is an audit fact, never an authorization input
-
-`platform-api/internal/platform/auth/verify.go` already carries this rule, and
-it is the single most important constraint in this document:
-
-> `Kind` is a HEURISTIC, for logging and audit only. Zitadel does not mark a
-> client_credentials token distinctly, so this is inferred from the presence of
-> an email claim. NEVER authorise on it: authorisation is by capability, which
-> is attested by the issuer, whereas this is a guess about the shape of a claim.
-
-An earlier draft of this design derived a principal *kind* from claim presence
-and then authorized on it — a narrow ceiling for autonomous callers. That is the
-mistake the comment forbids, and it produces a specific bug: a malformed `act`
-silently downgrading to "autonomous" while `sub` still names a human, recording
-that human as the direct actor for a call nobody made.
-
-So: **`sub` and `act` answer who acted for whom, and gate nothing.**
-
-### `act` parsing is fail-closed
-
-- `act` present but not an object with a non-empty string `sub` → **401**.
-  Never a downgrade to autonomous.
-- Nested `act.act` → **401**, until delegation chains have a stated
-  authorization rule. They are permitted by RFC 8693 and unhandled here.
-- The principal is derived in exactly one place, in the verifier. Never from a
-  header, a tool argument, or anything a caller supplies.
+**Credentials are references, never values.** A manifest declares
+`credentialRef: {secretName, key, header, prefix}`; a manifest carrying an inline
+`value`/`token`/`apiKey`/`secret` is **rejected at `/v0/apply`**. The gateway
+injects the upstream credential, so the calling agent presents only its own
+Zitadel token and never holds Kora's.
 
 ---
 
-## 4. Authorization
+## 5. Identity
 
-**Capability, always** — from the existing vocabulary pinned by the
-`capabilities.go` ↔ `capabilities.ts` contract test. No new vocabulary.
+Two identities, and the distinction is the whole of it.
 
-Effective authority for a delegated call is the **intersection** of the agent's
-own grant and the operator's capabilities. Neither half may widen the other.
+**Caller → gateway.** A Zitadel JWT, validated by the gateway against JWKS with
+audience and issuer pinned. The server never verifies this token, never
+discovers an issuer, never holds a JWKS. Coarse admission is a project role
+(`agentgateway.mcp` today, which is gateway-wide and not per-server).
 
-> **Open item (§12.1): where both role sets come from.** RFC 8693 yields one
-> token with one roles claim. If it carries the operator's roles, the agent's
-> ceiling does not bind; if the agent's, there is nothing to intersect. The
-> intersection must be computed **at the issuer/exchange**, which refuses to
-> mint a token whose roles exceed the agent's own grant, so the gateway verifies
-> a single already-intersected set. This moves a trust boundary and must be
-> settled before implementation.
+**Gateway → Kora.** The gateway injects a brokered credential from a Secret. The
+server calls Kora's existing platformauth admin surface with it, exactly as any
+other signed caller does — so **Kora's admin API is unchanged by this design**,
+and its "Kora does not own the privilege model" posture is preserved rather than
+contradicted.
 
-### Scope is frozen for the turn
+**The acting identity reaches the server as gateway-terminated trusted context**
+— a verified claim or a header the gateway set — and **never as a tool
+argument**. Kora issue #384 states the rule directly ("accept no user ID in tool
+arguments"), and every existing server implements it: `slm-support-platform`'s
+`_trusted_ctx()`, homechef's HMAC-signed identity headers, devai's
+`ToolContext.triggered_by`. A model-supplied user id is an attacker-supplied
+user id.
 
-An operator who asked for a health summary has not authorized a directory walk
-for the next five minutes. The exchanged token carries an explicit scope — the
-tool ids of the turn — fixed **before any tool result enters the model's
-context**, and the gateway enforces `tool ∈ scope`.
-
-This is also the only defence against §6 that does not depend on the model
-behaving.
+There is no RFC 8693 token exchange here, no `act` claim, no delegated-vs-
+autonomous principal type, and no `jti` replay store. §10 explains why those
+went.
 
 ---
 
-## 5. The tool set
+## 6. The tool set and its ceiling
 
-Tools only. Not resources, not prompts — the epic's premise is an agent asking
-questions, which is model-controlled by definition; resources are
-application-controlled ambient context, and a split surface would put the
-ceiling in two places. Resources remain the right home for ambient estate health
-in a console client later; that is additive.
+Tools only — not resources, not prompts. The premise is an agent asking
+questions, which is model-controlled by definition.
 
-| Tool | Returns | Capability |
+| Tool | Returns | Required claim |
 |---|---|---|
-| `estate_health` | dependency status per product | `read` |
-| `estate_kpis` | headline metrics, including an honest 501 | `read` |
-| `estate_inbox_counts` | queue depths only | `read` |
+| `kora_health` | dependency status | `read` |
+| `kora_kpis` | headline metrics, including an honest 501 | `read` |
+| `kora_inbox_counts` | queue depths only | `read` |
 | `kora_resolution_outcomes` | window + aggregate outcomes | `read` |
-| `estate_inbox_items` | items **including user-authored text** | `support` |
+| `kora_inbox_items` | items **including user-authored text** | `support` |
 | `kora_user_activity` | per-user activity rows | `platform` |
-| `estate_entities_search` | directory (**exposes email, see below**) | `platform` |
-| `estate_audit_search` | audit rows | `platform` |
+| `kora_entities_search` | directory (**discloses email**) | `platform` |
+| `kora_audit_search` | audit rows | `platform` |
 
-An autonomous machine user holds **`read` and nothing else**.
+The required claim is enforced by **`backend.mcp.authorization` at the gateway**,
+not by the server. The server's job is to make each tool a distinct, separately
+authorizable unit so the gateway has something to filter on.
 
 ### The ceiling is a tool boundary, never a field filter
 
-An earlier draft expressed the ceiling as endpoint names, and endpoints are not
-projections. `GET /v1/admin/ai-metrics` returns a paged `users[]` keyed by user
-UUID with an exact unpaged `total` and caller-controlled window bounds — so
-"aggregates and health only" would have granted full active-user enumeration
-plus a minute-resolution activity oracle, through an endpoint the same sentence
-listed as safe.
+This rule survives the rewrite unchanged, because it is a property of the tool
+surface rather than of where the server runs.
 
-**Rule for every product adopting this: a narrower principal must cause a
-narrower QUERY.** Never a narrower serialization of the same result. Data that
-is filtered after retrieval has already crossed into the gateway's logs, traces
-and memory. Hence `kora_resolution_outcomes` and `kora_user_activity` are two
-tools over one endpoint, at two capabilities, rather than one tool with a flag.
+An earlier draft expressed the ceiling as endpoint names. Endpoints are not
+projections: `GET /v1/admin/ai-metrics` returns a paged `users[]` keyed by user
+UUID with an exact unpaged total and caller-controlled window bounds, so
+"aggregates only" would have granted full active-user enumeration plus a
+minute-resolution activity oracle — through an endpoint the same sentence listed
+as safe.
 
-### Known exposure to weigh
+**A narrower principal must cause a narrower QUERY.** Never a narrower
+serialization: data filtered after retrieval has already crossed into the
+server's logs, traces and memory. Hence `kora_resolution_outcomes` and
+`kora_user_activity` are two tools over one endpoint, and Kora shipped
+`?sections=outcomes` (kora#525, merged) so the narrow tool drives a narrow query
+rather than fetching rows it must then drop.
+
+### Known exposure to price, not to fix
 
 `kora/api/internal/platformadmin/entities.go` renders a user's **email** into
-`sublabel` (and thence possibly `label`) when they have no handle. This is
-deliberate and documented — the endpoint's own comment reasons that a directory
-which cannot tell two people called "Alex" apart does not do its job — and it is
-the right call for a human operator paging a console.
-
-It is a different question for an agent. The console shows an operator one page
-at a time; a tool hands the same rows to a model, and from there to that model's
-context, logs and provider. So `estate_entities_search` is an email-disclosing
-tool, priced at `platform` accordingly, and is the clearest case for §5's
-per-principal row budget. Nothing here asks the product to change: the exposure
-is appropriate to its existing caller and merely needs pricing for a new one.
-
-### Volume is a threat, not just permission
-
-A human paging a directory and an agent exporting it are the same authorization
-decision and completely different events. `page` is currently uncapped
-(`envelope.go` clamps `limit` to 200 and does not bound `page`). Every
-row-returning tool carries its own limit and cursor — **MCP does not paginate
-`tools/call` output** — plus a page ceiling, a per-principal request budget, and
-a max-rows-per-session.
+`sublabel` when they have no handle. That is deliberate and documented — a
+directory that cannot tell two people called "Alex" apart does not do its job —
+and correct for a human operator paging a console. It is a different question
+when a tool hands the same rows to a model, and thence to that model's context,
+logs and provider. So `kora_entities_search` is an email-disclosing tool, priced
+at `platform`. Nothing asks Kora to change.
 
 ---
 
-## 6. Untrusted content
+## 7. What the server must still build
+
+Everything below is a gap in the platform, not a choice. Neither the gateway nor
+the registry can do any of it.
+
+- **Object-level authorization.** Cross-user access returns 404. Neither the
+  gateway nor the registry knows Kora's ownership graph, and every existing MCP
+  server reimplements this itself. This is the single most important server-side
+  responsibility.
+- **Deriving the acting identity from trusted context** (§5) and refusing to
+  read it from a tool argument.
+- **Input validation and output limits.** `tools/call` output is **not
+  paginated by the MCP protocol** — only the list operations are. Every
+  row-returning tool carries its own limit and cursor. Kora's own `page` is
+  capped (kora#524), but that is a query-cost bound and not a row budget.
+- **Schema honesty**, including the inversion below.
+- **Injection safety** of returned content (§8).
+- **The registry manifest**, and the decision to opt into
+  `backend.mcp.authorization` and `requireServerScope`.
+
+### Schema honesty, and one deliberate inversion
+
+`outputSchema` is the lever: a tagged union rather than a nullable number, and
+`"minimum": 1` on a denominator makes an empty one *schema-invalid* rather than
+a plausible `0.0`.
+
+But a model reads the **serialized text**, not the schema. Against that audience
+the estate's usual absence discipline is the weakest option — an absent key is
+invisible, and the model will omit the metric or infer something. So for
+agent-facing output only:
+
+> `{"first_try_rate": {"status": "not_instrumented"}}` — explicit status, not
+> absence.
+
+This is an audience-scoped exception to the rule applied everywhere else (a UUID
+header omitted rather than zeroed; `sublabel` absent rather than `""`;
+`first_try_rate_pct` absent rather than `0.0`). Recorded so nobody corrects it
+back.
+
+---
+
+## 8. Untrusted content
 
 **The protocol offers no mechanism here.** MCP has no content type or annotation
-marking a substring as untrusted; its trust language runs the other way
-(protecting clients from servers). "Tool output is data, never instruction" is a
+marking a substring as untrusted, and its trust language runs the other way —
+protecting clients from servers. "Tool output is data, never instruction" is a
 statement of intent, and this document does not pretend otherwise.
 
 The channel is unusually good for an attacker: an unresolved-food inbox item is
@@ -250,253 +289,103 @@ created by **any end user** with no admin action, its title is the user's raw
 typed phrase, a `no_match` carries `high` severity, and the inbox sorts
 oldest-first — so a planted item stays on page one indefinitely.
 
-Defences, honestly graded:
+What actually helps, honestly graded:
 
-1. **Scope freezing** (§4) — enforceable, ours, and independent of the model.
-2. **Capability separation** — `estate_inbox_items` requires `support`, so an
-   autonomous agent never receives user-authored text at all. The unwatched
-   principal cannot reach the injection channel.
-3. **Structural containment** — user text only inside a named field under
-   `outputSchema` with explicit provenance, never interpolated into composed
-   prose. A convention, not a boundary.
-4. **Detection** — log the exact user-authored strings served to an agent
-   principal, so an attempt is findable afterward.
-5. **Write-side hygiene** — control-character stripping and length caps, as
-   depth, explicitly not relied upon.
+1. **Capability separation** (enforceable, and now the gateway's):
+   `kora_inbox_items` requires `support`, so a caller holding only `read` never
+   receives user-authored text at all.
+2. **Structural containment** (server-side, partial): user text only inside a
+   named field under `outputSchema` with explicit provenance, never interpolated
+   into composed prose. A convention, not a boundary.
+3. **Detection** (server-side, cheap, currently absent): log the exact
+   user-authored strings served to an agent, so an attempt is findable
+   afterward.
 
-### Normative requirement on adopters
+### The boundary is the agent's whole tool set
 
-> **The security boundary is the agent's entire tool set, not this server's
-> response.** An agent session holding these tools MUST NOT simultaneously hold
-> egress tools — web fetch, ticket creation, outbound messaging. If it does,
-> every ceiling here is irrelevant: injected instructions exfiltrate through
-> capabilities this server cannot see.
+> An agent session holding these tools MUST NOT simultaneously hold egress tools
+> — web fetch, ticket creation, outbound messaging. If it does, every ceiling
+> here is irrelevant: injected instructions exfiltrate through capabilities
+> neither Kora nor the gateway can see.
 
-This cannot be enforced by the gateway. It is stated normatively because a
-copying product would otherwise inherit the assumption silently.
-
----
-
-## 7. Protocol
-
-**Target revision: 2026-07-28.** Pinned, because it decides the library and the
-auth attachment point. That revision removed `initialize`, connection-scoped
-sessions, and the GET/SSE stream; every request carries its own protocol version
-and capabilities in `_meta`. The statelessness suits a per-request bearer token
-and per-call audit.
-
-- **Transport: Streamable HTTP.** stdio is disqualified twice: a scheduled
-  remote agent cannot spawn a subprocess in-cluster, and stdio implementations
-  take credentials from the environment, which destroys per-call identity.
-- **Audience is this server's canonical URI** (RFC 8707 resource indicator),
-  exact match, with `azp` checked. **Not** a Zitadel project id: two servers in
-  one project would accept each other's tokens.
-- **Protected Resource Metadata** at `/.well-known/oauth-protected-resource`,
-  and `WWW-Authenticate` on every 401.
-- **`tools/list` carries `cacheScope: "private"`** and a `ttlMs` no longer than
-  the token's remaining life. `public` is the unprompted default and would let a
-  shared gateway serve one principal's tool list to another — a hazard that
-  exists only because the list is principal-scoped. Do not declare
-  `listChanged`: the list is a function of the credential, not a mutable fact.
-- Per-principal `tools/list` is explicitly permitted by this revision, which
-  allows the set to "vary by the authorization presented on the request … since
-  credentials are per-request input, not connection state".
-- `GET`/`DELETE` on the endpoint → `405`. Required headers
-  (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`) must match the body.
-  Validate `Origin` when present.
+Stated normatively because nothing in this stack enforces it. The Tesserix ADK
+gives the calling agent an independent allowlist — *"trusted descriptions,
+required scopes, and approval policy come from ADK configuration, never from an
+MCP server's untrusted annotations"* — which is where this belongs, and is a
+second narrowing on top of the gateway's.
 
 ---
 
-## 8. Failure semantics
+## 9. Evidence
 
-Fail closed. Every rule below is normative, not inherited by copying an existing
-parser.
+- **Object-level authorization** is the thing to test hardest, because it is the
+  thing only the server can get wrong: cross-user access returns 404, asserted
+  per tool.
+- **The data boundary.** Over the union of every `read`-tier tool's response,
+  across parameter combinations, assert no field matches a user UUID or an email
+  pattern. *This test fails today against `ai-metrics` if the aggregate-only
+  path is not used* — it is what would have caught the first version's worst
+  defect, and it generalises to any product joining the surface.
+- **Identity provenance:** a tool argument naming a user id is refused, not
+  honoured.
+- **Gateway policy is verified in the deployed environment, not asserted in
+  unit tests.** `backend.mcp.authorization` is Kubernetes state; the test is a
+  signed call with a narrow claim observing the wide tool absent from
+  `tools/list` and refused on `tools/call`.
 
-**Verifier:**
-- Asymmetric algorithms only. Reject `none`. Reject all HS\* — platform-api
-  holds HMAC secrets, so an HS-accepting verifier is a live forgery path with a
-  key already distributed.
-- `kid` resolved only against configured JWKS. Never honour `jwk`, `jku`, `x5u`.
-- Issuer exact-match against an allowlist. Never discovery driven by the token's
-  own `iss`.
-- `typ` pinned, so an ID token for the same audience cannot be replayed as an
-  access token.
-- Clock leeway 30s, far below the token TTL — otherwise the stated revocation
-  propagation objective is false by construction.
+Byte-exact signing vectors are **not** an artifact here: the server verifies no
+signature and mints no token. That was an artifact of the rejected design.
 
-**Statuses:**
+---
 
-| Condition | Answer |
+## 10. What changed from the first version
+
+Kept, because they are properties of the tool surface and independent of
+topology: the ceiling as a tool boundary (§6), the untrusted-content position
+(§8), and schema honesty including the LLM-audience inversion (§7).
+
+Deleted, because the platform owns them:
+
+| Removed | Now owned by |
 |---|---|
-| absent / unverifiable / expired / wrong audience or issuer | `401` + `WWW-Authenticate` |
-| verified, capability check fails | `403` |
-| server not configured | **`503`** |
+| MCP server as a `platform-api` module | its own repo; gateway routes to it |
+| A principal model with delegated/autonomous kinds | gateway JWT validation |
+| RFC 8693 `act` claim, token exchange, `may_act` | nothing — no exchange exists in this path |
+| Capability intersection in the server | `backend.mcp.authorization` |
+| Principal-scoped `tools/list` | `backend.mcp.authorization` (same primitive) |
+| Verifier hardening rules (alg, `kid`, `iss`, `typ`) | gateway JWT validation |
+| Single-use `jti` replay store | never needed; gateway is the trust boundary |
+| Per-principal rate limits and row budgets | `agentgateway-ratelimit` (row budgets remain, §7) |
+| An audit schema change in Kora | gateway access logs; Kora's audit is unchanged |
 
-A bare `404` is forbidden: a conforming client reads it as a legacy server and
-downgrades to the deprecated 2024-11-05 transport, producing a confusing double
-request. A product's own `404`-means-unmounted posture is unaffected — it simply
-does not transfer to MCP.
+**Why it went wrong.** The first version was written against an architecture
+diagram and four specialist reviews, none of which asked whether the platform
+already existed. It did — the MCP gateway was 88 days old. Kora's own AI calls
+already traverse `kora-ai.agentgateway-system.svc.cluster.local`, which was in
+the working notes throughout. The reviews were scoped to the design's internal
+coherence rather than to its premises, so they sharpened a wrong answer.
 
-Errors do not disclose which check failed; the log does. This declines the auth
-spec's SHOULD to return `error="insufficient_scope"`, and is recorded here as a
-**deliberate deviation**: there is no step-up flow to enable for a pre-provisioned
-in-cluster principal.
-
-Tool-level failures return `isError: true` inside the result so a model can
-self-correct; JSON-RPC errors are for structural failures. Never emit a code
-from the spec's reserved `-32020`–`-32099` range that the spec has not defined.
-
-**Replay.** Single-use `jti` is rejected: it collides with the stateless retry
-model and with multi-tool turns. Short TTL plus audience binding plus TLS is
-proportionate for a read surface. Record `jti` on every audit row so replay is
-detectable after the fact; do not gate on it. Sender-constraining (mTLS or DPoP)
-is the answer if that changes, and is deferred, not overlooked.
-
-**Revocation.** Short TTL plus de-provisioning at the issuer; the propagation
-objective equals the TTL. A configured deny-list of agent subject ids, checked in
-the verifier, is the break-glass lever — a handful of strings that do not scale
-with users, and the only way to refuse a specific compromised agent before its
-token expires.
+The check that would have caught it costs one command: `kubectl get deploy -A`.
 
 ---
 
-## 9. Audit
+## 11. Open items
 
-**The audit row commits before any data leaves the process.** A read that cannot
-be audited returns 500 and no data. Auditing after the response — or in a
-goroutine — fails open, and an agent can induce that failure by driving its own
-request rate.
-
-Each row records: the agent, the operator it acted for (absent for autonomous),
-principal kind, tool, `jti`, issuer, and request id. Identity is
-`(issuer, subject)`, never `subject` alone: agent and human subjects share a
-namespace and uniqueness is not guaranteed across issuers.
-
-`tools/list` is itself audited. It discloses the shape of the caller's
-authority, and it is the one call that can enumerate an operator's entitlements
-without touching data.
-
-### If agent attribution is later carried into products
-
-A product's audit table typically has a single non-null actor. Kora's, for
-example, has `actor_id` and `actor_email text NOT NULL CHECK (btrim(actor_email) <> '')`,
-and its reader renders email-first with an id fallback — a fallback whose
-comment already anticipates a system-written row. Two changes travel together
-or not at all:
-
-1. The projection: define how a delegated row renders in the contract's single
-   `actor` string.
-2. **The filter.** A reader that searches `actor_email = ? OR actor_id = ?` will
-   silently miss every agent-mediated row for that person — the exact class the
-   change exists to record. Shipping the column without the filter is worse than
-   not shipping it.
-
----
-
-## 10. Evidence
-
-Byte-exact vectors are the wrong artifact here: nothing reproduces a signature,
-it is verified. The artifact is a **decision table** — signed tokens from a test
-keypair, plus the asserted principal, tool visibility and outcome for each.
-
-Two property tests carry most of the weight:
-
-1. **listed-set == callable-set.** For every principal in a fixture set, the
-   tools `tools/list` returns are exactly the tools that do not 403 — iterated
-   over the registry, never a hand-written list. This converts "hiding is not
-   authorization" from a claim into a checked invariant, and is the only thing
-   stopping the two checks drifting apart.
-2. **The data boundary.** Over the union of every `read`-only tool's response,
-   across parameter combinations, assert no field matches a user UUID or an
-   email pattern. **This test fails today against `ai-metrics`** — it would have
-   caught this design's worst defect before review, and it generalises to every
-   product that adopts the pattern.
-
-Named negative cases, each asserted: forged operator; expired grant; wrong
-audience; wrong product; over-scoped capability; revoked agent (refused by the
-deny-list before its token expires); malformed `act`; nested `act`; a hidden
-tool called by name; and an autonomous principal attempting an operator-only
-tool.
-
-**Replay is asserted as DETECTION, not refusal.** §8 deliberately does not gate
-on `jti`, so a replayed token succeeds. The test asserts that two audit rows
-carry the same `jti` and are therefore distinguishable after the fact. Writing
-this case as "a replayed token is refused" would fail, and the natural fix — 
-re-introducing a single-use check — is the thing §8 rejected.
-
-### Schema honesty, and one deliberate inversion
-
-`outputSchema` is the lever. A tagged union rather than a nullable number; a
-denominator with `"minimum": 1` makes an empty one *schema-invalid* rather than
-a plausible `0.0`.
-
-But a model reads the **serialized text**, not the schema. Against that audience
-the estate's usual absence discipline is the weakest option: an absent key is
-invisible, and the model will either omit the metric or infer something. So for
-agent-facing output only:
-
-> `{"first_try_rate": {"status": "not_instrumented"}}` — explicit status, not
-> absence.
-
-This is an audience-scoped exception to the rule applied everywhere else, and is
-recorded so it is not "corrected" back. The parent epic's premise is right — a
-value an operator reads as "not measured" is read by a model as an assertion of
-zero — but the remedy that works for an operator is not the one that works for a
-language model.
-
----
-
-## 11. Rejected alternatives
-
-**Per-product MCP servers.** §2. Two authorization owners for one row; N issuer
-dependencies; every product re-implementing a verifier during an identity
-migration.
-
-**Reusing the products' HMAC scheme.** Its own package doc spends 47 lines on
-load-bearing properties that each fail as a silent 401 — `url.QueryEscape` vs
-`encodeURIComponent`, decoded path vs raw, newline ambiguity in `\n`-joined
-fields, hex case. Three implementations are kept honest only by a byte-identical
-vectors file. That is an N² problem; verification has no canonicalisation step
-at all.
-
-**The agent asserting its own operator header.** That field is trustworthy today
-only because a signing service holds a secret; an agent holding it makes the
-claim self-asserted.
-
-**An agent as its own principal with no operator concept.** Discards identity we
-genuinely have for operator-initiated calls, leaving the audit unable to answer
-"who asked".
-
-**Mesh/SPIFFE identity for the agent half.** Strongest guarantee — no bearer
-secret at all — but no product consumes peer identity today and manifests live
-in another repo. The delegation half is unchanged, so this remains an upgrade
-path rather than a fork.
-
-**Single-use `jti`.** §8.
-
----
-
-## 12. Open items
-
-These must be settled before implementation. None is a detail.
-
-1. **Where both role sets come from** (§4). Blocking. Likely answer: intersect
-   at the exchange, so the gateway verifies one already-intersected set.
-2. **Whether Zitadel token exchange is available on our instance**, and its
-   version. Upstream docs say it is enabled by default (a change from earlier
-   releases, when it was flag-gated), but this must be checked against the
-   instance rather than the docs. If unavailable, platform-api minting the token
-   itself is an **either/or decided up front, never a runtime fallback** —
-   accepting two issuers makes security that of the weaker one, and a minting
-   service is an unconstrained delegation oracle unless what it may assert is
-   stated.
-3. **`may_act`.** RFC 8693 defines a claim for "this party may act for that
-   one". The negative case "act present but agent not entitled to delegate"
-   needs it, and Zitadel may not emit it.
-4. **Small-N aggregates.** An aggregate over a population of one is per-user
-   data. Products pre-launch or with small tenants need a minimum window
-   granularity and k-anonymity suppression before `read` tools are safe.
-5. **Agent lifecycle ownership.** Who provisions a machine user, where the agent
-   registry lives, what de-provisioning looks like end to end, and how an
-   operator answers "which agents can reach this data right now". Revocation
-   names TTL as the mechanism but not the registry.
+1. **`backend.mcp.authorization` has never been used.** Kora's would be the
+   first. The CEL rules, the claim they read, and how a claim maps to the
+   `read`/`support`/`platform` tiers all need designing and proving in a
+   non-production namespace before this ships.
+2. **Coarse admission is gateway-wide today.** Every caller holding
+   `agentgateway.mcp` reaches every route on the public listener. Per-server
+   scope (`requireServerScope`) is off by default. Decide before publishing,
+   not after.
+3. **Which credential the gateway brokers to Kora**, and whether Kora's
+   platformauth admin surface is the right upstream or whether a narrower
+   internal surface should exist for this caller.
+4. **Tenancy.** The route is `/mcp/<tenant>/<server>` and the manifest carries
+   `mcp.tesserix.app/tenant`. Kora is single-tenant; confirm the label is
+   `kora` and that nothing about the estate's tenancy leaks into tool
+   semantics.
+5. **Whether the ADK's `McpServer` adapter should be used** rather than a
+   hand-rolled server. It already provides tenant scoping, redaction and
+   approval gates; the trade is a Python dependency for a Go product.
