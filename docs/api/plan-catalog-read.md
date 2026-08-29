@@ -110,7 +110,14 @@ behind an operator session (cookie or bearer session token). `/api/v1/plan-catal
 is listed verbatim in `MACHINE_AUTH_PATHS` and is matched by exact string
 equality, not by prefix — a deliberate choice so that a future path filed
 under `/api/v1/plan-catalog/...` does not silently inherit the same
-exemption; each sub-resource has to opt in explicitly. A request to this
+exemption; each sub-resource has to opt in explicitly. Both the bare path
+and its trailing-slash form are listed, because Next preserves a trailing
+slash in `nextUrl.pathname` when middleware runs: without the second entry,
+a client whose HTTP library appends one would get a flat `401` from
+middleware no matter how correctly it authenticated, with nothing in the
+response to point at the cause. Prefix matching would have covered that case
+too, and would also have admitted `/api/v1/plan-catalog/..%2fadmin`; two
+literals cover the real client and admit nothing else. A request to this
 exact path skips the operator-session check entirely and goes straight into
 the route handler, which then does its own, separate machine-token
 verification as described above. This route is unauthenticated by
