@@ -47,12 +47,27 @@ import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
 import type { PagerLinks } from "../entity-page";
 import { AiMetricsView, type AiMetricsViewProps } from "./ai-metrics-view";
 
+// The real ten kinds `resolveoutcome.AllKinds` declares (kora's
+// `docs/resolution-outcomes.md`), zero-filled the way Kora actually sends
+// them — not invented placeholder names, so part D's grouping tests exercise
+// the real vocabulary.
 const METRICS: KoraAiMetrics = {
   window: { from: "2026-08-01T00:00:00Z", to: "2026-08-28T00:00:00Z" },
   outcomes: {
     attempts: 42,
     needsHuman: 2,
-    byKind: { exact: 30, fuzzy: 10, needs_review: 2, no_match: 0 },
+    byKind: {
+      cache: 20,
+      alias: 3,
+      resolved: 15,
+      weak_match: 2,
+      below_floor: 1,
+      no_match: 1,
+      decomposed: 0,
+      budget: 0,
+      error: 0,
+      transcript_blank: 0,
+    },
     firstTryRatePct: 78.5,
   },
   users: [
@@ -134,14 +149,70 @@ describe("AiMetricsView — by kind", () => {
   // Kora zero-fills `by_kind` across every kind it measures. A kind dropped
   // because its count is 0 would hide that Kora measured it and found none —
   // a different fact from not measuring it at all.
-  it("renders every kind, including one with a zero count", () => {
+  it("renders every kind, including three with a zero count", () => {
     renderView();
-    expect(screen.getByText("exact")).toBeInTheDocument();
-    expect(screen.getByText("30")).toBeInTheDocument();
-    expect(screen.getByText("no match")).toBeInTheDocument();
-    // The zero itself must be on screen, not silently dropped.
     const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
-    expect(kindsSection.textContent).toMatch(/no match/);
+    expect(within(kindsSection).getByText("cache")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("20")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("decomposed")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("error")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("transcript blank")).toBeInTheDocument();
+    expect(kindsSection.textContent).toMatch(/decomposed/);
+  });
+
+  // Grouped by what an operator does about them, not declaration order.
+  it("groups the ten kinds into needs attention / succeeded / degraded / blocked", () => {
+    renderView();
+    const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
+    expect(within(kindsSection).getByText("Needs attention")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("Succeeded")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("Degraded")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("Blocked")).toBeInTheDocument();
+  });
+
+  // `Kind.NeedsHuman()` in kora returns true for exactly these two — see
+  // resolveoutcome/model.go. Everything else has no console destination
+  // today, so it must not be linked.
+  it("links only no_match and below_floor to the kora-filtered inbox", () => {
+    renderView();
+    const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
+    const noMatchLink = within(kindsSection).getByRole("link", { name: /no match/i });
+    expect(noMatchLink).toHaveAttribute("href", "/platform/inbox?source=kora");
+    const belowFloorLink = within(kindsSection).getByRole("link", { name: /below floor/i });
+    expect(belowFloorLink).toHaveAttribute("href", "/platform/inbox?source=kora");
+
+    // The other eight have no inbox destination — linking them would ship
+    // eight dead ends.
+    for (const kind of ["cache", "alias", "resolved", "decomposed", "weak match", "budget", "error", "transcript blank"]) {
+      expect(within(kindsSection).queryByRole("link", { name: new RegExp(`^${kind}$`, "i") })).toBeNull();
+    }
+  });
+
+  // `no_match` is an index gap (kora: "high" severity in the inbox);
+  // `below_floor` is a near-miss ("normal"). They must not read as
+  // equivalent, and no_match sorts first within the group.
+  it("orders no_match ahead of below_floor and marks it more severe", () => {
+    renderView();
+    const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
+    const text = kindsSection.textContent ?? "";
+    expect(text.indexOf("no match")).toBeLessThan(text.indexOf("below floor"));
+    expect(within(kindsSection).getByText("high")).toBeInTheDocument();
+  });
+
+  // An unrecognised kind (a future addition to kora's vocabulary, or a test
+  // fixture using one) is rendered rather than silently dropped — the same
+  // "unknown means unstyled/verbatim, never hidden" rule `inbox-queue.tsx`
+  // applies to `kind` and `severity`.
+  it("renders a kind this build has never seen under its own group rather than dropping it", () => {
+    renderView({
+      metrics: {
+        ...METRICS,
+        outcomes: { ...METRICS.outcomes, byKind: { ...METRICS.outcomes.byKind, mystery: 5 } },
+      },
+    });
+    const kindsSection = screen.getByRole("region", { name: /outcomes by kind/i });
+    expect(within(kindsSection).getByText("mystery")).toBeInTheDocument();
+    expect(within(kindsSection).getByText("Other")).toBeInTheDocument();
   });
 });
 

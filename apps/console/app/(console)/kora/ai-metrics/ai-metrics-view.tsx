@@ -5,8 +5,10 @@
 // export of another client component.
 "use client";
 
+import { Fragment } from "react";
 import Link from "next/link";
 import {
+  Badge,
   Table,
   TableBody,
   TableCell,
@@ -92,6 +94,133 @@ export interface AiMetricsViewProps {
  */
 function kindLabel(kind: string): string {
   return kind.replace(/_/g, " ");
+}
+
+/**
+ * `by_kind` grouped by what an operator does about a kind, not by Kora's
+ * declaration order — mirrors `resolveoutcome`'s own doc comment
+ * (`docs/resolution-outcomes.md`) almost verbatim:
+ *
+ *   - **Needs attention** — `no_match`, `below_floor`: index problems. These
+ *     are the only two kinds `Kind.NeedsHuman()` returns true for.
+ *   - **Succeeded** — `cache`, `alias`, `resolved`, `decomposed`: the attempt
+ *     produced an answer. `alias` is a PREVIOUS correction paying off.
+ *   - **Degraded** — `weak_match`, `transcript_blank`: real signal, but kora
+ *     deliberately does not make either triageable.
+ *   - **Blocked** — `budget`, `error`: not resolver quality at all — a budget
+ *     limit or a provider fault.
+ *
+ * `no_match` is ordered ahead of `below_floor` inside its group, because the
+ * two are not equally urgent — see `KIND_SEVERITY`.
+ */
+const KIND_GROUPS: readonly { label: string; kinds: readonly string[] }[] = [
+  { label: "Needs attention", kinds: ["no_match", "below_floor"] },
+  { label: "Succeeded", kinds: ["cache", "alias", "resolved", "decomposed"] },
+  { label: "Degraded", kinds: ["weak_match", "transcript_blank"] },
+  { label: "Blocked", kinds: ["budget", "error"] },
+];
+
+/** Label for a group of kinds a build has never seen — an unrecognised kind
+ *  is a future addition to Kora's vocabulary, not something to drop. Same
+ *  "unknown is rendered verbatim, never hidden" rule `inbox-queue.tsx`
+ *  applies to `kind` and `severity`. */
+const OTHER_GROUP_LABEL = "Other";
+
+export interface KindRow {
+  readonly kind: string;
+  readonly count: number;
+}
+
+export interface KindGroup {
+  readonly label: string;
+  readonly rows: readonly KindRow[];
+}
+
+/**
+ * Groups `by_kind` for display. Every key present in `byKind` is rendered
+ * exactly once, including a zero count — dropping a zero would hide that
+ * Kora measured that kind and found none, a different fact from not
+ * measuring it at all (the same rule `firstTryRatePct` follows on this
+ * surface). A key this build does not recognise lands in a trailing "Other"
+ * group instead of being silently dropped.
+ */
+export function groupByKind(byKind: Readonly<Record<string, number>>): KindGroup[] {
+  const seen = new Set<string>();
+  const groups: KindGroup[] = [];
+  for (const group of KIND_GROUPS) {
+    const rows = group.kinds
+      .filter((kind) => kind in byKind)
+      .map((kind) => {
+        seen.add(kind);
+        return { kind, count: byKind[kind] };
+      });
+    if (rows.length > 0) {
+      groups.push({ label: group.label, rows });
+    }
+  }
+  const rest = Object.keys(byKind).filter((kind) => !seen.has(kind));
+  if (rest.length > 0) {
+    groups.push({ label: OTHER_GROUP_LABEL, rows: rest.map((kind) => ({ kind, count: byKind[kind] })) });
+  }
+  return groups;
+}
+
+/**
+ * Where the estate inbox already filters to Kora — `?source=kora` is the
+ * param `readSource` (`platform/inbox/page.tsx`) reads.
+ *
+ * `Kind.NeedsHuman()` (kora's `resolveoutcome/model.go`) returns true for
+ * exactly `no_match` and `below_floor` — its own comment explains why the
+ * other eight are excluded: "a weak match is a soft signal and a
+ * decomposition is a known-imprecise answer, but neither is something an
+ * operator can act on; putting them in a triage queue would bury the two
+ * that are actionable." The other eight kinds therefore have NO console
+ * destination today, and rendering a link for them would ship eight dead
+ * ends — the same defect as promising a filtered inbox before the inbox
+ * could filter.
+ */
+const NEEDS_HUMAN_INBOX_HREF = "/platform/inbox?source=kora";
+
+/** kora's own severity for the two triageable kinds — `docs/resolution-
+ *  outcomes.md`: "An index gap is `high` severity; a near-miss is `normal`."
+ *  A gap has nothing to offer the user at all, while a near-miss at least
+ *  returned something they could correct — the two must not read as
+ *  equivalent. */
+const KIND_SEVERITY: Readonly<Record<string, "high" | "normal">> = {
+  no_match: "high",
+  below_floor: "normal",
+};
+
+function kindHref(kind: string): string | null {
+  return kind in KIND_SEVERITY ? NEEDS_HUMAN_INBOX_HREF : null;
+}
+
+function kindSeverityTone(kind: string): "destructive" | "warning" | null {
+  const severity = KIND_SEVERITY[kind];
+  if (severity === "high") return "destructive";
+  if (severity === "normal") return "warning";
+  return null;
+}
+
+/** One row's Kind cell: a link to the kora-filtered inbox for the two
+ *  triageable kinds, plain text for the other eight. No tooltip promising a
+ *  destination that does not exist for the eight — see `kindHref`. */
+function kindCell(kind: string) {
+  const href = kindHref(kind);
+  const severity = KIND_SEVERITY[kind];
+  const tone = kindSeverityTone(kind);
+  return (
+    <span className="inline-flex items-center gap-2">
+      {href ? (
+        <Link href={href} className="underline underline-offset-2 hover:text-foreground">
+          {kindLabel(kind)}
+        </Link>
+      ) : (
+        kindLabel(kind)
+      )}
+      {tone ? <Badge variant={tone}>{severity}</Badge> : null}
+    </span>
+  );
 }
 
 /**
@@ -227,12 +356,8 @@ export function AiMetricsView({
     );
   }
 
-  // `Object.entries`, not a fixed list of kind names — see the module doc
-  // comment on `kora-ai-metrics.ts`. Every key Kora sent is rendered,
-  // including one whose count is zero: dropping it would hide that Kora
-  // measured that kind and found none, a different fact from not measuring
-  // it at all.
-  const byKindEntries = Object.entries(metrics.outcomes.byKind);
+  const byKindGroups = groupByKind(metrics.outcomes.byKind);
+  const byKindCount = Object.keys(metrics.outcomes.byKind).length;
 
   const filtersActive = userFiltersActive(userFilterValues);
   const filteredUsers = metrics.users.filter((user) =>
@@ -274,25 +399,47 @@ export function AiMetricsView({
 
       <section className="flex flex-col gap-3" aria-label="Outcomes by kind">
         <h3 className="text-sm font-medium">By kind</h3>
-        {byKindEntries.length === 0 ? (
+        {byKindCount === 0 ? (
           <p className="text-sm text-muted-foreground">Kora measured no kinds this window.</p>
         ) : (
-          <Table aria-label="Outcomes by kind">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Kind</TableHead>
-                <TableHead>Count</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {byKindEntries.map(([kind, count]) => (
-                <TableRow key={kind}>
-                  <TableCell>{kindLabel(kind)}</TableCell>
-                  <TableCell className="tabular-nums">{count}</TableCell>
+          <>
+            {/* Only two of the ten kinds have a console destination — see
+                `kindHref`. Stated here, not just in a tooltip nobody reads,
+                so the other eight rendering unlinked reads as a choice
+                rather than an oversight. */}
+            <p className="text-xs text-muted-foreground">
+              Only &ldquo;no match&rdquo; and &ldquo;below floor&rdquo; link to the inbox — kora
+              marks exactly those two as work waiting on a human.
+            </p>
+            <Table aria-label="Outcomes by kind">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Kind</TableHead>
+                  <TableHead>Count</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {byKindGroups.map((group) => (
+                  <Fragment key={group.label}>
+                    <TableRow>
+                      <TableCell
+                        colSpan={2}
+                        className="bg-muted/30 text-xs font-medium uppercase text-muted-foreground"
+                      >
+                        {group.label}
+                      </TableCell>
+                    </TableRow>
+                    {group.rows.map(({ kind, count }) => (
+                      <TableRow key={kind}>
+                        <TableCell>{kindCell(kind)}</TableCell>
+                        <TableCell className="tabular-nums">{count}</TableCell>
+                      </TableRow>
+                    ))}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </>
         )}
       </section>
 
