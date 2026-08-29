@@ -56,7 +56,26 @@ async function startJwks(): Promise<{
   return { issuer: `http://127.0.0.1:${port}`, privateKey, kid };
 }
 
-/** Sign a token with the given key, defaulting to claims a machine token carries. */
+/**
+ * A real access token minted for the `mark8ly-catalog-reader` service user
+ * carries roles nested under this org id, inside a project-scoped claim —
+ * see the fix report and `zitadel.ts`'s `ZitadelMachineConfig.projectId`
+ * docstring for the verbatim decoded token this was taken from.
+ */
+const REAL_PROJECT_ID = "386377618200461939";
+const REAL_ORG_ID = "386377229942128837";
+
+/**
+ * Sign a token with the given key, defaulting to claims a machine token
+ * carries — the REAL shape confirmed on a live `mark8ly-catalog-reader`
+ * token: roles under `urn:zitadel:iam:org:project:{projectId}:roles`, with
+ * the granting org nested inside each role's value. There is no flat
+ * `urn:zitadel:iam:org:project:roles` claim and no separate
+ * `urn:zitadel:iam:org:id` claim on a machine token — both are absent by
+ * default here, deliberately, so a test that needs them must opt in via
+ * `flatRoles`/`orgIdClaim` rather than accidentally relying on a claim shape
+ * real tokens don't carry.
+ */
 async function signToken(
   privateKey: PrivateKey,
   kid: string,
@@ -64,14 +83,32 @@ async function signToken(
     issuer: string;
     audience: string;
     sub?: string;
+    /** Roles nested under `urn:zitadel:iam:org:project:{projectId}:roles`. */
+    projectId?: string;
     roles?: Record<string, unknown>;
-    orgId?: string;
+    /** Opt-in: the flat claim an operator's ID token carries, not a machine token. */
+    flatRoles?: Record<string, unknown>;
+    /** Opt-in: the flat org claim, absent from real machine tokens. */
+    orgIdClaim?: string;
+    /**
+     * `client_id` — what a real `mark8ly-catalog-reader` machine token
+     * carries (there is no `azp` on it at all).
+     */
+    clientIdClaim?: string;
+    /** Opt-in: `azp`, for the operator/ID-token shape that carries it instead. */
+    azpClaim?: string;
     expiresAtSeconds?: number;
   },
 ): Promise<string> {
   const claims: Record<string, unknown> = {};
-  if (overrides.roles) claims["urn:zitadel:iam:org:project:roles"] = overrides.roles;
-  if (overrides.orgId) claims["urn:zitadel:iam:org:id"] = overrides.orgId;
+  if (overrides.roles) {
+    const projectId = overrides.projectId ?? REAL_PROJECT_ID;
+    claims[`urn:zitadel:iam:org:project:${projectId}:roles`] = overrides.roles;
+  }
+  if (overrides.flatRoles) claims["urn:zitadel:iam:org:project:roles"] = overrides.flatRoles;
+  if (overrides.orgIdClaim) claims["urn:zitadel:iam:org:id"] = overrides.orgIdClaim;
+  if (overrides.clientIdClaim) claims.client_id = overrides.clientIdClaim;
+  if (overrides.azpClaim) claims.azp = overrides.azpClaim;
 
   return new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid })
@@ -191,6 +228,7 @@ describe("isInternal", () => {
 
 describe("verifyMachineAuthHeader", () => {
   const MACHINE_AUDIENCE = "machine-api-resource-id";
+  const MACHINE_PROJECT_ID = REAL_PROJECT_ID;
 
   it("verifies a valid machine token and returns its roles", async () => {
     const { issuer, privateKey, kid } = await startJwks();
@@ -198,18 +236,84 @@ describe("verifyMachineAuthHeader", () => {
       issuer,
       audience: MACHINE_AUDIENCE,
       sub: "service-user-1",
-      roles: { "read-plan-catalog": { "123456789": "tesserix.tesserix.app" } },
-      orgId: "123456789",
+      projectId: MACHINE_PROJECT_ID,
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
     });
 
     const identity = await verifyMachineAuthHeader(`Bearer ${token}`, {
       issuer,
       audience: MACHINE_AUDIENCE,
+      projectId: MACHINE_PROJECT_ID,
     });
 
     expect(identity.sub).toBe("service-user-1");
     expect(identity.roles).toEqual(["read-plan-catalog"]);
-    expect(identity.orgId).toBe("123456789");
+    expect(identity.orgId).toBe(REAL_ORG_ID);
+  });
+
+  it("populates clientId from a real machine token's shape: `client_id`, no `azp`", async () => {
+    // A real `mark8ly-catalog-reader` access token carries `client_id` and
+    // has no `azp` claim at all — confirmed against the same decoded token
+    // that exposed the roles-claim bug. `clientId` is not used for any auth
+    // decision (nothing reads it to authorize), but it is what a caller
+    // would want attributed in a log, so it must actually be populated for
+    // a real token rather than permanently `undefined`.
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      sub: "service-user-1",
+      clientIdClaim: "mark8ly-catalog-reader",
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
+    });
+
+    const identity = await verifyMachineAuthHeader(`Bearer ${token}`, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      projectId: MACHINE_PROJECT_ID,
+    });
+
+    expect(identity.clientId).toBe("mark8ly-catalog-reader");
+  });
+
+  it("does NOT pick up roles carried under a different project's claim", () => {
+    // A token can legitimately carry roles for another Zitadel project (a
+    // service user granted roles on more than one project) — this route
+    // must read only the configured project's roles, never fall back to
+    // whatever project claim happens to be present. Exercised directly
+    // against `extractRoles`/the claim-name construction rather than a
+    // second full round trip: the token-level assertion below already
+    // covers the end-to-end path.
+    const otherProjectClaim = "urn:zitadel:iam:org:project:999999999999999999:roles";
+    const payload: Record<string, unknown> = {
+      [otherProjectClaim]: { "read-plan-catalog": { [REAL_ORG_ID]: "x" } },
+    };
+    const configuredClaim = `urn:zitadel:iam:org:project:${MACHINE_PROJECT_ID}:roles`;
+    expect(extractRoles(payload[configuredClaim])).toEqual([]);
+  });
+
+  it("rejects — via an empty roles set — a token whose roles are scoped to a different project", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: MACHINE_AUDIENCE,
+      sub: "service-user-1",
+      projectId: "999999999999999999",
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
+    });
+
+    // The token verifies (signature/issuer/audience/subject all fine), but
+    // reading roles under the CONFIGURED project's claim finds nothing,
+    // because this token's roles are scoped to a different project. With no
+    // roles, `isInternal` denies it — proving the project-scoped read, not
+    // just the audience check, is what gates this.
+    await expect(
+      verifyMachineAuthHeader(`Bearer ${token}`, {
+        issuer,
+        audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
+      }),
+    ).rejects.toMatchObject({ reason: "invalid-token" });
   });
 
   it("rejects a token minted for a different audience", async () => {
@@ -223,6 +327,7 @@ describe("verifyMachineAuthHeader", () => {
       verifyMachineAuthHeader(`Bearer ${token}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
@@ -242,6 +347,7 @@ describe("verifyMachineAuthHeader", () => {
       verifyMachineAuthHeader(`Bearer ${token}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
@@ -258,6 +364,7 @@ describe("verifyMachineAuthHeader", () => {
       verifyMachineAuthHeader(`Bearer ${token}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
@@ -276,12 +383,17 @@ describe("verifyMachineAuthHeader", () => {
       verifyMachineAuthHeader(`Bearer ${token}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
 
   it("rejects a malformed or absent Authorization header, distinctly from an invalid token", async () => {
-    const config = { issuer: "https://auth.tesserix.app", audience: MACHINE_AUDIENCE };
+    const config = {
+      issuer: "https://auth.tesserix.app",
+      audience: MACHINE_AUDIENCE,
+      projectId: MACHINE_PROJECT_ID,
+    };
 
     for (const header of [undefined, null, "", "Bearer", "Basic abc123"]) {
       await expect(
@@ -298,7 +410,11 @@ describe("verifyMachineAuthHeader", () => {
       expiresAtSeconds: Math.floor(Date.now() / 1000) - 60,
     });
     await expect(
-      verifyMachineAuthHeader(`Bearer ${expired}`, { issuer, audience: MACHINE_AUDIENCE }),
+      verifyMachineAuthHeader(`Bearer ${expired}`, {
+        issuer,
+        audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
+      }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
 
@@ -307,6 +423,7 @@ describe("verifyMachineAuthHeader", () => {
       await verifyMachineAuthHeader(undefined, {
         issuer: "https://auth.tesserix.app",
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       });
       expect.unreachable("verifyMachineAuthHeader should have thrown");
     } catch (err) {
@@ -327,13 +444,16 @@ describe("verifyMachineAuthHeader", () => {
       issuer,
       audience: operatorClientId,
       sub: "operator-1",
-      roles: { read: { "123456789": "tesserix.tesserix.app" } },
+      // Operator ID tokens carry the FLAT roles claim, not the
+      // project-scoped one machine tokens carry.
+      flatRoles: { read: { "123456789": "tesserix.tesserix.app" } },
     });
 
     await expect(
       verifyMachineAuthHeader(`Bearer ${operatorToken}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
 
@@ -364,12 +484,16 @@ describe("verifyMachineAuthHeader", () => {
       issuer,
       audience: "some-other-resource",
       sub: "service-user-1",
-      roles: { "read-plan-catalog": { "123456789": "tesserix.tesserix.app" } },
-      orgId: "123456789",
+      projectId: MACHINE_PROJECT_ID,
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
     });
 
     await expect(
-      verifyMachineAuthHeader(`Bearer ${token}`, { issuer, audience: "" }),
+      verifyMachineAuthHeader(`Bearer ${token}`, {
+        issuer,
+        audience: "",
+        projectId: MACHINE_PROJECT_ID,
+      }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
 
@@ -381,7 +505,11 @@ describe("verifyMachineAuthHeader", () => {
     });
 
     await expect(
-      verifyMachineAuthHeader(`Bearer ${token}`, { issuer, audience: MACHINE_AUDIENCE }),
+      verifyMachineAuthHeader(`Bearer ${token}`, {
+        issuer,
+        audience: MACHINE_AUDIENCE,
+        projectId: MACHINE_PROJECT_ID,
+      }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
 
@@ -390,15 +518,16 @@ describe("verifyMachineAuthHeader", () => {
     const token = await signToken(privateKey, kid, {
       issuer,
       audience: MACHINE_AUDIENCE,
+      projectId: MACHINE_PROJECT_ID,
       roles: { "read-plan-catalog": { "999": "other-org.tesserix.app" } },
-      orgId: "999",
     });
 
     await expect(
       verifyMachineAuthHeader(`Bearer ${token}`, {
         issuer,
         audience: MACHINE_AUDIENCE,
-        internalOrgId: "123456789",
+        projectId: MACHINE_PROJECT_ID,
+        internalOrgId: REAL_ORG_ID,
       }),
     ).rejects.toMatchObject({ reason: "invalid-token" });
   });
@@ -408,16 +537,17 @@ describe("verifyMachineAuthHeader", () => {
     const token = await signToken(privateKey, kid, {
       issuer,
       audience: MACHINE_AUDIENCE,
-      roles: { "read-plan-catalog": { "123456789": "tesserix.tesserix.app" } },
-      orgId: "123456789",
+      projectId: MACHINE_PROJECT_ID,
+      roles: { "read-plan-catalog": { [REAL_ORG_ID]: "tesserix.auth.tesserix.app" } },
     });
 
     const identity = await verifyMachineAuthHeader(`Bearer ${token}`, {
       issuer,
       audience: MACHINE_AUDIENCE,
-      internalOrgId: "123456789",
+      projectId: MACHINE_PROJECT_ID,
+      internalOrgId: REAL_ORG_ID,
     });
 
-    expect(identity.orgId).toBe("123456789");
+    expect(identity.orgId).toBe(REAL_ORG_ID);
   });
 });
