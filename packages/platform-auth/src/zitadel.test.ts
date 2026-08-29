@@ -352,11 +352,20 @@ describe("verifyMachineAuthHeader", () => {
   it("rejects when the config carries no audience at all", async () => {
     // jose skips the `aud` comparison entirely when `audience` is falsy, so
     // a config built with `audience: ""` must be rejected by this function
-    // itself rather than silently accepting any audience.
+    // itself rather than silently accepting any audience. Everything ELSE
+    // about the token is made to pass — valid signature, correct issuer, a
+    // subject, roles that satisfy `extractRoles`/`isInternal`'s role check,
+    // and no `internalOrgId` configured (so org is not checked either) — so
+    // the only thing that can make this test fail is the audience guard
+    // itself. Confirmed empirically: deleting the guard at zitadel.ts turns
+    // this test red (see the fix report for the guard-removed FAIL output).
     const { issuer, privateKey, kid } = await startJwks();
     const token = await signToken(privateKey, kid, {
       issuer,
       audience: "some-other-resource",
+      sub: "service-user-1",
+      roles: { "read-plan-catalog": { "123456789": "tesserix.tesserix.app" } },
+      orgId: "123456789",
     });
 
     await expect(

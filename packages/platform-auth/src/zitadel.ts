@@ -162,9 +162,15 @@ export async function verifyIdToken(
  * coinciding the moment `apps/web` admits any other kind of user, and at that
  * point a customer's cookie would otherwise be accepted by the console.
  *
- * Reused as-is by `verifyMachineAuthHeader` below to enforce `internalOrgId`
- * on machine identities too — `MachineIdentity` carries the same `roles` /
- * `orgId` shape this function needs, so there is no separate machine check.
+ * `verifyMachineAuthHeader` below reuses this HELPER FUNCTION verbatim to
+ * gate on `internalOrgId` for machine identities too — `MachineIdentity`
+ * carries the same `roles` / `orgId` shape this function needs, so there is
+ * no separate machine-specific check function. That is reuse of this
+ * function's logic, NOT a claim that it matches the real operator login
+ * gate: `apps/console/app/auth/callback/route.ts` actually gates entry with
+ * an inline org match plus an email allowlist and never calls this function
+ * or checks `roles.length`. This function and that route have independently
+ * decided what "internal" means; they are not guaranteed to agree.
  */
 export function isInternal(
   identity: Pick<ZitadelIdentity, "roles" | "orgId">,
