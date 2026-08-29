@@ -96,6 +96,29 @@ export function extractRoles(claim: unknown): string[] {
 }
 
 /**
+ * Pull the granting org id out of a roles claim value.
+ *
+ * Each role key maps to an object of `{ <orgId>: <orgDomain> }` — see the
+ * `ROLES_CLAIM` docstring. This returns the first org id found among the
+ * role entries. In practice every role on a given token is granted by the
+ * same org (a service user belongs to one org), so "first" and "only" agree;
+ * this does not attempt to reconcile a token whose roles somehow named
+ * different granting orgs.
+ */
+function extractOrgIdFromRolesClaim(claim: unknown): string | undefined {
+  if (typeof claim !== "object" || claim === null || Array.isArray(claim)) {
+    return undefined;
+  }
+  for (const roleValue of Object.values(claim as Record<string, unknown>)) {
+    if (typeof roleValue === "object" && roleValue !== null && !Array.isArray(roleValue)) {
+      const orgIds = Object.keys(roleValue as Record<string, unknown>);
+      if (orgIds.length > 0) return orgIds[0];
+    }
+  }
+  return undefined;
+}
+
+/**
  * Verify a Zitadel ID token and return the identity it attests.
  *
  * Throws on any failure — bad signature, wrong issuer, wrong audience, expired,
@@ -237,8 +260,32 @@ export interface ZitadelMachineConfig {
    */
   readonly audience: string;
   /**
+   * The Zitadel project whose roles this machine path reads.
+   *
+   * A machine access token does NOT carry the flat `urn:zitadel:iam:org:
+   * project:roles` claim an operator's ID token carries — it carries a
+   * PROJECT-SCOPED form instead: `urn:zitadel:iam:org:project:{projectId}:
+   * roles`. `verifyMachineAuthHeader` needs `{projectId}` to know which
+   * claim to read, and it comes from here — deliberately NOT inferred from
+   * the token's own `aud`, even though the two happen to be equal in this
+   * deployment today. `aud` answers "who is this token for"; `projectId`
+   * answers "whose roles am I reading". Sourcing the second from the first
+   * would make that distinction hold only by coincidence, and a future
+   * Zitadel project/application layout where they diverge would silently
+   * start reading the wrong (or no) roles claim rather than failing loudly.
+   */
+  readonly projectId: string;
+  /**
    * Organization id that denotes an INTERNAL service user. Optional: when
    * unset, org is not checked and role possession alone gates access.
+   *
+   * NOTE ON HOW THIS IS POPULATED FOR MACHINE IDENTITIES: a real machine
+   * token does not carry `ORG_ID_CLAIM` (`urn:zitadel:iam:org:id`) at all —
+   * `verifyMachineAuthHeader` derives `MachineIdentity.orgId` from the
+   * project-scoped roles claim's nested value instead (see
+   * `extractOrgIdFromRolesClaim`). This field's meaning is unchanged; only
+   * where the machine path gets the org id to compare against it differs
+   * from the operator path.
    */
   readonly internalOrgId?: string;
 }
@@ -261,9 +308,18 @@ export function getZitadelMachineConfig(): ZitadelMachineConfig {
   if (!issuer) throw new Error("ZITADEL_ISSUER is not set");
   const audience = process.env.ZITADEL_MACHINE_AUDIENCE;
   if (!audience) throw new Error("ZITADEL_MACHINE_AUDIENCE is not set");
+  // `ZITADEL_PROJECT_ID` is already provisioned on the console deployment
+  // (`platform-api/README.md` documents it for the Go side) — no new
+  // environment variable needed. Fail closed the same way `audience` does
+  // above: a machine verifier that cannot name its project cannot read
+  // roles, and silently falling back to "no project" would return `[]`
+  // roles for every real token, which is exactly the bug this fixes.
+  const projectId = process.env.ZITADEL_PROJECT_ID;
+  if (!projectId) throw new Error("ZITADEL_PROJECT_ID is not set");
   return {
     issuer: issuer.replace(/\/$/, ""),
     audience,
+    projectId,
     internalOrgId: process.env.ZITADEL_INTERNAL_ORG_ID || undefined,
   };
 }
@@ -355,14 +411,39 @@ export async function verifyMachineAuthHeader(
       throw new Error("zitadel: machine token has no subject");
     }
 
+    // A machine access token carries roles under the PROJECT-SCOPED claim
+    // `urn:zitadel:iam:org:project:{projectId}:roles`, not the flat
+    // `ROLES_CLAIM` an operator's ID token carries — confirmed against a
+    // real token minted for the `mark8ly-catalog-reader` service user. Using
+    // `ROLES_CLAIM` here silently returned `[]` for every real machine
+    // token, which then failed `assertCapability` and surfaced as a 403
+    // that looked like a permissions problem rather than a claim-shape bug.
+    //
+    // Deliberately project-scoped ONLY, no fallback to the flat claim: this
+    // package has already seen `claims_supported` omit claims Zitadel still
+    // emits (see `ROLES_CLAIM`'s docstring), so a flat claim showing up on
+    // some future token cannot be ruled out. But accepting it here would let
+    // a token carrying roles for a DIFFERENT project satisfy this check, if
+    // Zitadel or a different application ever emitted that shape — the
+    // audience check narrows "which application", not "which project", so
+    // this would be a real widening of who can pass. If the flat claim ever
+    // legitimately needs to be honored for machine tokens too, that should
+    // be a deliberate, reviewed addition, not a quiet "accept either".
+    const projectRolesClaim = `urn:zitadel:iam:org:project:${config.projectId}:roles`;
+    const rolesClaimValue = payload[projectRolesClaim];
+
     const identity: MachineIdentity = {
       sub: payload.sub,
       clientId: typeof payload.azp === "string" ? payload.azp : undefined,
-      roles: extractRoles(payload[ROLES_CLAIM]),
-      orgId:
-        typeof payload[ORG_ID_CLAIM] === "string"
-          ? (payload[ORG_ID_CLAIM] as string)
-          : undefined,
+      roles: extractRoles(rolesClaimValue),
+      // `ORG_ID_CLAIM` (`urn:zitadel:iam:org:id`) is ALSO absent from a real
+      // machine token — the granting org appears only nested inside the
+      // roles claim's value instead. Derive it from there rather than
+      // leaving `orgId` permanently `undefined` for every machine caller:
+      // that would be harmless only for as long as `ZITADEL_INTERNAL_ORG_ID`
+      // stays unset, and would turn into an inexplicable 403 for every
+      // machine caller the moment someone sets it.
+      orgId: extractOrgIdFromRolesClaim(rolesClaimValue),
     };
 
     // Enforced, not merely documented: a service user holding the project
