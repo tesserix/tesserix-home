@@ -1,3 +1,5 @@
+import { CapabilityError } from "@tesserix/platform-auth";
+
 import { isDatabaseConfigured, tesserixQuery } from "./tesserix";
 
 /**
@@ -303,6 +305,77 @@ export interface AuditDescription {
   readonly target?: string;
 }
 
+/**
+ * Opt-in for an error that represents a DELIBERATE refusal — policy said no
+ * — rather than a failure. The decision to audit lives with the error
+ * itself rather than being duplicated at every call site that can throw one:
+ * a caller writes `throw new PublishRefused(...)` once, and every path that
+ * goes through `auditedOperation` picks it up without having to know it
+ * exists.
+ *
+ * Deliberately not satisfied by every `Error`: a plain `Error` is a failure
+ * (a bug, a dropped connection), not a decision, and must NOT gain this
+ * shape by accident. See `refusalDescription` and #409.
+ */
+export interface AuditableRefusal {
+  /** What the audit row should say about this refusal. */
+  readonly auditRefusal: () => AuditDescription;
+}
+
+/**
+ * Structural check, not `instanceof`: `AuditableRefusal` is a console-local
+ * interface, and an error class defined anywhere (including another
+ * package) can implement it without importing this module.
+ */
+export function isAuditableRefusal(
+  value: unknown,
+): value is Error & AuditableRefusal {
+  return (
+    value instanceof Error &&
+    "auditRefusal" in value &&
+    typeof (value as { auditRefusal?: unknown }).auditRefusal === "function"
+  );
+}
+
+/**
+ * Recognise a refusal among the causes `auditedOperation` might catch.
+ *
+ * Two branches, both explicit, neither guessing from a string:
+ *
+ * - `AuditableRefusal` — the general case. An error declares its own audit
+ *   description (`PublishRefused`, and any future refusal type).
+ * - `CapabilityError` — lives in `@tesserix/platform-auth`, which this
+ *   console package depends on; the dependency cannot run the other way, so
+ *   `CapabilityError` cannot implement a console-local interface. It gets
+ *   its own branch here instead of being duck-typed on `err.name`, which
+ *   would silently match anything (including a bug) that happened to reuse
+ *   that string.
+ *
+ * Returns `null` for anything else — a failure, not a decision — so the
+ * caller in `auditedOperation` writes nothing and rethrows unchanged.
+ */
+function refusalDescription(cause: unknown): AuditDescription | null {
+  if (isAuditableRefusal(cause)) {
+    return cause.auditRefusal();
+  }
+  if (cause instanceof CapabilityError) {
+    // `required` is a hyphenated capability name (e.g. "publish-catalog"),
+    // which SUMMARY_KEY's identifier shape rejects — hyphens aren't
+    // permitted. Underscored rather than dropped, so the row still names
+    // which capability was missing instead of only that one was.
+    const capability = cause.required.replaceAll("-", "_");
+    return {
+      action: "capability.refused",
+      summary: { [capability]: 1 },
+      // No target override: the operation never ran, so the caller's
+      // upfront `spec.target` (what was being acted on) is still the more
+      // accountable fact than the capability name, which already lives in
+      // `summary`.
+    };
+  }
+  return null;
+}
+
 /** An audited operation and the facts that account for it. */
 export interface AuditedOperation<T> {
   readonly actor: string;
@@ -345,8 +418,18 @@ export interface AuditedOperation<T> {
  *
  * 1. No database → refuse before the operation runs. Nothing is read, so
  *    nothing went unaccounted for. See AuditUnavailableError.
- * 2. Run the operation. Its own failure propagates unchanged — a failed
- *    operation returned no data, so there are no unaudited results.
+ * 2. Run the operation.
+ *    - It throws a DELIBERATE REFUSAL (`refusalDescription` recognises it)
+ *      → write a row describing the refusal, then rethrow the original
+ *      `cause` unchanged. A refusal is a decision, and belongs in the log:
+ *      the highest-stakes action in this system is exactly the one most
+ *      worth recording when it is refused, not only when it succeeds.
+ *    - It throws anything else (a FAILURE — not a decision: a bug, a
+ *      dropped connection, `AuditWriteError`) → propagate unchanged,
+ *      writing nothing. Recording it would put a database write exactly on
+ *      the path where the database is the likely cause, and would bury the
+ *      refusals worth reading — the rows this exists for — in operational
+ *      noise. See #409.
  * 3. Describe, then write. **The row is written even when the operation
  *    returned nothing**: "who searched for whom and found nothing" is the
  *    interesting case, and a zero-result summary is still a summary.
@@ -359,7 +442,18 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
     throw new AuditUnavailableError();
   }
 
-  const result = await spec.operation();
+  let result: T;
+  try {
+    result = await spec.operation();
+  } catch (cause) {
+    const refusal = refusalDescription(cause);
+    if (refusal) {
+      await writeRefusal(spec, refusal);
+    }
+    // Rethrow the ORIGINAL cause either way, refusal or failure: auditing
+    // changes what is recorded, never what the caller sees.
+    throw cause;
+  }
 
   // Described before the write and outside its try, so a bug in `describe`
   // surfaces as AuditSummaryError rather than being reported as a database
@@ -383,4 +477,45 @@ export async function auditedOperation<T>(spec: AuditedOperation<T>): Promise<T>
   });
 
   return result;
+}
+
+/**
+ * Write the row for a recognised refusal, on a best-effort basis.
+ *
+ * THE SUBTLE CASE (#409): what if the refusal's own audit write fails? The
+ * caller needs to know they were refused — that is the operation's real
+ * outcome, and a truthful one. Letting `AuditWriteError` propagate instead
+ * would tell them "audit failed" when what actually happened is "you were
+ * refused", which is both a worse answer and a wrong one: `AuditWriteError`
+ * is documented above as meaning the operation's *own* results are
+ * unaccounted for, and a refusal has none to lose.
+ *
+ * So this failure is swallowed here, after being logged server-side, and
+ * the caller in `auditedOperation` always rethrows the original refusal
+ * regardless of whether this write succeeded. The row that should have
+ * existed but doesn't is a real gap — exactly the class of gap #409 exists
+ * to close — but it is a gap to notice in server logs and alerting, not one
+ * to paper over with a false success or hide by reporting the wrong error
+ * to the caller.
+ */
+async function writeRefusal<T>(
+  spec: AuditedOperation<T>,
+  refusal: AuditDescription,
+): Promise<void> {
+  try {
+    await writeAuditEntry({
+      actor: spec.actor,
+      action: refusal.action,
+      target: refusal.target || spec.target,
+      summary: refusal.summary,
+    });
+  } catch (writeFailure) {
+    // Server-side signal only; see the doc comment above on why this is
+    // swallowed rather than propagated.
+    console.error(
+      "audit: failed to record a refused operation; the refusal itself " +
+        "still reached the caller",
+      writeFailure,
+    );
+  }
 }
