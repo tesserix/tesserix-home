@@ -563,4 +563,66 @@ describe("the mounted authoring surface", () => {
 
     expect(findOrphans).toHaveBeenCalledWith("test");
   });
+
+  // The two tests below assert RENDERED OUTPUT, not that a mock was called.
+  // Every other test in this block proves the page READS the right things;
+  // none of them prove those reads reach the screen. That gap is not
+  // theoretical here: all four props `page.tsx` hands `AuthoringPanel`
+  // (`persistedOutcome`, `attemptState`, `operationsState`, `orphans`,
+  // `orphansState`) are OPTIONAL, so a renamed or mistyped key in the
+  // `persistedOutcomeProps` bundle would typecheck, lint, build, and leave
+  // every call-assertion above green while the operator saw nothing at all.
+  // These two close the seam between "the page read it" and "an operator can
+  // see it", which is the entire point of tesserix-home#410.
+
+  it("renders the persisted failed attempt, end to end, with no session publish", async () => {
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue(FAILED_ATTEMPT);
+    operationsForAttempt.mockResolvedValue([
+      {
+        id: "op-1",
+        attemptId: "attempt-1",
+        sequence: 1,
+        kind: "replace_price",
+        stripeCall: "archive",
+        source: "mark8ly",
+        lookupKey: "mark8ly_pro_annual_developed_v1",
+        currency: null,
+        stripePriceId: "price_old",
+        idempotencyKey: "idem-1",
+        status: "failed",
+        error: "Stripe said no",
+        startedAt: "2026-08-30T00:00:01.000Z",
+        finishedAt: "2026-08-30T00:00:02.000Z",
+      },
+    ]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByText(/Publish attempt attempt-1/i)).toBeInTheDocument();
+    // The failed operation's own row — the per-operation detail that is the
+    // whole reason this surface exists rather than a summary count.
+    expect(screen.getByText("mark8ly_pro_annual_developed_v1")).toBeInTheDocument();
+    expect(screen.getByText("Stripe said no")).toBeInTheDocument();
+  });
+
+  it("renders an orphan the operator can act on when the latest attempt succeeded", async () => {
+    // Decision 2, asserted where it actually matters: not "findOrphans was
+    // called" but "the operator sees the orphan". A successful publish after
+    // the one that stranded the price must not blank this out.
+    setUpSuccessfulReads();
+    currentDraft.mockResolvedValue(null);
+    latestPublishAttempt.mockResolvedValue({ ...FAILED_ATTEMPT, outcome: "succeeded" });
+    findOrphans.mockResolvedValue([
+      { priceId: "price_stranded", lookupKey: "mark8ly_pro_annual_developed_v1", source: "mark8ly" },
+    ]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByText(/Orphaned Stripe prices/i)).toBeInTheDocument();
+    expect(screen.getByText(/price_stranded/)).toBeInTheDocument();
+  });
 });
