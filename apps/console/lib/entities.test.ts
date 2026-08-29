@@ -1,20 +1,27 @@
 import { describe, expect, it } from "vitest";
 
 import { parseEntities } from "./entities";
+// Named explicitly rather than a bare `{ ..., pagination: {...} }` literal:
+// `entities` nests pagination INSIDE `data`, unlike `koraaimetrics` (see
+// `kora-ai-metrics.test.ts`), and this is the one place that distinction is
+// pinned for this parser — see the helper's own doc comment for why (#421).
+import { paginationInsideData } from "./test-support/pagination-envelope";
 
 /** The shape platform-api's entities module emits, as its Go tests pin it. */
-const body = {
-  data: [
-    {
-      id: "kora:528ea893",
-      source: "kora",
-      type: "foods",
-      label: "Veg kolhapuri",
-      created_at: "2026-08-22T07:16:52Z",
-    },
-  ],
-  pagination: { page: 1, limit: 100, total: 6421 },
-};
+const body = paginationInsideData(
+  {
+    data: [
+      {
+        id: "kora:528ea893",
+        source: "kora",
+        type: "foods",
+        label: "Veg kolhapuri",
+        created_at: "2026-08-22T07:16:52Z",
+      },
+    ],
+  },
+  { page: 1, limit: 100, total: 6421 },
+) as { data: unknown[]; pagination: { page: number; limit: number; total: number } };
 
 describe("parseEntities", () => {
   it("reads the platform API's shape", () => {
@@ -32,10 +39,10 @@ describe("parseEntities", () => {
 
   it("refuses a non-whole or negative counter", () => {
     expect(() =>
-      parseEntities({ ...body, pagination: { page: 1, limit: 100, total: -1 } }),
+      parseEntities(paginationInsideData(body, { page: 1, limit: 100, total: -1 })),
     ).toThrow(/total/);
     expect(() =>
-      parseEntities({ ...body, pagination: { page: 1.5, limit: 100, total: 1 } }),
+      parseEntities(paginationInsideData(body, { page: 1.5, limit: 100, total: 1 })),
     ).toThrow(/page/);
   });
 
@@ -54,7 +61,8 @@ describe("parseEntities", () => {
   });
 
   it("names the offending path so the fix does not require a search", () => {
-    expect(() => parseEntities({ ...body, data: [{ ...body.data[0], label: 42 }] })).toThrow(
+    const firstRow = body.data[0] as Record<string, unknown>;
+    expect(() => parseEntities({ ...body, data: [{ ...firstRow, label: 42 }] })).toThrow(
       /data\[0\]\.label/,
     );
   });
@@ -66,7 +74,9 @@ describe("parseEntities", () => {
   });
 
   it("accepts an empty page, because zero rows is still a page", () => {
-    const page = parseEntities({ data: [], pagination: { page: 1, limit: 100, total: 0 } });
+    const page = parseEntities(
+      paginationInsideData({ data: [] }, { page: 1, limit: 100, total: 0 }),
+    );
     expect(page.data).toEqual([]);
     expect(page.pagination.total).toBe(0);
   });
