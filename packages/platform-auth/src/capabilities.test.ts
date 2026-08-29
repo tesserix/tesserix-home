@@ -3,6 +3,7 @@ import {
   CAPABILITIES,
   CONSOLE_ENTRY_CAPABILITY,
   CapabilityError,
+  MACHINE_CAPABILITIES,
   RISK_CAPABILITIES,
   SURFACE_CAPABILITIES,
   assertCapability,
@@ -117,6 +118,7 @@ describe("the capability set is a contract with Zitadel", () => {
       "mass-send",
       "hard-delete",
       "publish-catalog",
+      "read-plan-catalog",
     ]);
   });
 
@@ -134,6 +136,7 @@ describe("the surface/verb split (#261)", () => {
       CONSOLE_ENTRY_CAPABILITY,
       ...SURFACE_CAPABILITIES,
       ...RISK_CAPABILITIES,
+      ...MACHINE_CAPABILITIES,
     ]);
 
     expect([...CAPABILITIES].sort()).toEqual(Array.from(classified).sort());
@@ -192,5 +195,30 @@ describe("publish-catalog capability", () => {
   it("does not admit a publish on the billing surface alone", () => {
     expect(hasCapability(["billing"], "publish-catalog")).toBe(false);
     expect(hasCapability(["billing", "publish-catalog"], "publish-catalog")).toBe(true);
+  });
+});
+
+describe("read-plan-catalog capability", () => {
+  it("maps the plan-catalog read role to its capability", () => {
+    expect(toCapabilities(["read-plan-catalog"])).toContain("read-plan-catalog");
+  });
+
+  it("does not grant the billing surface to a plan-catalog reader", () => {
+    // A machine that reads published prices must not thereby hold the
+    // console's billing surface. This is the whole reason the capability
+    // exists.
+    expect(toCapabilities(["read-plan-catalog"])).not.toContain("billing");
+  });
+
+  it("does not let the console-entry capability imply it", () => {
+    expect(toCapabilities(["read"])).not.toContain("read-plan-catalog");
+  });
+
+  it("is classified as neither a surface nor a risk verb", () => {
+    // It is a machine capability: it says nothing about WHERE an operator
+    // works or WHAT they may do, because there is no operator.
+    expect(SURFACE_CAPABILITIES).not.toContain("read-plan-catalog");
+    expect(RISK_CAPABILITIES).not.toContain("read-plan-catalog");
+    expect(MACHINE_CAPABILITIES).toContain("read-plan-catalog");
   });
 });

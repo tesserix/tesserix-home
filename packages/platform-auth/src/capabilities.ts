@@ -114,6 +114,33 @@ export const CAPABILITIES = [
    * deployed it — with a CapabilityError that names no cause.
    */
   "publish-catalog",
+
+  // ---------------------------------------------------------------------
+  // MACHINE — held by a service identity, not an operator.
+  //
+  // Neither a surface nor a verb: a machine enters no console session and
+  // works in no surface, so SURFACE_CAPABILITIES' "where an operator works"
+  // and RISK_CAPABILITIES' operator-verb framing both describe a concept
+  // this identity doesn't have. Forcing it into either list would misstate
+  // what it is rather than clarify it.
+  // ---------------------------------------------------------------------
+  /**
+   * Read the PUBLISHED plan catalog. Held by a Zitadel service user (a
+   * machine), never an operator.
+   *
+   * Grants reading published prices and nothing else — not `billing`'s
+   * wallets, refunds, payouts and subscription state. A machine created to
+   * read prices must not thereby hold the console's entire billing surface;
+   * that is the entire reason this capability exists rather than reusing
+   * `billing`. It deliberately does not imply, and is not implied by,
+   * `billing` or any other capability here.
+   *
+   * DEPLOY PRECONDITION, same shape as `publish-catalog`: this string is a
+   * contract with Zitadel. The role must exist and be granted to the
+   * service user before the read endpoint ships, or verification succeeds
+   * while authorization silently fails for every caller.
+   */
+  "read-plan-catalog",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -152,6 +179,19 @@ export const RISK_CAPABILITIES = [
   "hard-delete",
   "publish-catalog",
 ] as const satisfies readonly Capability[];
+
+/**
+ * Capabilities held by a machine identity (a Zitadel service user), never an
+ * operator.
+ *
+ * A third bucket, not a subset of SURFACE_CAPABILITIES or RISK_CAPABILITIES:
+ * those two describe an operator's console — where they work, what they may
+ * do there. A machine does neither. Keeping this list separate is what lets
+ * `hasCapability`/`toCapabilities` stay a single shared check while still
+ * letting a reviewer see, at a glance, which strings a human should never be
+ * granted for console access alone.
+ */
+export const MACHINE_CAPABILITIES = ["read-plan-catalog"] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {
   return (CAPABILITIES as readonly string[]).includes(value);
