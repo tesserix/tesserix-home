@@ -67,17 +67,25 @@ function buildOrphans(fixtures: readonly OrphanFixture[] | undefined): PublishOu
 function renderOutcome(
   options: {
     mode?: StripeMode;
-    outcome?: PublishAttemptOutcome;
+    // `| null` is not laxness: it is the shape a PERSISTED attempt can have
+    // (tesserix-home#410) — one that never recorded a verdict — so the
+    // fixture builder has to be able to express it.
+    outcome?: PublishAttemptOutcome | null;
     promoted?: boolean;
     operations?: readonly OperationFixture[];
     orphans?: readonly OrphanFixture[];
   } = {},
 ) {
   // Defaults to `"failed"`: that is the outcome this whole surface exists
-  // for (see `publish-outcome.tsx`'s header), and every test below either
-  // asserts on failed-attempt behaviour or does not care which outcome it
-  // sees.
-  const outcome = options.outcome ?? "failed";
+  // for (see `publish-outcome.tsx`'s header), and every test that does not
+  // name an outcome either asserts on failed-attempt behaviour or does not
+  // care which outcome it sees.
+  //
+  // Compared against `undefined` rather than written with `??`: `null` is a
+  // MEANINGFUL outcome here (an attempt still in flight, which never
+  // recorded a verdict), and `??` would silently coerce it to the `"failed"`
+  // default — quietly disarming every in-flight test below.
+  const outcome = options.outcome === undefined ? "failed" : options.outcome;
   render(
     <PublishOutcome
       attemptId="attempt-1"
@@ -138,5 +146,54 @@ describe("PublishOutcome", () => {
   it("says the publication was NOT promoted when the attempt failed", () => {
     renderOutcome({ outcome: "failed", promoted: false });
     expect(screen.getByText(/still published/i)).toBeInTheDocument();
+  });
+
+  it("says an attempt that never recorded an outcome has no verdict, rather than calling it failed", () => {
+    // The single most important attempt to render well: a publish that died
+    // between `startPublishAttempt` and `finishPublishAttempt` is exactly
+    // the crash that strands an orphaned Price. Saying "failed" would
+    // assert more than the log knows.
+    renderOutcome({ outcome: null });
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/never recorded an outcome/i);
+    expect(status).toHaveTextContent(/does not say it failed/i);
+    // The same truthful claim the failed branch makes, worded the same way.
+    expect(status).toHaveTextContent(/NOT promoted/);
+    expect(status).toHaveTextContent(/previous revision is still published/i);
+    // Re-plan, never retry — this surface's rule everywhere.
+    expect(status).toHaveTextContent(/re-plan against what Stripe holds now/i);
+    // And it points at the orphan risk without asserting an orphan exists.
+    expect(status).toHaveTextContent(/orphan/i);
+  });
+
+  it("shows the operations an in-flight attempt already wrote", () => {
+    // An unresolved attempt is not an aborted one: `executePublish` DID
+    // enter `plan.operations`, so the write-ahead log has rows and they are
+    // the only evidence of what reached Stripe.
+    renderOutcome({
+      outcome: null,
+      operations: [
+        { sequence: 1, kind: "replace_price", lookupKey: "a", status: "succeeded" },
+        { sequence: 2, kind: "replace_price", lookupKey: "b", status: "pending" },
+      ],
+    });
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    expect(within(rows[1]).getByText(/succeeded/i)).toBeInTheDocument();
+    expect(within(rows[2]).getByText(/pending/i)).toBeInTheDocument();
+  });
+
+  it("does not claim promotion for an in-flight attempt", () => {
+    renderOutcome({ outcome: null });
+    // The success sentence claims Stripe matches the revision; an attempt
+    // with no verdict claims nothing of the sort.
+    expect(screen.queryByText(/Stripe now matches this revision/i)).toBeNull();
+    expect(screen.getByText(/Re-planning observes Stripe fresh/i)).toBeInTheDocument();
+  });
+
+  it("offers re-planning for an in-flight attempt", () => {
+    renderOutcome({ outcome: null });
+    expect(screen.getByRole("link", { name: /re-plan/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^retry$/i })).toBeNull();
   });
 });

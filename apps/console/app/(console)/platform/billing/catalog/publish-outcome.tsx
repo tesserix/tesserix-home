@@ -85,6 +85,25 @@ import type { StripeMode } from "@/lib/billing/stripe-read";
  * difference between an operator believing their change is live and knowing
  * it is not.
  *
+ * # The fourth state: an attempt with no verdict at all
+ *
+ * `publishAction`'s return value is always resolved, so for most of this
+ * component's life there were three outcomes. Reading a PERSISTED attempt
+ * back (tesserix-home#410) adds a fourth: `outcome: null`, an attempt whose
+ * row was written by `startPublishAttempt` and never closed by
+ * `finishPublishAttempt` — a publish that crashed mid-flight.
+ *
+ * That state is rendered, not hidden, and it is deliberately NOT called
+ * "failed": the log does not record that it failed, it records nothing at
+ * all about how it ended, and a status line that said "failed" would assert
+ * more than is known. What IS known is exactly what the three sections
+ * above already establish — some operations may have reached Stripe (the
+ * table says which), nothing was promoted (promotion only ever follows a
+ * `"succeeded"` outcome), and the recovery is to re-plan. It is also the
+ * single shape most likely to have stranded an orphan, since dying between
+ * a `replace_price`'s create and its archive is precisely how one is made,
+ * which is why its copy points at the orphan callout above.
+ *
  * # Consistency with `publish-view.tsx`
  *
  * The `"succeeded"` / `"aborted"` copy below is worded to match
@@ -93,7 +112,9 @@ import type { StripeMode } from "@/lib/billing/stripe-read";
  * see both of, in either order, should never read like two accounts of one
  * event. The `"failed"` copy extends that same account with what THIS
  * surface adds beyond a status line: the operation table and the orphan
- * check.
+ * check. The `null` copy reuses the `"failed"` copy's own two sentences
+ * about promotion and recovery verbatim in substance, for the same reason:
+ * they are the same two facts.
  */
 
 export interface PublishOutcomeOperation {
@@ -128,15 +149,20 @@ export interface PublishOutcomeProps {
    *  session path (`publishAction`'s return value) can never produce one;
    *  reading a PERSISTED attempt back (tesserix-home#410) can, because
    *  `PublishAttemptOutcome | null` is what the log actually stores. The
-   *  status line below is omitted for that case rather than coerced into a
-   *  verdict the log never recorded. */
+   *  status line below renders its own copy for that case rather than
+   *  coercing it into a verdict the log never recorded — see this module's
+   *  "fourth state" section. */
   readonly outcome: PublishAttemptOutcome | null;
   /** Whether `publishAction` promoted the revision — always `false` for a
-   *  `"failed"` or `"aborted"` outcome; see this module's header. */
+   *  `"failed"`, `"aborted"` or unresolved (`null`) outcome, since
+   *  promotion only ever follows a `"succeeded"` one; see this module's
+   *  header. */
   readonly promoted: boolean;
   /** Every operation the attempt's write-ahead log recorded, in `sequence`
    *  order — empty for `"aborted"`, since `executePublish` never entered
-   *  `plan.operations` in that case. */
+   *  `plan.operations` in that case. An unresolved (`null`) attempt is NOT
+   *  that case: it entered the loop and its rows are the only record of
+   *  what reached Stripe. */
   readonly operations: readonly PublishOutcomeOperation[];
   /** Orphans found by the automatic post-failure check. Empty on anything
    *  other than a failed attempt with an incomplete `replace_price`. */
@@ -147,15 +173,26 @@ export interface PublishOutcomeProps {
 }
 
 /**
- * The status line. Three outcomes, three different truths — the same
- * discipline `publish-view.tsx`'s `outcomeMessage` documents, and the
- * `"succeeded"` / `"aborted"` sentences below are worded to match it rather
- * than restate the same fact differently.
+ * The status line. Three recorded outcomes plus the unrecorded one, four
+ * different truths — the same discipline `publish-view.tsx`'s
+ * `outcomeMessage` documents, and the `"succeeded"` / `"aborted"` sentences
+ * below are worded to match it rather than restate the same fact
+ * differently.
  */
 function outcomeSummary(
-  outcome: PublishAttemptOutcome,
+  outcome: PublishAttemptOutcome | null,
   operations: readonly PublishOutcomeOperation[],
 ): string {
+  if (outcome === null) {
+    return (
+      "This attempt never recorded an outcome. The log does not say it failed — it says nothing at all about how " +
+      "it ended, which is what a publish that stopped between starting and finishing leaves behind. Some of its " +
+      "operations may already have been written to Stripe; the table below is the write-ahead log's record of " +
+      "which. This attempt was NOT promoted — the previous revision is still published. An attempt that stops " +
+      "mid-flight is the shape that can strand an orphaned Stripe price, so read any orphan warning above with " +
+      "that in mind. Re-plan against what Stripe holds now."
+    );
+  }
   if (outcome === "succeeded") {
     return "Published. Stripe now matches this revision, and it is the mode's published catalog.";
   }
@@ -256,7 +293,7 @@ export function PublishOutcome({
     <section className="flex flex-col gap-4">
       <div>
         <h2>Publish attempt {attemptId}</h2>
-        {outcome === null ? null : <p role="status">{outcomeSummary(outcome, operations)}</p>}
+        <p role="status">{outcomeSummary(outcome, operations)}</p>
       </div>
 
       <OrphansCallout orphans={orphans} />
@@ -265,12 +302,21 @@ export function PublishOutcome({
           never entered `plan.operations`, so the log has nothing for this
           attempt id and a table here would render a confusing "no
           operations" empty state for an event that has nothing to do with
-          operations at all. */}
+          operations at all.
+
+          An unresolved (`null`) attempt falls on the OTHER side of this
+          test on purpose: it did enter the loop, so its write-ahead rows
+          are the only evidence of what reached Stripe, and they are exactly
+          what the status line above tells the reader to consult. */}
       {outcome === "aborted" ? null : <OperationsTable operations={operations} />}
 
       {/* Re-plan, never retry — see this module's header. Hidden on a
           succeeded outcome: the revision was promoted and there is nothing
-          to re-plan against yet. */}
+          to re-plan against yet. An unresolved (`null`) attempt is not
+          succeeded, so it gets the control — and its `promoted` is `false`,
+          so it gets the "Re-planning observes Stripe fresh" caption, which
+          is the right one: whatever that attempt did to Stripe, only a
+          fresh observation can say. */}
       {outcome === "succeeded" ? null : (
         <div>
           <Button asChild>
