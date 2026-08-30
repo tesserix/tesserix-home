@@ -19,6 +19,16 @@ func TestEveryRouteNamesItsCapability(t *testing.T) {
 		// defines — a funnel that ends in a paid conversion is still not a
 		// revenue surface.
 		"GET /v1/onboarding/funnel": auth.CapPlatform,
+		// The same gate, and the decision is NOT automatic: this route
+		// returns merchant email addresses, so it is the one place in the
+		// module where a narrower capability would have been arguable. It
+		// gets `platform` because there is no narrower Operate capability to
+		// give it — `support` is a different surface, not a lesser one — and
+		// because splitting the two halves of one product endpoint across two
+		// capabilities would mean an operator who can see that 57 sessions
+		// were abandoned cannot see which. The PII decision is recorded in
+		// the package doc on onboardingfunnel; this is where it is enforced.
+		"GET /v1/onboarding/sessions": auth.CapPlatform,
 	}
 	for _, r := range handler.RouteTable {
 		key := r.Method + " " + r.Pattern
