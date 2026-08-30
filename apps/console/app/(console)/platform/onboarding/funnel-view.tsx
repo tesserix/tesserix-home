@@ -3,6 +3,7 @@
 // compose as JSX. This file carries its own directive for that reason.
 "use client";
 
+import Link from "next/link";
 import { StatTile } from "@/components/kit/stat-tile";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
@@ -15,11 +16,86 @@ export interface FunnelViewProps {
   /** `null` whenever `state.kind !== "ready"` — see `page.tsx`'s
    *  `funnelState`. A funnel is rendered only when one was actually read. */
   funnel: OnboardingFunnel | null;
-  /** The product this funnel belongs to, named on the page because the stage
-   *  words below are ITS vocabulary and not the console's. */
-  source: string;
+  /**
+   * The product this funnel belongs to, named on the page because the stage
+   * words below are ITS vocabulary and not the console's.
+   *
+   * `null` when no product was chosen — nobody declares `onboarding`, the
+   * declarations could not be read, or the URL named a product that does not
+   * declare one. In every one of those `funnel` is null too, so nothing that
+   * needs a name renders.
+   */
+  source: string | null;
+  /**
+   * Every product declaring `onboarding` on this deployment, in the API's own
+   * sorted order — see `SourcePicker` for what is done with one of them.
+   */
+  sources: readonly string[];
+  /** Where the picker's chips point. */
+  basePath: string;
   state: SurfaceState;
   reauthReturnTo: string;
+}
+
+/**
+ * The source picker: one chip per product declaring `onboarding`.
+ *
+ * # It renders NOTHING for a single source, and that is the design
+ *
+ * The list comes from the deployment's declarations either way — that is the
+ * point of the read, and it is what makes a second product appear here without
+ * a console change. What is conditional is the CONTROL, because a lone chip is
+ * a control that cannot do anything: there is nothing to switch to and
+ * nothing to deselect, so it reads as a filter an operator has failed to clear.
+ * The one source is still named on the page, on the window line below, which
+ * is where it belongs when there is no choice to make.
+ *
+ * So today, with only mark8ly declaring, this renders nothing. The day a
+ * second product declares, chips appear — the list was never the thing that
+ * was missing.
+ *
+ * # Links, not buttons
+ *
+ * A chosen source is a location: it must be shareable, bookmarkable and
+ * back-button-navigable, the same call `ResultPager` makes about a page of
+ * results.
+ */
+export function SourcePicker({
+  sources,
+  selected,
+  basePath,
+}: {
+  sources: readonly string[];
+  selected: string | null;
+  basePath: string;
+}) {
+  if (sources.length < 2) return null;
+  return (
+    <nav aria-label="Onboarding source" className="flex flex-wrap items-center gap-2">
+      {sources.map((slug) => {
+        const current = slug === selected;
+        return (
+          <Link
+            key={slug}
+            href={`${basePath}?source=${encodeURIComponent(slug)}`}
+            // `aria-current="page"` rather than a disabled control: the chosen
+            // chip stays a link so a screen-reader user hears which one is
+            // active without losing the ability to land on it directly.
+            aria-current={current ? "page" : undefined}
+            data-testid="funnel-source"
+            data-selected={current ? "true" : "false"}
+            className={
+              current
+                ? "rounded-full border border-foreground/20 bg-muted px-3 py-1 text-sm font-medium"
+                : "rounded-full border border-transparent px-3 py-1 text-sm text-muted-foreground hover:border-foreground/20"
+            }
+          >
+            {slug}
+          </Link>
+        );
+      })}
+    </nav>
+  );
 }
 
 /**
@@ -99,12 +175,32 @@ export function formatMedianCompletion(seconds: number | null): string {
  * of stage names to compare against, so a stage this build has never heard of
  * renders exactly like the five it has — see `lib/onboarding-funnel.ts`.
  */
-export function FunnelView({ funnel, source, state, reauthReturnTo }: FunnelViewProps) {
+export function FunnelView({
+  funnel,
+  source,
+  sources,
+  basePath,
+  state,
+  reauthReturnTo,
+}: FunnelViewProps) {
   return (
     <div className="flex flex-col gap-6">
+      {/* Above the state view, and outside its branches: when a product's
+          funnel fails to read, the way out is to try another product, so the
+          picker must survive the failure it is the remedy for. */}
+      <SourcePicker sources={sources} selected={source} basePath={basePath} />
+
       <SurfaceStateView
         state={state}
-        emptyMessage={`${source} has recorded no onboarding sessions yet.`}
+        emptyMessage={
+          // Only a chosen product can be said to have recorded nothing. With
+          // no source the empty state is unreachable anyway (no read was
+          // made), and "null has recorded no sessions" is the string that
+          // reaches an operator if that ever stops being true.
+          source
+            ? `${source} has recorded no onboarding sessions yet.`
+            : "No onboarding sessions to show."
+        }
         reauthReturnTo={reauthReturnTo}
       />
 

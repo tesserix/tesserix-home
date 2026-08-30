@@ -8,6 +8,7 @@ import {
   mobilePath,
   webPath,
 } from "./routes";
+import { navItems, platformNav } from "./nav";
 
 describe("consolePath", () => {
   it("never serves apps/web's /admin paths", () => {
@@ -37,12 +38,16 @@ describe("consolePath", () => {
     // "platform.onboarding" is excluded for that same second reason: the
     // funnel is a console surface over the platform API's federated read, and
     // expo-router has no screen for it either.
+    // "platform.onboardingSessions" likewise, and more so: the session list is
+    // reached only from the funnel and carries merchant email addresses, which
+    // is not a surface to put on a phone by default.
     for (const id of ROUTE_IDS) {
       if (
         id === "platform.dashboard" ||
         id === "platform.tools" ||
         id === "mark8ly.migrationFastPath" ||
-        id === "platform.onboarding"
+        id === "platform.onboarding" ||
+        id === "platform.onboardingSessions"
       )
         continue;
       expect(consolePath(id)).toBe(mobilePath(id));
@@ -130,6 +135,9 @@ describe("console-native surfaces record no apps/web path", () => {
     //     surfaces, but they are one product's own screens — there was never
     //     an estate-wide funnel to succeed, which is the whole reason this
     //     route is `platform.*` rather than `mark8ly.*`.
+    //   - platform.onboardingSessions: the same, one level down. The rows
+    //     behind the funnel's counts come from a federated read (#447) that
+    //     postdates apps/web entirely.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
@@ -141,6 +149,7 @@ describe("console-native surfaces record no apps/web path", () => {
       "platform.billingCatalog",
       "platform.tenants",
       "platform.onboarding",
+      "platform.onboardingSessions",
       "platform.aiUsage",
       "platform.crmImport",
       "platform.crmSuppressions",
@@ -360,5 +369,27 @@ describe("pending reflects what the console actually serves", () => {
     const ids: readonly string[] = ROUTE_IDS;
     expect(ids).not.toContain("mark8ly.audit");
     expect(ids).not.toContain("homechef.audit");
+  });
+});
+
+describe("the onboarding session list", () => {
+  it("is a route of its own, under the funnel", () => {
+    // Its own id rather than a `?view=` on the funnel: the funnel answers
+    // "where do merchants stall" and this answers "which merchant do I call".
+    // The nesting is what keeps the rail highlighting the funnel's entry while
+    // an operator is here — `platform.onboarding` is deliberately not `exact`.
+    expect(consolePath("platform.onboardingSessions")).toBe("/platform/onboarding/sessions");
+    expect(isPending("platform.onboardingSessions")).toBe(false);
+    expect(consolePath("platform.onboardingSessions").startsWith(consolePath("platform.onboarding"))).toBe(
+      true,
+    );
+  });
+
+  it("appears in no rail — it is the funnel's detail, and the estate's one PII queue", () => {
+    // A rail entry would advertise it as a peer of the funnel and put merchant
+    // email addresses one click from every operator's landing page.
+    const railed = navItems(platformNav).map((item) => item.route);
+    expect(railed).toContain("platform.onboarding");
+    expect(railed).not.toContain("platform.onboardingSessions");
   });
 });

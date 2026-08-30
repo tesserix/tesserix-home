@@ -453,6 +453,33 @@ export const ROUTES = {
   // a paid conversion is still an operational question, not a revenue surface.
   "platform.onboarding": { console: "/platform/onboarding", capability: "platform" },
 
+  // The rows behind the funnel's counts (#448). A SEPARATE route rather than a
+  // section of `platform.onboarding`, and the split is by question: the funnel
+  // answers "where do merchants stall", this answers "which merchant do I
+  // call". Different audiences, and different working shapes — one is a
+  // glance, the other is a queue with filters and paging.
+  //
+  // It is also where the PII boundary falls. Every row is a merchant's email
+  // address and no funnel tile is one, so the page most people open carries
+  // none. A route id makes that boundary a thing the estate can see, rather
+  // than a `?view=` on a surface whose id says nothing about it.
+  //
+  // NOT in `platformNav`, deliberately, and this is the one entry in the table
+  // that is reached only from another page. A rail item would advertise the
+  // list as a peer of the funnel, when it is the funnel's detail — and would
+  // put the estate's one PII queue one click from every operator's landing
+  // page. `platform.onboarding` is not `exact`, so this path still highlights
+  // the Onboarding rail entry while an operator is here.
+  //
+  // Same capability as the funnel: platform-api gates both routes on
+  // `platform`. That the rows carry PII is not a second capability — the
+  // console has no verb capability for reading it, and inventing one here
+  // would gate a surface on something no operator holds.
+  "platform.onboardingSessions": {
+    console: "/platform/onboarding/sessions",
+    capability: "platform",
+  },
+
   // The AI path's spend, token usage and guardrail activity, sourced from the
   // agentgateway data plane rather than from any one product. No `web`: apps/web
   // never had this surface — the gateway postdates it.
