@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import {
+  AuthCardDivider,
   AuthCredentialForm,
   AuthOtpStep,
   AuthPanel,
@@ -58,12 +59,19 @@ import { submitCredentials, submitTotp, type LoginOutcome } from "./actions";
  * sign in at all. Only TOTP is collected here. A security key still hands off,
  * because a half-built WebAuthn prompt is worse than none.
  *
- * # The provider button is above the whole form
+ * # The provider button is above the whole form, the divider below it
  *
  * Not beside a field: an operator decides whether to use Google BEFORE
  * deciding to type a password, so it has to be the first thing under the
  * heading. Part 1 of #440 collapsed the credential steps onto one page and
  * deliberately left no slot beside them for this reason.
+ *
+ * The "or" sits BETWEEN the button and the credentials, because that is what
+ * it separates. `AuthProviderList` renders its own `label` above its buttons,
+ * which put the divider first under the heading — reading as though something
+ * were missing above it — so the label is left off and `AuthCardDivider` is
+ * composed in after the list instead. It also carries the vertical rhythm
+ * between the two ways in, which the list alone did not.
  *
  * The list is passed in rather than fetched here — it comes from Zitadel's
  * login policy, read on the server by `page.tsx`. Nothing about which
@@ -173,25 +181,27 @@ export function LoginForm({
       mode="auto"
     >
       {step === "credentials" && providers.length > 0 ? (
-        // `AuthProviderList` hides itself and its divider when it has no
-        // children, so an org with no bound provider gets the password form
-        // alone rather than a dead "or continue with".
-        <AuthProviderList label="or">
-          {providers.map((provider) => (
-            <AuthProviderButton
-              key={provider.id}
-              // The DISPLAY NAME, which is what resolves the brand mark.
-              // Zitadel's, not ours — same source as the id beside it.
-              provider={provider.name}
-              disabled={pending}
-              onClick={() => {
-                // A full navigation, not a fetch: the route redirects to the
-                // provider, which cannot happen inside this page.
-                window.location.assign(startUrl(authRequestId, provider.id));
-              }}
-            />
-          ))}
-        </AuthProviderList>
+        // Both together or neither: an org with no bound provider gets the
+        // password form alone rather than a dead "or" above the only way in.
+        <>
+          <AuthProviderList>
+            {providers.map((provider) => (
+              <AuthProviderButton
+                key={provider.id}
+                // The DISPLAY NAME, which is what resolves the brand mark.
+                // Zitadel's, not ours — same source as the id beside it.
+                provider={provider.name}
+                disabled={pending}
+                onClick={() => {
+                  // A full navigation, not a fetch: the route redirects to the
+                  // provider, which cannot happen inside this page.
+                  window.location.assign(startUrl(authRequestId, provider.id));
+                }}
+              />
+            ))}
+          </AuthProviderList>
+          <AuthCardDivider />
+        </>
       ) : null}
 
       {step === "totp" ? (
