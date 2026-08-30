@@ -224,6 +224,11 @@ export const ESTATE: readonly EstateProduct[] = [
     // the vocabulary. This field carries what the CONSOLE renders, which is
     // the only half this package can check — see `EstateProduct.contracts`.
     contracts: ["inbox"],
+    // Describes apps/web's eight-entry rail, which is what `entries` counted
+    // until tesserix-home#406. It is still the honest summary of what the
+    // PRODUCT holds — the console's own rail ships one entry and is not live
+    // (see `entriesFrom` above) — so this is deliberately NOT narrowed to the
+    // single queue. Narrow it when the rail actually ships.
     summary: "Tenants, onboarding, subscriptions and leads.",
   },
   {

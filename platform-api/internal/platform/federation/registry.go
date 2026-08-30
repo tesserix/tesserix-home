@@ -48,9 +48,22 @@ type Product struct {
 	//
 	// Needed for the same reason Entities is, one level up. §3.2 is a required
 	// contract endpoint, but "required" governs products that adopt it, not
-	// every product at once: mark8ly does not mount `/admin/inbox` at all, so
-	// asking it returns 404 and an operator sees a failed source where the
-	// honest answer is that the product has no queue.
+	// every product at once: a product that does not mount a contract route
+	// answers 404, and an operator sees a failed source where the honest
+	// answer is that the product does not serve it.
+	//
+	// THE EXAMPLE THIS USED TO GIVE HAS EXPIRED. It said "mark8ly does not
+	// mount /admin/inbox at all". It does — probed in production on
+	// 2026-08-30, `GET /admin/inbox` answers 401 (mounted, signature
+	// rejected) against a control 404 for a made-up path under the same
+	// prefix, and tesserix/mark8ly#415 ("admin-conformance.json does not
+	// declare inbox, which is mounted and working") is closed. mark8ly is
+	// still not DECLARED here for `inbox`, which is a separate and deliberate
+	// choice — tesserix-home#406 put its fast-path queue on mark8ly's own
+	// product rail rather than the estate Inbox, because the review step
+	// presupposes mark8ly's migration model in a way "what is waiting on a
+	// human" does not. Declaring it would fan the estate Inbox out to that
+	// queue, which is a product decision, not a wiring one.
 	//
 	// Absence means it implements none — the same absence-means-no rule
 	// FEDERATION_PRODUCTS and ENTITIES use. A product stays out of the estate
