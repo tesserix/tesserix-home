@@ -20,13 +20,25 @@
  *
  * A password-only session may complete ONLY when there is no second factor to
  * ask for: the policy does not force MFA, and the user has enrolled none.
- * Anything else hands off to Zitadel's own login UI, which knows how to
- * collect every factor type this instance supports.
+ * Anything else must produce the missing factor before the login can finish.
  *
- * Handing off rather than implementing TOTP and U2F here is deliberate for a
- * first version. A half-built factor prompt is worse than none: it is the
- * screen an operator meets when their account is most sensitive, and Zitadel's
- * already handles enrolment, recovery codes and WebAuthn correctly.
+ * # TOTP is collected here; everything else still hands off
+ *
+ * The first version handed EVERY factor off to Zitadel's own login UI. That
+ * path was never exercised until an operator needed a factor, and it turned
+ * out to be broken: it pointed at the V1 hosted UI, which cannot resolve an
+ * auth request created through the OIDC **v2** service and answers
+ * `Errors.AuthRequest.NotFound (CACHE-d24aD)`. The operator could load the
+ * page, type a correct password, and never get in.
+ *
+ * TOTP now resolves in-page, because it is a six-digit code and nothing more:
+ * the console can collect it and hand it to Zitadel's session API without
+ * reimplementing anything security-relevant. U2F and passkeys still hand off —
+ * a half-built WebAuthn prompt is worse than none, and Zitadel's UI already
+ * handles enrolment, recovery codes and WebAuthn correctly.
+ *
+ * Enrolment is likewise not something this page can do, so "MFA is forced and
+ * the user has no authenticator" is still a hand-off.
  */
 
 /** The subset of the org login policy this decision reads. */
@@ -52,8 +64,49 @@ export interface EnrolledFactors {
 }
 
 export type Sufficiency =
+  /** The session may be handed to the auth request as it stands. */
   | { readonly outcome: "complete" }
+  /** Ask for a six-digit authenticator code in-page, then decide again. */
+  | { readonly outcome: "totp" }
+  /** This page cannot produce the missing factor; Zitadel's own login can. */
   | { readonly outcome: "handoff"; readonly reason: HandoffReason };
+
+/**
+ * Zitadel's `authMethodTypes` value for an authenticator app.
+ *
+ * Matched exactly, and only in this spelling. A looser match ("does it contain
+ * TOTP") would let an unfamiliar future value route an operator to a code
+ * prompt their account cannot answer; an unrecognised value has to fall
+ * through to the hand-off, which is the outcome that copes with anything.
+ */
+export const TOTP_METHOD = "AUTHENTICATION_METHOD_TYPE_TOTP";
+
+/**
+ * What THIS session has proved beyond the password.
+ *
+ * Not "what the user could prove" — `EnrolledFactors` already says that. This
+ * is the narrower and more dangerous question: what Zitadel has actually
+ * accepted against this session id. Only a check that succeeded may set it.
+ */
+export interface SessionChecks {
+  readonly totpVerified: boolean;
+}
+
+/** The state of every session before a second factor has been offered. */
+export function noChecks(): SessionChecks {
+  return { totpVerified: false };
+}
+
+/**
+ * A session whose TOTP code Zitadel accepted.
+ *
+ * Exported for tests and for the login client, which is the only production
+ * caller — it builds one from the branded token `addTotpCheck` returns, so a
+ * caller cannot assert a verification it never performed.
+ */
+export function totpChecked(): SessionChecks {
+  return { totpVerified: true };
+}
 
 export type HandoffReason = "policy-forces-mfa" | "user-has-second-factor" | "user-has-passkey";
 
@@ -72,19 +125,44 @@ export type HandoffReason = "policy-forces-mfa" | "user-has-second-factor" | "us
 export function decideSufficiency(
   policy: LoginPolicySnapshot,
   factors: EnrolledFactors,
+  checks: SessionChecks,
 ): Sufficiency {
+  if (checks.totpVerified) {
+    // Password plus an authenticator code IS multi-factor, which answers every
+    // reason below at once: the forcing policy, the factor the user chose, and
+    // the passkey rule's concern that the account not be reduced to a password.
+    return { outcome: "complete" };
+  }
+
+  const owesAFactor =
+    policy.forceMfa ||
+    policy.forceMfaLocalOnly ||
+    // The user chose to protect this account with a second factor. Completing
+    // on a password alone would silently downgrade their own decision.
+    factors.secondFactorTypes.length > 0 ||
+    // A passkey is not a second factor, but it means the account is protected
+    // by something stronger than a password, and this path must not reduce it
+    // to one.
+    factors.passkeyCount > 0;
+
+  if (!owesAFactor) {
+    return { outcome: "complete" };
+  }
+
+  if (factors.secondFactorTypes.includes(TOTP_METHOD)) {
+    // Answerable here. Note this is reached only from a factor list we
+    // actually read: `unknownFactors()` carries no recognised method, so a
+    // failed lookup cannot produce a code prompt the account may not answer.
+    return { outcome: "totp" };
+  }
+
   if (policy.forceMfa || policy.forceMfaLocalOnly) {
     return { outcome: "handoff", reason: "policy-forces-mfa" };
   }
   if (factors.secondFactorTypes.length > 0) {
-    // The user chose to protect this account with a second factor. Completing
-    // on a password alone would silently downgrade their own decision.
     return { outcome: "handoff", reason: "user-has-second-factor" };
   }
-  if (factors.passkeyCount > 0) {
-    return { outcome: "handoff", reason: "user-has-passkey" };
-  }
-  return { outcome: "complete" };
+  return { outcome: "handoff", reason: "user-has-passkey" };
 }
 
 /**

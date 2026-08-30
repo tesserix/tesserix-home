@@ -1,5 +1,7 @@
 import {
   decideSufficiency,
+  noChecks,
+  totpChecked,
   unknownFactors,
   unknownPolicy,
   type EnrolledFactors,
@@ -35,11 +37,26 @@ import {
 
 export class LoginClientError extends Error {
   readonly kind: "unconfigured" | "bad-credentials" | "unknown-user" | "auth-request" | "upstream";
+  /**
+   * The HTTP status, when there was one.
+   *
+   * Kept because Zitadel does not use one status for "you got the secret
+   * wrong": a bad password is 401, a bad TOTP code is 400 InvalidArgument.
+   * Without the status, the second reads as "upstream" — i.e. "sign-in is
+   * temporarily unavailable" — which tells an operator to wait out an outage
+   * that is really a mistyped digit. Server-side only; never rendered.
+   */
+  readonly status?: number;
 
-  constructor(kind: LoginClientError["kind"], message: string, options?: ErrorOptions) {
+  constructor(
+    kind: LoginClientError["kind"],
+    message: string,
+    options?: ErrorOptions & { status?: number },
+  ) {
     super(message, options);
     this.name = "LoginClientError";
     this.kind = kind;
+    this.status = options?.status;
   }
 }
 
@@ -92,6 +109,7 @@ async function call<T>(
     throw new LoginClientError(
       response.status === 401 || response.status === 403 ? "bad-credentials" : "upstream",
       `zitadel ${method} ${path} -> ${response.status} ${text.slice(0, 300)}`,
+      { status: response.status },
     );
   }
   return (text ? JSON.parse(text) : {}) as T;
@@ -193,6 +211,48 @@ export async function getEnrolledFactors(
 }
 
 /**
+ * Proof that Zitadel accepted a TOTP code against a specific session.
+ *
+ * Branded for the same reason as `Sufficient`: the only way to hold one is to
+ * have made the call that produces it. `checkSufficiency` takes one, so
+ * "assume the code was fine" is not something a caller can express.
+ */
+declare const totpBrand: unique symbol;
+export interface TotpVerified {
+  readonly [totpBrand]: true;
+}
+
+/**
+ * Add an authenticator code to a session that already passed its password.
+ *
+ * A PATCH on the EXISTING session, not a new one: the auth request is about to
+ * be handed this session id, and a second session would be a second password
+ * check the operator never made. `sessionToken` is what authorises the change
+ * — the login-client PAT alone cannot amend someone else's session.
+ */
+export async function addTotpCheck(
+  config: LoginClientConfig,
+  session: LoginSession,
+  code: string,
+): Promise<TotpVerified> {
+  try {
+    await call(config, "PATCH", `/v2/sessions/${encodeURIComponent(session.id)}`, {
+      sessionToken: session.token,
+      checks: { totp: { code } },
+    });
+  } catch (error) {
+    // 400 is the one that matters: Zitadel answers an invalid TOTP with
+    // InvalidArgument, which the generic mapping calls "upstream". Re-kinded
+    // here so the page can offer a retry instead of an outage notice.
+    if (error instanceof LoginClientError && error.status === 400) {
+      throw new LoginClientError("bad-credentials", error.message, { status: 400 });
+    }
+    throw error;
+  }
+  return {} as TotpVerified;
+}
+
+/**
  * Proof that the sufficiency decision was made and came back "complete".
  *
  * Its only constructor is `checkSufficiency`. `finalize` requires one, so a
@@ -205,12 +265,25 @@ export interface Sufficient {
   readonly [sufficientBrand]: true;
 }
 
-/** Run the decision. Returns the token only when the login may complete. */
+/**
+ * Run the decision. Returns the token only when the login may complete.
+ *
+ * `verifiedTotp` is the branded result of `addTotpCheck`, or `null` when no
+ * second factor has been offered yet. It is a parameter rather than something
+ * this function could infer, because after the in-page code prompt the
+ * completion has to come back through this decision — re-deriving it is what
+ * keeps `Sufficient` honest. Nothing casts its way past here.
+ */
 export function checkSufficiency(
   policy: LoginPolicySnapshot,
   factors: EnrolledFactors,
+  verifiedTotp: TotpVerified | null,
 ): { sufficiency: Sufficiency; proof: Sufficient | null } {
-  const sufficiency = decideSufficiency(policy, factors);
+  const sufficiency = decideSufficiency(
+    policy,
+    factors,
+    verifiedTotp ? totpChecked() : noChecks(),
+  );
   return {
     sufficiency,
     proof: sufficiency.outcome === "complete" ? ({} as Sufficient) : null,
