@@ -32,6 +32,26 @@ export interface EstateProduct {
   readonly entries: number;
   /** Has this product's IA moved into console-core? */
   readonly migrated: boolean;
+  /**
+   * Where `entries` was COUNTED from — which is not the same question as
+   * `migrated`, and conflating them is what made the estate map lie.
+   *
+   * Until tesserix-home#406 there were only two states and `migrated` could
+   * stand in for both: a migrated product's count came from console-core, an
+   * unmigrated one's came from apps/web's rail. Mark8ly is now a third:
+   * `entries` is `mark8lyNav.length`, counted from console-core, while
+   * `migrated` stays false because the rail has not shipped — its one entry
+   * is `pending`, and `routes.ts` is explicit that a pending entry links
+   * NOWHERE, "not in-app (the page does not exist) and not to apps/web
+   * either". Rendering "· still in apps/web" off `migrated` therefore made a
+   * false claim about a count that did not come from apps/web and does not
+   * point there.
+   *
+   * OPTIONAL, and absence means `"apps/web"` — the meaning every existing
+   * entry already had, so no other product changes. Declare it only when the
+   * count is derived from a console-core nav.
+   */
+  readonly entriesFrom?: "console-core" | "apps/web";
   /** What the rail holds, for a reader who has never seen the product. */
   readonly summary: string;
   /**
@@ -186,6 +206,13 @@ export const ESTATE: readonly EstateProduct[] = [
     // known wart rather than a fresh bug.
     entries: 1,
     migrated: false,
+    // Counted from `mark8lyNav`, not from apps/web's eight — see
+    // `entriesFrom`'s own doc for why this had to become explicit rather than
+    // being inferred from `migrated`. This is what stops the estate map
+    // rendering "1 rail entry · still in apps/web", which was false in both
+    // halves: the count is not apps/web's, and the entry it counts is
+    // `pending` and links nowhere.
+    entriesFrom: "console-core",
     // The one contract endpoint the rail renders from. `inbox` and not also
     // the actions endpoint: `POST /admin/inbox/{id}/actions/{actionId}` is
     // v2's way of invoking an action an inbox item already declares, not a
