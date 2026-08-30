@@ -98,18 +98,34 @@ export const ESTATE: readonly EstateProduct[] = [
     // false — EstateMap renders it as "8 rail entries · still in apps/web", and
     // apps/web really does ship eight.
     //
-    // NOT revised to 3 yet, though the mark8ly integration design does revise
-    // it: that 3 is the console rail's target (CSM migration fast-path review,
-    // arbitrage appeals, app credentials), and none of the three has a contract
-    // endpoint to render from — the fast-path review route is written but
-    // unmounted upstream (tesserix/mark8ly#281), and the other two live on
-    // mark8ly's own admin surface rather than /admin/*. Writing 3 here today
-    // would put "3 rail entries · still in apps/web" on a status board whose
-    // whole job is being honest about what has actually moved.
+    // NOT revised to the design's 3, and the reason has changed — the
+    // conclusion has not. Writing 3 here would still put "3 rail entries ·
+    // still in apps/web" on a status board whose whole job is being honest
+    // about what has actually moved, and apps/web really does ship eight.
     //
-    // When `mark8lyNav` lands, this becomes `mark8lyNav.length` and gets the
-    // same test kora has — the count checked against the nav it actually ships
-    // rather than transcribed.
+    // WHAT CHANGED (tesserix-home#405, 2026-08-30). This comment used to say
+    // all three of the design's targets lacked an endpoint, citing
+    // tesserix/mark8ly#281 as unmounted. **That issue is closed.**
+    // `platformadmin/routes.go:294` mounts `NewInboxActionsHandler` and
+    // `inbox_action_migration.go` implements the `migration_fast_path` kind,
+    // with route tests over it. So one of the three now HAS a contract
+    // endpoint to render from.
+    //
+    // The realistic target is therefore ONE entry, not three, and the other
+    // two are deferred BY DECISION rather than by absence — the integration
+    // design §5: arbitrage appeals and app credentials "are not on the list…
+    // /admin/inbox already carries the appeal queue as a `kind`. A dedicated
+    // surface for either is reassessed after the queue lands." App
+    // credentials additionally live on mark8ly's own admin surface rather
+    // than /admin/*, and need a `rotate-credentials` capability that does not
+    // exist.
+    //
+    // When `mark8lyNav` lands (tesserix-home#406), this becomes
+    // `mark8lyNav.length` and gets the same test kora has — the count checked
+    // against the nav it actually ships rather than transcribed. Until then
+    // this number is transcribed, which is exactly why the citation above
+    // went stale unnoticed: a comment naming an issue number is making a
+    // CHECKABLE claim, and nothing was checking it.
     entries: 8,
     migrated: false,
     summary: "Tenants, onboarding, subscriptions and leads.",
