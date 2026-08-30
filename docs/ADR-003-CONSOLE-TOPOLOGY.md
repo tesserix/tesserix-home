@@ -400,11 +400,16 @@ The API takes Zitadel access tokens. Two principal types, one issuer:
 Validation is the same on both paths: verify against Zitadel's JWKS, check the
 issuer and the platform API's audience, then read
 `urn:zitadel:iam:org:project:{projectId}:roles` and map it to the capability
-vocabulary #261 defines. (Amended by #433: this originally named the flat
-`urn:zitadel:iam:org:project:roles`, which only an operator's token carries.
-A service user's access token carries the project-scoped form alone, so the
-flat claim could not have proven the service half of this decision.) The principals differ in which roles they hold, not in how they
-are proven.
+vocabulary #261 defines. The principals differ in which roles they hold, not in
+how they are proven.
+
+> **Amended by #433.** This decision originally named the flat
+> `urn:zitadel:iam:org:project:roles`. A service user's access token does not
+> carry that claim at all — only the project-scoped form above — so the flat
+> name would have read zero roles on the service half of the very topology this
+> decision describes. Both real tokens were decoded on 2026-08-30; an operator's
+> carries both forms identically, which is why the project-scoped name alone
+> serves both principals.
 
 **The cheaper option, and why it is declined.** `tx_session` is a JWE — `alg:
 "dir"`, `enc: "A256GCM"`, off a symmetric `SESSION_ENCRYPT_KEY`. A Go service
