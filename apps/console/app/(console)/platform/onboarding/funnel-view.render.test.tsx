@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { OnboardingFunnel } from "@/lib/onboarding-funnel";
-import { FunnelView, formatMedianCompletion, stageLabel } from "./funnel-view";
+import { FunnelView, formatMedianCompletion, stageLabel, windowLabel } from "./funnel-view";
 
 // mark8ly's five stages, in the order its handler emits them.
 const FUNNEL: OnboardingFunnel = {
@@ -35,6 +35,33 @@ describe("stageLabel", () => {
     // vocabulary — the exact drift #404's first rule forbids.
     expect(stageLabel("email_verified")).toBe("email verified");
     expect(stageLabel("payment_added")).toBe("payment added");
+  });
+});
+
+describe("windowLabel", () => {
+  it("says all time when the product applied no bound", () => {
+    // mark8ly leaves both ends empty when no `created_from`/`created_to` was
+    // sent, which is what this console does. Interpolating them produced
+    // "mark8ly, to" in production — a fragment that reads as a date that
+    // failed to load rather than as an unbounded window.
+    expect(windowLabel({ from: "", to: "" })).toBe("all time");
+  });
+
+  it("reports a one-sided bound as the bound that exists", () => {
+    // Flattening these to "all time" would be wrong in the half that IS
+    // bounded, and the counts would be read as covering more than they do.
+    expect(windowLabel({ from: "2026-08-01", to: "" })).toBe("from 2026-08-01");
+    expect(windowLabel({ from: "", to: "2026-08-30" })).toBe("up to 2026-08-30");
+  });
+
+  it("states both ends when the product applied a real window", () => {
+    expect(windowLabel({ from: "2026-08-01", to: "2026-08-30" })).toBe(
+      "2026-08-01 to 2026-08-30",
+    );
+  });
+
+  it("treats blank-but-present ends as absent", () => {
+    expect(windowLabel({ from: "  ", to: "  " })).toBe("all time");
   });
 });
 
