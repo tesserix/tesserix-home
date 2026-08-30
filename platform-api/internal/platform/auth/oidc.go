@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -9,15 +10,44 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 )
 
-// ZitadelRolesClaim is where Zitadel puts project roles.
+// projectRolesClaim names the claim Zitadel puts project roles in.
 //
-// Shaped as {"read": {"<orgId>": "<orgDomain>"}} — the KEYS are the roles.
-// Identical to the claim `packages/platform-auth/src/zitadel.ts` reads, and
-// worth restating: it is absent from `claims_supported` in the discovery
-// document, so its presence depends on the project asserting roles AND the
-// application adding them to the token. When either is off the token verifies
-// perfectly and carries nothing, which is what ErrNoRoles exists to name.
-const ZitadelRolesClaim = "urn:zitadel:iam:org:project:roles"
+// Shaped as {"read": {"<orgId>": "<orgDomain>"}} — the KEYS are the roles, and
+// each value maps the granting organization's id to its primary domain.
+//
+// The name is PROJECT-SCOPED: `urn:zitadel:iam:org:project:{projectId}:roles`.
+// This service used to read the flat `urn:zitadel:iam:org:project:roles`
+// instead, which is the form an operator's ID token carries. A service user's
+// ACCESS token carries only the project-scoped form, so every machine caller
+// extracted zero roles, toCapabilities produced nothing, and Verify returned
+// ErrNoRoles — indistinguishable from a genuinely missing grant (#433). A real
+// operator access token was decoded alongside a real service-user one and
+// carries BOTH forms with identical contents, so reading only the
+// project-scoped name serves both callers and no flat-claim fallback is needed.
+//
+// That fallback is deliberately NOT added. Accepting the flat claim would widen
+// this path to a token minted for some other project, and the audience check in
+// Verify does not close that gap: `aud` narrows WHICH APPLICATION a token is
+// for, not which project's roles are being read. The same reasoning, and the
+// same rejection, is written out on ZitadelMachineConfig.projectId in
+// `packages/platform-auth/src/zitadel.ts`.
+//
+// {projectId} comes from explicit configuration (Config.ProjectID) rather than
+// from the token's own `aud`, even though the two are equal in this deployment.
+// `aud` answers "who is this token for"; the project id answers "whose roles am
+// I reading". Sourcing the second from the first would be correct only by
+// coincidence, and a future Zitadel project/application layout where they
+// diverge would silently read the wrong claim — returning no roles — instead of
+// failing loudly.
+//
+// As with the flat claim, this one is absent from `claims_supported` in the
+// discovery document: its presence depends on the project asserting roles AND
+// the application adding them to the token. When either is off the token
+// verifies perfectly and carries nothing, which is what ErrNoRoles exists to
+// name.
+func projectRolesClaim(projectID string) string {
+	return "urn:zitadel:iam:org:project:" + projectID + ":roles"
+}
 
 // OIDCParser verifies a token's signature against the issuer's JWKS.
 //
@@ -26,6 +56,10 @@ const ZitadelRolesClaim = "urn:zitadel:iam:org:project:roles"
 // that and hammer the issuer, so one is built at startup and reused.
 type OIDCParser struct {
 	verifier *oidc.IDTokenVerifier
+	// rolesClaim is the project-scoped claim name this parser reads, resolved
+	// once at startup because it depends on configuration and so cannot be a
+	// constant or a struct tag. See projectRolesClaim.
+	rolesClaim string
 }
 
 // NewOIDCParser performs issuer discovery once, at startup.
@@ -34,7 +68,20 @@ type OIDCParser struct {
 // start — deliberately. A service that starts without being able to verify
 // tokens can only fail closed on every request, which is a harder outage to
 // read than a refusal to boot.
-func NewOIDCParser(ctx context.Context, issuer string) (*OIDCParser, error) {
+//
+// An empty projectID is refused for the same fail-closed reason. Without the
+// guard the claim name would be built as `urn:zitadel:iam:org:project::roles`,
+// which no token carries, so every caller would extract zero roles and be
+// rejected with ErrNoRoles — the exact silent failure #433 was. Config.Validate
+// already requires ZITADEL_PROJECT_ID, but this constructor is exported and a
+// future caller can construct a parser directly, bypassing that reader, so the
+// guard belongs here too. (`verifyMachineAuthHeader` in
+// `packages/platform-auth/src/zitadel.ts` re-checks its audience for exactly
+// this reason.)
+func NewOIDCParser(ctx context.Context, issuer, projectID string) (*OIDCParser, error) {
+	if projectID == "" {
+		return nil, errors.New("zitadel project id is required to read the project-scoped roles claim")
+	}
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		return nil, fmt.Errorf("zitadel discovery at %s: %w", issuer, err)
@@ -52,7 +99,58 @@ func NewOIDCParser(ctx context.Context, issuer string) (*OIDCParser, error) {
 			// error rather than folded into a generic verification failure.
 			SkipExpiryCheck: true,
 		}),
+		rolesClaim: projectRolesClaim(projectID),
 	}, nil
+}
+
+// rolesFromClaims reduces Zitadel's roles claim to its keys.
+//
+// The value is shaped {"<role>": {"<orgId>": "<orgDomain>"}}; only the outer
+// keys are roles. Decoded as json.RawMessage rather than
+// map[string]map[string]string so an unexpected inner shape yields no roles
+// instead of failing the whole token — the roles are the keys and do not depend
+// on the value parsing.
+//
+// Returns an empty, non-nil slice when the claim is absent or is not a JSON
+// object (an array, a string and null all reach here from a misconfigured
+// Zitadel). Callers get "no roles", which verify.go turns into ErrNoRoles — the
+// correct, named failure — rather than ErrInvalid, which would report a
+// configuration gap as a malformed token. This mirrors extractRoles() in
+// `packages/platform-auth/src/zitadel.ts`, which rejects the same shapes.
+func rolesFromClaims(raw map[string]json.RawMessage, claim string) []string {
+	value, ok := raw[claim]
+	if !ok {
+		return []string{}
+	}
+	var byRole map[string]json.RawMessage
+	if err := json.Unmarshal(value, &byRole); err != nil {
+		return []string{}
+	}
+	roles := make([]string, 0, len(byRole))
+	for role := range byRole {
+		roles = append(roles, role)
+	}
+	return roles
+}
+
+// stringFromClaims reads a string-valued claim, or "" when it is absent or is
+// not a JSON string.
+//
+// It never fails the token. The only claim read through it is `email`, which
+// feeds Principal.Kind — documented in verify.go as a logging and audit
+// heuristic that NEVER authorises. Rejecting a token because a claim that
+// decides nothing has an odd shape would trade an attribution gap for an
+// outage.
+func stringFromClaims(raw map[string]json.RawMessage, claim string) string {
+	value, ok := raw[claim]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(value, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 // Parse verifies the signature and issuer, then extracts the claims this
@@ -66,26 +164,21 @@ func (p *OIDCParser) Parse(ctx context.Context, raw string) (*Claims, error) {
 		return nil, fmt.Errorf("%w: %s", ErrInvalid, err)
 	}
 
-	var claims struct {
-		Email string                       `json:"email"`
-		Roles map[string]map[string]string `json:"urn:zitadel:iam:org:project:roles"`
-	}
+	// Decoded by key rather than into a tagged struct: the roles claim's name
+	// depends on the configured project id (see projectRolesClaim), and a
+	// struct tag cannot carry a value that is only known at runtime.
+	var claims map[string]json.RawMessage
 	if err := token.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("%w: reading claims: %s", ErrInvalid, err)
 	}
 
-	roles := make([]string, 0, len(claims.Roles))
-	for role := range claims.Roles {
-		roles = append(roles, role)
-	}
-
 	return &Claims{
 		Subject:   token.Subject,
-		Email:     claims.Email,
+		Email:     stringFromClaims(claims, "email"),
 		Audience:  token.Audience,
 		Issuer:    token.Issuer,
 		ExpiresAt: token.Expiry,
-		Roles:     roles,
+		Roles:     rolesFromClaims(claims, p.rolesClaim),
 	}, nil
 }
 
@@ -140,7 +233,7 @@ func NewVerifierFromConfig(ctx context.Context, cfg Config) (*Verifier, error) {
 	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
 	defer cancel()
 
-	parser, err := NewOIDCParser(ctx, cfg.Issuer)
+	parser, err := NewOIDCParser(ctx, cfg.Issuer, cfg.ProjectID)
 	if err != nil {
 		return nil, err
 	}

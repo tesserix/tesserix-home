@@ -79,7 +79,10 @@ platform the console's own operators authenticate against
 (`auth.tesserix.app`). Concretely, standing this up requires, on the Zitadel
 side: a service user provisioned for the consuming product, granted the
 `read-plan-catalog` role on the Platform Console project, which it presents
-in access tokens as the `urn:zitadel:iam:org:project:roles` claim. The
+in access tokens as the project-scoped
+`urn:zitadel:iam:org:project:{projectId}:roles` claim — NOT the flat
+`urn:zitadel:iam:org:project:roles`, which a real service-user token was
+confirmed not to carry at all (#433). The
 consumer then runs the standard OAuth2 client-credentials grant against
 Zitadel's token endpoint to mint an access token before each call (or caches
 one until it expires). The exact audience value the token must carry is not

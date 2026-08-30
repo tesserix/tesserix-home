@@ -411,9 +411,12 @@ window in which the write has landed and the record has not.
 ## 7. Authentication and authorisation
 
 ADR-003 D8. Zitadel access tokens, two principal types, one issuer. Verified
-against the JWKS; issuer, audience and expiry checked; roles read from
-`urn:zitadel:iam:org:project:roles` and narrowed to #261's capability
-vocabulary.
+against the JWKS; issuer, audience and expiry checked; roles read from the
+project-scoped `urn:zitadel:iam:org:project:{projectId}:roles` and narrowed to
+#261's capability vocabulary. The project id comes from `ZITADEL_PROJECT_ID`,
+not from the token's `aud`, and the flat `urn:zitadel:iam:org:project:roles` is
+deliberately not accepted — a service user's access token does not carry it, so
+reading it gave every machine caller an empty role set (#433).
 
 **The API is the authorisation boundary. The console's checks are UX on top of
 it.** #244 puts surface refusal in the console's middleware; if this service

@@ -399,8 +399,11 @@ The API takes Zitadel access tokens. Two principal types, one issuer:
 
 Validation is the same on both paths: verify against Zitadel's JWKS, check the
 issuer and the platform API's audience, then read
-`urn:zitadel:iam:org:project:roles` and map it to the capability vocabulary
-#261 defines. The principals differ in which roles they hold, not in how they
+`urn:zitadel:iam:org:project:{projectId}:roles` and map it to the capability
+vocabulary #261 defines. (Amended by #433: this originally named the flat
+`urn:zitadel:iam:org:project:roles`, which only an operator's token carries.
+A service user's access token carries the project-scoped form alone, so the
+flat claim could not have proven the service half of this decision.) The principals differ in which roles they hold, not in how they
 are proven.
 
 **The cheaper option, and why it is declined.** `tx_session` is a JWE — `alg:
