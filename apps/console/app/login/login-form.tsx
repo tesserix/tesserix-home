@@ -19,19 +19,46 @@ import { submitCredentials, submitTotp, type LoginOutcome } from "./actions";
  * this page look like the console instead of like a login page that happens to
  * live next to it.
  *
- * Stepped — login name, then password, then the authenticator code when one is
- * owed — because that is the shape Zitadel's own login uses, and an operator
- * moving between the two should not have to relearn the form.
+ * # One page for the credentials
  *
- * The third step exists because the hand-off could not carry it: it pointed at
- * Zitadel's V1 login UI, which cannot resolve an auth request created through
- * the OIDC v2 service, so an operator with an authenticator could not sign in
- * at all. Only TOTP is collected here. A security key still hands off, because
- * a half-built WebAuthn prompt is worse than none.
+ * The login name and the password are collected together and submitted in one
+ * call. `createPasswordSession` always sent both at once — the split was never
+ * a protocol constraint.
+ *
+ * This form used to be stepped, login name then password, and the reason
+ * recorded here was that "that is the shape Zitadel's own login uses, and an
+ * operator moving between the two should not have to relearn the form". That
+ * reason no longer governs. Since #439 fixed the hand-off, this page is the
+ * primary sign-in surface rather than a lookalike an operator is bounced away
+ * from, so matching Zitadel's shape buys nothing; and a password manager can
+ * fill a username/password pair in one go, which a stepped form denies it.
+ *
+ * # The argument for stepping, kept rather than deleted
+ *
+ * Stepping exists so an identity provider can be chosen BEFORE a password is
+ * asked for — with several federated domains, which IdP a login name belongs
+ * to decides whether a password should be asked for at all. That is a real
+ * benefit, and this change gives it up knowingly: the estate has one IdP and a
+ * small operator set, so nothing is currently branching on the login name. If
+ * a second federated domain ever appears, stepping earns its keep again and
+ * this decision should be reopened rather than treated as settled.
+ *
+ * # The authenticator code stays a separate step
+ *
+ * It is owed only when the account has a factor, and only knowable once the
+ * session exists — there is nothing to ask for until the password has been
+ * checked. Folding it in would mean prompting every operator for a code most
+ * of them do not have.
+ *
+ * That step exists at all because the hand-off could not carry it: it pointed
+ * at Zitadel's V1 login UI, which cannot resolve an auth request created
+ * through the OIDC v2 service, so an operator with an authenticator could not
+ * sign in at all. Only TOTP is collected here. A security key still hands off,
+ * because a half-built WebAuthn prompt is worse than none.
  */
 export function LoginForm({ authRequestId }: { authRequestId: string }) {
   const [values, setValues] = useState<AuthCredentialValues>({ loginName: "", password: "" });
-  const [step, setStep] = useState<"loginName" | "password" | "totp">("loginName");
+  const [step, setStep] = useState<"credentials" | "totp">("credentials");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -83,18 +110,17 @@ export function LoginForm({ authRequestId }: { authRequestId: string }) {
         case "restart":
           setError(result.message);
           setCode("");
-          setStep("loginName");
+          setStep("credentials");
           return;
         default:
           setError(result.message);
           // Stay where the operator is. A rejected code must leave them on the
           // code field with the next one already coming — sending them back to
-          // the password would be the dead end this step exists to remove.
-          // Otherwise: back to the password field, never the login name.
-          // Re-typing a username that was accepted is busywork, and this page
-          // cannot tell the operator which half was wrong anyway.
+          // the credentials would be the dead end this step exists to remove.
+          // A rejected credential leaves them on the credential form with both
+          // fields as they typed them, because this page cannot tell them
+          // which half was wrong and re-typing both would be busywork.
           setCode("");
-          setStep((current) => (current === "totp" ? "totp" : "password"));
       }
     });
   }
@@ -119,9 +145,16 @@ export function LoginForm({ authRequestId }: { authRequestId: string }) {
         />
       ) : (
         <AuthCredentialForm
-          stepped
-          step={step}
-          onStepChange={setStep}
+          // Unstepped, so both fields render at once with their own
+          // `autoComplete` of "username" and "current-password".
+          //
+          // `error` is the form-level slot, and it is the ONLY one used here:
+          // `loginNameError` and `passwordError` would hang the message on a
+          // field, marking that input `aria-invalid` and telling the operator
+          // — and anyone probing — which half was wrong. The instance runs
+          // `ignoreUnknownUsernames` precisely so that cannot be learned, and
+          // with both fields on one page a field-level error would be the
+          // whole answer.
           values={values}
           onValuesChange={setValues}
           onSubmit={onSubmit}
