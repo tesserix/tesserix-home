@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   TOTP_METHOD,
+  classifyAuthMethods,
   decideSufficiency,
+  idpChecked,
   noChecks,
   totpChecked,
   unknownFactors,
@@ -154,5 +156,154 @@ describe("decideSufficiency", () => {
         }
       }
     }
+  });
+});
+
+describe("classifyAuthMethods", () => {
+  // Zitadel answers `ListAuthenticationMethodTypes` with a flat list mixing
+  // things that ARE second factors with things that are not. Reading it wrong
+  // is not a theoretical risk: it took every console operator to Zitadel's
+  // login page for two weeks. See the IDP case below.
+
+  it("counts an authenticator, a security key and the OTP deliveries as second factors", () => {
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_TOTP",
+        "AUTHENTICATION_METHOD_TYPE_U2F",
+        "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
+        "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
+      ]),
+    ).toEqual({
+      secondFactorTypes: [
+        "AUTHENTICATION_METHOD_TYPE_TOTP",
+        "AUTHENTICATION_METHOD_TYPE_U2F",
+        "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
+        "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
+      ],
+      passkeyCount: 0,
+    });
+  });
+
+  it("does NOT count a federated IdP link as a second factor", () => {
+    // The production bug, stated as a test. Every operator who has ever been
+    // linked to the Google IdP carries AUTHENTICATION_METHOD_TYPE_IDP, and
+    // `["...PASSWORD", "...IDP"]` is verbatim what Zitadel returns for the
+    // console's own operators. Counted as a second factor it decided
+    // "user-has-second-factor", which is answerable by nothing this page can
+    // collect, so every sign-in ended on Zitadel's hosted login.
+    //
+    // An IdP link is a way of proving the FIRST factor, not a second one.
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_PASSWORD",
+        "AUTHENTICATION_METHOD_TYPE_IDP",
+      ]),
+    ).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+  });
+
+  it("does not count the password itself", () => {
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_PASSWORD"])).toEqual({
+      secondFactorTypes: [],
+      passkeyCount: 0,
+    });
+  });
+
+  it("counts passkeys separately rather than as second factors", () => {
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_PASSKEY",
+        "AUTHENTICATION_METHOD_TYPE_PASSKEY",
+      ]),
+    ).toEqual({ secondFactorTypes: [], passkeyCount: 2 });
+  });
+
+  it("treats a value it does not recognise as a second factor", () => {
+    // The list is an open enum on Zitadel's side. A value this build has never
+    // seen must push towards the hand-off, never towards completing a login on
+    // a password alone — the same fail-closed rule `unknownFactors()` encodes.
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_FUTURE_THING"])).toEqual({
+      secondFactorTypes: ["AUTHENTICATION_METHOD_TYPE_FUTURE_THING"],
+      passkeyCount: 0,
+    });
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_UNSPECIFIED"])).toEqual({
+      secondFactorTypes: ["AUTHENTICATION_METHOD_TYPE_UNSPECIFIED"],
+      passkeyCount: 0,
+    });
+  });
+
+  it("is empty for a user with nothing enrolled, which decides complete", () => {
+    expect(classifyAuthMethods([])).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+    expect(decideSufficiency(noPolicy, classifyAuthMethods([]), noChecks())).toEqual({
+      outcome: "complete",
+    });
+  });
+});
+
+describe("decideSufficiency for a federated (IdP) session", () => {
+  // A federated login is NOT automatically sufficient. This is an explicit
+  // branch rather than a consequence of which code path the IdP flow happens
+  // to take, because the difference between the two is the whole reason
+  // `forceMfaLocalOnly` exists — and reading it wrong in the quiet direction
+  // completes a login the org asked to be protected.
+
+  it("does not treat a federated login as satisfying forceMfa", () => {
+    // `forceMfa` is unconditional: it does not distinguish local from
+    // federated, so Google having authenticated the operator does not answer
+    // it. Only a second factor does.
+    expect(decideSufficiency({ ...noPolicy, forceMfa: true }, nothingEnrolled, idpChecked())).toEqual(
+      { outcome: "handoff", reason: "policy-forces-mfa" },
+    );
+  });
+
+  it("exempts a federated login from forceMfaLocalOnly, which is what the flag MEANS", () => {
+    // The password path reads this flag as forcing MFA because that path IS
+    // the local login. The federated path is the other half of the same
+    // sentence: "MFA required for local logins but not federated ones". An
+    // operator who came through Google is on the exempt side of it.
+    expect(
+      decideSufficiency({ forceMfa: false, forceMfaLocalOnly: true }, nothingEnrolled, idpChecked()),
+    ).toEqual({ outcome: "complete" });
+  });
+
+  it("still owes the second factor the user enrolled for themselves", () => {
+    // Nothing about arriving via Google downgrades a factor the operator
+    // chose. It is answerable in-page, so it is asked for in-page.
+    expect(decideSufficiency(noPolicy, totpEnrolled, idpChecked())).toEqual({ outcome: "totp" });
+  });
+
+  it("still refuses to reduce a passkey-protected account to one factor", () => {
+    expect(
+      decideSufficiency(noPolicy, { secondFactorTypes: [], passkeyCount: 1 }, idpChecked()),
+    ).toEqual({ outcome: "handoff", reason: "user-has-passkey" });
+  });
+
+  it("hands off a federated login whose policy could not be read", () => {
+    // `unknownPolicy()` sets forceMfa, which no federated exemption touches.
+    // Fail-closed survives the new branch.
+    expect(decideSufficiency(unknownPolicy(), nothingEnrolled, idpChecked())).toEqual({
+      outcome: "handoff",
+      reason: "policy-forces-mfa",
+    });
+  });
+
+  it("hands off a federated login whose factor lookup failed", () => {
+    expect(decideSufficiency(noPolicy, unknownFactors(), idpChecked()).outcome).toBe("handoff");
+  });
+
+  it("does not let the federated exemption leak into a password login", () => {
+    // The regression that would matter most: if `forceMfaLocalOnly` stopped
+    // forcing MFA for everyone, the flag would be silently disabled.
+    expect(
+      decideSufficiency({ forceMfa: false, forceMfaLocalOnly: true }, nothingEnrolled, noChecks()),
+    ).toEqual({ outcome: "handoff", reason: "policy-forces-mfa" });
+  });
+
+  it("completes once a federated session has also verified a code", () => {
+    expect(
+      decideSufficiency({ ...noPolicy, forceMfa: true }, totpEnrolled, {
+        ...idpChecked(),
+        totpVerified: true,
+      }),
+    ).toEqual({ outcome: "complete" });
   });
 });
