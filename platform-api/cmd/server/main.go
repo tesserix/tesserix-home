@@ -29,6 +29,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/koraaimetrics"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/onboardingfunnel"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/outbox"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
@@ -242,6 +243,21 @@ func run(log *slog.Logger) error {
 		// ErrNotConfigured rather than the route not existing at all.
 		koraaimetrics.Register(m, koraaimetrics.Config{
 			Fed:      fed,
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "onboardingfunnel", func(m *http.ServeMux) {
+		onboardingfunnel.Register(m, onboardingfunnel.Config{
+			Fed: fed,
+			// SlugsImplementing, not Slugs: /admin/onboarding/funnel is the
+			// product's own route, not a §3 contract endpoint, and a product
+			// without one does not answer 501 — it does not mount the route
+			// at all. Asking it would 404 and surface to an operator as a
+			// failed source when the honest answer is that the product has no
+			// funnel. Same distinction the outbox and tenants blocks draw.
+			Slugs:    cfg.Federation.SlugsImplementing("onboarding"),
 			Verifier: verifier,
 			Log:      log,
 		})

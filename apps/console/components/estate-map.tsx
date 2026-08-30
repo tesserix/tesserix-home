@@ -35,10 +35,20 @@ function ProductCard({ product }: { product: EstateProduct }) {
           <>
             <span className="font-medium text-foreground">{product.entries}</span>{" "}
             rail {product.entries === 1 ? "entry" : "entries"}
+            {/* THREE states, not two. `migrated` alone cannot answer this:
+                a rail can be counted from console-core (`entriesFrom`) while
+                not yet shipping, which is Mark8ly since tesserix-home#406 —
+                its single entry is `pending` and `routes.ts` says a pending
+                entry links NOWHERE, not even to apps/web. Deriving the
+                suffix from `migrated` printed "· still in apps/web" over a
+                count that came from neither. Same class of bug the
+                `entries === 0` branch above already guards. */}
             {product.migrated ? (
               <span className="ml-2 font-medium text-success">
                 · in console-core
               </span>
+            ) : product.entriesFrom === "console-core" ? (
+              <span className="ml-2">· scaffolded in console-core, not yet live</span>
             ) : (
               <span className="ml-2">· still in apps/web</span>
             )}

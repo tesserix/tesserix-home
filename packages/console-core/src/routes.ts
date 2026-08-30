@@ -173,6 +173,52 @@ export const ROUTES = {
   // (`hard-delete`) is that same open decision.
   "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", capability: "platform" },
 
+  // Mark8ly's product rail — one route, the CSM migration fast-path review
+  // queue. `migrationFastPath` renders mark8ly's own vocabulary: it is the
+  // literal inbox `kind` (`migration_fast_path`) that
+  // `inbox_action_migration.go` implements, and a console-side synonym here
+  // would mean the id in the rail and the id on the wire no longer match.
+  //
+  // WHY THIS IS A PRODUCT-RAIL ROUTE AND NOT PART OF THE ESTATE INBOX. The
+  // rule in §2 — and §8.5, and the two retirements it already produced —
+  // pushes a queue onto the platform rail: `kora.feedback` is `retired`
+  // precisely because implementing `/admin/inbox` makes a product a SOURCE in
+  // a surface that already exists rather than earning a rail entry. This is
+  // the deliberate exception, not an oversight of that rule. Mark8ly's
+  // migration offer is its own commercial product and nothing else in the
+  // estate has one; the review STEP presupposes mark8ly's migration model in
+  // a way "what is waiting on a human" does not, so the two products' rows
+  // could not sit in one table without the columns meaning different things.
+  // A reviewer who knows the Kora precedent should read this paragraph before
+  // concluding it is the same mistake.
+  //
+  // PENDING STAYS, DELIBERATELY. `pending` means "the console has not built
+  // this page", and clearing it before the page exists points the rail and
+  // the palette at a 404 — the flag comes off per-surface as each page lands,
+  // and this one has not. The endpoint being live upstream is a
+  // PRECONDITION for building the page, not a substitute for it: mark8ly's
+  // `GET /api/v1/platform/admin/inbox` and `POST
+  // /api/v1/platform/admin/inbox/migration_fast_path/:id/actions/:actionId`
+  // both answer 401 in production (against a control of 404 for an invented
+  // path), so the surface is buildable. Building it is #406's follow-up, not
+  // #406. This is a hold, not an omission.
+  //
+  // No `web` and no `mobile`: neither app ever served this surface — apps/web
+  // ships mark8ly's eight-entry rail without it, and expo-router has no
+  // screen for it. A placeholder path in either field would claim a
+  // predecessor that does not exist (see RouteEntry.web).
+  //
+  // `platform` rather than a narrower verb: reviewing a fast-path request is
+  // an estate-operator read plus an action on someone else's product, and
+  // CAPABILITIES has no `approve`. The action itself must assert its own
+  // capability when the page is built, exactly as `platform.leadTemplates`
+  // records for test-sends.
+  "mark8ly.migrationFastPath": {
+    console: "/mark8ly/migration-fast-path",
+    pending: true,
+    capability: "platform",
+  },
+
   // Platform rail. The console owns their identity so the rail can be built
   // from one source; none of the surfaces is built here yet.
   // Served at the console root: the estate map plus the internal tools
@@ -384,6 +430,28 @@ export const ROUTES = {
   // `platform`, not `billing`: knowing a tenant exists is an Operate concern.
   // Only what they pay is a Revenue one.
   "platform.tenants": { mobile: "/platform/tenants", capability: "platform" },
+
+  // Where signups stall, read from the product that owns the funnel (#404).
+  //
+  // ON THE PLATFORM RAIL, not mark8ly's, and that is the whole filing
+  // decision. §2's rule: a surface belongs here when the operator's question
+  // spans products, and "where do signups stall" is a question every product
+  // with onboarding has. mark8ly is the first implementer, not the only
+  // conceivable one — which is exactly why platform-api's route is
+  // `/v1/onboarding/funnel?source=mark8ly` and not a mark8ly-named one, while
+  // Kora's food-resolution accuracy (no estate-generic equivalent at all) does
+  // carry its product's name. Contrast `mark8ly.migrationFastPath`, which
+  // presupposes mark8ly's migration model and could not share a table with
+  // another product's rows.
+  //
+  // Console-only, like `platform.tools`: apps/web's mark8ly rail has tenant
+  // and onboarding surfaces but no estate funnel, and mobile never served
+  // one. There is no predecessor to record and nothing being retired.
+  //
+  // NOT `pending`: the console serves this page. `platform`, not `billing`,
+  // matching the gate platform-api puts on the route — a funnel that ends in
+  // a paid conversion is still an operational question, not a revenue surface.
+  "platform.onboarding": { console: "/platform/onboarding", capability: "platform" },
 
   // The AI path's spend, token usage and guardrail activity, sourced from the
   // agentgateway data plane rather than from any one product. No `web`: apps/web

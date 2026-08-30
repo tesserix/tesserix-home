@@ -3,6 +3,7 @@ import {
   PlatformApiError,
   fetchDashboard,
   fetchKoraAiMetricsPage,
+  fetchOnboardingFunnel,
   fetchProductEntities,
   parseDashboard,
   fetchSupportAnalytics,
@@ -1100,5 +1101,62 @@ describe("fetchProductEntities", () => {
 
     expect(result.pagination).toEqual({ page: 1, limit: 50, total: 1 });
     expect(result.data[0]?.label).toBe("mahesh");
+  });
+});
+
+/**
+ * The onboarding funnel's federated read (#404). Two things are pinned here
+ * and nowhere else: the `source` parameter — the API refuses a request
+ * without one, because a funnel is one product's stages and not the estate's
+ * — and the 501, which is the answer this deployment actually gives today.
+ */
+describe("fetchOnboardingFunnel", () => {
+  const FUNNEL_DATA = {
+    started: 3,
+    completed: 1,
+    median_completion_seconds: null,
+    last_24h: { started: 1, completed: 0 },
+    window: { from: "2026-08-01T00:00:00Z", to: "2026-08-30T00:00:00Z" },
+  };
+
+  it("names the product it is asking about", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(envelope(FUNNEL_DATA)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const funnel = await fetchOnboardingFunnel("mark8ly");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://platform-api.test/v1/onboarding/funnel?source=mark8ly",
+    );
+    expect(funnel.stages).toEqual([
+      { stage: "started", count: 3 },
+      { stage: "completed", count: 1 },
+    ]);
+  });
+
+  it("keeps the 501 status, so a parked federation never reads as an empty funnel", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: false,
+            error: { code: "not_implemented", message: "no product declares an onboarding funnel" },
+          }),
+          { status: 501, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(fetchOnboardingFunnel("mark8ly")).rejects.toMatchObject({ status: 501 });
   });
 });

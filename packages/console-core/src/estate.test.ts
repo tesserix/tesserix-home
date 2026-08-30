@@ -6,7 +6,7 @@ import {
   endUserLookupProducts,
   unmigrated,
 } from "./estate";
-import { koraNav } from "./nav";
+import { koraNav, mark8lyNav } from "./nav";
 
 describe("estate", () => {
   it("covers every rail context apps/web defines", () => {
@@ -47,6 +47,34 @@ describe("estate", () => {
     // transcribed — this is the entry that would rot first if koraNav changed.
     const kora = ESTATE.find((p) => p.context === "kora");
     expect(kora?.entries).toBe(koraNav.length);
+  });
+
+  it("keeps Mark8ly's entry count honest against the nav it actually ships", () => {
+    // The same guard Kora has, and for the reason #405 found the hard way: the
+    // literal `8` sat here for a fortnight beside a comment citing an issue
+    // that had since closed, and nothing was checking either. A count derived
+    // from the rail cannot go stale on its own — only the rail can change, and
+    // then this is what says so.
+    //
+    // Mark8ly is NOT migrated, unlike Kora, so this pins a smaller claim: the
+    // number equals the rail console-core declares. See estate.ts's Mark8ly
+    // comment for what that number now means and what it stopped meaning.
+    const mark8ly = ESTATE.find((p) => p.context === "mark8ly");
+    expect(mark8ly?.entries).toBe(mark8lyNav.length);
+    // Guards the guard: an empty rail on both sides would satisfy the line
+    // above. The rail is deliberately one entry — see nav.ts for why the
+    // design's other two are deferred rather than forgotten.
+    expect(mark8lyNav).toHaveLength(1);
+  });
+
+  it("declares the contracts Mark8ly's rail renders from, and nothing for anyone else", () => {
+    // `contracts` is the D4 mechanism: absence means the product declares
+    // none, the same absence-means-no shape `endUserLookup` uses. Asserted
+    // over the WHOLE estate rather than on Mark8ly alone, so a product that
+    // picks up a declaration without a rail to render it fails here.
+    const declaring = ESTATE.filter((p) => p.contracts !== undefined);
+    expect(declaring.map((p) => p.name)).toEqual(["Mark8ly"]);
+    expect(declaring[0]?.contracts).toEqual(["inbox"]);
   });
 
   it("reports exactly one product as migrated today", () => {
