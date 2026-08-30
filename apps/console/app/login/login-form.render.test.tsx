@@ -149,6 +149,21 @@ describe("the provider button", () => {
     );
   });
 
+  it("reads button, then divider, then fields — the divider separates two ways in", async () => {
+    // The divider is a separator between the two ways of signing in, so it
+    // cannot be the first thing under the heading: that reads as though
+    // something is missing above it. Order is what regressed, so order is what
+    // is pinned — the provider button, then the "or", then the credentials.
+    render(<LoginForm authRequestId="V2_1" providers={google} />);
+
+    const button = screen.getByRole("button", { name: /Continue with Google/i });
+    const divider = screen.getByText("or");
+    const loginName = screen.getByLabelText(LOGIN_NAME);
+
+    expect(button.compareDocumentPosition(divider)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(divider.compareDocumentPosition(loginName)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("starts the flow at the console's own route, carrying the id Zitadel gave", async () => {
     const assign = vi.fn();
     vi.stubGlobal("location", { assign });
@@ -168,6 +183,7 @@ describe("the provider button", () => {
     render(<LoginForm authRequestId="V2_1" providers={[]} />);
 
     expect(screen.queryByRole("button", { name: /Continue with/i })).toBeNull();
+    expect(screen.queryByText("or")).toBeNull();
     expect(screen.getByLabelText(PASSWORD)).toBeInTheDocument();
   });
 
