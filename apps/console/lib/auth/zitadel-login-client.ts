@@ -1,4 +1,5 @@
 import {
+  classifyAuthMethods,
   decideSufficiency,
   noChecks,
   totpChecked,
@@ -177,8 +178,18 @@ export async function getLoginPolicy(config: LoginClientConfig): Promise<LoginPo
       forceMfa: wire.policy?.forceMfa === true,
       forceMfaLocalOnly: wire.policy?.forceMfaLocalOnly === true,
     };
-  } catch {
+  } catch (error) {
     // Fail closed: an unreadable policy must not read as "MFA not required".
+    //
+    // Said out loud, because the silent version is what let a
+    // hand-off-for-everyone run for two weeks before a screenshot found it.
+    // This is one of two inputs to a security decision, and an unreadable one
+    // makes that decision permanent — an operator can retry forever and never
+    // get past it. The message carries no secret: `LoginClientError` is built
+    // from the method, path and a truncated body, never the bearer.
+    console.warn("[login] could not read the login policy; assuming MFA is forced", {
+      message: error instanceof Error ? error.message : String(error),
+    });
     return unknownPolicy();
   }
 }
@@ -189,23 +200,43 @@ export async function getEnrolledFactors(
   session: LoginSession,
 ): Promise<EnrolledFactors> {
   try {
+    // The login-client bearer alone is enough to read the session AND its
+    // factors. VERIFIED against the live instance (Zitadel v4.15.3): a plain
+    // `GET /v2/sessions/{id}` with no `sessionToken` answers 200 with
+    // `factors.user.id` populated. Passing `session.token` as well would be
+    // harmless and is deliberately not done — it would imply the token is what
+    // unlocks the factors, which is the wrong mental model to leave behind for
+    // the next reader of this call.
     const wire = await call<{
       session?: { factors?: { user?: { id?: string } } };
     }>(config, "GET", `/v2/sessions/${encodeURIComponent(session.id)}`);
     const userId = wire.session?.factors?.user?.id;
-    if (!userId) return unknownFactors();
+    if (!userId) {
+      // A session with no user factor cannot have its methods looked up, so
+      // the decision has to fail closed. Logged because the result is a
+      // hand-off the operator cannot escape by retrying.
+      console.warn("[login] session resolved to no user; handing off", {
+        sessionId: session.id,
+      });
+      return unknownFactors();
+    }
 
     const methods = await call<{ authMethodTypes?: string[] }>(
       config,
       "GET",
       `/v2/users/${encodeURIComponent(userId)}/authentication_methods`,
     );
-    const types = methods.authMethodTypes ?? [];
-    return {
-      secondFactorTypes: types.filter((t) => t !== "AUTHENTICATION_METHOD_TYPE_PASSWORD" && t !== "AUTHENTICATION_METHOD_TYPE_PASSKEY"),
-      passkeyCount: types.filter((t) => t === "AUTHENTICATION_METHOD_TYPE_PASSKEY").length,
-    };
-  } catch {
+    // Absent, not empty, is how Zitadel says "none": proto3 omits an empty
+    // repeated field. `?? []` is therefore the enrolled-nothing case, not a
+    // parse failure — the failure case is the catch below.
+    return classifyAuthMethods(methods.authMethodTypes ?? []);
+  } catch (error) {
+    // The other half of the security decision, and the same reasoning as the
+    // policy lookup: fail closed, but say so.
+    console.warn("[login] could not read the enrolled factors; handing off", {
+      sessionId: session.id,
+      message: error instanceof Error ? error.message : String(error),
+    });
     return unknownFactors();
   }
 }

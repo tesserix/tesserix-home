@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   TOTP_METHOD,
+  classifyAuthMethods,
   decideSufficiency,
   noChecks,
   totpChecked,
@@ -154,5 +155,85 @@ describe("decideSufficiency", () => {
         }
       }
     }
+  });
+});
+
+describe("classifyAuthMethods", () => {
+  // Zitadel answers `ListAuthenticationMethodTypes` with a flat list mixing
+  // things that ARE second factors with things that are not. Reading it wrong
+  // is not a theoretical risk: it took every console operator to Zitadel's
+  // login page for two weeks. See the IDP case below.
+
+  it("counts an authenticator, a security key and the OTP deliveries as second factors", () => {
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_TOTP",
+        "AUTHENTICATION_METHOD_TYPE_U2F",
+        "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
+        "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
+      ]),
+    ).toEqual({
+      secondFactorTypes: [
+        "AUTHENTICATION_METHOD_TYPE_TOTP",
+        "AUTHENTICATION_METHOD_TYPE_U2F",
+        "AUTHENTICATION_METHOD_TYPE_OTP_SMS",
+        "AUTHENTICATION_METHOD_TYPE_OTP_EMAIL",
+      ],
+      passkeyCount: 0,
+    });
+  });
+
+  it("does NOT count a federated IdP link as a second factor", () => {
+    // The production bug, stated as a test. Every operator who has ever been
+    // linked to the Google IdP carries AUTHENTICATION_METHOD_TYPE_IDP, and
+    // `["...PASSWORD", "...IDP"]` is verbatim what Zitadel returns for the
+    // console's own operators. Counted as a second factor it decided
+    // "user-has-second-factor", which is answerable by nothing this page can
+    // collect, so every sign-in ended on Zitadel's hosted login.
+    //
+    // An IdP link is a way of proving the FIRST factor, not a second one.
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_PASSWORD",
+        "AUTHENTICATION_METHOD_TYPE_IDP",
+      ]),
+    ).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+  });
+
+  it("does not count the password itself", () => {
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_PASSWORD"])).toEqual({
+      secondFactorTypes: [],
+      passkeyCount: 0,
+    });
+  });
+
+  it("counts passkeys separately rather than as second factors", () => {
+    expect(
+      classifyAuthMethods([
+        "AUTHENTICATION_METHOD_TYPE_PASSKEY",
+        "AUTHENTICATION_METHOD_TYPE_PASSKEY",
+      ]),
+    ).toEqual({ secondFactorTypes: [], passkeyCount: 2 });
+  });
+
+  it("treats a value it does not recognise as a second factor", () => {
+    // The list is an open enum on Zitadel's side. A value this build has never
+    // seen must push towards the hand-off, never towards completing a login on
+    // a password alone — the same fail-closed rule `unknownFactors()` encodes.
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_FUTURE_THING"])).toEqual({
+      secondFactorTypes: ["AUTHENTICATION_METHOD_TYPE_FUTURE_THING"],
+      passkeyCount: 0,
+    });
+    expect(classifyAuthMethods(["AUTHENTICATION_METHOD_TYPE_UNSPECIFIED"])).toEqual({
+      secondFactorTypes: ["AUTHENTICATION_METHOD_TYPE_UNSPECIFIED"],
+      passkeyCount: 0,
+    });
+  });
+
+  it("is empty for a user with nothing enrolled, which decides complete", () => {
+    expect(classifyAuthMethods([])).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+    expect(decideSufficiency(noPolicy, classifyAuthMethods([]), noChecks())).toEqual({
+      outcome: "complete",
+    });
   });
 });

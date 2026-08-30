@@ -225,3 +225,136 @@ describe("the sufficiency proof after a second factor", () => {
     void (() => checkSufficiency({ forceMfa: false, forceMfaLocalOnly: false }, { secondFactorTypes: [], passkeyCount: 0 }, {}));
   });
 });
+
+/**
+ * Stub fetch per URL, because `getEnrolledFactors` makes TWO calls — the
+ * session, then that user's methods — and a single canned body cannot tell
+ * the story of either one.
+ */
+function route(handler: (url: string) => unknown | { status: number; body: unknown }) {
+  vi.stubGlobal("fetch", async (url: string) => {
+    const answer = handler(String(url)) as { status?: number; body?: unknown };
+    const isEnvelope =
+      answer !== null && typeof answer === "object" && "status" in answer && "body" in answer;
+    const status = isEnvelope ? Number(answer.status) : 200;
+    const body = isEnvelope ? answer.body : answer;
+    return new Response(JSON.stringify(body), { status });
+  });
+}
+
+const SESSION_USER = {
+  session: { id: "s1", factors: { user: { id: "u1", loginName: "operator@tesserix.test" } } },
+};
+
+describe("getEnrolledFactors", () => {
+  it("completes a login for a user with NO enrolled methods", async () => {
+    // The exact case that was broken in production. Zitadel omits
+    // `authMethodTypes` entirely rather than sending an empty array, and the
+    // session resolves to a real user id, so this is "we looked and there is
+    // nothing to ask for" — not "we could not find out".
+    route((url) => (url.includes("/v2/sessions/") ? SESSION_USER : {}));
+
+    const factors = await getEnrolledFactors(config, { id: "s1", token: "t1" });
+
+    expect(factors).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+    expect(
+      checkSufficiency({ forceMfa: false, forceMfaLocalOnly: false }, factors, null).proof,
+    ).not.toBeNull();
+  });
+
+  it("completes a login for an operator whose only extra method is a federated IdP link", async () => {
+    // `["...PASSWORD", "...IDP"]` is verbatim what the live instance returns
+    // for the console's operators. Counting IDP as a second factor is what
+    // sent every one of them to Zitadel's hosted login after typing a correct
+    // password on the console's own page.
+    route((url) =>
+      url.includes("/v2/sessions/")
+        ? SESSION_USER
+        : {
+            authMethodTypes: [
+              "AUTHENTICATION_METHOD_TYPE_PASSWORD",
+              "AUTHENTICATION_METHOD_TYPE_IDP",
+            ],
+          },
+    );
+
+    const factors = await getEnrolledFactors(config, { id: "s1", token: "t1" });
+
+    expect(factors).toEqual({ secondFactorTypes: [], passkeyCount: 0 });
+    expect(
+      checkSufficiency({ forceMfa: false, forceMfaLocalOnly: false }, factors, null).proof,
+    ).not.toBeNull();
+  });
+
+  it("still refuses to complete for a user holding a real second factor", async () => {
+    // The other live operator has a security key. Nothing about the IdP fix
+    // may reach this one: U2F is not collectible in-page, so it hands off.
+    route((url) =>
+      url.includes("/v2/sessions/")
+        ? SESSION_USER
+        : {
+            authMethodTypes: [
+              "AUTHENTICATION_METHOD_TYPE_PASSWORD",
+              "AUTHENTICATION_METHOD_TYPE_IDP",
+              "AUTHENTICATION_METHOD_TYPE_U2F",
+            ],
+          },
+    );
+
+    const factors = await getEnrolledFactors(config, { id: "s1", token: "t1" });
+
+    expect(factors.secondFactorTypes).toEqual(["AUTHENTICATION_METHOD_TYPE_U2F"]);
+    expect(
+      checkSufficiency({ forceMfa: false, forceMfaLocalOnly: false }, factors, null).sufficiency,
+    ).toEqual({ outcome: "handoff", reason: "user-has-second-factor" });
+  });
+
+  it("reads the session with the login-client token alone", async () => {
+    // VERIFIED against the live instance (Zitadel v4.15.3): a plain
+    // `GET /v2/sessions/{id}` carrying only the login-client bearer answers
+    // 200 WITH `factors.user.id`. The session token is not required to see the
+    // factors, so its absence was never the reason this returned "unknown".
+    let seen = "";
+    route((url) => {
+      if (url.includes("/v2/sessions/")) {
+        seen = url;
+        return SESSION_USER;
+      }
+      return {};
+    });
+
+    await getEnrolledFactors(config, { id: "s1", token: "session-token" });
+
+    expect(seen).toBe("https://auth.test/v2/sessions/s1");
+    expect(seen).not.toContain("session-token");
+  });
+
+  it("says so in the log when a permanent hand-off is caused by a failed lookup", async () => {
+    // The two inputs to this decision used to fail into a bare `catch {}`.
+    // Failing closed is right; failing closed SILENTLY is what made a
+    // hand-off-for-everyone take a screenshot to find.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    respond("boom", 500);
+
+    await getEnrolledFactors(config, { id: "s1", token: "t1" });
+    await getLoginPolicy(config);
+
+    const messages = warn.mock.calls.map((call) => String(call[0]));
+    expect(messages).toContain("[login] could not read the enrolled factors; handing off");
+    expect(messages).toContain("[login] could not read the login policy; assuming MFA is forced");
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("login-client-pat");
+    warn.mockRestore();
+  });
+
+  it("logs the session that resolved to no user rather than swallowing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    respond({ session: {} });
+
+    await getEnrolledFactors(config, { id: "s1", token: "t1" });
+
+    expect(warn.mock.calls.map((call) => String(call[0]))).toContain(
+      "[login] session resolved to no user; handing off",
+    );
+    warn.mockRestore();
+  });
+});

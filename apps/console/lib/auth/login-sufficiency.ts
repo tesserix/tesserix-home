@@ -81,6 +81,59 @@ export type Sufficiency =
  */
 export const TOTP_METHOD = "AUTHENTICATION_METHOD_TYPE_TOTP";
 
+/** Zitadel's `authMethodTypes` value for a passwordless credential. */
+export const PASSKEY_METHOD = "AUTHENTICATION_METHOD_TYPE_PASSKEY";
+
+/**
+ * The methods Zitadel lists that are NOT a second factor.
+ *
+ * `ListAuthenticationMethodTypes` answers with one flat list mixing the ways a
+ * user can prove the FIRST factor with the ways they can prove a second, and
+ * nothing in the response distinguishes them. From Zitadel v4.15.3's own
+ * `AuthenticationMethodType` enum the full set is UNSPECIFIED, PASSWORD,
+ * PASSKEY, IDP, TOTP, U2F, OTP_SMS, OTP_EMAIL, RECOVERY_CODE.
+ *
+ * # IDP is the one that cost two weeks
+ *
+ * A federated identity-provider link is how a user signs in, not an extra
+ * thing they must produce afterwards. Zitadel returns
+ * `["...PASSWORD", "...IDP"]` for every console operator linked to the Google
+ * IdP — which the first version of this code, filtering out only PASSWORD and
+ * PASSKEY, read as an enrolled second factor. The decision then owed a factor
+ * that no page can collect, so every operator typed a correct password on the
+ * console and landed on Zitadel's hosted login. VERIFIED against the live
+ * instance: that is the literal response for the affected accounts.
+ *
+ * PASSKEY is excluded here because it is counted separately — a passwordless
+ * credential is not a second factor, but it is not nothing either.
+ */
+const NOT_A_SECOND_FACTOR: ReadonlySet<string> = new Set([
+  "AUTHENTICATION_METHOD_TYPE_PASSWORD",
+  PASSKEY_METHOD,
+  "AUTHENTICATION_METHOD_TYPE_IDP",
+]);
+
+/**
+ * Turn Zitadel's `authMethodTypes` into the shape the decision reads.
+ *
+ * Deliberately an EXCLUDE list rather than an include list. An include list of
+ * known second factors would silently drop a value this build has never seen,
+ * and dropping it decides "nothing enrolled" — a login completed on a password
+ * alone. Excluding only the three that are provably not second factors makes
+ * an unrecognised value push towards the hand-off, which is the same
+ * fail-closed direction `unknownFactors()` encodes.
+ *
+ * RECOVERY_CODE therefore counts as a second factor. It is really a fallback
+ * for one, but a user holding recovery codes holds the factor they back up,
+ * and erring towards asking is the safe half of the error.
+ */
+export function classifyAuthMethods(types: readonly string[]): EnrolledFactors {
+  return {
+    secondFactorTypes: types.filter((type) => !NOT_A_SECOND_FACTOR.has(type)),
+    passkeyCount: types.filter((type) => type === PASSKEY_METHOD).length,
+  };
+}
+
 /**
  * What THIS session has proved beyond the password.
  *
