@@ -31,6 +31,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/kpis"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/onboardingfunnel"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/outbox"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/sources"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tenants"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tools"
@@ -220,6 +221,25 @@ func run(log *slog.Logger) error {
 		}
 		entities.Register(m, entities.Config{
 			Fed: fed, Types: types, Verifier: verifier, Log: log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "sources", func(m *http.ServeMux) {
+		// Built here rather than inside the module for the same reason the
+		// entities block above is: the module never sees the registry. That
+		// matters more here than there — federation.Product carries the HMAC
+		// Secret, and this is the one module whose entire job is to marshal
+		// what it is handed into a response.
+		endpoints := make(map[string][]string)
+		entities := make(map[string][]string)
+		for _, slug := range cfg.Federation.Slugs() {
+			if product, ok := cfg.Federation.Get(slug); ok {
+				endpoints[slug] = product.Endpoints
+				entities[slug] = product.Entities
+			}
+		}
+		sources.Register(m, sources.Config{
+			Endpoints: endpoints, Entities: entities, Verifier: verifier, Log: log,
 		})
 	})
 
