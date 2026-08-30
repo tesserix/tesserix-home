@@ -117,13 +117,33 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 // size they did not choose. Refusing here is the only place that distinction
 // can still be made.
 //
-// status, created_from and created_to are forwarded unvalidated, matching the
-// funnel route's treatment of the same window pair. That asymmetry is
-// deliberate and known: a malformed created_from is silently dropped upstream
-// and widens the window to all time. It is the same class of bug and it wants
-// the same fix on both routes at once, which is a change to the funnel's
-// contract and not a thing to do quietly inside this one.
+// created_from and created_to are the same bug class and are now refused too,
+// on this route and the funnel's together — see refuseUnparseableWindow in
+// window.go, which is shared precisely because fixing one route and not the
+// other would have left the estate's two views of the same population
+// disagreeing about what a window is.
+//
+// status is the one parameter still forwarded unexamined, and that is a
+// decision rather than an omission. Refusing an unrecognised status would
+// require a canonical list of onboarding statuses, and this service has no
+// honest source for one: the vocabulary belongs to mark8ly's own upstream
+// onboarding service, behind /internal/onboarding/sessions, which this
+// deployment cannot see or version. Hard-coding a list here would invent a
+// vocabulary and then under-report against it — the far more damaging half of
+// the failure registry.go warns about, because a status this service refuses
+// is a status an operator can never ask for again until somebody redeploys.
+//
+// The asymmetry with the window is not arbitrary. A dropped created_from
+// WIDENS: the filter vanishes and the answer covers everything, which is a
+// different question answered silently. A mistyped status NARROWS: the filter
+// is applied, faithfully, to a value nothing matches, and the operator sees a
+// 200 with an empty list. That empty list is the truthful answer to what they
+// actually asked, and it is visibly empty — the one thing an operator does
+// notice. Nothing is hidden, so there is nothing to refuse.
 func narrowSessionsQuery(query url.Values) error {
+	if err := refuseUnparseableWindow(query); err != nil {
+		return err
+	}
 	if raw := strings.TrimSpace(query.Get("abandoned")); raw != "" {
 		if _, err := strconv.ParseBool(raw); err != nil {
 			return httpx.BadRequest(

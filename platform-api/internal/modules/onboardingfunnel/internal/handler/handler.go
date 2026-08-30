@@ -83,9 +83,11 @@ var RouteTable = []Route{
 // the window mark8ly's funnel handler itself parses (created_from,
 // created_to). Anything else is a 400 — see httpx.RejectUnknownParameters.
 //
-// The window pair is forwarded, never interpreted: the response echoes the
-// EFFECTIVE window back, and that echo is only true if this layer did not
-// quietly rewrite what it asked for.
+// The window pair is forwarded verbatim, never rewritten: the response echoes
+// the EFFECTIVE window back, and that echo is only true if this layer did not
+// quietly change what it asked for. It IS examined, though — a value mark8ly
+// could not parse is refused here rather than passed on to be dropped there.
+// See refuseUnparseableWindow in window.go.
 var funnelParameters = []string{"source", "created_from", "created_to"}
 
 // Routes mounts the table behind the capability gate.
@@ -126,6 +128,16 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	// the far end.
 	upstream := query
 	upstream.Del("source")
+
+	// The window is refused before it is forwarded, never repaired. A
+	// created_from mark8ly cannot parse is dropped there and the funnel comes
+	// back covering all time — the widest possible answer, wearing a 200. See
+	// refuseUnparseableWindow, including why a 400 on a live route is the
+	// right change to make now.
+	if err := refuseUnparseableWindow(upstream); err != nil {
+		httpx.WriteError(w, r, err, h.log)
+		return
+	}
 
 	funnel, err := h.svc.Read(r.Context(), federation.Operator{
 		ID: principal.Subject, Capability: string(auth.CapPlatform),
