@@ -95,9 +95,16 @@ type Claims struct {
 	Audience  []string
 	Issuer    string
 	ExpiresAt time.Time
-	// Roles is the `urn:zitadel:iam:org:project:roles` claim, already reduced
-	// to its keys. Zitadel shapes it as {"read": {"<orgId>": "<orgDomain>"}};
-	// the keys are the roles.
+	// Roles is the project-scoped
+	// `urn:zitadel:iam:org:project:{projectId}:roles` claim, already reduced to
+	// its keys. Zitadel shapes it as {"read": {"<orgId>": "<orgDomain>"}}; the
+	// keys are the roles.
+	//
+	// NOT the flat `urn:zitadel:iam:org:project:roles`, which a service user's
+	// access token does not carry — reading that one gave every machine caller
+	// an empty slice and so an ErrNoRoles it could not have fixed (#433). See
+	// projectRolesClaim in oidc.go for why the flat form is not accepted as a
+	// fallback.
 	Roles []string
 }
 
