@@ -372,12 +372,25 @@ export async function retrieveIdpIntent(
 export async function createIdpSession(
   config: LoginClientConfig,
   intent: IdpIntent,
+  userId: string,
 ): Promise<LoginSession> {
+  // BOTH checks, and `user` is not optional. An `idpIntent` check alone tells
+  // Zitadel the identity was proved but not WHOSE session to open, and it
+  // answers `400 User ID missing (COMMAND-Sfw3r)` — observed in production
+  // 2026-08-30, where the Google round trip completed and only this last call
+  // failed. `retrieveIdpIntent` already resolves the linked user (and refuses
+  // with `unknown-user` when the identity is linked to nobody), so the id is
+  // in hand by the time we get here; it was simply not being passed.
   const wire = await call<{ sessionId?: string; sessionToken?: string }>(
     config,
     "POST",
     "/v2/sessions",
-    { checks: { idpIntent: { idpIntentId: intent.id, idpIntentToken: intent.token } } },
+    {
+      checks: {
+        user: { userId },
+        idpIntent: { idpIntentId: intent.id, idpIntentToken: intent.token },
+      },
+    },
   );
   if (!wire.sessionId || !wire.sessionToken) {
     throw new LoginClientError("upstream", "zitadel returned no session");

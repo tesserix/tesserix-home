@@ -110,10 +110,17 @@ describe("finishing a federated login", () => {
     await begin();
     const response = await callback(request("/login/idp/callback?id=intent-1&token=it-1"));
 
-    expect(client.createIdpSession).toHaveBeenCalledWith(expect.anything(), {
-      id: "intent-1",
-      token: "it-1",
-    });
+    // The user id is NOT optional and is asserted here on purpose. Zitadel
+    // answers `400 User ID missing (COMMAND-Sfw3r)` for a session created from
+    // an intent check alone — the identity is proved, but not whose session to
+    // open. The previous version of this assertion pinned the two-argument
+    // shape the code happened to produce, so it passed while production
+    // failed; it now pins what Zitadel actually requires.
+    expect(client.createIdpSession).toHaveBeenCalledWith(
+      expect.anything(),
+      { id: "intent-1", token: "it-1" },
+      "u1",
+    );
     expect(client.finalize).toHaveBeenCalled();
     expect(response.headers.get("location")).toBe(`${ORIGIN}/auth/callback?code=abc`);
     // The round-trip cookie is spent.

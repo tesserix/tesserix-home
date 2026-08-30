@@ -480,11 +480,20 @@ describe("createIdpSession", () => {
       return new Response(JSON.stringify({ sessionId: "s9", sessionToken: "t9" }), { status: 200 });
     });
 
-    const session = await createIdpSession(config, { id: "intent-1", token: "it-1" });
+    const session = await createIdpSession(config, { id: "intent-1", token: "it-1" }, "u1");
 
     expect(session).toEqual({ id: "s9", token: "t9" });
+    // The `user` check is REQUIRED alongside the intent. This assertion used
+    // to omit it, pinning the shape the code produced rather than the one
+    // Zitadel accepts — so it stayed green while production answered
+    // `400 User ID missing (COMMAND-Sfw3r)` after an otherwise complete
+    // Google round trip (2026-08-30). An intent check proves the identity;
+    // it does not say whose session to open.
     expect(body).toEqual({
-      checks: { idpIntent: { idpIntentId: "intent-1", idpIntentToken: "it-1" } },
+      checks: {
+        user: { userId: "u1" },
+        idpIntent: { idpIntentId: "intent-1", idpIntentToken: "it-1" },
+      },
     });
   });
 });
