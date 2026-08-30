@@ -45,6 +45,32 @@ export function stageLabel(stage: string): string {
  * finished. A real 0 is left to format as a duration, so the two stay
  * distinguishable on the page as well as in the type.
  */
+/**
+ * What the counts cover, in words.
+ *
+ * `window` is the EFFECTIVE bound the product applied, and mark8ly leaves both
+ * ends empty when it applied none — this console sends no `created_from` or
+ * `created_to`, so that is the ordinary case rather than an error. Interpolating
+ * the empty strings rendered "mark8ly, to", a fragment that says nothing and
+ * looks broken (observed in production 2026-08-30).
+ *
+ * An unbounded window means the counts are all-time, so SAY all-time. The line
+ * exists precisely so nobody has to guess what a number covers; a half-written
+ * range is worse than no line at all, because it looks like a date failed to
+ * load rather than like there was never a bound.
+ *
+ * A one-sided bound is reported as the bound that exists rather than being
+ * flattened into "all time", which would be wrong in the half that IS bounded.
+ */
+export function windowLabel(window: { readonly from: string; readonly to: string }): string {
+  const from = window.from.trim();
+  const to = window.to.trim();
+  if (!from && !to) return "all time";
+  if (from && !to) return `from ${from}`;
+  if (!from && to) return `up to ${to}`;
+  return `${from} to ${to}`;
+}
+
 export function formatMedianCompletion(seconds: number | null): string {
   if (seconds === null) return "Not measurable";
   const whole = Math.round(seconds);
@@ -87,8 +113,8 @@ export function FunnelView({ funnel, source, state, reauthReturnTo }: FunnelView
           <p className="text-sm text-muted-foreground" data-testid="funnel-window">
             {/* The window the product ACTUALLY applied, echoed back by it —
                 not one this console asked for. Stated rather than implied, so
-                nobody reads these counts as all-time. */}
-            {source}, {funnel.window.from} to {funnel.window.to}
+                nobody has to guess what these counts cover. */}
+            {source}, {windowLabel(funnel.window)}
           </p>
 
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
