@@ -62,8 +62,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // That falls into the same catch as every other failure and produces the
     // same message, because whether an email belongs to an operator is not
     // something this page may reveal.
-    const { verified } = await retrieveIdpIntent(config, { id: intentId, token: intentToken });
-    const session = await createIdpSession(config, { id: intentId, token: intentToken });
+    const { userId, verified } = await retrieveIdpIntent(config, { id: intentId, token: intentToken });
+    const session = await createIdpSession(config, { id: intentId, token: intentToken }, userId);
 
     const [policy, factors] = await Promise.all([
       getLoginPolicy(config),
