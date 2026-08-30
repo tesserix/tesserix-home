@@ -81,7 +81,46 @@ export interface EstateProduct {
    * gate and their API becomes the source.
    */
   readonly endUserLookup?: boolean;
+  /**
+   * The contract endpoints this product's rail renders from (design D4).
+   *
+   * Optional, and the absence is the mechanism, exactly as it is for
+   * `endUserLookup` above: absence means the product declares none, so a
+   * product is excluded because it has not declared itself in rather than
+   * because a list somewhere remembered to leave it out. The rail renders only
+   * what is declared here — a product's rail IS its declaration — so a later
+   * product joining costs the console one line rather than a new branch.
+   *
+   * Additive and optional on purpose. `console-core` compiles into three apps
+   * (web, mobile, console); a required field here would be a compile error in
+   * every one of them for a mechanism only one product uses today.
+   *
+   * NOT a claim about everything the product implements. Mark8ly is
+   * conformant across far more of the contract than it declares here; what
+   * this field carries is what the console renders, which is the only thing
+   * this package can check.
+   */
+  readonly contracts?: readonly ContractId[];
 }
+
+/**
+ * An endpoint id from the product-admin integration contract's closed
+ * vocabulary — what a product DECLARES it implements, not a path.
+ *
+ * Deliberately narrow: it names only the ids this package renders a rail from
+ * today. The contract's own vocabulary is seventeen ids (v3, 2026-08-29) and
+ * lives in `@tesserix/admin-conformance`'s `contract.ts`, which is not in this
+ * repo — restating all seventeen here would create a second copy of a closed
+ * vocabulary that this package cannot check itself against, and the copy would
+ * drift the way `estate.ts`'s own transcribed numbers already have.
+ *
+ * ADD, NEVER RENAME — the rule `contract.ts` states for itself, and it binds
+ * here for a sharper reason: a renamed id turns a product's declaration into
+ * "not implemented", which the conformance suite reports as a PASS. A typo is
+ * therefore silent in both directions, so this union exists to make an id a
+ * compile-time fact rather than a string a rail happened to spell right.
+ */
+export type ContractId = "inbox";
 
 export const ESTATE: readonly EstateProduct[] = [
   {
@@ -94,22 +133,24 @@ export const ESTATE: readonly EstateProduct[] = [
   {
     name: "Mark8ly",
     context: "mark8ly",
-    // 8 is apps/web's rail, which is what this field means while `migrated` is
-    // false — EstateMap renders it as "8 rail entries · still in apps/web", and
-    // apps/web really does ship eight.
+    // 1, down from 8 — and the number now means something different, which is
+    // the change, not the digit.
     //
-    // NOT revised to the design's 3, and the reason has changed — the
-    // conclusion has not. Writing 3 here would still put "3 rail entries ·
-    // still in apps/web" on a status board whose whole job is being honest
-    // about what has actually moved, and apps/web really does ship eight.
+    // WHAT #405 ESTABLISHED, AND STILL HOLDS. While `migrated` is false this
+    // field meant "apps/web's rail", because that is where the IA still lived
+    // and EstateMap renders it as "N rail entries · still in apps/web". On
+    // that reading 8 was right and the design's 3 would have been a forecast
+    // printed on a status board whose whole job is being honest about what has
+    // actually moved. apps/web really does ship eight, and still does.
     //
-    // WHAT CHANGED (tesserix-home#405, 2026-08-30). This comment used to say
-    // all three of the design's targets lacked an endpoint, citing
+    // WHAT CHANGED FIRST (tesserix-home#405, 2026-08-30). This comment used to
+    // say all three of the design's targets lacked an endpoint, citing
     // tesserix/mark8ly#281 as unmounted. **That issue is closed.**
     // `platformadmin/routes.go:294` mounts `NewInboxActionsHandler` and
     // `inbox_action_migration.go` implements the `migration_fast_path` kind,
-    // with route tests over it. So one of the three now HAS a contract
-    // endpoint to render from.
+    // with route tests over it — and both routes answer 401 rather than 404 in
+    // production, against a control of 404 for an invented path. So one of the
+    // three has a contract endpoint to render from.
     //
     // The realistic target is therefore ONE entry, not three, and the other
     // two are deferred BY DECISION rather than by absence — the integration
@@ -118,16 +159,44 @@ export const ESTATE: readonly EstateProduct[] = [
     // surface for either is reassessed after the queue lands." App
     // credentials additionally live on mark8ly's own admin surface rather
     // than /admin/*, and need a `rotate-credentials` capability that does not
-    // exist.
+    // exist. See `mark8lyNav` for the same record in the file that would
+    // otherwise look two entries short.
     //
-    // When `mark8lyNav` lands (tesserix-home#406), this becomes
-    // `mark8lyNav.length` and gets the same test kora has — the count checked
-    // against the nav it actually ships rather than transcribed. Until then
-    // this number is transcribed, which is exactly why the citation above
-    // went stale unnoticed: a comment naming an issue number is making a
-    // CHECKABLE claim, and nothing was checking it.
-    entries: 8,
+    // WHAT CHANGED SECOND (tesserix-home#406). `mark8lyNav` now exists, so
+    // there is a console-side rail to count and this literal is CHECKED
+    // against it — `estate.test.ts` fails the moment the two disagree, the
+    // same guard Kora's 4 has had since #139. A literal rather than an import
+    // of `mark8lyNav.length`, exactly as Kora does it: estate.ts stays free of
+    // a runtime dependency on nav.ts, and the test is what makes the number
+    // trustworthy. That is the whole point of the change — the previous 8 was
+    // TRANSCRIBED, which is precisely why the citation above could go stale
+    // for a fortnight with nobody noticing. A comment naming an issue number
+    // is making a checkable claim; a number nothing checks is worse.
+    //
+    // KNOWN COLLISION, recorded rather than papered over. `migrated` stays
+    // false — correctly: nothing renders `mark8lyNav` yet, the one route is
+    // `pending`, and the field means what it says. But that leaves EstateMap
+    // rendering "1 rail entry · still in apps/web", and this one entry is not
+    // in apps/web at all. The card is now understating mark8ly's eight web
+    // entries in order to state the console's one. Deriving from the rail was
+    // asked for by #405 and #406 both, and it is the right mechanism; the
+    // stale half is EstateMap's suffix, which assumes a product's rail lives
+    // in exactly one of two places. Fixing that is a separate change to
+    // apps/console — out of scope here, and named so the next reader finds a
+    // known wart rather than a fresh bug.
+    entries: 1,
     migrated: false,
+    // The one contract endpoint the rail renders from. `inbox` and not also
+    // the actions endpoint: `POST /admin/inbox/{id}/actions/{actionId}` is
+    // v2's way of invoking an action an inbox item already declares, not a
+    // separate declarable id — the same reason the contract makes
+    // `purge/preview` not a separate id from `tenant-purge`.
+    //
+    // Under-declared on purpose relative to what mark8ly implements: its
+    // `Platform integration v1` milestone closed conformant across most of
+    // the vocabulary. This field carries what the CONSOLE renders, which is
+    // the only half this package can check — see `EstateProduct.contracts`.
+    contracts: ["inbox"],
     summary: "Tenants, onboarding, subscriptions and leads.",
   },
   {

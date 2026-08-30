@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isNavGroup,
   koraNav,
+  mark8lyNav,
   navItems,
   platformNav,
   type NavEntry,
@@ -66,6 +67,47 @@ describe("koraNav", () => {
   it("carries AI metrics — the full surface behind the overview's tiles", () => {
     const names = collectItems(koraNav).map((item) => item.name);
     expect(names).toContain("AI metrics");
+  });
+});
+
+describe("mark8lyNav", () => {
+  it("resolves its route through webPath without throwing", () => {
+    // Same guard koraNav gets: a rail entry pointing at an id absent from
+    // routes.ts is the drift this package exists to prevent. `webPath` may
+    // legitimately return undefined — this rail is console-native and apps/web
+    // never served it — what it must not do is throw.
+    for (const item of navItems(mark8lyNav)) {
+      expect(() => webPath(item.route)).not.toThrow();
+    }
+  });
+
+  it("carries the CSM migration fast-path queue and nothing else", () => {
+    // ONE entry, not the design's three. Arbitrage appeals and app
+    // credentials are deferred BY DECISION (§5), so this names what is here
+    // rather than counting to it — re-adding either fails with the reason
+    // attached rather than with "expected 3 to be 1".
+    const names = navItems(mark8lyNav).map((item) => item.name);
+    expect(names).toEqual(["Migration fast-path review"]);
+  });
+
+  it("offers no retired surface", () => {
+    const retired = collectItems(mark8lyNav)
+      .filter((item) => isRetired(item.route))
+      .map((item) => `${item.name} (${item.route})`);
+    expect(
+      retired,
+      `Retired routes must be dropped from the rail, not left in it: ` +
+        `${retired.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("shows the queue as pending rather than linking it", () => {
+    // The endpoint is live upstream — both mark8ly routes answer 401 in
+    // production, not 404 — but the console has no page yet. `pending` means
+    // "the rail links to apps/console", so clearing it before the page exists
+    // points the rail and the palette at a 404. This is a deliberate hold, and
+    // this test is what makes flipping it a decision rather than a reflex.
+    expect(isPending("mark8ly.migrationFastPath")).toBe(true);
   });
 });
 

@@ -59,6 +59,52 @@ export const koraNav: readonly NavEntry[] = [
 ];
 
 /**
+ * Mark8ly's product rail. ONE entry, and that is the whole rail today.
+ *
+ * The design (§2.3) names three: the CSM migration fast-path review queue,
+ * arbitrage appeals, and app credentials. Only the first is built against
+ * anything. The other two are deferred BY DECISION rather than by absence —
+ * §5: arbitrage appeals and app credentials "are not on the list…
+ * /admin/inbox already carries the appeal queue as a `kind`. A dedicated
+ * surface for either is reassessed after the queue lands." App credentials
+ * additionally live on mark8ly's own admin surface rather than /admin/*, and
+ * are gated on a `rotate-credentials` capability the console has no way to
+ * hold. Recorded here so a reader does not conclude two entries were
+ * forgotten: this rail is §5's own sequencing, and this issue is the "after
+ * the queue lands" the deferrals wait on.
+ *
+ * WHY A PRODUCT RAIL AT ALL, given §8.5 retired Kora's feedback into the
+ * estate Inbox for implementing the same `/admin/inbox` contract: mark8ly's
+ * migration offer is its own commercial product, and nothing else in the
+ * estate has one. The review step presupposes mark8ly's migration model in a
+ * way "what is waiting on a human" does not, so this queue fails §2's
+ * decisive test — two products' rows could not sit in one table without a
+ * column meaning something different in each. The full argument is on the
+ * route in routes.ts; it is repeated here because this is the file where the
+ * Kora precedent is visible three lines away.
+ *
+ * Not seeded from apps/web, unlike koraNav and platformNav: apps/web's
+ * mark8ly rail is eight entries of tenant/onboarding/subscription surfaces
+ * and contains nothing resembling this queue. This rail is console-native.
+ *
+ * `inbox` icon rather than a new key: the queue IS `/admin/inbox`'s
+ * `migration_fast_path` kind, and IconKey is consumed as `Record<IconKey, …>`
+ * in web, mobile and console, so adding a key is a compile error in three
+ * apps for one rail entry.
+ */
+export const mark8lyNav: readonly NavEntry[] = [
+  // The name renders mark8ly's vocabulary rather than translating it: the
+  // queue is over the `migration_fast_path` inbox kind, and calling it
+  // anything else on the rail would make the console and the product describe
+  // the same rows with two different words.
+  {
+    name: "Migration fast-path review",
+    route: "mark8ly.migrationFastPath",
+    icon: "inbox",
+  },
+];
+
+/**
  * The platform rail — the console's default context, and the one its own home
  * page serves.
  *

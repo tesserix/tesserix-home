@@ -29,8 +29,18 @@ describe("consolePath", () => {
     // "platform.tools" is excluded too: it has no mobile counterpart at all
     // (see RouteEntry.mobile), so there is nothing for `console` to agree
     // with — the fallback has nothing to fall back to.
+    // "mark8ly.migrationFastPath" is excluded for exactly that second reason:
+    // the CSM queue is a console surface over mark8ly's federated
+    // /admin/inbox, and expo-router has no screen for it. A `mobile` path
+    // written here purely to satisfy this loop would claim a screen that was
+    // never built — the failure RouteEntry.mobile exists to prevent.
     for (const id of ROUTE_IDS) {
-      if (id === "platform.dashboard" || id === "platform.tools") continue;
+      if (
+        id === "platform.dashboard" ||
+        id === "platform.tools" ||
+        id === "mark8ly.migrationFastPath"
+      )
+        continue;
       expect(consolePath(id)).toBe(mobilePath(id));
     }
   });
@@ -107,9 +117,15 @@ describe("console-native surfaces record no apps/web path", () => {
     //     #380 — apps/web never had a catalog surface at all.
     //   - kora.aiMetrics: apps/web never served this — `/v1/kora/ai-metrics`
     //     postdates it entirely. Console-native, like platform.aiUsage.
+    //   - mark8ly.migrationFastPath: apps/web's mark8ly rail is eight
+    //     tenant/onboarding/subscription entries and has nothing resembling a
+    //     migration fast-path review queue. The surface it renders —
+    //     mark8ly's `/admin/inbox` `migration_fast_path` kind — postdates
+    //     apps/web, so there is no predecessor to record.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
+      "mark8ly.migrationFastPath",
       "platform.tools",
       "platform.auditLog",
       "platform.inbox",
