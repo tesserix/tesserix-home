@@ -1051,3 +1051,122 @@ export async function fetchOnboardingFunnel(
     await platformRequest("onboarding funnel", `/v1/onboarding/funnel?${query.toString()}`),
   );
 }
+
+/**
+ * Which products declare which federated endpoints and entity types — the
+ * platform API's `sources` module.
+ *
+ * Takes no parameters, deliberately: the route answers every declaration at
+ * once rather than `?endpoint=onboarding`, because an endpoint name it does
+ * not recognise is either a typo or an endpoint nobody declares, and those
+ * want opposite answers while being indistinguishable without a canonical
+ * list of endpoint names kept somewhere. A key exists in the answer because a
+ * product declared it.
+ *
+ * There is no 501 contract here and nothing to park: this read is answered
+ * from the deployment's own configuration and calls no product, so a failure
+ * is a real failure — the API is unreachable, or this console cannot
+ * authenticate to it. A caller must NOT treat one as "no sources declared".
+ * The two are opposite answers: an empty list is a fact about the estate, and
+ * a failed read is the absence of any fact at all.
+ */
+export async function fetchPlatformSources(): Promise<
+  import("./platform-sources").PlatformSources
+> {
+  const { parsePlatformSources } = await import("./platform-sources");
+  return parsePlatformSources(await platformRequest("platform sources", "/v1/platform/sources"));
+}
+
+/**
+ * The page size this surface asks for.
+ *
+ * 50, matching the estate's other index pages, and well under platform-api's
+ * clamp of 200. The clamp is a PII blast radius rather than a performance
+ * bound — every row is a merchant's email address — so asking for less than it
+ * allows is the right direction to err, and there is no operator task on this
+ * surface that a longer page serves better than paging does.
+ *
+ * Stated here rather than transcribed into page copy so it cannot go stale in
+ * two places. What the page RENDERS a range from is `meta.limit`, the size
+ * mark8ly actually applied — see `OnboardingSessionList.limit`.
+ */
+export const ONBOARDING_SESSIONS_LIMIT = 50;
+
+/**
+ * Narrowing for a session list. Every key optional; an omitted key is no
+ * filter at all.
+ *
+ * The names mirror the API's query parameters rather than renaming them, so
+ * there is no translation table to keep in step — the same call
+ * `TicketFilters` makes.
+ *
+ * `status` is a free string on purpose. It is mark8ly's own vocabulary, held
+ * by an upstream service this deployment cannot see or version, so the console
+ * has no honest source for a list of valid values. platform-api forwards it
+ * unvalidated for that reason: a mistyped status is applied faithfully to a
+ * value nothing matches and comes back as a visibly empty list, which is the
+ * truthful answer to what was asked.
+ */
+export interface OnboardingSessionFilters {
+  readonly status?: string;
+  readonly createdFrom?: string;
+  readonly createdTo?: string;
+  /** `true`/`false` only — platform-api answers 400 for anything else, because
+   *  mark8ly DROPS an unparseable value, and a dropped filter answers a
+   *  different question without saying so. */
+  readonly abandoned?: string;
+}
+
+/**
+ * One page of one product's onboarding sessions — contract #448, federated by
+ * the platform API's `onboardingfunnel` module.
+ *
+ * `source` is REQUIRED and there is no estate-wide default, for the reason the
+ * funnel has none: a merged queue across products needs a third vocabulary
+ * that is neither product's. The caller names the product it is asking about.
+ *
+ * A blank filter value is DROPPED rather than sent. `status=` would filter on
+ * the empty string, and platform-api refuses parameters it does not read
+ * rather than ignoring them — so a stray key is a 400, not a wrong answer.
+ *
+ * `platformRequestWithMeta`, not `platformRequest`: the rows live in `data`
+ * and the pagination in `meta`, and the latter discards `meta` before the
+ * parser would see it.
+ *
+ * The failures worth knowing apart, all of which arrive with their status:
+ * 400 (an undeclared source, or a malformed `created_from`/`created_to`/
+ * `abandoned`/`page`/`limit`), 404 (the product declares a funnel but mounts
+ * no session list), 501 (nothing federates onboarding, or the product
+ * declines), 503 (unreachable, or a body the API refused to call a session
+ * list). NONE of them is an empty list, which arrives as a 200 carrying `[]`.
+ */
+export async function fetchOnboardingSessions(
+  source: string,
+  filters: OnboardingSessionFilters = {},
+  page = 1,
+): Promise<import("./onboarding-sessions").OnboardingSessionList> {
+  const { parseOnboardingSessions } = await import("./onboarding-sessions");
+
+  const query = new URLSearchParams({
+    source,
+    limit: String(ONBOARDING_SESSIONS_LIMIT),
+  });
+  for (const [key, value] of [
+    ["status", filters.status],
+    ["created_from", filters.createdFrom],
+    ["created_to", filters.createdTo],
+    ["abandoned", filters.abandoned],
+  ] as const) {
+    if (value) query.set(key, value);
+  }
+  // Omitted at 1, matching every other paged read here: the platform API
+  // defaults to the first page, and sending it makes every first-page request
+  // differ from the default for no gain.
+  if (page > 1) query.set("page", String(page));
+
+  const { data, meta } = await platformRequestWithMeta(
+    "onboarding sessions",
+    `/v1/onboarding/sessions?${query.toString()}`,
+  );
+  return parseOnboardingSessions(data, meta);
+}

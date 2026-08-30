@@ -4,6 +4,8 @@ import {
   fetchDashboard,
   fetchKoraAiMetricsPage,
   fetchOnboardingFunnel,
+  fetchOnboardingSessions,
+  fetchPlatformSources,
   fetchProductEntities,
   parseDashboard,
   fetchSupportAnalytics,
@@ -1158,5 +1160,186 @@ describe("fetchOnboardingFunnel", () => {
     );
 
     await expect(fetchOnboardingFunnel("mark8ly")).rejects.toMatchObject({ status: 501 });
+  });
+});
+
+/**
+ * The declarations read (#447/#448). What is pinned here is the URL, because
+ * the whole value of this read is that it replaces a literal: a query
+ * parameter added by a future edit would make it a filtered view of the
+ * estate's declarations while still looking like the whole list, and
+ * platform-api answers 400 for any parameter on this route.
+ */
+describe("fetchPlatformSources", () => {
+  const INDEX = {
+    endpoints: { onboarding: ["mark8ly"], outbox: ["mark8ly"] },
+    entities: { tenants: ["mark8ly"], users: ["kora"] },
+  };
+
+  it("asks the unparameterised route and returns the deployment's declarations", async () => {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(envelope(INDEX)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sources = await fetchPlatformSources();
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://platform-api.test/v1/platform/sources");
+    expect(sources.endpoints.onboarding).toEqual(["mark8ly"]);
+  });
+
+  it("fails rather than answering an empty estate when the read fails", async () => {
+    // A caller must never read a failure as "nothing is declared": one is the
+    // absence of a fact, the other is a fact.
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: false, error: { code: "unavailable", message: "down" } }),
+          { status: 503, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(fetchPlatformSources()).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+/**
+ * The session list's federated read (#448).
+ *
+ * The query is asserted against the API CONTRACT — platform-api's
+ * `sessionsParameters` — rather than against whatever this module happens to
+ * emit: the route rejects an unknown parameter with a 400 rather than ignoring
+ * it, so a renamed key here is a broken surface, not a harmless difference.
+ */
+describe("fetchOnboardingSessions", () => {
+  const ROW = {
+    id: "sess-1",
+    email: "merchant@example.com",
+    status: "in_progress",
+    created_at: "2026-08-28T09:00:00Z",
+    last_activity_at: "2026-08-29T11:30:00Z",
+    idle_hours: 21.5,
+    abandoned: false,
+    completed_at: null,
+    tenant_id: null,
+  };
+
+  function respond(body: unknown, status = 200) {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  /** The query the module actually sent, as parameters rather than as a
+   *  string — key order is not part of the contract and asserting it would
+   *  pin the implementation instead. */
+  function sentQuery(fetchMock: ReturnType<typeof vi.fn>): URLSearchParams {
+    return new URL(fetchMock.mock.calls[0][0] as string).searchParams;
+  }
+
+  it("names the product and the page size, and sends nothing else by default", async () => {
+    const fetchMock = respond(envelope([ROW], { total: 1, limit: 50 }));
+
+    await fetchOnboardingSessions("mark8ly");
+
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.pathname).toBe("/v1/onboarding/sessions");
+    expect([...sentQuery(fetchMock).keys()].sort()).toEqual(["limit", "source"]);
+    expect(sentQuery(fetchMock).get("source")).toBe("mark8ly");
+    expect(sentQuery(fetchMock).get("limit")).toBe("50");
+  });
+
+  it("sends each filter under the API's own parameter name", async () => {
+    const fetchMock = respond(envelope([], { total: 0, limit: 50 }));
+
+    await fetchOnboardingSessions("mark8ly", {
+      status: "in_progress",
+      createdFrom: "2026-08-01T00:00:00Z",
+      createdTo: "2026-08-30T00:00:00Z",
+      abandoned: "true",
+    });
+
+    const query = sentQuery(fetchMock);
+    expect(query.get("status")).toBe("in_progress");
+    expect(query.get("created_from")).toBe("2026-08-01T00:00:00Z");
+    expect(query.get("created_to")).toBe("2026-08-30T00:00:00Z");
+    expect(query.get("abandoned")).toBe("true");
+  });
+
+  it("drops a blank filter rather than filtering on the empty string", async () => {
+    const fetchMock = respond(envelope([], { total: 0, limit: 50 }));
+
+    await fetchOnboardingSessions("mark8ly", { status: "", createdFrom: undefined });
+
+    expect(sentQuery(fetchMock).has("status")).toBe(false);
+    expect(sentQuery(fetchMock).has("created_from")).toBe(false);
+  });
+
+  it("omits page 1 and sends every later page", async () => {
+    const first = respond(envelope([], { total: 0, limit: 50 }));
+    await fetchOnboardingSessions("mark8ly", {}, 1);
+    expect(sentQuery(first).has("page")).toBe(false);
+
+    const third = respond(envelope([], { total: 0, limit: 50 }));
+    await fetchOnboardingSessions("mark8ly", {}, 3);
+    expect(sentQuery(third).get("page")).toBe("3");
+  });
+
+  it("reads the rows from data and the pagination from meta", async () => {
+    const fetchMock = respond(envelope([ROW], { total: 137, limit: 50 }));
+
+    const page = await fetchOnboardingSessions("mark8ly");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(page.total).toBe(137);
+    expect(page.limit).toBe(50);
+    expect(page.rows[0]?.email).toBe("merchant@example.com");
+  });
+
+  it("keeps a 400 status, so a mistyped window reaches the page as advice", async () => {
+    respond(
+      {
+        success: false,
+        error: {
+          code: "BAD_REQUEST",
+          message:
+            "created_from must be an RFC 3339 timestamp, for example 2026-08-01T00:00:00Z",
+        },
+      },
+      400,
+    );
+
+    await expect(
+      fetchOnboardingSessions("mark8ly", { createdFrom: "2026-08-01" }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("rejects rather than returning an empty list when the body is not a list", async () => {
+    // The empty-versus-unreadable rule, at the console's end of the wire.
+    //
+    // Asserted on the message rather than `toThrow(PlatformApiError)`, for the
+    // reason recorded on "the platform API switch" above: this file's
+    // `afterEach` calls `vi.resetModules()`, so the class a freshly-resolved
+    // module throws is a different identity from the one imported at the top.
+    respond(envelope(null, { total: 0, limit: 50 }));
+    await expect(fetchOnboardingSessions("mark8ly")).rejects.toThrow(
+      /an unreadable list is not an empty one/,
+    );
   });
 });

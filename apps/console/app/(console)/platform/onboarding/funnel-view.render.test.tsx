@@ -1,7 +1,13 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { OnboardingFunnel } from "@/lib/onboarding-funnel";
-import { FunnelView, formatMedianCompletion, stageLabel, windowLabel } from "./funnel-view";
+import {
+  FunnelView,
+  SourcePicker,
+  formatMedianCompletion,
+  stageLabel,
+  windowLabel,
+} from "./funnel-view";
 
 // mark8ly's five stages, in the order its handler emits them.
 const FUNNEL: OnboardingFunnel = {
@@ -22,6 +28,8 @@ function renderView(props: Partial<Parameters<typeof FunnelView>[0]> = {}) {
     <FunnelView
       funnel={FUNNEL}
       source="mark8ly"
+      sources={["mark8ly"]}
+      basePath="/platform/onboarding"
       state={{ kind: "ready" }}
       reauthReturnTo="/platform/onboarding"
       {...props}
@@ -158,5 +166,47 @@ describe("FunnelView", () => {
     });
     expect(screen.getByText(/mark8ly/)).toBeTruthy();
     expect(screen.queryAllByTestId("funnel-stage")).toHaveLength(0);
+  });
+});
+
+describe("SourcePicker", () => {
+  function renderPicker(sources: string[], selected: string | null = null) {
+    render(
+      <SourcePicker sources={sources} selected={selected} basePath="/platform/onboarding" />,
+    );
+  }
+
+  it("renders nothing for the single product declaring onboarding today", () => {
+    // The list still came from the deployment's declarations — what is
+    // conditional is the CONTROL. A lone chip cannot be switched away from or
+    // deselected, so it reads as a filter the operator has failed to clear.
+    renderPicker(["mark8ly"]);
+    expect(screen.queryAllByTestId("funnel-source")).toHaveLength(0);
+  });
+
+  it("renders nothing when nothing is declared, rather than an empty control", () => {
+    renderPicker([]);
+    expect(screen.queryByRole("navigation", { name: /source/i })).toBeNull();
+  });
+
+  it("renders a chip per product once there is a choice to make", () => {
+    renderPicker(["kora", "mark8ly"], "mark8ly");
+    const chips = screen.getAllByTestId("funnel-source");
+    expect(chips.map((chip) => chip.textContent)).toEqual(["kora", "mark8ly"]);
+  });
+
+  it("links every chip, including the chosen one", () => {
+    // A chosen source is a LOCATION: shareable, bookmarkable and
+    // back-button-navigable. Disabling the active chip would cost a
+    // screen-reader user the ability to land on it directly.
+    renderPicker(["kora", "mark8ly"], "mark8ly");
+    const links = screen.getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/platform/onboarding?source=kora",
+      "/platform/onboarding?source=mark8ly",
+    ]);
+    expect(links.find((link) => link.getAttribute("aria-current") === "page")?.textContent).toBe(
+      "mark8ly",
+    );
   });
 });
