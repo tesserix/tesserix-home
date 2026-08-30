@@ -257,6 +257,27 @@ describe("platformNav", () => {
     expect(railed).toContain("platform.auditLog");
   });
 
+  it("carries the onboarding funnel on the platform rail, not on mark8ly's", () => {
+    // §2's rule decides the rail: a surface belongs on the platform rail when
+    // the operator's question spans products, and "where do signups stall" is
+    // a question every product with onboarding has. mark8ly is the first
+    // implementer, not the only conceivable one — so this entry must not
+    // migrate onto the product rail the way the migration fast-path queue did.
+    expect(collectItems(platformNav).map((item) => item.route)).toContain(
+      "platform.onboarding",
+    );
+    expect(navItems(mark8lyNav).map((item) => item.route)).not.toContain(
+      "platform.onboarding",
+    );
+  });
+
+  it("links the onboarding funnel rather than showing it as pending", () => {
+    // The console serves this page. `pending` means "the console has not
+    // built it", and leaving it set would render a built surface inert behind
+    // a SOON badge — the same failure the audit log's assertion above guards.
+    expect(isPending("platform.onboarding")).toBe(false);
+  });
+
   it("puts Organisations in Growth, ahead of import", () => {
     // Browse is how an operator reaches a row that is on neither queue for
     // its first fourteen days; it belongs beside the queue, not after the

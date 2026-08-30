@@ -431,6 +431,28 @@ export const ROUTES = {
   // Only what they pay is a Revenue one.
   "platform.tenants": { mobile: "/platform/tenants", capability: "platform" },
 
+  // Where signups stall, read from the product that owns the funnel (#404).
+  //
+  // ON THE PLATFORM RAIL, not mark8ly's, and that is the whole filing
+  // decision. §2's rule: a surface belongs here when the operator's question
+  // spans products, and "where do signups stall" is a question every product
+  // with onboarding has. mark8ly is the first implementer, not the only
+  // conceivable one — which is exactly why platform-api's route is
+  // `/v1/onboarding/funnel?source=mark8ly` and not a mark8ly-named one, while
+  // Kora's food-resolution accuracy (no estate-generic equivalent at all) does
+  // carry its product's name. Contrast `mark8ly.migrationFastPath`, which
+  // presupposes mark8ly's migration model and could not share a table with
+  // another product's rows.
+  //
+  // Console-only, like `platform.tools`: apps/web's mark8ly rail has tenant
+  // and onboarding surfaces but no estate funnel, and mobile never served
+  // one. There is no predecessor to record and nothing being retired.
+  //
+  // NOT `pending`: the console serves this page. `platform`, not `billing`,
+  // matching the gate platform-api puts on the route — a funnel that ends in
+  // a paid conversion is still an operational question, not a revenue surface.
+  "platform.onboarding": { console: "/platform/onboarding", capability: "platform" },
+
   // The AI path's spend, token usage and guardrail activity, sourced from the
   // agentgateway data plane rather than from any one product. No `web`: apps/web
   // never had this surface — the gateway postdates it.

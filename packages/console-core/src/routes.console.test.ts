@@ -34,11 +34,15 @@ describe("consolePath", () => {
     // /admin/inbox, and expo-router has no screen for it. A `mobile` path
     // written here purely to satisfy this loop would claim a screen that was
     // never built — the failure RouteEntry.mobile exists to prevent.
+    // "platform.onboarding" is excluded for that same second reason: the
+    // funnel is a console surface over the platform API's federated read, and
+    // expo-router has no screen for it either.
     for (const id of ROUTE_IDS) {
       if (
         id === "platform.dashboard" ||
         id === "platform.tools" ||
-        id === "mark8ly.migrationFastPath"
+        id === "mark8ly.migrationFastPath" ||
+        id === "platform.onboarding"
       )
         continue;
       expect(consolePath(id)).toBe(mobilePath(id));
@@ -122,6 +126,10 @@ describe("console-native surfaces record no apps/web path", () => {
     //     migration fast-path review queue. The surface it renders —
     //     mark8ly's `/admin/inbox` `migration_fast_path` kind — postdates
     //     apps/web, so there is no predecessor to record.
+    //   - platform.onboarding: apps/web's mark8ly rail has onboarding
+    //     surfaces, but they are one product's own screens — there was never
+    //     an estate-wide funnel to succeed, which is the whole reason this
+    //     route is `platform.*` rather than `mark8ly.*`.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
@@ -132,6 +140,7 @@ describe("console-native surfaces record no apps/web path", () => {
       "platform.billing",
       "platform.billingCatalog",
       "platform.tenants",
+      "platform.onboarding",
       "platform.aiUsage",
       "platform.crmImport",
       "platform.crmSuppressions",

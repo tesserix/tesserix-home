@@ -1013,3 +1013,41 @@ export async function fetchAiUsageEvents(
     await platformRequest("ai usage events", `/v1/ai/usage/events${aiUsageParams(query, extra)}`),
   );
 }
+
+/**
+ * One product's onboarding funnel — contract #404, federated by the platform
+ * API's `onboardingfunnel` module.
+ *
+ * `source` is REQUIRED and there is deliberately no estate-wide default: the
+ * API refuses a request without one, because merging two products' funnels
+ * needs a third stage vocabulary that is neither product's — the exact drift
+ * #404's first rule exists to prevent. The caller names the product it is
+ * asking about, and the page renders that product's own stage names back.
+ *
+ * No `created_from`/`created_to`: the endpoint forwards a caller-chosen
+ * window, but this surface states the product's default window as a datum
+ * rather than offering a picker. Adding one is a separate design question.
+ *
+ * A `501` here means this deployment does not federate an onboarding funnel —
+ * either no product declares `onboarding` in `FEDERATION_<SLUG>_ENDPOINTS`,
+ * or the product mounts the route and declines. It is a deployment fact, NOT
+ * a funnel of zeroes, and `platformRequest` keeps the status so the page can
+ * tell those apart. Every other failure — 400 (a source that cannot be asked),
+ * 404 (declared but not mounted), 503 (unreachable, or a body the API refused
+ * to call a funnel) — arrives as an error, which is also not an empty funnel.
+ *
+ * An unset `PLATFORM_API_ORIGIN` throws WITHOUT a status, so it resolves to a
+ * plain error rather than "not federated here". That is deliberate: a console
+ * that was never pointed at the platform API is misconfigured, and saying
+ * "nothing is broken" about it would send an operator looking at the wrong
+ * deployment's environment. Same call `fetchEstateInbox` makes.
+ */
+export async function fetchOnboardingFunnel(
+  source: string,
+): Promise<import("./onboarding-funnel").OnboardingFunnel> {
+  const { parseOnboardingFunnel } = await import("./onboarding-funnel");
+  const query = new URLSearchParams({ source });
+  return parseOnboardingFunnel(
+    await platformRequest("onboarding funnel", `/v1/onboarding/funnel?${query.toString()}`),
+  );
+}

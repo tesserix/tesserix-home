@@ -256,6 +256,23 @@ export const platformNav: readonly NavEntry[] = [
       // Tenants and Organisations entries above record. `bar-chart` is the
       // closest existing sense: the business read of the estate.
       { name: "Billing", route: "platform.billing", icon: "bar-chart" },
+      // Directly after Billing and ahead of the CRM cluster, because that is
+      // the order the funnel question sits in: the CRM is the pipeline before
+      // a signup, onboarding is the signup itself, and billing is what
+      // happens after one converts. Billing stays first for the reason
+      // recorded above — revenue must not be buried under lead management —
+      // so onboarding takes the next slot rather than the top one.
+      //
+      // Growth rather than Operate: this is not service upkeep. It is read to
+      // answer where prospective tenants are dropping out, which is revenue
+      // work in exactly the sense this group was created for.
+      //
+      // `users` duplicates the CRM item's icon, a wart already recorded on
+      // Organisations: IconKey is consumed as `Record<IconKey, ...>` in web,
+      // mobile and console, so a dedicated "funnel" key is three renderers
+      // changed for one rail entry. The duplicate icon is the cheaper wrong
+      // thing.
+      { name: "Onboarding", route: "platform.onboarding", icon: "users" },
       { name: "CRM", route: "platform.crm", icon: "users" },
       // Second, not last: an imported lead sits on neither queue for its
       // first fourteen days (Due needs a next action, Drifting needs a
