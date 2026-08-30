@@ -1,6 +1,8 @@
 // Package handler is the onboardingfunnel module's HTTP surface.
 //
 //	GET /v1/onboarding/funnel?source=<slug>&created_from=&created_to=
+//	GET /v1/onboarding/sessions?source=<slug>&status=&created_from=&created_to=
+//	                           &abandoned=&page=&limit=
 //
 // # The capability is `platform`
 //
@@ -11,12 +13,27 @@
 // surface, and this route is not the one that should first claim a capability
 // still marked RESERVED in platform-auth's capabilities.ts.
 //
-// # Every failure is a status, never a funnel
+// # Every failure is a status, never a funnel and never a queue
 //
 // tesserix-home#404: "a stage with zero is a measurement; a funnel that could
 // not be read is not". writeReadError below is where that rule is enforced on
 // the wire — there is no path through this handler on which a failed read
 // produces a 200 with a `data` object, empty or otherwise.
+//
+// writeSessionsError enforces the same rule against the opposite shape, and it
+// is the harder of the two: on the sessions route an empty `data` array is a
+// LEGITIMATE 200, so the two states are one JSON value apart. mark8ly draws
+// the same line from the other side — its respondErr maps ErrUnavailable to
+// 503 "never an empty 200", because "an empty session list and an unreachable
+// upstream are different answers".
+//
+// # The sessions route carries PII
+//
+// Every row is a merchant's email address. Neither handler function logs or
+// renders any part of a product's response body, and the failure paths are
+// written from this file's own strings for that reason and not only for the
+// hostname-leak reason the funnel route has. See the package doc on
+// onboardingfunnel for the decision, and sessions.go for the discipline.
 package handler
 
 import (
@@ -51,21 +68,26 @@ type Route struct {
 // RouteTable is every route this module serves, and the ONLY place they are
 // declared. capability_test ranges over it.
 //
-// One route, not two. mark8ly also serves /admin/onboarding/sessions, and it
-// is deliberately NOT federated here — see the package doc on onboardingfunnel
-// for why, and for what would change that.
+// Two routes, mirroring the two mark8ly's own OnboardingFunnelHandler mounts
+// behind a single dependency. The sessions half arrived second and on purpose
+// — see the package doc on onboardingfunnel for the PII decision that gated
+// it, which was made rather than skipped.
 var RouteTable = []Route{
 	{Method: http.MethodGet, Pattern: "/v1/onboarding/funnel",
 		handler: func(h *Handler) http.HandlerFunc { return h.read }},
+	{Method: http.MethodGet, Pattern: "/v1/onboarding/sessions",
+		handler: func(h *Handler) http.HandlerFunc { return h.listSessions }},
 }
 
 // funnelParameters is every query parameter this route reads: the source, plus
 // the window mark8ly's funnel handler itself parses (created_from,
 // created_to). Anything else is a 400 — see httpx.RejectUnknownParameters.
 //
-// The window pair is forwarded, never interpreted: the response echoes the
-// EFFECTIVE window back, and that echo is only true if this layer did not
-// quietly rewrite what it asked for.
+// The window pair is forwarded verbatim, never rewritten: the response echoes
+// the EFFECTIVE window back, and that echo is only true if this layer did not
+// quietly change what it asked for. It IS examined, though — a value mark8ly
+// could not parse is refused here rather than passed on to be dropped there.
+// See refuseUnparseableWindow in window.go.
 var funnelParameters = []string{"source", "created_from", "created_to"}
 
 // Routes mounts the table behind the capability gate.
@@ -106,6 +128,16 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 	// the far end.
 	upstream := query
 	upstream.Del("source")
+
+	// The window is refused before it is forwarded, never repaired. A
+	// created_from mark8ly cannot parse is dropped there and the funnel comes
+	// back covering all time — the widest possible answer, wearing a 200. See
+	// refuseUnparseableWindow, including why a 400 on a live route is the
+	// right change to make now.
+	if err := refuseUnparseableWindow(upstream); err != nil {
+		httpx.WriteError(w, r, err, h.log)
+		return
+	}
 
 	funnel, err := h.svc.Read(r.Context(), federation.Operator{
 		ID: principal.Subject, Capability: string(auth.CapPlatform),
