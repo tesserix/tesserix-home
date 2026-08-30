@@ -143,11 +143,33 @@ export function classifyAuthMethods(types: readonly string[]): EnrolledFactors {
  */
 export interface SessionChecks {
   readonly totpVerified: boolean;
+  /**
+   * Zitadel accepted a completed identity-provider intent against this session
+   * — the operator arrived through "Continue with Google" rather than by
+   * typing a password here.
+   *
+   * Recorded because ONE rule turns on it, `forceMfaLocalOnly`, and that rule
+   * is otherwise unreadable from the session alone: a federated session and a
+   * password session look identical to `decideSufficiency` once they exist.
+   */
+  readonly idpVerified: boolean;
 }
 
 /** The state of every session before a second factor has been offered. */
 export function noChecks(): SessionChecks {
-  return { totpVerified: false };
+  return { totpVerified: false, idpVerified: false };
+}
+
+/**
+ * A session created from a completed identity-provider intent.
+ *
+ * Built by the login client from the branded token `retrieveIdpIntent`
+ * returns, on the same principle as `totpChecked()`: a caller cannot claim a
+ * federated login it did not perform, because claiming one is what buys the
+ * `forceMfaLocalOnly` exemption below.
+ */
+export function idpChecked(): SessionChecks {
+  return { totpVerified: false, idpVerified: true };
 }
 
 /**
@@ -158,7 +180,7 @@ export function noChecks(): SessionChecks {
  * caller cannot assert a verification it never performed.
  */
 export function totpChecked(): SessionChecks {
-  return { totpVerified: true };
+  return { totpVerified: true, idpVerified: false };
 }
 
 export type HandoffReason = "policy-forces-mfa" | "user-has-second-factor" | "user-has-passkey";
@@ -188,8 +210,23 @@ export function decideSufficiency(
   }
 
   const owesAFactor =
+    // Unconditional, and it does not care how the first factor was proved: a
+    // federated login is still one factor.
     policy.forceMfa ||
-    policy.forceMfaLocalOnly ||
+    // The one rule a federated login is exempt from, and deliberately an
+    // explicit branch rather than a side effect of which path got here.
+    //
+    // "MFA required for local logins but not federated ones" is the whole
+    // content of the flag. The password path reads it as forcing MFA because
+    // that path IS the local login; the IdP path is the other half of the same
+    // sentence. Left implicit, this would either force a factor on federated
+    // operators that the org exempted, or — far worse, if written the other
+    // way round — quietly stop forcing it on the local ones.
+    //
+    // An org that wants MFA for everyone sets `forceMfa`, which is above and
+    // has no exemption. `unknownPolicy()` sets both, so a policy this code
+    // could not read still hands off no matter which path is running.
+    (policy.forceMfaLocalOnly && !checks.idpVerified) ||
     // The user chose to protect this account with a second factor. Completing
     // on a password alone would silently downgrade their own decision.
     factors.secondFactorTypes.length > 0 ||
@@ -209,7 +246,7 @@ export function decideSufficiency(
     return { outcome: "totp" };
   }
 
-  if (policy.forceMfa || policy.forceMfaLocalOnly) {
+  if (policy.forceMfa || (policy.forceMfaLocalOnly && !checks.idpVerified)) {
     return { outcome: "handoff", reason: "policy-forces-mfa" };
   }
   if (factors.secondFactorTypes.length > 0) {

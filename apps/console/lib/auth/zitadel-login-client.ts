@@ -1,8 +1,8 @@
 import {
   classifyAuthMethods,
   decideSufficiency,
+  idpChecked,
   noChecks,
-  totpChecked,
   unknownFactors,
   unknownPolicy,
   type EnrolledFactors,
@@ -241,6 +241,150 @@ export async function getEnrolledFactors(
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Federated sign-in ("Continue with Google")
+ * ------------------------------------------------------------------ */
+
+/** An identity provider bound to the org's login policy. */
+export interface LoginIdp {
+  readonly id: string;
+  /** Zitadel's display name. Also what the button is labelled from. */
+  readonly name: string;
+}
+
+/**
+ * The identity providers the org's login policy actually offers.
+ *
+ * Read at request time and never transcribed into this repository. The Zitadel
+ * bootstrap owns the Google IdP object and is free to recreate it, at which
+ * point a hardcoded id becomes a button that starts an intent for a provider
+ * that no longer exists — the same class of stale evidence as
+ * tesserix-home#405. Reading the policy also means a SECOND provider the
+ * bootstrap binds appears on this page with no code change.
+ *
+ * VERIFIED against the live instance (Zitadel v4.15.3): the login-client token
+ * can POST this search and gets back `{"result":[{"idpId":…,"idpName":…}]}`.
+ * `idpType` and `ownerType` come back omitted (proto3 drops their zero values),
+ * so there is nothing here to filter on — which is why every bound provider is
+ * offered rather than one picked out by type.
+ *
+ * Answers `[]` rather than throwing. This list is an affordance, not a
+ * decision: with no providers the page renders the password form alone, which
+ * still works. A button that cannot start an intent would be worse than none.
+ */
+export async function listLoginPolicyIdps(config: LoginClientConfig): Promise<readonly LoginIdp[]> {
+  try {
+    const wire = await call<{ result?: { idpId?: string; idpName?: string }[] }>(
+      config,
+      "POST",
+      "/management/v1/policies/login/idps/_search",
+      {},
+    );
+    return (wire.result ?? [])
+      .filter((idp): idp is { idpId: string; idpName?: string } => Boolean(idp.idpId))
+      .map((idp) => ({ id: idp.idpId, name: idp.idpName ?? "" }));
+  } catch (error) {
+    console.warn("[login] could not list the policy's identity providers", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Begin an identity-provider intent and get the URL to send the browser to.
+ *
+ * `successUrl` is where Zitadel returns the browser once the provider is done,
+ * with `id` and `token` appended; `failureUrl` is where it goes if the
+ * provider refuses. Both are absolute URLs on the console's own origin.
+ */
+export async function startIdpIntent(
+  config: LoginClientConfig,
+  idpId: string,
+  urls: { successUrl: string; failureUrl: string },
+): Promise<string> {
+  const wire = await call<{ authUrl?: string }>(config, "POST", "/v2/idp_intents", {
+    idpId,
+    urls,
+  });
+  if (!wire.authUrl) {
+    // `StartIdentityProviderIntentResponse` is a oneof: `authUrl` for the
+    // redirect providers, but `formData` or `idpIntent` for others (SAML POST
+    // bindings, LDAP). Google is redirect-based, and an unhandled next step
+    // has to stop here rather than navigate the browser to `undefined`.
+    throw new LoginClientError("upstream", "zitadel returned no idp auth url");
+  }
+  return wire.authUrl;
+}
+
+/**
+ * Proof that Zitadel returned a completed identity-provider intent.
+ *
+ * Branded like `TotpVerified`, and for a sharper reason: this token is what
+ * exempts a session from `forceMfaLocalOnly`. It is the only input to the
+ * sufficiency decision that makes a login easier, so the only way to hold one
+ * must be to have completed the intent that earns it.
+ */
+declare const idpBrand: unique symbol;
+export interface IdpVerified {
+  readonly [idpBrand]: true;
+}
+
+export interface IdpIntent {
+  readonly id: string;
+  readonly token: string;
+}
+
+/**
+ * Read back a finished intent, and insist it belongs to an existing operator.
+ *
+ * Zitadel offers `createUser` here for an external identity it has never seen.
+ * The console does not take that offer: a console account is a grant of
+ * platform access, and signing in with a Google account is not an application
+ * for one. An unlinked identity is `unknown-user`, which the page answers with
+ * the same "that didn't work" it gives a bad password — whether an email is an
+ * operator is not something this page may reveal.
+ */
+export async function retrieveIdpIntent(
+  config: LoginClientConfig,
+  intent: IdpIntent,
+): Promise<{ userId: string; verified: IdpVerified }> {
+  const wire = await call<{ userId?: string }>(
+    config,
+    "POST",
+    `/v2/idp_intents/${encodeURIComponent(intent.id)}`,
+    { idpIntentToken: intent.token },
+  );
+  if (!wire.userId) {
+    throw new LoginClientError("unknown-user", "idp identity is linked to no zitadel user");
+  }
+  return { userId: wire.userId, verified: {} as IdpVerified };
+}
+
+/**
+ * Create a session from a completed intent.
+ *
+ * The same session shape the password path produces — the auth request cannot
+ * tell the two apart, and `finalize` still demands the `Sufficient` proof for
+ * either. What differs is only what the sufficiency decision is told, which is
+ * `IdpVerified` and nothing else.
+ */
+export async function createIdpSession(
+  config: LoginClientConfig,
+  intent: IdpIntent,
+): Promise<LoginSession> {
+  const wire = await call<{ sessionId?: string; sessionToken?: string }>(
+    config,
+    "POST",
+    "/v2/sessions",
+    { checks: { idpIntent: { idpIntentId: intent.id, idpIntentToken: intent.token } } },
+  );
+  if (!wire.sessionId || !wire.sessionToken) {
+    throw new LoginClientError("upstream", "zitadel returned no session");
+  }
+  return { id: wire.sessionId, token: wire.sessionToken };
+}
+
 /**
  * Proof that Zitadel accepted a TOTP code against a specific session.
  *
@@ -300,7 +444,8 @@ export interface Sufficient {
  * Run the decision. Returns the token only when the login may complete.
  *
  * `verifiedTotp` is the branded result of `addTotpCheck`, or `null` when no
- * second factor has been offered yet. It is a parameter rather than something
+ * second factor has been offered yet. `verifiedIdp` is the branded result of
+ * `retrieveIdpIntent`, or `null` for the password path. It is a parameter rather than something
  * this function could infer, because after the in-page code prompt the
  * completion has to come back through this decision — re-deriving it is what
  * keeps `Sufficient` honest. Nothing casts its way past here.
@@ -309,12 +454,16 @@ export function checkSufficiency(
   policy: LoginPolicySnapshot,
   factors: EnrolledFactors,
   verifiedTotp: TotpVerified | null,
+  verifiedIdp: IdpVerified | null = null,
 ): { sufficiency: Sufficiency; proof: Sufficient | null } {
-  const sufficiency = decideSufficiency(
-    policy,
-    factors,
-    verifiedTotp ? totpChecked() : noChecks(),
-  );
+  const sufficiency = decideSufficiency(policy, factors, {
+    // Both are branded, so neither can be claimed by a caller that did not
+    // make the call. That matters most for the IdP one: it is what buys the
+    // `forceMfaLocalOnly` exemption, i.e. the only input to this decision that
+    // makes a login EASIER.
+    ...(verifiedIdp ? idpChecked() : noChecks()),
+    totpVerified: verifiedTotp !== null,
+  });
   return {
     sufficiency,
     proof: sufficiency.outcome === "complete" ? ({} as Sufficient) : null,

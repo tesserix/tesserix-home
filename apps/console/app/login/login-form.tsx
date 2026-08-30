@@ -5,6 +5,8 @@ import {
   AuthCredentialForm,
   AuthOtpStep,
   AuthPanel,
+  AuthProviderButton,
+  AuthProviderList,
   type AuthCredentialValues,
 } from "@tesserix/web";
 
@@ -55,12 +57,48 @@ import { submitCredentials, submitTotp, type LoginOutcome } from "./actions";
  * through the OIDC v2 service, so an operator with an authenticator could not
  * sign in at all. Only TOTP is collected here. A security key still hands off,
  * because a half-built WebAuthn prompt is worse than none.
+ *
+ * # The provider button is above the whole form
+ *
+ * Not beside a field: an operator decides whether to use Google BEFORE
+ * deciding to type a password, so it has to be the first thing under the
+ * heading. Part 1 of #440 collapsed the credential steps onto one page and
+ * deliberately left no slot beside them for this reason.
+ *
+ * The list is passed in rather than fetched here — it comes from Zitadel's
+ * login policy, read on the server by `page.tsx`. Nothing about which
+ * providers exist is decided in this repository, so a provider the bootstrap
+ * binds appears here with no code change, and one it removes disappears.
  */
-export function LoginForm({ authRequestId }: { authRequestId: string }) {
+export interface LoginProvider {
+  readonly id: string;
+  readonly name: string;
+}
+
+export interface LoginFormProps {
+  readonly authRequestId: string;
+  /** The identity providers the org's login policy currently offers. */
+  readonly providers: readonly LoginProvider[];
+  /**
+   * Where to open. `"totp"` is how the federated callback returns an operator
+   * who owes a code: it has already parked the session, and landing on the
+   * credential form would ask for a password they never typed.
+   */
+  readonly initialStep?: "credentials" | "totp";
+  /** A message the server decided on, from a fixed set. Never query text. */
+  readonly initialError?: string | null;
+}
+
+export function LoginForm({
+  authRequestId,
+  providers,
+  initialStep = "credentials",
+  initialError = null,
+}: LoginFormProps) {
   const [values, setValues] = useState<AuthCredentialValues>({ loginName: "", password: "" });
-  const [step, setStep] = useState<"credentials" | "totp">("credentials");
+  const [step, setStep] = useState<"credentials" | "totp">(initialStep);
   const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -134,6 +172,28 @@ export function LoginForm({ authRequestId }: { authRequestId: string }) {
       // source of truth for a colour the console already defines.
       mode="auto"
     >
+      {step === "credentials" && providers.length > 0 ? (
+        // `AuthProviderList` hides itself and its divider when it has no
+        // children, so an org with no bound provider gets the password form
+        // alone rather than a dead "or continue with".
+        <AuthProviderList label="or">
+          {providers.map((provider) => (
+            <AuthProviderButton
+              key={provider.id}
+              // The DISPLAY NAME, which is what resolves the brand mark.
+              // Zitadel's, not ours — same source as the id beside it.
+              provider={provider.name}
+              disabled={pending}
+              onClick={() => {
+                // A full navigation, not a fetch: the route redirects to the
+                // provider, which cannot happen inside this page.
+                window.location.assign(startUrl(authRequestId, provider.id));
+              }}
+            />
+          ))}
+        </AuthProviderList>
+      ) : null}
+
       {step === "totp" ? (
         <AuthOtpStep
           factor="totp"
@@ -165,4 +225,16 @@ export function LoginForm({ authRequestId }: { authRequestId: string }) {
       )}
     </AuthPanel>
   );
+}
+
+/**
+ * Where the federated flow begins.
+ *
+ * A route handler on the console's own origin rather than a link straight to
+ * Zitadel: the intent has to be started server-side with the login-client
+ * token, and the auth request has to be written to a cookie before the browser
+ * leaves. Both are things this component cannot do.
+ */
+function startUrl(authRequestId: string, idpId: string): string {
+  return `/login/idp/start?authRequest=${encodeURIComponent(authRequestId)}&idp=${encodeURIComponent(idpId)}`;
 }

@@ -3,6 +3,7 @@ import {
   TOTP_METHOD,
   classifyAuthMethods,
   decideSufficiency,
+  idpChecked,
   noChecks,
   totpChecked,
   unknownFactors,
@@ -235,5 +236,74 @@ describe("classifyAuthMethods", () => {
     expect(decideSufficiency(noPolicy, classifyAuthMethods([]), noChecks())).toEqual({
       outcome: "complete",
     });
+  });
+});
+
+describe("decideSufficiency for a federated (IdP) session", () => {
+  // A federated login is NOT automatically sufficient. This is an explicit
+  // branch rather than a consequence of which code path the IdP flow happens
+  // to take, because the difference between the two is the whole reason
+  // `forceMfaLocalOnly` exists — and reading it wrong in the quiet direction
+  // completes a login the org asked to be protected.
+
+  it("does not treat a federated login as satisfying forceMfa", () => {
+    // `forceMfa` is unconditional: it does not distinguish local from
+    // federated, so Google having authenticated the operator does not answer
+    // it. Only a second factor does.
+    expect(decideSufficiency({ ...noPolicy, forceMfa: true }, nothingEnrolled, idpChecked())).toEqual(
+      { outcome: "handoff", reason: "policy-forces-mfa" },
+    );
+  });
+
+  it("exempts a federated login from forceMfaLocalOnly, which is what the flag MEANS", () => {
+    // The password path reads this flag as forcing MFA because that path IS
+    // the local login. The federated path is the other half of the same
+    // sentence: "MFA required for local logins but not federated ones". An
+    // operator who came through Google is on the exempt side of it.
+    expect(
+      decideSufficiency({ forceMfa: false, forceMfaLocalOnly: true }, nothingEnrolled, idpChecked()),
+    ).toEqual({ outcome: "complete" });
+  });
+
+  it("still owes the second factor the user enrolled for themselves", () => {
+    // Nothing about arriving via Google downgrades a factor the operator
+    // chose. It is answerable in-page, so it is asked for in-page.
+    expect(decideSufficiency(noPolicy, totpEnrolled, idpChecked())).toEqual({ outcome: "totp" });
+  });
+
+  it("still refuses to reduce a passkey-protected account to one factor", () => {
+    expect(
+      decideSufficiency(noPolicy, { secondFactorTypes: [], passkeyCount: 1 }, idpChecked()),
+    ).toEqual({ outcome: "handoff", reason: "user-has-passkey" });
+  });
+
+  it("hands off a federated login whose policy could not be read", () => {
+    // `unknownPolicy()` sets forceMfa, which no federated exemption touches.
+    // Fail-closed survives the new branch.
+    expect(decideSufficiency(unknownPolicy(), nothingEnrolled, idpChecked())).toEqual({
+      outcome: "handoff",
+      reason: "policy-forces-mfa",
+    });
+  });
+
+  it("hands off a federated login whose factor lookup failed", () => {
+    expect(decideSufficiency(noPolicy, unknownFactors(), idpChecked()).outcome).toBe("handoff");
+  });
+
+  it("does not let the federated exemption leak into a password login", () => {
+    // The regression that would matter most: if `forceMfaLocalOnly` stopped
+    // forcing MFA for everyone, the flag would be silently disabled.
+    expect(
+      decideSufficiency({ forceMfa: false, forceMfaLocalOnly: true }, nothingEnrolled, noChecks()),
+    ).toEqual({ outcome: "handoff", reason: "policy-forces-mfa" });
+  });
+
+  it("completes once a federated session has also verified a code", () => {
+    expect(
+      decideSufficiency({ ...noPolicy, forceMfa: true }, totpEnrolled, {
+        ...idpChecked(),
+        totpVerified: true,
+      }),
+    ).toEqual({ outcome: "complete" });
   });
 });

@@ -3,12 +3,16 @@ import {
   LoginClientError,
   addTotpCheck,
   checkSufficiency,
+  createIdpSession,
   createPasswordSession,
   finalize,
   getAuthRequest,
   getEnrolledFactors,
   getLoginPolicy,
+  listLoginPolicyIdps,
   loginClientConfig,
+  retrieveIdpIntent,
+  startIdpIntent,
 } from "./zitadel-login-client";
 
 const config = { issuer: "https://auth.test", token: "login-client-pat" };
@@ -356,5 +360,164 @@ describe("getEnrolledFactors", () => {
       "[login] session resolved to no user; handing off",
     );
     warn.mockRestore();
+  });
+});
+
+describe("listLoginPolicyIdps", () => {
+  it("reads the providers bound to the login policy rather than a hardcoded id", async () => {
+    // The bootstrap owns the Google IdP object, so its id is its to change. A
+    // transcribed id is the stale-evidence class of bug tesserix-home#405 was.
+    // VERIFIED against the live instance: this endpoint answers
+    // `{"result":[{"idpId":"...","idpName":"Google"}]}` to the login-client
+    // token.
+    let seen = { url: "", method: "" };
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      seen = { url: String(url), method: String(init.method) };
+      return new Response(
+        JSON.stringify({ result: [{ idpId: "386381087862948767", idpName: "Google" }] }),
+        { status: 200 },
+      );
+    });
+
+    const idps = await listLoginPolicyIdps(config);
+
+    expect(seen).toEqual({
+      url: "https://auth.test/management/v1/policies/login/idps/_search",
+      method: "POST",
+    });
+    expect(idps).toEqual([{ id: "386381087862948767", name: "Google" }]);
+  });
+
+  it("offers no provider at all when the list cannot be read", async () => {
+    // A button that cannot work is worse than no button: it takes the operator
+    // to a dead end instead of to the password field that still works.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    respond("boom", 500);
+    expect(await listLoginPolicyIdps(config)).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("drops an entry missing an id, which cannot start an intent", async () => {
+    respond({ result: [{ idpName: "Broken" }, { idpId: "i2", idpName: "Google" }] });
+    expect(await listLoginPolicyIdps(config)).toEqual([{ id: "i2", name: "Google" }]);
+  });
+});
+
+describe("startIdpIntent", () => {
+  it("asks Zitadel where to send the browser", async () => {
+    let body: unknown;
+    let url = "";
+    vi.stubGlobal("fetch", async (u: string, init: RequestInit) => {
+      url = String(u);
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ authUrl: "https://accounts.google.com/o/oauth2/v2/auth?x=1" }), {
+        status: 200,
+      });
+    });
+
+    const authUrl = await startIdpIntent(config, "idp-1", {
+      successUrl: "https://console.test/login/idp/callback",
+      failureUrl: "https://console.test/login?error=idp",
+    });
+
+    expect(url).toBe("https://auth.test/v2/idp_intents");
+    expect(body).toEqual({
+      idpId: "idp-1",
+      urls: {
+        successUrl: "https://console.test/login/idp/callback",
+        failureUrl: "https://console.test/login?error=idp",
+      },
+    });
+    expect(authUrl).toBe("https://accounts.google.com/o/oauth2/v2/auth?x=1");
+  });
+
+  it("refuses a response with no auth url rather than redirecting nowhere", async () => {
+    // Zitadel can answer this call with a form POST instead of a URL for some
+    // provider types. Google is redirect-based, but an unhandled next step
+    // must stop the flow, not send the browser to `undefined`.
+    respond({ formData: { url: "https://idp.test/saml" } });
+    await expect(
+      startIdpIntent(config, "idp-1", { successUrl: "https://c/s", failureUrl: "https://c/f" }),
+    ).rejects.toThrow(LoginClientError);
+  });
+});
+
+describe("retrieveIdpIntent", () => {
+  it("returns the linked Zitadel user for a completed intent", async () => {
+    let url = "";
+    let body: unknown;
+    vi.stubGlobal("fetch", async (u: string, init: RequestInit) => {
+      url = String(u);
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ userId: "u1" }), { status: 200 });
+    });
+
+    const { userId } = await retrieveIdpIntent(config, { id: "intent-1", token: "it-1" });
+
+    expect(url).toBe("https://auth.test/v2/idp_intents/intent-1");
+    expect(body).toEqual({ idpIntentToken: "it-1" });
+    expect(userId).toBe("u1");
+  });
+
+  it("refuses an intent whose external identity is linked to no console account", async () => {
+    // Zitadel offers to CREATE a user here. The console does not take that
+    // offer: an operator account is a grant of platform access, and a Google
+    // sign-in is not an application for one. Anyone who is not already linked
+    // has to be provisioned deliberately.
+    respond({ idpInformation: { idpId: "idp-1" }, addHumanUser: { username: "stranger" } });
+    await expect(retrieveIdpIntent(config, { id: "i", token: "t" })).rejects.toMatchObject({
+      kind: "unknown-user",
+    });
+  });
+});
+
+describe("createIdpSession", () => {
+  it("creates the session from the intent, carrying no password check", async () => {
+    let body: unknown;
+    vi.stubGlobal("fetch", async (_u: string, init: RequestInit) => {
+      body = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ sessionId: "s9", sessionToken: "t9" }), { status: 200 });
+    });
+
+    const session = await createIdpSession(config, { id: "intent-1", token: "it-1" });
+
+    expect(session).toEqual({ id: "s9", token: "t9" });
+    expect(body).toEqual({
+      checks: { idpIntent: { idpIntentId: "intent-1", idpIntentToken: "it-1" } },
+    });
+  });
+});
+
+describe("the sufficiency decision for a federated session", () => {
+  it("takes the federated exemption only from a real retrieved intent", async () => {
+    // The proof is branded for the same reason `Sufficient` and `TotpVerified`
+    // are: the exemption from `forceMfaLocalOnly` is a security decision, and
+    // the only way to claim it is to have completed the intent that earns it.
+    respond({ userId: "u1" });
+    const { verified } = await retrieveIdpIntent(config, { id: "i", token: "t" });
+
+    expect(
+      checkSufficiency(
+        { forceMfa: false, forceMfaLocalOnly: true },
+        { secondFactorTypes: [], passkeyCount: 0 },
+        null,
+        verified,
+      ).proof,
+    ).not.toBeNull();
+
+    // Without it, the same policy and the same account hand off.
+    expect(
+      checkSufficiency(
+        { forceMfa: false, forceMfaLocalOnly: true },
+        { secondFactorTypes: [], passkeyCount: 0 },
+        null,
+      ).proof,
+    ).toBeNull();
+  });
+
+  it("does not accept a hand-rolled stand-in for a completed intent", () => {
+    // @ts-expect-error IdpVerified is branded; only retrieveIdpIntent returns one
+    void (() => checkSufficiency({ forceMfa: false, forceMfaLocalOnly: true }, { secondFactorTypes: [], passkeyCount: 0 }, null, {}));
   });
 });
