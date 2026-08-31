@@ -35,7 +35,7 @@ type Deps struct {
 	// review, approve or merge.
 	Reviews handlers.Reviewer
 	// Verifier validates Zitadel bearer tokens for the middleware that guards
-	// the API surface as it moves off session cookies.
+	// the API surface.
 	Verifier *authcore.Verifier
 }
 
