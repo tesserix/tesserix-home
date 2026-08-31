@@ -17,6 +17,7 @@ func setEnv(t *testing.T, kv map[string]string) {
 		"TESSERIX_DB_PASSWORD", "TESSERIX_DB_NAME", "TESSERIX_DB_SSLMODE",
 		"TESSERIX_DB_MAX_CONNS",
 		"PLATFORM_API_AUTH_ENABLED", "ZITADEL_ISSUER", "ZITADEL_PROJECT_ID",
+		"ZITADEL_CONSOLE_CLIENT_ID",
 		"PLATFORM_API_CLUSTER_READ_ENABLED", "PLATFORM_API_CLUSTER_API_SERVER",
 		"PLATFORM_API_CLUSTER_TOKEN_PATH", "PLATFORM_API_CLUSTER_CA_PATH",
 		"PLATFORM_API_CLUSTER_NAMESPACE_PATH",
@@ -41,6 +42,37 @@ func validEnv() map[string]string {
 		"TESSERIX_DB_PASSWORD": "hunter2",
 		"ZITADEL_ISSUER":       "https://auth.tesserix.app",
 		"ZITADEL_PROJECT_ID":   "386377618200461939",
+	}
+}
+
+// The console's client id is read, and its ABSENCE is loadable.
+//
+// Both halves matter, and they pull in opposite directions. It must be read,
+// or every operator stays recorded as a service (#450). It must not be
+// required, or an attribution setting becomes a boot dependency and a missing
+// audit label takes the API down — see auth.Config.ConsoleClientID. It also
+// lands in tesserix-k8s in a separate, earlier PR, so this build has to run
+// both before and after that.
+func TestConsoleClientIDIsReadButOptional(t *testing.T) {
+	env := validEnv()
+	env["ZITADEL_CONSOLE_CLIENT_ID"] = "386382971877196703"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Auth.ConsoleClientID != "386382971877196703" {
+		t.Errorf("console client id = %q, want the console's application id", cfg.Auth.ConsoleClientID)
+	}
+
+	setEnv(t, validEnv())
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("an unset console client id must still load: %v", err)
+	}
+	if cfg.Auth.ConsoleClientID != "" {
+		t.Errorf("console client id = %q, want empty", cfg.Auth.ConsoleClientID)
 	}
 }
 

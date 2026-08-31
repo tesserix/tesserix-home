@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -56,6 +57,9 @@ func projectRolesClaim(projectID string) string {
 // that and hammer the issuer, so one is built at startup and reused.
 type OIDCParser struct {
 	verifier *oidc.IDTokenVerifier
+	// provider is retained so the userinfo endpoint comes from the SAME
+	// discovery document as the JWKS, fetched once. See ProfileResolver.
+	provider *oidc.Provider
 	// rolesClaim is the project-scoped claim name this parser reads, resolved
 	// once at startup because it depends on configuration and so cannot be a
 	// constant or a struct tag. See projectRolesClaim.
@@ -87,6 +91,7 @@ func NewOIDCParser(ctx context.Context, issuer, projectID string) (*OIDCParser, 
 		return nil, fmt.Errorf("zitadel discovery at %s: %w", issuer, err)
 	}
 	return &OIDCParser{
+		provider: provider,
 		verifier: provider.Verifier(&oidc.Config{
 			// Audience is checked in Verify, against the PROJECT id rather than
 			// a client id — the console requests
@@ -136,11 +141,16 @@ func rolesFromClaims(raw map[string]json.RawMessage, claim string) []string {
 // stringFromClaims reads a string-valued claim, or "" when it is absent or is
 // not a JSON string.
 //
-// It never fails the token. The only claim read through it is `email`, which
-// feeds Principal.Kind — documented in verify.go as a logging and audit
-// heuristic that NEVER authorises. Rejecting a token because a claim that
-// decides nothing has an odd shape would trade an attribution gap for an
-// outage.
+// It never fails the token. The claims read through it — `email` and
+// `client_id` — feed Principal.Email and Principal.Kind, both documented in
+// verify.go as audit and attribution only, NEVER authorisation. Rejecting a
+// token because one of them has an odd shape would trade an attribution gap
+// for an outage.
+//
+// Note what that means for `client_id`: a non-string one yields "", which
+// matches no configured console id, so the caller is classified as a service.
+// Degrading towards the kind that resolves no profile and is granted nothing
+// extra is the correct direction for a value that decides no access.
 func stringFromClaims(raw map[string]json.RawMessage, claim string) string {
 	value, ok := raw[claim]
 	if !ok {
@@ -175,11 +185,23 @@ func (p *OIDCParser) Parse(ctx context.Context, raw string) (*Claims, error) {
 	return &Claims{
 		Subject:   token.Subject,
 		Email:     stringFromClaims(claims, "email"),
+		ClientID:  stringFromClaims(claims, "client_id"),
 		Audience:  token.Audience,
 		Issuer:    token.Issuer,
 		ExpiresAt: token.Expiry,
 		Roles:     rolesFromClaims(claims, p.rolesClaim),
 	}, nil
+}
+
+// ProfileResolver returns a resolver for this parser's issuer.
+//
+// A method on the parser rather than its own constructor because the provider
+// is the expensive part — discovery is a network call made once at startup —
+// and a separate constructor would either repeat it or take a *oidc.Provider
+// parameter, which would put a go-oidc type in this package's wiring API for
+// no gain.
+func (p *OIDCParser) ProfileResolver() ProfileResolver {
+	return userinfoResolver{provider: p.provider}
 }
 
 // Config is what the service needs to verify tokens.
@@ -189,6 +211,20 @@ type Config struct {
 	// ProjectID is the Platform Console project. Both the audience this API
 	// requires and the project whose roles it reads.
 	ProjectID string
+	// ConsoleClientID is the console's Zitadel client id
+	// (ZITADEL_CONSOLE_CLIENT_ID). A token minted for it is an operator's.
+	//
+	// OPTIONAL, and deliberately not in Validate. It decides Principal.Kind,
+	// which is audit labelling and never authorisation, so making it a boot
+	// dependency would let an attribution setting take the whole service down
+	// — a strictly worse failure than the one it prevents. Unset means every
+	// principal is recorded as a service, which is exactly the #450 behaviour
+	// this change fixes, so NewVerifierFromConfig warns loudly rather than
+	// letting it pass unremarked the way #433 did.
+	ConsoleClientID string
+	// Log receives that warning, and the per-request warning when a userinfo
+	// lookup fails. Optional; slog.Default() when nil.
+	Log *slog.Logger
 	// Enabled is false when the service is running without authentication.
 	//
 	// It exists for the window in which the platform API serves only /health
@@ -237,7 +273,26 @@ func NewVerifierFromConfig(ctx context.Context, cfg Config) (*Verifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewVerifier(parser, cfg.ProjectID), nil
+
+	log := cfg.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	if cfg.ConsoleClientID == "" {
+		// Loud and degraded, not quiet and wrong. Authentication and
+		// authorisation are unaffected; attribution is not, and an audit trail
+		// in which every human appears as a machine is the kind of defect that
+		// is only noticed long after the rows that needed it were written.
+		log.Warn("ZITADEL_CONSOLE_CLIENT_ID is unset — every principal will be recorded as a service, and no operator will be named in the audit trail",
+			slog.String("set_it_in", "tesserix-k8s charts/apps/platform-api/values-prod.yaml"),
+		)
+	}
+
+	return NewVerifier(parser, cfg.ProjectID,
+		WithConsoleClientID(cfg.ConsoleClientID),
+		WithProfileResolver(parser.ProfileResolver()),
+		WithLogger(log),
+	), nil
 }
 
 // ErrAuthDisabled is returned when something asks for a principal on a service

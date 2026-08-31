@@ -36,12 +36,17 @@ const (
 	// An operator carries BOTH forms, with identical contents. This is what
 	// settles the question of whether reading only the project-scoped claim
 	// regresses operators: it does not, so no flat-claim fallback exists.
-	// Note the absent `email` — real operator access tokens have none, which is
-	// a separate, unfixed audit-attribution defect in verify.go's Kind
-	// heuristic and deliberately not this test's subject.
+	//
+	// Note the absent `email`, and the absent `azp`. Both are load-bearing:
+	// the missing email is why the Kind heuristic recorded every human as a
+	// machine (#450), and the missing azp is why `client_id` — which IS here,
+	// naming the console's Zitadel application — is what replaced it.
 	operatorPayload = `{
-		"sub": "386380123456789012",
+		"sub": "386888878927118733",
+		"client_id": "386382971877196703",
 		"urn:zitadel:iam:org:id": "386377229942128837",
+		"urn:zitadel:iam:user:resourceowner:id": "386377229942128837",
+		"urn:zitadel:iam:user:resourceowner:name": "TESSERIX",
 		"urn:zitadel:iam:org:project:386377618200461939:roles": {
 			"adjust-balance": {"386377229942128837": "tesserix.auth.tesserix.app"},
 			"billing": {"386377229942128837": "tesserix.auth.tesserix.app"},
@@ -219,6 +224,49 @@ func TestNewOIDCParserRefusesAnEmptyProjectID(t *testing.T) {
 	}
 	if parser != nil {
 		t.Fatalf("NewOIDCParser returned a parser alongside an error: %#v", parser)
+	}
+}
+
+// The claim that decides Principal.Kind, read from both real payloads.
+//
+// Asserted through stringFromClaims with the claim name spelled out, because
+// this is the one input to the operator/machine split and a test that composed
+// the name from a constant the code also reads would prove only that the code
+// agrees with itself — the property the broken email heuristic also had.
+func TestClientIDIsReadFromBothRealTokens(t *testing.T) {
+	for name, want := range map[string]struct {
+		payload  string
+		clientID string
+	}{
+		"the console's operator token": {operatorPayload, "386382971877196703"},
+		"a service user's token":       {serviceUserPayload, "mark8ly-catalog-reader"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := decodePayload(t, want.payload)
+			if got := stringFromClaims(raw, "client_id"); got != want.clientID {
+				t.Fatalf("client_id = %q, want %q", got, want.clientID)
+			}
+			// `azp` is an ID-token concept and appears on NEITHER access
+			// token. Reading it instead would have reproduced #450 with a
+			// different claim name.
+			if got := stringFromClaims(raw, "azp"); got != "" {
+				t.Errorf("azp = %q, want absent on an access token", got)
+			}
+		})
+	}
+}
+
+// The claim that USED to decide it. Spelled out so that the reason the
+// heuristic was wrong stays visible in the fixtures rather than only in a
+// commit message: neither real access token carries an email.
+func TestNeitherRealAccessTokenCarriesAnEmail(t *testing.T) {
+	for name, payload := range map[string]string{
+		"the console's operator token": operatorPayload,
+		"a service user's token":       serviceUserPayload,
+	} {
+		if got := stringFromClaims(decodePayload(t, payload), "email"); got != "" {
+			t.Errorf("%s: email = %q, want absent — Principal.Email comes from userinfo", name, got)
+		}
 	}
 }
 

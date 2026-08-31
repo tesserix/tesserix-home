@@ -39,6 +39,9 @@ type Auth struct {
 	Enabled   bool
 	Issuer    string
 	ProjectID string
+	// ConsoleClientID identifies which tokens belong to a human. Optional and
+	// NOT in the required list below — see auth.Config.ConsoleClientID.
+	ConsoleClientID string
 }
 
 // ClusterRead is how the health module reaches the Kubernetes API.
@@ -141,6 +144,12 @@ func Load() (Config, error) {
 			// `urn:zitadel:iam:org:project:id:{projectId}:aud`, so its tokens
 			// carry it and no new Zitadel application is needed.
 			ProjectID: env("ZITADEL_PROJECT_ID", ""),
+			// The console's Zitadel application. A token minted for it is an
+			// operator's; anything else is a machine. Deliberately absent from
+			// the required list: it labels audit rows and authorises nothing,
+			// so a deployment missing it must degrade, not refuse to start.
+			// auth.NewVerifierFromConfig warns when it is unset.
+			ConsoleClientID: env("ZITADEL_CONSOLE_CLIENT_ID", ""),
 		},
 		Database: database(),
 		ClusterRead: ClusterRead{

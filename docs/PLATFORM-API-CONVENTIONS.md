@@ -418,6 +418,15 @@ not from the token's `aud`, and the flat `urn:zitadel:iam:org:project:roles` is
 deliberately not accepted — a service user's access token does not carry it, so
 reading it gave every machine caller an empty role set (#433).
 
+Which of the two principal types a caller is comes from `client_id` compared
+against `ZITADEL_CONSOLE_CLIENT_ID`, never from the shape of the claims: an
+operator's access token carries no `email`, so inferring from that recorded
+every human as a machine (#450), and claim presence varies with the SCOPES a
+caller requested rather than with what kind of caller it is. `client_id` is
+attested by the issuer and present on both. It still decides no access — an
+operator's name and email are resolved from userinfo for the audit trail, and
+that lookup fails soft.
+
 **The API is the authorisation boundary. The console's checks are UX on top of
 it.** #244 puts surface refusal in the console's middleware; if this service
 authorised only "is this a valid session", anything holding a session could call

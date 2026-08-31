@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -61,18 +62,44 @@ const (
 type Principal struct {
 	// Subject is Zitadel's stable user id. The audit trail's actor.
 	Subject string
-	// Email is present for operators and usually absent for machine users.
+	// Email is the operator's address, RESOLVED FROM USERINFO rather than read
+	// from the token: an operator's access token carries no `email` claim at
+	// all. Empty for machine users, and empty for an operator whose userinfo
+	// lookup failed — see ProfileResolver, which fails soft by design.
 	Email string
+	// Name is the operator's display name, from the same userinfo lookup.
+	//
+	// It reaches a merchant: tickets' displayName() (tickets/internal/service/
+	// service.go) signs a reply with it, and falls through to the literal
+	// "Tesserix Support" when it and Email are both empty. So an empty Name is
+	// not merely a thinner audit line — it is a human agent's reply signed as
+	// the platform.
+	Name string
 	// Capabilities are the known role keys the token carried. Unknown roles are
 	// already dropped.
 	Capabilities []Capability
-	// Kind is a HEURISTIC, for logging and audit only.
+	// Kind is for logging, audit and profile resolution only.
 	//
-	// Zitadel does not mark a client_credentials token distinctly, so this is
-	// inferred from the presence of an email claim. NEVER authorise on it:
-	// authorisation is by capability, which is attested by the issuer, whereas
-	// this is a guess about the shape of a claim. A machine user with an email
-	// would be misclassified and nothing about access should change if so.
+	// NEVER authorise on it. Authorisation is by capability, and keeping these
+	// two apart is what stops a change to caller CLASSIFICATION from silently
+	// becoming a change to caller ACCESS.
+	//
+	// It is decided by comparing the token's `client_id` against the
+	// explicitly configured console client id (Config.ConsoleClientID). That
+	// claim is attested by the issuer and present on both an operator's and a
+	// machine user's access token, so this is no longer the guess it was: it
+	// used to be inferred from the presence of an `email` claim, and since a
+	// real operator ACCESS token carries none, EVERY human was recorded as a
+	// service (#450). The same class of inference produced #433.
+	//
+	// A claim-presence heuristic is not the fix either. Which claims a token
+	// carries depends on the SCOPES the caller requested, not on what kind of
+	// caller it is — the first client_credentials mint taken during #450's
+	// investigation came back with no roles claim at all for exactly that
+	// reason.
+	//
+	// When ConsoleClientID is unset every principal is KindService, which is
+	// the safe direction: it costs attribution and grants nothing.
 	Kind PrincipalKind
 }
 
@@ -90,8 +117,19 @@ func (p Principal) Has(required Capability) bool {
 
 // Claims is the subset of a Zitadel token this service reads.
 type Claims struct {
-	Subject   string
-	Email     string
+	Subject string
+	// Email is very often empty. An operator's access token carries no `email`
+	// claim; Principal.Email is recovered from userinfo instead.
+	Email string
+	// ClientID is the `client_id` claim — the Zitadel application or machine
+	// user the token was minted for. Present on BOTH kinds of access token,
+	// and the input to the Kind decision in Verify.
+	//
+	// Read from `client_id` and NOT from `azp`: a client_credentials access
+	// token names its client as `client_id` and carries no `azp` at all, `azp`
+	// being an ID-token concept. `packages/platform-auth/src/zitadel.ts`
+	// documents the same asymmetry on MachineIdentity.clientId.
+	ClientID  string
 	Audience  []string
 	Issuer    string
 	ExpiresAt time.Time
@@ -126,11 +164,81 @@ type Verifier struct {
 	// audience of its own.
 	audience string
 	now      func() time.Time
+	// consoleClientID is the console's Zitadel client id, from
+	// ZITADEL_CONSOLE_CLIENT_ID. Empty means "not configured", which makes
+	// every principal a service — see Principal.Kind.
+	consoleClientID string
+	// profiles resolves an operator's name and email, and is nil when nothing
+	// wired one (tests, and any deployment whose issuer has no userinfo).
+	profiles ProfileResolver
+	// profileTimeout bounds the userinfo call. See resolveProfile.
+	profileTimeout time.Duration
+	log            *slog.Logger
 }
 
-func NewVerifier(parser TokenParser, projectID string) *Verifier {
-	return &Verifier{parser: parser, audience: projectID, now: time.Now}
+// Option configures a Verifier at construction.
+//
+// Options rather than more constructor parameters because everything below is
+// genuinely optional: a Verifier with none of them still verifies tokens
+// correctly, it just attributes them less well. Keeping NewVerifier's signature
+// as it was is not incidental either — every existing test builds one this way,
+// and a signature change would have edited the tests that guard this change.
+type Option func(*Verifier)
+
+// WithConsoleClientID names the client id whose tokens are operators.
+func WithConsoleClientID(clientID string) Option {
+	return func(v *Verifier) { v.consoleClientID = clientID }
 }
+
+// WithProfileResolver enables userinfo lookup for operators.
+//
+// The resolver is wrapped in a cache here rather than by the caller so that no
+// wiring can accidentally put userinfo on the request path uncached.
+func WithProfileResolver(resolver ProfileResolver) Option {
+	return func(v *Verifier) {
+		if resolver == nil {
+			return
+		}
+		v.profiles = newProfileCache(resolver, v.now)
+	}
+}
+
+// WithLogger replaces the logger the fail-soft paths warn on.
+func WithLogger(log *slog.Logger) Option {
+	return func(v *Verifier) {
+		if log != nil {
+			v.log = log
+		}
+	}
+}
+
+func NewVerifier(parser TokenParser, projectID string, opts ...Option) *Verifier {
+	v := &Verifier{
+		parser:         parser,
+		audience:       projectID,
+		now:            time.Now,
+		profileTimeout: profileTimeout,
+		log:            slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v
+}
+
+// profileTimeout bounds the userinfo call Verify makes for an operator.
+//
+// Zitadel is now IN THE REQUEST PATH, which it was not before. Without a
+// deadline of its own a slow IdP does not fail requests, it hangs them — the
+// worse outcome, because a hung request holds a connection and reports as
+// latency rather than as an error. The same reasoning is written out at length
+// on REFRESH_DEADLINE_MS in `apps/console/lib/auth/platform-token.ts`.
+//
+// Three seconds: long enough that an ordinary round trip to auth.tesserix.app
+// never trips it, short enough that tripping it is invisible beside the
+// database work the request is about to do anyway. Exceeding it costs an
+// unnamed operator on one audit line, never a refusal.
+const profileTimeout = 3 * time.Second
 
 // Verify checks a raw token and returns the principal it attests.
 func (v *Verifier) Verify(ctx context.Context, raw string) (*Principal, error) {
@@ -171,15 +279,62 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Principal, error) {
 		return nil, fmt.Errorf("%w (raw roles: %v)", ErrNoRoles, claims.Roles)
 	}
 
+	// Compared against an explicitly configured client id rather than inferred
+	// from claim shape. See Principal.Kind for why the email heuristic this
+	// replaces recorded every operator as a service (#450).
 	kind := KindService
-	if claims.Email != "" {
+	if v.consoleClientID != "" && claims.ClientID == v.consoleClientID {
 		kind = KindOperator
+	}
+
+	name, email := "", claims.Email
+	if kind == KindOperator {
+		// ONLY for operators. A machine user has no profile to fetch, so this
+		// gate is also what keeps machine callers — the products calling
+		// /api/internal/* — on a purely local path with no network call in
+		// their request at all.
+		name, email = v.resolveProfile(ctx, raw, claims.Subject, claims.Email)
 	}
 
 	return &Principal{
 		Subject:      claims.Subject,
-		Email:        claims.Email,
+		Email:        email,
+		Name:         name,
 		Capabilities: caps,
 		Kind:         kind,
 	}, nil
+}
+
+// resolveProfile recovers an operator's name and email, and NEVER fails.
+//
+// Fail-soft is the whole design, not a convenience. This runs after the token
+// has already been verified, its audience checked and its capabilities read —
+// the caller is authorised, and everything still to be decided is about how
+// well the resulting audit line reads. An operator who can be authorised but
+// not named is a worse audit line; an operator refused because Zitadel's
+// userinfo endpoint was briefly slow is an outage. The WARN is what stops the
+// degraded state from being silent, which is the mistake #433 was.
+//
+// Falls back to the token's own email, which is empty for an operator today
+// but costs nothing to prefer over discarding a claim that is there.
+func (v *Verifier) resolveProfile(ctx context.Context, raw, subject, claimEmail string) (string, string) {
+	if v.profiles == nil {
+		return "", claimEmail
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, v.profileTimeout)
+	defer cancel()
+
+	name, email, err := v.profiles.Resolve(ctx, raw, subject)
+	if err != nil {
+		v.log.WarnContext(ctx, "could not resolve the operator's profile — the audit trail will name only their subject",
+			slog.String("subject", subject),
+			slog.String("error", err.Error()),
+		)
+		return "", claimEmail
+	}
+	if email == "" {
+		email = claimEmail
+	}
+	return name, email
 }

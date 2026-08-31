@@ -331,14 +331,24 @@ func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation 
 	return &key, nil
 }
 
+// actorOf reduces a principal to what a reply and an audit row need.
+//
+// Name and Email are both resolved from Zitadel's userinfo endpoint for an
+// operator, because their access token carries neither claim (#450). Passing
+// Name through matters to somebody outside this system: displayName()
+// (tickets/internal/service/service.go) falls through to the literal "Tesserix
+// Support" when Name and Email are both empty, so while this was hardcoded to
+// "" every human agent's reply reached the merchant signed as the platform
+// rather than as a person.
+//
+// Both may still be empty — userinfo resolution fails soft, and a machine
+// principal has no profile at all — so the fallback in displayName is still
+// load-bearing and must not be removed on the strength of this.
 func actorOf(principal *auth.Principal) service.Actor {
 	return service.Actor{
 		Subject: principal.Subject,
-		// Zitadel's `name` claim is not read by the verifier, so an operator's
-		// display name is their email here. Honest rather than blank: the
-		// alternative is inventing a name from the subject.
-		Name:  "",
-		Email: principal.Email,
+		Name:    principal.Name,
+		Email:   principal.Email,
 	}
 }
 

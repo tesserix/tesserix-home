@@ -89,6 +89,7 @@ that already exist.
 | `PLATFORM_API_AUTH_ENABLED` | `true` | opt-**out** since #269; see below |
 | `ZITADEL_ISSUER` | — | required unless auth is off |
 | `ZITADEL_PROJECT_ID` | — | required unless auth is off |
+| `ZITADEL_CONSOLE_CLIENT_ID` | — | **optional**; see below |
 
 ### Authentication is on by default
 
@@ -104,6 +105,22 @@ The Zitadel values come from
 
 Startup fails loudly and names every missing variable at once, rather than
 booting half-configured and failing on the first request.
+
+### `ZITADEL_CONSOLE_CLIENT_ID` labels the audit trail
+
+It is the console's Zitadel application id. A token minted for it is an
+operator's; anything else is a machine, and only an operator has their name and
+email fetched from the issuer's userinfo endpoint — an access token carries
+neither claim, which is why every human used to be recorded as a service
+(#450).
+
+Deliberately **not required**. It decides `Principal.Kind`, which is audit
+labelling and never authorisation, so making it a boot dependency would let an
+attribution setting take the API down. Unset is not silent either: the service
+warns once at startup that every principal will be recorded as a service.
+
+Userinfo runs only for operators, is cached by subject, and **fails soft** — an
+unreachable issuer costs a name on an audit line, never a refused request.
 
 ### The pool is small on purpose
 

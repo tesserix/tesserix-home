@@ -10,6 +10,19 @@ import (
 
 const projectID = "386377618200461939"
 
+// The two client ids these tests turn on, both taken from real decoded tokens
+// (see the payloads in oidc_test.go).
+const (
+	// consoleClientID is the console's Zitadel application — ZITADEL_CLIENT_ID
+	// in `apps/console`, and what ZITADEL_CONSOLE_CLIENT_ID must be set to.
+	consoleClientID = "386382971877196703"
+	// machineClientID is a service user. Zitadel names a machine by its
+	// username here, not by a numeric id.
+	machineClientID = "mark8ly-catalog-reader"
+	// operatorSubject is the `sub` of the operator token the console presents.
+	operatorSubject = "386888878927118733"
+)
+
 // A parser that returns whatever the test hands it. The signature check is the
 // one thing not reimplemented here — that belongs to go-oidc, and faking it
 // would mean asserting against a fake.
@@ -29,19 +42,43 @@ func (s stubParser) Parse(context.Context, string) (*Claims, error) {
 // irrelevant; the stub decides the claims.
 const jwtShaped = "header.payload.signature"
 
+// validClaims is a real OPERATOR access token's shape, roles aside.
+//
+// Note the empty Email. That is not an omission for brevity — a real operator
+// access token carries no `email` claim at all, which is precisely why the old
+// email heuristic recorded every human as a service (#450) and why Kind is
+// decided by ClientID here.
 func validClaims() *Claims {
 	return &Claims{
-		Subject:   "user-1",
-		Email:     "mahesh@tesserix.test",
-		Audience:  []string{projectID},
+		Subject:   operatorSubject,
+		Email:     "",
+		ClientID:  consoleClientID,
+		Audience:  []string{consoleClientID, projectID},
 		Issuer:    "https://auth.tesserix.app",
 		ExpiresAt: time.Now().Add(30 * time.Minute),
 		Roles:     []string{"read", "crm"},
 	}
 }
 
+// machineClaims is a service user's access token: named by client_id, with no
+// email, no org claims, and the project audience only.
+func machineClaims() *Claims {
+	return &Claims{
+		Subject:   "388414281508455697",
+		ClientID:  machineClientID,
+		Audience:  []string{projectID},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"support"},
+	}
+}
+
+// verifierFor builds a verifier configured the way a real deployment is —
+// with the console's client id known. Tests that want the UNCONFIGURED case
+// build their own, because that case is a behaviour worth naming rather than a
+// default worth inheriting.
 func verifierFor(c *Claims) *Verifier {
-	return NewVerifier(stubParser{claims: c}, projectID)
+	return NewVerifier(stubParser{claims: c}, projectID, WithConsoleClientID(consoleClientID))
 }
 
 func TestVerifyReturnsThePrincipal(t *testing.T) {
@@ -50,14 +87,14 @@ func TestVerifyReturnsThePrincipal(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 
-	if got.Subject != "user-1" {
-		t.Errorf("subject: want user-1, got %q", got.Subject)
+	if got.Subject != operatorSubject {
+		t.Errorf("subject: want %s, got %q", operatorSubject, got.Subject)
 	}
 	if !got.Has(CapCRM) {
 		t.Error("want the crm capability")
 	}
 	if got.Kind != KindOperator {
-		t.Errorf("a token with an email is an operator, got %q", got.Kind)
+		t.Errorf("a token minted for the console is an operator, got %q", got.Kind)
 	}
 }
 
@@ -194,14 +231,10 @@ func TestEmptyTokenIsRefused(t *testing.T) {
 	}
 }
 
-// A machine user's token has no email. The classification is for audit only,
-// which the next test pins down.
-func TestATokenWithNoEmailIsAService(t *testing.T) {
-	c := validClaims()
-	c.Email = ""
-	c.Roles = []string{"support"}
-
-	got, err := verifierFor(c).Verify(context.Background(), jwtShaped)
+// A token minted for anything other than the console is a machine. The
+// classification is for audit only, which the next test pins down.
+func TestATokenFromAnotherClientIsAService(t *testing.T) {
+	got, err := verifierFor(machineClaims()).Verify(context.Background(), jwtShaped)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -216,20 +249,20 @@ func TestATokenWithNoEmailIsAService(t *testing.T) {
 	}
 }
 
-// Kind must never decide access. If it ever does, a machine user configured
-// with an email — or an operator without one — silently changes what it may do.
+// Kind must never decide access. If it ever does, then a console client id
+// that is unset, wrong, or newly rotated silently changes what a caller may
+// do — an attribution setting becoming an authorisation one.
 func TestKindDoesNotAffectAuthorisation(t *testing.T) {
-	withEmail := validClaims()
-	withEmail.Roles = []string{"crm"}
-	withoutEmail := validClaims()
-	withoutEmail.Email = ""
-	withoutEmail.Roles = []string{"crm"}
+	operator := validClaims()
+	operator.Roles = []string{"crm"}
+	machine := machineClaims()
+	machine.Roles = []string{"crm"}
 
-	a, err := verifierFor(withEmail).Verify(context.Background(), jwtShaped)
+	a, err := verifierFor(operator).Verify(context.Background(), jwtShaped)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	b, err := verifierFor(withoutEmail).Verify(context.Background(), jwtShaped)
+	b, err := verifierFor(machine).Verify(context.Background(), jwtShaped)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}

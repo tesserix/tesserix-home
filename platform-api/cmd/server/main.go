@@ -88,9 +88,11 @@ func run(log *slog.Logger) error {
 	// boot rather than failing every request. A service that starts unable to
 	// verify tokens can only fail closed, which is a harder outage to read.
 	verifier, err := auth.NewVerifierFromConfig(ctx, auth.Config{
-		Enabled:   cfg.Auth.Enabled,
-		Issuer:    cfg.Auth.Issuer,
-		ProjectID: cfg.Auth.ProjectID,
+		Enabled:         cfg.Auth.Enabled,
+		Issuer:          cfg.Auth.Issuer,
+		ProjectID:       cfg.Auth.ProjectID,
+		ConsoleClientID: cfg.Auth.ConsoleClientID,
+		Log:             log,
 	})
 	if err != nil {
 		return err
