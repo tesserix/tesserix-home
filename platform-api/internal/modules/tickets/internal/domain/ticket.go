@@ -106,6 +106,20 @@ type Reply struct {
 	// `sub` for an operator, a Firebase UID for a merchant forwarded from a
 	// product's admin app.
 	//
+	// "A Zitadel `sub` for an operator" is true only of rows written since the
+	// Keycloak-to-Zitadel migration. Operator rows that predate it carry a
+	// GOOGLE subject — a 21-digit numeric string, distinguishable from a
+	// Zitadel `sub` only by length, and there is at least one in
+	// platform_ticket_replies today. The issuer is not recorded anywhere on the
+	// row, so it cannot be derived; it can only be inferred from created_at.
+	//
+	// That matters to anything that ever joins this column to Zitadel: the join
+	// will silently miss the older rows rather than fail, which is the failure
+	// mode that looks like missing data rather than a bug. Those values are
+	// deliberately NOT backfilled — rewriting them to a Zitadel `sub` would
+	// assert an identifier that did not exist when the reply was written, which
+	// is a tidier audit trail and a false one.
+	//
 	// Written but never read back into a response. It is attribution the
 	// database keeps, and the console renders a name and an email; putting a
 	// third-party identifier on the wire would publish a join key to every
