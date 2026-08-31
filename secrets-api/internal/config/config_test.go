@@ -9,11 +9,11 @@ import (
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"OPENBAO_ADDR":       "http://openbao.openbao.svc:8200",
-		"OPENBAO_K8S_ROLE":   "secret-service",
-		"ZITADEL_ISSUER":     "https://tesserix.zitadel.cloud",
-		"ZITADEL_PROJECT_ID": "123456789012345678",
-		"CONSOLE_CLIENT_ID":  "987654321098765432@tesserix",
+		"OPENBAO_ADDR":              "http://openbao.openbao.svc:8200",
+		"OPENBAO_K8S_ROLE":          "secret-service",
+		"ZITADEL_ISSUER":            "https://tesserix.zitadel.cloud",
+		"ZITADEL_PROJECT_ID":        "123456789012345678",
+		"ZITADEL_CONSOLE_CLIENT_ID": "987654321098765432@tesserix",
 	}
 }
 
@@ -32,7 +32,7 @@ func TestLoadAcceptsACompleteEnvironment(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresEveryCredential(t *testing.T) {
+func TestLoadRequiresOpenBaoAddr(t *testing.T) {
 	for _, key := range []string{
 		"OPENBAO_ADDR",
 	} {
@@ -176,12 +176,12 @@ func TestZitadelConfigIsRequired(t *testing.T) {
 	}
 }
 
-// Unset CONSOLE_CLIENT_ID is allowed and costs attribution, not access: every
+// Unset ZITADEL_CONSOLE_CLIENT_ID is allowed and costs attribution, not access: every
 // principal is then recorded as a service. Refusing to start over it would
 // take the service down for a logging concern.
 func TestConsoleClientIDIsOptional(t *testing.T) {
 	env := validEnv()
-	delete(env, "CONSOLE_CLIENT_ID")
+	delete(env, "ZITADEL_CONSOLE_CLIENT_ID")
 	cfg, err := loadFrom(env)
 	if err != nil {
 		t.Fatalf("Load: %v", err)

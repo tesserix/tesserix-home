@@ -65,7 +65,7 @@ func Load(get Lookup) (Config, error) {
 
 		ZitadelIssuer:    strings.TrimSpace(get("ZITADEL_ISSUER")),
 		ZitadelProjectID: strings.TrimSpace(get("ZITADEL_PROJECT_ID")),
-		ConsoleClientID:  strings.TrimSpace(get("CONSOLE_CLIENT_ID")),
+		ConsoleClientID:  strings.TrimSpace(get("ZITADEL_CONSOLE_CLIENT_ID")),
 
 		GitHubToken:       strings.TrimSpace(get("GITHUB_TOKEN")),
 		GitHubOwner:       valueOr(get("GITHUB_OWNER"), "tesserix"),
