@@ -97,6 +97,15 @@ beforeAll(async () => {
   );
   await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
 
+  // 0041 adds `crm_erased_identifiers`, the register `commitImport` now
+  // checks every row against (#226). Without it here, the very first row of
+  // every import in this file fails on a missing relation.
+  const erasedIdentifiersMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0041_crm_erased_identifiers.sql",
+  );
+  await db.exec(readFileSync(erasedIdentifiersMigrationPath, "utf-8"));
+
   // Migration 0020 (not replayed here — its only job is backfilling
   // `leads`) drops the CHECK so grandfathered rows can be inserted; 0021
   // re-adds the identical CHECK as NOT VALID. Reproduced directly rather

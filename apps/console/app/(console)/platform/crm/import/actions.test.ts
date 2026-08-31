@@ -67,12 +67,20 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-const PREVIEW = { toCreate: 1, matchedExisting: 0, skippedSuppressed: 0, malformed: 0, matchedRows: [] };
+const PREVIEW = {
+  toCreate: 1,
+  matchedExisting: 0,
+  skippedSuppressed: 0,
+  skippedErased: 0,
+  malformed: 0,
+  matchedRows: [],
+};
 const COMMIT_RESULT = {
   importId: "imp1",
   created: 1,
   matchedExisting: 0,
   skippedSuppressed: 0,
+  skippedErased: 0,
   malformed: 0,
   droppedWebsiteUrls: 0,
   droppedCountCells: 0,
@@ -163,7 +171,7 @@ describe("commitImportAction", () => {
     const audit = lastAuditInsert();
     expect(audit.actor).toBe("sub-1");
     expect(audit.action).toBe("crm.import");
-    expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, malformed: 0 });
+    expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, erased: 0, malformed: 0 });
     expect(revalidatePath).toHaveBeenCalledWith("/platform/crm/import");
   });
 
@@ -309,6 +317,6 @@ describe("commitImportAction", () => {
     await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 4);
 
     const audit = lastAuditInsert();
-    expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, malformed: 3 });
+    expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, erased: 0, malformed: 3 });
   });
 });

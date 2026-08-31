@@ -22,6 +22,22 @@ export interface DisplayCounts {
   toCreate: number;
   matchedExisting: number;
   skippedSuppressed: number;
+  /**
+   * Rows refused because the person asked to be forgotten (#226).
+   *
+   * Its own number on the card, never added into `skippedSuppressed`, for a
+   * reason that is about the copy rather than the arithmetic: the note under
+   * the suppressed count tells an operator to remove the suppression, and
+   * that is the wrong thing to do — and a thing they CAN do — for someone
+   * who asked to be erased. Two reasons with two remedies have to read as
+   * two numbers.
+   *
+   * A plain number on both a preview and a commit, unlike the `dropped*`
+   * counts below: the erasure check runs identically on both paths, so a
+   * zero here is a fact the preview genuinely established, not a claim about
+   * an import that has not happened.
+   */
+  skippedErased: number;
   malformed: number;
   /**
    * Rows created with their `website_url` dropped as unsafe. `null` — not 0
@@ -48,6 +64,7 @@ export function previewDisplayCounts(preview: ImportPreview, parseMalformed: num
     toCreate: preview.toCreate,
     matchedExisting: preview.matchedExisting,
     skippedSuppressed: preview.skippedSuppressed,
+    skippedErased: preview.skippedErased,
     malformed: preview.malformed + parseMalformed,
     droppedWebsiteUrls: null,
     droppedCountCells: null,
@@ -60,6 +77,7 @@ export function committedDisplayCounts(result: ImportResult, parseMalformed: num
     toCreate: result.created,
     matchedExisting: result.matchedExisting,
     skippedSuppressed: result.skippedSuppressed,
+    skippedErased: result.skippedErased,
     malformed: result.malformed + parseMalformed,
     droppedWebsiteUrls: result.droppedWebsiteUrls,
     droppedCountCells: result.droppedCountCells,

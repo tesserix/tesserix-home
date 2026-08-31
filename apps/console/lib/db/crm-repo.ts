@@ -8,6 +8,12 @@ import {
   type FollowerFilter,
 } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
+import { normalizeContactEmail, normalizeInstagramHandle } from "./crm-identity";
+import {
+  ERASURE_HASH_KEY_ENV,
+  erasureHashes,
+  isErasureHashKeyConfigured,
+} from "./crm-erasure-hash";
 import {
   decodeKeysetCursor,
   encodeKeysetCursor,
@@ -1216,16 +1222,15 @@ function toSuppressionRow(row: RawSuppressionRow): SuppressionRow {
   };
 }
 
-/** Strips a leading `@` and lowercases, so `@BondiBaker` and `bondibaker`
- *  are the same key on both the write and the read side (Ruling 18).
+/** Both normalisers now live in `crm-identity.ts` and are re-exported here so
+ *  `crm-writes.ts` (#236) keeps its existing import path.
  *
- *  Exported for `crm-writes.ts`'s `insertContact` (#236): the manual-create
- *  door checks the suppression list through `isSuppressed`, which normalises
- *  here, so its INSERT has to hand over the same string this produces or the
- *  two halves of one write disagree about what the handle is. */
-export function normalizeInstagramHandle(handle: string): string {
-  return handle.trim().replace(/^@+/, "").toLowerCase();
-}
+ *  They moved for #226: `crm-erasure-hash.ts` has to derive its HMAC input
+ *  with the SAME functions `findMatchingOrganisationId` matches with, and
+ *  importing them from this module would have made this module and that one
+ *  import each other. See `crm-identity.ts` for why one definition — not two
+ *  that agree — is the thing that matters here. */
+export { normalizeInstagramHandle };
 
 export interface SuppressionCheck {
   email?: string;
@@ -1261,14 +1266,14 @@ export async function isSuppressed(
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (input.email) {
-    // Trimmed to match the write path (`addSuppression`) and the database
-    // trigger (migration 0022), both of which store `trim(lower(email))`.
-    // Before Ruling 19 neither side trimmed, so an untrimmed lookup still
-    // matched an untrimmed stored value; now that the stored form is always
-    // canonical, a lookup that skips this trim can miss a real match on
-    // nothing but leading/trailing whitespace — exactly the input a CSV
-    // import (Task 8) carries as a matter of course.
-    params.push(input.email.trim());
+    // Canonicalised to match the write path (`addSuppression`) and the
+    // database trigger (migration 0022), both of which store
+    // `trim(lower(email))`. Before Ruling 19 neither side trimmed, so an
+    // untrimmed lookup still matched an untrimmed stored value; now that the
+    // stored form is always canonical, a lookup that skips the trim can miss
+    // a real match on nothing but leading/trailing whitespace — exactly the
+    // input a CSV import (Task 8) carries as a matter of course.
+    params.push(normalizeContactEmail(input.email));
     clauses.push(`lower(email) = lower($${params.length})`);
   }
   if (input.instagramHandle) {
@@ -1309,7 +1314,7 @@ export async function addSuppression(input: AddSuppressionInput): Promise<Suppre
   // handle — the database trigger (migration 0022, Ruling 19) is the
   // invariant, this is belt-and-braces so the common case never round-trips
   // through it to look normal.
-  const email = input.email ? input.email.trim().toLowerCase() : null;
+  const email = input.email ? normalizeContactEmail(input.email) : null;
   const rows = await tesserixQuery<RawSuppressionRow>(
     `INSERT INTO crm_suppressions (email, instagram_handle, reason, created_by)
      VALUES ($1, $2, $3, $4)
@@ -1390,6 +1395,12 @@ export async function removeSuppression(id: string): Promise<RemovedSuppression[
  * comparison the do-not-contact list itself uses — so the two paths can
  * never disagree about who is protected.
  *
+ * The same rule now holds for the erasure register (#226): both paths call
+ * `isErased`, in the same order relative to `isSuppressed`, so neither can
+ * report a file differently from the other. Erasure has the stronger claim of
+ * the two — a suppression can be lifted by an operator, an erasure is a
+ * request to be forgotten — so it is checked first and counted separately.
+ *
  * `previewImport` never calls `tesserixTx` and issues no INSERT/UPDATE at
  * all — the "dry run writes nothing" guarantee is structural (there is no
  * write statement anywhere in the function to accidentally reach), not a
@@ -1437,7 +1448,7 @@ export async function findMatchingOrganisationId(
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (input.email) {
-    params.push(input.email.trim());
+    params.push(normalizeContactEmail(input.email));
     clauses.push(`lower(email) = lower($${params.length})`);
   }
   if (input.instagramHandle) {
@@ -1454,10 +1465,158 @@ export async function findMatchingOrganisationId(
   return rows[0]?.organisation_id ?? null;
 }
 
+/**
+ * The erasure register (#226, migration 0041).
+ *
+ * `eraseContact` nulls `email` and `instagram_handle`, and
+ * `findMatchingOrganisationId` above matches on exactly those two columns. So
+ * before this, a re-import of an erased person matched NOTHING and
+ * `commitImport` created them again as a fresh organisation with a fresh
+ * opportunity — the erasure silently undone, and the new row carrying no
+ * trace that a request had ever been made. `crm_contacts.erased_at` had
+ * existed since migration 0024 and was written by nobody's reader; 0024's own
+ * header predicted this exact failure and the read half never shipped.
+ *
+ * The register holds a keyed HMAC of each destroyed identifier and nothing
+ * else — no contact id, no organisation id, no plaintext. See
+ * `crm-erasure-hash.ts` for why HMAC rather than a bare digest, and migration
+ * 0041 for why the table deliberately has no foreign key to anything.
+ */
+
+/**
+ * Thrown when an import cannot check the erasure register.
+ *
+ * This exists for exactly one situation: `CRM_ERASURE_HASH_KEY` is unset AND
+ * the register is not empty. Both halves matter.
+ *
+ * With no key and an EMPTY register there is nothing wrong — `eraseContact`
+ * throws without a key, so no hash can ever have been recorded, so there is
+ * nothing an import could have matched and nothing it can get wrong. The two
+ * halves of the feature cannot disagree, because neither of them runs.
+ *
+ * With no key and a NON-empty register the picture inverts: somebody's
+ * erasure IS recorded, and this import would compute no hashes, match
+ * nothing, and re-create them — while cheerfully reporting `skippedErased: 0`
+ * as though it had checked. That is the silent no-op the whole feature exists
+ * to prevent, and it is not something an operator could ever notice from the
+ * summary card. Refusing the import outright is the only honest answer: it is
+ * recoverable in one deploy, and importing is recoverable only by erasing the
+ * same person a second time.
+ *
+ * Operator-facing (see `mapError` in `lib/crm-write.ts`) and it names the
+ * variable, because the remedy is to provision it and retry.
+ */
+export class ErasureCheckUnavailableError extends Error {
+  constructor() {
+    super(
+      `This import cannot run: ${ERASURE_HASH_KEY_ENV} is not configured, but contacts have ` +
+        `already been erased. Importing without it would re-create people who asked to be ` +
+        `forgotten. Set the variable and try again.`,
+    );
+    this.name = "ErasureCheckUnavailableError";
+  }
+}
+
+/**
+ * A once-per-batch guard that refuses the import if the erasure check could
+ * not mean anything.
+ *
+ * Returns a function rather than being one, for two reasons that both matter:
+ *
+ * ONCE per batch, not once per row. The question — "is the register non-empty
+ * while the key is missing?" — has one answer for the whole import, and
+ * asking it 500 times against a `max: 2` pool is the connection pressure
+ * Ruling 23 exists to avoid.
+ *
+ * LAZILY, not up front. `previewImport`'s guarantee is that a batch of rows
+ * with nothing to identify them touches the database not at all — pinned by
+ * `crm-repo.test.ts` — and hoisting this to the top of the loop would break
+ * it for no gain: with no row to check, there is nothing the register could
+ * have been consulted about.
+ *
+ * The probe itself only runs on the branch where the key is missing, which is
+ * never in a correctly configured deployment. `LIMIT 1` because the count is
+ * irrelevant; the question is whether the register is empty.
+ *
+ * Both `previewImport` and `commitImport` use it, for the same reason both
+ * call `isSuppressed`: a preview that quietly ignored the register would
+ * promise an operator N creations that the commit must then refuse.
+ *
+ * The returned function throws {@link ErasureCheckUnavailableError}.
+ */
+function erasureCheckGuard(query: TxQuery): () => Promise<void> {
+  let settled = false;
+  return async () => {
+    if (settled) return;
+    settled = true;
+    if (isErasureHashKeyConfigured()) return;
+    const rows = await query<{ one: number }>(
+      `SELECT 1 AS one FROM crm_erased_identifiers LIMIT 1`,
+      [],
+    );
+    if (rows.length > 0) throw new ErasureCheckUnavailableError();
+  };
+}
+
+/**
+ * Whether either identifier belongs to someone who asked to be forgotten.
+ *
+ * Shaped like `isSuppressed` on purpose — same `SuppressionCheck` input, same
+ * `query` override, same `false` for a row carrying neither key — because the
+ * two run back to back on every import row and a reader should not have to
+ * hold two different calling conventions in mind to see that both are
+ * checked.
+ *
+ * `query` defaults to `tesserixQuery`; `commitImport` passes its
+ * transaction's own scoped query for the reasons in `isSuppressed`'s comment
+ * (Ruling 23). Here the connection argument is the operative one: this is a
+ * pure read of a table the import never writes, but acquiring a second pooled
+ * client per row against `max: 2` is how two concurrent commits starve each
+ * other out of the pool.
+ *
+ * Returns `false` — rather than throwing — when the key is unset. That is not
+ * a fail-open: {@link assertErasureCheckable} has already refused the batch if
+ * a single hash exists that this could have missed. Splitting it that way is
+ * what keeps the per-row path free of a check that can only ever have one
+ * answer for the whole batch.
+ */
+export async function isErased(
+  input: SuppressionCheck,
+  query: TxQuery = tesserixQuery,
+): Promise<boolean> {
+  if (!isErasureHashKeyConfigured()) return false;
+  const hashes = erasureHashes(input);
+  if (hashes.length === 0) return false;
+
+  const rows = await query<{ identifier_hash: string }>(
+    // `= ANY($1::text[])`, one round trip, rather than a clause per
+    // identifier: the parameter count then does not depend on which of the
+    // two keys the row happens to carry, so the statement text is identical
+    // for every row and the planner sees one prepared shape. The explicit
+    // cast is not optional — without it the driver's array literal arrives
+    // as `unknown` and the comparison against a `text` column is ambiguous.
+    `SELECT identifier_hash FROM crm_erased_identifiers WHERE identifier_hash = ANY($1::text[]) LIMIT 1`,
+    [hashes],
+  );
+  return rows.length > 0;
+}
+
 export interface ImportPreview {
   toCreate: number;
   matchedExisting: number;
   skippedSuppressed: number;
+  /**
+   * Rows refused because the person asked to be forgotten (#226).
+   *
+   * A SEPARATE counter from `skippedSuppressed`, never folded into it, even
+   * though both mean "we did not create this row". They are different legal
+   * requests with different remedies, and the import card's copy for the
+   * suppressed case tells the operator to remove the suppression — advice
+   * that is actively wrong for someone who asked to be erased, and which an
+   * operator could act on. A merged counter would put that wrong advice in
+   * front of them with no way to tell the two apart.
+   */
+  skippedErased: number;
   malformed: number;
   /** The rows that matched an existing organisation, in order — cheap to
    *  keep (no extra query: `commitImport`/`previewImport` already has the
@@ -1483,7 +1642,7 @@ export interface ImportPreview {
  *  with a stored `bondibaker`. */
 function importRowKeys(row: ImportRow): string[] {
   const keys: string[] = [];
-  if (row.email) keys.push(`email:${row.email.trim().toLowerCase()}`);
+  if (row.email) keys.push(`email:${normalizeContactEmail(row.email)}`);
   if (row.instagramHandle) keys.push(`ig:${normalizeInstagramHandle(row.instagramHandle)}`);
   return keys;
 }
@@ -1512,9 +1671,11 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
   let toCreate = 0;
   let matchedExisting = 0;
   let skippedSuppressed = 0;
+  let skippedErased = 0;
   let malformed = 0;
   const matchedRows: ImportRow[] = [];
   const seenKeys = new Set<string>();
+  const ensureErasureCheckable = erasureCheckGuard(tesserixQuery);
 
   for (const row of rows) {
     if (!isUsableImportRow(row)) {
@@ -1522,6 +1683,19 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
       continue;
     }
     const check: SuppressionCheck = { email: row.email, instagramHandle: row.instagramHandle };
+    // Erasure BEFORE suppression, here and in `commitImport`, and the order
+    // is load-bearing rather than arbitrary. Someone can be on both lists,
+    // and whichever check runs first decides which counter — and therefore
+    // which remedy — the operator is shown. "Remove the suppression" is the
+    // wrong instruction for a person who asked to be forgotten, and it is an
+    // instruction an operator can actually carry out. The two paths run the
+    // checks in the same order so they can never report the same file
+    // differently.
+    await ensureErasureCheckable();
+    if (await isErased(check)) {
+      skippedErased++;
+      continue;
+    }
     if (await isSuppressed(check)) {
       skippedSuppressed++;
       continue;
@@ -1556,7 +1730,7 @@ export async function previewImport(rows: readonly ImportRow[]): Promise<ImportP
     }
   }
 
-  return { toCreate, matchedExisting, skippedSuppressed, malformed, matchedRows };
+  return { toCreate, matchedExisting, skippedSuppressed, skippedErased, malformed, matchedRows };
 }
 
 export interface ImportResult {
@@ -1564,6 +1738,11 @@ export interface ImportResult {
   created: number;
   matchedExisting: number;
   skippedSuppressed: number;
+  /** Rows refused because the person asked to be forgotten (#226) — see
+   *  `ImportPreview.skippedErased` for why this is never folded into
+   *  `skippedSuppressed`. The same file must produce the same number here as
+   *  it does at preview; `crm-repo.integration.test.ts` pins that. */
+  skippedErased: number;
   malformed: number;
   /**
    * Rows that WERE created, but whose `website_url` cell failed
@@ -1628,9 +1807,9 @@ function metadataCell(raw: string | undefined): CellOutcome<Record<string, unkno
  * whole batch lands or none of it does, so a failure partway through never
  * leaves an orphaned `crm_imports` row with no organisations to show for it.
  *
- * Re-checks suppression per row, exactly like `previewImport` — see the
- * module comment for why a stale preview cannot be trusted to have already
- * covered it. A row matching an existing organisation is counted but not
+ * Re-checks suppression AND the erasure register per row, exactly like
+ * `previewImport` — see the module comment for why a stale preview cannot be
+ * trusted to have already covered either. A row matching an existing organisation is counted but not
  * written, same as at preview: this does not merge into or update the
  * existing row.
  *
@@ -1657,11 +1836,14 @@ export async function commitImport(
     let created = 0;
     let matchedExisting = 0;
     let skippedSuppressed = 0;
+    let skippedErased = 0;
     let malformed = 0;
     let droppedWebsiteUrls = 0;
     let droppedCountCells = 0;
     let droppedMetadataCells = 0;
     const matchedRows: ImportRow[] = [];
+
+    const ensureErasureCheckable = erasureCheckGuard(query);
 
     const importRows = await query<{ id: string }>(
       `INSERT INTO crm_imports (filename, created_by) VALUES ($1, $2) RETURNING id`,
@@ -1693,6 +1875,15 @@ export async function commitImport(
       //     transaction and tried to acquire a second, twice per row; two
       //     operators committing concurrently could each hold one client
       //     and starve the other out of the pool entirely.
+      // Erasure first, then suppression — the same order `previewImport`
+      // uses, for the reason documented there: the order decides which
+      // counter, and therefore which remedy, the operator is shown for a
+      // person who is on both lists.
+      await ensureErasureCheckable();
+      if (await isErased(check, query)) {
+        skippedErased++;
+        continue;
+      }
       if (await isSuppressed(check, query)) {
         skippedSuppressed++;
         continue;
@@ -1767,7 +1958,7 @@ export async function commitImport(
         [
           organisationId,
           row.name?.trim() || null,
-          row.email ? row.email.trim().toLowerCase() : null,
+          row.email ? normalizeContactEmail(row.email) : null,
           row.phone?.trim() || null,
           row.instagramHandle ? normalizeInstagramHandle(row.instagramHandle) : null,
           row.biography?.trim() || null,
@@ -1804,6 +1995,7 @@ export async function commitImport(
       created,
       matchedExisting,
       skippedSuppressed,
+      skippedErased,
       malformed,
       droppedWebsiteUrls,
       droppedCountCells,

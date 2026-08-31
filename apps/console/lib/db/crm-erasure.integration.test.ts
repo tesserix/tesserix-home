@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Integration coverage for the two DPDP data operations: `eraseContact` and
@@ -39,6 +39,7 @@ vi.mock("./tesserix", async (importOriginal) => {
 });
 
 const { eraseContact, deleteOrganisation } = await import("./crm-erasure");
+const { ERASURE_HASH_KEY_ENV } = await import("./crm-erasure-hash");
 
 let db: PGlite;
 let orgId: string;
@@ -55,6 +56,10 @@ beforeAll(async () => {
     // 0027 adds `crm_contacts.metadata`, the raw-scrape bag. Loaded here
     // because the erasure claim below is a claim about a real column.
     "0027_crm_contacts_metadata.sql",
+    // 0041 is the erasure register (#226). Loaded because `eraseContact` now
+    // writes to it inside its own transaction: without the table every test
+    // below fails on the INSERT rather than on the claim it is making.
+    "0041_crm_erased_identifiers.sql",
   ]) {
     const migrationPath = path.resolve(__dirname, "../../../web/db/migrations", migration);
     await db.exec(readFileSync(migrationPath, "utf-8"));
@@ -65,9 +70,19 @@ afterAll(async () => {
   await db.close();
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 // Seeded per-test, not once for the suite: several tests here delete their
 // fixtures, which would break a `beforeAll`-seeded org for the next test.
 beforeEach(async () => {
+  // `eraseContact` fails closed without this (#226): an erasure it cannot
+  // record in a form the next import can refuse must not report success. The
+  // refusal itself is covered in `crm-erasure-import.integration.test.ts`;
+  // here it would just mask every other claim.
+  vi.stubEnv(ERASURE_HASH_KEY_ENV, "integration-erasure-key");
+
   // Every test reuses the same fixture email, so previous tests' rows must
   // be gone first — TRUNCATE ... CASCADE clears organisations and, via
   // ON DELETE CASCADE, their contacts/opportunities/activities too.

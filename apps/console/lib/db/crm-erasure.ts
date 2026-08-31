@@ -1,4 +1,9 @@
 import { tesserixTx } from "./tesserix";
+import {
+  ErasureHashKeyMissingError,
+  erasureHashes,
+  isErasureHashKeyConfigured,
+} from "./crm-erasure-hash";
 
 /**
  * The two data operations behind a DPDP request, per #213 / #154.
@@ -78,6 +83,48 @@ export interface ErasedContact {
  * evidence that the erasure was owed. Erasing them would destroy the audit
  * trail of the erasure's own justification.
  *
+ * # The erasure register (#226)
+ *
+ * Before this, `eraseContact` was the whole of "forget me" and it did not
+ * survive contact with the next CSV. Nulling `email` and `instagram_handle`
+ * is exactly what makes `findMatchingOrganisationId` — which matches on those
+ * two columns and nothing else — fail to recognise the person on re-import,
+ * so `commitImport` created them again as a fresh organisation with a fresh
+ * opportunity. The erasure was undone silently, by the ordinary operation of
+ * the feature next door, and the new row said nothing about it. Migration
+ * 0024's own header predicted this ("re-import would treat it as a fresh row
+ * to enrich") and only the marker half ever shipped.
+ *
+ * So this transaction now also records a keyed HMAC of each identifier it is
+ * about to destroy into `crm_erased_identifiers` (migration 0041), which
+ * `previewImport`/`commitImport` check every row against. The pre-image comes
+ * from the `old` CTE below — the values as they stood BEFORE this statement
+ * nulled them — so the hash is of what was actually there, and the INSERT is
+ * in the same transaction as the UPDATE, so either both land or neither does.
+ * There is no window in which a contact is erased but unrecorded.
+ *
+ * `ON CONFLICT DO NOTHING`: erasing twice is idempotent for the same reason
+ * `erased_at` is COALESCE'd, and in practice the second call has nothing to
+ * insert anyway — the columns it would hash are already null.
+ *
+ * # It throws when CRM_ERASURE_HASH_KEY is unset, and that is the safe way
+ *
+ * `erasureHashes` raises `ErasureHashKeyMissingError` with no key, and this
+ * function does not catch it: the transaction rolls back and the erasure
+ * FAILS. An erasure that succeeded without recording its hashes would report
+ * "forgotten" to an operator while quietly losing the ability to enforce
+ * itself against the next import — the worst of the three outcomes, because
+ * nobody would ever look at it again. A refused erasure is visible, and the
+ * operator retries it once the variable is provisioned.
+ *
+ * The two halves cannot disagree about this. With no key, this throws, so no
+ * hash is ever recorded, so `crm_erased_identifiers` is empty, so import has
+ * nothing it could have missed — which is precisely the condition
+ * `assertErasureCheckable` in `crm-repo.ts` tests before letting an import
+ * run without a key. Key present: both halves work. Key absent: neither half
+ * runs. There is no third state in which one half is enforcing and the other
+ * is not.
+ *
  * Idempotent — erasing an already-erased contact re-overwrites the same
  * (already-null) columns and is not an error, but MUST NOT move
  * `erased_at` forward. The date an erasure was actually performed is the
@@ -88,6 +135,16 @@ export interface ErasedContact {
  * write, full stop).
  */
 export async function eraseContact(contactId: string): Promise<ErasedContact | null> {
+  // Checked here as well as inside `erasureHashes` below, and the duplication
+  // is deliberate. The one below is the guarantee — it is on the path that
+  // actually produces the hashes, so it cannot be routed around. This one is
+  // only so that a deployment missing the variable issues no statement at
+  // all, rather than running the UPDATE and rolling it back: the outcome is
+  // identical, but a write that never happens is easier to reason about than
+  // one that happened and was undone, and it keeps a pointless round trip off
+  // a `max: 2` pool.
+  if (!isErasureHashKeyConfigured()) throw new ErasureHashKeyMissingError();
+
   return tesserixTx(async (query) => {
     // `old` is a plain CTE (its body is a SELECT, not itself a write) that
     // captures the pre-update row so the UPDATE's RETURNING can hand back
@@ -97,10 +154,13 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
       id: string;
       organisation_id: string;
       previous_name: string | null;
+      previous_email: string | null;
+      previous_instagram_handle: string | null;
       previous_erased_at: string | null;
     }>(
       `WITH old AS (
-         SELECT id, name, erased_at FROM crm_contacts WHERE id = $1
+         SELECT id, name, email, instagram_handle, erased_at
+           FROM crm_contacts WHERE id = $1
        )
        UPDATE crm_contacts c
           SET name = '[erased]',
@@ -115,7 +175,10 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
               updated_at = now()
          FROM old
         WHERE c.id = old.id
-        RETURNING c.id, c.organisation_id, old.name AS previous_name, old.erased_at AS previous_erased_at`,
+        RETURNING c.id, c.organisation_id, old.name AS previous_name,
+                  old.email AS previous_email,
+                  old.instagram_handle AS previous_instagram_handle,
+                  old.erased_at AS previous_erased_at`,
       [contactId],
     );
 
@@ -124,6 +187,25 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
     }
 
     const row = rows[0];
+
+    // The identifiers as they were a statement ago. Hashed and recorded here,
+    // inside the same transaction, so the erasure and the thing that enforces
+    // it are one atomic fact. Throws — and so aborts the erasure — when
+    // CRM_ERASURE_HASH_KEY is unset; see the doc comment for why that is the
+    // safe direction.
+    const hashes = erasureHashes({
+      email: row.previous_email,
+      instagramHandle: row.previous_instagram_handle,
+    });
+    for (const identifierHash of hashes) {
+      await query(
+        `INSERT INTO crm_erased_identifiers (identifier_hash)
+         VALUES ($1)
+         ON CONFLICT (identifier_hash) DO NOTHING`,
+        [identifierHash],
+      );
+    }
+
     return {
       contactId: row.id,
       organisationId: row.organisation_id,

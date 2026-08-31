@@ -20,6 +20,7 @@ const PREVIEW = {
   toCreate: 1,
   matchedExisting: 0,
   skippedSuppressed: 0,
+  skippedErased: 0,
   malformed: 0,
   matchedRows: [],
 };
@@ -30,6 +31,7 @@ function committedResult(overrides: Partial<ImportResult> = {}): ImportResult {
     created: 47,
     matchedExisting: 3,
     skippedSuppressed: 1,
+    skippedErased: 0,
     malformed: 0,
     droppedWebsiteUrls: 0,
     droppedCountCells: 0,
@@ -134,6 +136,29 @@ describe("ImportView committed result", () => {
 
     expect(screen.getByText("Metadata dropped")).toBeInTheDocument();
     expect(screen.getByText(/was not a JSON object/i)).toBeInTheDocument();
+  });
+
+  it("reports rows refused because the person asked to be forgotten (#226)", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ skippedErased: 2 }));
+
+    // Its own cell beside Suppressed, and its own note — the two counts have
+    // opposite remedies, and the suppressed copy ("remove the suppression")
+    // is advice an operator could act on for someone who asked to be erased.
+    expect(screen.getByText("Erased")).toBeInTheDocument();
+    expect(screen.getByText("Suppressed")).toBeInTheDocument();
+    expect(screen.getByText(/asked to be forgotten/i)).toBeInTheDocument();
+    expect(screen.getByText(/Do not add them back by hand/i)).toBeInTheDocument();
+  });
+
+  it("shows the erased count as zero rather than hiding it when nothing was refused", async () => {
+    const user = userEvent.setup();
+    await commitAnImport(user, committedResult({ skippedErased: 0 }));
+
+    // A checked fact, not an unknown: the register is consulted on every
+    // import, so the cell stays and only the explanatory note goes.
+    expect(screen.getByText("Erased")).toBeInTheDocument();
+    expect(screen.queryByText(/asked to be forgotten/i)).toBeNull();
   });
 
   it("offers no link when the import created nothing", async () => {
