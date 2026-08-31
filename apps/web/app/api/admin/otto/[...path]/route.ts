@@ -48,10 +48,25 @@ async function forward(request: NextRequest, pathSegments: string[]): Promise<Re
   if (!session?.sub) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // 501, not 503, when the secret is unset. The console reads a status, not a
+  // body: `apps/console/components/kit/surface-state.ts` maps 501 onto
+  // `instrumentation-unavailable` — the calm "not measured yet" callout — and
+  // maps EVERY other non-2xx onto a red error state. An unset
+  // OTTO_INTERNAL_AUTH is not a fault; it is an integration nobody switched on
+  // yet, and answering 503 made a parked platform inbox render as though otto
+  // were down. See #198.
+  //
+  // The distinction the contract turns on: 501 means "never wired", the 502s
+  // below mean "wired and not answering" (an upstream 5xx, a timeout, a
+  // transport failure). Those must stay 502 — they are real faults and should
+  // read as one. The full contract is stated in
+  // docs/PLATFORM-API-CONVENTIONS.md §1c, and
+  // apps/web/app/api/admin/apps/[product]/audit-logs/route.ts's header is the
+  // worked example.
   if (!OTTO_INTERNAL_AUTH) {
     return NextResponse.json(
       { error: "not_configured", message: "OTTO_INTERNAL_AUTH unset" },
-      { status: 503 },
+      { status: 501 },
     );
   }
 

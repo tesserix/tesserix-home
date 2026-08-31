@@ -126,6 +126,45 @@ explanation. That is one commit's work and it is not this one; a module written
 against this file should follow the rule above, and tickets is the exception
 until it is fixed.
 
+### 1c. An unconfigured upstream answers **501**, never 503
+
+**Scope note, because it differs from the rest of §1:** the rules above govern
+what a Go module puts on the wire. This one governs the **console's own
+`/api/admin/*` proxy routes** in `apps/web` — the layer §2 describes, which
+composes product endpoints for a screen. It lives here because it is a
+response-status rule and this is where response shapes are written down; there
+is no other file that records the console's proxy contract.
+
+**The rule:** every `/api/admin/*` route the console reads must distinguish
+*never wired* from *wired and not answering*, and must do it with the status,
+not the body.
+
+| Status | Means | Route returns it when |
+| --- | --- | --- |
+| **501** `{ error: "not_configured", … }` | The integration was never switched on. Not a fault. | The upstream credential / URL / feature is unset — nothing was attempted. |
+| **502** `{ error: "upstream_unavailable" \| "upstream_error", … }` | The integration is wired and failing. A real fault. | The upstream was reached and returned 5xx, timed out, or the transport threw. |
+
+**Why the status and not the body.** The console branches on the number.
+`apps/console/components/kit/surface-state.ts` exports `NOT_IMPLEMENTED = 501`
+and `resolveState` maps it to `instrumentation-unavailable` — a calm "not
+measured yet" callout that `states.tsx` documents as *"deliberately neither
+empty nor error"*. **Every other non-2xx becomes a red error state.** So a
+proxy that answers 503 for an unset credential tells an operator that a parked
+product is BROKEN, and there is no body field that can talk them out of it.
+That is #198.
+
+**Do not collapse the two cases.** 501 and 502 are the whole point; a route
+that returns one status for both has lost the distinction the rule exists to
+carry. `apps/web/app/api/admin/apps/[product]/audit-logs/route.ts` is the
+worked example — its header enumerates 200 / 404 / 501 / 502 and says which is
+which. `analytics/support/route.ts` and `otto/[...path]/route.ts` were brought
+onto it in #198; they predate it and were the only two that had not been.
+
+**Test the number, not the constant.** A route test that imports
+`NOT_IMPLEMENTED` from the console kit passes even if both sides drift together
+— it asserts self-consistency, not the contract. Assert `501` and `502` as
+literals.
+
 ---
 
 ## 2. Resources are domain-shaped; the console composes
