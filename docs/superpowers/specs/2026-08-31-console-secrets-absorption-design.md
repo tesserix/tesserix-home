@@ -133,11 +133,45 @@ Carried from #274, verified there from code and cluster config:
 - Read-only Kubernetes RBAC — no write verb anywhere
 - Path traversal guards on both the secret path and the chart path
 
-**Unverified and load-bearing:** #274 records a GCP custom role claimed to
-exclude `versions.access`, said to live in `terraform-new/stacks/06-workload-identity`
-and present in neither repository. The OpenBao half of "the console can write but
-never read a secret value" is verified in the chart; the Secret Manager half is
-not. Confirm before the move, or the claim is half unevidenced.
+**The Secret Manager half is now verified.** #274 recorded a GCP custom role
+claimed to exclude `versions.access`, said to live in
+`terraform-new/stacks/06-workload-identity` and present in neither repository.
+Checked against live GCP on 2026-08-31:
+
+```
+secret-service@tesseracthub-480811.iam.gserviceaccount.com
+  -> projects/tesseracthub-480811/roles/secretManagerWriteBlind   (its ONLY role)
+
+Secret Manager Write-Blind (GA)
+"Manage secrets and versions without permission to read a payload"
+
+secrets.create  secrets.delete  secrets.get  secrets.list  secrets.update
+versions.add  versions.destroy  versions.disable  versions.enable
+versions.get  versions.list
+```
+
+`secretmanager.versions.access` — the one permission returning a payload — is
+absent. `versions.get` returns version metadata and `secrets.get` returns the
+secret's metadata; neither returns bytes.
+
+Four angles, because a project-level role list alone would not have been
+conclusive: the role excludes the permission; it is the SA's only project-level
+role; a project-wide asset search for the SA returned **exactly one** IAM policy,
+this binding, so no per-secret grant widens it; and the project has **no parent
+org or folder**, so there is nothing to inherit and project level is the whole
+policy surface.
+
+Not fully empirical: reading a secret while impersonating the SA was refused for
+want of `iam.serviceAccountTokenCreator` — itself reassuring, since it means the
+SA is not broadly impersonable. Policy Troubleshooter is disabled on the project
+and was deliberately not enabled. The residual assumption is GCP's own
+`versions.access` => payload contract, not an inference about this estate.
+
+**The role is real but unmanaged.** It exists only in live GCP — not in
+`tesserix-infra`, not in `tesserix-k8s`, not where #274 says it lives. So
+nothing would notice if `versions.access` were added to it, and the write-blind
+property would be lost silently. Same shape as the Zitadel lockout policy
+(#445): correct today, declared nowhere. Tracked separately.
 
 ## 7. Out of scope
 
