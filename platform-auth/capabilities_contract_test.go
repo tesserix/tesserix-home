@@ -22,7 +22,7 @@ import (
 // dropped at the boundary, and a principal holding only unknown roles is
 // refused with an error that logs the raw values.
 func TestCapabilitiesMatchTheTypeScriptVocabulary(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "packages", "platform-auth", "src", "capabilities.ts")
+	path := filepath.Join("..", "packages", "platform-auth", "src", "capabilities.ts")
 	source, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading the TypeScript vocabulary: %v", err)

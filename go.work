@@ -1,4 +1,5 @@
 go 1.26.5
 
 use ./platform-api
+use ./platform-auth
 use ./secrets-api
