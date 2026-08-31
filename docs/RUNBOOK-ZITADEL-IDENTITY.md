@@ -216,13 +216,38 @@ this document exists is that it was, accidentally.
    console and no admin browser session, in **4 seconds** once the credential was
    in hand.
 
+   **Re-verified 2026-08-31 (#288), ten days on**, because a runbook whose
+   credential has since rotated away is worse than no runbook. `iam-admin-pat`
+   still exists and still authenticates (HTTP 200 against `POST /v2/users`), and
+   the whole write half ran again on a throwaway user — deactivate, reactivate,
+   set password, delete — in **2 seconds**. Re-check this on any deliberate
+   schedule; the credential is the single point the whole procedure rests on.
+
    **What is still untested is the human half** — whether someone unfamiliar can
    follow this under pressure, and whether the people holding cluster and GCP
    admin know that they are the recovery path. There is no separate break-glass
    identity: recovering Zitadel needs the same access that can already do
    anything.
 
-5. **Note on `kubectl exec`.** Several pods in this estate are distroless and
+5. **The admin PAT can delete users. The console's login-client token cannot.**
+
+   `ZITADEL_LOGIN_CLIENT_TOKEN` (`console-secrets`, the PAT for the
+   `console-login-client` machine user) will happily CREATE a user and then
+   refuse to remove it — `403` on both `DELETE /v2/users/{id}` and
+   `DELETE /management/v1/users/{id}`. `iam-admin-pat` returns `200`.
+
+   Recorded because it is invisible until it strands something: on 2026-08-31
+   the #445 TOTP probe created two disposable users with the login-client token
+   and could not clean them up, so they had to be deactivated and then deleted
+   by hand with the admin credential. Anyone scripting a create-and-clean-up
+   against Zitadel should mint from `iam-admin-pat`, or plan to leave litter.
+
+   Deactivating is not deleting. `POST /v2/users/{id}/deactivate` succeeds with
+   the login-client token, which makes a stranded user *harmless* — it cannot
+   authenticate — but it is still there, and it still holds whatever grants it
+   had.
+
+6. **Note on `kubectl exec`.** Several pods in this estate are distroless and
    have no shell, so `kubectl exec ... -- sh` fails. Where a procedure needs to
    authenticate as a workload, mint a token instead:
    `kubectl -n NS create token SERVICE_ACCOUNT --duration=10m`.
