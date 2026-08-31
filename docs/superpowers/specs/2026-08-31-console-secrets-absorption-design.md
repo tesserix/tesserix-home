@@ -4,6 +4,7 @@
 **Implements:** ADR-003 D3 · tesserix-home#274 (M4-2)
 **Depends on:** #273 (criteria 1 and 6 landed as secret-service#18; criterion 4 to follow)
 **Supersedes premises in:** #274 ("the service holds no permission to merge" — false, see §2)
+**Prototype:** https://claude.ai/code/artifact/1ce7c134-4001-4424-ba7c-e97f099ceddf — clickable, covers every flow below. Reviewed by a UX pass whose findings are folded in.
 
 ## 1. What moves, and what does not
 
@@ -112,6 +113,13 @@ inspector on a path that does not exist.
    its own outcome.
 3. **A secret no app can read is flagged wherever it is listed**, derived from
    whether a whitelist entry exists — not from whether someone finished a wizard.
+   Orphans sort to the top of the list and are counted above it; a chip in a row
+   of chips loses a horizontal scan.
+
+A proposal can also be **rejected**, which changes nothing but the record. That
+is exactly how a secret acquires no reader without anyone having removed one, and
+it is the case the derived flag exists to catch — so the reject path and the flag
+have to ship together, or the flag makes a claim nothing can produce.
 
 The derived indicator is the reason this beats a guided two-stage flow. A wizard
 only knows about secrets made through the wizard; a derived state also catches a
@@ -120,7 +128,78 @@ It also leaves the common cases untaxed: rotating a secret for an
 already-whitelisted app, and granting an existing secret to another app, never
 involve creating a secret at all.
 
-## 5a. Notifying the people a proposal is waiting on
+### Removing a reader is the same route, and that is deliberate
+
+Removing an app is a `revoke` change to the same file in the same repository, so
+it takes the same gate as adding one. It is not a local toggle, and the Reviews
+queue shows both directions.
+
+A queued revoke means access stays live until someone approves it, which invites
+the objection that an urgent revocation cannot wait. **The objection points at
+the wrong control.** If a credential is compromised, revoking *access* is the
+slow and partial answer; **rotating the value** is immediate and total — write a
+new version and every holder of the old value has nothing, with no approver, no
+pull request and no merge. That path already exists and needs no new mechanism.
+
+So revocation of access is inherently a tidying operation and queuing it is
+correct. What is missing is only that an approver cannot tell routine cleanup
+from "please hurry" — worth an optional reason on a revoke, surfaced in the queue
+and in the notification. An emergency lane is deliberately NOT added: it would be
+a second, weaker path to an outcome the rotate path already achieves better.
+
+## 6. Two stores, which are not peers
+
+`SECRET_BACKENDS=openbao,gcpsm` is live in production, default `openbao`. The
+`Store` interface (`apps/api/internal/secrets/store.go`) is uniform, so every
+secret *operation* — list, describe, write, delete, destroy, restore, versions —
+is identical across both. Access is not:
+
+| | OpenBao | Google Secret Manager |
+|---|---|---|
+| add / update / delete a secret | `Store` | `Store`, identically |
+| who may read it | whitelist in `tesserix-k8s`, via the proposal flow above | **GCP IAM, outside this tool** |
+
+The access handlers take no backend parameter. `AddApp` / `RemoveApp` edit
+`values.yaml`; there is no GSM equivalent, and inventing one is not in scope
+here.
+
+**So the stores are a filter, not a tab.** A tab asserts peerage, and these are
+not peers on the axis that matters. The secrets list carries a store chip per
+row and a filter — All / OpenBao / Google Secret Manager, plus a separate
+"No reader" — with counts drawn from the whole set rather than the filtered
+view, so a chip reports what is *not* currently on screen.
+
+On a GSM secret, the "Who can read this" card is replaced, not emptied. It says
+access is governed by GCP IAM and there is nothing for the console to propose.
+Rendering an empty reader list instead would conflate two different facts —
+"nothing can read this" and "this tool does not manage who reads this" — and the
+first of those is the alarm the orphan flag exists to raise.
+
+**Write-blind is enforced by IAM, not by the UI.** The console's Google
+credential holds `secretManagerWriteBlind`: create, update, delete, destroy,
+and metadata reads, but **not** `secretmanager.versions.access`. The `Store`
+interface has no `Read` method at all, *"so no handler can leak one"*. A
+compromised console cannot reveal a GSM payload, because it has no permission
+to. See §9 for the caveat that this role is declared nowhere (#465).
+
+## 7. Writing a value
+
+The value field is hidden by default, with reveal and copy controls inside it,
+and a **Generate** action beside it. Generating produces 32 random bytes.
+
+Copy exists because the one case that needs the value is handing it to something
+outside the estate — a payment provider's dashboard. The copy in the form says
+what is true: **this is the only moment the value can be retrieved**, because
+nothing in the console can read a stored value back.
+
+An earlier draft offered "do not show it to me", writing a generated value that
+no human ever saw. That was dropped. It reads as a stronger guarantee than it is
+— the operator creating the secret can always look, and a reveal control is one
+click away — and the guarantee that matters is not about the moment of creation
+but about every moment after it, which `secretManagerWriteBlind` and the absent
+`Store.Read` already provide.
+
+## 8. Notifying the people a proposal is waiting on
 
 A queued proposal blocks two people: whoever can clear it, and whoever raised it
 and is waiting to deploy. Both are notified through the console's existing bell
@@ -164,7 +243,7 @@ minutes rather than up to seven days — the same property §4 relies on for the
 approve action itself, arriving here for free rather than needing its own
 mechanism.
 
-## 6. Security properties that must survive, each with a test or a note
+## 9. Security properties that must survive, each with a test or a note
 
 Carried from #274, verified there from code and cluster config:
 
@@ -217,12 +296,28 @@ nothing would notice if `versions.access` were added to it, and the write-blind
 property would be lost silently. Same shape as the Zitadel lockout policy
 (#445): correct today, declared nowhere. Tracked separately.
 
-## 7. Out of scope
+## 10. Out of scope
 
 - #273 criterion 3 (two-phase granting). The current apply-then-propose ordering
   has a stated reason — *"a rebuilt OpenBao comes back with no memory of the
   grant"* — so changing it is its own decision, not part of the move.
 - #273 criterion 5 (denylist in OpenBao, whitelist in Git). Documented as a split
   with its reconciliation, or unified, separately.
-- The scoped machine identity. Required for the Git record to be honest, tracked
-  as its own issue because it is true whether or not this design ships.
+- The scoped machine identity (#464). Required for the Git record to be honest,
+  tracked as its own issue because it is true whether or not this design ships.
+- Managing GSM *access* from the console. §6 records why the stores are not peers
+  on that axis. Making them peers would mean the service proposing IAM changes,
+  which needs #465 settled first — you cannot propose a change to a role that is
+  declared nowhere — and would give the service IAM write it does not have.
+- An optional reason on a revoke (§5). Worth doing; not required for the move.
+
+## Dependencies worth stating
+
+- **#465** — `secretManagerWriteBlind` exists only in live GCP. §6's write-blind
+  guarantee rests on it, so a surface built on that guarantee should not ship
+  while the role can be widened with no diff and no failing check.
+- **#285** — already delivered, and §4 and §8 both rely on it. Revoking an
+  approver's capability now takes five minutes rather than up to seven days.
+- **#313** — the `tesserix-k8s` bypass narrowing. §2's analysis assumes the
+  current `bypass_mode: pull_request`; restoring `always` would silently re-open
+  the force-push and deletion paths this design reasons about.
