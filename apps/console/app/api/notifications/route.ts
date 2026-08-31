@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   readLastSeenAt,
@@ -42,7 +42,7 @@ async function authorize(): Promise<{ sub: string } | NextResponse> {
   try {
     // The bell's feed is ticket and reply rows, so it carries support data and
     // gates on the support surface rather than console entry.
-    checkOperatorCapability(session, "support");
+    await checkOperatorCapabilityLive(session, "support");
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });

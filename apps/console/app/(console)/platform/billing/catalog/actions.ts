@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import {
   auditedOperation,
   type AuditDescription,
@@ -145,8 +145,8 @@ async function withDraftWrite<T>(
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => {
-        checkOperatorCapability(session, "billing");
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, "billing");
         return run(actor);
       },
       describe,
@@ -418,9 +418,9 @@ async function withPublishWrite<T>(
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => {
-        checkOperatorCapability(session, "billing");
-        checkOperatorCapability(session, "publish-catalog");
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, "billing");
+        await checkOperatorCapabilityLive(session, "publish-catalog");
         return run(actor);
       },
       describe,
@@ -551,7 +551,7 @@ export async function planPublishAction(
 ): Promise<PlanPublishResult> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "billing");
+    await checkOperatorCapabilityLive(session, "billing");
     const { plan, verdict } = await observeAndPlan(mode, revisionId);
     return {
       ok: true,

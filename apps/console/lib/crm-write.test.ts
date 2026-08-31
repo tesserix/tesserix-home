@@ -6,7 +6,7 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 }));
 vi.mock("@/lib/auth/operator", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/operator")>()),
-  checkOperatorCapability: vi.fn(),
+  checkOperatorCapabilityLive: vi.fn(),
 }));
 // Ruling 15/17: goes through the REAL `auditedOperation` (not mocked) —
 // only its leaf dependency is, the same way `suppressions/actions.test.ts`
@@ -19,7 +19,7 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 }));
 
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import { withCrmWrite } from "./crm-write";
 
@@ -39,7 +39,7 @@ beforeEach(() => {
   // `vi.clearAllMocks()` clears call history, not a mock's implementation —
   // a throwing `mockImplementation` set by one test would otherwise leak
   // into the next. Reset to "capability granted" explicitly every time.
-  vi.mocked(checkOperatorCapability).mockImplementation(() => undefined);
+  vi.mocked(checkOperatorCapabilityLive).mockResolvedValue(undefined);
 });
 
 describe("withCrmWrite", () => {
@@ -51,20 +51,22 @@ describe("withCrmWrite", () => {
   // now enforces.
   it("gates on the capability the caller names", async () => {
     await withCrmWrite("crm:org", { capability: "crm" }, async () => "ok", () => description);
-    expect(checkOperatorCapability).toHaveBeenCalledWith(expect.anything(), "crm");
+    expect(checkOperatorCapabilityLive).toHaveBeenCalledWith(expect.anything(), "crm");
   });
 
   it("gates a verb on the verb, not on the surface it is reached from", async () => {
     // Orthogonality: erasure happens from a CRM surface but gates on
     // `hard-delete`. Holding `crm` must not carry the right to erase.
     await withCrmWrite("crm:org", { capability: "hard-delete" }, async () => "ok", () => description);
-    expect(checkOperatorCapability).toHaveBeenCalledWith(expect.anything(), "hard-delete");
+    expect(checkOperatorCapabilityLive).toHaveBeenCalledWith(expect.anything(), "hard-delete");
   });
 
   it("returns the permission message and never runs the operation when the gate fails", async () => {
-    vi.mocked(checkOperatorCapability).mockImplementation(() => {
-      throw new CapabilityError("hard-delete");
-    });
+    // Async since tesserix-home#285 — the gate reads the server-side list, so
+    // a refusal is a rejected promise rather than a synchronous throw.
+    vi.mocked(checkOperatorCapabilityLive).mockRejectedValue(
+      new CapabilityError("hard-delete"),
+    );
     const run = vi.fn();
     const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
     expect(run).not.toHaveBeenCalled();
@@ -72,15 +74,17 @@ describe("withCrmWrite", () => {
   });
 
   // #409 task 3: the gap this task closes. Before this change,
-  // `checkOperatorCapability` ran BEFORE `auditedOperation`, so a thrown
+  // `checkOperatorCapabilityLive` ran BEFORE `auditedOperation`, so a thrown
   // `CapabilityError` never reached it and no row was written — a deliberate
   // refusal indistinguishable, on paper, from a request that was never made.
   // Breaks if the capability check in `withCrmWrite` moves back outside
   // `operation`.
   it("writes an audit row for a CapabilityError refusal, naming the required capability", async () => {
-    vi.mocked(checkOperatorCapability).mockImplementation(() => {
-      throw new CapabilityError("hard-delete");
-    });
+    // Async since tesserix-home#285 — the gate reads the server-side list, so
+    // a refusal is a rejected promise rather than a synchronous throw.
+    vi.mocked(checkOperatorCapabilityLive).mockRejectedValue(
+      new CapabilityError("hard-delete"),
+    );
     const run = vi.fn();
 
     const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
@@ -115,14 +119,16 @@ describe("withCrmWrite", () => {
   // whether a database is configured.
   it("fails closed on AuditUnavailableError before the capability check runs, when no database is configured", async () => {
     vi.mocked(isDatabaseConfigured).mockReturnValue(false);
-    vi.mocked(checkOperatorCapability).mockImplementation(() => {
-      throw new CapabilityError("hard-delete");
-    });
+    // Async since tesserix-home#285 — the gate reads the server-side list, so
+    // a refusal is a rejected promise rather than a synchronous throw.
+    vi.mocked(checkOperatorCapabilityLive).mockRejectedValue(
+      new CapabilityError("hard-delete"),
+    );
     const run = vi.fn();
 
     const result = await withCrmWrite("crm:org", { capability: "hard-delete" }, run, () => description);
 
-    expect(checkOperatorCapability).not.toHaveBeenCalled();
+    expect(checkOperatorCapabilityLive).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
     expect(tesserixQuery).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, message: "That change was not saved." });

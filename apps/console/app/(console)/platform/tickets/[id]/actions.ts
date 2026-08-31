@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { postTicketReply, patchTicketStatus } from "@/lib/platform-api";
 import { isTicketStatus } from "@/lib/tickets";
 
@@ -24,7 +24,7 @@ async function withRespond(
 ): Promise<TicketActionResult> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "respond");
+    await checkOperatorCapabilityLive(session, "respond");
     await run((await cookies()).toString());
     return { ok: true };
   } catch (cause) {

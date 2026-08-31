@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
 import { searchTicketRows } from "@/lib/db/search-repo";
 import { MIN_TICKET_QUERY, ticketEntry } from "@/lib/search";
@@ -35,7 +35,7 @@ async function authorize(): Promise<{ sub: string } | NextResponse> {
     // the console entry ticket would hand ticket contents to any operator who
     // can reach the console, with the only protection being a client-side
     // filter they could skip by calling the route directly.
-    checkOperatorCapability(session, "support");
+    await checkOperatorCapabilityLive(session, "support");
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });

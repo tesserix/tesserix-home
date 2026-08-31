@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import {
   previewImport,
   commitImport,
@@ -18,7 +18,7 @@ import { committedDisplayCounts } from "./counts";
  * CSV import's two server actions.
  *
  * `commitImportAction` goes through `withCrmWrite` (Ruling 17) exactly like
- * every other CRM write — session check, `checkOperatorCapability(session,
+ * every other CRM write — session check, `checkOperatorCapabilityLive(session,
  * "read")`, `auditedOperation` under `action: "crm.import"`, error mapping.
  *
  * `previewImportAction` deliberately does NOT: `previewImport` writes
@@ -57,7 +57,7 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
     const session = await getCurrentSession();
     // A preview of up to 500 contacts is CRM data. It sat on `read` — the
     // console entry ticket — which is the case #261 opens with.
-    checkOperatorCapability(session, "crm");
+    await checkOperatorCapabilityLive(session, "crm");
     const preview = await previewImport(rows);
     return { ok: true, preview };
   } catch (cause) {

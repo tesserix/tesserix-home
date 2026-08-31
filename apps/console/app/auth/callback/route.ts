@@ -265,6 +265,18 @@ export async function GET(request: NextRequest): Promise<Response> {
   // row that was never written.
   const sid = randomBytes(16).toString("hex");
 
+  // Computed ONCE, here, and used twice: as the session cookie's `roles` claim
+  // below, and as the `capabilities` column `saveTokens` writes further down.
+  //
+  // NOT recomputed at the second call site, and this is the point of the whole
+  // change rather than a tidy-up. The cookie's copy is a UX hint that decides
+  // which buttons render; the stored copy is what the verb gate enforces
+  // (tesserix-home#285). Deriving them from one expression is what guarantees
+  // they start out agreeing — two `capabilitiesFor(...)` calls would be two
+  // representations of one grant that can drift, which is exactly the failure
+  // this issue is about.
+  const capabilities = capabilitiesFor(identity.email, identity.roles);
+
   const token = await signSession({
     sub: identity.sub,
     email: identity.email,
@@ -272,7 +284,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     // Narrow to known capabilities before they reach the session: an
     // unrecognised role cannot be checked meaningfully, and carrying it invites
     // code elsewhere to match on a string the capability model never sanctioned.
-    roles: capabilitiesFor(identity.email, identity.roles),
+    roles: capabilities,
     // THE ZITADEL ACCESS AND REFRESH TOKENS ARE DELIBERATELY NOT HERE.
     //
     // They were, for ADR-003 D8, and it broke console login outright. The
@@ -391,6 +403,19 @@ export async function GET(request: NextRequest): Promise<Response> {
             // undefined`), never as an empty string that would later decrypt
             // to a token nothing issued.
             refreshToken: tokens.refresh_token ?? null,
+            // The AUTHORITATIVE copy of what this operator may do, and the
+            // first `capabilities_checked_at` this session will have. The same
+            // value the cookie above carries — see where `capabilities` is
+            // computed — so the two cannot start out disagreeing.
+            //
+            // `new Date()` and not a value from the token: this records when
+            // ZITADEL WAS ASKED, which is now. The exchange that produced
+            // `identity.roles` completed moments ago, so an operator whose
+            // grant is revoked one second later still holds it for
+            // CAPABILITY_REVALIDATE_SECONDS — that bound is the acceptance
+            // criterion, not zero.
+            capabilities,
+            capabilitiesCheckedAt: new Date(),
           },
           new Date(Date.now() + cookie.maxAge * 1000),
         ),

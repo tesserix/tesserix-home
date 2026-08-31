@@ -28,9 +28,13 @@ vi.mock("../db/tesserix", () => ({
   },
 }));
 
-const { saveTokens, readTokens, deleteTokens, pruneExpired } = await import(
-  "./operator-token-store"
-);
+const {
+  saveTokens,
+  readTokens,
+  readCapabilities,
+  deleteTokens,
+  pruneExpired,
+} = await import("./operator-token-store");
 
 let db: PGlite;
 
@@ -42,11 +46,20 @@ beforeAll(async () => {
   process.env.OPERATOR_TOKEN_ENCRYPT_KEY = "0123456789abcdef0123456789abcdef";
   db = new PGlite();
   dbHolder.db = db;
-  const migrationPath = path.resolve(
-    __dirname,
-    "../../../web/db/migrations/0029_operator_api_tokens.sql",
-  );
-  await db.exec(readFileSync(migrationPath, "utf-8"));
+  // Both migrations, IN ORDER, and both the real files. 0040 adds the
+  // capability columns (tesserix-home#285); its `capabilities text[]` and the
+  // COALESCE-preserving upsert that writes it are a contract with that file,
+  // and a fixture schema would only prove the fixture agrees with itself.
+  for (const migration of [
+    "0029_operator_api_tokens.sql",
+    "0040_operator_capabilities.sql",
+  ]) {
+    const migrationPath = path.resolve(
+      __dirname,
+      `../../../web/db/migrations/${migration}`,
+    );
+    await db.exec(readFileSync(migrationPath, "utf-8"));
+  }
 });
 
 afterAll(async () => {
@@ -284,5 +297,173 @@ describe("inside a transaction", () => {
     const stored = await readTokens("sid-locked");
     expect(stored!.accessToken).toBe("after");
     expect(stored!.refreshToken).toBe("r-after");
+  });
+});
+
+/**
+ * The capability columns, against the REAL migration 0040
+ * (tesserix-home#285).
+ *
+ * Everything here is about a distinction Postgres can express and JavaScript
+ * blurs: NULL ("never checked", therefore STALE) versus `{}` ("checked, holds
+ * nothing"). Collapsing them in either direction is an outage — one refuses
+ * every gated action for every session alive at deploy time, the other makes a
+ * full revocation invisible — and neither is observable without a real array
+ * column.
+ */
+describe("capabilities", () => {
+  it("round-trips a list and its checked-at timestamp", async () => {
+    const checkedAt = new Date();
+    await saveTokens(
+      "sid-caps",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        refreshToken: "r",
+        capabilities: ["crm", "hard-delete"],
+        capabilitiesCheckedAt: checkedAt,
+      },
+      future(HOUR),
+    );
+
+    const read = await readCapabilities("sid-caps");
+    expect(read.outcome).toBe("ok");
+    expect(read.capabilities).toEqual(["crm", "hard-delete"]);
+    expect(read.checkedAt?.getTime()).toBe(checkedAt.getTime());
+    // And the token read carries them too, which is what the locked
+    // re-check inside `revalidateUnderLock` reads.
+    const tokens = await readTokens("sid-caps");
+    expect(tokens!.capabilities).toEqual(["crm", "hard-delete"]);
+  });
+
+  it("stores an EMPTY list as an empty array, distinctly from NULL", async () => {
+    await saveTokens(
+      "sid-empty",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        capabilities: [],
+        capabilitiesCheckedAt: new Date(),
+      },
+      future(HOUR),
+    );
+
+    const read = await readCapabilities("sid-empty");
+    // NOT null. This is a revoked operator, confirmed — a real answer that the
+    // gate must refuse on, rather than a reason to go and ask again.
+    expect(read.capabilities).toEqual([]);
+    expect(read.checkedAt).toBeInstanceOf(Date);
+  });
+
+  it("leaves the columns NULL for a caller that did not ask", async () => {
+    // What `/auth/callback` produced before this change, and what every row
+    // written before migration 0040 looks like.
+    await saveTokens(
+      "sid-unasked",
+      "sub-1",
+      { accessToken: "a", accessExpiresAt: future(HOUR) },
+      future(HOUR),
+    );
+
+    const read = await readCapabilities("sid-unasked");
+    expect(read.outcome).toBe("ok");
+    expect(read.capabilities).toBeNull();
+    expect(read.checkedAt).toBeNull();
+  });
+
+  it("PRESERVES a stored list when a later write omits it", async () => {
+    // The token-refresh path renews a credential without asking about
+    // capabilities. An upsert writing EXCLUDED unconditionally would blank the
+    // list on every refresh, so the gate would find it permanently missing and
+    // never stop revalidating. This is the COALESCE.
+    const checkedAt = new Date();
+    await saveTokens(
+      "sid-preserve",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        refreshToken: "r",
+        capabilities: ["crm"],
+        capabilitiesCheckedAt: checkedAt,
+      },
+      future(HOUR),
+    );
+    await saveTokens(
+      "sid-preserve",
+      "sub-1",
+      { accessToken: "renewed", accessExpiresAt: future(2 * HOUR), refreshToken: "r2" },
+      future(2 * HOUR),
+    );
+
+    const read = await readCapabilities("sid-preserve");
+    expect(read.capabilities).toEqual(["crm"]);
+    expect(read.checkedAt?.getTime()).toBe(checkedAt.getTime());
+    // The credential half still moved, which is the point of that write.
+    expect((await readTokens("sid-preserve"))!.accessToken).toBe("renewed");
+  });
+
+  it("OVERWRITES a stored list with an empty one — a revocation is not an omission", async () => {
+    await saveTokens(
+      "sid-revoked",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        capabilities: ["crm", "hard-delete"],
+        capabilitiesCheckedAt: past(HOUR),
+      },
+      future(HOUR),
+    );
+    await saveTokens(
+      "sid-revoked",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        capabilities: [],
+        capabilitiesCheckedAt: new Date(),
+      },
+      future(HOUR),
+    );
+
+    expect((await readCapabilities("sid-revoked")).capabilities).toEqual([]);
+  });
+
+  it("reads capabilities with NO encryption key — the gate must not need one", async () => {
+    // These columns are plaintext on purpose. A key that is rotated, unset or
+    // provisioned wrong costs the platform API and must not also cost the
+    // console its authorization answer. `readTokens` goes dark here;
+    // `readCapabilities` does not.
+    await saveTokens(
+      "sid-keyless",
+      "sub-1",
+      {
+        accessToken: "a",
+        accessExpiresAt: future(HOUR),
+        capabilities: ["support"],
+        capabilitiesCheckedAt: new Date(),
+      },
+      future(HOUR),
+    );
+
+    const key = process.env.OPERATOR_TOKEN_ENCRYPT_KEY;
+    delete process.env.OPERATOR_TOKEN_ENCRYPT_KEY;
+    try {
+      expect(await readTokens("sid-keyless")).toBeNull();
+      const read = await readCapabilities("sid-keyless");
+      expect(read.outcome).toBe("ok");
+      expect(read.capabilities).toEqual(["support"]);
+    } finally {
+      process.env.OPERATOR_TOKEN_ENCRYPT_KEY = key;
+    }
+  });
+
+  it("reports `absent` for a session with no row", async () => {
+    const read = await readCapabilities("sid-nothing-here");
+    expect(read.outcome).toBe("absent");
+    expect(read.capabilities).toBeNull();
   });
 });

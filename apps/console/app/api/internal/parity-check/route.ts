@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { performParityCheck } from "@/lib/billing/parity-run";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -80,7 +80,7 @@ async function authorize(): Promise<null | NextResponse> {
     // inheriting safety from the middleware matcher — is what
     // `/api/notifications` does, and this follows it rather than inventing a
     // second scheme.
-    checkOperatorCapability(session, "billing");
+    await checkOperatorCapabilityLive(session, "billing");
   } catch (cause) {
     if (cause instanceof CapabilityError) {
       return NextResponse.json({ error: "forbidden" }, { status: 403 });

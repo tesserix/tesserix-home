@@ -27,6 +27,10 @@ interface Row {
   accessExpiresAt: Date;
   refreshToken: string | null;
   sessionExpiresAt: Date;
+  /** Null is "never checked" — see migration 0040. The token tests do not
+   *  exercise capabilities; `platform-token.capabilities.test.ts` does. */
+  capabilities: string[] | null;
+  capabilitiesCheckedAt: Date | null;
 }
 
 const state = vi.hoisted(() => ({
@@ -120,6 +124,8 @@ vi.mock("./operator-token-store", async (importOriginal) => {
           accessToken: found.accessToken,
           accessExpiresAt: found.accessExpiresAt,
           refreshToken: found.refreshToken,
+          capabilities: found.capabilities ?? null,
+          capabilitiesCheckedAt: found.capabilitiesCheckedAt ?? null,
         },
       };
     },
@@ -144,6 +150,13 @@ vi.mock("./operator-token-store", async (importOriginal) => {
         accessExpiresAt: tokens.accessExpiresAt,
         refreshToken: tokens.refreshToken ?? null,
         sessionExpiresAt,
+        // COALESCE, as the real upsert does: `undefined` means "the caller did
+        // not ask Zitadel", and must preserve rather than clear.
+        capabilities: tokens.capabilities
+          ? [...tokens.capabilities]
+          : (rows[sid]?.capabilities ?? null),
+        capabilitiesCheckedAt:
+          tokens.capabilitiesCheckedAt ?? rows[sid]?.capabilitiesCheckedAt ?? null,
       };
       state.row = rows;
     },
@@ -190,6 +203,8 @@ function seedRow(over: Partial<Row> & { accessExpiresAt: Date }): void {
       accessToken: "stored",
       refreshToken: "refresh-1",
       sessionExpiresAt: new Date(Date.now() + 7 * 86_400_000),
+      capabilities: null,
+      capabilitiesCheckedAt: null,
       ...over,
     },
   };

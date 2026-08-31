@@ -3,7 +3,7 @@ import {
   getCurrentSession,
   type Capability,
 } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import {
   auditedOperation,
   AuditUnavailableError,
@@ -13,7 +13,7 @@ import {
 
 /**
  * The one wrapper every CRM write goes through: session check +
- * `checkOperatorCapability(session, options.capability)` +
+ * `checkOperatorCapabilityLive(session, options.capability)` +
  * `auditedOperation` + error mapping. Defaults to `"read"` because that is
  * the only gate an edit can be checked against today — see the comment on
  * `withCrmWrite` for the one exception (erasure, gated on `hard-delete`)
@@ -109,8 +109,8 @@ export async function withCrmWrite<T>(
     const value = await auditedOperation({
       actor: actor.sub,
       target,
-      operation: () => {
-        checkOperatorCapability(session, options.capability);
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, options.capability);
         return run(actor);
       },
       describe,
