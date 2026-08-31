@@ -120,6 +120,50 @@ It also leaves the common cases untaxed: rotating a secret for an
 already-whitelisted app, and granting an existing secret to another app, never
 involve creating a secret at all.
 
+## 5a. Notifying the people a proposal is waiting on
+
+A queued proposal blocks two people: whoever can clear it, and whoever raised it
+and is waiting to deploy. Both are notified through the console's existing bell
+(`components/nav/notification-bell.tsx`, fed by `/api/notifications`) rather than
+a second inbox.
+
+| kind | goes to | says |
+|---|---|---|
+| `access_proposal_open` | holders of `rotate-credentials` | someone needs you to unblock them |
+| `access_proposal_merged` | the proposer | your request is live |
+
+The second direction is not a courtesy. Without it a new member reloads the
+Reviews page to discover whether they are unblocked — which is exactly the
+polling the bell exists to remove.
+
+### Two changes this forces, both of which are the point
+
+**The feed becomes per-capability filtered, not single-gated.** `authorize()`
+currently requires `support`, with the reason recorded in place: *"the bell's
+feed is ticket and reply rows, so it carries support data."* That reason stops
+holding the moment the feed carries a second kind answering to a different
+capability. Keeping one gate produces both failures at once — a `support` holder
+sees approvals they cannot act on, and someone holding `rotate-credentials` but
+not `support` is refused the whole feed and never sees them.
+
+So entry to the feed drops to console entry, and **each kind is filtered by the
+capability that kind answers to**. A notification the recipient cannot act on is
+noise, and noise in a bell is how people learn to ignore it.
+
+**`NotificationItem` becomes a discriminated union on `kind`.** It is ticket-shaped
+today — `ticketId`, `ticketNumber`, `productId` and `subject` are all required —
+and an access proposal has none of them. Widening every field to optional would
+push the shape check into each renderer; a union keeps the boundary honest, and
+`isNotificationFeedShape` already exists to enforce it.
+
+### What this inherits from #285
+
+`/api/notifications` already calls `checkOperatorCapabilityLive`. So revoking
+someone's `rotate-credentials` stops their approval notifications within five
+minutes rather than up to seven days — the same property §4 relies on for the
+approve action itself, arriving here for free rather than needing its own
+mechanism.
+
 ## 6. Security properties that must survive, each with a test or a note
 
 Carried from #274, verified there from code and cluster config:
