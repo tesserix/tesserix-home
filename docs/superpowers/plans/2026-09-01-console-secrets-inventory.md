@@ -31,6 +31,18 @@ Each produces working, testable software on its own. Do not implement 3b or 3c h
 - Every response is **parsed and validated at the boundary**, never trusted — follow `lib/tenants.ts`'s `parseEstateTenants` idiom, not a bare cast.
 - The page is **unlisted**: a route entry in `packages/console-core/src/routes.ts`, and **no** sidebar nav entry. Adding the nav entry is a one-line follow-up after the chart cutover.
 - Capability is `platform` (spec §4). Reading the inventory needs no verb.
+- The Zitadel **project** id is `386377618200461939` (`platform-console`), per
+  `docs/RUNBOOK-ZITADEL-IDENTITY.md`. That is what a token carries in `aud`, what
+  `ZITADEL_PROJECT_ID` is set to, and what any test fixture standing for an
+  audience must use. **`386377229942128837` is the Tesserix ORGANIZATION, not a
+  project.** Both are real and both appear in a token, in different positions —
+  the roles claim KEY is `urn:zitadel:iam:org:project:<projectId>:roles`, while
+  the org id appears inside the claim VALUE. Using the org id where a project id
+  belongs passes self-consistent tests and misleads whoever next debugs a live
+  audience mismatch; it had to be corrected in secrets-api once already (#475).
+- The console OIDC application is `386382971877196703` — that is
+  `ZITADEL_CONSOLE_CLIENT_ID`, a third distinct id. Do not substitute it for either
+  of the above.
 - Commit messages: single line, conventional-commit prefix, no signature, no Co-Authored-By trailer.
 - Every test is **mutated before it is trusted**: make it fail, then restore.
 
