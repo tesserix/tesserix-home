@@ -117,7 +117,9 @@ type Actor struct {
 // widened it accidentally either: the email was empty for every operator
 // until #450 began resolving it from userinfo, so this returned the subject
 // in practice and matched the contract by accident. #450 would have made it
-// start writing emails for real.
+// start writing emails for real. That resolver has since been removed —
+// auth.Principal carries no email at all now — but this is the wrapper that
+// makes the contract hold on purpose rather than by luck.
 func (a Actor) auditActor() string {
 	return a.Subject
 }

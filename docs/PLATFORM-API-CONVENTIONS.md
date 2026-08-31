@@ -423,9 +423,13 @@ against `ZITADEL_CONSOLE_CLIENT_ID`, never from the shape of the claims: an
 operator's access token carries no `email`, so inferring from that recorded
 every human as a machine (#450), and claim presence varies with the SCOPES a
 caller requested rather than with what kind of caller it is. `client_id` is
-attested by the issuer and present on both. It still decides no access — an
-operator's name and email are resolved from userinfo for the audit trail, and
-that lookup fails soft.
+attested by the issuer and present on both. It still decides no access, and it
+is all the classification buys: verification is entirely local, for both
+principal types. #450 also resolved an operator's name and email from userinfo
+for the audit trail; #453 removed both consumers on purpose — the trail is
+keyed by subject, and a staff reply is signed "Tesserix Support" because a
+merchant must not be shown a staff member's identity — so the lookup went with
+them rather than staying on every operator's request path unread.
 
 **The API is the authorisation boundary. The console's checks are UX on top of
 it.** #244 puts surface refusal in the console's middleware; if this service
@@ -441,9 +445,11 @@ a module directly and every console restriction would be decoration.
 - **Take the capability from `packages/console-core/src/routes.ts`.** It already
   declares one per surface; a module inventing its own would be a second
   vocabulary.
-- **Never authorise on `Principal.Kind`.** It is a heuristic — Zitadel does not
-  mark a client-credentials token distinctly, so it is inferred from the
-  presence of an email claim. It is for logs and audit only.
+- **Never authorise on `Principal.Kind`.** It is a label, decided by comparing
+  `client_id` against `ZITADEL_CONSOLE_CLIENT_ID`, and it is unset in some
+  deployments — which must never mean "grants less". It is for logs and audit
+  only. (This bullet used to describe it as inferred from the presence of an
+  email claim; that heuristic was #450's bug and is gone.)
 - **`httpx.RegisterModule` panics without a verifier.** A module is registered
   through it, never by calling `Register` directly — including in tests, since a
   test that went around the guard would not be testing how the module is served.

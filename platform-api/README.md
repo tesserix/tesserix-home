@@ -109,18 +109,22 @@ booting half-configured and failing on the first request.
 ### `ZITADEL_CONSOLE_CLIENT_ID` labels the audit trail
 
 It is the console's Zitadel application id. A token minted for it is an
-operator's; anything else is a machine, and only an operator has their name and
-email fetched from the issuer's userinfo endpoint — an access token carries
-neither claim, which is why every human used to be recorded as a service
-(#450).
+operator's; anything else is a machine. The classification comes from the
+`client_id` claim rather than from the shape of the claims, because an access
+token carries no `email` at all and inferring from that recorded every human as
+a service (#450).
 
 Deliberately **not required**. It decides `Principal.Kind`, which is audit
 labelling and never authorisation, so making it a boot dependency would let an
 attribution setting take the API down. Unset is not silent either: the service
 warns once at startup that every principal will be recorded as a service.
 
-Userinfo runs only for operators, is cached by subject, and **fails soft** — an
-unreachable issuer costs a name on an audit line, never a refused request.
+`Kind` is the whole of what the client id buys, and verification is otherwise
+entirely local. #450 also fetched an operator's name and email from the
+issuer's userinfo endpoint; #453 removed both consumers — the audit trail is
+keyed by subject, and a staff reply to a merchant is signed "Tesserix Support"
+— so the lookup was removed rather than left on the authentication path of
+every operator request with nothing reading its result.
 
 ### The pool is small on purpose
 

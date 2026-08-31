@@ -45,7 +45,6 @@ func (s stubParser) Parse(context.Context, string) (*auth.Claims, error) {
 func tokenFor(roles ...string) *auth.Claims {
 	return &auth.Claims{
 		Subject:   subjectOperator,
-		Email:     "operator@tesserix.test",
 		Audience:  []string{projectID},
 		Issuer:    "https://auth.tesserix.app",
 		ExpiresAt: time.Now().Add(time.Hour),

@@ -57,9 +57,6 @@ func projectRolesClaim(projectID string) string {
 // that and hammer the issuer, so one is built at startup and reused.
 type OIDCParser struct {
 	verifier *oidc.IDTokenVerifier
-	// provider is retained so the userinfo endpoint comes from the SAME
-	// discovery document as the JWKS, fetched once. See ProfileResolver.
-	provider *oidc.Provider
 	// rolesClaim is the project-scoped claim name this parser reads, resolved
 	// once at startup because it depends on configuration and so cannot be a
 	// constant or a struct tag. See projectRolesClaim.
@@ -91,7 +88,6 @@ func NewOIDCParser(ctx context.Context, issuer, projectID string) (*OIDCParser, 
 		return nil, fmt.Errorf("zitadel discovery at %s: %w", issuer, err)
 	}
 	return &OIDCParser{
-		provider: provider,
 		verifier: provider.Verifier(&oidc.Config{
 			// Audience is checked in Verify, against the PROJECT id rather than
 			// a client id — the console requests
@@ -141,16 +137,20 @@ func rolesFromClaims(raw map[string]json.RawMessage, claim string) []string {
 // stringFromClaims reads a string-valued claim, or "" when it is absent or is
 // not a JSON string.
 //
-// It never fails the token. The claims read through it — `email` and
-// `client_id` — feed Principal.Email and Principal.Kind, both documented in
-// verify.go as audit and attribution only, NEVER authorisation. Rejecting a
-// token because one of them has an odd shape would trade an attribution gap
-// for an outage.
+// It never fails the token. The one claim read through it — `client_id` —
+// feeds Principal.Kind, documented in verify.go as audit and attribution only,
+// NEVER authorisation. Rejecting a token because it has an odd shape would
+// trade an attribution gap for an outage.
 //
 // Note what that means for `client_id`: a non-string one yields "", which
 // matches no configured console id, so the caller is classified as a service.
-// Degrading towards the kind that resolves no profile and is granted nothing
-// extra is the correct direction for a value that decides no access.
+// Degrading towards the kind that is granted nothing extra is the correct
+// direction for a value that decides no access.
+//
+// It read `email` too until the userinfo resolver went (see Principal). The
+// helper stays general rather than being folded into the one call site: the
+// next claim this service reads will want the same never-fail treatment, and
+// it is the treatment, not the claim, that is the point here.
 func stringFromClaims(raw map[string]json.RawMessage, claim string) string {
 	value, ok := raw[claim]
 	if !ok {
@@ -184,24 +184,12 @@ func (p *OIDCParser) Parse(ctx context.Context, raw string) (*Claims, error) {
 
 	return &Claims{
 		Subject:   token.Subject,
-		Email:     stringFromClaims(claims, "email"),
 		ClientID:  stringFromClaims(claims, "client_id"),
 		Audience:  token.Audience,
 		Issuer:    token.Issuer,
 		ExpiresAt: token.Expiry,
 		Roles:     rolesFromClaims(claims, p.rolesClaim),
 	}, nil
-}
-
-// ProfileResolver returns a resolver for this parser's issuer.
-//
-// A method on the parser rather than its own constructor because the provider
-// is the expensive part — discovery is a network call made once at startup —
-// and a separate constructor would either repeat it or take a *oidc.Provider
-// parameter, which would put a go-oidc type in this package's wiring API for
-// no gain.
-func (p *OIDCParser) ProfileResolver() ProfileResolver {
-	return userinfoResolver{provider: p.provider}
 }
 
 // Config is what the service needs to verify tokens.
@@ -222,8 +210,8 @@ type Config struct {
 	// this change fixes, so NewVerifierFromConfig warns loudly rather than
 	// letting it pass unremarked the way #433 did.
 	ConsoleClientID string
-	// Log receives that warning, and the per-request warning when a userinfo
-	// lookup fails. Optional; slog.Default() when nil.
+	// Log receives that warning. Startup only — nothing on the request path
+	// logs from this package. Optional; slog.Default() when nil.
 	Log *slog.Logger
 	// Enabled is false when the service is running without authentication.
 	//
@@ -290,8 +278,6 @@ func NewVerifierFromConfig(ctx context.Context, cfg Config) (*Verifier, error) {
 
 	return NewVerifier(parser, cfg.ProjectID,
 		WithConsoleClientID(cfg.ConsoleClientID),
-		WithProfileResolver(parser.ProfileResolver()),
-		WithLogger(log),
 	), nil
 }
 
