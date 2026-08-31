@@ -28,7 +28,17 @@ var publicRoutes = map[string]bool{
 	"GET /readyz":  true,
 }
 
-const testProject = "386377229942128837"
+// The platform-console PROJECT, per docs/RUNBOOK-ZITADEL-IDENTITY.md — the
+// same value platform-api's handler tests use. Zitadel puts the project id
+// in a token's `aud`, which is what Verifier checks.
+//
+// NOT 386377229942128837: that is the Tesserix ORGANIZATION. Both ids are
+// real and both appear in a token, in different positions — the roles claim
+// KEY is urn:zitadel:iam:org:project:<projectId>:roles, while the org id
+// appears inside the claim VALUE. Using the org id here passed, because the
+// same constant supplied both the audience and the expected project, but it
+// would mislead anyone comparing it against a production audience mismatch.
+const testProject = "386377618200461939"
 
 // stubParser stands in for Zitadel's JWKS verification. It always returns
 // claims for whatever role set it was built with, never an error — the tests

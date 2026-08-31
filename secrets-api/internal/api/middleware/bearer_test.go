@@ -25,7 +25,17 @@ func (s stubParser) Parse(context.Context, string) (*authcore.Claims, error) {
 	return s.claims, nil
 }
 
-const testProject = "386377229942128837"
+// The platform-console PROJECT, per docs/RUNBOOK-ZITADEL-IDENTITY.md — the
+// same value platform-api's handler tests use. Zitadel puts the project id
+// in a token's `aud`, which is what Verifier checks.
+//
+// NOT 386377229942128837: that is the Tesserix ORGANIZATION. Both ids are
+// real and both appear in a token, in different positions — the roles claim
+// KEY is urn:zitadel:iam:org:project:<projectId>:roles, while the org id
+// appears inside the claim VALUE. Using the org id here passed, because the
+// same constant supplied both the audience and the expected project, but it
+// would mislead anyone comparing it against a production audience mismatch.
+const testProject = "386377618200461939"
 
 func verifierWith(roles []string) *authcore.Verifier {
 	return authcore.NewVerifier(stubParser{claims: &authcore.Claims{
