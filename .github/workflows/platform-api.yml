@@ -16,6 +16,7 @@ on:
     branches: [main]
     paths:
       - 'platform-api/**'
+      - 'platform-auth/**'
       - 'go.work'
       - 'Dockerfile.platform-api'
       - '.github/workflows/platform-api.yml'
@@ -28,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'platform-api/**'
+      - 'platform-auth/**'
       - 'go.work'
       - 'Dockerfile.platform-api'
       - '.github/workflows/platform-api.yml'
