@@ -1,9 +1,12 @@
 package middleware_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,11 +19,10 @@ import (
 // expiry, principal shape — is what we are testing here, not JWKS.
 type stubParser struct {
 	claims *authcore.Claims
-	err    error
 }
 
 func (s stubParser) Parse(context.Context, string) (*authcore.Claims, error) {
-	return s.claims, s.err
+	return s.claims, nil
 }
 
 const testProject = "386377229942128837"
@@ -127,5 +129,41 @@ func TestPrincipalIsAvailableToHandlers(t *testing.T) {
 	}
 	if got.Subject != "user-1" {
 		t.Errorf("Subject = %q, want user-1", got.Subject)
+	}
+}
+
+// The verification-failure branch of RequireBearer is the one whose defect
+// hands an unauthorised client the role vocabulary (ErrNoRoles names it). A
+// verifier that genuinely refuses — here, a token with no roles — must
+// produce the FIXED refusal body, never the underlying error, while the real
+// reason still reaches the log so an operator can diagnose it.
+func TestVerificationFailureIsLoggedNotLeakedToCaller(t *testing.T) {
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	verifier := authcore.NewVerifier(stubParser{claims: &authcore.Claims{
+		Subject:   "user-1",
+		Audience:  []string{testProject},
+		Roles:     nil, // triggers authcore.ErrNoRoles
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}, testProject)
+
+	w := request(t, middleware.RequireBearer(verifier, log), nil, "Bearer a.b.c")
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
+	}
+
+	const wantBody = `{"error":"authentication required"}`
+	gotBody := strings.TrimSpace(w.Body.String())
+	if gotBody != wantBody {
+		t.Errorf("body = %q, want %q", gotBody, wantBody)
+	}
+	if strings.Contains(gotBody, "role") {
+		t.Errorf("body leaked the role vocabulary: %q", gotBody)
+	}
+
+	if !strings.Contains(logBuf.String(), authcore.ErrNoRoles.Error()) {
+		t.Errorf("log = %q, want it to contain the rejection reason %q", logBuf.String(), authcore.ErrNoRoles.Error())
 	}
 }

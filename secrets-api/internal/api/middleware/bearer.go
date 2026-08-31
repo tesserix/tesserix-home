@@ -9,8 +9,12 @@ import (
 	authcore "github.com/tesserix/tesserix-home/platform-auth"
 )
 
-// bearerPrincipalKey is unexported so nothing outside this package can plant a
-// principal on the context. BearerPrincipalFrom is the only way in.
+// bearerPrincipalKey keeps the context key's NAME out of other packages'
+// reach, but gin's Context.Keys is map[string]any: nothing stops another
+// package that guesses or hardcodes this string from calling
+// c.Set("auth.bearer.principal", anything). The real protection is the
+// comma-ok type assertion in BearerPrincipalFrom, which rejects a planted
+// value of the wrong type rather than trusting the key alone.
 const bearerPrincipalKey = "auth.bearer.principal"
 
 // RequireBearer verifies the Zitadel bearer token and attaches the principal.
