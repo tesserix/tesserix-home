@@ -326,7 +326,7 @@ func (h *Handler) setNextAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.SetNextAction(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		r.PathValue("id"),
 		domain.NextAction{At: request.At, Note: request.Note},
 		key)

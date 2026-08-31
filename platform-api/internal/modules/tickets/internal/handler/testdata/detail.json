@@ -21,8 +21,8 @@
         "id": "<uuid>",
         "ticket_id": "<uuid>",
         "author_type": "platform_admin",
-        "author_name": "operator@tesserix.test",
-        "author_email": "operator@tesserix.test",
+        "author_name": "Tesserix Support",
+        "author_email": "",
         "content": "Looking into this now.",
         "created_at": "<timestamp>"
       }

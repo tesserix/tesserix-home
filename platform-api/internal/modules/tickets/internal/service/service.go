@@ -29,31 +29,38 @@ var ErrRefused = errors.New("the request was refused")
 // Actor is the principal performing a write, reduced to what a reply and an
 // audit row need.
 type Actor struct {
-	// Subject is the Zitadel `sub`. The audit trail's actor and the scope of
-	// an idempotency key.
+	// Subject is the Zitadel `sub`. The audit trail's actor, the scope of an
+	// idempotency key, and — since a reply no longer carries a name or an
+	// email — the only attribution a reply row has. See Reply.
 	Subject string
-	// Name and Email are what the console renders beside the message. A
-	// machine principal usually has neither, which is why neither is required.
-	Name  string
-	Email string
 }
 
-// displayName is what appears on the thread.
+// displayName is how a platform reply is signed on a merchant's thread.
 //
-// Falls back through email to a fixed label rather than writing an empty
-// string: author_name is NOT NULL and the console renders it directly, so an
-// empty one produces a message that appears to be from nobody. "Tesserix
-// Support" is honest for a service principal — the merchant is talking to the
-// platform, not to a named person.
-func (a Actor) displayName() string {
-	switch {
-	case a.Name != "":
-		return a.Name
-	case a.Email != "":
-		return a.Email
-	default:
-		return "Tesserix Support"
-	}
+// The fixed label, unconditionally. This is NOT a fallback for missing
+// profile data any more; it is the intended identity of the reply. Everything
+// InsertReply is called with here is AuthorOperator — staff — and the person
+// reading the row is a merchant, outside this organisation. Signing it with
+// the operator's name or email would disclose a staff member's personal
+// identity, and their personal email address, to a customer. A merchant is
+// talking to the platform; the platform is what the reply should say.
+//
+// It stays a named function rather than an inlined literal because the label
+// has a reason, and the reason belongs somewhere a reader will find it before
+// deciding the constant looks like a stub.
+//
+// Never returns an empty string: author_name is NOT NULL and the console
+// renders it directly, so an empty one produces a message that appears to be
+// from nobody.
+//
+// A merchant's own replies do not come through here — they arrive by a
+// different path with a different author type — so this cannot affect how a
+// merchant's own name is rendered.
+// The receiver is unnamed because the label deliberately does not depend on
+// the actor. It stays a method on Actor so the call site still reads as "what
+// this actor is shown as".
+func (Actor) displayName() string {
+	return "Tesserix Support"
 }
 
 // Service is the tickets module's operations over a pool.
@@ -152,11 +159,24 @@ func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input
 			return nil, audit.Entry{}, 0, err
 		}
 
+		// Signed by the platform, attributed by subject.
+		//
+		// AuthorName is the fixed label and AuthorEmail is deliberately
+		// empty: a merchant reads this row, and neither a staff member's name
+		// nor their personal email address is theirs to see. The repository
+		// wraps the email in nullIfEmpty (repository/tickets.go), so the
+		// column goes NULL rather than holding a blank string.
+		//
+		// AuthorUserID keeps the subject, and that is what makes the two
+		// above safe to drop: WHO replied is still recorded on the row, in
+		// the identifier the audit trail uses, just not in front of the
+		// merchant. Internal attribution was not lost here — do not "restore"
+		// the email on the belief that it was.
 		reply, err := repository.InsertReply(ctx, tx, domain.Reply{
 			TicketID:     ticketID,
 			AuthorType:   domain.AuthorOperator,
 			AuthorName:   actor.displayName(),
-			AuthorEmail:  actor.Email,
+			AuthorEmail:  "",
 			AuthorUserID: actor.Subject,
 			Content:      content,
 		})
