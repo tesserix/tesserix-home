@@ -51,7 +51,7 @@ func TestAuthenticateAttachesThePrincipal(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	if got == nil || got.Subject != "user-1" {
+	if got == nil || got.Subject != operatorSubject {
 		t.Errorf("principal not attached: %+v", got)
 	}
 }
