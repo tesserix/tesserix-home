@@ -21,15 +21,16 @@ func NewSecrets(registry *secrets.Registry, log *audit.Logger) *Secrets {
 	return &Secrets{registry: registry, audit: log}
 }
 
-func (h *Secrets) Register(r gin.IRoutes) {
-	r.GET("/api/backends", h.Backends)
-	r.GET("/api/backends/status", h.Status)
-	r.GET("/api/secrets", h.List)
-	r.GET("/api/secrets/*path", h.Describe)
-	r.PUT("/api/secrets/*path", h.Write)
-	r.DELETE("/api/secrets/*path", h.Delete)
-	r.GET("/api/secret-versions/*path", h.Versions)
-	r.POST("/api/secret-versions/*path", h.Restore)
+func (h *Secrets) Register(g Groups) {
+	g.Read.GET("/api/backends", h.Backends)
+	g.Read.GET("/api/backends/status", h.Status)
+	g.Read.GET("/api/secrets", h.List)
+	g.Read.GET("/api/secrets/*path", h.Describe)
+	g.Read.GET("/api/secret-versions/*path", h.Versions)
+
+	g.Live.PUT("/api/secrets/*path", h.Write)
+	g.Live.DELETE("/api/secrets/*path", h.Delete)
+	g.Live.POST("/api/secret-versions/*path", h.Restore)
 }
 
 // Backends tells the console which stores this deployment enabled, so the
@@ -225,8 +226,8 @@ func (h *Secrets) record(c *gin.Context, backend secrets.Backend, action audit.A
 		RequestID: middleware.RequestIDFrom(c),
 		SourceIP:  c.ClientIP(),
 	}
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		event.Actor = p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		event.Actor = p.Subject
 	}
 	if err != nil {
 		event.Outcome = audit.OutcomeError

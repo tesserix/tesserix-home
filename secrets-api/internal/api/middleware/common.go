@@ -58,8 +58,8 @@ func Logger(log *slog.Logger) gin.HandlerFunc {
 			"duration_ms", time.Since(start).Milliseconds(),
 			"requestId", RequestIDFrom(c),
 		}
-		if p, ok := PrincipalFrom(c); ok {
-			attrs = append(attrs, "actor", p.Email)
+		if p, ok := BearerPrincipalFrom(c); ok {
+			attrs = append(attrs, "actor", p.Subject)
 		}
 
 		if c.Writer.Status() >= http.StatusInternalServerError {

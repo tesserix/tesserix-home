@@ -118,7 +118,7 @@ func TestWithdrawProposesARemoval(t *testing.T) {
 }
 
 // The pull request is reviewed by the other administrator, so it has to say who
-// asked for it even when the session middleware is not in the chain.
+// asked for it even when no auth middleware is in the chain.
 func TestProposeRefusesWithoutAnActor(t *testing.T) {
 	p := &stubProposer{url: "https://example.invalid/pull/1"}
 	p.err = errors.New("gitops: a change must name the administrator requesting it")

@@ -12,15 +12,19 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
+# Both modules, as siblings. platform-api's go.mod carries
+# `replace ... => ../platform-auth`, a relative path, so the layout inside the
+# image has to match the layout in the repository. go.work is deliberately NOT
+# copied: the relative replace is what resolves the platform-auth import to
+# the sibling directory, so no workspace file is needed to build this image.
 # Manifests first, so a source-only change does not re-download modules.
-# go.work is deliberately NOT copied: it points at ./platform-api relative to
-# the repository root, and inside this stage the module is the root. Copying it
-# makes the build fail with a confusing "directory prefix . does not contain
-# modules listed in go.work".
-COPY platform-api/go.mod platform-api/go.sum ./
+COPY platform-auth/go.mod platform-auth/go.sum ./platform-auth/
+COPY platform-api/go.mod platform-api/go.sum ./platform-api/
+WORKDIR /src/platform-api
 RUN go mod download
 
-COPY platform-api/ ./
+COPY platform-auth/ /src/platform-auth/
+COPY platform-api/ /src/platform-api/
 
 # -trimpath and an empty buildid so the image is reproducible: the same source
 # produces the same layer, which is what lets a rebuild be recognised as a

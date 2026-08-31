@@ -117,8 +117,8 @@ func (h *Whitelist) Rewire(c *gin.Context) {
 			RemoteProperty: req.RemoteProperty,
 		},
 	}
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		proposal.Actor = p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		proposal.Actor = p.Subject
 	}
 
 	target := req.Namespace + "/" + req.App
@@ -141,8 +141,8 @@ func (h *Whitelist) submit(c *gin.Context, action audit.Action, changes []gitops
 
 	target := namespace + "/" + app
 	for i := range changes {
-		if p, ok := middleware.PrincipalFrom(c); ok {
-			changes[i].Actor = p.Email
+		if p, ok := middleware.BearerPrincipalFrom(c); ok {
+			changes[i].Actor = p.Subject
 		}
 		changes[i].Summary = string(action) + " " + target
 	}
@@ -185,8 +185,8 @@ func recordEvent(log *audit.Logger, c *gin.Context, action audit.Action, target 
 		RequestID: middleware.RequestIDFrom(c),
 		SourceIP:  c.ClientIP(),
 	}
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		event.Actor = p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		event.Actor = p.Subject
 	}
 	switch {
 	case errors.Is(err, gitops.ErrNoChange):

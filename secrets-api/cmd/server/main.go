@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	authcore "github.com/tesserix/tesserix-home/platform-auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/handlers"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
-	"github.com/tesserix/tesserix-home/secrets-api/internal/auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/bao"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/config"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/gcpsm"
@@ -74,22 +75,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	sealer, err := auth.NewSealer(cfg.SessionKey)
-	if err != nil {
-		return err
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	flow, err := auth.NewFlow(ctx, auth.FlowConfig{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  cfg.RedirectURL,
-	})
-	if err != nil {
-		return err
-	}
 
 	client, registry, err := buildBackends(cfg)
 	if err != nil {
@@ -122,15 +109,29 @@ func run(log *slog.Logger) error {
 		log.Warn("whitelist proposals disabled", "reason", "GITHUB_TOKEN is not set")
 	}
 
-	allow := auth.NewAllowlist(cfg.AdminEmails)
-	log.Info("starting", "port", cfg.Port, "administrators", allow.Size(),
+	// Discovery is a network call made once at startup, bounded by
+	// NewVerifierFromConfig's own timeout so an unreachable-but-not-refusing
+	// Zitadel fails the startup instead of hanging it — a stuck rollout reads
+	// far worse than a failed one. Authentication is always enabled here:
+	// unlike platform-api, secrets-api has no unauthenticated bootstrapping
+	// window, and config.Load already refuses to start without
+	// ZITADEL_ISSUER/ZITADEL_PROJECT_ID.
+	verifier, err := authcore.NewVerifierFromConfig(ctx, authcore.Config{
+		Enabled:         true,
+		Issuer:          cfg.ZitadelIssuer,
+		ProjectID:       cfg.ZitadelProjectID,
+		ConsoleClientID: cfg.ConsoleClientID,
+		Log:             log,
+	})
+	if err != nil {
+		return fmt.Errorf("zitadel discovery: %w", err)
+	}
+
+	log.Info("starting", "port", cfg.Port,
 		"backends", cfg.Backends, "defaultBackend", cfg.DefaultBackend)
 
 	srv := api.NewServer(api.Deps{
 		Config:    cfg,
-		Flow:      flow,
-		Sealer:    sealer,
-		Allow:     allow,
 		Bao:       client,
 		Secrets:   registry,
 		Audit:     audit.New(os.Stdout),
@@ -138,6 +139,7 @@ func run(log *slog.Logger) error {
 		Discovery: discovery,
 		Whitelist: whitelist,
 		Reviews:   reviews,
+		Verifier:  verifier,
 	})
 
 	errCh := make(chan error, 1)

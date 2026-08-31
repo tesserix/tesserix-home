@@ -12,10 +12,7 @@ import (
 type Action string
 
 const (
-	ActionLogin       Action = "auth.login"
-	ActionLogout      Action = "auth.logout"
-	ActionLoginDenied Action = "auth.login_denied"
-	ActionSecretList  Action = "secret.list"
+	ActionSecretList Action = "secret.list"
 	// A secret's shape can be described; its values can never be read, so there
 	// is deliberately no secret.read action to record.
 	ActionSecretDescribe Action = "secret.describe"

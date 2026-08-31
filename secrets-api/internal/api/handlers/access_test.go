@@ -41,7 +41,7 @@ func grant(t *testing.T, p handlers.Proposer, body string) *httptest.ResponseRec
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	handlers.NewAccess(stubBaoServer(t), p, audit.New(io.Discard)).Register(r)
+	handlers.NewAccess(stubBaoServer(t), p, audit.New(io.Discard)).Register(handlers.Groups{Read: r, Live: r}) // no middleware runs here, so Read/Live has no effect on these unit tests
 
 	req := httptest.NewRequest(http.MethodPost, "/api/access/grants", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

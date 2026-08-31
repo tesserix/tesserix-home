@@ -16,6 +16,7 @@ on:
     branches: [main]
     paths:
       - 'platform-api/**'
+      - 'platform-auth/**'
       - 'go.work'
       - 'Dockerfile.platform-api'
       - '.github/workflows/platform-api.yml'
@@ -28,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'platform-api/**'
+      - 'platform-auth/**'
       - 'go.work'
       - 'Dockerfile.platform-api'
       - '.github/workflows/platform-api.yml'
@@ -51,6 +53,58 @@ permissions:
   packages: write
 
 jobs:
+  # platform-auth is a module dependency of platform-api (wired via the go.work
+  # replace directive), not a package inside it — `go test ./...` run from
+  # platform-api never crosses that module boundary. Moving the Zitadel
+  # verifier and capability vocabulary into their own module took them out of
+  # every CI job in the repository, including capabilities_contract_test.go,
+  # the exact Go<->TypeScript regression guard #408 exists to catch. This job
+  # restores coverage, following the same four checks the other modules get.
+  platform-auth:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: platform-auth
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: platform-auth/go.sum
+
+      - name: Verify formatting
+        # gofmt exits 0 whether or not it found anything, so the output is the
+        # signal. Without this check the -l listing scrolls past in a green run.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Verify go.mod is tidy
+        # A go.mod that drifts from the imports makes every later dependency
+        # change produce an unrelated diff, and hides an accidental dependency
+        # in the noise.
+        run: |
+          cp go.mod go.mod.bak && cp go.sum go.sum.bak
+          go mod tidy
+          if ! diff -q go.mod go.mod.bak >/dev/null || ! diff -q go.sum go.sum.bak >/dev/null; then
+            echo "::error::go.mod/go.sum are not tidy — run 'go mod tidy' in platform-auth/"
+            diff go.mod.bak go.mod || true
+            exit 1
+          fi
+          rm go.mod.bak go.sum.bak
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
   test:
     runs-on: ubuntu-latest
     defaults:
