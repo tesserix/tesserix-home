@@ -246,8 +246,14 @@ func TestANextActionLandsWithItsAuditRow(t *testing.T) {
 	if rows[0].action != "crm.next_action.set" {
 		t.Errorf("action = %q, want \"crm.next_action.set\" — the console's own spelling for this write", rows[0].action)
 	}
-	if rows[0].actor != "operator@tesserix.test" {
-		t.Errorf("actor = %q, want the operator's email", rows[0].actor)
+	// The SUBJECT, not the email. console_audit_log.actor holds subjects and
+	// nothing else — the contract apps/console/lib/crm-write.ts enforces on
+	// the other side — and the principal this fixture authenticates as carries
+	// both, so this assertion tells the two apart rather than passing because
+	// only one was available.
+	if rows[0].actor != subjectOperator {
+		t.Errorf("actor = %q, want the subject %q — console_audit_log.actor holds subjects, not emails",
+			rows[0].actor, subjectOperator)
 	}
 	if rows[0].target == nil || *rows[0].target != id {
 		t.Errorf("target = %v, want the opportunity %s", rows[0].target, id)

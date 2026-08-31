@@ -69,11 +69,16 @@ type Principal struct {
 	Email string
 	// Name is the operator's display name, from the same userinfo lookup.
 	//
-	// It reaches a merchant: tickets' displayName() (tickets/internal/service/
-	// service.go) signs a reply with it, and falls through to the literal
-	// "Tesserix Support" when it and Email are both empty. So an empty Name is
-	// not merely a thinner audit line — it is a human agent's reply signed as
-	// the platform.
+	// It reached a merchant briefly and no longer does. tickets' displayName()
+	// (tickets/internal/service/service.go) signed a reply with it; a reply is
+	// now signed "Tesserix Support" unconditionally, because a staff member's
+	// name and personal email are not a merchant's to see. Attribution is by
+	// Subject, in author_user_id.
+	//
+	// Which leaves Name — and Email above — with no reader in this service.
+	// They are kept deliberately, pending a decision on whether the userinfo
+	// resolver earns its round trip at all; do not add a consumer for either
+	// without answering that first.
 	Name string
 	// Capabilities are the known role keys the token carried. Unknown roles are
 	// already dropped.

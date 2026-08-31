@@ -73,32 +73,52 @@ var ErrRefused = errors.New("the request was refused")
 // Actor is the principal performing a write, reduced to what an audit row
 // needs.
 //
-// Narrower than the tickets module's Actor, which also carries a display name
-// because a reply is rendered beside one. Nothing this module writes is shown
-// to a merchant, so a name here would be a field with no reader.
+// The same shape as the tickets module's Actor, and for the same reason: a
+// subject is the only identity either module has a reader for. Nothing this
+// module writes is shown to a merchant, and the one thing the tickets module
+// does show a merchant is signed by the platform rather than by a person
+// (tickets/internal/service/service.go, displayName).
 type Actor struct {
 	// Subject is the Zitadel `sub` — the audit trail's actor and the scope of
 	// an idempotency key.
+	//
+	// The only identity this module carries. An email was held here too until
+	// it turned out to be writing the wrong identifier into the wrong table;
+	// auditActor below is the whole story.
 	Subject string
-	// Email is what an operator recognises in the trail. The console records
-	// `actor.email` for the same write (crm/[organisation]/actions.ts), and
-	// one timeline reads both.
-	Email string
 }
 
 // auditActor is what lands in console_audit_log.actor.
 //
-// The EMAIL where there is one, falling back to the subject. That is not the
-// tickets module's choice — it records the subject — and the difference is
-// deliberate rather than an inconsistency: the console's existing CRM rows
-// carry `actor.email`, this write appends to that same trail, and a CRM
-// timeline whose rows suddenly changed identifier halfway down would read as
-// two different people. A subject with no email still attributes the row,
-// which is the property audit.Write actually requires.
+// The SUBJECT, always. That column holds subjects and nothing else, which is
+// documented and enforced on the console side: apps/console/lib/crm-write.ts
+// exists because a second CRM surface hand-rolled its own write and "audited
+// under `actor.email` while this wrapper always uses `actor.sub` (the
+// column's documented contract)", leaving console_audit_log.actor holding two
+// identity shapes depending on which surface produced the row. That is the
+// defect the wrapper was lifted out to make structurally impossible, and this
+// module writing an email would reintroduce it from Go.
+//
+// This returned the email where there was one until #450, and its comment
+// justified that by claiming the console's existing CRM rows in this table
+// carry `actor.email` and that this write appends to the same trail. Both
+// halves were wrong, and they were wrong by conflating two tables:
+//
+//   - console_audit_log.actor is the audit trail. It had NO rows at all when
+//     that comment was written, so there was no established email shape here
+//     to be consistent with; the first two rows ever written to it are
+//     subjects.
+//   - crm_activities.actor is the CRM timeline the merchant-facing UI
+//     renders. THAT is the table whose rows carry an email, it is written by
+//     the console rather than by this module, and its contract is its own.
+//
+// So there was never one trail with a changing identifier — there are two
+// tables with two contracts, and this one wants the subject. Nothing here
+// widened it accidentally either: the email was empty for every operator
+// until #450 began resolving it from userinfo, so this returned the subject
+// in practice and matched the contract by accident. #450 would have made it
+// start writing emails for real.
 func (a Actor) auditActor() string {
-	if a.Email != "" {
-		return a.Email
-	}
 	return a.Subject
 }
 

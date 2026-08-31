@@ -333,23 +333,20 @@ func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation 
 
 // actorOf reduces a principal to what a reply and an audit row need.
 //
-// Name and Email are both resolved from Zitadel's userinfo endpoint for an
-// operator, because their access token carries neither claim (#450). Passing
-// Name through matters to somebody outside this system: displayName()
-// (tickets/internal/service/service.go) falls through to the literal "Tesserix
-// Support" when Name and Email are both empty, so while this was hardcoded to
-// "" every human agent's reply reached the merchant signed as the platform
-// rather than as a person.
+// The subject and nothing else. This passed the principal's name and email
+// through as well, so that displayName() could sign a reply with them; it no
+// longer can, and must not. A reply is read by a MERCHANT, and a staff
+// member's name and personal email address are not theirs to see — so a
+// platform reply is signed "Tesserix Support" and stores no email
+// (tickets/internal/service/service.go). The subject still lands in
+// author_user_id, which is where internal attribution lives.
 //
-// Both may still be empty — userinfo resolution fails soft, and a machine
-// principal has no profile at all — so the fallback in displayName is still
-// load-bearing and must not be removed on the strength of this.
+// auth.Principal continues to carry Name and Email, resolved from Zitadel's
+// userinfo endpoint because an operator's access token carries neither claim
+// (#450). This module simply has no use for them; that they now have no
+// reader at all is a question for internal/platform/auth, not for here.
 func actorOf(principal *auth.Principal) service.Actor {
-	return service.Actor{
-		Subject: principal.Subject,
-		Name:    principal.Name,
-		Email:   principal.Email,
-	}
+	return service.Actor{Subject: principal.Subject}
 }
 
 // decode parses a request body, rejecting anything the struct does not
