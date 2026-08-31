@@ -62,7 +62,7 @@ func TestNoAuthorizationHeaderIs401(t *testing.T) {
 }
 
 func TestNonBearerSchemeIs401(t *testing.T) {
-	w := request(t, middleware.RequireBearer(verifierWith([]string{"platform"}), nil), nil, "Basic abc")
+	w := request(t, middleware.RequireBearer(verifierWith([]string{"platform"}), nil), nil, "Basic a.b.c")
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", w.Code)
 	}
