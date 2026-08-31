@@ -224,7 +224,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.CreateGroup(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		request.Key, request.Label, request.SortOrder, key)
 	if err != nil {
 		h.fail(w, r, err)
@@ -279,7 +279,7 @@ func (h *Handler) updateGroup(w http.ResponseWriter, r *http.Request) {
 
 	patch := service.GroupPatch{Label: request.Label, SortOrder: request.SortOrder}
 	written, err := h.svc.UpdateGroup(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		r.PathValue("key"), patch, key)
 	if err != nil {
 		h.fail(w, r, err)
@@ -300,7 +300,7 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.DeleteGroup(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		r.PathValue("key"), key)
 	if err != nil {
 		h.fail(w, r, err)
@@ -393,7 +393,7 @@ func (h *Handler) createTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.CreateTool(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		domain.Tool{
 			Name: request.Name, Subdomain: request.Subdomain, Purpose: request.Purpose,
 			Note: request.Note, GroupKey: request.GroupKey, SortOrder: request.SortOrder,
@@ -465,7 +465,7 @@ func (h *Handler) updateTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.UpdateTool(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		r.PathValue("id"), patch, key)
 	if err != nil {
 		h.fail(w, r, err)
@@ -488,7 +488,7 @@ func (h *Handler) deleteTool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	written, err := h.svc.DeleteTool(r.Context(),
-		service.Actor{Subject: principal.Subject, Email: principal.Email},
+		service.Actor{Subject: principal.Subject},
 		r.PathValue("id"), key)
 	if err != nil {
 		h.fail(w, r, err)

@@ -341,10 +341,11 @@ func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation 
 // (tickets/internal/service/service.go). The subject still lands in
 // author_user_id, which is where internal attribution lives.
 //
-// auth.Principal continues to carry Name and Email, resolved from Zitadel's
-// userinfo endpoint because an operator's access token carries neither claim
-// (#450). This module simply has no use for them; that they now have no
-// reader at all is a question for internal/platform/auth, not for here.
+// auth.Principal no longer carries a name or an email at all. Removing the
+// last reader here was what left the userinfo lookup behind #450 with nothing
+// to feed, so the resolver and both fields went; the reasoning is written out
+// on auth.Principal. There is nothing left for this function to pass through
+// even if it wanted to.
 func actorOf(principal *auth.Principal) service.Actor {
 	return service.Actor{Subject: principal.Subject}
 }

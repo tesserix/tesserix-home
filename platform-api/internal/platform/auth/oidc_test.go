@@ -199,8 +199,8 @@ func TestAbsentRolesClaimYieldsEmptyNonNilSlice(t *testing.T) {
 	}
 }
 
-// Email decides only Principal.Kind, a logging heuristic, so an odd shape must
-// not fail the token.
+// A claim of an odd shape must never fail the token — everything read through
+// this helper is attribution, never authorisation.
 func TestStringFromClaims(t *testing.T) {
 	raw := decodePayload(t, `{"email": "mahesh@tesserix.test", "name": 7}`)
 	if got := stringFromClaims(raw, "email"); got != "mahesh@tesserix.test" {
@@ -256,16 +256,19 @@ func TestClientIDIsReadFromBothRealTokens(t *testing.T) {
 	}
 }
 
-// The claim that USED to decide it. Spelled out so that the reason the
-// heuristic was wrong stays visible in the fixtures rather than only in a
-// commit message: neither real access token carries an email.
+// The claim that USED to decide it, and that this service no longer reads at
+// all. Spelled out so the reason the heuristic was wrong stays visible in the
+// fixtures rather than only in a commit message: neither real access token
+// carries an email, which is why #450 misclassified every operator and why the
+// userinfo lookup that recovered one was needed — and then, once nothing read
+// its result, removed.
 func TestNeitherRealAccessTokenCarriesAnEmail(t *testing.T) {
 	for name, payload := range map[string]string{
 		"the console's operator token": operatorPayload,
 		"a service user's token":       serviceUserPayload,
 	} {
 		if got := stringFromClaims(decodePayload(t, payload), "email"); got != "" {
-			t.Errorf("%s: email = %q, want absent — Principal.Email comes from userinfo", name, got)
+			t.Errorf("%s: email = %q, want absent — this fixture is the record that no access token carries one", name, got)
 		}
 	}
 }

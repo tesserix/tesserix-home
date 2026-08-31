@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -59,31 +58,29 @@ const (
 )
 
 // Principal is an authenticated caller.
+//
+// It carries no name and no email, and that is a decision rather than a gap.
+// #450 resolved both from Zitadel's userinfo endpoint — an operator's ACCESS
+// token carries neither claim — so an audit line could name the human behind
+// it. #453 then removed both consumers deliberately: console_audit_log.actor
+// holds SUBJECTS by contract (crm/internal/service/service.go), and a staff
+// reply to a merchant is signed "Tesserix Support" unconditionally, because a
+// staff member's name and personal address are not a merchant's to see
+// (tickets/internal/service/service.go). Attribution is by Subject throughout.
+//
+// What that left was a network call to Zitadel on the authentication path of
+// EVERY operator request, feeding two fields nothing read — so the resolver
+// was removed with them. It was not lost by accident, and restoring it is not
+// a repair: a lookup on the hot path is only earned by something that displays
+// the result. If a future change needs an operator's name, fetch it where it
+// is shown, and decide the round trip there.
 type Principal struct {
 	// Subject is Zitadel's stable user id. The audit trail's actor.
 	Subject string
-	// Email is the operator's address, RESOLVED FROM USERINFO rather than read
-	// from the token: an operator's access token carries no `email` claim at
-	// all. Empty for machine users, and empty for an operator whose userinfo
-	// lookup failed — see ProfileResolver, which fails soft by design.
-	Email string
-	// Name is the operator's display name, from the same userinfo lookup.
-	//
-	// It reached a merchant briefly and no longer does. tickets' displayName()
-	// (tickets/internal/service/service.go) signed a reply with it; a reply is
-	// now signed "Tesserix Support" unconditionally, because a staff member's
-	// name and personal email are not a merchant's to see. Attribution is by
-	// Subject, in author_user_id.
-	//
-	// Which leaves Name — and Email above — with no reader in this service.
-	// They are kept deliberately, pending a decision on whether the userinfo
-	// resolver earns its round trip at all; do not add a consumer for either
-	// without answering that first.
-	Name string
 	// Capabilities are the known role keys the token carried. Unknown roles are
 	// already dropped.
 	Capabilities []Capability
-	// Kind is for logging, audit and profile resolution only.
+	// Kind is for logging and audit only.
 	//
 	// NEVER authorise on it. Authorisation is by capability, and keeping these
 	// two apart is what stops a change to caller CLASSIFICATION from silently
@@ -123,9 +120,6 @@ func (p Principal) Has(required Capability) bool {
 // Claims is the subset of a Zitadel token this service reads.
 type Claims struct {
 	Subject string
-	// Email is very often empty. An operator's access token carries no `email`
-	// claim; Principal.Email is recovered from userinfo instead.
-	Email string
 	// ClientID is the `client_id` claim — the Zitadel application or machine
 	// user the token was minted for. Present on BOTH kinds of access token,
 	// and the input to the Kind decision in Verify.
@@ -173,12 +167,6 @@ type Verifier struct {
 	// ZITADEL_CONSOLE_CLIENT_ID. Empty means "not configured", which makes
 	// every principal a service — see Principal.Kind.
 	consoleClientID string
-	// profiles resolves an operator's name and email, and is nil when nothing
-	// wired one (tests, and any deployment whose issuer has no userinfo).
-	profiles ProfileResolver
-	// profileTimeout bounds the userinfo call. See resolveProfile.
-	profileTimeout time.Duration
-	log            *slog.Logger
 }
 
 // Option configures a Verifier at construction.
@@ -195,35 +183,11 @@ func WithConsoleClientID(clientID string) Option {
 	return func(v *Verifier) { v.consoleClientID = clientID }
 }
 
-// WithProfileResolver enables userinfo lookup for operators.
-//
-// The resolver is wrapped in a cache here rather than by the caller so that no
-// wiring can accidentally put userinfo on the request path uncached.
-func WithProfileResolver(resolver ProfileResolver) Option {
-	return func(v *Verifier) {
-		if resolver == nil {
-			return
-		}
-		v.profiles = newProfileCache(resolver, v.now)
-	}
-}
-
-// WithLogger replaces the logger the fail-soft paths warn on.
-func WithLogger(log *slog.Logger) Option {
-	return func(v *Verifier) {
-		if log != nil {
-			v.log = log
-		}
-	}
-}
-
 func NewVerifier(parser TokenParser, projectID string, opts ...Option) *Verifier {
 	v := &Verifier{
-		parser:         parser,
-		audience:       projectID,
-		now:            time.Now,
-		profileTimeout: profileTimeout,
-		log:            slog.Default(),
+		parser:   parser,
+		audience: projectID,
+		now:      time.Now,
 	}
 	for _, opt := range opts {
 		opt(v)
@@ -231,21 +195,13 @@ func NewVerifier(parser TokenParser, projectID string, opts ...Option) *Verifier
 	return v
 }
 
-// profileTimeout bounds the userinfo call Verify makes for an operator.
-//
-// Zitadel is now IN THE REQUEST PATH, which it was not before. Without a
-// deadline of its own a slow IdP does not fail requests, it hangs them — the
-// worse outcome, because a hung request holds a connection and reports as
-// latency rather than as an error. The same reasoning is written out at length
-// on REFRESH_DEADLINE_MS in `apps/console/lib/auth/platform-token.ts`.
-//
-// Three seconds: long enough that an ordinary round trip to auth.tesserix.app
-// never trips it, short enough that tripping it is invisible beside the
-// database work the request is about to do anyway. Exceeding it costs an
-// unnamed operator on one audit line, never a refusal.
-const profileTimeout = 3 * time.Second
-
 // Verify checks a raw token and returns the principal it attests.
+//
+// Entirely local: signature, issuer, audience, expiry and roles all come from
+// the token itself, so no caller — operator or machine — puts Zitadel in its
+// request path. #450 briefly did, for an operator, to fetch a name and email
+// from userinfo; see Principal for why that went away rather than being
+// tuned.
 func (v *Verifier) Verify(ctx context.Context, raw string) (*Principal, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -292,54 +248,9 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Principal, error) {
 		kind = KindOperator
 	}
 
-	name, email := "", claims.Email
-	if kind == KindOperator {
-		// ONLY for operators. A machine user has no profile to fetch, so this
-		// gate is also what keeps machine callers — the products calling
-		// /api/internal/* — on a purely local path with no network call in
-		// their request at all.
-		name, email = v.resolveProfile(ctx, raw, claims.Subject, claims.Email)
-	}
-
 	return &Principal{
 		Subject:      claims.Subject,
-		Email:        email,
-		Name:         name,
 		Capabilities: caps,
 		Kind:         kind,
 	}, nil
-}
-
-// resolveProfile recovers an operator's name and email, and NEVER fails.
-//
-// Fail-soft is the whole design, not a convenience. This runs after the token
-// has already been verified, its audience checked and its capabilities read —
-// the caller is authorised, and everything still to be decided is about how
-// well the resulting audit line reads. An operator who can be authorised but
-// not named is a worse audit line; an operator refused because Zitadel's
-// userinfo endpoint was briefly slow is an outage. The WARN is what stops the
-// degraded state from being silent, which is the mistake #433 was.
-//
-// Falls back to the token's own email, which is empty for an operator today
-// but costs nothing to prefer over discarding a claim that is there.
-func (v *Verifier) resolveProfile(ctx context.Context, raw, subject, claimEmail string) (string, string) {
-	if v.profiles == nil {
-		return "", claimEmail
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, v.profileTimeout)
-	defer cancel()
-
-	name, email, err := v.profiles.Resolve(ctx, raw, subject)
-	if err != nil {
-		v.log.WarnContext(ctx, "could not resolve the operator's profile — the audit trail will name only their subject",
-			slog.String("subject", subject),
-			slog.String("error", err.Error()),
-		)
-		return "", claimEmail
-	}
-	if email == "" {
-		email = claimEmail
-	}
-	return name, email
 }

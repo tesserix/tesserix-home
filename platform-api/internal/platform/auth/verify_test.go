@@ -44,14 +44,13 @@ const jwtShaped = "header.payload.signature"
 
 // validClaims is a real OPERATOR access token's shape, roles aside.
 //
-// Note the empty Email. That is not an omission for brevity — a real operator
-// access token carries no `email` claim at all, which is precisely why the old
-// email heuristic recorded every human as a service (#450) and why Kind is
-// decided by ClientID here.
+// Note what is NOT here: an email. Claims has no such field any more, and that
+// is the record of why — a real operator access token carries no `email` claim
+// at all, which is precisely why the old email heuristic recorded every human
+// as a service (#450) and why Kind is decided by ClientID.
 func validClaims() *Claims {
 	return &Claims{
 		Subject:   operatorSubject,
-		Email:     "",
 		ClientID:  consoleClientID,
 		Audience:  []string{consoleClientID, projectID},
 		Issuer:    "https://auth.tesserix.app",
@@ -246,6 +245,65 @@ func TestATokenFromAnotherClientIsAService(t *testing.T) {
 	// lesser one — it holds exactly what it was granted.
 	if !got.Has(CapSupport) {
 		t.Error("a service principal must hold its granted capabilities")
+	}
+}
+
+// The #450 regression itself: this is the token the console actually presents,
+// it has no email, and before the fix it was recorded as a machine.
+//
+// It lived in profile_test.go with the userinfo resolver and outlived it. The
+// resolver went because nothing read its result; the classification stayed
+// because it is attested, free, and the thing #450 was actually about.
+func TestTheConsolesClientIDIdentifiesAnOperator(t *testing.T) {
+	got, err := verifierFor(validClaims()).Verify(context.Background(), jwtShaped)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got.Kind != KindOperator {
+		t.Fatalf("kind = %q, want operator — this token has no email, which is the whole of #450", got.Kind)
+	}
+}
+
+// The deployment that has not set ZITADEL_CONSOLE_CLIENT_ID yet. It must run —
+// degraded, never broken — and degrade towards the kind that is granted
+// nothing extra.
+func TestAnUnsetConsoleClientIDMakesEveryoneAService(t *testing.T) {
+	for name, claims := range map[string]*Claims{
+		"the operator token": validClaims(),
+		"a machine token":    machineClaims(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := NewVerifier(stubParser{claims: claims}, projectID)
+
+			got, err := v.Verify(context.Background(), jwtShaped)
+			if err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+			if got.Kind != KindService {
+				t.Errorf("kind = %q, want service when no console client id is configured", got.Kind)
+			}
+			// Unconfigured is an attribution setting, never an access one:
+			// whatever the token granted is still granted.
+			if len(got.Capabilities) == 0 {
+				t.Error("an unconfigured console client id must not cost the caller its capabilities")
+			}
+		})
+	}
+}
+
+// A token with no `client_id` at all — a shape no Zitadel access token has
+// today, which is exactly why it is worth pinning: "" must not match a
+// configured id and must not be mistaken for the console.
+func TestAnAbsentClientIDIsAService(t *testing.T) {
+	c := validClaims()
+	c.ClientID = ""
+
+	got, err := verifierFor(c).Verify(context.Background(), jwtShaped)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got.Kind != KindService {
+		t.Errorf("kind = %q, want service", got.Kind)
 	}
 }
 

@@ -59,12 +59,19 @@ func (s *Service) Groups(ctx context.Context) (GroupsPayload, error) {
 
 // Actor is the principal performing a write, reduced to what an audit row
 // needs.
+//
+// The subject and nothing else. There was an Email field beside it, carried
+// from auth.Principal at six call sites, whose comment said it was "what an
+// operator recognises in the trail" — aspirational rather than load-bearing.
+// Nothing ever read it: the trail is keyed by Subject, and the email was empty
+// for every operator anyway until #450 resolved it from userinfo. #453 decided
+// that identity must not be shown to a merchant, the userinfo resolver was
+// removed with it (see auth.Principal), and a field with no reader and no
+// source went too.
 type Actor struct {
 	// Subject is the Zitadel `sub` — the audit trail's actor and the scope of
 	// an idempotency key.
 	Subject string
-	// Email is what an operator recognises in the trail.
-	Email string
 }
 
 // The audit trail's action names. Stable dotted identifiers, not prose: a
