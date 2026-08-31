@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import {
+  ErasureCheckUnavailableError,
   previewImport,
   commitImport,
   type ImportPreview,
@@ -64,6 +65,15 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
     if (cause instanceof CapabilityError) {
       return { ok: false, message: NO_PERMISSION_MESSAGE };
     }
+    // Shown verbatim, unlike every other failure here, because it is the one
+    // an operator can do something about and the generic "Could not preview
+    // this import" would send them to re-upload the same file forever. The
+    // message names an environment variable and nothing about any person or
+    // any row — see `ErasureCheckUnavailableError` for why the refusal exists
+    // at all.
+    if (cause instanceof ErasureCheckUnavailableError) {
+      return { ok: false, message: cause.message };
+    }
     return { ok: false, message: PREVIEW_FAILED_MESSAGE };
   }
 }
@@ -84,6 +94,15 @@ export async function previewImportAction(rows: ImportRow[]): Promise<PreviewImp
  * happened.
  */
 function mapUnrecordedCommit(cause: unknown): { ok: false; message: string } | undefined {
+  // Nothing was written — `assertErasureCheckable` runs before the
+  // `crm_imports` insert and the transaction rolls back regardless. Mapped
+  // for the same reason `previewImportAction` maps it: the wrapper's default
+  // "That change was not saved" is true but useless, and this message is the
+  // only thing that tells anyone which variable to set. It repeats no
+  // personal data; the refusal is a fact about the deployment.
+  if (cause instanceof ErasureCheckUnavailableError) {
+    return { ok: false, message: cause.message };
+  }
   if (cause instanceof AuditWriteError) {
     return {
       ok: false,
@@ -150,6 +169,10 @@ export async function commitImportAction(
           created: counts.toCreate,
           matched: counts.matchedExisting,
           skipped: counts.skippedSuppressed,
+          // Its own key, not added into `skipped`: the audit row is the
+          // record that an erasure was honoured on the import side too, and
+          // a number folded into another number evidences nothing.
+          erased: counts.skippedErased,
           malformed: counts.malformed,
         },
       };

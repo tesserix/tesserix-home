@@ -25,6 +25,7 @@ import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
 } from "@/lib/db/crm-erasure";
+import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
@@ -426,6 +427,21 @@ export async function createOpportunityAction(
  * present. Allowlisted to this one exception type, not "any Error".
  */
 function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | undefined {
+  // #226's fail-closed: with `CRM_ERASURE_HASH_KEY` unset, `eraseContact`
+  // refuses rather than performing an erasure it cannot make stick against
+  // the next import. Nothing was written, so "that change was not saved" is
+  // literally true — and useless, because it reads as a transient failure and
+  // an operator will click again forever. The remedy is a deployment change
+  // and the message has to say so. It names a variable and no person.
+  if (cause instanceof ErasureHashKeyMissingError) {
+    return {
+      ok: false,
+      message:
+        "This contact was NOT erased. CRM_ERASURE_HASH_KEY is not configured, so the erasure " +
+        "could not be recorded in a form that stops the next import re-creating them. " +
+        "Report this before telling anyone the request was honoured.",
+    };
+  }
   if (cause instanceof AuditWriteError) {
     return {
       ok: false,

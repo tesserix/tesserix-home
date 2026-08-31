@@ -8,12 +8,20 @@ import {
 } from "./counts";
 import type { ImportRow } from "@/lib/crm";
 
-const PREVIEW = { toCreate: 1, matchedExisting: 2, skippedSuppressed: 3, malformed: 4, matchedRows: [] };
+const PREVIEW = {
+  toCreate: 1,
+  matchedExisting: 2,
+  skippedSuppressed: 3,
+  skippedErased: 6,
+  malformed: 4,
+  matchedRows: [],
+};
 const RESULT = {
   importId: "imp1",
   created: 1,
   matchedExisting: 2,
   skippedSuppressed: 3,
+  skippedErased: 6,
   malformed: 4,
   droppedWebsiteUrls: 0,
   droppedCountCells: 0,
@@ -38,6 +46,7 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       toCreate: 1,
       matchedExisting: 2,
       skippedSuppressed: 3,
+      skippedErased: 6,
       malformed: 4,
       droppedWebsiteUrls: null,
       droppedCountCells: null,
@@ -50,6 +59,7 @@ describe("previewDisplayCounts / committedDisplayCounts", () => {
       toCreate: 1,
       matchedExisting: 2,
       skippedSuppressed: 3,
+      skippedErased: 6,
       malformed: 4,
       droppedWebsiteUrls: 0,
       droppedCountCells: 0,

@@ -69,6 +69,16 @@ function CountsSummary({
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Suppressed</dt>
           <dd className="mt-1 text-lg">{counts.skippedSuppressed}</dd>
         </div>
+        {/* Beside Suppressed, never merged into it (#226). Both mean "not
+         *  created", and the remedies are opposites: a suppression is a
+         *  thing an operator can lift, an erasure is a request to be
+         *  forgotten that they must not. Always rendered, on a preview as
+         *  well as a commit — the erasure check runs on both paths, so a
+         *  zero here is a checked fact rather than an unknown. */}
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Erased</dt>
+          <dd className="mt-1 text-lg">{counts.skippedErased}</dd>
+        </div>
         <div>
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Malformed</dt>
           <dd className="mt-1 text-lg">{counts.malformed}</dd>
@@ -103,6 +113,16 @@ function CountsSummary({
           </div>
         ) : null}
       </dl>
+      {/* The one note on this card whose instruction is "do nothing". Every
+       *  other count here ends in "correct the CSV and import again"; this
+       *  one must not, or an operator follows the house pattern and
+       *  re-creates the person by hand. */}
+      {counts.skippedErased ? (
+        <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
+          These people asked to be forgotten and were erased from the CRM. They were left out of
+          this import deliberately. Do not add them back by hand.
+        </p>
+      ) : null}
       {counts.droppedWebsiteUrls ? (
         <p className="mt-3 border-t border-border pt-3 text-muted-foreground">
           These rows were created, but their website cell was not a http:// or https:// address and

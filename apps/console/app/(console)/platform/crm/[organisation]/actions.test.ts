@@ -65,6 +65,7 @@ import {
   DuplicateContactError,
 } from "@/lib/db/crm-writes";
 import { eraseContact, deleteOrganisation } from "@/lib/db/crm-erasure";
+import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { withCrmWrite } from "@/lib/crm-write";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
@@ -878,6 +879,24 @@ describe("eraseContactAction", () => {
       summary: { erased: 0 },
     });
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("says the contact was NOT erased when CRM_ERASURE_HASH_KEY is missing (#226)", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockRejectedValue(new ErasureHashKeyMissingError());
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    // The shared wrapper's default here is "That change was not saved",
+    // which reads as transient and would have an operator clicking forever.
+    // This is a deployment fault with a named remedy, and — the part that
+    // matters for a DPDP request — the operator must not walk away believing
+    // the person was forgotten.
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("NOT erased");
+      expect(result.message).toContain("CRM_ERASURE_HASH_KEY");
+    }
   });
 
   // Important 2 (fix round 1): re-erasing an already-erased contact must not

@@ -1,0 +1,82 @@
+-- 0041_crm_erased_identifiers.sql
+--
+-- Makes an erasure survive the next import (#226).
+--
+-- WHAT WAS BROKEN. Migration 0024 added `crm_contacts.erased_at` and said in
+-- its own header that without the marker "re-import would treat it as a fresh
+-- row to enrich". The marker shipped; nothing ever read it. `eraseContact`
+-- nulls `email` and `instagram_handle` — deliberately, because
+-- `crm_contacts_email_lower_uq` is partial (WHERE email IS NOT NULL) and
+-- nulling releases the address for a legitimate future contact at the same
+-- business — and `findMatchingOrganisationId` matches on exactly those two
+-- columns. So a re-import of the same person matched nothing, and
+-- `commitImport` re-created them as a brand new organisation with a fresh
+-- opportunity. The erasure was silently undone and the new row carried no
+-- trace that it had ever happened.
+--
+-- The fix cannot be "keep the email on the contact row". That is the thing an
+-- erasure exists to destroy. It has to be a value that can be COMPARED against
+-- an incoming identifier without being readable as one.
+--
+-- WHY A KEYED HMAC AND NOT A BARE DIGEST. `identifier_hash` is
+-- HMAC-SHA256(CRM_ERASURE_HASH_KEY, "email:ava@example.com"), computed in
+-- lib/db/crm-erasure-hash.ts. A plain sha256 of an email address is not a
+-- one-way function in any useful sense here: the input space is a mailing
+-- list, and anyone holding a dump of this table plus a scrape could confirm
+-- membership by hashing candidates. Keying it means a dump alone confirms
+-- nothing without also holding the key, which lives in the application's
+-- environment and never in the database.
+--
+-- The key is fixed and application-wide rather than per-row, and that is
+-- forced by the requirement, not a shortcut: a per-row random salt cannot be
+-- matched against an incoming value without first retrieving the salt for the
+-- row you are trying to find, which is the row you do not know yet. HMAC is
+-- the correct primitive for a keyed equality comparison; it also removes any
+-- temptation to invent a salt-then-hash scheme by hand.
+--
+-- WHY THERE IS NO FOREIGN KEY, AND WHY THAT IS THE POINT. No `contact_id`, no
+-- `organisation_id`, no email column, no handle column. A hash stored ON
+-- `crm_contacts` would have been simpler, and it would also have tied the hash
+-- to a surviving organisation row — and the erased contact still exists, named
+-- `[erased]`, under a named business. That is a re-identification path: hash a
+-- candidate address, find the row, read off who they worked for. This table
+-- retains the minimum needed to REFUSE a match and nothing that can rebuild
+-- who the person was or where they worked.
+--
+-- Two rows per erased contact, not one: email and Instagram handle are hashed
+-- separately, so a person who comes back under only one of the two is still
+-- caught.
+--
+-- WHAT IS NOT HERE. No backfill, deliberately. At the time this was written
+-- `crm_contacts` held 259 rows and zero with `erased_at` set, so there is
+-- nothing to reconstruct — and there could not be even in principle: the
+-- identifiers of an already-erased contact are gone, which is the whole point
+-- of the erasure. This lands ahead of the first real erasure, which is the
+-- only time it could have landed without a gap.
+
+-- =======================================================================
+-- crm_erased_identifiers
+--
+-- The hash IS the primary key. There is no surrogate id because there is
+-- nothing else to identify a row by, and the only two operations this table
+-- ever serves are "does this hash exist" (import) and "record this hash"
+-- (erasure). A duplicate insert is not an error — erasing twice is
+-- idempotent, exactly as `crm_contacts.erased_at` is COALESCE'd for the same
+-- reason — so the write path uses ON CONFLICT DO NOTHING against this key.
+--
+-- The primary key's implicit unique index is also the lookup index; import
+-- probes it by exact equality, never by prefix or range, so no second index
+-- is warranted.
+-- =======================================================================
+CREATE TABLE IF NOT EXISTS crm_erased_identifiers (
+  -- Hex-encoded HMAC-SHA256. text, not bytea: it is only ever compared for
+  -- equality against another hex string the application produced, and text
+  -- keeps it readable in a psql session without changing what it is. Never
+  -- decode this — there is nothing to decode; it is a digest, not ciphertext.
+  identifier_hash text PRIMARY KEY,
+
+  -- When the erasure that produced this hash was performed. Retained because
+  -- it is the only thing here that can answer "why does this import keep
+  -- refusing a row" for an operator, and it identifies nobody on its own.
+  erased_at timestamptz NOT NULL DEFAULT now()
+);
