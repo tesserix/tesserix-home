@@ -109,19 +109,23 @@ func run(log *slog.Logger) error {
 		log.Warn("whitelist proposals disabled", "reason", "GITHUB_TOKEN is not set")
 	}
 
-	// Discovery is a network call made once at startup. Failing here rather
-	// than per-request means a misconfigured issuer is a visible crash-loop
-	// instead of a service that silently authenticates nobody.
-	parser, err := authcore.NewOIDCParser(ctx, cfg.ZitadelIssuer, cfg.ZitadelProjectID)
+	// Discovery is a network call made once at startup, bounded by
+	// NewVerifierFromConfig's own timeout so an unreachable-but-not-refusing
+	// Zitadel fails the startup instead of hanging it — a stuck rollout reads
+	// far worse than a failed one. Authentication is always enabled here:
+	// unlike platform-api, secrets-api has no unauthenticated bootstrapping
+	// window, and config.Load already refuses to start without
+	// ZITADEL_ISSUER/ZITADEL_PROJECT_ID.
+	verifier, err := authcore.NewVerifierFromConfig(ctx, authcore.Config{
+		Enabled:         true,
+		Issuer:          cfg.ZitadelIssuer,
+		ProjectID:       cfg.ZitadelProjectID,
+		ConsoleClientID: cfg.ConsoleClientID,
+		Log:             log,
+	})
 	if err != nil {
 		return fmt.Errorf("zitadel discovery: %w", err)
 	}
-
-	verifierOpts := []authcore.Option{}
-	if cfg.ConsoleClientID != "" {
-		verifierOpts = append(verifierOpts, authcore.WithConsoleClientID(cfg.ConsoleClientID))
-	}
-	verifier := authcore.NewVerifier(parser, cfg.ZitadelProjectID, verifierOpts...)
 
 	log.Info("starting", "port", cfg.Port,
 		"backends", cfg.Backends, "defaultBackend", cfg.DefaultBackend)
