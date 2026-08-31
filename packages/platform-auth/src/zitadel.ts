@@ -35,6 +35,29 @@ import { bearerToken } from "./bearer";
  */
 const ROLES_CLAIM = "urn:zitadel:iam:org:project:roles";
 
+/**
+ * The PROJECT-SCOPED roles claim for one project.
+ *
+ * An ACCESS token — machine or operator — carries roles under this name, not
+ * under the flat {@link ROLES_CLAIM} an operator's ID token carries. An
+ * operator's access token carries BOTH, and only this form is correct: the
+ * flat one is not scoped to a project, so honouring it would let roles granted
+ * on a DIFFERENT project satisfy a check about this one. That distinction cost
+ * a day when `verifyMachineAuthHeader` read the flat claim and silently got
+ * `[]` for every real machine token — see tesserix-home#433.
+ *
+ * A FUNCTION, and exported, so the two callers that need this string cannot
+ * spell it differently. The console's capability revalidation
+ * (`apps/console/lib/auth/platform-token.ts`) reads it off a refreshed access
+ * token; `verifyMachineAuthHeader` below reads it off a service user's. A
+ * template literal written out twice is one typo away from an authorization
+ * check that quietly finds no roles and refuses everyone, which is a failure
+ * that looks like a permissions problem rather than a string bug.
+ */
+export function projectRolesClaim(projectId: string): string {
+  return `urn:zitadel:iam:org:project:${projectId}:roles`;
+}
+
 /** The organization a token's subject belongs to. */
 const ORG_ID_CLAIM = "urn:zitadel:iam:org:id";
 
@@ -75,6 +98,90 @@ function jwks(issuer: string): ReturnType<typeof createRemoteJWKSet> {
   const set = createRemoteJWKSet(new URL(`${issuer}/oauth/v2/keys`));
   jwksCache.set(issuer, set);
   return set;
+}
+
+/**
+ * The roles a freshly-issued ACCESS token attests, or null when it attests
+ * nothing this code can read.
+ *
+ * # Why this exists
+ *
+ * `/auth/callback` reads an operator's roles once, at login, and the session
+ * cookie carries that snapshot for seven days. Revoking a grant in Zitadel
+ * therefore took up to a week to take effect (tesserix-home#285). The console
+ * closes that window by refreshing the access token every few minutes and
+ * re-reading the roles off the NEW one — this function — rather than trusting
+ * the cookie's snapshot.
+ *
+ * # It VERIFIES, and that is not belt-and-braces
+ *
+ * This module's header rejects decode-only for exactly this token: roles that
+ * decide whether someone may rotate live payment keys must be
+ * cryptographically attributable, not merely well-formed. That the token
+ * arrived over TLS from the issuer moments ago makes decoding DEFENSIBLE, not
+ * correct, and the whole point of this path is that its answer OVERRIDES a
+ * signed session claim. A widening decision has to rest on the signature.
+ *
+ * The JWKS is the same cached remote set every other verification here uses,
+ * so the cost after the first call is arithmetic.
+ *
+ * # PROJECT-SCOPED CLAIM ONLY
+ *
+ * An operator's access token carries BOTH the flat {@link ROLES_CLAIM} and the
+ * project-scoped {@link projectRolesClaim} form. Only the latter is read, and
+ * there is deliberately no fallback: the flat claim names no project, so
+ * honouring it would let a grant on a DIFFERENT project decide what an
+ * operator may do in this console. See tesserix-home#433, where reading the
+ * wrong one of these two silently produced `[]` for every real token.
+ *
+ * # `[]` IS AN ANSWER; `null` IS NOT
+ *
+ * A verified token with no roles claim returns `[]` — "this operator holds
+ * nothing on this project" — because that is what Zitadel emits when every
+ * grant has been removed, and reading it as anything else would defeat the
+ * revocation this function exists to deliver. Every other outcome — an opaque
+ * token, a bad signature, a wrong issuer, an expired token, a claim of an
+ * unexpected shape — returns null, meaning "no answer", and the caller must
+ * keep whatever it had rather than treat silence as revocation.
+ *
+ * # DEPLOY PRECONDITION: THE APPLICATION MUST ISSUE **JWT** ACCESS TOKENS
+ *
+ * Zitadel applications default to OPAQUE bearer access tokens; the roles claim
+ * is readable only when the application's auth token type is JWT. With the
+ * default, every call here returns null, the caller falls back to the cookie,
+ * and revocation quietly reverts to its seven-day window with nothing failing.
+ * That is why the caller logs a warning rather than staying silent — see
+ * `apps/console/lib/auth/platform-token.ts`.
+ */
+export async function rolesFromAccessToken(
+  accessToken: string,
+  config: { readonly issuer: string; readonly projectId: string },
+): Promise<string[] | null> {
+  if (!accessToken || !config.issuer || !config.projectId) return null;
+  try {
+    const { payload } = await jwtVerify(accessToken, jwks(config.issuer), {
+      issuer: config.issuer,
+      // The project, not the OIDC client id. The console asks for
+      // `urn:zitadel:iam:org:project:id:{projectId}:aud` at authorization,
+      // which is the same scope that puts the roles claim on the token — so a
+      // token carrying the claim carries this audience by construction, and
+      // one that does not is not a token whose roles this project should read.
+      audience: config.projectId,
+    });
+    const claim = payload[projectRolesClaim(config.projectId)];
+    // Absent means "no grants on this project" — Zitadel omits the claim
+    // rather than emitting an empty object — and that is a real, actionable
+    // answer. `extractRoles` returns [] for a present-but-unreadable shape
+    // too, which is the same conclusion by a less likely route.
+    if (claim === undefined) return [];
+    return extractRoles(claim);
+  } catch {
+    // Opaque token, wrong issuer, expired, bad signature. Nothing here is worth
+    // logging from a shared package — the caller knows which session it was
+    // asking about and logs that. Never throws: a revalidation that cannot
+    // happen must not take down the action it was checking.
+    return null;
+  }
 }
 
 export interface ZitadelIdentity {
@@ -441,8 +548,7 @@ export async function verifyMachineAuthHeader(
     // this would be a real widening of who can pass. If the flat claim ever
     // legitimately needs to be honored for machine tokens too, that should
     // be a deliberate, reviewed addition, not a quiet "accept either".
-    const projectRolesClaim = `urn:zitadel:iam:org:project:${config.projectId}:roles`;
-    const rolesClaimValue = payload[projectRolesClaim];
+    const rolesClaimValue = payload[projectRolesClaim(config.projectId)];
 
     const identity: MachineIdentity = {
       sub: payload.sub,

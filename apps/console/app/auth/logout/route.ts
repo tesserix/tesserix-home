@@ -73,6 +73,24 @@ function idpLogoutUrl(): string | null {
 async function signOut(request: NextRequest): Promise<NextResponse> {
   const session = await getCurrentSession();
   try {
+    // THE SYNC GATE, DELIBERATELY — the one mutating call site that was NOT
+    // moved to `checkOperatorCapabilityLive` (tesserix-home#285).
+    //
+    // Two reasons, and both are about not being able to leave:
+    //
+    //  1. Signing out must not depend on the database or on Zitadel. The live
+    //     gate reads the store and, every five minutes, spends a refresh token
+    //     against the IdP. Putting either in front of logout means an operator
+    //     cannot sign out during an outage — and this handler's own comment
+    //     below already commits to logout succeeding "no matter what happens"
+    //     to the store.
+    //  2. Revoking `read` must not strand a live session. Under the live gate,
+    //     an operator whose console entry was removed would be refused HERE
+    //     and keep a valid cookie they cannot clear, which is the opposite of
+    //     what a revocation is for.
+    //
+    // The staleness this leaves is `read` only, and the action it authorises is
+    // destroying this session's own credentials. There is nothing to widen.
     checkOperatorCapability(session, "read");
   } catch (cause) {
     if (cause instanceof CapabilityError) {

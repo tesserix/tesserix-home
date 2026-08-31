@@ -50,6 +50,21 @@ import { isDatabaseConfigured, tesserixQuery } from "../db/tesserix";
  * ciphertexts under one nonce leak their XOR and, worse, the authentication
  * key. It is never derived from the plaintext, the `sid`, or a counter.
  *
+ * # The capabilities live here too, and they are NOT encrypted
+ *
+ * Migration 0040 added `capabilities` and `capabilities_checked_at` beside the
+ * tokens (tesserix-home#285). They are here rather than in a table of their
+ * own because the refresh token in this row is the only way to ask Zitadel
+ * what an operator currently holds, and because the sweep that drops a dead
+ * session must drop both together or neither.
+ *
+ * They are plaintext, deliberately. A capability key names a permission; it is
+ * not a bearer credential and nothing holding the list can act with it. More
+ * to the point, this is the one column the verb gate MUST be able to read
+ * during a partial outage, and making it depend on `OPERATOR_TOKEN_ENCRYPT_KEY`
+ * would tie the console's authorization decision to a key it does not need —
+ * see {@link readCapabilities}, which needs a database and nothing else.
+ *
  * # Nothing here logs a token
  *
  * No plaintext, no ciphertext, no key material, no token value of any kind
@@ -93,6 +108,21 @@ export interface StoredOperatorTokens {
    *  spent and its replacement was never persisted. The session then works
    *  until `accessExpiresAt` and no further — degrade, not break. */
   refreshToken: string | null;
+  /**
+   * The mapped capability keys this session's operator held when they were
+   * last confirmed against Zitadel, or null for "NEVER CHECKED".
+   *
+   * NULL IS NOT AN EMPTY GRANT. A row written before migration 0040 has no
+   * value here, and so does a row `/auth/callback` wrote on a deployment where
+   * the capability write did not run. Treating null as "holds nothing" would
+   * refuse every gated action for every session alive at deploy time. An
+   * operator who genuinely holds nothing is `[]`, which is a real answer.
+   */
+  capabilities: string[] | null;
+  /** When {@link capabilities} was last confirmed, or null for "never". Read
+   *  against `CAPABILITY_REVALIDATE_SECONDS` in `./platform-token`; null is
+   *  stale, for the reason above. */
+  capabilitiesCheckedAt: Date | null;
 }
 
 /** What a caller hands in to persist. */
@@ -100,6 +130,24 @@ export interface OperatorTokensInput {
   accessToken: string;
   accessExpiresAt: Date;
   refreshToken?: string | null;
+  /**
+   * The mapped capability keys — `capabilitiesFor(email, roles)`'s OUTPUT, not
+   * the raw Zitadel roles. Two representations of one grant that can disagree
+   * is the bug class tesserix-home#285 is about, so only the mapped form is
+   * ever stored.
+   *
+   * OMITTING THIS PRESERVES WHAT IS ALREADY THERE — it does not clear it. The
+   * token-refresh path in `./platform-token` renews a credential without
+   * having asked about capabilities, and an upsert that wrote EXCLUDED
+   * unconditionally would blank the list on every refresh, making it
+   * permanently stale. Passing `[]` is how a caller says "confirmed, and holds
+   * nothing"; `undefined` says "I did not ask".
+   */
+  capabilities?: readonly string[] | null;
+  /** Written beside {@link capabilities}, and omitted with it. Always `now()`
+   *  in practice — it records when Zitadel was ASKED, not when the answer
+   *  changed, because an unchanged answer is still a fresh one. */
+  capabilitiesCheckedAt?: Date | null;
 }
 
 /**
@@ -329,10 +377,124 @@ function reportFailure(operation: string, sid: string | null): void {
   );
 }
 
+/**
+ * Coerce whatever the driver hands back for `capabilities text[]` into either
+ * a list of strings or the "never checked" null.
+ *
+ * NULL AND `[]` MUST SURVIVE AS DIFFERENT VALUES — that is the whole reason
+ * this is a function and not `row.capabilities ?? null`, which reads correctly
+ * and is correct, but hides the invariant it depends on. Migration 0040 spells
+ * out why: null means the row predates the column or was written by a path
+ * that never asked, and a reader must go and ask; `[]` means Zitadel was
+ * asked and the answer was "nothing". Collapsing them refuses every gated
+ * action for every session alive at deploy time.
+ *
+ * Non-string elements are DROPPED rather than carried through, matching
+ * `toCapabilities`: this column is only ever written by this module, so a
+ * foreign shape here means the row was edited by hand or corrupted, and a
+ * value nothing can check should not reach a gate. An array that is not an
+ * array at all is `null` — unreadable, therefore unchecked.
+ */
+function normaliseCapabilities(value: unknown): string[] | null {
+  if (value === null || value === undefined) return null;
+  if (!Array.isArray(value)) return null;
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+/**
+ * What a capability read answers, and why it is not merely a list.
+ *
+ * The verb gate has to tell three states apart, and two of them look like
+ * "no capabilities" if the outcome is dropped:
+ *
+ * - `ok` — the row was found. `capabilities` may still be null ("never
+ *   checked") or `[]` ("checked, holds nothing"); those are the row's answer,
+ *   not the store's.
+ * - `absent` — the store worked and this session has no row. A session minted
+ *   before the store existed, or one whose row was pruned.
+ * - `unavailable` — the store could not answer at all: no database, or the
+ *   read threw. Nothing about the operator's grant can be inferred from this,
+ *   which is exactly why the gate falls back to the cookie here rather than
+ *   refusing.
+ */
+export interface CapabilityReadResult {
+  outcome: TokenReadOutcome;
+  /** Null for "never checked" as well as for a non-`ok` outcome. Read it
+   *  together with `outcome`, never on its own. */
+  capabilities: string[] | null;
+  /** Null for "never checked". Stale, not empty — see migration 0040. */
+  checkedAt: Date | null;
+}
+
+interface CapabilityRow extends QueryResultRow {
+  capabilities: string[] | null;
+  capabilities_checked_at: Date | null;
+}
+
+const CAPABILITIES_ABSENT: CapabilityReadResult = {
+  outcome: "absent",
+  capabilities: null,
+  checkedAt: null,
+};
+const CAPABILITIES_UNAVAILABLE: CapabilityReadResult = {
+  outcome: "unavailable",
+  capabilities: null,
+  checkedAt: null,
+};
+
+/**
+ * Read one session's capabilities and when they were last confirmed.
+ *
+ * NEEDS THE DATABASE, NOT THE KEY — the same rule as {@link deleteTokens} and
+ * {@link pruneExpired}, and the reason matters more here than for either of
+ * them. These two columns are plaintext, so this read is possible with the
+ * encryption key rotated, unset, or provisioned wrong. Gating it on
+ * {@link isStoreUsable} would make the console's authorization decision depend
+ * on a credential it does not need to read, and would turn a key
+ * misconfiguration — which today costs the platform API and nothing else —
+ * into a stale-capability window for every operator.
+ *
+ * Separate from {@link readTokenRecord} for the same reason: that one reports
+ * `unavailable` when the ACCESS TOKEN will not decrypt, which is a true
+ * statement about the credential and a false one about the grant. The verb
+ * gate must not lose a perfectly readable capability list because the
+ * ciphertext beside it is dead.
+ *
+ * Throws only on the caller-supplied-`query` path, as the module header
+ * promises.
+ */
+export async function readCapabilities(
+  sid: string,
+  options: TokenStoreOptions = {},
+): Promise<CapabilityReadResult> {
+  if (!options.query && !isDatabaseConfigured()) return CAPABILITIES_UNAVAILABLE;
+  try {
+    const rows = await runner(options)<CapabilityRow>(
+      `SELECT capabilities, capabilities_checked_at
+         FROM operator_api_tokens
+        WHERE sid = $1`,
+      [sid],
+    );
+    const row = rows[0];
+    if (!row) return CAPABILITIES_ABSENT;
+    return {
+      outcome: "ok",
+      capabilities: normaliseCapabilities(row.capabilities),
+      checkedAt: row.capabilities_checked_at ?? null,
+    };
+  } catch (err) {
+    if (options.query) throw err;
+    reportFailure("capability read", sid);
+    return CAPABILITIES_UNAVAILABLE;
+  }
+}
+
 interface TokenRow extends QueryResultRow {
   access_token: Uint8Array;
   access_expires_at: Date;
   refresh_token: Uint8Array | null;
+  capabilities: string[] | null;
+  capabilities_checked_at: Date | null;
 }
 
 /**
@@ -390,7 +552,8 @@ export async function readTokenRecord(
   const lock = options.query && options.forUpdate ? " FOR UPDATE" : "";
   try {
     const rows = await runner(options)<TokenRow>(
-      `SELECT access_token, access_expires_at, refresh_token
+      `SELECT access_token, access_expires_at, refresh_token,
+              capabilities, capabilities_checked_at
          FROM operator_api_tokens
         WHERE sid = $1${lock}`,
       [sid],
@@ -411,6 +574,15 @@ export async function readTokenRecord(
         // which is already a case every caller handles: the session works until
         // the access token expires.
         refreshToken: decryptToken(row.refresh_token),
+        // NOT encrypted, and deliberately: a capability key names a permission
+        // an operator was granted, it is not a bearer credential, and nothing
+        // holding the list can act with it. Encrypting it would make the ONE
+        // column the verb gate has to read on a database blip depend on a key
+        // that may be the thing missing — and `capabilities_checked_at` would
+        // have to stay plaintext anyway for the freshness comparison to be a
+        // SQL predicate rather than a full table decrypt.
+        capabilities: normaliseCapabilities(row.capabilities),
+        capabilitiesCheckedAt: row.capabilities_checked_at ?? null,
       },
     };
   } catch (err) {
@@ -466,14 +638,29 @@ export async function saveTokens(
     await runner(options)(
       `INSERT INTO operator_api_tokens
          (sid, sub, access_token, access_expires_at, refresh_token,
-          session_expires_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())
+          session_expires_at, capabilities, capabilities_checked_at,
+          updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, now())
        ON CONFLICT (sid) DO UPDATE SET
          sub = EXCLUDED.sub,
          access_token = EXCLUDED.access_token,
          access_expires_at = EXCLUDED.access_expires_at,
          refresh_token = EXCLUDED.refresh_token,
          session_expires_at = EXCLUDED.session_expires_at,
+         -- COALESCE, NOT a bare EXCLUDED. A caller that did not ask Zitadel
+         -- about capabilities passes null here, and null must LEAVE THE
+         -- STORED LIST ALONE rather than blank it: the token-refresh path in
+         -- platform-token.ts renews a credential on its own schedule, and an
+         -- unconditional EXCLUDED would clear the capabilities on every one of
+         -- those, so the verb gate would find them permanently missing and
+         -- never stop revalidating. An operator who holds nothing is written
+         -- as an EMPTY ARRAY, which is not null and therefore does overwrite —
+         -- that is what makes "confirmed empty" expressible at all.
+         capabilities = COALESCE(EXCLUDED.capabilities,
+                                 operator_api_tokens.capabilities),
+         capabilities_checked_at = COALESCE(
+           EXCLUDED.capabilities_checked_at,
+           operator_api_tokens.capabilities_checked_at),
          updated_at = now()`,
       [
         sid,
@@ -482,6 +669,14 @@ export async function saveTokens(
         tokens.accessExpiresAt,
         refreshCiphertext,
         sessionExpiresAt,
+        // `?? null` and a spread copy: `undefined` is "I did not ask" and the
+        // driver would send it as null anyway, so say so here rather than
+        // letting the two spellings mean the same thing by accident. The copy
+        // is because the input is `readonly string[]` and pg mutates nothing,
+        // but a stored reference to a caller's array is a shape that invites
+        // a later mutation to be a database bug.
+        tokens.capabilities ? [...tokens.capabilities] : null,
+        tokens.capabilitiesCheckedAt ?? null,
       ],
     );
   } catch (err) {

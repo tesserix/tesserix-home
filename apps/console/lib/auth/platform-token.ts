@@ -4,11 +4,16 @@
 import "server-only";
 
 import { cache } from "react";
-import { getCurrentSession } from "@tesserix/platform-auth";
+import {
+  capabilitiesFor,
+  getCurrentSession,
+  rolesFromAccessToken,
+} from "@tesserix/platform-auth";
 import { tesserixTx } from "../db/tesserix";
 import { withDeadline } from "./deadline";
 import {
   accessTokenExpiresAt,
+  readCapabilities,
   readTokenRecord,
   readTokens,
   saveTokens,
@@ -157,6 +162,42 @@ const RENEW_WITHIN_SECONDS = 60;
  * until the pod is restarted.
  */
 const REFRESH_TIMEOUT_MS = 3_000;
+
+/**
+ * How long a stored capability list may be trusted before Zitadel is asked
+ * again. FIVE MINUTES.
+ *
+ * # This number IS the fix, and the obvious implementation gets it wrong
+ *
+ * Removing an operator's `hard-delete` in Zitadel used to leave them holding
+ * it in the console for up to SEVEN DAYS — the life of the `tx_session`
+ * cookie, which is written once at login and never re-read
+ * (tesserix-home#285). The same mechanism was watched pointing the harmless
+ * way on 2026-08-19: four roles were granted and neither operator saw them
+ * until they signed in again.
+ *
+ * The tempting fix is to re-derive capabilities whenever the access token is
+ * refreshed anyway. THAT DOES NOT WORK. The access token lives about twelve
+ * hours, so `RENEW_WITHIN_SECONDS` fires roughly twice a day and the
+ * revocation window would be TWELVE HOURS, not minutes — better than a week,
+ * and still not the thing #285 asks for. Minutes require refreshing
+ * PROACTIVELY: calling the token endpoint because the CAPABILITIES are stale,
+ * not because the token is. That is why this constant exists separately from
+ * `RENEW_WITHIN_SECONDS` and drives its own path rather than riding on that
+ * one.
+ *
+ * # Why 300 and not lower
+ *
+ * 300s is #285's stated acceptance criterion ("minutes, not a week"). The cost
+ * is one Zitadel refresh per ACTIVE operator per five minutes — this estate
+ * has two operators on the allowlist, and both short-circuit before any I/O at
+ * all (see `checkOperatorCapabilityLive`), so the real steady-state cost today
+ * is zero and the ceiling is negligible. Lowering it further buys seconds off
+ * a window measured against a human revoking a grant and noticing it took
+ * effect, and pays for them with IdP traffic on the critical path of every
+ * mutation.
+ */
+export const CAPABILITY_REVALIDATE_SECONDS = 300;
 
 /**
  * Memoised per request.
@@ -414,3 +455,298 @@ function sessionExpiry(exp: number | undefined): Date {
 /** The `tx_session` lifetime, per ADR-003 D8. Mirrored rather than imported
  *  because it is only a fallback for a claim that is always present. */
 const SESSION_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+
+// =========================================================================
+// LIVE CAPABILITIES (tesserix-home#285)
+//
+// Everything above answers "what credential does this session hold". What
+// follows answers "what is this operator allowed to do RIGHT NOW", which the
+// cookie cannot answer because it was written once, at login, and lives seven
+// days.
+//
+// The two share the row, the lock and the refresh token on purpose: asking
+// Zitadel what an operator currently holds MEANS spending the refresh token,
+// so a second mechanism would double-spend a one-use credential against the
+// first one. See `renewUnderLock` for why that is not survivable.
+// =========================================================================
+
+/** The session fields the capability path needs. A structural type rather than
+ *  an import of `SessionClaims`, so a caller can pass a test double without
+ *  minting a JWE. */
+export interface CapabilitySession {
+  sub: string;
+  email?: string;
+  sid?: string;
+  exp?: number;
+}
+
+/**
+ * What the store could tell us about an operator's current capabilities.
+ *
+ * `unavailable` is NOT "holds nothing" and must never be read as a refusal —
+ * see {@link resolveLiveCapabilities} for the full argument. `[]` is a real
+ * answer meaning every grant is gone.
+ */
+export type CapabilityResolution =
+  | { source: "store"; capabilities: string[] }
+  | { source: "unavailable"; reason: CapabilityUnavailableReason };
+
+/**
+ * Why there is no live answer. Carried rather than collapsed because the gate
+ * logs it, and "this session predates the store" is an ordinary fact while
+ * "the refresh failed" is worth looking at.
+ */
+export type CapabilityUnavailableReason =
+  /** No `sid` claim: a session minted before the token store existed. */
+  | "no-sid"
+  /** The store worked and holds no row for this session. */
+  | "no-row"
+  /** No database, or the read threw. */
+  | "store-unavailable"
+  /** Zitadel is not configured on this deployment. */
+  | "not-configured"
+  /** The refresh, or the roles read off its result, did not produce an answer. */
+  | "revalidation-failed";
+
+/**
+ * Is a stored capability list still inside the revalidation window?
+ *
+ * NULL IS STALE, NOT EMPTY. A row written before migration 0040 has no
+ * timestamp, and so does one whose capability write never ran; both must send
+ * the reader to ask Zitadel rather than conclude the operator holds nothing.
+ * Migration 0040's header says the same thing at the schema.
+ *
+ * A timestamp in the FUTURE is also stale. Clock skew between the console and
+ * Postgres could otherwise park a list permanently inside the window — the one
+ * direction where being wrong reinstates exactly the bug this closes — so the
+ * comparison is on a non-negative age rather than on `checkedAt > cutoff`.
+ */
+function capabilitiesAreFresh(checkedAt: Date | null | undefined): boolean {
+  if (!checkedAt) return false;
+  const at = checkedAt.getTime();
+  if (!Number.isFinite(at)) return false;
+  const age = Date.now() - at;
+  return age >= 0 && age < CAPABILITY_REVALIDATE_SECONDS * 1000;
+}
+
+/**
+ * Whether the "access tokens are opaque" warning has been said.
+ *
+ * Module-level for the same reason `warnedMissingKey` is in the store: this
+ * reports a DEPLOYMENT FACT that cannot change without a restart, and it is on
+ * the path of every gated mutation. One line per process makes it visible; one
+ * per action would bury it.
+ */
+let warnedUnreadableRoles = false;
+
+/**
+ * The capabilities this operator holds right now, according to the store.
+ *
+ * # The order, and why each step is where it is
+ *
+ * 1. No `sid` — a session minted before the token store existed. There is no
+ *    row to consult and never will be for this session; it expires within
+ *    seven days of the store's deploy.
+ * 2. Read the store. This read needs a database and NOT the encryption key
+ *    (see `readCapabilities`), so a key problem does not cost the gate its
+ *    answer.
+ * 3. Fresh list — serve it. This is the common path and it is deliberately
+ *    LOCK-FREE and IdP-free: for the 300 seconds a list is good, a gated
+ *    action costs one indexed point lookup.
+ * 4. Stale or never checked — refresh the access token under the row lock and
+ *    re-derive from the NEW token's project-scoped roles claim.
+ *
+ * # `unavailable` means "keep what you had", never "refuse"
+ *
+ * Every failure here — no database, a read that threw, Zitadel down, an
+ * unreadable token — resolves to `unavailable`, and the caller falls back to
+ * the cookie's snapshot. That is a deliberate widening and it is the accepted
+ * trade: see `checkOperatorCapabilityLive` in `./operator`, which owns the
+ * argument and the WARN.
+ */
+export async function resolveLiveCapabilities(
+  session: CapabilitySession,
+): Promise<CapabilityResolution> {
+  if (!session.sid) return unavailable("no-sid");
+  const sid = session.sid;
+
+  const stored = await readCapabilities(sid);
+  if (stored.outcome === "unavailable") return unavailable("store-unavailable");
+  // The store answered and there is no row: a logout raced this request, or the
+  // callback never managed to write one. Nothing to refresh WITH — the refresh
+  // token lives in the row that is not there — so there is no revalidation to
+  // attempt and the cookie is all that is left.
+  if (stored.outcome === "absent") return unavailable("no-row");
+
+  if (stored.capabilities && capabilitiesAreFresh(stored.checkedAt)) {
+    return { source: "store", capabilities: stored.capabilities };
+  }
+
+  let config: ConsoleOidcConfig;
+  try {
+    config = getOidcConfig();
+  } catch {
+    // Zitadel is not configured on this deployment — local dev without the
+    // OIDC env, typically. Checked BEFORE the transaction so a
+    // misconfiguration never opens one, exactly as the token path does.
+    return unavailable("not-configured");
+  }
+
+  const revalidated = await revalidateUnderLock(
+    sid,
+    session.sub,
+    session.email,
+    sessionExpiry(session.exp),
+    config,
+  );
+  return revalidated
+    ? { source: "store", capabilities: revalidated }
+    : unavailable("revalidation-failed");
+}
+
+function unavailable(
+  reason: CapabilityUnavailableReason,
+): CapabilityResolution {
+  return { source: "unavailable", reason };
+}
+
+/**
+ * Spend the refresh token, read the roles off the new access token, store both.
+ *
+ * # Same lock, same reasons, and it must stay that way
+ *
+ * This is `renewUnderLock`'s shape and it is not duplication for its own sake:
+ * revalidating MEANS refreshing, so both paths spend the same one-use refresh
+ * token and must serialise against each other on the same row. Two locks, or
+ * one path skipping the lock, would reintroduce the double-spend
+ * `renewUnderLock`'s docstring describes — and Zitadel treats a reused refresh
+ * token as theft and can revoke the entire grant, signing the operator out
+ * everywhere. Read that docstring before changing this one.
+ *
+ * # The re-check inside the lock
+ *
+ * A caller that waited on the lock may be looking at a row somebody else has
+ * just revalidated. Re-reading freshness INSIDE the lock and returning early
+ * is what turns "everyone who was waiting also refreshes" into "exactly one
+ * refresh", and skipping it would serialise the double-spend rather than
+ * prevent it.
+ *
+ * # ONE deadline covering BOTH network calls
+ *
+ * The refresh and the JWKS-backed verification of its result are wrapped in a
+ * SINGLE `REFRESH_TIMEOUT_MS` budget, not one each. That constant is sized
+ * against `connectionTimeoutMillis` in `lib/db/tesserix.ts` — read its
+ * docstring — and two 3s budgets in series would hold a connection from a
+ * two-connection pool for 6s, quietly breaking the bound it documents. The
+ * JWKS is cached after the first fetch, so in steady state the second call
+ * costs arithmetic.
+ *
+ * # THE TOKENS ARE WRITTEN EVEN WHEN THE ROLES CANNOT BE READ
+ *
+ * By the time the roles read fails the refresh token has ALREADY been spent
+ * and rotated. Returning early without persisting the replacement would leave
+ * the row holding a dead token, and the session could never refresh again —
+ * turning a capability read that failed into a lost session. So the write
+ * always happens; only the capability columns are omitted, and omitting them
+ * PRESERVES the previous list rather than clearing it (see `saveTokens`).
+ */
+async function revalidateUnderLock(
+  sid: string,
+  sub: string,
+  email: string | undefined,
+  sessionExpiresAt: Date,
+  config: ConsoleOidcConfig,
+): Promise<string[] | null> {
+  try {
+    return await tesserixTx(async (query) => {
+      const locked = await readTokens(sid, { query, forUpdate: true });
+      // Deleted between the unlocked read and the lock — a logout, or a prune.
+      if (!locked) return null;
+
+      // THE RE-CHECK. Another request revalidated while this one waited, so its
+      // answer is the answer and there is nothing to spend.
+      if (locked.capabilities && capabilitiesAreFresh(locked.capabilitiesCheckedAt)) {
+        return locked.capabilities;
+      }
+      const refreshToken = locked.refreshToken;
+      // Nothing to ask Zitadel with. The session keeps working until its access
+      // token expires; the gate falls back to the cookie meanwhile.
+      if (!refreshToken) return null;
+
+      const outcome = await withDeadline(
+        (async () => {
+          const renewed = await refreshAccessToken(config, refreshToken);
+          // Held in its own const so the narrowing survives into the object
+          // returned below — `renewed.access_token` is `string | undefined` on
+          // the response type, and TypeScript does not carry a property guard
+          // across an object literal.
+          const accessToken = renewed?.access_token;
+          if (!renewed || !accessToken) return null;
+          // VERIFIED, not decoded — `rolesFromAccessToken` owns that argument.
+          // null here means the token could not be read at all (an OPAQUE
+          // access token is the likely cause; see the deploy precondition in
+          // its docstring), which is not the same as "holds no roles".
+          const roles = await rolesFromAccessToken(accessToken, {
+            issuer: config.issuer,
+            projectId: config.projectId,
+          });
+          return { renewed, accessToken, roles };
+        })(),
+        REFRESH_TIMEOUT_MS,
+      );
+
+      // Rejected, revoked, or already rotated out from under us.
+      // `refreshAccessToken` already logged why. NOTHING IS WRITTEN — the row
+      // keeps the tokens it had, which is the only state that could still be
+      // valid.
+      if (!outcome) return null;
+      const { renewed, accessToken, roles } = outcome;
+
+      // `capabilitiesFor`, the SAME mapping `/auth/callback` applies, so the
+      // stored list is the same representation the cookie carries and the two
+      // cannot mean different things. `roles === null` means "no answer", and
+      // is passed through as `undefined` so the upsert leaves the stored list
+      // exactly as it found it.
+      const capabilities =
+        roles === null ? undefined : (capabilitiesFor(email, roles) as string[]);
+
+      if (roles === null && !warnedUnreadableRoles) {
+        warnedUnreadableRoles = true;
+        console.warn(
+          "[auth] capability revalidation could not read roles from the refreshed access token; " +
+            "capabilities will stay at their last known value and revocation reverts to the session lifetime. " +
+            "Check that the Zitadel application issues JWT access tokens rather than opaque ones",
+          { sid },
+        );
+      }
+
+      await saveTokens(
+        sid,
+        sub,
+        {
+          accessToken,
+          accessExpiresAt: accessTokenExpiresAt(renewed.expires_in),
+          // PERSIST THE ROTATED REFRESH TOKEN, on every branch. See the
+          // docstring: the token is already spent by this point, so dropping
+          // its replacement costs the session.
+          refreshToken: renewed.refresh_token ?? refreshToken,
+          capabilities,
+          // Stamped only when there is a real answer. Advancing it on a failed
+          // read would claim freshness for a list nobody confirmed, and the
+          // next 300 seconds of gated actions would trust it.
+          capabilitiesCheckedAt: capabilities ? new Date() : undefined,
+        },
+        sessionExpiresAt,
+        { query },
+      );
+
+      return capabilities ?? null;
+    });
+  } catch {
+    // A rolled-back transaction, an unreachable database, or the deadline
+    // above. The caller treats all of them as "no live answer" and keeps the
+    // cookie's snapshot; the store has already reported the detail without
+    // logging anything a scraper could use.
+    return null;
+  }
+}

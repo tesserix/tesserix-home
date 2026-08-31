@@ -4,14 +4,14 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   getCurrentSession: vi.fn(),
 }));
-vi.mock("@/lib/auth/operator", () => ({ checkOperatorCapability: vi.fn() }));
+vi.mock("@/lib/auth/operator", () => ({ checkOperatorCapabilityLive: vi.fn() }));
 vi.mock("@/lib/platform-api", () => ({
   platformApiOrigin: vi.fn(() => "https://api.test"),
   platformRequestWithMeta: vi.fn(),
 }));
 
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { createTool, deleteGroup, deleteTool, updateTool } from "./tools-write";
@@ -22,7 +22,7 @@ function signedIn() {
   vi.mocked(getCurrentSession).mockResolvedValue({
     sub: "op-1", email: "op@t.test", roles: ["platform"],
   } as never);
-  vi.mocked(checkOperatorCapability).mockReturnValue(undefined as never);
+  vi.mocked(checkOperatorCapabilityLive).mockResolvedValue(undefined as never);
 }
 
 const TOOL = {
@@ -45,9 +45,12 @@ describe("the tools write seam", () => {
 
   it("refuses without the capability, and never calls the API", async () => {
     vi.mocked(getCurrentSession).mockResolvedValue({ sub: "op-2", roles: ["crm"] } as never);
-    vi.mocked(checkOperatorCapability).mockImplementation(() => {
-      throw new CapabilityError("platform");
-    });
+    // The live gate is async now (tesserix-home#285): a revoked capability is
+    // discovered by reading the store, so the refusal arrives as a rejected
+    // promise rather than a synchronous throw.
+    vi.mocked(checkOperatorCapabilityLive).mockRejectedValue(
+      new CapabilityError("platform"),
+    );
 
     const result = await createTool(TOOL);
 

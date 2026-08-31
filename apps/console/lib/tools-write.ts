@@ -4,7 +4,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 
@@ -84,7 +84,7 @@ async function withToolsWrite(
 ): Promise<ToolsWriteResult> {
   try {
     const session = await getCurrentSession();
-    checkOperatorCapability(session, "platform");
+    await checkOperatorCapabilityLive(session, "platform");
     await run();
     return { ok: true };
   } catch (cause) {

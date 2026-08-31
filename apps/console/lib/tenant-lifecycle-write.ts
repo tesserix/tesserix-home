@@ -4,7 +4,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
-import { checkOperatorCapability } from "@/lib/auth/operator";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { LifecycleVerb } from "@/lib/tenant-lifecycle";
@@ -93,7 +93,7 @@ export async function setTenantLifecycle(
     // boundary: this stops the console sending a request it already knows will
     // be refused, and makes the failure read as "you do not have permission"
     // rather than as a transport error.
-    checkOperatorCapability(session, "platform");
+    await checkOperatorCapabilityLive(session, "platform");
 
     const body = await platformRequestWithMeta(
       LABEL,

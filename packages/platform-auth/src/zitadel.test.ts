@@ -6,6 +6,8 @@ import {
   MachineTokenError,
   extractRoles,
   isInternal,
+  projectRolesClaim,
+  rolesFromAccessToken,
   verifyIdToken,
   verifyMachineAuthHeader,
 } from "./zitadel";
@@ -549,5 +551,148 @@ describe("verifyMachineAuthHeader", () => {
     });
 
     expect(identity.orgId).toBe(REAL_ORG_ID);
+  });
+});
+
+describe("projectRolesClaim", () => {
+  it("builds the project-scoped name, not the flat one", () => {
+    // A FUNCTION rather than a template literal repeated at each call site:
+    // the two readers of this claim (`verifyMachineAuthHeader` here, and the
+    // console's capability revalidation) must spell it identically, and a typo
+    // presents as "this operator holds no roles" rather than as a string bug.
+    expect(projectRolesClaim("p-1")).toBe(
+      "urn:zitadel:iam:org:project:p-1:roles",
+    );
+    expect(projectRolesClaim("p-1")).not.toBe(
+      "urn:zitadel:iam:org:project:roles",
+    );
+  });
+});
+
+/**
+ * `rolesFromAccessToken` — the read that makes a revoked grant take effect in
+ * minutes rather than a week (tesserix-home#285).
+ *
+ * Two properties carry the whole feature and both are asserted here:
+ *
+ *  - it VERIFIES. Its answer overrides a signed session claim, so a widening
+ *    decision has to rest on the signature, not on the token having arrived
+ *    over TLS.
+ *  - it distinguishes `[]` ("every grant removed", a real answer that must
+ *    REFUSE) from `null` ("no answer", which must leave the caller's previous
+ *    list alone). Collapsing those in either direction is an outage.
+ */
+describe("rolesFromAccessToken", () => {
+  it("returns the roles from the PROJECT-SCOPED claim", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: REAL_PROJECT_ID,
+      projectId: REAL_PROJECT_ID,
+      roles: { crm: { [REAL_ORG_ID]: "tesserix.app" }, "hard-delete": {} },
+    });
+
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toEqual(["crm", "hard-delete"]);
+  });
+
+  it("IGNORES the flat claim an operator's token also carries", async () => {
+    // An operator access token carries both. Honouring the flat one would let
+    // a grant on a DIFFERENT project decide what this console permits — see
+    // tesserix-home#433 for the day this distinction cost.
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: REAL_PROJECT_ID,
+      flatRoles: { "hard-delete": {} },
+    });
+
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toEqual([]);
+  });
+
+  it("returns [] — not null — when every grant has been removed", async () => {
+    // Zitadel omits the claim entirely rather than emitting an empty object.
+    // Reading that as "no answer" would make a full revocation invisible,
+    // which is precisely the bug being fixed.
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: REAL_PROJECT_ID,
+    });
+
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toEqual([]);
+  });
+
+  it("returns null for a token signed by the wrong key", async () => {
+    const { issuer, kid } = await startJwks();
+    const { privateKey: wrongKey } = await generateKeyPair("RS256");
+    const token = await signToken(wrongKey, kid, {
+      issuer,
+      audience: REAL_PROJECT_ID,
+      roles: { "hard-delete": {} },
+    });
+
+    // NOT `["hard-delete"]`, and not `[]` either: a forged token has no
+    // standing to grant OR to revoke.
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toBeNull();
+  });
+
+  it("returns null for a token minted for another project", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: "some-other-project",
+      roles: { "hard-delete": {} },
+    });
+
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toBeNull();
+  });
+
+  it("returns null for an expired token", async () => {
+    const { issuer, privateKey, kid } = await startJwks();
+    const token = await signToken(privateKey, kid, {
+      issuer,
+      audience: REAL_PROJECT_ID,
+      roles: { crm: {} },
+      expiresAtSeconds: Math.floor(Date.now() / 1000) - 60,
+    });
+
+    expect(
+      await rolesFromAccessToken(token, { issuer, projectId: REAL_PROJECT_ID }),
+    ).toBeNull();
+  });
+
+  it("returns null for an OPAQUE access token, without throwing", async () => {
+    // The deploy precondition: Zitadel applications default to opaque bearer
+    // access tokens, and with that default there is nothing here to read. It
+    // must degrade to "no answer" — the caller keeps its previous list and
+    // warns — rather than to "no roles", which would refuse everything.
+    const { issuer } = await startJwks();
+
+    expect(
+      await rolesFromAccessToken("not-a-jwt-at-all", {
+        issuer,
+        projectId: REAL_PROJECT_ID,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for an empty token or an unconfigured project", async () => {
+    const { issuer } = await startJwks();
+    expect(
+      await rolesFromAccessToken("", { issuer, projectId: REAL_PROJECT_ID }),
+    ).toBeNull();
+    expect(
+      await rolesFromAccessToken("x.y.z", { issuer, projectId: "" }),
+    ).toBeNull();
   });
 });
