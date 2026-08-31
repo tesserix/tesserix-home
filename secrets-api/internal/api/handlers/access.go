@@ -24,16 +24,16 @@ func NewAccess(client *bao.Client, p Proposer, log *audit.Logger) *Access {
 	return &Access{bao: client, proposer: p, audit: log}
 }
 
-func (h *Access) Register(read, live gin.IRoutes) {
-	read.GET("/api/access/grants", h.ListGrants)
-	read.GET("/api/access/denied", h.ListDenied)
+func (h *Access) Register(g Groups) {
+	g.Read.GET("/api/access/grants", h.ListGrants)
+	g.Read.GET("/api/access/denied", h.ListDenied)
 
 	// GrantAll and bao.Allow/Deny take effect in OpenBao immediately; the
 	// proposal they open afterwards is a receipt, not a gate.
-	live.POST("/api/access/grants", h.CreateGrant)
-	live.DELETE("/api/access/grants/:namespace/:app", h.RevokeGrant)
-	live.POST("/api/access/denied", h.Deny)
-	live.DELETE("/api/access/denied/:namespace", h.Allow)
+	g.Live.POST("/api/access/grants", h.CreateGrant)
+	g.Live.DELETE("/api/access/grants/:namespace/:app", h.RevokeGrant)
+	g.Live.POST("/api/access/denied", h.Deny)
+	g.Live.DELETE("/api/access/denied/:namespace", h.Allow)
 }
 
 func (h *Access) ListGrants(c *gin.Context) {

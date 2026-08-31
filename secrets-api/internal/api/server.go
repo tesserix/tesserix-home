@@ -54,7 +54,7 @@ func NewRouter(d Deps) *gin.Engine {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     d.Config.AllowedOrigins,
 		AllowMethods:     []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete},
-		AllowHeaders:     []string{"Content-Type", middleware.CSRFHeaderName, middleware.RequestIDHeader},
+		AllowHeaders:     []string{"Content-Type", "Authorization", middleware.CSRFHeaderName, middleware.RequestIDHeader},
 		AllowCredentials: true,
 	}))
 
@@ -86,13 +86,15 @@ func NewRouter(d Deps) *gin.Engine {
 	// merge into tesserix-k8s — additionally need the credential verb.
 	live := authed.Group("/", middleware.RequireCapability(authcore.CapRotateCredentials))
 
-	handlers.NewSecrets(d.Secrets, d.Audit).Register(authed, live)
+	groups := handlers.Groups{Read: authed, Live: live}
+
+	handlers.NewSecrets(d.Secrets, d.Audit).Register(groups)
 	if d.Bao != nil {
-		handlers.NewAccess(d.Bao, d.Whitelist, d.Audit).Register(authed, live)
+		handlers.NewAccess(d.Bao, d.Whitelist, d.Audit).Register(groups)
 	}
 	handlers.NewCluster(d.Discovery).Register(authed)
 	handlers.NewWhitelist(d.Whitelist, d.Audit).Register(authed)
-	handlers.NewReviews(d.Reviews, d.Audit).Register(authed, live)
+	handlers.NewReviews(d.Reviews, d.Audit).Register(groups)
 
 	return r
 }

@@ -76,7 +76,7 @@ func secretsRouter(t *testing.T) (*gin.Engine, *recorder, *recorder, *bytes.Buff
 
 	log := &bytes.Buffer{}
 	r := gin.New()
-	handlers.NewSecrets(registry, audit.New(log)).Register(r, r)
+	handlers.NewSecrets(registry, audit.New(log)).Register(handlers.Groups{Read: r, Live: r}) // no middleware runs here, so Read/Live has no effect on these unit tests
 	return r, bao, gcp, log
 }
 

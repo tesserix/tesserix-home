@@ -32,13 +32,13 @@ func NewReviews(r Reviewer, log *audit.Logger) *Reviews {
 	return &Reviews{reviewer: r, audit: log}
 }
 
-func (h *Reviews) Register(read, live gin.IRoutes) {
-	read.GET("/api/reviews", h.List)
-	read.GET("/api/reviews/:number", h.Show)
+func (h *Reviews) Register(g Groups) {
+	g.Read.GET("/api/reviews", h.List)
+	g.Read.GET("/api/reviews/:number", h.Show)
 
-	live.POST("/api/reviews/:number/approve", h.Approve)
-	live.POST("/api/reviews/:number/merge", h.Merge)
-	live.POST("/api/reviews/:number/reject", h.Reject)
+	g.Live.POST("/api/reviews/:number/approve", h.Approve)
+	g.Live.POST("/api/reviews/:number/merge", h.Merge)
+	g.Live.POST("/api/reviews/:number/reject", h.Reject)
 }
 
 func (h *Reviews) List(c *gin.Context) {

@@ -60,7 +60,7 @@ func serveReviewBody(t *testing.T, r handlers.Reviewer, method, path, body strin
 	gin.SetMode(gin.TestMode)
 
 	engine := gin.New()
-	handlers.NewReviews(r, audit.New(io.Discard)).Register(engine, engine)
+	handlers.NewReviews(r, audit.New(io.Discard)).Register(handlers.Groups{Read: engine, Live: engine}) // no middleware runs here, so Read/Live has no effect on these unit tests
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -21,16 +21,16 @@ func NewSecrets(registry *secrets.Registry, log *audit.Logger) *Secrets {
 	return &Secrets{registry: registry, audit: log}
 }
 
-func (h *Secrets) Register(read, live gin.IRoutes) {
-	read.GET("/api/backends", h.Backends)
-	read.GET("/api/backends/status", h.Status)
-	read.GET("/api/secrets", h.List)
-	read.GET("/api/secrets/*path", h.Describe)
-	read.GET("/api/secret-versions/*path", h.Versions)
+func (h *Secrets) Register(g Groups) {
+	g.Read.GET("/api/backends", h.Backends)
+	g.Read.GET("/api/backends/status", h.Status)
+	g.Read.GET("/api/secrets", h.List)
+	g.Read.GET("/api/secrets/*path", h.Describe)
+	g.Read.GET("/api/secret-versions/*path", h.Versions)
 
-	live.PUT("/api/secrets/*path", h.Write)
-	live.DELETE("/api/secrets/*path", h.Delete)
-	live.POST("/api/secret-versions/*path", h.Restore)
+	g.Live.PUT("/api/secrets/*path", h.Write)
+	g.Live.DELETE("/api/secrets/*path", h.Delete)
+	g.Live.POST("/api/secret-versions/*path", h.Restore)
 }
 
 // Backends tells the console which stores this deployment enabled, so the
