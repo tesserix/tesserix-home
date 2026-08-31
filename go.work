@@ -3,3 +3,12 @@ go 1.26.5
 use ./platform-api
 use ./platform-auth
 use ./secrets-api
+
+// Workaround for a Go 1.26 workspace module-graph-pruning quirk: when a
+// workspace member module has its own non-trivial requires (platform-auth
+// requires go-oidc et al.), `go build` in an importing module tries to
+// re-resolve that member's go.mod over VCS to prune the graph, even though
+// the member is already a `use`-d workspace directory. Pinning a replace at
+// the exact placeholder version importers request (v0.0.0) makes the
+// workspace-local directory authoritative and skips the network lookup.
+replace github.com/tesserix/tesserix-home/platform-auth v0.0.0 => ./platform-auth
