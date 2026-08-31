@@ -95,3 +95,7 @@ func bearerToken(r *http.Request) (string, bool) {
 	token = strings.TrimSpace(token)
 	return token, token != ""
 }
+
+func abort(c *gin.Context, status int, message string) {
+	c.AbortWithStatusJSON(status, gin.H{"error": message})
+}

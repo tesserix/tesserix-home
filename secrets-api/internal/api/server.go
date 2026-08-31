@@ -6,14 +6,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	authcore "github.com/tesserix/tesserix-home/platform-auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/handlers"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/middleware"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
-	"github.com/tesserix/tesserix-home/secrets-api/internal/auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/bao"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/config"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/k8s"
@@ -22,9 +20,6 @@ import (
 
 type Deps struct {
 	Config config.Config
-	Flow   *auth.Flow
-	Sealer *auth.Sealer
-	Allow  *auth.Allowlist
 	// Bao is nil when the OpenBao backend is not enabled; namespace access
 	// control is then unavailable, since it is an OpenBao policy.
 	Bao     *bao.Client
@@ -51,12 +46,13 @@ func NewRouter(d Deps) *gin.Engine {
 
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.RequestID(), middleware.SecurityHeaders(), middleware.Logger(d.Log))
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     d.Config.AllowedOrigins,
-		AllowMethods:     []string{http.MethodGet, http.MethodPut, http.MethodPost, http.MethodDelete},
-		AllowHeaders:     []string{"Content-Type", "Authorization", middleware.CSRFHeaderName, middleware.RequestIDHeader},
-		AllowCredentials: true,
-	}))
+
+	// No CORS middleware: no browser ever calls this service directly. Today
+	// apps/web is served same-origin behind the Istio VirtualService (only
+	// /api is routed here); after the cutover the console calls this API from
+	// its Next.js server, which is not subject to the same-origin policy at
+	// all. A CORS policy here would only be a grant nothing needs — on the one
+	// service whose entire job is holding secrets.
 
 	r.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.GET("/readyz", func(c *gin.Context) {

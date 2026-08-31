@@ -15,7 +15,6 @@ import (
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/handlers"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
-	"github.com/tesserix/tesserix-home/secrets-api/internal/auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/bao"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/config"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/gcpsm"
@@ -76,22 +75,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	sealer, err := auth.NewSealer(cfg.SessionKey)
-	if err != nil {
-		return err
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	flow, err := auth.NewFlow(ctx, auth.FlowConfig{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  cfg.RedirectURL,
-	})
-	if err != nil {
-		return err
-	}
 
 	client, registry, err := buildBackends(cfg)
 	if err != nil {
@@ -138,15 +123,11 @@ func run(log *slog.Logger) error {
 	}
 	verifier := authcore.NewVerifier(parser, cfg.ZitadelProjectID, verifierOpts...)
 
-	allow := auth.NewAllowlist(cfg.AdminEmails)
-	log.Info("starting", "port", cfg.Port, "administrators", allow.Size(),
+	log.Info("starting", "port", cfg.Port,
 		"backends", cfg.Backends, "defaultBackend", cfg.DefaultBackend)
 
 	srv := api.NewServer(api.Deps{
 		Config:    cfg,
-		Flow:      flow,
-		Sealer:    sealer,
-		Allow:     allow,
 		Bao:       client,
 		Secrets:   registry,
 		Audit:     audit.New(os.Stdout),

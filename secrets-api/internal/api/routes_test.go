@@ -85,7 +85,7 @@ func testDeps(t *testing.T, roles []string) api.Deps {
 		t.Fatalf("secrets.NewRegistry: %v", err)
 	}
 	return api.Deps{
-		Config:   config.Config{AllowedOrigins: []string{"http://localhost"}},
+		Config:   config.Config{},
 		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Bao:      stubBaoServer(t),
 		Secrets:  registry,
