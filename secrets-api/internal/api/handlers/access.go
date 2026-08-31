@@ -24,13 +24,16 @@ func NewAccess(client *bao.Client, p Proposer, log *audit.Logger) *Access {
 	return &Access{bao: client, proposer: p, audit: log}
 }
 
-func (h *Access) Register(r gin.IRoutes) {
-	r.GET("/api/access/grants", h.ListGrants)
-	r.POST("/api/access/grants", h.CreateGrant)
-	r.DELETE("/api/access/grants/:namespace/:app", h.RevokeGrant)
-	r.GET("/api/access/denied", h.ListDenied)
-	r.POST("/api/access/denied", h.Deny)
-	r.DELETE("/api/access/denied/:namespace", h.Allow)
+func (h *Access) Register(read, live gin.IRoutes) {
+	read.GET("/api/access/grants", h.ListGrants)
+	read.GET("/api/access/denied", h.ListDenied)
+
+	// GrantAll and bao.Allow/Deny take effect in OpenBao immediately; the
+	// proposal they open afterwards is a receipt, not a gate.
+	live.POST("/api/access/grants", h.CreateGrant)
+	live.DELETE("/api/access/grants/:namespace/:app", h.RevokeGrant)
+	live.POST("/api/access/denied", h.Deny)
+	live.DELETE("/api/access/denied/:namespace", h.Allow)
 }
 
 func (h *Access) ListGrants(c *gin.Context) {
@@ -92,8 +95,8 @@ func (h *Access) propose(c *gin.Context, granted []bao.Grant) (string, error) {
 	}
 
 	actor := ""
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		actor = p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		actor = p.Subject
 	}
 
 	changes := make([]gitops.Change, 0, len(granted))
@@ -147,8 +150,8 @@ func (h *Access) Deny(c *gin.Context) {
 	}
 
 	actor := ""
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		actor = p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		actor = p.Subject
 	}
 
 	if err := h.bao.Deny(c.Request.Context(), req.Namespace, req.Reason, actor); err != nil {

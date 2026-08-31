@@ -32,12 +32,13 @@ func NewReviews(r Reviewer, log *audit.Logger) *Reviews {
 	return &Reviews{reviewer: r, audit: log}
 }
 
-func (h *Reviews) Register(r gin.IRoutes) {
-	r.GET("/api/reviews", h.List)
-	r.GET("/api/reviews/:number", h.Show)
-	r.POST("/api/reviews/:number/approve", h.Approve)
-	r.POST("/api/reviews/:number/merge", h.Merge)
-	r.POST("/api/reviews/:number/reject", h.Reject)
+func (h *Reviews) Register(read, live gin.IRoutes) {
+	read.GET("/api/reviews", h.List)
+	read.GET("/api/reviews/:number", h.Show)
+
+	live.POST("/api/reviews/:number/approve", h.Approve)
+	live.POST("/api/reviews/:number/merge", h.Merge)
+	live.POST("/api/reviews/:number/reject", h.Reject)
 }
 
 func (h *Reviews) List(c *gin.Context) {
@@ -141,8 +142,8 @@ func (h *Reviews) number(c *gin.Context) (int, bool) {
 }
 
 func actorOf(c *gin.Context) string {
-	if p, ok := middleware.PrincipalFrom(c); ok {
-		return p.Email
+	if p, ok := middleware.BearerPrincipalFrom(c); ok {
+		return p.Subject
 	}
 	return ""
 }

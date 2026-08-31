@@ -69,23 +69,30 @@ func NewRouter(d Deps) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"status": "ready"})
 	})
 
-	authHandler := handlers.NewAuth(d.Config, d.Flow, d.Sealer, d.Allow, d.Audit)
-	authHandler.Register(r)
-
-	// Everything below this line requires an allowlisted session and, for
-	// mutations, a matching CSRF token.
-	guarded := r.Group("/",
-		middleware.RequireSession(d.Sealer, d.Allow, middleware.SessionCookie(d.Config.IsSecure())),
-		middleware.CSRF(),
+	// Everything below requires a verified Zitadel token. The two groups differ
+	// only in the capability they demand.
+	//
+	// The split follows EFFECT, not HTTP verb. POST /api/access/grants looks
+	// like a proposal and is not: CreateGrant writes OpenBao immediately and
+	// then opens a pull request to record what it already did. Gating by method
+	// would have put that in the same tier as /api/access/whitelist, which
+	// really does nothing until a human merges it.
+	authed := r.Group("/",
+		middleware.RequireBearer(d.Verifier, d.Log),
+		middleware.RequireCapability(authcore.CapPlatform),
 	)
-	guarded.GET("/api/auth/me", authHandler.Me)
-	handlers.NewSecrets(d.Secrets, d.Audit).Register(guarded)
+
+	// Routes that change live state — OpenBao, Google Secret Manager, or a
+	// merge into tesserix-k8s — additionally need the credential verb.
+	live := authed.Group("/", middleware.RequireCapability(authcore.CapRotateCredentials))
+
+	handlers.NewSecrets(d.Secrets, d.Audit).Register(authed, live)
 	if d.Bao != nil {
-		handlers.NewAccess(d.Bao, d.Whitelist, d.Audit).Register(guarded)
+		handlers.NewAccess(d.Bao, d.Whitelist, d.Audit).Register(authed, live)
 	}
-	handlers.NewCluster(d.Discovery).Register(guarded)
-	handlers.NewWhitelist(d.Whitelist, d.Audit).Register(guarded)
-	handlers.NewReviews(d.Reviews, d.Audit).Register(guarded)
+	handlers.NewCluster(d.Discovery).Register(authed)
+	handlers.NewWhitelist(d.Whitelist, d.Audit).Register(authed)
+	handlers.NewReviews(d.Reviews, d.Audit).Register(authed, live)
 
 	return r
 }

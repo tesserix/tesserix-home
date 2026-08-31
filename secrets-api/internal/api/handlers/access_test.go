@@ -41,7 +41,7 @@ func grant(t *testing.T, p handlers.Proposer, body string) *httptest.ResponseRec
 	gin.SetMode(gin.TestMode)
 
 	r := gin.New()
-	handlers.NewAccess(stubBaoServer(t), p, audit.New(io.Discard)).Register(r)
+	handlers.NewAccess(stubBaoServer(t), p, audit.New(io.Discard)).Register(r, r)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/access/grants", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

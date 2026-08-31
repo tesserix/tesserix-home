@@ -76,7 +76,7 @@ func secretsRouter(t *testing.T) (*gin.Engine, *recorder, *recorder, *bytes.Buff
 
 	log := &bytes.Buffer{}
 	r := gin.New()
-	handlers.NewSecrets(registry, audit.New(log)).Register(r)
+	handlers.NewSecrets(registry, audit.New(log)).Register(r, r)
 	return r, bao, gcp, log
 }
 
