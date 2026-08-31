@@ -29,6 +29,15 @@ type Config struct {
 
 	AdminEmails []string
 
+	// Zitadel is the only identity provider. ZitadelProjectID doubles as the
+	// expected token audience, which is why it is required: without it the
+	// verifier would accept a token minted for any other project.
+	ZitadelIssuer    string
+	ZitadelProjectID string
+	// ConsoleClientID names the client whose tokens are operators rather than
+	// machines. Optional: unset costs attribution, not access.
+	ConsoleClientID string
+
 	// Backends are the secret stores this deployment enables, and
 	// DefaultBackend the one a request that names none is served by.
 	Backends       []secrets.Backend
@@ -70,6 +79,10 @@ func Load(get Lookup) (Config, error) {
 		OpenBaoK8sMount: valueOr(get("OPENBAO_K8S_MOUNT"), "kubernetes"),
 		OpenBaoDevToken: get("OPENBAO_TOKEN"),
 
+		ZitadelIssuer:    strings.TrimSpace(get("ZITADEL_ISSUER")),
+		ZitadelProjectID: strings.TrimSpace(get("ZITADEL_PROJECT_ID")),
+		ConsoleClientID:  strings.TrimSpace(get("CONSOLE_CLIENT_ID")),
+
 		GitHubToken:       strings.TrimSpace(get("GITHUB_TOKEN")),
 		GitHubOwner:       valueOr(get("GITHUB_OWNER"), "tesserix"),
 		GitHubRepo:        valueOr(get("GITHUB_REPO"), "tesserix-k8s"),
@@ -98,6 +111,8 @@ func Load(get Lookup) (Config, error) {
 		{"APP_BASE_URL", cfg.BaseURL},
 		{"GOOGLE_CLIENT_ID", cfg.ClientID},
 		{"GOOGLE_CLIENT_SECRET", cfg.ClientSecret},
+		{"ZITADEL_ISSUER", cfg.ZitadelIssuer},
+		{"ZITADEL_PROJECT_ID", cfg.ZitadelProjectID},
 	}
 	if cfg.BackendEnabled(secrets.BackendOpenBao) {
 		required = append(required, struct{ name, value string }{"OPENBAO_ADDR", cfg.OpenBaoAddr})

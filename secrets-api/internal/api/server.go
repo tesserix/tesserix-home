@@ -9,6 +9,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
+	authcore "github.com/tesserix/tesserix-home/platform-auth"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/handlers"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/api/middleware"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
@@ -38,6 +39,9 @@ type Deps struct {
 	// Reviews is nil on the same terms: with no repository there is nothing to
 	// review, approve or merge.
 	Reviews handlers.Reviewer
+	// Verifier validates Zitadel bearer tokens for the middleware that guards
+	// the API surface as it moves off session cookies.
+	Verifier *authcore.Verifier
 }
 
 func NewRouter(d Deps) *gin.Engine {

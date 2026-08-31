@@ -17,6 +17,9 @@ func validEnv() map[string]string {
 		"ADMIN_EMAILS":         "samyak.rout@gmail.com,mahesh.sangawar@gmail.com",
 		"OPENBAO_ADDR":         "http://openbao.openbao.svc:8200",
 		"OPENBAO_K8S_ROLE":     "secret-service",
+		"ZITADEL_ISSUER":       "https://tesserix.zitadel.cloud",
+		"ZITADEL_PROJECT_ID":   "123456789012345678",
+		"CONSOLE_CLIENT_ID":    "987654321098765432@tesserix",
 	}
 }
 
@@ -223,5 +226,32 @@ func TestLoadRefusesADefaultThatIsNotEnabled(t *testing.T) {
 	env["SECRET_BACKEND_DEFAULT"] = "gcpsm"
 	if _, err := loadFrom(env); err == nil {
 		t.Fatal("Load with a default outside SECRET_BACKENDS succeeded, want error")
+	}
+}
+
+func TestZitadelConfigIsRequired(t *testing.T) {
+	for _, missing := range []string{"ZITADEL_ISSUER", "ZITADEL_PROJECT_ID"} {
+		t.Run(missing, func(t *testing.T) {
+			env := validEnv()
+			delete(env, missing)
+			if _, err := loadFrom(env); err == nil {
+				t.Fatalf("Load succeeded with %s unset; it must refuse", missing)
+			}
+		})
+	}
+}
+
+// Unset CONSOLE_CLIENT_ID is allowed and costs attribution, not access: every
+// principal is then recorded as a service. Refusing to start over it would
+// take the service down for a logging concern.
+func TestConsoleClientIDIsOptional(t *testing.T) {
+	env := validEnv()
+	delete(env, "CONSOLE_CLIENT_ID")
+	cfg, err := loadFrom(env)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ConsoleClientID != "" {
+		t.Errorf("ConsoleClientID = %q, want empty", cfg.ConsoleClientID)
 	}
 }
