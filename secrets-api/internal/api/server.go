@@ -40,6 +40,16 @@ type Deps struct {
 }
 
 func NewRouter(d Deps) *gin.Engine {
+	// Every route below requires a verified token, so a nil Verifier is a
+	// miswired Deps, not a runtime condition to handle. Panicking here — at
+	// construction — turns that into a boot-time failure instead of
+	// RequireBearer panicking on the first request, which would read as an
+	// intermittent outage rather than the wiring bug it is. Mirrors
+	// platform-api's httpx.RegisterModule, which refuses the same way.
+	if d.Verifier == nil {
+		panic("refusing to build the router with a nil Verifier — secrets-api has no unauthenticated mode")
+	}
+
 	if d.Config.Environment != "development" {
 		gin.SetMode(gin.ReleaseMode)
 	}
