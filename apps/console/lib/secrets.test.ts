@@ -19,6 +19,21 @@ describe("parseSecretList", () => {
   it("rejects an entry missing isFolder", () => {
     expect(() => parseSecretList({ entries: [{ name: "db" }] })).toThrow();
   });
+
+  // This is the boundary parser every walk of the tree passes through, and
+  // the namespace/app matching downstream assumes each path segment is
+  // exactly one entry's name — a "/" inside a name would silently cross that
+  // boundary and either merge or split a segment nobody asked for.
+  it("rejects an entry whose name contains a slash", () => {
+    expect(() => parseSecretList({ entries: [{ name: "a/b", isFolder: false }] })).toThrow();
+  });
+
+  // An empty name composes into a path with a missing segment (or a bare
+  // trailing slash), which is exactly as unmatchable against a grant prefix
+  // as a slash-containing one — and just as silent about it.
+  it("rejects an entry with an empty name", () => {
+    expect(() => parseSecretList({ entries: [{ name: "", isFolder: false }] })).toThrow();
+  });
 });
 
 describe("parseGrants", () => {

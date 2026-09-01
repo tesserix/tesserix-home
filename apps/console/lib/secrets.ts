@@ -79,8 +79,19 @@ export function parseSecretList(json: unknown): SecretListEntry[] {
   if (!Array.isArray(json.entries)) fail("entries is not an array");
   return json.entries.map((entry, i) => {
     if (!isRecord(entry)) fail(`entries[${i}] is not an object`);
+    const name = str(entry.name, `entries[${i}].name`);
+    // This is the boundary parser: every caller — in particular the estate
+    // walk in `secrets-api.ts` — composes `name` directly into a path it then
+    // matches against a "${namespace}/${app}" grant prefix. A "/" inside a
+    // name would silently merge or split a path segment nobody asked for; an
+    // empty name would compose a path with a missing segment or a bare
+    // trailing slash. Both cross that boundary exactly as silently as each
+    // other, so both are rejected here rather than left to whichever caller
+    // happens to notice first.
+    if (name === "") fail(`entries[${i}].name is empty`);
+    if (name.includes("/")) fail(`entries[${i}].name contains a "/" (${JSON.stringify(name)})`);
     return {
-      name: str(entry.name, `entries[${i}].name`),
+      name,
       isFolder: bool(entry.isFolder, `entries[${i}].isFolder`),
     };
   });

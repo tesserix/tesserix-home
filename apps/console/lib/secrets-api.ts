@@ -109,6 +109,25 @@ export async function secretsRequest(label: string, path: string): Promise<unkno
 const MAX_DEPTH = 8;
 const MAX_NODES = 512;
 
+/** The estate walk's result: the paths found, plus whether the walk actually
+ *  reached every leaf or was cut off by one of the two bounds. */
+export interface SecretWalkResult {
+  readonly paths: string[];
+  /**
+   * `false` when `MAX_NODES` or `MAX_DEPTH` stopped the walk before the tree
+   * was exhausted. This surface exists to answer "which secrets have no
+   * reader" — a question a truncated list answers wrongly by omission, not
+   * approximately. A caller that renders `paths` without checking this flag
+   * would present a partial estate as if it were the whole one, silently
+   * turning "we didn't look" into "it isn't there".
+   *
+   * Reaching `MAX_DEPTH` only counts as truncation if a folder was actually
+   * declined at the limit; a tree that happens to bottom out in leaves at
+   * exactly that depth, with nothing left to expand, is complete.
+   */
+  readonly complete: boolean;
+}
+
 /**
  * Every leaf secret path in `store`, mount-relative (e.g.
  * `homechef/homechef-api/db-password`, never `kv/homechef/...` — the API adds
@@ -117,51 +136,76 @@ const MAX_NODES = 512;
  * Task 2's matching rule compares these paths against `${namespace}/${app}`
  * prefixes, so a stray leading slash would break every match silently, by
  * flagging every secret as unreadable.
+ *
+ * A prefix that fails outright (a non-2xx from `secretsRequest`, including a
+ * 404 mid-walk) rejects the whole call rather than being swallowed into a
+ * smaller `paths` array. A partial list here reads as "these are the only
+ * secrets" to a surface whose entire job is flagging what's missing — a
+ * silently-shrunk inventory is a worse answer than an explicit failure the
+ * caller can show as "the inventory couldn't be read", so this walk fails
+ * loud instead of guessing.
  */
-export async function fetchSecretPaths(store: SecretStore): Promise<string[]> {
+export async function fetchSecretPaths(store: SecretStore): Promise<SecretWalkResult> {
   const paths: string[] = [];
   const visited = new Set<string>();
-  let frontier: Array<{ prefix: string; depth: number }> = [{ prefix: "/", depth: 0 }];
+  // A flat FIFO queue rather than level-by-level batches: BFS order only
+  // requires shifting from the front and pushing children to the back, and
+  // keeping it flat makes the two truncation signals below a single flag
+  // each, set at the exact point a bound actually bites.
+  const queue: Array<{ prefix: string; depth: number }> = [{ prefix: "/", depth: 0 }];
   let requests = 0;
+  // Two independent truncation signals, because either bound can fire without
+  // the other: a wide-but-shallow tree can hit MAX_NODES with no folder ever
+  // near MAX_DEPTH, and a narrow-but-deep tree can hit MAX_DEPTH having made
+  // far fewer than MAX_NODES requests.
+  let nodeCapHit = false;
+  let depthLimitHit = false;
 
-  while (frontier.length > 0 && requests < MAX_NODES) {
-    const next: Array<{ prefix: string; depth: number }> = [];
-
-    for (const { prefix, depth } of frontier) {
-      if (visited.has(prefix)) continue;
-      visited.add(prefix);
-
-      if (requests >= MAX_NODES) break;
-      requests += 1;
-
-      const json = await secretsRequest(
-        "secrets",
-        `/api/secrets?backend=${encodeURIComponent(store)}&prefix=${encodeURIComponent(prefix)}`,
-      );
-      const entries = parseSecretList(json);
-
-      // Trim the parent prefix's leading AND trailing slashes so composed
-      // child paths carry neither — a stray "/mark8ly/db" or "mark8ly//db"
-      // would fail to match the "${namespace}/${app}" prefixes Task 2
-      // compares against.
-      const base = prefix.replace(/^\/+|\/+$/g, "");
-
-      for (const entry of entries) {
-        const path = base === "" ? entry.name : `${base}/${entry.name}`;
-        if (!entry.isFolder) {
-          paths.push(path);
-          continue;
-        }
-        if (depth + 1 >= MAX_DEPTH) continue;
-        const childPrefix = `/${path}/`;
-        if (!visited.has(childPrefix)) {
-          next.push({ prefix: childPrefix, depth: depth + 1 });
-        }
-      }
+  while (queue.length > 0) {
+    if (requests >= MAX_NODES) {
+      // Work remains in the queue that the node cap forbids fetching — the
+      // walk stops here without ever seeing it.
+      nodeCapHit = true;
+      break;
     }
 
-    frontier = next;
+    // Non-null: `queue.length > 0` was just checked above.
+    const { prefix, depth } = queue.shift()!;
+    if (visited.has(prefix)) continue;
+    visited.add(prefix);
+    requests += 1;
+
+    const json = await secretsRequest(
+      "secrets",
+      `/api/secrets?backend=${encodeURIComponent(store)}&prefix=${encodeURIComponent(prefix)}`,
+    );
+    const entries = parseSecretList(json);
+
+    // Trim the parent prefix's leading AND trailing slashes so composed
+    // child paths carry neither — a stray "/mark8ly/db" or "mark8ly//db"
+    // would fail to match the "${namespace}/${app}" prefixes Task 2
+    // compares against.
+    const base = prefix.replace(/^\/+|\/+$/g, "");
+
+    for (const entry of entries) {
+      const path = base === "" ? entry.name : `${base}/${entry.name}`;
+      if (!entry.isFolder) {
+        paths.push(path);
+        continue;
+      }
+      if (depth + 1 >= MAX_DEPTH) {
+        // A folder sat right at the limit and was declined — this is the
+        // "actually declined a folder" case the doc comment distinguishes
+        // from a tree that simply has nothing below this depth.
+        depthLimitHit = true;
+        continue;
+      }
+      const childPrefix = `/${path}/`;
+      if (!visited.has(childPrefix)) {
+        queue.push({ prefix: childPrefix, depth: depth + 1 });
+      }
+    }
   }
 
-  return paths;
+  return { paths, complete: !nodeCapHit && !depthLimitHit };
 }

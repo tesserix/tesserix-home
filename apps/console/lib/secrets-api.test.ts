@@ -157,7 +157,7 @@ describe("fetchSecretPaths", () => {
     });
   }
 
-  it("returns leaf paths, not folders", async () => {
+  it("returns leaf paths, not folders, and reports the walk as complete", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
     vi.doMock("./auth/platform-token", () => ({
       resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
@@ -168,12 +168,19 @@ describe("fetchSecretPaths", () => {
     }));
 
     const { fetchSecretPaths } = await import("./secrets-api");
-    expect((await fetchSecretPaths("openbao")).sort()).toEqual(["mark8ly/db", "root-key"]);
+    const result = await fetchSecretPaths("openbao");
+    expect(result.paths.sort()).toEqual(["mark8ly/db", "root-key"]);
+    // A walk that fits comfortably inside both bounds exhausted the whole
+    // tree — nothing was declined, so it is complete.
+    expect(result.complete).toBe(true);
   });
 
   // A backend that returned a folder containing itself would otherwise walk
-  // forever and hang the page rather than failing.
-  it("stops at the depth limit instead of recursing forever", async () => {
+  // forever and hang the page rather than failing. The mock's prefix keeps
+  // growing (`/loop/`, `/loop/loop/`, …) and never repeats, so this exercises
+  // MAX_DEPTH specifically, not the visited set — see the dedicated visited-set
+  // test below for that.
+  it("stops at the depth limit instead of recursing forever, and reports the walk as incomplete", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
     vi.doMock("./auth/platform-token", () => ({
       resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
@@ -188,8 +195,91 @@ describe("fetchSecretPaths", () => {
     vi.stubGlobal("fetch", selfReferential);
 
     const { fetchSecretPaths } = await import("./secrets-api");
-    await expect(fetchSecretPaths("openbao")).resolves.toBeInstanceOf(Array);
+    const result = await fetchSecretPaths("openbao");
+    expect(Array.isArray(result.paths)).toBe(true);
     expect(selfReferential.mock.calls.length).toBeLessThan(100);
+    // A folder was actually declined at the depth limit (it never ran out of
+    // "loop" children to offer), so the walk must say it did not finish.
+    expect(result.complete).toBe(false);
+  });
+
+  // Distinct from the depth-limit test above: here the tree is wide, not
+  // deep, and every prefix is genuinely distinct, so MAX_DEPTH never comes
+  // close to firing. Only MAX_NODES can be responsible for stopping this one.
+  it("stops at the node cap for a wide tree, and reports the walk as incomplete", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const wideRoot = Array.from({ length: 600 }, (_, i) => ({ name: `folder-${i}`, isFolder: true }));
+    const wide = vi.fn(async (url: string) => {
+      const prefix = new URL(url).searchParams.get("prefix") ?? "/";
+      const entries = prefix === "/" ? wideRoot : [];
+      return new Response(JSON.stringify({ prefix, entries }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", wide);
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    const result = await fetchSecretPaths("openbao");
+    // The node cap (512) is well below the 601 prefixes (root + 600 children)
+    // this tree would otherwise require.
+    expect(wide.mock.calls.length).toBeLessThanOrEqual(512);
+    expect(result.complete).toBe(false);
+  });
+
+  // The visited set, not the depth limit, is what must prevent a second
+  // fetch of an already-seen prefix. A tree cannot legitimately recompose an
+  // ancestor's exact prefix through ordinary concatenation (see the report),
+  // so the realistic way this happens is a backend listing the same folder
+  // name twice in one response — which is exactly what this asserts against:
+  // both instances resolve to the same child prefix ("/dup/"), and only the
+  // first may actually be requested.
+  it("requests a repeated prefix only once, proving the visited set (not the depth limit) terminates it", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = treeFetch({
+      "/": [{ name: "dup", isFolder: true }, { name: "dup", isFolder: true }],
+      "/dup/": [{ name: "key", isFolder: false }],
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    const result = await fetchSecretPaths("openbao");
+
+    expect(result.paths).toEqual(["dup/key"]);
+    expect(result.complete).toBe(true);
+    const dupRequests = fetchMock.mock.calls.filter((call) =>
+      new URL(call[0] as string).searchParams.get("prefix") === "/dup/",
+    );
+    expect(dupRequests.length).toBe(1);
+  });
+
+  // A prefix that fails outright mid-walk (not merely a folder that turns
+  // out to be empty) must not be swallowed into a smaller, silently-wrong
+  // inventory — see the doc comment on `fetchSecretPaths`. Failing loud beats
+  // a confidently incomplete list on a surface whose job is to say what's
+  // missing.
+  it("rejects the whole walk when a prefix 404s partway through", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const prefix = new URL(url).searchParams.get("prefix") ?? "/";
+        if (prefix === "/mark8ly/") return new Response("nope", { status: 404 });
+        return new Response(
+          JSON.stringify({ prefix, entries: [{ name: "mark8ly", isFolder: true }] }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    await expect(fetchSecretPaths("openbao")).rejects.toBeInstanceOf(PlatformApiError);
   });
 
   it("asks for the requested store", async () => {
