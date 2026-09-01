@@ -23,6 +23,23 @@ import type { SecretStore } from "@/lib/secrets";
  * that cannot succeed, not about security — the security boundary is the
  * API's, and duplicating it here would just be a second copy to keep in
  * sync with the first.
+ *
+ * DELIBERATE EXCEPTION to `render-path-capabilities.test.ts`'s stated
+ * invariant for `GATED_FILES` ("every server action and route handler that
+ * gates a write"): this file calls neither `checkOperatorCapability` nor
+ * `checkOperatorCapabilityLive`, and is not in that list. That is not an
+ * omission — logout is that file's other asserted exception, and this is
+ * the second, asserted the same way. `resolvePlatformApiToken` (used
+ * transitively through `writeSecret`) resolves the OPERATOR'S OWN Zitadel
+ * token, not a shared service principal, and `PUT /api/secrets/*path` sits
+ * in secrets-api's `Live` group, requiring `rotate-credentials` — pinned by
+ * `TestPlatformOnlyPrincipalCannotReachLiveRoutes`. The API refuses this
+ * write on the operator's own credentials no matter what this action does,
+ * so a console-side capability check here would be a duplicate of that
+ * gate, not a second layer of defence. Worth noting plainly, given the
+ * irony: this file's *twin* list, `GATED_FILES`, was updated by this very
+ * branch — so the natural read is that this file was simply missed. It
+ * wasn't.
  */
 export type WriteSecretActionResult =
   | { ok: true; version: number }
