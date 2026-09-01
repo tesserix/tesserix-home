@@ -49,7 +49,10 @@ export interface InventoryRow {
   readonly hasReader: boolean | null;
 }
 
-export interface SecretsInventory {
+/** What `buildInventory` itself can compute from listings and grants alone.
+ *  It has no notion of a "walk" (that's `fetchSecretPaths`'s concept, in
+ *  `secrets-api.ts`), so it cannot set `complete` — see `SecretsInventory`. */
+export interface SecretsInventoryData {
   readonly rows: readonly InventoryRow[];
   readonly counts: {
     readonly all: number;
@@ -57,6 +60,22 @@ export interface SecretsInventory {
     readonly gcpsm: number;
     readonly noReader: number;
   };
+}
+
+/**
+ * The full inventory a page renders: `SecretsInventoryData` plus whether the
+ * walks that produced it actually reached every leaf.
+ *
+ * `complete` is composed at the fetch layer (`fetchSecretsInventory`), not
+ * here: `buildInventory` is handed plain path arrays and never sees a
+ * `SecretWalkResult`, so it has nothing to compose it from. It is `true`
+ * only if every store that was walked reported `complete` — one truncated
+ * store must make the whole inventory incomplete, because this surface's job
+ * is to say what's missing, and a silently-partial "complete" would turn a
+ * missing row back into a false all-clear.
+ */
+export interface SecretsInventory extends SecretsInventoryData {
+  readonly complete: boolean;
 }
 
 /** One app's read grant, identified by the namespace/app prefix it covers. */
@@ -151,7 +170,7 @@ export function buildInventory(input: {
   openbao: string[];
   gcpsm: string[];
   grants: Grant[];
-}): SecretsInventory {
+}): SecretsInventoryData {
   const rows: InventoryRow[] = [
     ...input.openbao.map((path) => ({
       path,

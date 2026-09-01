@@ -1,6 +1,6 @@
 import { PlatformApiError } from "./platform-api-error";
-import { parseSecretList } from "./secrets";
-import type { SecretStore } from "./secrets";
+import { buildInventory, parseGrants, parseSecretList } from "./secrets";
+import type { SecretsInventory, SecretStore } from "./secrets";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. Mirrors
@@ -210,4 +210,89 @@ export async function fetchSecretPaths(store: SecretStore): Promise<SecretWalkRe
   }
 
   return { paths, complete: !nodeCapHit && !depthLimitHit };
+}
+
+// The stores this console knows how to render. `buildInventory` has exactly
+// two slots (`openbao`, `gcpsm`) and nowhere to put a third store's paths
+// without a code change here, so this is also the set `fetchSecretsInventory`
+// is willing to walk — see the comment there for what happens when
+// `/api/backends` reports something outside it.
+const KNOWN_STORES: readonly SecretStore[] = ["openbao", "gcpsm"];
+
+function isKnownStore(name: string): name is SecretStore {
+  return (KNOWN_STORES as readonly string[]).includes(name);
+}
+
+/**
+ * Parse `GET /api/backends`'s response into the backend names this
+ * deployment has enabled (`{"backends": [...], "default": "..."}`).
+ *
+ * Kept minimal and local rather than promoted to `secrets.ts`'s
+ * boundary-parser style: nothing else in the console reuses this shape, and
+ * `default` is not read at all — the inventory walk needs every enabled
+ * backend, not the one a single-store picker would default to.
+ */
+function parseBackendNames(json: unknown): string[] {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new Error("secrets: /api/backends response is not an object");
+  }
+  const backends = (json as { backends?: unknown }).backends;
+  if (!Array.isArray(backends) || !backends.every((b): b is string => typeof b === "string")) {
+    throw new Error("secrets: /api/backends .backends is not an array of strings");
+  }
+  return backends;
+}
+
+/**
+ * Assemble the console's secrets inventory: ask `/api/backends` which stores
+ * this deployment has enabled, walk each one this console knows how to
+ * render, read the OpenBao grants, and hand all three to `buildInventory`.
+ *
+ * The enabled-backend list is read from the API on every call — never
+ * hardcoded to `["openbao", "gcpsm"]`. A deployment can run a subset (e.g.
+ * OpenBao only, before GSM is provisioned), and walking a store the API
+ * never enabled would surface as an opaque per-request error the operator
+ * cannot act on, instead of the API's own authoritative answer about what
+ * exists here.
+ *
+ * A backend name `/api/backends` reports that this console does not
+ * recognise (a future third store) is IGNORED, not treated as a failure:
+ * `buildInventory` has no slot to put its paths in without a code change
+ * here regardless, so failing loud would take down the whole inventory page
+ * over a store this code was never taught to render — worse than rendering
+ * what it does know. Because it is ignored rather than attempted-and-cut-off,
+ * it does not count against `complete` either: the console did not fail to
+ * finish looking at it, it was never asked to look. (If a future reader
+ * decides an unrecognised backend should instead be surfaced loudly — e.g.
+ * once a third store is common enough that silently dropping it is more
+ * surprising than an error — that's a deliberate change to this comment and
+ * the filter below, not a bug fix.)
+ */
+export async function fetchSecretsInventory(): Promise<SecretsInventory> {
+  const backendsJson = await secretsRequest("backends", "/api/backends");
+  const enabled = parseBackendNames(backendsJson).filter(isKnownStore);
+
+  // Sequential, not `Promise.all`: there is no ordering requirement between
+  // these three requests, but each independently resolves the operator token
+  // (`secretsRequest`'s own dynamic `import`), and this is a low-traffic
+  // console page, not a hot path — the simplicity of one request in flight
+  // at a time outweighs the small latency win from firing them together.
+  const openbaoResult = enabled.includes("openbao") ? await fetchSecretPaths("openbao") : null;
+  const gcpsmResult = enabled.includes("gcpsm") ? await fetchSecretPaths("gcpsm") : null;
+  const grantsJson = await secretsRequest("access grants", "/api/access/grants");
+
+  const grants = parseGrants(grantsJson);
+  const data = buildInventory({
+    openbao: openbaoResult?.paths ?? [],
+    gcpsm: gcpsmResult?.paths ?? [],
+    grants,
+  });
+
+  // Complete only if every store that was actually walked reported complete
+  // — a store never enabled (and so never walked) cannot make the inventory
+  // incomplete, but a truncated one sinks the whole inventory's flag, not
+  // just its own rows. See `SecretsInventory`'s doc comment for why.
+  const complete = [openbaoResult, gcpsmResult].every((r) => r === null || r.complete);
+
+  return { ...data, complete };
 }

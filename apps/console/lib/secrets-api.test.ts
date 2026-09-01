@@ -6,6 +6,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// Hoisted, for `fetchSecretsInventory` only (see below): it awaits several
+// `secretsRequest` calls back to back (backends, then a `Promise.all` of the
+// per-store walks and the grants read), each doing its own dynamic
+// `import("./auth/platform-token")`. A per-test `vi.doMock` — the pattern the
+// rest of this file uses for the single-hop `secretsRequest`/`fetchSecretPaths`
+// calls — applied inconsistently across that many hops, the same failure mode
+// documented in `platform-api.test.ts` next to its own `vi.hoisted`/`vi.mock`
+// fix: the real module ran and called next/headers' `cookies()` outside a
+// request scope, failing for a reason unrelated to what was under test.
+const inventoryAuthState = vi.hoisted(() => ({ token: "t" as string | null }));
+vi.mock("./auth/platform-token", () => ({
+  resolvePlatformApiToken: async () => ({ token: inventoryAuthState.token, reauthRequired: false }),
+}));
+
 describe("secretsApiOrigin", () => {
   it("is undefined when SECRETS_API_ORIGIN is unset", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "");
@@ -294,5 +308,126 @@ describe("fetchSecretPaths", () => {
     await fetchSecretPaths("gcpsm");
 
     expect(fetchMock.mock.calls[0][0]).toContain("backend=gcpsm");
+  });
+});
+
+describe("fetchSecretsInventory", () => {
+  /** Routes the three endpoints `fetchSecretsInventory` calls through one
+   *  `fetch` stub: `/api/backends`, `/api/secrets` (per store), and
+   *  `/api/access/grants`. */
+  function inventoryFetch(config: {
+    backends: string[];
+    default?: string;
+    trees?: Record<string, Record<string, Array<{ name: string; isFolder: boolean }>>>;
+    grants?: Array<{ namespace: string; app: string }>;
+  }) {
+    return vi.fn(async (url: string) => {
+      if (url.includes("/api/backends")) {
+        return new Response(
+          JSON.stringify({ backends: config.backends, default: config.default ?? config.backends[0] }),
+          { status: 200 },
+        );
+      }
+      if (url.includes("/api/access/grants")) {
+        return new Response(JSON.stringify({ grants: config.grants ?? [] }), { status: 200 });
+      }
+      const parsed = new URL(url);
+      const backend = parsed.searchParams.get("backend") ?? "";
+      const prefix = parsed.searchParams.get("prefix") ?? "/";
+      const tree = config.trees?.[backend] ?? {};
+      return new Response(JSON.stringify({ prefix, entries: tree[prefix] ?? [] }), { status: 200 });
+    });
+  }
+
+  // The whole point of reading `/api/backends` instead of hardcoding the two
+  // known stores: a deployment can run OpenBao only, and walking gcpsm
+  // anyway would hit a store the API never enabled — an error the operator
+  // cannot act on. This is the most important test in the task.
+  it("walks only the backends the API reports as enabled", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    const fetchMock = inventoryFetch({
+      backends: ["openbao"],
+      trees: { openbao: { "/": [{ name: "root-key", isFolder: false }] } },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretsInventory } = await import("./secrets-api");
+    const inventory = await fetchSecretsInventory();
+
+    expect(inventory.rows.map((r) => r.path)).toEqual(["root-key"]);
+    const gcpsmCalls = fetchMock.mock.calls.filter((call) =>
+      new URL(call[0] as string).searchParams.get("backend") === "gcpsm",
+    );
+    expect(gcpsmCalls.length).toBe(0);
+  });
+
+  it("derives readers from the grants endpoint", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.stubGlobal(
+      "fetch",
+      inventoryFetch({
+        backends: ["openbao", "gcpsm"],
+        trees: {
+          openbao: {
+            "/": [
+              { name: "mark8ly", isFolder: true },
+              { name: "orphan-key", isFolder: false },
+            ],
+            "/mark8ly/": [{ name: "db-password", isFolder: false }],
+          },
+          gcpsm: { "/": [] },
+        },
+        grants: [{ namespace: "mark8ly", app: "db-password" }],
+      }),
+    );
+
+    const { fetchSecretsInventory } = await import("./secrets-api");
+    const inventory = await fetchSecretsInventory();
+
+    const granted = inventory.rows.find((r) => r.path === "mark8ly/db-password");
+    const ungranted = inventory.rows.find((r) => r.path === "orphan-key");
+    expect(granted?.hasReader).toBe(true);
+    expect(ungranted?.hasReader).toBe(false);
+  });
+
+  // The completeness signal exists to spot a secret nothing can read. A
+  // truncated walk that still reports `complete: true` would present a
+  // partial estate as the whole one — a missing row silently reads as "it
+  // isn't there" instead of "we didn't look". One truncated store must sink
+  // the whole inventory's flag, not just its own rows.
+  it("reports the inventory incomplete when one store's walk truncates", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    // gcpsm is a self-referential tree: every prefix offers another "loop"
+    // folder, so it can never finish and MAX_DEPTH truncates it. openbao is
+    // a small, complete tree.
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/backends")) {
+        return new Response(JSON.stringify({ backends: ["openbao", "gcpsm"], default: "openbao" }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/api/access/grants")) {
+        return new Response(JSON.stringify({ grants: [] }), { status: 200 });
+      }
+      const parsed = new URL(url);
+      const backend = parsed.searchParams.get("backend");
+      const prefix = parsed.searchParams.get("prefix") ?? "/";
+      if (backend === "gcpsm") {
+        return new Response(
+          JSON.stringify({ prefix, entries: [{ name: "loop", isFolder: true }] }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({ prefix, entries: prefix === "/" ? [{ name: "root-key", isFolder: false }] : [] }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretsInventory } = await import("./secrets-api");
+    const inventory = await fetchSecretsInventory();
+
+    expect(inventory.complete).toBe(false);
   });
 });
