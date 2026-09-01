@@ -357,6 +357,20 @@ export const ROUTES = {
   // No `web` path: apps/web never served this. Its predecessor is
   // secret-service's own UI, a separate application being retired, which is
   // not what this field records.
+  //
+  // NOT pending, and no sidebar entry either — a deliberate mismatch, not an
+  // oversight. The surface is built and this route serves it, so `pending`
+  // (meaning "not built yet") would misdescribe it; but it has no sidebar
+  // entry until the chart cutover redeploys `secrets-api`, which is what
+  // actually answers requests here today. It IS reachable in the meantime,
+  // though: `lib/search.ts` builds the ⌘K command palette from route ids, not
+  // from nav config, so an operator holding `platform` can find "Platform ·
+  // Secrets" and land on it before that cutover. Landing there shows the
+  // calm, honest 501 "not configured" state (`SECRETS_UNAVAILABLE_TITLE` in
+  // `secrets/page.tsx`), never an error. This was accepted deliberately for
+  // the one phase this window lasts, rather than inventing a third
+  // rail-lever ("built but not yet reachable") that `pending`/`retired`
+  // don't already express.
   "platform.secrets": { mobile: "/platform/secrets", capability: "platform" },
 
   // Everything waiting on a human, across every product implementing §3.2,
