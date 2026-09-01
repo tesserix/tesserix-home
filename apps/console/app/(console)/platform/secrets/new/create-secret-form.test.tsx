@@ -84,17 +84,17 @@ describe("CreateSecretForm", () => {
     // Valid for OpenBao; the `--` is only a problem for Google Secret
     // Manager, where it is the separator a path is encoded with.
     fillPath("mark8ly/stripe/web--hook");
-    expect(screen.queryByRole("alert")).toBeNull();
 
     fireEvent.change(screen.getByLabelText(/^store$/i), { target: { value: "gcpsm" } });
 
     // A "valid" verdict left over from before the switch is a lie the
     // operator would act on, so the switch itself must produce the message.
+    // This is the whole test: two assertions that stood here before it —
+    // "no alert yet" before the switch, and "no write" after a submit with
+    // nothing awaited — were both incapable of failing, so they were
+    // deleted rather than dressed up. The submit-blocks-on-an-invalid-path
+    // property is pinned live by the invalid-path test above.
     expect(await screen.findByText(/may not contain "--"/i)).toBeInTheDocument();
-
-    fillKeyAndValue("STRIPE_WEBHOOK_SECRET", "hunter2");
-    clickCreate();
-    expect(writeSecretAction).not.toHaveBeenCalled();
   });
 
   it("a path that already holds a secret is refused, and writeSecretAction is never called", async () => {
@@ -104,10 +104,6 @@ describe("CreateSecretForm", () => {
     fillKeyAndValue("STRIPE_WEBHOOK_SECRET", "hunter2");
     clickCreate();
 
-    // Waited on the transition ENDING rather than on the refusal copy, so
-    // the "never called" assertion below is the one that fails when the
-    // guard is removed — not an earlier `findByText` that would mask which
-    // property actually broke.
     await waitFor(() => expect(secretExistsAction).toHaveBeenCalled());
     // Waits for the transition to have SETTLED into either outcome — the
     // refusal alert, or (were the guard removed) the success card — so the
@@ -170,8 +166,11 @@ describe("CreateSecretForm", () => {
     clickCreate();
 
     await screen.findByText(/^secret created\.$/i);
+    // The raw text check, not `queryByText`: a value interpolated beside
+    // other words never equals any single element's whole text. It also
+    // subsumes a `queryByDisplayValue` check — the success card replaces the
+    // form outright, so there is no input left to hold a display value.
     expect(document.body.textContent).not.toContain("a-very-distinctive-secret-value");
-    expect(screen.queryByDisplayValue("a-very-distinctive-secret-value")).toBeNull();
   });
 
   it("offers the grant seam after creating an OpenBao secret", async () => {
@@ -208,7 +207,11 @@ describe("CreateSecretForm", () => {
     render(<CreateSecretForm stores={["openbao"]} preferred={null} />);
 
     expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByTestId("create-secret-store-fixed")).toHaveTextContent("OpenBao");
+    // Found by its accessible name, not a test id: the static store field
+    // must carry a real label association (`aria-labelledby`), because a
+    // `<Label htmlFor>` pointing at a `<p>` is inert markup that names
+    // nothing.
+    expect(screen.getByLabelText(/^store$/i)).toHaveTextContent("OpenBao");
 
     fillPath("mark8ly/stripe/webhook");
     fillKeyAndValue("STRIPE_WEBHOOK_SECRET", "hunter2");
@@ -234,7 +237,7 @@ describe("CreateSecretForm", () => {
 
   it("a preferred store that is not enabled is not adopted", () => {
     render(<CreateSecretForm stores={["openbao"]} preferred="gcpsm" />);
-    expect(screen.getByTestId("create-secret-store-fixed")).toHaveTextContent("OpenBao");
+    expect(screen.getByLabelText(/^store$/i)).toHaveTextContent("OpenBao");
   });
 
   it("an empty key or value never reaches either action", async () => {

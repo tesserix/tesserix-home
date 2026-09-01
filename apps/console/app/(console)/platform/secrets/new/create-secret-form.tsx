@@ -9,7 +9,7 @@
 
 import Link from "next/link";
 import { type FormEvent, useState, useTransition } from "react";
-import { Button, Callout, CalloutDescription, CalloutTitle, Input, Label } from "@tesserix/web";
+import { Button, Callout, CalloutDescription, CalloutTitle, Input, Label, labelVariants } from "@tesserix/web";
 import { SecretValueField } from "@/components/secrets/secret-value-field";
 import { validateSecretPathForCreate } from "@/lib/secret-path";
 import type { SecretStore } from "@/lib/secrets";
@@ -287,36 +287,52 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
   return (
     <form onSubmit={handleSubmit} method="post" aria-label="Create secret">
       <div>
-        <Label htmlFor="create-secret-store">Store</Label>
         {onlyStore ? (
           // Static text, not a one-option select: with a single enabled
           // store there is no choice to offer, and a select that cannot
           // change anything reads as one that can.
-          <p id="create-secret-store" data-testid="create-secret-store-fixed">
-            {STORE_LABEL[onlyStore]}
-          </p>
+          //
+          // A `<Label htmlFor>` would be INERT here: `<p>` is not a
+          // labelable element, so the pairing would do nothing and this
+          // field would reach a screen reader with no accessible name at
+          // all. `labelVariants()` gives a `<span>` the same styling
+          // without claiming an association the markup cannot honour, and
+          // `aria-labelledby` is what actually makes the name real —
+          // asserted by `getByLabelText` in the test, which can only find
+          // this the way a screen reader would.
+          <>
+            <span id="create-secret-store-label" className={labelVariants()}>
+              Store
+            </span>
+            <p id="create-secret-store" aria-labelledby="create-secret-store-label">
+              {STORE_LABEL[onlyStore]}
+            </p>
+          </>
         ) : (
-          <select
-            id="create-secret-store"
-            className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-            value={store}
-            disabled={isPending}
-            onChange={(event) => handleStoreChange(event.target.value as SecretStore)}
-          >
-            {/* Present only while nothing is selected, and unselectable, so
-             *  "no default" stays visibly unanswered instead of silently
-             *  adopting whichever store happens to be first. */}
-            {store === "" && (
-              <option value="" disabled>
-                Choose a store
-              </option>
-            )}
-            {stores.map((candidate) => (
-              <option key={candidate} value={candidate}>
-                {STORE_LABEL[candidate]}
-              </option>
-            ))}
-          </select>
+          <>
+            <Label htmlFor="create-secret-store">Store</Label>
+            <select
+              id="create-secret-store"
+              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              value={store}
+              disabled={isPending}
+              onChange={(event) => handleStoreChange(event.target.value as SecretStore)}
+            >
+              {/* Present only while nothing is selected, and unselectable, so
+               *  "no default" stays visibly unanswered instead of silently
+               *  adopting whichever store happens to be first. */}
+              {store === "" && (
+                <option value="" disabled>
+                  Choose a store
+                </option>
+              )}
+              {stores.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {STORE_LABEL[candidate]}
+                </option>
+              ))}
+            </select>
+          </>
         )}
       </div>
 
