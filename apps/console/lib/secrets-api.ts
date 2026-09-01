@@ -350,14 +350,18 @@ function isKnownStore(name: string): name is SecretStore {
 
 /**
  * Parse `GET /api/backends`'s response into the backend names this
- * deployment has enabled (`{"backends": [...], "default": "..."}`).
+ * deployment has enabled, plus its declared default
+ * (`{"backends": [...], "default": "..."}`).
  *
  * Kept minimal and local rather than promoted to `secrets.ts`'s
- * boundary-parser style: nothing else in the console reuses this shape, and
- * `default` is not read at all — the inventory walk needs every enabled
- * backend, not the one a single-store picker would default to.
+ * boundary-parser style: nothing else in the console reuses this shape.
+ * `default` IS read here — `fetchSecretsInventory` still only wants
+ * `.backends` (every enabled store, not one to default to), but
+ * `fetchSecretStores` below is the single-store picker `default` exists
+ * for, and needs it. Both callers parse through this one function rather
+ * than duplicating the object-shape checks below.
  */
-function parseBackendNames(json: unknown): string[] {
+function parseBackends(json: unknown): { backends: string[]; default: string | null } {
   if (typeof json !== "object" || json === null || Array.isArray(json)) {
     throw new Error("secrets: /api/backends response is not an object");
   }
@@ -365,7 +369,8 @@ function parseBackendNames(json: unknown): string[] {
   if (!Array.isArray(backends) || !backends.every((b): b is string => typeof b === "string")) {
     throw new Error("secrets: /api/backends .backends is not an array of strings");
   }
-  return backends;
+  const defaultRaw = (json as { default?: unknown }).default;
+  return { backends, default: typeof defaultRaw === "string" ? defaultRaw : null };
 }
 
 /**
@@ -395,7 +400,7 @@ function parseBackendNames(json: unknown): string[] {
  */
 export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   const backendsJson = await secretsRequest("backends", "/api/backends");
-  const enabled = parseBackendNames(backendsJson).filter(isKnownStore);
+  const enabled = parseBackends(backendsJson).backends.filter(isKnownStore);
 
   // Concurrent: the two stores' walks and the grants read have no ordering
   // requirement between them, and each store's walk is already many
@@ -445,6 +450,38 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   const complete = [openbaoResult, gcpsmResult].every((r) => r === null || r.complete);
 
   return { ...data, complete };
+}
+
+/** The stores a create-secret picker can offer: every store this deployment
+ *  has enabled and this console knows how to render, plus which one (if
+ *  any) should be preselected. */
+export interface SecretStoreChoices {
+  readonly enabled: SecretStore[];
+  readonly preferred: SecretStore | null;
+}
+
+/**
+ * Ask `/api/backends` which stores this deployment has enabled, for a
+ * single-store picker (the create-secret form) rather than the whole-estate
+ * walk `fetchSecretsInventory` does.
+ *
+ * `preferred` is the API's declared `default`, but only when it actually
+ * names a store that's both enabled and known — a `default` naming a
+ * disabled or unrecognised store is `null`, not a store this console cannot
+ * offer. This function does not invent a fallback (e.g. `enabled[0]`) when
+ * `preferred` comes back `null`: whether to fall back, and to what, is the
+ * caller's call — a form might prefer to force an explicit choice instead of
+ * silently picking one for the operator.
+ */
+export async function fetchSecretStores(): Promise<SecretStoreChoices> {
+  const backendsJson = await secretsRequest("backends", "/api/backends");
+  const { backends, default: defaultName } = parseBackends(backendsJson);
+  const enabled = backends.filter(isKnownStore);
+  const preferred = defaultName !== null && isKnownStore(defaultName) && enabled.includes(defaultName)
+    ? defaultName
+    : null;
+
+  return { enabled, preferred };
 }
 
 /**
