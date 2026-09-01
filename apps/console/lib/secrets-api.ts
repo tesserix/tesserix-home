@@ -7,8 +7,8 @@
 import "server-only";
 
 import { PlatformApiError } from "./platform-api-error";
-import { buildInventory, parseGrants, parseSecretList } from "./secrets";
-import type { SecretsInventory, SecretStore } from "./secrets";
+import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
+import type { SecretDetail, SecretsInventory, SecretStore, SecretVersion } from "./secrets";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. Mirrors
@@ -89,14 +89,41 @@ export function __resetPlatformTokenModuleForTests(): void {
 }
 
 /**
- * A single GET-style call against secrets-api, mirroring `platformCall`'s
- * shape (the unwrapping-to-`.data` layer above it, `platformRequest`, has no
- * counterpart here yet — secrets-api does not speak the same envelope). The
- * operator token is the only credential this service accepts, so a missing
- * token is refused before the network call rather than sent and left to come
- * back as an indistinguishable 401.
+ * The non-GET part of a `secretsRequest` call: an HTTP method and a body to
+ * JSON-encode. Left as a loose options bag rather than `RequestInit` itself
+ * so the body stays a plain value here (JSON-encoded once, in one place)
+ * instead of every caller doing its own `JSON.stringify` and remembering the
+ * content-type header.
  */
-export async function secretsRequest(label: string, path: string): Promise<unknown> {
+export interface SecretsRequestInit {
+  readonly method?: string;
+  readonly body?: unknown;
+}
+
+/**
+ * A single call against secrets-api — GET by default, or whatever `init`
+ * asks for — mirroring `platformCall`'s shape (the unwrapping-to-`.data`
+ * layer above it, `platformRequest`, has no counterpart here yet —
+ * secrets-api does not speak the same envelope).
+ *
+ * `writeSecret` and `restoreSecretVersion` (below) extend this function with
+ * a `method`/`body` rather than getting a sibling helper: every other
+ * concern here — resolving and attaching the operator token, refusing before
+ * the network call when there is none, preserving the upstream status
+ * instead of flattening it, distinguishing a non-JSON body from a thrown
+ * error — is identical for a write and a read, and duplicating it into a
+ * second function would just be two copies to keep in sync (and two places
+ * a future fix could land in only one of).
+ *
+ * The operator token is the only credential this service accepts, so a
+ * missing token is refused before the network call rather than sent and left
+ * to come back as an indistinguishable 401.
+ */
+export async function secretsRequest(
+  label: string,
+  path: string,
+  init?: SecretsRequestInit,
+): Promise<unknown> {
   const origin = secretsApiOrigin();
   if (!origin) {
     throw new PlatformApiError(`${label}: SECRETS_API_ORIGIN is not set`, 501);
@@ -119,11 +146,20 @@ export async function secretsRequest(label: string, path: string): Promise<unkno
     );
   }
 
+  const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: "application/json" };
+  let body: string | undefined;
+  if (init?.body !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(init.body);
+  }
+
   let response: Response;
   try {
     response = await fetch(`${origin}${path}`, {
       cache: "no-store",
-      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      method: init?.method,
+      headers,
+      body,
     });
   } catch (cause) {
     throw new PlatformApiError(`${label}: request failed (${describe(cause)})`, undefined, {
@@ -384,4 +420,131 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   const complete = [openbaoResult, gcpsmResult].every((r) => r === null || r.complete);
 
   return { ...data, complete };
+}
+
+/**
+ * `path` is mount-relative, exactly as `fetchSecretPaths` produces it (e.g.
+ * `homechef/homechef-api/db-password`, never `/homechef/...` or
+ * `kv/homechef/...`). `secrets-api` matches `/api/secrets/*path`, so the
+ * leading slash belongs to the URL built here, not to the stored path — see
+ * the module doc comment on `fetchSecretPaths` for why a stray one breaks
+ * every match silently. Each segment is encoded on its own so a literal "/"
+ * inside a segment (which `parseSecretList` already rejects at the listing
+ * boundary — see `secrets.ts`) can never be produced by this call either.
+ */
+function encodeSecretPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * A secret's current shape: `GET /api/secrets/*path?backend=…`, returning
+ * the bare `secrets.Secret` struct (see `parseSecretDetail`'s doc comment for
+ * why nothing here ever carries a value).
+ */
+export async function fetchSecretDetail(store: SecretStore, path: string): Promise<SecretDetail> {
+  const json = await secretsRequest(
+    "secret detail",
+    `/api/secrets/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+  );
+  return parseSecretDetail(json);
+}
+
+/**
+ * A secret's version history: `GET /api/secret-versions/*path?backend=…`.
+ */
+export async function fetchSecretVersions(store: SecretStore, path: string): Promise<SecretVersion[]> {
+  const json = await secretsRequest(
+    "secret versions",
+    `/api/secret-versions/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+  );
+  return parseSecretVersions(json);
+}
+
+/**
+ * Parse `PUT /api/secrets/*path`'s response body (`{"path":…,"version":…,
+ * "backend":…}`) into a typed result. Kept local, like `parseBackendNames`
+ * above — nothing else in the console reuses this shape.
+ *
+ * `version` must be a POSITIVE number, not merely a number. OpenBao KV v2
+ * assigns versions starting at 1 and only increments, so a write response
+ * reporting `0` or negative is not a shape the server can legitimately
+ * return — it is a wrong response, and this is where a wrong shape should
+ * die, at the boundary, rather than travel further as a value some caller
+ * has to remember to re-check. `write-secret-form.tsx`'s `asRotateVersion`
+ * guards the same fact on the client for a different reason (a component
+ * should not hold a property that only happens to be true because another
+ * system behaves — see its own doc comment) but this check is the one that
+ * actually stops a malformed response from reaching it in the first place.
+ */
+function parseWriteResult(json: unknown): { path: string; version: number; backend: string } {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new Error("secrets: write response is not an object");
+  }
+  const { path, version, backend } = json as Record<string, unknown>;
+  if (typeof path !== "string") throw new Error("secrets: write response .path is not a string");
+  if (typeof version !== "number" || version <= 0) {
+    throw new Error("secrets: write response .version is not a positive number");
+  }
+  if (typeof backend !== "string") throw new Error("secrets: write response .backend is not a string");
+  return { path, version, backend };
+}
+
+/**
+ * Write a new version of a secret: `PUT /api/secrets/*path?backend=…`, body
+ * `{data, ifVersion?}`, returning the version the store assigned.
+ *
+ * `ifVersion` is optimistic concurrency: OpenBao takes it as a KV v2
+ * check-and-set, and GCP Secret Manager compares it against the newest live
+ * version itself (`secrets-api/internal/bao/kv.go`). A POSITIVE value is what
+ * actually requests the check — it must be the version the caller's form was
+ * rendered from, so a write built on stale data comes back as a 409 instead
+ * of silently overwriting whatever another operator wrote in the meantime.
+ * Callers should pass it on a rotate (the form read a real version) and omit
+ * it on a create (there is no version yet to check against).
+ *
+ * Omitted and `0` are THE SAME THING on the wire: `IfVersion` is a bare Go
+ * `int` with no binding tag (`secrets-api/internal/api/handlers/secrets.go`),
+ * so a JSON body with the key left out decodes to `0` there regardless, and
+ * `0` is the store's own sentinel for "no check requested". The `if` below
+ * exists only to keep the request body tidy for a create — not to preserve a
+ * distinction the server can see, because there isn't one. Do not "fix" this
+ * later by always sending the key (or by adding logic to strip a `0`): both
+ * read identically to `secrets-api`.
+ */
+export async function writeSecret(
+  store: SecretStore,
+  path: string,
+  data: Record<string, string>,
+  ifVersion?: number,
+): Promise<{ path: string; version: number; backend: string }> {
+  const body: { data: Record<string, string>; ifVersion?: number } = { data };
+  if (ifVersion !== undefined) {
+    body.ifVersion = ifVersion;
+  }
+  const json = await secretsRequest(
+    "write secret",
+    `/api/secrets/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+    { method: "PUT", body },
+  );
+  return parseWriteResult(json);
+}
+
+/**
+ * Restore a soft-deleted version: `POST /api/secret-versions/*path?backend=…`,
+ * body `{version}`. Only reverses a delete — a destroyed version is gone for
+ * good, and the store reports that as its own error rather than pretending
+ * to bring it back.
+ *
+ * Not called anywhere yet — this is 3b-ii groundwork (the restore control
+ * itself is a later task), so do not go hunting for a caller.
+ */
+export async function restoreSecretVersion(store: SecretStore, path: string, version: number): Promise<void> {
+  await secretsRequest(
+    "restore secret version",
+    `/api/secret-versions/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+    { method: "POST", body: { version } },
+  );
 }

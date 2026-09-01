@@ -17,7 +17,7 @@ import SecretsInventoryPage, {
   secretsReadError,
   secretsState,
 } from "./page";
-import { SecretsTable } from "./secrets-table";
+import { secretDetailHref, SecretsTable } from "./secrets-table";
 
 // The page is a server component, exercised the same way `outbox/page.test.tsx`
 // exercises its sibling: its default export is awaited and rendered directly,
@@ -51,6 +51,29 @@ describe("row-level reader flag", () => {
     expect(screen.getAllByText("No reader")).toHaveLength(1);
     // The GSM row renders its own, distinct chip — never the orphan chip.
     expect(screen.getByText("Access via IAM")).toBeInTheDocument();
+  });
+});
+
+// `secretDetailHref` is the only producer of the `?store=` param that
+// `parseStoreParam` (`[...path]/page.tsx`) fails closed on — an absent or
+// unrecognised value 404s rather than defaulting to openbao. Pinning the
+// exact href here, and round-tripping its query string back through
+// `parseStoreParam`, is what actually closes the loop between the two
+// tasks: a change to either side's param name or encoding would show up
+// here instead of only at request time in a real deployment.
+describe("secretDetailHref", () => {
+  it("builds the exact detail route href for a row", () => {
+    expect(secretDetailHref({ path: "mark8ly/homechef-api/db-password", store: "openbao" })).toBe(
+      "/platform/secrets/mark8ly/homechef-api/db-password?store=openbao",
+    );
+  });
+
+  it("encodes a store value's query string so parseStoreParam reads it back", async () => {
+    const { parseStoreParam } = await import("./[...path]/page");
+    const href = secretDetailHref({ path: "mark8ly/db-password", store: "gcpsm" });
+    const store = new URL(href, "https://example.test").searchParams.get("store");
+    expect(store).toBe("gcpsm");
+    expect(parseStoreParam(store ?? undefined)).toBe("gcpsm");
   });
 });
 

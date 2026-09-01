@@ -28,6 +28,50 @@ function bool(value: unknown, path: string): boolean {
   return value;
 }
 
+function num(value: unknown, path: string): number {
+  if (typeof value !== "number") fail(`${path} is not a number`);
+  return value;
+}
+
+function optionalStr(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return str(value, path);
+}
+
+/**
+ * Go's zero `time.Time`, serialised. `secrets.Secret.CreatedAt/UpdatedAt`
+ * and `Version.CreatedAt` are `time.Time` fields tagged `json:",omitempty"`
+ * — but `encoding/json`'s `omitempty` is a no-op on a struct type (it only
+ * ever suppresses a value that is the zero VALUE for a small set of
+ * primitive kinds — bool, numeric, string, pointer/interface/slice/map/array
+ * length — and `time.Time` is none of those), so a zero timestamp still
+ * serialises as this literal string rather than being omitted. It reaches
+ * here as a perfectly well-formed, non-empty string, which is exactly why
+ * `optionalStr` alone cannot catch it: there is nothing malformed about it
+ * to reject.
+ *
+ * Reachable, not hypothetical: a GCPSM secret whose versions are all deleted
+ * or destroyed leaves `UpdatedAt` zero (`gcpsm.Describe`'s loop that would
+ * set it never fires), and `timeFrom`/`parseTime` return `time.Time{}` on
+ * any absent or unparseable upstream timestamp.
+ */
+const ZERO_TIME = "0001-01-01T00:00:00Z";
+
+/**
+ * `optionalStr`, plus treating Go's serialised zero `time.Time` as absent.
+ * See {@link ZERO_TIME} for why that string, specifically, needs its own
+ * check rather than being caught by `optionalStr`'s `undefined` check.
+ *
+ * Fixed at THIS boundary, not in the Go service: `secrets.Secret`'s JSON
+ * contract may have other readers, and "zero time serialises as a truthy
+ * string" is a fact about `encoding/json`, not a bug to route around
+ * upstream of every consumer.
+ */
+function optionalTimestamp(value: unknown, path: string): string | undefined {
+  const parsed = optionalStr(value, path);
+  return parsed === ZERO_TIME ? undefined : parsed;
+}
+
 export type SecretStore = "openbao" | "gcpsm";
 
 /** One entry in a directory listing — either a secret or a folder of them. */
@@ -202,4 +246,68 @@ export function buildInventory(input: {
       noReader: sorted.filter((r) => r.hasReader === false).length,
     },
   };
+}
+
+/**
+ * A secret's shape: `secrets-api`'s `Store` interface has no `Read` method
+ * (the design spec says why: "so no handler can leak one"), so nothing this
+ * console can fetch ever carries a value. `keys` is a list of key NAMES.
+ *
+ * Do not add a `value` field here, ever — see `parseSecretDetail`.
+ */
+export interface SecretDetail {
+  readonly path: string;
+  readonly version: number;
+  readonly keys: string[];
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+}
+
+/** One version in a secret's history. */
+export interface SecretVersion {
+  readonly version: number;
+  readonly createdAt?: string;
+  readonly destroyed: boolean;
+  readonly deleted: boolean;
+}
+
+/**
+ * Parse `GET /api/secrets/*path`'s response — the bare `secrets.Secret`
+ * struct, not wrapped in an envelope — into a `SecretDetail`.
+ *
+ * Built field by field from known keys, never by spreading `json`: a spread
+ * would carry forward any field the input happens to have, including one
+ * shaped like a secret value if the service ever grew a way to return one.
+ * The console has no legitimate use for a value and must never be able to
+ * hold one in a type a UI could render — see `SecretDetail`'s doc comment.
+ */
+export function parseSecretDetail(json: unknown): SecretDetail {
+  if (!isRecord(json)) fail("response is not an object");
+  return {
+    path: str(json.path, "path"),
+    version: num(json.version, "version"),
+    keys: Array.isArray(json.keys)
+      ? json.keys.map((k, i) => str(k, `keys[${i}]`))
+      : fail("keys is not an array"),
+    createdAt: optionalTimestamp(json.createdAt, "createdAt"),
+    updatedAt: optionalTimestamp(json.updatedAt, "updatedAt"),
+  };
+}
+
+/**
+ * Parse `GET /api/secret-versions/*path`'s response
+ * (`{"path":…,"versions":[…]}`) into its version list.
+ */
+export function parseSecretVersions(json: unknown): SecretVersion[] {
+  if (!isRecord(json)) fail("response is not an object");
+  if (!Array.isArray(json.versions)) fail("versions is not an array");
+  return json.versions.map((v, i) => {
+    if (!isRecord(v)) fail(`versions[${i}] is not an object`);
+    return {
+      version: num(v.version, `versions[${i}].version`),
+      createdAt: optionalTimestamp(v.createdAt, `versions[${i}].createdAt`),
+      destroyed: bool(v.destroyed, `versions[${i}].destroyed`),
+      deleted: bool(v.deleted, `versions[${i}].deleted`),
+    };
+  });
 }

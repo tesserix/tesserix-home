@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInventory, parseGrants, parseSecretList } from "./secrets";
+import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
 
 describe("parseSecretList", () => {
   it("reads the entries array", () => {
@@ -145,5 +145,91 @@ describe("buildInventory", () => {
       grants: [{ namespace: "homechef", app: "homechef-api" }],
     });
     expect(rows[0].hasReader).toBe(true);
+  });
+});
+
+describe("parseSecretDetail", () => {
+  it("reads a secret's shape", () => {
+    expect(parseSecretDetail({ path: "a/b/c", version: 3, keys: ["password"] })).toMatchObject({
+      path: "a/b/c",
+      version: 3,
+      keys: ["password"],
+    });
+  });
+
+  it("rejects a detail with a non-numeric version", () => {
+    expect(() => parseSecretDetail({ path: "a/b/c", version: "3", keys: [] })).toThrow();
+  });
+
+  // A response carrying a value would mean the service grew an endpoint that
+  // returns one. Parse it out rather than passing it along: the console has no
+  // legitimate use for it, and a type that can hold one invites a UI that shows it.
+  it("ignores any value-shaped field rather than surfacing it", () => {
+    const parsed = parseSecretDetail({
+      path: "a/b",
+      version: 1,
+      keys: ["k"],
+      data: { k: "hunter2" },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.data).toBeUndefined();
+    expect(JSON.stringify(parsed)).not.toContain("hunter2");
+  });
+
+  // Go's `encoding/json` `omitempty` is a no-op on a `time.Time` struct
+  // field, so `secrets.Secret.CreatedAt`/`UpdatedAt` — both `time.Time`,
+  // tagged `json:",omitempty"` — serialise their zero value as this literal
+  // string rather than omitting the key. This is the shape the server
+  // ACTUALLY produces for a GCPSM secret whose versions are all deleted or
+  // destroyed (`gcpsm.Describe`'s loop that would set `UpdatedAt` never
+  // fires) — present-but-zero, never an omitted key, which is why a fixture
+  // that omits `createdAt`/`updatedAt` entirely (as this suite used to)
+  // cannot catch the bug: real absence and real zero look identical only if
+  // you never construct the zero case.
+  it("treats Go's serialised zero time.Time as absent, not as a real timestamp", () => {
+    const parsed = parseSecretDetail({
+      path: "a/b",
+      version: 1,
+      keys: ["k"],
+      createdAt: "0001-01-01T00:00:00Z",
+      updatedAt: "0001-01-01T00:00:00Z",
+    });
+    expect(parsed.createdAt).toBeUndefined();
+    expect(parsed.updatedAt).toBeUndefined();
+  });
+
+  it("still passes through a real timestamp", () => {
+    const parsed = parseSecretDetail({
+      path: "a/b",
+      version: 1,
+      keys: ["k"],
+      createdAt: "2026-08-01T12:00:00Z",
+      updatedAt: "2026-08-30T09:30:00Z",
+    });
+    expect(parsed.createdAt).toBe("2026-08-01T12:00:00Z");
+    expect(parsed.updatedAt).toBe("2026-08-30T09:30:00Z");
+  });
+});
+
+describe("parseSecretVersions", () => {
+  it("reads versions, preserving destroyed and deleted", () => {
+    expect(parseSecretVersions({ versions: [{ version: 2, destroyed: false, deleted: true }] })).toEqual([
+      { version: 2, destroyed: false, deleted: true, createdAt: undefined },
+    ]);
+  });
+
+  // Same server-shape fact as `parseSecretDetail` above: `Version.CreatedAt`
+  // is also a `time.Time` with a no-op `omitempty`, so a version whose
+  // timestamp was never recorded arrives as the zero-time string, present,
+  // not an omitted key.
+  it("treats a present-but-zero createdAt the same as absent", () => {
+    expect(
+      parseSecretVersions({
+        versions: [{ version: 1, createdAt: "0001-01-01T00:00:00Z", destroyed: false, deleted: false }],
+      }),
+    ).toEqual([{ version: 1, createdAt: undefined, destroyed: false, deleted: false }]);
+  });
+
+  it("rejects a versions response that is not a list", () => {
+    expect(() => parseSecretVersions({ versions: "nope" })).toThrow();
   });
 });

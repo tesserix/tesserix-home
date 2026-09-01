@@ -28,13 +28,17 @@ import { describe, expect, it } from "vitest";
 
 const CONSOLE_ROOT = path.resolve(__dirname, "../..");
 
-/** The six render-path checks, as of #285. Each hides a surface or a button
- *  and none of them authorises anything. */
+/** Every render-path check in this console. Each hides a surface or a
+ *  button and none of them authorises anything. Keep this list exhaustive —
+ *  it is not derived from anything, so a page with its own
+ *  `hasCapability(session?.roles, …)` gate that is missing here is
+ *  unprotected against the regression this file exists to catch. */
 const RENDER_PATH_FILES = [
   "app/(console)/platform/tickets/[id]/page.tsx",
   "app/(console)/platform/tools/page.tsx",
   "app/(console)/platform/crm/[organisation]/page.tsx",
   "app/(console)/platform/billing/catalog/page.tsx",
+  "app/(console)/platform/secrets/[...path]/page.tsx",
 ] as const;
 
 function source(relative: string): string {
@@ -59,8 +63,9 @@ describe("the render path stays on the cookie", () => {
 });
 
 describe("the verb gate is live everywhere it decides a mutation", () => {
-  /** Every server action and route handler that gates a write. Logout is the
-   *  one deliberate exception and is asserted separately below. */
+  /** Every server action and route handler that gates a write. Logout and
+   *  the secrets write action are the two deliberate exceptions, both
+   *  asserted separately below. */
   const GATED_FILES = [
     "app/(console)/platform/crm/import/actions.ts",
     "app/(console)/platform/tickets/[id]/actions.ts",
@@ -100,5 +105,23 @@ describe("the verb gate is live everywhere it decides a mutation", () => {
     // CALL, not on the string.)
     expect(text).not.toContain("await checkOperatorCapabilityLive(");
     expect(text).toContain("DELIBERATELY");
+  });
+
+  it("the secrets write action is the other exception, and stays that way on purpose", () => {
+    // Unlike every other GATED_FILES entry, this action never calls the live
+    // gate at all — not synchronous, not live, nothing. That is correct: the
+    // API refuses the write on the operator's own token regardless of what
+    // this action does (`resolvePlatformApiToken` resolves the OPERATOR'S OWN
+    // Zitadel token here, not a shared service principal, and `PUT
+    // /api/secrets/*path` sits in secrets-api's `Live` group, requiring
+    // `rotate-credentials` — pinned by
+    // `TestPlatformOnlyPrincipalCannotReachLiveRoutes`). A console-side check
+    // here would be a duplicate of that gate, not a second layer of defence.
+    const text = source("app/(console)/platform/secrets/[...path]/actions.ts");
+    expect(text).not.toContain("await checkOperatorCapabilityLive(");
+    // The exception is written down, not merely present — same requirement
+    // as logout's above: a reader who finds the odd one out must find the
+    // reason beside it in the source, not just in this test.
+    expect(text).toContain("DELIBERATE EXCEPTION");
   });
 });
