@@ -320,3 +320,7 @@ Expected: no nav hit. (The ⌘K palette reaches it via route id — that is know
 **Not covered:** grants, whitelist proposals, the reviews queue (3b-ii); notifications (3c); delete and destroy — deliberately left to 3b-ii so that destroy, which is irreversible, lands beside the access flow that gives it context rather than as a button added in passing.
 
 **Type consistency.** `SecretDetail`, `SecretVersion` and the two fetchers are defined in Task 1 and consumed unchanged in Tasks 3–5. `writeSecret`'s `ifVersion` is optional throughout and is never defaulted to a number.
+
+## What this phase did not reach
+
+`WriteSecretForm` (Task 4) has always had a create mode — no `ifVersion` — and this phase shipped it unreachable: every task here operates on a secret that already exists (`[...path]/page.tsx` 404s a nonexistent path before the form ever renders), and no task owned the question of how an operator first reaches create. That gap sat between tasks, invisible to any review of a single task's diff, and stood for a week before `2026-09-01-console-create-secret.md` gave it a route. The check this earns: a plan that adds a mode must name the route that reaches it.
