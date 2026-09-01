@@ -32,6 +32,24 @@ function generateSecretValue(): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/**
+ * Reduces the raw `currentVersion` prop to the one value this form is ever
+ * willing to treat as "a secret already exists here": a POSITIVE number.
+ *
+ * `parseSecretDetail` types a secret's version as a plain `number`, which
+ * admits `0` — and `0` is indistinguishable from "omitted" on the wire (see
+ * `writeSecret`'s own doc comment in `lib/secrets-api.ts`). Without this
+ * guard, a `0` would still satisfy `!== undefined`, label the button
+ * "Rotate secret", and then send `ifVersion: 0` — the exact same request a
+ * CREATE sends, i.e. no concurrency check at all, on a write presented to
+ * the operator as protected by one. This function is the one place that
+ * distinction is enforced, so both the label (`isRotate`) and the argument
+ * (`ifVersion`) can never disagree about what counts as a rotate.
+ */
+function asRotateVersion(currentVersion: number | undefined): number | undefined {
+  return currentVersion !== undefined && currentVersion > 0 ? currentVersion : undefined;
+}
+
 export interface WriteSecretFormProps {
   readonly store: SecretStore;
   /** Mount-relative, exactly as `fetchSecretDetail`/`writeSecret` take it. */
@@ -41,10 +59,12 @@ export interface WriteSecretFormProps {
    * a secret already exists at `path` and this is a ROTATE — that value is
    * sent as `ifVersion` so a write built on stale data is refused (409)
    * instead of silently overwriting whatever another operator wrote in the
-   * meantime. `undefined` means there is no secret here yet (a CREATE), and
-   * `ifVersion` is omitted entirely — see `writeSecret`'s own doc comment in
-   * `lib/secrets-api.ts` for why "omitted" and "0" are the same thing on the
-   * wire, and why this form must not try to send one to distinguish them.
+   * meantime. `undefined` (or a non-positive number — see
+   * {@link asRotateVersion}) means there is no secret here yet (a CREATE),
+   * and `ifVersion` is omitted entirely — see `writeSecret`'s own doc
+   * comment in `lib/secrets-api.ts` for why "omitted" and "0" are the same
+   * thing on the wire, and why this form must not try to send one to
+   * distinguish them.
    */
   readonly currentVersion?: number;
 }
@@ -56,8 +76,9 @@ export interface WriteSecretFormProps {
  * state, never on anything fetched, because there is nothing to fetch: `GET
  * /api/secrets/*path` returns `SecretDetail` (path, version, key NAMES,
  * timestamps — see `lib/secrets.ts`), never a value, and secrets-api's
- * `Store` interface has no `Read` method at all. The copy in this form's
- * hint text says what is true: this is the only moment the value can be
+ * `Store` interface has no `Read` method at all. The hint text beside the
+ * field says what is true, unconditionally (spec §7's own wording, not
+ * softened for a pasted value): this is the only moment the value can be
  * retrieved, because nothing in the console can read a stored value back
  * afterwards, whichever way it got in.
  *
@@ -67,23 +88,44 @@ export interface WriteSecretFormProps {
  * and the guarantee that actually matters is about every moment AFTER
  * creation — which the absent `Store.Read` and the GSM write-blind IAM role
  * already provide regardless of what this form does at creation time.
+ *
+ * No `name` on either input, and this is deliberate, not an oversight: the
+ * `<form>` has no `action`/`method` of its own, so a submit that somehow
+ * fires before this component hydrates would fall back to the browser's
+ * native default — a GET to the current URL. A `name`d field would then
+ * serialise into that URL's query string, landing the secret's value in the
+ * address bar and every access log downstream of it. `method="post"` closes
+ * that path outright (a native POST fallback still hits the current route
+ * with no server action mounted there and simply fails, rather than leaking
+ * anything into a URL); the absence of `name` closes it a second, redundant
+ * way. Do not add `name` attributes here for a form library's benefit
+ * without re-checking this reasoning first.
  */
 export function WriteSecretForm({ store, path, currentVersion }: WriteSecretFormProps) {
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [revealed, setRevealed] = useState(false);
-  const [generated, setGenerated] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ version: number } | null>(null);
+  // Seeded from the prop once, then OWNED by this component: a successful
+  // write returns the version the store actually assigned, and every
+  // subsequent write in the same session (via "Write another version") must
+  // check against THAT version, not the one this page happened to render
+  // with. Without this, a second write after a successful rotate would keep
+  // sending the now-stale prop version forever and 409 every time — the
+  // bug this state exists to close. See `handleSubmit`'s success branch for
+  // where it is advanced.
+  const [ifVersion, setIfVersion] = useState<number | undefined>(asRotateVersion(currentVersion));
   const [isPending, startTransition] = useTransition();
 
-  const isRotate = currentVersion !== undefined;
+  const isRotate = ifVersion !== undefined;
 
   function handleGenerate() {
     setValue(generateSecretValue());
-    setGenerated(true);
     setCopied(false);
+    setCopyError(null);
   }
 
   /**
@@ -102,12 +144,35 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
     setRevealed((current) => !current);
   }
 
+  /**
+   * `navigator.clipboard` is only present in a secure context (HTTPS, or
+   * localhost) — over plain HTTP on any other origin it is `undefined`, so
+   * calling `.writeText` on it throws a synchronous `TypeError` before any
+   * Promise even exists. And even where the API exists, a denied permission
+   * or an unfocused document rejects the Promise it returns. Both cases used
+   * to be silent here (a missing guard for the first, a missing `.catch` for
+   * the second) — silent in a way that matters more on THIS form than most:
+   * copy exists because a stored value can never be read back once written
+   * (see this file's header), so a copy that failed without telling the
+   * operator is a value that is now unrecoverable both here and wherever it
+   * was meant to go.
+   */
   function handleCopy() {
     if (!value) return;
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    });
+    setCopyError(null);
+    if (!navigator.clipboard?.writeText) {
+      setCopyError("Clipboard access isn't available here. Select the value and copy it manually.");
+      return;
+    }
+    navigator.clipboard.writeText(value).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1400);
+      },
+      () => {
+        setCopyError("Copy failed. Select the value and copy it manually.");
+      },
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -125,19 +190,24 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
     }
 
     startTransition(async () => {
-      const outcome = await writeSecretAction(store, path, { [trimmedKey]: value }, currentVersion);
+      const outcome = await writeSecretAction(store, path, { [trimmedKey]: value }, ifVersion);
       if (!outcome.ok) {
         setError(outcome.message);
         return;
       }
       // The value is dropped from state here, not merely hidden — the
       // success view below has nothing to accidentally render even if a
-      // future edit forgets to gate on `result`.
+      // future edit forgets to gate on `result`. `ifVersion` is advanced to
+      // the version the store just assigned, so a second write in this same
+      // session (via "Write another version") checks against what is
+      // actually there now, not the version this page was rendered from.
       setResult({ version: outcome.version });
+      setIfVersion(outcome.version);
       setKey("");
       setValue("");
       setRevealed(false);
-      setGenerated(false);
+      setCopied(false);
+      setCopyError(null);
     });
   }
 
@@ -161,7 +231,7 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
   }
 
   return (
-    <form onSubmit={handleSubmit} aria-label={isRotate ? "Rotate secret" : "Create secret"}>
+    <form onSubmit={handleSubmit} method="post" aria-label={isRotate ? "Rotate secret" : "Create secret"}>
       <div>
         <Label htmlFor="write-secret-key">Key name</Label>
         <Input
@@ -170,8 +240,17 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
           onChange={(event) => setKey(event.target.value)}
           disabled={isPending}
           spellCheck={false}
+          aria-describedby="write-secret-key-hint"
         />
-        <p className="text-xs text-muted-foreground">Key names are recorded in the audit trail. Values never are.</p>
+        {/* `@tesserix/web`'s `Input` declares `helperText` in its types, but
+         *  the shipped runtime bundle never reads it (verified: neither
+         *  `helperText` nor `errorText` appears anywhere in
+         *  `dist/index.mjs`) — passing it would silently do nothing, not
+         *  wire the `aria-describedby` its doc comment implies. Wired by
+         *  hand here instead: a real id on the hint, referenced explicitly. */}
+        <p id="write-secret-key-hint" className="text-xs text-muted-foreground">
+          Key names are recorded in the audit trail. Values never are.
+        </p>
       </div>
 
       <div>
@@ -183,13 +262,14 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
             value={value}
             onChange={(event) => {
               setValue(event.target.value);
-              setGenerated(false);
               setCopied(false);
+              setCopyError(null);
             }}
             disabled={isPending}
             spellCheck={false}
             placeholder="Paste a value, or generate one"
             autoComplete="off"
+            aria-describedby="write-secret-value-hint"
           />
           <Button
             type="button"
@@ -214,14 +294,23 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
             Generate
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          {generated
-            ? // The load-bearing sentence spec §7 requires verbatim in intent:
-              // this really is the only chance to retrieve this value, because
-              // nothing in the console can read a stored value back afterwards.
-              "Copy it now if something outside this estate needs it — a payment provider's dashboard, say. Nothing here can read it back afterwards, so this is the only moment it can be retrieved."
-            : "Hidden while you type. Nothing in the console can read a stored value back, whichever way this one gets in."}
+        <p id="write-secret-value-hint" className="text-xs text-muted-foreground">
+          {/* Unconditional per spec §7's own wording — a pasted value gets
+           *  the identical sentence a generated one does. An earlier version
+           *  only said this after Generate was clicked, on the reasoning
+           *  that a pasted value "probably" has another copy somewhere
+           *  (a password manager); review flagged that "probably" was doing
+           *  real work an operator who typed a value on the spot does not
+           *  get the benefit of. */}
+          Nothing here can read a stored value back afterwards, whichever way it gets in — this is the only
+          moment it can be retrieved. Copy it now if something outside this estate needs it, such as a payment
+          provider's dashboard.
         </p>
+        {copyError && (
+          <Callout variant="destructive" role="alert">
+            <CalloutDescription>{copyError}</CalloutDescription>
+          </Callout>
+        )}
       </div>
 
       {error && (

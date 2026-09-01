@@ -143,6 +143,74 @@ describe("WriteSecretForm", () => {
     expect(call[3]).toBeUndefined();
   });
 
+  it("a second write after a successful rotate carries the version the store just assigned, not the stale prop", async () => {
+    writeSecretAction.mockResolvedValueOnce({ ok: true, version: 6 });
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
+    typeKeyAndValue("PASSWORD", "first-value");
+    await submit();
+
+    expect(writeSecretAction).toHaveBeenNthCalledWith(
+      1,
+      "openbao",
+      "mark8ly/db-password",
+      { PASSWORD: "first-value" },
+      5,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /write another version/i }));
+    typeKeyAndValue("PASSWORD", "second-value");
+    fireEvent.click(screen.getByRole("button", { name: /write secret|create secret|rotate secret/i }));
+    await waitFor(() => expect(writeSecretAction).toHaveBeenCalledTimes(2));
+
+    // NOT 5 (the prop this form was rendered with) — the store is at 6 now,
+    // because the first write just told this component so.
+    expect(writeSecretAction).toHaveBeenNthCalledWith(
+      2,
+      "openbao",
+      "mark8ly/db-password",
+      { PASSWORD: "second-value" },
+      6,
+    );
+  });
+
+  it("currentVersion={0} does not present as a rotate — 0 and omitted are the same thing on the wire", async () => {
+    render(<WriteSecretForm store="openbao" path="mark8ly/new-secret" currentVersion={0} />);
+    expect(screen.getByRole("button", { name: /create secret/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /rotate secret/i })).toBeNull();
+
+    typeKeyAndValue("PASSWORD", "hunter2");
+    await submit();
+
+    const call = writeSecretAction.mock.calls[0];
+    expect(call[3]).toBeUndefined();
+  });
+
+  it("Copy surfaces a distinguishable failure when the Clipboard API is unavailable", async () => {
+    // A secure-context absence, not a permission denial: `navigator.clipboard`
+    // itself is undefined here, exactly as jsdom already has it before the
+    // `beforeEach` above assigns a mock onto it — this test removes that
+    // mock to exercise the real absent-API path.
+    Object.assign(navigator, { clipboard: undefined });
+
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" />);
+    typeKeyAndValue("PASSWORD", "hunter2");
+    fireEvent.click(screen.getByRole("button", { name: /copy value/i }));
+
+    expect(await screen.findByText(/clipboard access isn.t available/i)).toBeInTheDocument();
+  });
+
+  it("Copy surfaces a distinguishable failure when the clipboard write is rejected", async () => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" />);
+    typeKeyAndValue("PASSWORD", "hunter2");
+    fireEvent.click(screen.getByRole("button", { name: /copy value/i }));
+
+    expect(await screen.findByText(/copy failed/i)).toBeInTheDocument();
+  });
+
   it("the success state does not display the value", async () => {
     render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
     typeKeyAndValue("PASSWORD", "a-very-distinctive-secret-value");
