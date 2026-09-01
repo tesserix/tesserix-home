@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const fetchSecretsInventory = vi.fn();
 
@@ -99,6 +100,132 @@ describe("counts", () => {
       screen.getByRole("button", { name: /Google Secret Manager \(4\)/ }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /No reader \(7\)/ })).toBeInTheDocument();
+  });
+});
+
+describe("path search", () => {
+  // The property this surface exists to add: finding one row among 602
+  // without scrolling. Matches on `path` only, case-insensitively, and never
+  // touches `counts` — see the "counts must not move" test below for that
+  // half of the contract.
+  const rows = [
+    { path: "kv/data/mark8ly/stripe", store: "openbao" as const, hasReader: false },
+    { path: "kv/data/mark8ly/sendgrid", store: "openbao" as const, hasReader: true },
+    { path: "prod-STRIPE-webhook-secret", store: "gcpsm" as const, hasReader: null },
+  ];
+
+  it("filters rows to a case-insensitive substring match on path", async () => {
+    const user = userEvent.setup();
+    const data = inventory({
+      rows,
+      counts: { all: 3, openbao: 2, gcpsm: 1, noReader: 1 },
+    });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    await user.type(screen.getByRole("searchbox", { name: /search by path/i }), "stripe");
+
+    // Matches both the openbao and the gcpsm row despite the differing case
+    // of the query against "STRIPE" — a case-sensitive match would drop the
+    // second row.
+    expect(screen.getByText("kv/data/mark8ly/stripe")).toBeInTheDocument();
+    expect(screen.getByText("prod-STRIPE-webhook-secret")).toBeInTheDocument();
+    // The row whose path does not contain "stripe" must be gone.
+    expect(screen.queryByText("kv/data/mark8ly/sendgrid")).toBeNull();
+  });
+
+  it("composes with the store chip as AND, not OR", async () => {
+    const user = userEvent.setup();
+    const data = inventory({
+      rows,
+      counts: { all: 3, openbao: 2, gcpsm: 1, noReader: 1 },
+    });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    // "stripe" matches a row in both stores; the OpenBao chip should narrow
+    // that down to only the OpenBao match, not restore the GSM one.
+    await user.click(screen.getByRole("button", { name: /OpenBao \(2\)/ }));
+    await user.type(screen.getByRole("searchbox", { name: /search by path/i }), "stripe");
+
+    expect(screen.getByText("kv/data/mark8ly/stripe")).toBeInTheDocument();
+    expect(screen.queryByText("prod-STRIPE-webhook-secret")).toBeNull();
+    expect(screen.queryByText("kv/data/mark8ly/sendgrid")).toBeNull();
+  });
+
+  it("never filters the counts row — they stay pinned to the whole estate", async () => {
+    const user = userEvent.setup();
+    const data = inventory({
+      rows,
+      counts: { all: 3, openbao: 2, gcpsm: 1, noReader: 1 },
+    });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    // A query matching exactly one of three rows would move every count to 1
+    // if the counts were derived from the filtered view instead of `counts`.
+    await user.type(screen.getByRole("searchbox", { name: /search by path/i }), "sendgrid");
+
+    expect(screen.getByRole("button", { name: /All \(3\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /OpenBao \(2\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Google Secret Manager \(1\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /No reader \(1\)/ })).toBeInTheDocument();
+  });
+
+  it("shows the search-specific empty message once a query matches nothing", async () => {
+    const user = userEvent.setup();
+    const data = inventory({ rows, counts: { all: 3, openbao: 2, gcpsm: 1, noReader: 1 } });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    await user.type(screen.getByRole("searchbox", { name: /search by path/i }), "no-such-secret");
+
+    expect(screen.getByText("No secrets match this search.")).toBeInTheDocument();
+    expect(screen.queryByText("No secrets match this filter.")).toBeNull();
+  });
+
+  it("shows the filter-only empty message when no query is typed", async () => {
+    const user = userEvent.setup();
+    const data = inventory({
+      rows: [{ path: "only/row", store: "gcpsm" as const, hasReader: null }],
+      counts: { all: 1, openbao: 0, gcpsm: 1, noReader: 0 },
+    });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /OpenBao \(0\)/ }));
+
+    expect(screen.getByText("No secrets match this filter.")).toBeInTheDocument();
   });
 });
 

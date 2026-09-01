@@ -8,6 +8,7 @@ import {
   Callout,
   CalloutDescription,
   CalloutTitle,
+  Input,
   Table,
   TableBody,
   TableCell,
@@ -137,6 +138,35 @@ function matchesFilter(row: InventoryRow, filter: FilterId): boolean {
   }
 }
 
+/**
+ * Does `row.path` match a typed search query?
+ *
+ * Case-insensitive substring on the path only — never the store or reader
+ * columns, which already have their own dedicated chips above. An empty (or
+ * all-whitespace) query matches everything, so a freshly-typed-then-cleared
+ * box behaves exactly like no search was ever entered.
+ */
+function matchesSearch(row: InventoryRow, query: string): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (trimmed === "") return true;
+  return row.path.toLowerCase().includes(trimmed);
+}
+
+/**
+ * Copy for the "nothing survived the filter" row.
+ *
+ * The prototype's original wording — "No secrets match this filter." — is
+ * accurate when only a store chip narrowed the view, but wrong once the
+ * visitor typed a path: it points at "this filter" when the actual reason is
+ * the search box, and an operator debugging a zero-result search should see
+ * their own query implicated, not a vaguer noun. Kept in the same short,
+ * declarative register as the original rather than growing into a sentence
+ * that echoes the typed text back.
+ */
+function noMatchesMessage(searchQuery: string): string {
+  return searchQuery.trim() === "" ? "No secrets match this filter." : "No secrets match this search.";
+}
+
 export interface SecretsTableProps {
   inventory: SecretsInventory;
   state: SurfaceState;
@@ -147,14 +177,25 @@ export interface SecretsTableProps {
 export function SecretsTable({ inventory, state, emptyMessage, reauthReturnTo }: SecretsTableProps) {
   const { rows, counts, complete } = inventory;
   const [filter, setFilter] = useState<FilterId>("all");
+  // Ephemeral, like `filter` above: neither is backed by the URL, and
+  // graduating only one of the two to a query param would leave a search
+  // that survives a reload sitting next to a chip that doesn't — an
+  // asymmetry worse than either choice on its own.
+  const [searchQuery, setSearchQuery] = useState("");
 
   // The rows shown are filtered client-side, but the counts above them never
   // are — see `FilterDescriptor`'s `count` below, which reads `counts`
   // directly rather than `rows.filter(...).length`. A count that moved with
   // the filter would answer "how many are on screen", a question this row of
   // buttons already answers by the table beneath it; its job is "how many are
-  // in the estate".
-  const visibleRows = useMemo(() => rows.filter((row) => matchesFilter(row, filter)), [rows, filter]);
+  // in the estate". The search box composes with the chip (AND, not OR) by
+  // adding a second predicate to the same `filter` call rather than a
+  // separate pass, so there is still exactly one place "what's on screen"
+  // is decided.
+  const visibleRows = useMemo(
+    () => rows.filter((row) => matchesFilter(row, filter) && matchesSearch(row, searchQuery)),
+    [rows, filter, searchQuery],
+  );
 
   const filters: readonly FilterDescriptor[] = [
     { id: "all", label: "All", count: counts.all },
@@ -168,29 +209,48 @@ export function SecretsTable({ inventory, state, emptyMessage, reauthReturnTo }:
       {complete ? null : <IncompleteInventoryNotice />}
 
       {state.kind === "ready" ? (
-        <div
-          className="flex flex-wrap items-center gap-2"
-          role="group"
-          aria-label="Filter secrets"
-        >
-          {filters.map((f) => (
-            <Button
-              key={f.id}
-              type="button"
-              size="sm"
-              variant={filter === f.id ? "default" : "outline"}
-              aria-pressed={filter === f.id}
-              onClick={() => setFilter(f.id)}
+        <div className="flex flex-wrap items-end gap-4">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Filter secrets"
+          >
+            {filters.map((f) => (
+              <Button
+                key={f.id}
+                type="button"
+                size="sm"
+                variant={filter === f.id ? "default" : "outline"}
+                aria-pressed={filter === f.id}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label} ({f.count})
+              </Button>
+            ))}
+          </div>
+
+          <div>
+            <label
+              className="text-xs uppercase tracking-wide text-muted-foreground"
+              htmlFor="secrets-search"
             >
-              {f.label} ({f.count})
-            </Button>
-          ))}
+              Search by path
+            </label>
+            <Input
+              id="secrets-search"
+              type="search"
+              className="mt-1 h-9 w-64"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="stripe, db-password…"
+            />
+          </div>
         </div>
       ) : null}
 
       {state.kind === "ready" ? (
         visibleRows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No secrets match this filter.</p>
+          <p className="text-sm text-muted-foreground">{noMatchesMessage(searchQuery)}</p>
         ) : (
           <Table aria-label="Secrets inventory">
             <TableHeader>
