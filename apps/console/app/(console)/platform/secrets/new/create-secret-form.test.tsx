@@ -235,7 +235,7 @@ describe("CreateSecretForm", () => {
     expect(writeSecretAction).not.toHaveBeenCalled();
   });
 
-  it("a preferred store that is not enabled is not adopted", () => {
+  it("with a single enabled store, that store wins even when preferred names the other one", () => {
     render(<CreateSecretForm stores={["openbao"]} preferred="gcpsm" />);
     expect(screen.getByLabelText(/^store$/i)).toHaveTextContent("OpenBao");
   });

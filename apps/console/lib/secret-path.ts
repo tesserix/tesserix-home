@@ -46,10 +46,6 @@ const GCPSM_SEGMENT_PATTERN = /^[a-zA-Z0-9_-]+$/;
  */
 const GCPSM_PATH_SEPARATOR = "--";
 
-export interface SecretPathProblem {
-  readonly message: string;
-}
-
 export type SecretPathValidation = { ok: true; cleaned: string } | { ok: false; message: string };
 
 function isControlChar(ch: string): boolean {

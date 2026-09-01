@@ -49,14 +49,16 @@ interface CreateResult {
 /**
  * Picks the store this form opens on.
  *
- * `preferred` is checked against `stores` rather than trusted: it comes from
- * the API's reported default, and a default naming a store that is not in
- * the enabled list would preselect an option this form does not render —
- * leaving `store` holding a value the operator can neither see nor change.
+ * With a single enabled store there is no choice to make, so that store wins
+ * outright — `preferred` is not even consulted. With both stores enabled,
+ * `SecretStore` is exactly `"openbao" | "gcpsm"`, so any non-null `preferred`
+ * is necessarily one of `stores`; there is no third value it could name that
+ * would need rejecting. `preferred` is still checked for null so "no
+ * default" falls through to "" and the operator picks.
  */
 function initialStore(stores: readonly SecretStore[], preferred: SecretStore | null): SecretStore | "" {
   if (stores.length === 1) return stores[0];
-  if (preferred !== null && stores.includes(preferred)) return preferred;
+  if (preferred !== null) return preferred;
   return "";
 }
 
@@ -87,10 +89,10 @@ function initialStore(stores: readonly SecretStore[], preferred: SecretStore | n
  *    gets it wrong rather than after submitting.
  *
  * No `name` on any input, for the reason spelled out in full on
- * `WriteSecretForm`: this `<form>` has no `action`/`method` of its own, so a
- * `name`d field would serialise the value into the URL on a pre-hydration
- * native GET fallback. `method="post"` closes that path and the absent
- * `name` closes it a second time.
+ * `WriteSecretForm`: this `<form>` has no `action` of its own, so a `name`d
+ * field would serialise the value into the URL on a pre-hydration native GET
+ * fallback. `method="post"` closes that path and the absent `name` closes it
+ * a second time.
  */
 export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
   const [store, setStore] = useState<SecretStore | "">(() => initialStore(stores, preferred));
@@ -261,8 +263,9 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
           <div>
             <p>Grant an app access to this?</p>
             <p className="text-sm text-muted-foreground">
-              Nothing can read this secret until an app is whitelisted for it. That is a proposal someone
-              reviews and merges — separate from the secret, which already exists.
+              If no app is whitelisted for this namespace and app yet, nothing can read it — the secret's own
+              page shows who can. Whitelisting is a proposal someone reviews and merges — separate from the
+              secret, which already exists.
             </p>
             <Link href={href}>Grant access…</Link>
             <Button type="button" variant="outline" size="sm" onClick={handleCreateAnother}>

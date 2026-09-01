@@ -99,7 +99,7 @@ export const STORE_READ_FAILED_MESSAGE =
  * own "nowhere to create a secret" callout for that, because the store list
  * is the form's input, not this surface's content.
  */
-export function createSecretState(error: unknown): SurfaceState {
+function createSecretState(error: unknown): SurfaceState {
   return resolveState({
     // The page awaits its fetch before rendering, so there is no client-side
     // pending window — Suspense fallbacks, not this state, cover the wait.

@@ -4,6 +4,13 @@ import type { SecretStore } from "@/lib/secrets";
 
 const STORES: readonly SecretStore[] = ["openbao", "gcpsm"];
 
+// `maxSecretPathLen` in path.go counts BYTES; the length check below
+// (`trimmed.length`) counts UTF-16 code units. They agree for ASCII paths
+// but diverge for one carrying multi-byte characters, so a path near the
+// 512 limit that this validator accepts can still be rejected by the API.
+// Not fixed here — this validator is UX only, the API remains the actual
+// control (see the file-level doc comment on `secret-path.ts`).
+
 describe("validateSecretPathForCreate", () => {
   it("accepts a well-formed 3-segment path for both stores", () => {
     for (const store of STORES) {
@@ -121,5 +128,11 @@ describe("validateSecretPathForCreate", () => {
     const result = validateSecretPathForCreate("   ", "openbao");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/empty/);
+  });
+
+  it("rejects a segment containing a control character", () => {
+    const result = validateSecretPathForCreate("a/b\u0001c/d", "openbao");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toMatch(/control character/);
   });
 });

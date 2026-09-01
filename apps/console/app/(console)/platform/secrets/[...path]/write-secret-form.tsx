@@ -52,7 +52,7 @@ export interface WriteSecretFormProps {
 
 /**
  * No `name` on either input, and this is deliberate, not an oversight: the
- * `<form>` has no `action`/`method` of its own, so a submit that somehow
+ * `<form>` has no `action` of its own, so a submit that somehow
  * fires before this component hydrates would fall back to the browser's
  * native default — a GET to the current URL. A `name`d field would then
  * serialise into that URL's query string, landing the secret's value in the
