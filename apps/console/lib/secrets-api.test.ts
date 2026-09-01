@@ -784,10 +784,12 @@ describe("createGrant", () => {
   });
 
   // The response's `grants[].secretPrefix` cannot be joined against the
-  // mount-inclusive shape `GET /api/access/grants` returns (#476) — so a 403
-  // (lacks `rotate-credentials`) must still surface as a `PlatformApiError`
-  // the caller can distinguish from a store-side refusal, exactly like
-  // `writeSecret`'s equivalent test.
+  // mount-inclusive shape `GET /api/access/grants` returns (#476) — that
+  // mismatch is why `createGrant` discards its response body rather than
+  // parsing it. This test covers a separate concern: a 403 (lacks
+  // `rotate-credentials`) must still surface as a `PlatformApiError` carrying
+  // the upstream status, so `isForbidden` can fold it into the no-permission
+  // copy — exactly like `writeSecret`'s equivalent test.
   it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
     vi.doMock("./auth/platform-token", () => ({

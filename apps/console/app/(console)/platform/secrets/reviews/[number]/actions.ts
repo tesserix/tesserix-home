@@ -113,7 +113,17 @@ export async function approveAndMergeAction(number: number): Promise<SecretsWrit
   const mergeResult = await withReviewWrite(
     target,
     () => mergeProposal(number),
-    () => ({ action: "secrets.review.merge", summary: { merged: 1 }, target }),
+    // `target` is overridden here with the merge commit SHA appended — the
+    // "accountable fact only known from the operation's result" case
+    // `AuditDescription.target`'s own doc comment describes. Without this,
+    // the merge commit `mergeProposal` returns would be discarded entirely:
+    // nothing else on the console reads or stores it, and the audit row is
+    // the one place a record of it can live.
+    (result) => ({
+      action: "secrets.review.merge",
+      summary: { merged: 1 },
+      target: `${target}@${result.sha}`,
+    }),
     "The merge did not go through.",
   );
   if (!mergeResult.ok) {

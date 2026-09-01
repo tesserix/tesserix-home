@@ -89,10 +89,12 @@ describe("approveAndMergeAction", () => {
     expect(mergeProposal).toHaveBeenCalledWith(42);
     // Two audit rows, approve before merge — the same separate rows
     // secrets-api's own handler writes (`ActionReviewApprove`/
-    // `ActionReviewMerge`).
+    // `ActionReviewMerge`). The merge row's target carries the merge commit
+    // SHA `mergeProposal` returned — the only place this console records it,
+    // since it discards the sha from the operator-facing result.
     expect(auditInserts()).toEqual([
       { action: "secrets.review.approve", target: "pull/42" },
-      { action: "secrets.review.merge", target: "pull/42" },
+      { action: "secrets.review.merge", target: "pull/42@abc123" },
     ]);
   });
 

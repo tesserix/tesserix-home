@@ -721,7 +721,13 @@ export async function approveProposal(number: number): Promise<void> {
  * (`{"number":…,"sha":…,"status":"merged"}`) is not just a receipt — the
  * merge commit SHA is the one piece of information this call produces that
  * nothing else on the console can re-derive, so it is returned rather than
- * discarded.
+ * discarded. Its only caller, `approveAndMergeAction`
+ * (`reviews/[number]/actions.ts`), writes it into the audit row's `target`
+ * rather than the operator-facing result: `SecretsWriteResult` (the type
+ * every review/access write action returns) carries no data payload on
+ * success, and widening it for this one caller was judged not worth the
+ * ripple into `access-actions.ts`'s grant/revoke actions, which have no sha
+ * to carry. The audit trail is where it is recorded today.
  */
 export async function mergeProposal(number: number): Promise<{ number: number; sha: string }> {
   const json = await secretsRequest("merge review", `/api/reviews/${encodeURIComponent(String(number))}/merge`, {
