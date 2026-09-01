@@ -170,6 +170,7 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
           onChange={(event) => setKey(event.target.value)}
           disabled={isPending}
           spellCheck={false}
+          autoComplete="off"
           aria-describedby="write-secret-key-hint"
         />
         <p id="write-secret-key-hint" className="text-xs text-muted-foreground">

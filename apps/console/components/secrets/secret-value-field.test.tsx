@@ -101,6 +101,13 @@ describe("SecretValueField", () => {
     expect(await screen.findByText(/clipboard access isn.t available/i)).toBeInTheDocument();
   });
 
+  it("sets autoComplete to new-password, not off — Chrome ignores off on credential-classified inputs", () => {
+    render(<ControlledField />);
+    const value = screen.getByLabelText(/^value$/i) as HTMLInputElement;
+
+    expect(value.autocomplete).toBe("new-password");
+  });
+
   it("Copy surfaces a distinguishable failure when the clipboard write is rejected", async () => {
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },

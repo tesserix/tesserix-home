@@ -270,6 +270,11 @@ describe("WriteSecretForm", () => {
     expect(await screen.findByText(/^secret rotated\./i)).toBeInTheDocument();
   });
 
+  it("the key name field disables autofill so Chrome does not offer the operator's saved email there", () => {
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" />);
+    expect(screen.getByLabelText(/key name/i)).toHaveAttribute("autoComplete", "off");
+  });
+
   it("the success state does not display the value", async () => {
     render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
     typeKeyAndValue("PASSWORD", "a-very-distinctive-secret-value");

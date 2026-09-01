@@ -240,6 +240,11 @@ describe("CreateSecretForm", () => {
     expect(screen.getByLabelText(/^store$/i)).toHaveTextContent("OpenBao");
   });
 
+  it("the key name field disables autofill so Chrome does not offer the operator's saved email there", () => {
+    render(<CreateSecretForm stores={BOTH_STORES} preferred="openbao" />);
+    expect(screen.getByLabelText(/key name/i)).toHaveAttribute("autoComplete", "off");
+  });
+
   it("an empty key or value never reaches either action", async () => {
     render(<CreateSecretForm stores={BOTH_STORES} preferred="openbao" />);
     fillPath("mark8ly/stripe/webhook");

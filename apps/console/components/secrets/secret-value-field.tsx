@@ -137,7 +137,18 @@ export function SecretValueField({ value, onChange, disabled, id = "secret-value
           disabled={disabled}
           spellCheck={false}
           placeholder="Paste a value, or generate one"
-          autoComplete="off"
+          /* `autoComplete="off"` does NOT work here — observed live in Chrome,
+           * reproducibly, including after the form resets post-create.
+           * Chrome ignores `off` on inputs it heuristically classifies as
+           * credential fields, and this one is `type="password"` whenever
+           * the value is hidden, which is its default state. Chrome then
+           * autofills the field immediately preceding this one — the Key
+           * name text input — as the "username" paired with this
+           * "password", so the operator's saved email/password lands in
+           * Key name/Value. `autocomplete="new-password"` is the documented
+           * opt-out Chrome actually honors for a password-shaped field that
+           * is not a login password. */
+          autoComplete="new-password"
           aria-describedby={hintId}
         />
         <Button

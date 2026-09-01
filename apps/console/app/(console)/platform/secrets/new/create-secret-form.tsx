@@ -374,6 +374,7 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
           onChange={(event) => setKey(event.target.value)}
           disabled={isPending}
           spellCheck={false}
+          autoComplete="off"
           aria-describedby="create-secret-key-hint"
         />
         <p id="create-secret-key-hint" className="text-xs text-muted-foreground">
