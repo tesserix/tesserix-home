@@ -143,6 +143,8 @@ describe("console-native surfaces record no apps/web path", () => {
     //     is not what this field records.
     //   - platform.secretsReviews: same predecessor gap as platform.secrets —
     //     apps/web never served a review queue for secret access changes.
+    //   - platform.newSecret: same predecessor gap again. secret-service's own
+    //     UI had a create dialog; apps/web never did.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
@@ -151,6 +153,7 @@ describe("console-native surfaces record no apps/web path", () => {
       "platform.auditLog",
       "platform.secrets",
       "platform.secretsReviews",
+      "platform.newSecret",
       "platform.inbox",
       "platform.billing",
       "platform.billingCatalog",

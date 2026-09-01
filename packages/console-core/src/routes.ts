@@ -407,6 +407,29 @@ export const ROUTES = {
   // `secrets/[...path]` above.
   "platform.secretsReviews": { mobile: "/platform/secrets/reviews", capability: "platform" },
 
+  // Creating a secret — the route the write form's create mode never had.
+  // `[...path]/page.tsx` turns a 404 into `notFound()`, so a path holding
+  // nothing has no detail page to offer a create from; this is the way in,
+  // and the inventory's header action is the way to it.
+  //
+  // `platform`, not `rotate-credentials`, and NOT because the page is
+  // harmless — the page itself gates on `platform` AND `rotate-credentials`
+  // together and refuses to draw the form without both, because secrets-api
+  // refuses the write without both. This field is DISCOVERY, and discovery
+  // has to be at least as wide as the real gate or the palette misleads by
+  // omission: an operator who can reach the surface but not complete the
+  // write should find it and read why, not fail to find it and conclude the
+  // console cannot create secrets. Same reasoning as `platform.secrets` and
+  // `platform.secretsReviews` above, where it is written out in full.
+  //
+  // NO nav entry, deliberately, and here that is a statement rather than a
+  // leftover: the rail lists SURFACES, and a create action is not one.
+  // Operators arrive from the inventory's header, which is where this
+  // console puts page actions.
+  //
+  // No `web` predecessor, matching the two secrets routes above.
+  "platform.newSecret": { mobile: "/platform/secrets/new", capability: "platform" },
+
   // Everything waiting on a human, across every product implementing §3.2,
   // from platform-api's inbox module (#352).
   //

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -8,6 +8,31 @@ vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
   fetchSecretsInventory: (...args: unknown[]) => fetchSecretsInventory(...args),
 }));
+
+// `getCurrentSession` and `requiresCapability` back the New secret action's
+// render-path gate. Mocked because the real `getCurrentSession` reads the
+// request's cookies, which do not exist when a server component is awaited
+// directly. `hasCapability` is deliberately NOT mocked, matching
+// `[...path]/page.test.tsx` — the gate tests below are evidence about the
+// real capability decision, not a stand-in for it.
+const getCurrentSession = vi.fn();
+vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tesserix/platform-auth")>()),
+  getCurrentSession: (...args: unknown[]) => getCurrentSession(...args),
+}));
+
+const requiresCapability = vi.fn((..._args: unknown[]) => true);
+vi.mock("@/lib/internal-access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/internal-access")>()),
+  requiresCapability: (...args: unknown[]) => requiresCapability(...args),
+}));
+
+beforeEach(() => {
+  getCurrentSession.mockReset();
+  getCurrentSession.mockResolvedValue(null);
+  requiresCapability.mockReset();
+  requiresCapability.mockReturnValue(true);
+});
 
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { SecretsInventory } from "@/lib/secrets";
@@ -344,5 +369,61 @@ describe("completeness", () => {
       />,
     );
     expect(screen.queryByText(/may be incomplete/i)).toBeNull();
+  });
+});
+
+describe("the way in to creating a secret", () => {
+  // The entry point whose absence is the bug this whole change closes: the
+  // write form has always had a create mode and nothing could reach it,
+  // because `[...path]/page.tsx` turns a 404 into `notFound()`.
+  function signIn(roles: readonly string[]) {
+    getCurrentSession.mockResolvedValue({
+      sub: "operator-1",
+      email: "ava@tesserix.app",
+      roles,
+      iat: 0,
+      exp: 0,
+    });
+  }
+
+  beforeEach(() => {
+    fetchSecretsInventory.mockResolvedValue(inventory());
+  });
+
+  it("offers New secret, pointing at the create route, to a fully capable operator", async () => {
+    signIn(["platform", "rotate-credentials"]);
+
+    render(await SecretsInventoryPage());
+
+    // The href is asserted, not just the label: a New secret button linking
+    // anywhere else is exactly as broken as no button at all, and the create
+    // route is unreachable by any other means.
+    expect(screen.getByRole("link", { name: "New secret" })).toHaveAttribute(
+      "href",
+      "/platform/secrets/new",
+    );
+  });
+
+  it("does not offer it to a platform-only operator", async () => {
+    // `PUT /api/secrets/*path` sits in secrets-api's `live` tier and needs
+    // `rotate-credentials` too, so offering this operator the control would
+    // walk them into a page that can only tell them no.
+    signIn(["platform"]);
+
+    render(await SecretsInventoryPage());
+
+    expect(screen.queryByRole("link", { name: "New secret" })).toBeNull();
+  });
+
+  it("offers it before cutover, when no provider requires capabilities", async () => {
+    // `requiresCapability()` is false under `google`, where sessions carry no
+    // roles at all — the gate must not hide the control from every operator
+    // on deploy.
+    requiresCapability.mockReturnValue(false);
+    getCurrentSession.mockResolvedValue(null);
+
+    render(await SecretsInventoryPage());
+
+    expect(screen.getByRole("link", { name: "New secret" })).toBeInTheDocument();
   });
 });
