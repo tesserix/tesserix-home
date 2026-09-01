@@ -251,6 +251,34 @@ describe("deleteSecretAction", () => {
     expect(lastAuditInsert().action).toBe("capability.refused");
   });
 
+  // `withAccessWrite` checks `platform` AND `rotate-credentials` — both,
+  // never as alternatives (see that function's own doc comment). Every
+  // other test in this file signs in with `undefined` (fails on the very
+  // first check) or with both capabilities present (passes both), so
+  // neither proves the SECOND check does anything: deleting the
+  // `rotate-credentials` check would satisfy every other test in this file
+  // unchanged. These two cases hold one capability back at a time, so each
+  // is refused only if ITS check is actually still there.
+  it("refuses an operator who holds `platform` but not `rotate-credentials`", async () => {
+    signIn(["platform"]);
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", true);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(lastAuditInsert().action).toBe("capability.refused");
+  });
+
+  it("refuses an operator who holds `rotate-credentials` but not `platform`", async () => {
+    signIn(["rotate-credentials"]);
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", true);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(lastAuditInsert().action).toBe("capability.refused");
+  });
+
   it("folds a PlatformApiError 403 into the SAME no-permission message a CapabilityError produces", async () => {
     signIn(["platform", "rotate-credentials"]);
     vi.mocked(deleteSecret).mockRejectedValue(
