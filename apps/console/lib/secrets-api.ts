@@ -36,17 +36,22 @@ export function secretsApiOrigin(): string | undefined {
  * static import preserves that property; the import still only happens at
  * first call, lazily, and only on the server.
  *
- * The memo also fixes a genuine concurrency bug, not just a style
- * preference: `fetchSecretsInventory` fires several `secretsRequest` calls
- * concurrently (`Promise.all`), and without this cache each one would do its
- * own first-time `import("./auth/platform-token")`. Two concurrent
- * first-imports of the same specifier raced under Vitest's SSR module
- * runner — confirmed in isolation with nothing but
- * `Promise.all([secretsRequest(...), secretsRequest(...)])` sharing a
- * `vi.mock` — and one of the two would resolve the *real* module instead of
- * the mock, throwing `cookies() was called outside a request scope`. With
- * only one `import()` call ever made (every caller awaits the same cached
- * promise), there is nothing left to race.
+ * The memo is also what let `fetchSecretsInventory` go back to firing its
+ * several `secretsRequest` calls concurrently (`Promise.all`). Without it,
+ * each call did its own first-time `import("./auth/platform-token")`, and
+ * two of those concurrent first-imports of the same specifier raced under
+ * Vitest's SSR module runner rewiring its mock graph — confirmed in
+ * isolation with nothing but `Promise.all([secretsRequest(...),
+ * secretsRequest(...)])` sharing a `vi.mock` — with one of the two
+ * resolving the *real* module instead of the mock, throwing `cookies() was
+ * called outside a request scope`. That is not a claim about ESM generally:
+ * the module loader dedupes `import()` by resolved specifier, so concurrent
+ * first-time imports of the same module do not race there, and nothing here
+ * was observed to race outside this test runner's mock rewiring. The memo
+ * removes the race by removing the repeated `import()` calls it depends on
+ * — every caller now awaits the one promise resolved here — which also
+ * happens to mean the module is only ever resolved once instead of once per
+ * request.
  */
 let tokenModule: Promise<typeof import("./auth/platform-token")> | undefined;
 function platformTokenModule(): Promise<typeof import("./auth/platform-token")> {
@@ -331,6 +336,16 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   // resolves the operator-token module exactly once and every caller awaits
   // that same cached promise, so there is no first-import race between
   // these three calls.
+  // `Promise.all` rejects the whole call if any one of these three requests
+  // fails outright (a network error, a non-2xx from `secretsRequest`) —
+  // deliberately, not merely as a consequence of using `Promise.all`. A
+  // failed request means we do not know what that store's secrets are at
+  // all; that's a different situation from a walk that ran and reports
+  // `complete: false`, where we know exactly what we didn't see. Collapsing
+  // the former into a partial inventory would present "we couldn't ask" as
+  // if it were "we asked and some was missing" — the same silent-shrinkage
+  // failure `fetchSecretPaths`'s own doc comment argues against for a single
+  // store, just one level up.
   const [openbaoResult, gcpsmResult, grantsJson] = await Promise.all([
     enabled.includes("openbao") ? fetchSecretPaths("openbao") : Promise.resolve(null),
     enabled.includes("gcpsm") ? fetchSecretPaths("gcpsm") : Promise.resolve(null),
