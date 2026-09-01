@@ -11,6 +11,7 @@ vi.mock("@/lib/secrets-api", async (importOriginal) => ({
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { SecretsInventory } from "@/lib/secrets";
 import SecretsInventoryPage, {
+  emptyMessageFor,
   SECRETS_EMPTY_MESSAGE,
   SECRETS_UNAVAILABLE_TITLE,
   secretsReadError,
@@ -101,6 +102,31 @@ describe("empty state", () => {
     );
     render(await SecretsInventoryPage());
     expect(screen.getByText(SECRETS_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+
+  // Finding 3 of the whole-branch review: an empty `rows` with `complete:
+  // false` must not render the all-clear message beneath a callout that says
+  // the list may be short — the two would contradict each other on screen.
+  describe("when the walk was cut short", () => {
+    it("emptyMessageFor returns the qualified message, not the all-clear", () => {
+      const message = emptyMessageFor({ complete: false });
+      expect(message).not.toBe(SECRETS_EMPTY_MESSAGE);
+      expect(message).toMatch(/cut short/i);
+    });
+
+    it("emptyMessageFor returns the all-clear when the walk finished", () => {
+      expect(emptyMessageFor({ complete: true })).toBe(SECRETS_EMPTY_MESSAGE);
+    });
+
+    it("renders the qualified message end-to-end, never the all-clear", async () => {
+      fetchSecretsInventory.mockResolvedValue(
+        inventory({ rows: [], counts: { all: 0, openbao: 0, gcpsm: 0, noReader: 0 }, complete: false }),
+      );
+      render(await SecretsInventoryPage());
+      expect(screen.queryByText(SECRETS_EMPTY_MESSAGE)).toBeNull();
+      expect(screen.getByText(/cut short/i)).toBeInTheDocument();
+      expect(screen.getByText(/may be incomplete/i)).toBeInTheDocument();
+    });
   });
 });
 

@@ -49,9 +49,29 @@ import { SecretsTable } from "./secrets-table";
  * calm, not broken, nothing to retry.
  */
 
-/** Copy for the plain `empty` state — no secrets in any enabled store.
- *  Exported so the test asserts the shipped string. */
+/** Copy for the plain `empty` state — no secrets in any enabled store, and the
+ *  walk that looked reached every leaf. Exported so the test asserts the
+ *  shipped string. */
 export const SECRETS_EMPTY_MESSAGE = "No secrets found in any configured store.";
+
+/**
+ * The `empty` copy when rows are zero AND the walk that produced them was cut
+ * short (`complete: false`).
+ *
+ * `empty` is still the right `SurfaceState` — there is genuinely nothing to
+ * tabulate from what was read — but `SECRETS_EMPTY_MESSAGE` would assert a
+ * clean estate this surface cannot back: "no secrets" and "no secrets in the
+ * part we managed to search" are different claims, and only the second is
+ * true here. `IncompleteInventoryNotice` (in `./secrets-table`) is what makes
+ * the reason visible; this function is what stops the empty state's own text
+ * from contradicting it — the same problem `emptyMessageFor` in
+ * `outbox/page.tsx` solves for its sibling surface, and the same fix.
+ */
+export function emptyMessageFor(input: { complete: boolean }): string {
+  if (input.complete) return SECRETS_EMPTY_MESSAGE;
+  return "No secrets found in the part of the estate this walk reached before it was cut " +
+    "short — this is not evidence the rest of the estate has none.";
+}
 
 /**
  * Copy for the 501, which is NOT an error and must not read as one.
@@ -141,7 +161,7 @@ export default async function SecretsInventoryPage() {
       <SecretsTable
         inventory={inventory}
         state={secretsState({ error, rows: inventory.rows })}
-        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        emptyMessage={emptyMessageFor({ complete: inventory.complete })}
         reauthReturnTo="/platform/secrets"
       />
     </div>
