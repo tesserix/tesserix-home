@@ -101,6 +101,23 @@ describe("SecretValueField", () => {
     expect(await screen.findByText(/clipboard access isn.t available/i)).toBeInTheDocument();
   });
 
+  it("renders Reveal and Copy inside the value field, with Generate outside it", () => {
+    render(<ControlledField />);
+    const value = screen.getByLabelText(/^value$/i);
+    // The prototype's `.valfield`: the input and the two icon buttons share
+    // one positioned wrapper, which is what puts the icons over the field's
+    // right edge instead of floating them loose beside it. Generate is the
+    // wrapper's sibling, not its child.
+    const field = value.parentElement as HTMLElement;
+
+    expect(field).toContainElement(screen.getByRole("button", { name: /reveal value/i }));
+    expect(field).toContainElement(screen.getByRole("button", { name: /copy value/i }));
+    expect(field).not.toContainElement(screen.getByRole("button", { name: /generate/i }));
+    // Without reserved padding a long revealed value runs underneath the two
+    // buttons overlaying the field.
+    expect(value.className).toMatch(/\bpr-/);
+  });
+
   it("sets autoComplete to new-password, not off — Chrome ignores off on credential-classified inputs", () => {
     render(<ControlledField />);
     const value = screen.getByLabelText(/^value$/i) as HTMLInputElement;
