@@ -94,10 +94,22 @@ describe("proposal number validation", () => {
 });
 
 describe("the proposal detail surface", () => {
-  it("renders the not-found state on a PlatformApiError 404, rather than throwing an unhandled error", async () => {
-    fetchProposal.mockRejectedValue(new PlatformApiError("not found", 404));
+  // No test asserting a 404-to-notFound() mapping here: `GET
+  // /api/reviews/:number` never returns 404 (see `page.tsx`'s comment on
+  // this branch), so such a test would pin behaviour that cannot occur.
 
-    await expectNotFound(renderPage("42"));
+  // This route inherits its 503 handling from `reviewsState` (imported from
+  // `../page`) rather than implementing its own — see the import's doc
+  // comment. Nothing here re-verifies that reuse still produces the "not
+  // configured" surface state, so a future change that stops sharing
+  // `reviewsState` (or changes its 503 branch) would go uncaught without
+  // this test.
+  it("renders the 'not configured' state on the reviewer's 503, matching the queue page", async () => {
+    fetchProposal.mockRejectedValue(new PlatformApiError("no review repository is configured", 503));
+
+    render(await renderPage("42"));
+
+    expect(screen.getByText(/not configured/i)).toBeInTheDocument();
   });
 
   it("renders the proposal's title and diff on success", async () => {

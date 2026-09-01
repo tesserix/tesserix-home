@@ -25,10 +25,14 @@ import { ProposalsTable } from "./proposals-table";
  * `platform.secretsReviews`'s route-id comment in
  * `packages/console-core/src/routes.ts`.
  *
- * # Why this page asks for nothing beyond `platform`
+ * # Why this page needs no capability check of its own
  *
- * Reading the queue and acting on an entry are different acts, and this page
- * only does the first. `secrets-api.ts` groups its endpoints accordingly:
+ * This page performs no capability check — there is no per-route view
+ * enforcement in this console at all (`middleware.ts` checks only session
+ * validity and `isInternal(...)`; a route id's `capability` field only drives
+ * ⌘K palette and nav visibility, see `lib/search.ts`). The real gate is
+ * entirely server-side: reading the queue and acting on an entry are
+ * different acts, and `secrets-api.ts` groups its endpoints accordingly:
  * `GET /api/reviews` is in the `read` group (`platform` alone), while
  * approve/merge/reject are in `live` (`platform` + `rotate-credentials`) —
  * see the doc comments on `fetchProposals` and `approveProposal`. If this

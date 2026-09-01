@@ -377,14 +377,24 @@ export const ROUTES = {
   // `tesserix-k8s` — `secrets-api`'s `GET /api/reviews`.
   //
   // `platform`, not `rotate-credentials` — see `platform.secrets`'s comment
-  // above for what that capability gates and why. The reason this ID takes
-  // the surface capability rather than the verb is the two-tier design
-  // itself: if merely LOOKING at the queue required `rotate-credentials`,
-  // every operator who could see a proposal could also approve or merge it,
-  // and the queue/detail split would collapse to one tier in practice even
-  // though it looks like two in the routing table. Entry has to be a wider
-  // door than the one the merge button sits behind, or the door means
-  // nothing.
+  // above for what this field actually gates: DISCOVERY, not access. This
+  // `capability` only drives ⌘K palette visibility and nav filtering
+  // (`lib/search.ts`'s `routeEntries`) — this console has no per-route view
+  // enforcement on the render path (`middleware.ts` checks only session
+  // validity and `isInternal(...)`). The real read gate lives entirely in
+  // `secrets-api`: `GET /api/reviews` and `GET /api/reviews/:number` sit
+  // behind the operator's own `RequireCapability(CapPlatform)` token check
+  // (`secrets-api/internal/api/server.go`'s `authed` group), independent of
+  // whatever this field says.
+  //
+  // Given that, the reason this ID is offered under `platform` rather than
+  // `rotate-credentials` is still a two-tier design choice, just one about
+  // what gets DISCOVERED, not what gets ALLOWED: if the palette only
+  // surfaced this route to operators holding `rotate-credentials`, an
+  // operator who could see a proposal (per the real, server-side gate) but
+  // not act on it would have no way to find the queue at all. Discovery has
+  // to be at least as wide as the real gate, or the palette misleads by
+  // omission.
   //
   // Unlisted, like `platform.secrets`, and for the same reason: no rail entry
   // until the chart cutover that redeploys `secrets-api`.

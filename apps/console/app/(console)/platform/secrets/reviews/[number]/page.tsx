@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import { getCurrentSession, hasCapability } from "@tesserix/platform-auth";
 import { fetchProposal } from "@/lib/secrets-api";
-import { PlatformApiError } from "@/lib/platform-api-error";
 import { requiresCapability } from "@/lib/internal-access";
 import type { ProposalDetail } from "@/lib/secrets";
 // Reused rather than re-implemented: the list page (`../page.tsx`) already
@@ -46,14 +45,19 @@ export default async function ProposalDetailPage({
     notFound();
   }
 
+  // No 404-to-notFound() mapping here, unlike `secrets/[...path]/page.tsx`'s
+  // identical-looking branch: `GET /api/reviews/:number` never returns 404.
+  // `handlers/reviews.go`'s `Show` maps a bad segment to 400 (rejected above
+  // by `parseProposalNumber` before this call), an unconfigured reviewer to
+  // 503, and any `Pull` error — including "no such pull request" — to 502.
+  // A branch for a status the backend cannot produce would be dead code that
+  // looks like a safety net; every other error, including "not found",
+  // surfaces through `reviewsState` below instead.
   let proposal: ProposalDetail | null = null;
   let error: unknown = null;
   try {
     proposal = await fetchProposal(number);
   } catch (caught) {
-    if (caught instanceof PlatformApiError && caught.status === 404) {
-      notFound();
-    }
     error = caught;
   }
 
@@ -69,12 +73,19 @@ export default async function ProposalDetailPage({
   // in `lib/secrets-api.ts`), which enforces the real gate itself; this only
   // decides whether the page offers a control guaranteed to work.
   //
-  // Both capabilities are checked here, not just `rotate-credentials`, even
-  // though `/platform/secrets/reviews` (the queue this route is reached
-  // from) already requires `platform` to view: this page can also be reached
-  // directly by URL, and checking only the one capability that happens to
-  // differ between the two operators in the brief's example would silently
-  // stop being correct the day the queue's own requirement changes.
+  // Both capabilities are checked here, not just `rotate-credentials`. It
+  // would be tempting to check only `rotate-credentials` on the theory that
+  // the queue this route is reached from already requires `platform` to
+  // view — but that premise is false: this console has no per-route view
+  // enforcement on the render path at all (`middleware.ts` checks only
+  // session validity and `isInternal(...)`), and a route id's `capability`
+  // field (`platform` on `platform.secretsReviews`) drives only ⌘K palette
+  // and nav discovery (`lib/search.ts`), not access. This page is also
+  // reachable directly by URL, bypassing the queue entirely. So both
+  // capabilities are checked here explicitly, matching the real gate
+  // `secrets-api` enforces server-side (`RequireCapability(CapPlatform)` on
+  // the `authed` group, `RequireCapability(CapRotateCredentials)` on `live`,
+  // in `secrets-api/internal/api/server.go`).
   const session = await getCurrentSession();
   const canAct =
     !requiresCapability() ||
