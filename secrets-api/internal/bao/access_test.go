@@ -133,6 +133,9 @@ func TestGrantAllBindsEveryAppItIsGiven(t *testing.T) {
 		homechefAPIRole:   storedRole("homechef-api"),
 		webPolicy:         map[string]any{},
 		webRole:           storedRole("homechef-web"),
+		"/v1/kv/metadata/homechef/homechef-api": map[string]any{
+			"data": map[string]any{"keys": []string{"db-password"}},
+		},
 	}))
 
 	granted, err := c.GrantAll(context.Background(), "homechef", "6h", []bao.AppRef{
@@ -145,9 +148,7 @@ func TestGrantAllBindsEveryAppItIsGiven(t *testing.T) {
 	if len(granted) != 2 {
 		t.Fatalf("GrantAll returned %d grants, want 2", len(granted))
 	}
-	if granted[0].SecretPrefix != "homechef/homechef-api" {
-		t.Errorf("granted[0].SecretPrefix = %q, want homechef/homechef-api", granted[0].SecretPrefix)
-	}
+	assertSecretPrefixCoversListedPaths(t, c, granted[0])
 
 	for _, role := range []string{homechefAPIRole, webRole} {
 		if findRequest(t, *seen, role).Body["token_ttl"] != "6h" {
@@ -262,6 +263,9 @@ func TestGrantsListsEveryBoundApp(t *testing.T) {
 				"token_ttl":                        "30m",
 			},
 		},
+		"/v1/kv/metadata/homechef/homechef-api": map[string]any{
+			"data": map[string]any{"keys": []string{"db-password"}},
+		},
 	})
 
 	grants, err := c.Grants(context.Background())
@@ -278,8 +282,65 @@ func TestGrantsListsEveryBoundApp(t *testing.T) {
 	if grants[1].Namespace != "marketplace" || grants[1].App != "order-service" {
 		t.Errorf("grants[1] = %+v, want marketplace/order-service", grants[1])
 	}
-	if grants[0].SecretPrefix != "kv/homechef/homechef-api" {
-		t.Errorf("grants[0].SecretPrefix = %q, want the app's KV prefix", grants[0].SecretPrefix)
+	assertSecretPrefixCoversListedPaths(t, c, grants[0])
+}
+
+// assertSecretPrefixCoversListedPaths ties SecretPrefix to the actual secret
+// path space — the property a consumer depends on — rather than to a literal.
+// It lists the app's real secrets independently of g.SecretPrefix (via
+// g.Namespace/g.App, the fields both constructors already agree on) and
+// checks g.SecretPrefix is a genuine string prefix of each resulting path.
+// That fails if SecretPrefix carries the KV mount, since listed paths never
+// do, and it fails just as loudly if it carried anything else non-matching.
+func assertSecretPrefixCoversListedPaths(t *testing.T, c *bao.Client, g bao.Grant) {
+	t.Helper()
+	appPrefix := g.Namespace + "/" + g.App
+	entries, err := c.List(context.Background(), appPrefix)
+	if err != nil {
+		t.Fatalf("List(%q): %v", appPrefix, err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("List(%q) returned no entries; the test stub is missing the secret route", appPrefix)
+	}
+	for _, e := range entries {
+		secretPath := appPrefix + "/" + e.Name
+		if !strings.HasPrefix(secretPath, g.SecretPrefix+"/") {
+			t.Errorf("grant SecretPrefix %q is not a prefix of secret path %q (the space GET /api/secrets returns)", g.SecretPrefix, secretPath)
+		}
+	}
+}
+
+// The console's POST /api/access/grants and GET /api/access/grants must
+// report the same SecretPrefix for the same grant — a consumer that reads one
+// endpoint and later polls the other should never see the value change shape
+// underneath it. This pins the relationship between the two constructors
+// directly, so they cannot drift back apart independently of the check above.
+func TestGrantSecretPrefixAgreesBetweenCreateAndList(t *testing.T) {
+	c, _ := stubBao(t, routes(map[string]any{
+		homechefAPIPolicy: map[string]any{},
+		homechefAPIRole:   storedRole("homechef-api"),
+		"/v1/auth/kubernetes/role": map[string]any{
+			"data": map[string]any{"keys": []string{"app-homechef_homechef-api"}},
+		},
+	}))
+
+	granted, err := c.GrantAll(context.Background(), "homechef", "1h", []bao.AppRef{
+		{Name: "homechef-api", ServiceAccount: "homechef-api"},
+	})
+	if err != nil {
+		t.Fatalf("GrantAll: %v", err)
+	}
+
+	grants, err := c.Grants(context.Background())
+	if err != nil {
+		t.Fatalf("Grants: %v", err)
+	}
+	if len(grants) != 1 {
+		t.Fatalf("Grants returned %d entries, want 1", len(grants))
+	}
+
+	if granted[0].SecretPrefix != grants[0].SecretPrefix {
+		t.Errorf("SecretPrefix disagrees between GrantAll (%q) and Grants (%q)", granted[0].SecretPrefix, grants[0].SecretPrefix)
 	}
 }
 
