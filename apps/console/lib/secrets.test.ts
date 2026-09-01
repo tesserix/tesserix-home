@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildInventory,
   parseGrants,
+  parseProposalDetail,
+  parseProposals,
   parseSecretDetail,
   parseSecretList,
   parseSecretVersions,
@@ -272,5 +274,131 @@ describe("parseSecretVersions", () => {
 
   it("rejects a versions response that is not a list", () => {
     expect(() => parseSecretVersions({ versions: "nope" })).toThrow();
+  });
+});
+
+describe("parseProposals", () => {
+  const pull = (overrides: Record<string, unknown> = {}) => ({
+    number: 42,
+    title: "grant homechef reader access",
+    url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+    branch: "console/homechef-homechef-api-grant",
+    author: "console-bot",
+    createdAt: "2026-08-30T09:30:00Z",
+    targets: ["homechef/homechef-api"],
+    ...overrides,
+  });
+
+  it("reads the pulls array", () => {
+    expect(parseProposals({ pulls: [pull()] })).toEqual([
+      {
+        number: 42,
+        title: "grant homechef reader access",
+        url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+        branch: "console/homechef-homechef-api-grant",
+        author: "console-bot",
+        createdAt: "2026-08-30T09:30:00Z",
+        targets: ["homechef/homechef-api"],
+      },
+    ]);
+  });
+
+  // THE trap: `gitops/review.go:61` discards `time.Parse`'s error
+  // (`created, _ := time.Parse(...)`), so any GitHub timestamp the service
+  // fails to parse becomes the zero time and reaches this parser as this
+  // literal, non-empty, well-formed string — reused check, see `secrets.ts`'s
+  // `ZERO_TIME` doc comment for why `optionalStr` alone cannot catch it.
+  it("treats a zero-time createdAt as absent", () => {
+    const parsed = parseProposals({ pulls: [pull({ createdAt: "0001-01-01T00:00:00Z" })] });
+    expect(parsed[0]?.createdAt).toBeUndefined();
+  });
+
+  // `targets` comes from `var files []ChangedFile`-style plain slices in the
+  // Go source (`parseTargets` returns nil when the PR body has no target
+  // trailer), so it serialises as JSON `null`, not `[]`, when empty.
+  it("normalises a null targets to an empty array", () => {
+    const parsed = parseProposals({ pulls: [pull({ targets: null })] });
+    expect(parsed[0]?.targets).toEqual([]);
+  });
+
+  it("rejects a response that is not shaped like a pull list", () => {
+    expect(() => parseProposals({ pulls: "nope" })).toThrow();
+    expect(() => parseProposals(null)).toThrow();
+  });
+
+  it("rejects a malformed entry rather than defaulting", () => {
+    expect(() => parseProposals({ pulls: [pull({ number: "42" })] })).toThrow();
+    expect(() => parseProposals({ pulls: [pull({ title: undefined })] })).toThrow();
+  });
+});
+
+describe("parseProposalDetail", () => {
+  const detail = (overrides: Record<string, unknown> = {}) => ({
+    number: 42,
+    title: "grant homechef reader access",
+    url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+    branch: "console/homechef-homechef-api-grant",
+    author: "console-bot",
+    createdAt: "2026-08-30T09:30:00Z",
+    targets: ["homechef/homechef-api"],
+    mergeableState: "clean",
+    approvals: ["reviewer-one"],
+    files: [{ filename: "apps/homechef/rbac.yaml", additions: 3, deletions: 0, patch: "@@ -0,0 +1,3 @@" }],
+    ...overrides,
+  });
+
+  // The handler returns the bare struct (`c.JSON(http.StatusOK, detail)`),
+  // never wrapped in an envelope — unlike `GET /api/reviews`'s `{"pulls":…}`.
+  it("reads a bare (unwrapped) detail response", () => {
+    expect(parseProposalDetail(detail())).toEqual({
+      number: 42,
+      title: "grant homechef reader access",
+      url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+      branch: "console/homechef-homechef-api-grant",
+      author: "console-bot",
+      createdAt: "2026-08-30T09:30:00Z",
+      targets: ["homechef/homechef-api"],
+      mergeableState: "clean",
+      approvals: ["reviewer-one"],
+      files: [{ filename: "apps/homechef/rbac.yaml", additions: 3, deletions: 0, patch: "@@ -0,0 +1,3 @@" }],
+    });
+  });
+
+  it("treats a zero-time createdAt as absent", () => {
+    const parsed = parseProposalDetail(detail({ createdAt: "0001-01-01T00:00:00Z" }));
+    expect(parsed.createdAt).toBeUndefined();
+  });
+
+  // `files` is `var files []ChangedFile` in `gitops.Pull` — a plain nil-able
+  // slice, so an empty result serialises as JSON `null`.
+  it("normalises a null files to an empty array", () => {
+    const parsed = parseProposalDetail(detail({ files: null }));
+    expect(parsed.files).toEqual([]);
+  });
+
+  // Same fact as `parseProposals`'s equivalent test, but on the detail's own
+  // `targets` field.
+  it("normalises a null targets to an empty array", () => {
+    const parsed = parseProposalDetail(detail({ targets: null }));
+    expect(parsed.targets).toEqual([]);
+  });
+
+  // `approvals` is built with `make([]string, 0, len(reviews))` — always a
+  // JSON array, never `null`. A `null` here is a genuine shape violation,
+  // not the same "empty vs absent" case `files`/`targets` legitimately hit,
+  // so it must throw rather than being silently defaulted to `[]`.
+  it("rejects a null approvals rather than defaulting it", () => {
+    expect(() => parseProposalDetail(detail({ approvals: null }))).toThrow();
+  });
+
+  it("rejects a response that is not shaped like a detail", () => {
+    expect(() => parseProposalDetail("nope")).toThrow();
+    expect(() => parseProposalDetail(null)).toThrow();
+  });
+
+  it("rejects a malformed file entry rather than defaulting", () => {
+    expect(() =>
+      parseProposalDetail(detail({ files: [{ filename: "a", additions: "3", deletions: 0, patch: "" }] })),
+    ).toThrow();
   });
 });
