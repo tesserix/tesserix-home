@@ -99,6 +99,17 @@ export default async function SecretDetailPage({
   let readers: Grant[] = [];
   let error: unknown = null;
   try {
+    // The `fetchGrants` leg is deliberately NOT given its own `.catch(() =>
+    // [])` to keep a grants-read failure from taking down the rest of this
+    // page. That would default `readers` to `[]` on a fetch failure — and an
+    // empty grants list is exactly the "no app can read this" ALARM state
+    // this whole card exists to raise (spec §6). A defaulted `[]` would be
+    // indistinguishable from a genuine orphaned secret, turning "not
+    // knowable right now" into a false all-clear that reads as a false
+    // alarm — a lie in the opposite direction is still a lie. The honest
+    // alternative — a card-level error state that says "the reader list
+    // could not be read" rather than "no one can read this" — is real
+    // scope, not a one-line change, and is not implemented here.
     const [fetchedDetail, fetchedVersions, grants] = await Promise.all([
       fetchSecretDetail(store, path),
       fetchSecretVersions(store, path),
