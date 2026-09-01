@@ -1,3 +1,11 @@
+// `server-only`: this reads the estate's secret stores through a token
+// resolved from the operator-token store. A client component importing this
+// file — even via a dynamic `import()`, which is exactly a lazy chunk — must
+// fail the BUILD with a message naming the cause, not ship server code to the
+// browser silently. See `./health.ts`, `./outbox.ts` and `./tools-directory.ts`
+// for the same guard on the same shape of surface.
+import "server-only";
+
 import { PlatformApiError } from "./platform-api-error";
 import { buildInventory, parseGrants, parseSecretList } from "./secrets";
 import type { SecretsInventory, SecretStore } from "./secrets";
@@ -346,10 +354,20 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   // if it were "we asked and some was missing" — the same silent-shrinkage
   // failure `fetchSecretPaths`'s own doc comment argues against for a single
   // store, just one level up.
+  // The grants read is gated on "openbao" being enabled for the same reason
+  // the walks above are: secrets-api registers `/api/access/grants` only when
+  // OpenBao is configured (`secrets-api/internal/api/server.go`, `if
+  // d.Bao != nil`), so a GSM-only deployment 404s on this call unconditionally
+  // and `Promise.all` rejects the whole inventory over a store that was never
+  // walked. An empty grants list changes nothing when it's skipped: with no
+  // OpenBao there are no OpenBao rows to match against grants, and GSM rows
+  // always carry `hasReader: null` regardless of what `grants` contains.
   const [openbaoResult, gcpsmResult, grantsJson] = await Promise.all([
     enabled.includes("openbao") ? fetchSecretPaths("openbao") : Promise.resolve(null),
     enabled.includes("gcpsm") ? fetchSecretPaths("gcpsm") : Promise.resolve(null),
-    secretsRequest("access grants", "/api/access/grants"),
+    enabled.includes("openbao")
+      ? secretsRequest("access grants", "/api/access/grants")
+      : Promise.resolve({ grants: [] }),
   ]);
 
   const grants = parseGrants(grantsJson);

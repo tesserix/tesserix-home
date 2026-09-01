@@ -442,4 +442,47 @@ describe("fetchSecretsInventory", () => {
 
     expect(inventory.complete).toBe(false);
   });
+
+  // Finding 1 of the whole-branch review: secrets-api registers
+  // `/api/access/grants` only when OpenBao is configured
+  // (`secrets-api/internal/api/server.go`, `if d.Bao != nil`), so a
+  // `SECRET_BACKENDS=gcpsm` deployment 404s on that call — and, before this
+  // fix, an unconditional `Promise.all` member rejected the whole inventory
+  // over a store that was never walked. Without the gate in
+  // `fetchSecretsInventory`, this test fails: the stub below has no handler
+  // for `/api/access/grants` (it 404s, same as the real gcpsm-only
+  // deployment), so `fetchSecretsInventory()` would reject instead of
+  // resolving, and the assertion on `gcpsm` rows would never run.
+  it("assembles a gcpsm-only inventory without ever requesting access grants", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/api/backends")) {
+        return new Response(JSON.stringify({ backends: ["gcpsm"], default: "gcpsm" }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/api/access/grants")) {
+        // Mirrors the real server: this route does not exist without
+        // OpenBao configured.
+        return new Response("not found", { status: 404 });
+      }
+      const parsed = new URL(url);
+      const prefix = parsed.searchParams.get("prefix") ?? "/";
+      return new Response(
+        JSON.stringify({ prefix, entries: prefix === "/" ? [{ name: "api-key", isFolder: false }] : [] }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretsInventory } = await import("./secrets-api");
+    const inventory = await fetchSecretsInventory();
+
+    expect(inventory.rows.map((r) => r.path)).toEqual(["api-key"]);
+    expect(inventory.rows[0]?.hasReader).toBeNull();
+    const grantsCalls = fetchMock.mock.calls.filter((call) =>
+      (call[0] as string).includes("/api/access/grants"),
+    );
+    expect(grantsCalls.length).toBe(0);
+  });
 });
