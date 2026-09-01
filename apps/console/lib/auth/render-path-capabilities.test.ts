@@ -28,13 +28,17 @@ import { describe, expect, it } from "vitest";
 
 const CONSOLE_ROOT = path.resolve(__dirname, "../..");
 
-/** The six render-path checks, as of #285. Each hides a surface or a button
- *  and none of them authorises anything. */
+/** Every render-path check in this console. Each hides a surface or a
+ *  button and none of them authorises anything. Keep this list exhaustive —
+ *  it is not derived from anything, so a page with its own
+ *  `hasCapability(session?.roles, …)` gate that is missing here is
+ *  unprotected against the regression this file exists to catch. */
 const RENDER_PATH_FILES = [
   "app/(console)/platform/tickets/[id]/page.tsx",
   "app/(console)/platform/tools/page.tsx",
   "app/(console)/platform/crm/[organisation]/page.tsx",
   "app/(console)/platform/billing/catalog/page.tsx",
+  "app/(console)/platform/secrets/[...path]/page.tsx",
 ] as const;
 
 function source(relative: string): string {
