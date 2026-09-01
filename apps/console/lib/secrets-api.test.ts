@@ -784,10 +784,12 @@ describe("createGrant", () => {
   });
 
   // The response's `grants[].secretPrefix` cannot be joined against the
-  // mount-inclusive shape `GET /api/access/grants` returns (#476) — so a 403
-  // (lacks `rotate-credentials`) must still surface as a `PlatformApiError`
-  // the caller can distinguish from a store-side refusal, exactly like
-  // `writeSecret`'s equivalent test.
+  // mount-inclusive shape `GET /api/access/grants` returns (#476) — that
+  // mismatch is why `createGrant` discards its response body rather than
+  // parsing it. This test covers a separate concern: a 403 (lacks
+  // `rotate-credentials`) must still surface as a `PlatformApiError` carrying
+  // the upstream status, so `isForbidden` can fold it into the no-permission
+  // copy — exactly like `writeSecret`'s equivalent test.
   it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
     vi.doMock("./auth/platform-token", () => ({
@@ -920,6 +922,282 @@ describe("deleteSecret", () => {
 
     const { deleteSecret } = await import("./secrets-api");
     const caught = await deleteSecret("openbao", "homechef/api/db", false).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});
+
+describe("fetchProposals", () => {
+  it("GETs /api/reviews and unwraps pulls", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          pulls: [
+            {
+              number: 7,
+              title: "grant homechef reader access",
+              url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+              branch: "console/homechef-grant",
+              author: "console-bot",
+              createdAt: "2026-08-30T09:30:00Z",
+              targets: ["homechef/homechef-api"],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchProposals } = await import("./secrets-api");
+    const proposals = await fetchProposals();
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/reviews");
+    expect(init.method).toBeUndefined();
+    expect(proposals).toEqual([
+      {
+        number: 7,
+        title: "grant homechef reader access",
+        url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+        branch: "console/homechef-grant",
+        author: "console-bot",
+        createdAt: "2026-08-30T09:30:00Z",
+        targets: ["homechef/homechef-api"],
+      },
+    ]);
+  });
+
+  // The 503 case is not an error to swallow into an empty list — it's the
+  // "not configured" state the page must render calmly, exactly like the
+  // inventory's 501 for an unset SECRETS_API_ORIGIN. `secretsRequest`
+  // already preserves the upstream status; this just proves this call
+  // doesn't flatten it.
+  it("surfaces a 503 (no review repository configured) as a PlatformApiError carrying that status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no review repository is configured" }), { status: 503 })),
+    );
+
+    const { fetchProposals } = await import("./secrets-api");
+    const caught = await fetchProposals().catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(503);
+  });
+});
+
+describe("fetchProposal", () => {
+  it("GETs /api/reviews/:number and parses the bare (unwrapped) detail", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          number: 7,
+          title: "grant homechef reader access",
+          url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+          branch: "console/homechef-grant",
+          author: "console-bot",
+          createdAt: "2026-08-30T09:30:00Z",
+          targets: ["homechef/homechef-api"],
+          mergeableState: "clean",
+          approvals: ["reviewer-one"],
+          files: [{ filename: "apps/homechef/rbac.yaml", additions: 3, deletions: 0, patch: "@@ -0,0 +1,3 @@" }],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchProposal } = await import("./secrets-api");
+    const detail = await fetchProposal(7);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/reviews/7");
+    expect(detail).toMatchObject({ number: 7, mergeableState: "clean", approvals: ["reviewer-one"] });
+  });
+
+  it("surfaces a 503 (no review repository configured) as a PlatformApiError carrying that status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no review repository is configured" }), { status: 503 })),
+    );
+
+    const { fetchProposal } = await import("./secrets-api");
+    const caught = await fetchProposal(7).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(503);
+  });
+});
+
+describe("approveProposal", () => {
+  it("POSTs /api/reviews/:number/approve with no body", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ number: 7, status: "approved" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { approveProposal } = await import("./secrets-api");
+    await approveProposal(7);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/reviews/7/approve");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+  });
+
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { approveProposal } = await import("./secrets-api");
+    const caught = await approveProposal(7).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});
+
+describe("mergeProposal", () => {
+  it("POSTs /api/reviews/:number/merge and returns the merge commit sha", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ number: 7, sha: "abc1234", status: "merged" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { mergeProposal } = await import("./secrets-api");
+    const result = await mergeProposal(7);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/reviews/7/merge");
+    expect(init.method).toBe("POST");
+    expect(result).toEqual({ number: 7, sha: "abc1234" });
+  });
+
+  it("rejects a merge response with no sha rather than returning it undefined", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ number: 7, status: "merged" }), { status: 200 })),
+    );
+
+    const { mergeProposal } = await import("./secrets-api");
+    await expect(mergeProposal(7)).rejects.toThrow(/sha/);
+  });
+
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { mergeProposal } = await import("./secrets-api");
+    const caught = await mergeProposal(7).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});
+
+describe("rejectProposal", () => {
+  it("POSTs /api/reviews/:number/reject with no body when no reason is given", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ number: 7, status: "rejected" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rejectProposal } = await import("./secrets-api");
+    await rejectProposal(7);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/reviews/7/reject");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+  });
+
+  it("sends a reason when given", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ number: 7, status: "rejected" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rejectProposal } = await import("./secrets-api");
+    await rejectProposal(7, "wrong app");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [, init] = call;
+    expect(JSON.parse(init.body as string)).toEqual({ reason: "wrong app" });
+  });
+
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { rejectProposal } = await import("./secrets-api");
+    const caught = await rejectProposal(7).catch((e: unknown) => e);
 
     expect(caught).toBeInstanceOf(PlatformApiError);
     expect((caught as PlatformApiError).status).toBe(403);

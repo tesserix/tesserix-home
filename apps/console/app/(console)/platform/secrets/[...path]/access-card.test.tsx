@@ -44,7 +44,7 @@ describe("AccessCard", () => {
   describe("with canWrite", () => {
     it("renders the Add an app field group, the Propose access button, and a Remove button per reader", () => {
       render(
-        <AccessCard store="openbao" path="mark8ly/db-password" readers={READERS} canWrite />,
+        <AccessCard store="openbao" readers={READERS} canWrite />,
       );
 
       expect(screen.getByText(/add an app/i)).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe("AccessCard", () => {
     });
 
     it("submitting calls grantAccessAction once with the parsed namespace/app/serviceAccount", async () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
@@ -72,7 +72,7 @@ describe("AccessCard", () => {
     });
 
     it("typing an app name prefills the service account field", () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
 
@@ -80,7 +80,7 @@ describe("AccessCard", () => {
     });
 
     it("editing the service account first, then editing the app name, does not overwrite the operator's edit", () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       const serviceAccount = screen.getByLabelText(/service account/i);
       fireEvent.change(serviceAccount, { target: { value: "custom-sa" } });
@@ -90,7 +90,7 @@ describe("AccessCard", () => {
     });
 
     it("editing the app name before ever touching the service account keeps prefilling it", () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders-v2" } });
@@ -99,7 +99,7 @@ describe("AccessCard", () => {
     });
 
     it("submit is a quiet no-op when any of the three fields is empty — no error banner", async () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       // Namespace and app filled (which prefills service account too), but
       // the operator then clears the service account back out.
@@ -117,7 +117,7 @@ describe("AccessCard", () => {
     });
 
     it("fields clear after a successful grant", async () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
@@ -134,7 +134,7 @@ describe("AccessCard", () => {
     });
 
     it("submitting the form with Enter triggers the same grant call", async () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
@@ -149,7 +149,7 @@ describe("AccessCard", () => {
 
     it("Remove calls revokeAccessAction with the reader's namespace and app, and re-reads afterward", async () => {
       render(
-        <AccessCard store="openbao" path="mark8ly/db-password" readers={READERS} canWrite />,
+        <AccessCard store="openbao" readers={READERS} canWrite />,
       );
 
       const removeButtons = screen.getAllByRole("button", { name: /remove/i });
@@ -161,7 +161,7 @@ describe("AccessCard", () => {
     });
 
     it("a successful grant re-reads via router.refresh rather than mutating the reader list locally", async () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
@@ -177,7 +177,7 @@ describe("AccessCard", () => {
     });
 
     it("shows the approver copy: adding or removing merges immediately", () => {
-      render(<AccessCard store="openbao" path="mark8ly/db-password" readers={[]} canWrite />);
+      render(<AccessCard store="openbao" readers={[]} canWrite />);
 
       expect(
         screen.getByText(/adding or removing a reader here merges immediately/i),
@@ -190,13 +190,18 @@ describe("AccessCard", () => {
       render(
         <AccessCard
           store="openbao"
-          path="mark8ly/db-password"
           readers={READERS}
           canWrite={false}
         />,
       );
 
-      expect(screen.getByText(/granting access needs `?rotate-credentials`?/i)).toBeInTheDocument();
+      // Rendered as "Granting access needs " + a <code> element, not a
+      // single text node with literal backticks — matched by function so
+      // the code-formatted credential name isn't required to be inline text.
+      expect(
+        screen.getByText((_, element) => element?.textContent === "Granting access needs rotate-credentials."),
+      ).toBeInTheDocument();
+      expect(screen.getByText("rotate-credentials").tagName).toBe("CODE");
       expect(screen.queryByRole("button", { name: /propose access/i })).toBeNull();
       expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
       // `queryByLabelText(/add an app/i)` looked like it covered the whole
@@ -213,7 +218,6 @@ describe("AccessCard", () => {
       render(
         <AccessCard
           store="openbao"
-          path="mark8ly/db-password"
           readers={READERS}
           canWrite={false}
         />,

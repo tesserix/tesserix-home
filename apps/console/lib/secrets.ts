@@ -39,6 +39,33 @@ function optionalStr(value: unknown, path: string): string | undefined {
 }
 
 /**
+ * A string that must additionally be an `http:`/`https:` URL — for fields
+ * this console later puts straight into an `<a href>` (`proposal.url`,
+ * rendered by `proposals-table.tsx`). React 19 already refuses to run a
+ * `javascript:` href, so this is not closing an exploitable gap; it is
+ * closing an ASYMMETRY in how carefully this file treats attacker-reachable
+ * fields. `proposal.url` comes from GitHub's `html_url` via `secrets-api`,
+ * the same distance from this console's control as `file.patch`
+ * (`proposal-view.tsx`'s `ChangedFileDiff` reasons at length about `patch`
+ * being attacker-influenced) — validating the scheme here, at the same
+ * boundary every other field is validated at, keeps that reasoning honest
+ * rather than applying it selectively.
+ */
+function httpUrl(value: unknown, path: string): string {
+  const url = str(value, path);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    fail(`${path} is not a valid URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    fail(`${path} is not an http(s) URL`);
+  }
+  return url;
+}
+
+/**
  * Go's zero `time.Time`, serialised. `secrets.Secret.CreatedAt/UpdatedAt`
  * and `Version.CreatedAt` are `time.Time` fields tagged `json:",omitempty"`
  * — but `encoding/json`'s `omitempty` is a no-op on a struct type (it only
@@ -318,4 +345,135 @@ export function parseSecretVersions(json: unknown): SecretVersion[] {
       deleted: bool(v.deleted, `versions[${i}].deleted`),
     };
   });
+}
+
+/**
+ * A console-raised change awaiting review: one entry in `gitops.PullRequest`
+ * (`secrets-api/internal/gitops/review.go`).
+ *
+ * `createdAt` is optional for the same reason `SecretDetail.createdAt` is:
+ * `PullRequest.CreatedAt` is a `time.Time` with no `omitempty` that would do
+ * anything (see `ZERO_TIME`'s doc comment) — but here the trigger is not a
+ * store quirk, it's `toPullRequest` discarding `time.Parse`'s error
+ * (`review.go:61`, `created, _ := time.Parse(...)`), so ANY GitHub
+ * timestamp this service fails to parse becomes the zero time and reaches
+ * this parser as the literal `ZERO_TIME` string. `optionalTimestamp` is
+ * reused rather than re-implemented for exactly that string.
+ *
+ * `targets` is `string[]`, never `string[] | undefined` or nullable, even
+ * though the Go field can serialise as JSON `null` (`parseTargets` returns a
+ * nil slice when the PR body has no target trailer, and a nil `[]string`
+ * with no `omitempty`-relevant zero-value exemption for slices still writes
+ * `null`). The parser below normalises `null` to `[]` at this boundary so
+ * every caller can iterate `targets` unconditionally.
+ */
+export interface Proposal {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly branch: string;
+  readonly author: string;
+  readonly createdAt?: string;
+  readonly targets: string[];
+}
+
+/** One file changed by a proposal: `gitops.ChangedFile`. */
+export interface ChangedFile {
+  readonly filename: string;
+  readonly additions: number;
+  readonly deletions: number;
+  readonly patch: string;
+}
+
+/**
+ * A proposal plus what an administrator needs to decide on it:
+ * `gitops.PullDetail`, which embeds `PullRequest` and adds three fields.
+ *
+ * `files`, like `targets` above, is declared `var files []ChangedFile` in
+ * `gitops.Pull` (`review.go`) — a plain nil-able slice — so a proposal that
+ * changed nothing GitHub reports as files (it never does in practice, but
+ * the wire shape doesn't know that) serialises as JSON `null`, not `[]`.
+ * `approvals`, by contrast, is built with `make([]string, 0, len(reviews))`
+ * in the same function, so it is ALWAYS a JSON array, never `null` — do not
+ * add a null-guard for it that mirrors `files`'s; there is nothing on the
+ * wire for it to guard against, and doing so would hide a genuine shape
+ * violation (a non-array `approvals`) behind a silent default instead of
+ * throwing.
+ */
+export interface ProposalDetail extends Proposal {
+  readonly mergeableState: string;
+  readonly approvals: string[];
+  readonly files: ChangedFile[];
+}
+
+/**
+ * An array field that the Go source declares as a plain `var …[]T` (never
+ * `make`d), so an empty result serialises as JSON `null` rather than `[]`.
+ * Reused by both `parseProposals` (for `targets`) and `parseProposalDetail`
+ * (for `targets` and `files`) — see their doc comments for which Go fields
+ * this applies to and, just as importantly, which one (`approvals`) it does
+ * NOT apply to.
+ *
+ * `null` and an absent key are treated the same way (both hit the `?? null`
+ * default), but a present value that is neither `null` nor an array is
+ * rejected — a nullable array is not the same contract as "anything goes".
+ */
+function nullableArray<T>(value: unknown, path: string, parseItem: (item: unknown, itemPath: string) => T): T[] {
+  const v = value ?? null;
+  if (v === null) return [];
+  if (!Array.isArray(v)) fail(`${path} is not an array or null`);
+  return v.map((item, i) => parseItem(item, `${path}[${i}]`));
+}
+
+function parseProposalFields(entry: Record<string, unknown>, prefix: string): Proposal {
+  return {
+    number: num(entry.number, `${prefix}number`),
+    title: str(entry.title, `${prefix}title`),
+    url: httpUrl(entry.url, `${prefix}url`),
+    branch: str(entry.branch, `${prefix}branch`),
+    author: str(entry.author, `${prefix}author`),
+    createdAt: optionalTimestamp(entry.createdAt, `${prefix}createdAt`),
+    targets: nullableArray(entry.targets, `${prefix}targets`, (item, itemPath) => str(item, itemPath)),
+  };
+}
+
+/**
+ * Parse `GET /api/reviews`'s response (`{"pulls":[…]}`) into its proposal
+ * list.
+ */
+export function parseProposals(json: unknown): Proposal[] {
+  if (!isRecord(json)) fail("response is not an object");
+  if (!Array.isArray(json.pulls)) fail("pulls is not an array");
+  return json.pulls.map((entry, i) => {
+    if (!isRecord(entry)) fail(`pulls[${i}] is not an object`);
+    return parseProposalFields(entry, `pulls[${i}].`);
+  });
+}
+
+/**
+ * Parse `GET /api/reviews/:number`'s response into a `ProposalDetail`.
+ *
+ * The response is the bare `gitops.PullDetail` struct, not wrapped in an
+ * envelope (`c.JSON(http.StatusOK, detail)` in
+ * `secrets-api/internal/api/handlers/reviews.go:67`) — unlike `parseProposals`
+ * above, there is no `{"pull":…}` key to unwrap first.
+ */
+export function parseProposalDetail(json: unknown): ProposalDetail {
+  if (!isRecord(json)) fail("response is not an object");
+  return {
+    ...parseProposalFields(json, ""),
+    mergeableState: str(json.mergeableState, "mergeableState"),
+    approvals: Array.isArray(json.approvals)
+      ? json.approvals.map((a, i) => str(a, `approvals[${i}]`))
+      : fail("approvals is not an array"),
+    files: nullableArray(json.files, "files", (file, filePath) => {
+      if (!isRecord(file)) fail(`${filePath} is not an object`);
+      return {
+        filename: str(file.filename, `${filePath}.filename`),
+        additions: num(file.additions, `${filePath}.additions`),
+        deletions: num(file.deletions, `${filePath}.deletions`),
+        patch: str(file.patch, `${filePath}.patch`),
+      };
+    }),
+  };
 }

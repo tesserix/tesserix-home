@@ -7,8 +7,24 @@
 import "server-only";
 
 import { PlatformApiError } from "./platform-api-error";
-import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
-import type { Grant, SecretDetail, SecretsInventory, SecretStore, SecretVersion } from "./secrets";
+import {
+  buildInventory,
+  parseGrants,
+  parseProposalDetail,
+  parseProposals,
+  parseSecretDetail,
+  parseSecretList,
+  parseSecretVersions,
+} from "./secrets";
+import type {
+  Grant,
+  Proposal,
+  ProposalDetail,
+  SecretDetail,
+  SecretsInventory,
+  SecretStore,
+  SecretVersion,
+} from "./secrets";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. Mirrors
@@ -646,4 +662,108 @@ export async function deleteSecret(store: SecretStore, path: string, destroy: bo
     ? `backend=${encodeURIComponent(store)}&destroy=true`
     : `backend=${encodeURIComponent(store)}`;
   await secretsRequest("delete secret", `/api/secrets/${encodeSecretPath(path)}?${query}`, { method: "DELETE" });
+}
+
+/**
+ * The review queue: `GET /api/reviews`, the `read` group (`platform` alone —
+ * listing proposals changes nothing). Response is `{"pulls":[…]}`.
+ *
+ * A 503 (no review repository configured, `handlers/reviews.go`'s
+ * `configured()`) is NOT special-cased here — `secretsRequest` already
+ * preserves the upstream status on the thrown `PlatformApiError` rather than
+ * flattening it, so the caller sees `status: 503` and can render the same
+ * calm "not configured" state the inventory page already gives a 501 for
+ * `SECRETS_API_ORIGIN` unset. Swallowing it into `[]` here would make an
+ * unconfigured deployment indistinguishable from one with an empty queue.
+ */
+export async function fetchProposals(): Promise<Proposal[]> {
+  const json = await secretsRequest("reviews", "/api/reviews");
+  return parseProposals(json);
+}
+
+/**
+ * One proposal's full detail: `GET /api/reviews/:number`, the `read` group
+ * (`platform` alone), same 503-passthrough reasoning as {@link fetchProposals}.
+ *
+ * The response is the bare `gitops.PullDetail` struct, not wrapped in an
+ * envelope (`handlers/reviews.go:67`) — `parseProposalDetail` parses it
+ * directly, unlike `fetchProposals`'s `{"pulls":…}` unwrap.
+ */
+export async function fetchProposal(number: number): Promise<ProposalDetail> {
+  const json = await secretsRequest("review", `/api/reviews/${encodeURIComponent(String(number))}`);
+  return parseProposalDetail(json);
+}
+
+/**
+ * Record an approving review: `POST /api/reviews/:number/approve`, the
+ * `live` group — `platform` + `rotate-credentials`, not `platform` alone,
+ * because GitHub's approval is a real vote on a change that will grant
+ * access, not a read.
+ *
+ * The response (`{"number":…,"status":"approved"}`) is discarded: an
+ * approval doesn't change anything this console already holds in state —
+ * the caller re-reads the proposal (`fetchProposal`) to see the updated
+ * `approvals` list, the one shape everything else already renders from.
+ */
+export async function approveProposal(number: number): Promise<void> {
+  await secretsRequest("approve review", `/api/reviews/${encodeURIComponent(String(number))}/approve`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Merge a proposal: `POST /api/reviews/:number/merge`, the `live` group —
+ * same `platform` + `rotate-credentials` requirement as
+ * {@link approveProposal}, because a merge changes `tesserix-k8s` and
+ * ArgoCD syncs it from there.
+ *
+ * Unlike `approveProposal`/`rejectProposal`, the response
+ * (`{"number":…,"sha":…,"status":"merged"}`) is not just a receipt — the
+ * merge commit SHA is the one piece of information this call produces that
+ * nothing else on the console can re-derive, so it is returned rather than
+ * discarded. Its only caller, `approveAndMergeAction`
+ * (`reviews/[number]/actions.ts`), writes it into the audit row's `target`
+ * rather than the operator-facing result: `SecretsWriteResult` (the type
+ * every review/access write action returns) carries no data payload on
+ * success, and widening it for this one caller was judged not worth the
+ * ripple into `access-actions.ts`'s grant/revoke actions, which have no sha
+ * to carry. The audit trail is where it is recorded today.
+ */
+export async function mergeProposal(number: number): Promise<{ number: number; sha: string }> {
+  const json = await secretsRequest("merge review", `/api/reviews/${encodeURIComponent(String(number))}/merge`, {
+    method: "POST",
+  });
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new Error("secrets: merge response is not an object");
+  }
+  const { number: returnedNumber, sha } = json as Record<string, unknown>;
+  if (typeof returnedNumber !== "number") {
+    throw new Error("secrets: merge response .number is not a number");
+  }
+  if (typeof sha !== "string" || sha === "") {
+    throw new Error("secrets: merge response .sha is not a non-empty string");
+  }
+  return { number: returnedNumber, sha };
+}
+
+/**
+ * Reject a proposal: `POST /api/reviews/:number/reject`, the `live` group —
+ * same `platform` + `rotate-credentials` requirement as
+ * {@link approveProposal}, because rejecting closes the pull request and
+ * deletes its branch (`gitops.GitHub.Reject`), an irreversible action on
+ * `tesserix-k8s` even though it grants nothing.
+ *
+ * `reason` is optional on the wire — the handler does
+ * `_ = c.ShouldBindJSON(&body)`, ignoring a bind error, so an empty body is
+ * legal and the Go side falls back to "no reason given"
+ * (`gitops.GitHub.Reject`). Per the console's design, no reason is sent from
+ * here; the parameter exists so a future UI can add one without a client
+ * change.
+ */
+export async function rejectProposal(number: number, reason?: string): Promise<void> {
+  const body = reason === undefined ? undefined : { reason };
+  await secretsRequest("reject review", `/api/reviews/${encodeURIComponent(String(number))}/reject`, {
+    method: "POST",
+    body,
+  });
 }

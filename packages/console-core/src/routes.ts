@@ -373,6 +373,39 @@ export const ROUTES = {
   // don't already express.
   "platform.secrets": { mobile: "/platform/secrets", capability: "platform" },
 
+  // The review queue for access-change proposals raised against
+  // `tesserix-k8s` — `secrets-api`'s `GET /api/reviews`.
+  //
+  // `platform`, not `rotate-credentials` — see `platform.secrets`'s comment
+  // above for what this field actually gates: DISCOVERY, not access. This
+  // `capability` only drives ⌘K palette visibility and nav filtering
+  // (`lib/search.ts`'s `routeEntries`) — this console has no per-route view
+  // enforcement on the render path (`middleware.ts` checks only session
+  // validity and `isInternal(...)`). The real read gate lives entirely in
+  // `secrets-api`: `GET /api/reviews` and `GET /api/reviews/:number` sit
+  // behind the operator's own `RequireCapability(CapPlatform)` token check
+  // (`secrets-api/internal/api/server.go`'s `authed` group), independent of
+  // whatever this field says.
+  //
+  // Given that, the reason this ID is offered under `platform` rather than
+  // `rotate-credentials` is still a two-tier design choice, just one about
+  // what gets DISCOVERED, not what gets ALLOWED: if the palette only
+  // surfaced this route to operators holding `rotate-credentials`, an
+  // operator who could see a proposal (per the real, server-side gate) but
+  // not act on it would have no way to find the queue at all. Discovery has
+  // to be at least as wide as the real gate, or the palette misleads by
+  // omission.
+  //
+  // Unlisted, like `platform.secrets`, and for the same reason: no rail entry
+  // until the chart cutover that redeploys `secrets-api`.
+  //
+  // No `web` predecessor, matching `platform.secrets`.
+  //
+  // The detail route (`/platform/secrets/reviews/[number]`) gets no id of its
+  // own — detail routes are not registered in this console, matching
+  // `secrets/[...path]` above.
+  "platform.secretsReviews": { mobile: "/platform/secrets/reviews", capability: "platform" },
+
   // Everything waiting on a human, across every product implementing §3.2,
   // from platform-api's inbox module (#352).
   //

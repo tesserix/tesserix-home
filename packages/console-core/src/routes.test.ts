@@ -75,6 +75,25 @@ describe("route capability", () => {
     expect(onEntry).toEqual([]);
   });
 
+  it("gives the secrets review queue the SURFACE capability, not the verb it gates", () => {
+    // The property `platform.secretsReviews`'s own comment in `routes.ts`
+    // exists to hold: if reading the queue required `rotate-credentials` —
+    // the capability that gates approve/merge/reject — every operator able
+    // to see a proposal would also be able to merge it, and the two-tier
+    // review design would collapse to one tier even though the routing table
+    // still claimed two. `platform` is the wider door the merge button has
+    // to sit behind for that door to mean anything.
+    //
+    // This is the one place that pins the value: a page-level test
+    // (`reviews/page.test.tsx`) proves no approve/merge/reject control
+    // renders on the queue, but that bypasses the routing table entirely —
+    // `capability` also drives ⌘K palette visibility and nav filtering
+    // (`lib/search.ts`), and nothing else in this suite checks its value for
+    // this specific route. Confirmed by mutation: flipping it to
+    // `"rotate-credentials"` left every other test in this file green.
+    expect(routeCapability("platform.secretsReviews")).toBe("platform");
+  });
+
   it("gives the identity lookup a surface, now that one exists", () => {
     // #134 recorded this staying at `read` because none of the seven
     // capabilities described "may look people up" — every one above `read`
