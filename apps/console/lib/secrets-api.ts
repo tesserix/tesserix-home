@@ -89,23 +89,25 @@ export async function secretsRequest(label: string, path: string): Promise<unkno
 // assembling the estate-wide inventory means walking the tree ourselves.
 // There is no flat-inventory endpoint to fall back on.
 //
-// Two bounds, both deliberate:
+// MAX_DEPTH is what actually bounds the walk, and the bound is total, not a
+// backstop: a child's prefix is always strictly longer than its parent's
+// (path composition only ever appends — see `parseSecretList`'s rejection of
+// empty and "/"-containing names, which is what makes that hold), so depth
+// strictly increases and the same prefix can never recur along a root-to-leaf
+// chain. That is the whole termination argument, and it depends on the name
+// validation staying in place — relax it and a cycle becomes possible again.
 //
-//   MAX_DEPTH  — a backend that returned a folder containing itself would
-//                otherwise recurse until the page hung. A bounded walk that
-//                returns a short list is diagnosable; a hang is not.
-//   MAX_NODES  — caps the request count for a pathological tree, so one bad
-//                prefix cannot turn a page load into hundreds of upstream
-//                calls.
+// The visited set is not a termination mechanism; it deduplicates repeated
+// entries (the same folder name listed twice in one response, or the same
+// subtree reachable more than once) so they cost one request instead of two.
+//
+// MAX_NODES bounds the total request count for a wide tree, independently of
+// depth.
 //
 // The walk is breadth-first rather than depth-first: a bounded BFS degrades
 // gracefully (you still get the shallow, common secrets first) where a
 // bounded DFS could spend its whole budget descending one deep corner and
 // return nothing useful from the rest of the tree.
-//
-// A visited set on the prefix is what actually terminates a cycle (a folder
-// that lists itself, or a longer loop); MAX_DEPTH is the backstop for a
-// cycle the visited set does not catch and for legitimately deep trees.
 const MAX_DEPTH = 8;
 const MAX_NODES = 512;
 
