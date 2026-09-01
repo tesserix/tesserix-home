@@ -39,6 +39,7 @@ const RENDER_PATH_FILES = [
   "app/(console)/platform/crm/[organisation]/page.tsx",
   "app/(console)/platform/billing/catalog/page.tsx",
   "app/(console)/platform/secrets/[...path]/page.tsx",
+  "app/(console)/platform/secrets/reviews/[number]/page.tsx",
 ] as const;
 
 function source(relative: string): string {
@@ -77,6 +78,7 @@ describe("the verb gate is live everywhere it decides a mutation", () => {
     "lib/tools-write.ts",
     "lib/tenant-lifecycle-write.ts",
     "app/(console)/platform/secrets/[...path]/access-actions.ts",
+    "app/(console)/platform/secrets/reviews/[number]/actions.ts",
   ] as const;
 
   it.each(GATED_FILES)("%s awaits the live gate", (file) => {
