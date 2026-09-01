@@ -76,6 +76,7 @@ describe("the verb gate is live everywhere it decides a mutation", () => {
     "lib/crm-write.ts",
     "lib/tools-write.ts",
     "lib/tenant-lifecycle-write.ts",
+    "app/(console)/platform/secrets/[...path]/access-actions.ts",
   ] as const;
 
   it.each(GATED_FILES)("%s awaits the live gate", (file) => {

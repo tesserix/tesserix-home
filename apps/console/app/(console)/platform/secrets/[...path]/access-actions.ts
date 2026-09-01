@@ -1,0 +1,144 @@
+"use server";
+
+import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
+import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
+import { createGrant, revokeGrant, type AppRef } from "@/lib/secrets-api";
+import { PlatformApiError } from "@/lib/platform-api-error";
+
+/**
+ * Grant and revoke a secret reader — the server-action boundary
+ * `access-panel.tsx` (task 4) calls across, mirroring `draft-editor.tsx`'s
+ * relationship to `billing/catalog/actions.ts`.
+ *
+ * # WHY THIS FILE GATES, AND `./actions.ts` DOES NOT
+ *
+ * `./actions.ts`'s `writeSecretAction` carries a DELIBERATE EXCEPTION: it
+ * calls neither `checkOperatorCapability` nor `checkOperatorCapabilityLive`,
+ * because `secrets-api` itself refuses `PUT /api/secrets/*path` on the
+ * OPERATOR'S OWN Zitadel token, and a console-side check would be a
+ * duplicate of that gate, not a second layer of defence.
+ *
+ * The actions here are different in the one respect that matters: they do
+ * not write a value into an existing store the way a secret write does —
+ * `createGrant`/`revokeGrant` call `bao.GrantAll`/its inverse, which change
+ * `tesserix-k8s`, the repository that governs the cluster, IMMEDIATELY (the
+ * pull request `secrets-api` opens afterwards is a receipt, not an approval
+ * gate — see `createGrant`'s own doc comment in `lib/secrets-api.ts`). The
+ * cutover design's §4 puts approval "in application code" for exactly this
+ * class of change and says it "gets the platform API's treatment: refuse by
+ * default, no fallback that silently allows." That is a property of THIS
+ * write — reaching outside the secret store into the cluster's own
+ * repository — not a general "writes should be gated" rule; the sibling
+ * file's non-gate is not an oversight this file is correcting.
+ *
+ * So these gate console-side with `checkOperatorCapabilityLive`, on the same
+ * two capabilities `secrets-api`'s `live` route group requires: `platform`
+ * (the surface) and `rotate-credentials` (the risk verb) — see
+ * `createGrant`/`revokeGrant`'s own doc comments for that requirement.
+ * Checked in addition to each other, never as alternatives, the same
+ * `withPublishWrite` checks `billing` and `publish-catalog` both.
+ *
+ * # THE AUDITED SHAPE, NOT THE THIN ONE
+ *
+ * `lib/tools-write.ts`'s `withToolsWrite` checks the capability BEFORE
+ * calling `run()`, with no audit at all — correct for tools, where the Go
+ * write records its own audit row inside the same transaction. There is no
+ * such row here: `secrets-api` does not audit a grant/revoke to this
+ * console's `console_audit_log`, so if this file did not audit it, nothing
+ * would. It follows `billing/catalog/actions.ts`'s `withDraftWrite`/
+ * `withPublishWrite` instead — the capability check runs INSIDE
+ * `auditedOperation`'s `operation` callback, not before it, so a
+ * `CapabilityError` reaches `auditedOperation` and is written as a
+ * `capability.refused` row instead of vanishing before the audit path is
+ * ever entered. A refused attempt to grant a reader on a secret is precisely
+ * the thing an audit log exists to hold.
+ */
+export type SecretsWriteResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+const NO_PERMISSION_MESSAGE = "You don't have permission to change who can read this secret.";
+
+/**
+ * Internal error text (a transport failure, a non-2xx status, a body that
+ * was not JSON) must never reach the operator verbatim — the same
+ * discipline `withDraftWrite` and `withToolsWrite` apply. A `PlatformApiError`
+ * 403 is folded into {@link NO_PERMISSION_MESSAGE}: to the operator, the
+ * console refusing and secrets-api refusing are the same fact ("you may not
+ * do this"), and showing two different sentences for it would teach them a
+ * distinction that does not exist on their side of the boundary.
+ */
+const NOT_SAVED_MESSAGE = "That change was not saved.";
+
+function isForbidden(cause: unknown): boolean {
+  return cause instanceof PlatformApiError && cause.status === 403;
+}
+
+async function withAccessWrite<T>(
+  target: string,
+  run: () => Promise<T>,
+  describe: (result: T) => AuditDescription,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  try {
+    const session = await getCurrentSession();
+    const actor = session?.sub ?? "unknown";
+    const value = await auditedOperation({
+      actor,
+      target,
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, "platform");
+        await checkOperatorCapabilityLive(session, "rotate-credentials");
+        return run();
+      },
+      describe,
+    });
+    return { ok: true, value };
+  } catch (cause) {
+    if (cause instanceof CapabilityError || isForbidden(cause)) {
+      return { ok: false, message: NO_PERMISSION_MESSAGE };
+    }
+    // Anything else — secrets-api unreachable, a non-403 status, a body that
+    // was not JSON, `AuditUnavailableError`/`AuditWriteError` — degrades to
+    // the same fixed sentence. None of those are things an operator can act
+    // on, and the underlying `cause.message` (which can carry secrets-api's
+    // origin, a status code, or a database detail) is never shown.
+    return { ok: false, message: NOT_SAVED_MESSAGE };
+  }
+}
+
+/**
+ * Grant `serviceAccount` a reader on `namespace`/`app`'s secret prefix.
+ * `createGrant`'s `ttl` is left unset — the estate's cutover design has no
+ * surface yet for choosing one, so every console-issued grant is
+ * non-expiring until that lands.
+ */
+export async function grantAccessAction(input: {
+  namespace: string;
+  app: string;
+  serviceAccount: string;
+}): Promise<SecretsWriteResult> {
+  const appRef: AppRef = {
+    namespace: input.namespace,
+    name: input.app,
+    serviceAccount: input.serviceAccount,
+  };
+  const target = `${input.namespace}/${input.app}`;
+  const result = await withAccessWrite(
+    target,
+    () => createGrant(appRef),
+    () => ({ action: "secrets.access.grant", summary: { granted: 1 }, target }),
+  );
+  if (!result.ok) return result;
+  return { ok: true };
+}
+
+/** Revoke `app`'s reader grant in `namespace`. */
+export async function revokeAccessAction(namespace: string, app: string): Promise<SecretsWriteResult> {
+  const target = `${namespace}/${app}`;
+  const result = await withAccessWrite(
+    target,
+    () => revokeGrant(namespace, app),
+    () => ({ action: "secrets.access.revoke", summary: { revoked: 1 }, target }),
+  );
+  if (!result.ok) return result;
+  return { ok: true };
+}
