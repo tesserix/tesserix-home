@@ -9,7 +9,20 @@
 
 export type NotificationKind = "ticket_created" | "merchant_reply";
 
-export interface NotificationItem {
+/**
+ * Every kind a `NotificationItem` can carry, as one exported list rather than
+ * a type-only union. `notification-bell.tsx`'s shape validator checks an
+ * incoming item's `kind` against this array — deriving from the same list
+ * `NotificationItem` is built from, instead of its own hardcoded literal
+ * list, is what keeps the two from drifting apart when a later task adds a
+ * third kind.
+ */
+export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
+  "ticket_created",
+  "merchant_reply",
+];
+
+export interface TicketNotification {
   /** `${kind}:${row id}` — the merged list holds both kinds, and a bare row
    *  id could collide across the two tables. */
   readonly id: string;
@@ -22,6 +35,12 @@ export interface NotificationItem {
   readonly actor: string;
   readonly at: string;
 }
+
+// A discriminated union with, for now, one member — introduced ahead of the
+// second member (an access proposal awaiting approval, with none of
+// TicketNotification's fields) so that refactor and the new kind land as
+// separately bisectable changes.
+export type NotificationItem = TicketNotification;
 
 export interface NotificationFeed {
   readonly items: readonly NotificationItem[];

@@ -204,6 +204,16 @@ describe("NotificationBell", () => {
     expect(screen.queryByText("12")).not.toBeInTheDocument();
   });
 
+  it("renders unavailable, not a broken row, when an item carries an unrecognised kind", async () => {
+    // NotificationItem is a discriminated union now, so a feed item's kind
+    // is no longer guaranteed to be one this build knows how to render. An
+    // unrecognised kind must fail the shape check and fall back to
+    // UNAVAILABLE, the same as any other malformed payload.
+    mockFeed({ items: [{ ...TICKET_ITEM, kind: "nope" }], unread: 1, lastSeenAt: null });
+    renderBell();
+    await waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
+  });
+
   it("links a ticket_created item to the ticket by uuid, not by ticket number", async () => {
     mockFeed({ items: [TICKET_ITEM], unread: 1, lastSeenAt: null });
     renderBell();

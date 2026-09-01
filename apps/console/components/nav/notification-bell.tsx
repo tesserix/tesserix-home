@@ -4,7 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { Bell } from "lucide-react";
-import type { NotificationFeed, NotificationItem } from "@/lib/notifications";
+import {
+  NOTIFICATION_KINDS,
+  type NotificationFeed,
+  type NotificationItem,
+} from "@/lib/notifications";
 
 const FEED_URL = "/api/notifications";
 const POLL_INTERVAL_MS = 60_000;
@@ -59,15 +63,32 @@ async function fetchFeed(url: string): Promise<FeedResult> {
  * boundary where a malformed payload becomes a broken sidebar on every
  * console page, so a wrong-shaped body must fall back to `UNAVAILABLE`
  * rather than render garbage or throw.
+ *
+ * `NotificationItem` is now a union, so an item's `kind` is no longer
+ * guaranteed to be one this build knows how to render. An unrecognised kind
+ * that reached `NotificationRow` unchecked would render as a broken ticket
+ * link (or, once a variant with different fields exists, as `undefined`
+ * spliced into the DOM) rather than falling back cleanly — so this check
+ * inspects each item's `kind`, not just the feed's outer shape.
  */
 function isNotificationFeedShape(value: unknown): value is NotificationFeed {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return (
     Array.isArray(candidate.items) &&
+    candidate.items.every(hasRecognisedKind) &&
     typeof candidate.unread === "number" &&
     Number.isFinite(candidate.unread)
   );
+}
+
+/** Checks only the discriminant, against the single exported list of known
+ *  kinds — not the rest of an item's shape, which stays out of scope for a
+ *  boundary check this proportionate. */
+function hasRecognisedKind(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const kind = (item as { kind?: unknown }).kind;
+  return typeof kind === "string" && (NOTIFICATION_KINDS as readonly string[]).includes(kind);
 }
 
 function isUnavailable(result: FeedResult | undefined): result is typeof UNAVAILABLE {
@@ -87,14 +108,48 @@ function formatRelativeTime(iso: string): string {
   return `${diffDays}d ago`;
 }
 
+/** Throws for a `NotificationItem["kind"]` no `switch` below handles. The
+ *  parameter type is `never` only when every case has actually been
+ *  handled, so a future kind that falls through a `switch`'s cases (rather
+ *  than being deliberately handled) is a COMPILE error here, not a runtime
+ *  one — the failure it guards against is a new variant silently rendering
+ *  as a broken ticket link, and catching that at the type level is stronger
+ *  than any test could be. */
+function assertNever(value: never): never {
+  throw new Error(`notification-bell: unhandled kind ${JSON.stringify(value)}`);
+}
+
 function leadingPhrase(item: NotificationItem): string {
-  return item.kind === "ticket_created" ? "New ticket" : `${item.actor} replied`;
+  // Exhaustive switch, not a binary ternary: Task 4 adds a second member to
+  // the NotificationItem union, and the ternary's "else" branch would
+  // silently swallow it instead of failing to compile.
+  switch (item.kind) {
+    case "ticket_created":
+      return "New ticket";
+    case "merchant_reply":
+      return `${item.actor} replied`;
+    default:
+      return assertNever(item.kind);
+  }
+}
+
+/** The href is decided per variant, not assumed — today every kind links to
+ *  a ticket, but that is a per-case decision, not a fact about
+ *  NotificationItem as a whole. */
+function hrefFor(item: NotificationItem): string {
+  switch (item.kind) {
+    case "ticket_created":
+    case "merchant_reply":
+      return `/platform/tickets/${item.ticketId}`;
+    default:
+      return assertNever(item.kind);
+  }
 }
 
 function NotificationRow({ item }: { item: NotificationItem }) {
   return (
     <Link
-      href={`/platform/tickets/${item.ticketId}`}
+      href={hrefFor(item)}
       className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-[13px] transition-colors hover:bg-accent"
     >
       <span className="font-medium text-foreground">

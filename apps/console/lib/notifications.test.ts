@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  NOTIFICATION_KINDS,
   countUnread,
   mergeEvents,
   toReplyEvent,
@@ -38,6 +39,15 @@ function item(at: string, id = at): NotificationItem {
     at,
   };
 }
+
+describe("NOTIFICATION_KINDS", () => {
+  it("lists exactly the two ticket kinds this build understands", () => {
+    // The validator in notification-bell.tsx derives its accepted-kind
+    // check from this exact list — an entry dropped here silently makes a
+    // real, currently-working kind read as unrecognised.
+    expect(NOTIFICATION_KINDS).toEqual(["ticket_created", "merchant_reply"]);
+  });
+});
 
 describe("toTicketEvent", () => {
   it("links to the ticket by uuid, not by number", () => {
