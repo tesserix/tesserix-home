@@ -1,9 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlatformApiError } from "./platform-api-error";
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  // `secrets-api.ts` memoises its dynamic `import("./auth/platform-token")`
+  // into a module-level promise (see `platformTokenModule`'s comment), and
+  // this test file's many `await import("./secrets-api")` calls all resolve
+  // to the SAME cached module instance (only `vi.doMock`'d modules get
+  // re-evaluated, and "./secrets-api" itself is never doMocked). Without
+  // this, the first test to call `secretsRequest` would pin its mock's
+  // token for every test that follows. `vi.resetModules()` would also fix
+  // it, but at the cost of handing out a fresh `PlatformApiError` class per
+  // test — see `__resetPlatformTokenModuleForTests`'s comment for why that
+  // is worse.
+  const { __resetPlatformTokenModuleForTests } = await import("./secrets-api");
+  __resetPlatformTokenModuleForTests();
 });
 
 // Hoisted, for `fetchSecretsInventory` only (see below): it awaits several

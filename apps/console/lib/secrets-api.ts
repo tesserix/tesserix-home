@@ -25,6 +25,57 @@ export function secretsApiOrigin(): string | undefined {
 }
 
 /**
+ * Resolves `./auth/platform-token` exactly once per module instance, into a
+ * cached promise every `secretsRequest` call awaits.
+ *
+ * `import("./auth/platform-token")` is dynamic (not a static top-level
+ * import) for a real reason unrelated to this cache: a static import drags
+ * in the operator-token store, and through it `pg`, into any client bundle
+ * that reaches this module — see the identical reasoning documented on
+ * `PlatformApiError`. Memoising the *promise* rather than switching to a
+ * static import preserves that property; the import still only happens at
+ * first call, lazily, and only on the server.
+ *
+ * The memo also fixes a genuine concurrency bug, not just a style
+ * preference: `fetchSecretsInventory` fires several `secretsRequest` calls
+ * concurrently (`Promise.all`), and without this cache each one would do its
+ * own first-time `import("./auth/platform-token")`. Two concurrent
+ * first-imports of the same specifier raced under Vitest's SSR module
+ * runner — confirmed in isolation with nothing but
+ * `Promise.all([secretsRequest(...), secretsRequest(...)])` sharing a
+ * `vi.mock` — and one of the two would resolve the *real* module instead of
+ * the mock, throwing `cookies() was called outside a request scope`. With
+ * only one `import()` call ever made (every caller awaits the same cached
+ * promise), there is nothing left to race.
+ */
+let tokenModule: Promise<typeof import("./auth/platform-token")> | undefined;
+function platformTokenModule(): Promise<typeof import("./auth/platform-token")> {
+  tokenModule ??= import("./auth/platform-token");
+  return tokenModule;
+}
+
+/**
+ * Test-only escape hatch: clears the memo above so a fresh per-test
+ * `vi.doMock("./auth/platform-token", ...)` actually takes effect on the
+ * next `secretsRequest` call.
+ *
+ * Production never calls this — one server process is one long-lived module
+ * instance, so the memo is filled exactly once and stays filled for the
+ * process's life, which is the whole point of it (see `platformTokenModule`'s
+ * comment). Tests are different: many "sessions" (different tokens,
+ * `reauthRequired` values) share this one module instance across a single
+ * `vitest run`, and `vi.resetModules()` is too blunt a fix for that — it
+ * would also hand out a fresh `PlatformApiError` class per test, breaking
+ * every `instanceof PlatformApiError` check against the class this test file
+ * imported once at the top (see the class's own doc comment on exactly this
+ * failure mode). Resetting only this one memo, not the whole module
+ * registry, avoids that.
+ */
+export function __resetPlatformTokenModuleForTests(): void {
+  tokenModule = undefined;
+}
+
+/**
  * A single GET-style call against secrets-api, mirroring `platformCall`'s
  * shape (the unwrapping-to-`.data` layer above it, `platformRequest`, has no
  * counterpart here yet — secrets-api does not speak the same envelope). The
@@ -38,7 +89,7 @@ export async function secretsRequest(label: string, path: string): Promise<unkno
     throw new PlatformApiError(`${label}: SECRETS_API_ORIGIN is not set`, 501);
   }
 
-  const { resolvePlatformApiToken } = await import("./auth/platform-token");
+  const { resolvePlatformApiToken } = await platformTokenModule();
   const { token, reauthRequired } = await resolvePlatformApiToken();
   if (!token) {
     // The marker is set ONLY for the absence a fresh sign-in mints a token
@@ -272,14 +323,19 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   const backendsJson = await secretsRequest("backends", "/api/backends");
   const enabled = parseBackendNames(backendsJson).filter(isKnownStore);
 
-  // Sequential, not `Promise.all`: there is no ordering requirement between
-  // these three requests, but each independently resolves the operator token
-  // (`secretsRequest`'s own dynamic `import`), and this is a low-traffic
-  // console page, not a hot path — the simplicity of one request in flight
-  // at a time outweighs the small latency win from firing them together.
-  const openbaoResult = enabled.includes("openbao") ? await fetchSecretPaths("openbao") : null;
-  const gcpsmResult = enabled.includes("gcpsm") ? await fetchSecretPaths("gcpsm") : null;
-  const grantsJson = await secretsRequest("access grants", "/api/access/grants");
+  // Concurrent: the two stores' walks and the grants read have no ordering
+  // requirement between them, and each store's walk is already many
+  // sequential requests on its own — serialising the stores too would
+  // roughly double this page's wall-clock for no product reason. This is
+  // safe to run concurrently because `platformTokenModule` (see its comment)
+  // resolves the operator-token module exactly once and every caller awaits
+  // that same cached promise, so there is no first-import race between
+  // these three calls.
+  const [openbaoResult, gcpsmResult, grantsJson] = await Promise.all([
+    enabled.includes("openbao") ? fetchSecretPaths("openbao") : Promise.resolve(null),
+    enabled.includes("gcpsm") ? fetchSecretPaths("gcpsm") : Promise.resolve(null),
+    secretsRequest("access grants", "/api/access/grants"),
+  ]);
 
   const grants = parseGrants(grantsJson);
   const data = buildInventory({
