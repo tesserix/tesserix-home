@@ -17,7 +17,8 @@ import {
 } from "@tesserix/web";
 import { DetailLayout } from "@/components/kit/detail-layout";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import type { SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import type { Grant, SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import { AccessCard } from "./access-card";
 import { WriteSecretForm } from "./write-secret-form";
 
 const STORE_LABEL: Record<SecretStore, string> = {
@@ -82,6 +83,10 @@ export interface SecretDetailViewProps {
   path: string;
   detail: SecretDetail | null;
   versions: SecretVersion[];
+  /** Every grant covering this secret, already filtered by `page.tsx` via
+   *  `readersFor` — `[]` for a GSM secret (see the comment at that call
+   *  site), which `AccessCard` never renders as an empty reader list. */
+  readers: Grant[];
   state: SurfaceState;
   /** From `page.tsx`'s render-path gate — see the comment there. Not the
    *  security control: it only decides whether the write tab is offered. */
@@ -104,6 +109,7 @@ export function SecretDetailView({
   path,
   detail,
   versions,
+  readers,
   state,
   canWrite,
 }: SecretDetailViewProps) {
@@ -162,6 +168,13 @@ export function SecretDetailView({
           id: "versions",
           label: "Versions",
           content: <VersionHistoryTable versions={versions} />,
+        },
+        // Shown to every viewer, unlike Write below — this is read-only
+        // (Task 2), so there is nothing here that requires `canWrite`.
+        {
+          id: "access",
+          label: "Access",
+          content: <AccessCard store={store} path={path} readers={readers} />,
         },
         // Offered only to an operator whose session holds both `platform`
         // and `rotate-credentials` (see `canWrite`'s doc comment above). A

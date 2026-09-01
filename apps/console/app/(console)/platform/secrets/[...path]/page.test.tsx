@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 const fetchSecretDetail = vi.fn();
 const fetchSecretVersions = vi.fn();
+const fetchGrants = vi.fn();
 
 vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
   fetchSecretDetail: (...args: unknown[]) => fetchSecretDetail(...args),
   fetchSecretVersions: (...args: unknown[]) => fetchSecretVersions(...args),
+  fetchGrants: (...args: unknown[]) => fetchGrants(...args),
 }));
 
 // `getCurrentSession` and `requiresCapability` back the write-affordance gate
@@ -68,6 +71,8 @@ const VERSIONS: SecretVersion[] = [
 beforeEach(() => {
   fetchSecretDetail.mockReset();
   fetchSecretVersions.mockReset();
+  fetchGrants.mockReset();
+  fetchGrants.mockResolvedValue([]);
   getCurrentSession.mockReset();
   getCurrentSession.mockResolvedValue(null);
   requiresCapability.mockReset();
@@ -192,6 +197,93 @@ describe("the secret detail surface", () => {
     await expectNotFound(
       renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }),
     );
+  });
+});
+
+describe("the access card", () => {
+  // The tab's content only mounts once selected (`@tesserix/web`'s
+  // `TabsContent` returns `null` for every tab but the active one), so every
+  // assertion below clicks into "Access" first — same pattern as
+  // `crm/[organisation]/page.test.tsx`'s "Contacts" tab.
+  async function openAccessTab() {
+    await userEvent.click(screen.getByRole("tab", { name: "Access" }));
+  }
+
+  beforeEach(() => {
+    fetchSecretDetail.mockResolvedValue(DETAIL);
+    fetchSecretVersions.mockResolvedValue([]);
+  });
+
+  it("flags an OpenBao secret with no covering grant", async () => {
+    fetchGrants.mockResolvedValue([]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+    await openAccessTab();
+
+    expect(screen.getByText("Nothing reads this secret yet.")).toBeInTheDocument();
+    expect(screen.getByText("No app can read this")).toBeInTheDocument();
+  });
+
+  it("counts a single covering grant as '1 reader'", async () => {
+    fetchGrants.mockResolvedValue([{ namespace: "homechef", app: "homechef-api" }]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+    await openAccessTab();
+
+    expect(screen.getByText("1 reader")).toBeInTheDocument();
+    expect(screen.getByText("homechef/homechef-api")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing reads this secret yet.")).toBeNull();
+  });
+
+  it("counts two covering grants as '2 readers'", async () => {
+    // `readersFor` matches by prefix (`lib/secrets.ts`), so two DISTINCT
+    // grants covering one path need two distinct prefixes along it — a
+    // route one level deeper than the other tests here, matching
+    // `readersFor`'s own "grant on a parent prefix" fixture
+    // (`lib/secrets.test.ts`). Only the route segments matter for this
+    // match; `fetchSecretDetail`'s resolved `DETAIL.path` is unrelated and
+    // never compared against it.
+    fetchGrants.mockResolvedValue([
+      { namespace: "homechef", app: "homechef-api" },
+      { namespace: "homechef", app: "homechef-api/nested" },
+    ]);
+
+    render(
+      await renderPage({
+        path: ["homechef", "homechef-api", "nested", "db-password"],
+        store: "openbao",
+      }),
+    );
+    await openAccessTab();
+
+    expect(screen.getByText("2 readers")).toBeInTheDocument();
+  });
+
+  // The failure mode this guards against is both cards rendering at once —
+  // asserting only that the IAM copy is present would still pass then, so
+  // this checks both directions.
+  it("replaces the access card with the IAM card for a GSM secret, never rendering an empty reader list", async () => {
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "gcpsm" }));
+    await openAccessTab();
+
+    // A single element containing this exact sentence, split across a
+    // `<strong>` and a `<code>`, does not exist as one text node — checking
+    // the rendered body's full text is the honest way to assert on it.
+    expect(document.body.textContent).toContain(
+      "Governed by Google Cloud IAM, not from here. This store has no whitelist in tesserix-k8s, so there is nothing for the console to propose.",
+    );
+    expect(screen.queryByText("Nothing reads this secret yet.")).toBeNull();
+
+    // GSM never calls the OpenBao-only grants route at all.
+    expect(fetchGrants).not.toHaveBeenCalled();
+  });
+
+  it("renders no reader chip at all for a GSM secret", async () => {
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "gcpsm" }));
+    await openAccessTab();
+
+    expect(screen.queryByText("No app can read this")).toBeNull();
+    expect(screen.queryByText(/^\d+ readers?$/)).toBeNull();
   });
 });
 

@@ -8,7 +8,7 @@ import "server-only";
 
 import { PlatformApiError } from "./platform-api-error";
 import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
-import type { SecretDetail, SecretsInventory, SecretStore, SecretVersion } from "./secrets";
+import type { Grant, SecretDetail, SecretsInventory, SecretStore, SecretVersion } from "./secrets";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. Mirrors
@@ -461,6 +461,24 @@ export async function fetchSecretVersions(store: SecretStore, path: string): Pro
     `/api/secret-versions/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
   );
   return parseSecretVersions(json);
+}
+
+/**
+ * The OpenBao access grants: `GET /api/access/grants`.
+ *
+ * Callers pass the result to `readersFor` (`lib/secrets.ts`) to answer "who
+ * can read this secret" for one path — the same function
+ * `fetchSecretsInventory` uses to build the whole-estate orphan flag, so
+ * there is exactly one definition of "covers" between the two surfaces.
+ *
+ * The detail page (Task 2) is the only caller so far, and it calls this only
+ * when the secret's own store is `"openbao"` — see the comment at that call
+ * site for why, which mirrors `fetchSecretsInventory`'s existing guard on
+ * the same route.
+ */
+export async function fetchGrants(): Promise<Grant[]> {
+  const json = await secretsRequest("access grants", "/api/access/grants");
+  return parseGrants(json);
 }
 
 /**

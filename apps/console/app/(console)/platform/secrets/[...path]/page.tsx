@@ -9,10 +9,11 @@ import {
   toSurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
-import { fetchSecretDetail, fetchSecretVersions } from "@/lib/secrets-api";
+import { fetchGrants, fetchSecretDetail, fetchSecretVersions } from "@/lib/secrets-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { requiresCapability } from "@/lib/internal-access";
-import type { SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import { readersFor } from "@/lib/secrets";
+import type { Grant, SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
 import { SecretDetailView } from "./secret-detail-view";
 
 /**
@@ -95,12 +96,34 @@ export default async function SecretDetailPage({
 
   let detail: SecretDetail | null = null;
   let versions: SecretVersion[] = [];
+  let readers: Grant[] = [];
   let error: unknown = null;
   try {
-    [detail, versions] = await Promise.all([
+    const [fetchedDetail, fetchedVersions, grants] = await Promise.all([
       fetchSecretDetail(store, path),
       fetchSecretVersions(store, path),
+      // Skipped for GSM, for two independent reasons — see `readersFor`'s
+      // call below for how the empty result flows through, and never
+      // "GSM has no readers": `secrets-api` only registers
+      // `/api/access/grants` when OpenBao is configured (`if d.Bao != nil`
+      // in `secrets-api/internal/api/server.go`), so on a GSM-only
+      // deployment the route 404s outright and would fail this whole
+      // `Promise.all` over a call nobody needs the answer to; and even on a
+      // deployment where OpenBao IS configured, a GSM secret's readers are
+      // IAM bindings this console cannot see, so the answer would be
+      // meaningless for that store regardless of whether the route exists.
+      // Mirrors the identical guard in `fetchSecretsInventory`
+      // (`lib/secrets-api.ts`).
+      store === "openbao" ? fetchGrants() : Promise.resolve([]),
     ]);
+    detail = fetchedDetail;
+    versions = fetchedVersions;
+    // Safe to call unconditionally: with `grants` forced to `[]` for a GSM
+    // secret above, this always returns `[]` there too — `AccessCard`
+    // (`access-card.tsx`) is what actually decides not to render a reader
+    // list for GSM, and it decides that from `store`, not from `readers`
+    // being empty.
+    readers = readersFor(path, grants);
   } catch (caught) {
     if (caught instanceof PlatformApiError && caught.status === 404) {
       notFound();
@@ -134,6 +157,7 @@ export default async function SecretDetailPage({
       path={path}
       detail={detail}
       versions={versions}
+      readers={readers}
       state={state}
       canWrite={canWrite}
     />
