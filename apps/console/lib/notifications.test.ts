@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  NOTIFICATION_KINDS,
+  compareByAtDescending,
   countUnread,
   mergeEvents,
+  toProposalEvent,
   toReplyEvent,
   toTicketEvent,
   type NotificationItem,
 } from "./notifications";
+import type { Proposal } from "./secrets";
 
 const TICKET_ROW = {
   id: "5f0b2c34-0000-0000-0000-000000000000",
@@ -26,6 +30,16 @@ const REPLY_ROW = {
   subject: "Payout missing",
 };
 
+const PROPOSAL: Proposal = {
+  number: 42,
+  title: "Grant mp-payments read on mark8ly/stripe",
+  url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+  branch: "grant/mp-payments-stripe",
+  author: "someone",
+  createdAt: "2026-08-16T00:00:00.000Z",
+  targets: ["mark8ly/stripe"],
+};
+
 function item(at: string, id = at): NotificationItem {
   return {
     id,
@@ -38,6 +52,33 @@ function item(at: string, id = at): NotificationItem {
     at,
   };
 }
+
+/** An `AccessProposalNotification` fixture, `at` defaulting to a real
+ *  timestamp so tests that don't care about the undated case aren't
+ *  accidentally exercising it. */
+function proposalItem(at: string | undefined, number = 1): NotificationItem {
+  return {
+    id: `access_proposal_open:${number}`,
+    kind: "access_proposal_open",
+    number,
+    title: "Grant read",
+    targets: ["mark8ly/stripe"],
+    at,
+  };
+}
+
+describe("NOTIFICATION_KINDS", () => {
+  it("lists exactly the three kinds this build understands", () => {
+    // The validator in notification-bell.tsx derives its accepted-kind
+    // check from this exact list — an entry dropped here silently makes a
+    // real, currently-working kind read as unrecognised.
+    expect(NOTIFICATION_KINDS).toEqual([
+      "ticket_created",
+      "merchant_reply",
+      "access_proposal_open",
+    ]);
+  });
+});
 
 describe("toTicketEvent", () => {
   it("links to the ticket by uuid, not by number", () => {
@@ -79,11 +120,39 @@ describe("toReplyEvent", () => {
   });
 });
 
+describe("toProposalEvent", () => {
+  it("maps a proposal's number, title, and targets straight through", () => {
+    const e = toProposalEvent(PROPOSAL);
+    expect(e.kind).toBe("access_proposal_open");
+    if (e.kind !== "access_proposal_open") throw new Error("unreachable");
+    expect(e.number).toBe(42);
+    expect(e.title).toBe(PROPOSAL.title);
+    expect(e.targets).toEqual(["mark8ly/stripe"]);
+    expect(e.at).toBe(PROPOSAL.createdAt);
+  });
+
+  it("ids the event by the pull request number, not the ticket convention", () => {
+    const e = toProposalEvent(PROPOSAL);
+    expect(e.id).toBe("access_proposal_open:42");
+  });
+
+  it("passes an undefined createdAt straight through as undefined", () => {
+    // secrets-api discards a time.Parse error upstream and this parser
+    // maps the resulting zero-time literal to undefined (see
+    // Proposal.createdAt's doc comment) — this mapper must not paper over
+    // that with a fabricated timestamp.
+    const e = toProposalEvent({ ...PROPOSAL, createdAt: undefined });
+    expect(e.at).toBeUndefined();
+  });
+});
+
 describe("mergeEvents", () => {
   it("interleaves both sources newest first", () => {
     const merged = mergeEvents(
-      [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
-      [item("2026-08-12T00:00:00.000Z")],
+      [
+        [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z")],
+      ],
       10,
     );
     expect(merged.map((e) => e.at)).toEqual([
@@ -95,8 +164,10 @@ describe("mergeEvents", () => {
 
   it("truncates to the limit after sorting, keeping the newest", () => {
     const merged = mergeEvents(
-      [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
-      [item("2026-08-12T00:00:00.000Z")],
+      [
+        [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z")],
+      ],
       2,
     );
     expect(merged.map((e) => e.at)).toEqual([
@@ -108,7 +179,82 @@ describe("mergeEvents", () => {
   it("does not mutate its inputs", () => {
     const a = [item("2026-08-10T00:00:00.000Z")];
     const frozen = Object.freeze([...a]);
-    expect(() => mergeEvents(frozen, [], 5)).not.toThrow();
+    expect(() => mergeEvents([frozen, []], 5)).not.toThrow();
+  });
+
+  it("merges three or more sources, still newest-first and truncated after sorting", () => {
+    // The feed is gaining a third source (access proposals); this is the
+    // generalization the two-array signature could not express.
+    const merged = mergeEvents(
+      [
+        [item("2026-08-10T00:00:00.000Z")],
+        [item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z"), item("2026-08-09T00:00:00.000Z")],
+      ],
+      3,
+    );
+    expect(merged.map((e) => e.at)).toEqual([
+      "2026-08-14T00:00:00.000Z",
+      "2026-08-12T00:00:00.000Z",
+      "2026-08-10T00:00:00.000Z",
+    ]);
+  });
+
+  it("sorts an undated proposal to the bottom of a newest-first list, not the top", () => {
+    // Ruling: an undated item (a proposal whose upstream timestamp failed to
+    // parse) is treated as the OLDEST thing in the list, never the newest —
+    // an accidental empty-string-style comparison would instead leave it in
+    // whatever order Array.flat() produced, or worse, at the top.
+    const merged = mergeEvents(
+      [[proposalItem(undefined, 1), item("2026-08-10T00:00:00.000Z")]],
+      10,
+    );
+    expect(merged.map((e) => e.id)).toEqual([
+      "2026-08-10T00:00:00.000Z",
+      "access_proposal_open:1",
+    ]);
+  });
+
+  it("keeps two undated items stable relative to each other, via a comparator that reports them equal", () => {
+    // This exercises the same input as before (two undated items through
+    // mergeEvents), but the previous version of this test asserted the
+    // observed order rather than the comparator's actual return value —
+    // which meant it could not distinguish a correct `return 0` from a
+    // broken comparator, because V8's small-array insertion sort never
+    // queries both `cmp(a, b)` and `cmp(b, a)` for a 2-element array, so a
+    // asymmetric comparator (which is inconsistent, not "unordered") would
+    // still have produced this same stable-looking output. See the
+    // `compareByAtDescending` symmetry test below for the assertion that
+    // actually catches that.
+    const merged = mergeEvents(
+      [[proposalItem(undefined, 1), proposalItem(undefined, 2)]],
+      10,
+    );
+    expect(merged.map((e) => e.id)).toEqual([
+      "access_proposal_open:1",
+      "access_proposal_open:2",
+    ]);
+  });
+});
+
+describe("compareByAtDescending", () => {
+  it("reports two undated items equal in both comparison directions", () => {
+    // This is the property `sort()` cannot be trusted to check (see the
+    // comment above): a comparator that returns a nonzero, non-symmetric
+    // value for one direction only (e.g. 1 for both (x, y) and (y, x), which
+    // is what deleting the guard line's `return 0` and falling through to
+    // "b === undefined ? -1" branches would produce) breaks `Array.sort`'s
+    // contract even though a 2-element `sort()` call might not visibly
+    // reorder anything. Asserting both directions directly, and their
+    // relationship to each other, is what actually pins the guard line
+    // down.
+    const a = proposalItem(undefined, 1);
+    const b = proposalItem(undefined, 2);
+    // Both directions must report "equal" — a comparator that returns a
+    // nonzero value for one or both directions here is broken, whether or
+    // not that break happens to be symmetric.
+    expect(compareByAtDescending(a, b)).toBe(0);
+    expect(compareByAtDescending(b, a)).toBe(0);
   });
 });
 
@@ -130,5 +276,19 @@ describe("countUnread", () => {
 
   it("counts nothing when last seen is newer than every event", () => {
     expect(countUnread([item("2026-08-14T00:00:00.000Z")], "2026-08-20T00:00:00.000Z")).toBe(0);
+  });
+
+  it("never counts an undated proposal as unread, even with a real last-seen value", () => {
+    // Ruling: an item with no `at` can never be PROVEN newer than
+    // lastSeenAt, so it must never inflate the badge — a bell that cannot
+    // be cleared for one specific item is the failure this function's own
+    // null-lastSeenAt case already guards against.
+    expect(
+      countUnread([proposalItem(undefined, 1)], "2026-08-01T00:00:00.000Z"),
+    ).toBe(0);
+  });
+
+  it("never counts an undated proposal as unread for an operator who has never opened the panel", () => {
+    expect(countUnread([proposalItem(undefined, 1)], null)).toBe(0);
   });
 });

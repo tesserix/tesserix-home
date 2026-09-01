@@ -110,10 +110,18 @@ export function __resetPlatformTokenModuleForTests(): void {
  * so the body stays a plain value here (JSON-encoded once, in one place)
  * instead of every caller doing its own `JSON.stringify` and remembering the
  * content-type header.
+ *
+ * `signal` is optional and, today, passed by exactly one caller
+ * (`fetchProposals`, guarding the notification bell's proposals leg — see
+ * its call site). `fetch` already treats an `undefined` `signal` as "no
+ * abort controller," so every other caller's behaviour is unchanged by this
+ * field's existence; it is not a blanket timeout for every `secretsRequest`
+ * call, only a per-call opt-in.
  */
 export interface SecretsRequestInit {
   readonly method?: string;
   readonly body?: unknown;
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -176,6 +184,7 @@ export async function secretsRequest(
       method: init?.method,
       headers,
       body,
+      signal: init?.signal,
     });
   } catch (cause) {
     throw new PlatformApiError(`${label}: request failed (${describe(cause)})`, undefined, {
@@ -675,9 +684,21 @@ export async function deleteSecret(store: SecretStore, path: string, destroy: bo
  * calm "not configured" state the inventory page already gives a 501 for
  * `SECRETS_API_ORIGIN` unset. Swallowing it into `[]` here would make an
  * unconfigured deployment indistinguishable from one with an empty queue.
+ *
+ * `signal` is `undefined` by default — the reviews queue page
+ * (`app/(console)/platform/secrets/reviews/page.tsx`) calls this with none,
+ * unchanged. `/api/notifications` (`safeProposalEvents` in
+ * `app/api/notifications/route.ts`) passes an `AbortSignal.timeout(...)`:
+ * that leg sits inside the bell's `Promise.all` alongside the ticket/reply
+ * queries, and without a bound, a `secrets-api` that accepts the connection
+ * and never answers would hold `/api/notifications` open indefinitely,
+ * taking the ticket rows down with it — the exact thing the `safe` in
+ * `safeProposalEvents` promises not to do. The reviews queue page has no
+ * sibling data to protect, so it is left on `fetch`'s own (lack of a)
+ * timeout rather than gaining one it never asked for.
  */
-export async function fetchProposals(): Promise<Proposal[]> {
-  const json = await secretsRequest("reviews", "/api/reviews");
+export async function fetchProposals(signal?: AbortSignal): Promise<Proposal[]> {
+  const json = await secretsRequest("reviews", "/api/reviews", { signal });
   return parseProposals(json);
 }
 

@@ -6,6 +6,22 @@ import type { ReplyEventRow, TicketEventRow } from "../notifications";
  *
  * Both feed queries are bounded by a window AND a limit: the window keeps the
  * scan small, the limit keeps the panel scannable.
+ *
+ * `console_notification_reads` holds ONE watermark per `user_id`, not one
+ * per `(user_id, kind)` — `readLastSeenAt`/`writeLastSeenAt` below read and
+ * write a single row keyed only on the operator. That is a deliberate,
+ * accepted simplification for this phase, not an oversight: `countUnread`
+ * (`lib/notifications.ts`) runs on the already capability-filtered list, so
+ * day-to-day the watermark only ever measures against kinds the operator can
+ * currently see.
+ *
+ * The one real consequence: an operator who has been opening the bell while
+ * holding only `rotate-credentials` (so the watermark has only ever advanced
+ * against proposal timestamps), who then GAINS `support`, will find the
+ * entire existing ticket backlog older than that watermark on their very
+ * next read — it arrives pre-read with `unread: 0`, even though they have
+ * never actually seen a single one of those tickets. A per-kind watermark
+ * would avoid this; it is not what this phase built.
  */
 
 /** pg parses timestamptz into a Date; the row types (and every consumer:

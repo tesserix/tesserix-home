@@ -45,6 +45,26 @@ const ITEM = {
   at: "2026-08-16T00:00:00.000Z",
 };
 
+const TICKET_ITEM = {
+  id: "ticket_created:2",
+  kind: "ticket_created",
+  ticketId: "9a1c7e00-0000-0000-0000-000000000000",
+  ticketNumber: "M8-2001",
+  productId: "mark8ly",
+  subject: "Storefront down",
+  actor: "Ravi Shah",
+  at: "2026-08-16T00:00:00.000Z",
+};
+
+const PROPOSAL_ITEM = {
+  id: "access_proposal_open:42",
+  kind: "access_proposal_open",
+  number: 42,
+  title: "Grant reader access to products-db",
+  targets: ["products-db", "orders-db"],
+  at: "2026-08-16T00:00:00.000Z",
+};
+
 describe("NotificationBell", () => {
   it("shows the unread count in the button's accessible name", async () => {
     mockFeed({ items: [ITEM], unread: 1, lastSeenAt: null });
@@ -152,5 +172,107 @@ describe("NotificationBell", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the ticket_created phrase, not the reply phrase", async () => {
+    // Every prior render test used a merchant_reply fixture, so the other
+    // half of leadingPhrase's ternary (notification-bell.tsx:91) has never
+    // rendered. Assert the literal string, not the DISPLAY_CAP-style
+    // constant, so a ternary swap or wording change is caught by the text
+    // itself rather than by a value both sides could share.
+    mockFeed({ items: [TICKET_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    expect(await screen.findByText("New ticket · M8-2001")).toBeInTheDocument();
+  });
+
+  it("renders the merchant_reply phrase composed with the actor and ticket number", async () => {
+    // Prior tests only checked the actor's name appeared somewhere; this
+    // asserts the full composed leading phrase, catching a swapped ternary
+    // branch or a change to the "actor replied" template itself.
+    mockFeed({ items: [ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    expect(await screen.findByText("Asha Pillai replied · M8-1042")).toBeInTheDocument();
+  });
+
+  it("caps the badge at 9+ while the accessible name still carries the true unread count", async () => {
+    // The badge is aria-hidden; the true count reaches assistive tech only
+    // via the button's aria-label. Above DISPLAY_CAP the two deliberately
+    // differ ("9+" vs the real number), and nothing tested that divergence.
+    mockFeed({ items: [ITEM], unread: 12, lastSeenAt: null });
+    renderBell();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Notifications, 12 unread" })).toBeInTheDocument(),
+    );
+    expect(screen.getByText("9+")).toBeInTheDocument();
+    expect(screen.queryByText("12")).not.toBeInTheDocument();
+  });
+
+  it("renders unavailable, not a broken row, when an item carries an unrecognised kind", async () => {
+    // NotificationItem is a discriminated union now, so a feed item's kind
+    // is no longer guaranteed to be one this build knows how to render. An
+    // unrecognised kind must fail the shape check and fall back to
+    // UNAVAILABLE, the same as any other malformed payload.
+    mockFeed({ items: [{ ...TICKET_ITEM, kind: "nope" }], unread: 1, lastSeenAt: null });
+    renderBell();
+    await waitFor(() => expect(screen.getByRole("button")).toBeDisabled());
+  });
+
+  it("links a ticket_created item to the ticket by uuid, not by ticket number", async () => {
+    mockFeed({ items: [TICKET_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    const link = await screen.findByRole("link", { name: /M8-2001/ });
+    expect(link).toHaveAttribute(
+      "href",
+      "/platform/tickets/9a1c7e00-0000-0000-0000-000000000000",
+    );
+  });
+
+  it("links an access_proposal_open item to the review detail route, not a ticket path", async () => {
+    mockFeed({ items: [PROPOSAL_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    const link = await screen.findByRole("link", { name: /#42/ });
+    expect(link).toHaveAttribute("href", "/platform/secrets/reviews/42");
+  });
+
+  it("renders an access_proposal_open item's targets, not a requester's name", async () => {
+    // secrets-api never parses the requester out of the pull request body,
+    // so the row's content is what is waiting (the targets), not who is
+    // waiting on it.
+    mockFeed({ items: [PROPOSAL_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    expect(await screen.findByText("Access proposal waiting · #42")).toBeInTheDocument();
+    expect(screen.getByText("products-db, orders-db")).toBeInTheDocument();
+  });
+
+  it("renders a mixed feed with a ticket and a proposal, each linking to its own destination", async () => {
+    mockFeed({ items: [TICKET_ITEM, PROPOSAL_ITEM], unread: 2, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+
+    const ticketLink = await screen.findByRole("link", { name: /M8-2001/ });
+    expect(ticketLink).toHaveAttribute(
+      "href",
+      "/platform/tickets/9a1c7e00-0000-0000-0000-000000000000",
+    );
+
+    const proposalLink = await screen.findByRole("link", { name: /#42/ });
+    expect(proposalLink).toHaveAttribute("href", "/platform/secrets/reviews/42");
   });
 });
