@@ -573,3 +573,134 @@ describe("fetchSecretVersions", () => {
     expect(versions).toEqual([{ version: 2, destroyed: false, deleted: true, createdAt: undefined }]);
   });
 });
+
+describe("writeSecret", () => {
+  it("PUTs the exact mount-relative path with the data in the body", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", version: 1, backend: "openbao" }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { writeSecret } = await import("./secrets-api");
+    await writeSecret("openbao", "homechef/api/db", { password: "hunter2" });
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/secrets/homechef/api/db?backend=openbao");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(init.body as string)).toMatchObject({ data: { password: "hunter2" } });
+  });
+
+  // The concurrency guarantee: a rotate must send the POSITIVE version the
+  // form was rendered from, verbatim, so a write built on stale data is
+  // refused (409) rather than silently overwriting another operator's write.
+  // Losing this is exactly the mutation this test exists to catch (see
+  // task-2-report.md for the captured failure).
+  it("sends the positive ifVersion verbatim on a rotate", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", version: 6, backend: "openbao" }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { writeSecret } = await import("./secrets-api");
+    await writeSecret("openbao", "homechef/api/db", { password: "hunter2" }, 5);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [, init] = call;
+    const body = JSON.parse(init.body as string);
+    expect(body.ifVersion).toBe(5);
+  });
+
+  // On a create there is no current version to check against. This
+  // deliberately does NOT assert whether `ifVersion` is present or absent in
+  // the body: `IfVersion` is a bare Go `int` with no binding tag on the
+  // server (`secrets-api/internal/api/handlers/secrets.go`), so an omitted
+  // key and an explicit `0` decode identically there. Asserting on which
+  // would pin an implementation detail the wire format does not actually
+  // distinguish.
+  it("succeeds on a create with no ifVersion supplied", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ path: "homechef/api/db", version: 1, backend: "openbao" }), {
+          status: 200,
+        }),
+      ),
+    );
+
+    const { writeSecret } = await import("./secrets-api");
+    const result = await writeSecret("openbao", "homechef/api/db", { password: "hunter2" });
+
+    expect(result).toEqual({ path: "homechef/api/db", version: 1, backend: "openbao" });
+  });
+
+  // A stale write must be distinguishable from a permission failure: both are
+  // non-2xx, but only the preserved upstream status tells a 409 (conflict)
+  // apart from a 403 (lacks `rotate-credentials`).
+  it("surfaces a conflict as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ error: "the secret changed while you were editing it; reload and write again" }),
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const { writeSecret } = await import("./secrets-api");
+    const caught = await writeSecret("openbao", "homechef/api/db", { password: "x" }, 5).catch(
+      (e: unknown) => e,
+    );
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(409);
+  });
+});
+
+describe("restoreSecretVersion", () => {
+  it("POSTs the exact mount-relative path with the version in the body", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", version: 2, restored: true }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { restoreSecretVersion } = await import("./secrets-api");
+    await restoreSecretVersion("openbao", "homechef/api/db", 2);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/secret-versions/homechef/api/db?backend=openbao");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ version: 2 });
+  });
+});
