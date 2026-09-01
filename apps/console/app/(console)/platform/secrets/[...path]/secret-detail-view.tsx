@@ -180,7 +180,7 @@ export function SecretDetailView({
           id: "access",
           label: "Access",
           content: (
-            <AccessCard store={store} path={path} readers={readers} canWrite={canWrite} />
+            <AccessCard store={store} readers={readers} canWrite={canWrite} />
           ),
         },
         // Offered only to an operator whose session holds both `platform`

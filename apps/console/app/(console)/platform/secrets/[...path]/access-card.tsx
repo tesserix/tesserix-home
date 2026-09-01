@@ -201,7 +201,6 @@ function AddReaderForm({
 
 export interface AccessCardProps {
   store: SecretStore;
-  path: string;
   readers: Grant[];
   /** From `page.tsx`'s render-path gate (threaded through
    *  `SecretDetailView`) — the same value that decides whether the Write
@@ -315,7 +314,10 @@ export function AccessCard({ store, readers, canWrite }: AccessCardProps) {
           // no queue) — NOT that this operator "lacks permission to
           // propose": there is no proposal step to lack permission for.
           <p className="text-xs text-muted-foreground">
-            <strong>Granting access needs `rotate-credentials`.</strong> Both adding and removing
+            <strong>
+              Granting access needs <code className="font-mono">rotate-credentials</code>.
+            </strong>{" "}
+            Both adding and removing
             a reader change <code className="font-mono">tesserix-k8s</code> immediately, so both
             take the credential verb. Someone holding it can make this change for you.
           </p>
