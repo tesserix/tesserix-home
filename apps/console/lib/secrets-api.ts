@@ -537,6 +537,9 @@ export async function writeSecret(
  * body `{version}`. Only reverses a delete — a destroyed version is gone for
  * good, and the store reports that as its own error rather than pretending
  * to bring it back.
+ *
+ * Not called anywhere yet — this is 3b-ii groundwork (the restore control
+ * itself is a later task), so do not go hunting for a caller.
  */
 export async function restoreSecretVersion(store: SecretStore, path: string, version: number): Promise<void> {
   await secretsRequest(
