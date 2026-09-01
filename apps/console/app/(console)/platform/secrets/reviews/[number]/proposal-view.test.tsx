@@ -256,6 +256,68 @@ describe("rejecting", () => {
   });
 });
 
+describe("mergeableState and approvals", () => {
+  it("says GitHub can merge when mergeableState is clean", () => {
+    render(
+      <ProposalView
+        number={42}
+        proposal={{ ...PROPOSAL, mergeableState: "clean" }}
+        state={{ kind: "ready" }}
+        canAct
+        operatorLabel="ava@tesserix.app"
+      />,
+    );
+
+    expect(screen.getByText("GitHub says this can merge.")).toBeInTheDocument();
+    expect(screen.queryByText(/cannot merge yet/)).toBeNull();
+  });
+
+  it("shows the raw reported state, not a gloss, when mergeableState is not clean", () => {
+    render(
+      <ProposalView
+        number={42}
+        proposal={{ ...PROPOSAL, mergeableState: "dirty" }}
+        state={{ kind: "ready" }}
+        canAct
+        operatorLabel="ava@tesserix.app"
+      />,
+    );
+
+    expect(screen.getByText(/cannot merge yet/)).toBeInTheDocument();
+    expect(screen.getByText("dirty")).toBeInTheDocument();
+    expect(screen.queryByText("GitHub says this can merge.")).toBeNull();
+  });
+
+  it("says no one has approved when approvals is empty", () => {
+    render(
+      <ProposalView
+        number={42}
+        proposal={{ ...PROPOSAL, approvals: [] }}
+        state={{ kind: "ready" }}
+        canAct
+        operatorLabel="ava@tesserix.app"
+      />,
+    );
+
+    expect(screen.getByText("No one has approved this yet.")).toBeInTheDocument();
+  });
+
+  it("lists every login that has already approved", () => {
+    render(
+      <ProposalView
+        number={42}
+        proposal={{ ...PROPOSAL, approvals: ["octocat", "hubot"] }}
+        state={{ kind: "ready" }}
+        canAct
+        operatorLabel="ava@tesserix.app"
+      />,
+    );
+
+    expect(screen.getByText("Already approved by octocat, hubot")).toBeInTheDocument();
+    expect(screen.queryByText("No one has approved this yet.")).toBeNull();
+  });
+});
+
 describe("non-ready states", () => {
   it("renders the surface-state view, not the diff, when the state is not ready", () => {
     render(

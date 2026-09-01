@@ -6,10 +6,21 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@tesserix/web";
+import { ConsolePageHeader } from "@/components/kit/page-header";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { ChangedFile, ProposalDetail } from "@/lib/secrets";
 import { approveAndMergeAction, rejectProposalAction } from "./actions";
+
+/**
+ * GitHub's `mergeable_state` values this console has actually observed or can
+ * find documented for a pull request. `"clean"` is the only one that means
+ * "GitHub says this can merge cleanly right now" — every other value,
+ * including ones not in this set, is rendered as-is rather than glossed,
+ * because this console has no way to verify what each one means for every
+ * possible upstream state and a wrong gloss is worse than the raw string.
+ */
+const MERGEABLE_CLEAN = "clean";
 
 /**
  * The refusal copy a `platform`-only operator sees instead of any control.
@@ -135,15 +146,37 @@ export function ProposalView({ number, proposal, state, canAct, operatorLabel }:
     });
   }
 
+  const isClean = proposal.mergeableState === MERGEABLE_CLEAN;
+
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-lg font-medium">
-          #{proposal.number} {proposal.title}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Opened by {proposal.author} on branch{" "}
-          <code className="font-mono">{proposal.branch}</code>
+      <ConsolePageHeader
+        title={`#${proposal.number} ${proposal.title}`}
+        description={`Opened by ${proposal.author}`}
+        breadcrumbs={[
+          { label: "Reviews", href: "/platform/secrets/reviews" },
+          { label: `#${proposal.number}` },
+        ]}
+      />
+
+      <div className="flex flex-col gap-1 text-sm">
+        <p className="text-muted-foreground">
+          Branch <code className="font-mono">{proposal.branch}</code>
+        </p>
+        <p>
+          {isClean ? (
+            <span>GitHub says this can merge.</span>
+          ) : (
+            <span>
+              GitHub says this cannot merge yet — reported state:{" "}
+              <code className="font-mono">{proposal.mergeableState}</code>
+            </span>
+          )}
+        </p>
+        <p className="text-muted-foreground">
+          {proposal.approvals.length > 0
+            ? `Already approved by ${proposal.approvals.join(", ")}`
+            : "No one has approved this yet."}
         </p>
       </div>
 
