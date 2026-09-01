@@ -18,6 +18,7 @@ import {
 import { DetailLayout } from "@/components/kit/detail-layout";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import { WriteSecretForm } from "./write-secret-form";
 
 const STORE_LABEL: Record<SecretStore, string> = {
   openbao: "OpenBao",
@@ -82,6 +83,9 @@ export interface SecretDetailViewProps {
   detail: SecretDetail | null;
   versions: SecretVersion[];
   state: SurfaceState;
+  /** From `page.tsx`'s render-path gate — see the comment there. Not the
+   *  security control: it only decides whether the write tab is offered. */
+  canWrite: boolean;
 }
 
 /**
@@ -95,7 +99,14 @@ export interface SecretDetailViewProps {
  * the whole body whenever it isn't `"ready"`, so summary/tabs are empty
  * rather than partially populated.
  */
-export function SecretDetailView({ store, path, detail, versions, state }: SecretDetailViewProps) {
+export function SecretDetailView({
+  store,
+  path,
+  detail,
+  versions,
+  state,
+  canWrite,
+}: SecretDetailViewProps) {
   if (!detail) {
     return (
       <DetailLayout
@@ -152,6 +163,21 @@ export function SecretDetailView({ store, path, detail, versions, state }: Secre
           label: "Versions",
           content: <VersionHistoryTable versions={versions} />,
         },
+        // Offered only to an operator whose session holds both `platform`
+        // and `rotate-credentials` (see `canWrite`'s doc comment above). A
+        // `platform`-only operator never sees this tab at all — the summary
+        // and Versions tab above render exactly the same either way.
+        ...(canWrite
+          ? [
+              {
+                id: "write",
+                label: "Write",
+                content: (
+                  <WriteSecretForm store={store} path={path} currentVersion={detail.version} />
+                ),
+              },
+            ]
+          : []),
       ]}
       state={state}
     />

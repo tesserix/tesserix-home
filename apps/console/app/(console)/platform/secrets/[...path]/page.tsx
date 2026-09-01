@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { getCurrentSession, hasCapability } from "@tesserix/platform-auth";
 // From `surface-state`, not `states`: this is a server component, and
 // `states.tsx` is a "use client" module whose exports resolve to client
 // references here. See tickets/[id]/page.tsx for the incident this guards
@@ -10,6 +11,7 @@ import {
 } from "@/components/kit/surface-state";
 import { fetchSecretDetail, fetchSecretVersions } from "@/lib/secrets-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
+import { requiresCapability } from "@/lib/internal-access";
 import type { SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
 import { SecretDetailView } from "./secret-detail-view";
 
@@ -108,7 +110,32 @@ export default async function SecretDetailPage({
 
   const state = detailState({ error, detail });
 
+  // THE RENDER PATH, NOT THE CONTROL. Writing requires `platform` AND
+  // `rotate-credentials` together — `secrets-api` enforces that itself on
+  // `PUT /api/secrets/*path` (that route sits in its `live` tier), so a
+  // `platform`-only operator gets refused by the API regardless of what this
+  // page draws. This check exists only so the console does not offer a
+  // control that is guaranteed to 403 — it is the same
+  // `!requiresCapability() || hasCapability(session?.roles, …)` shape every
+  // other render-path gate in this console uses (`tickets/[id]/page.tsx`,
+  // `billing/catalog/page.tsx`), reading the session cookie's snapshot
+  // synchronously rather than the live gate: hiding a button is UX, not
+  // authorization, and `render-path-capabilities.test.ts` is what keeps that
+  // distinction from drifting.
+  const session = await getCurrentSession();
+  const canWrite =
+    !requiresCapability() ||
+    (hasCapability(session?.roles, "platform") &&
+      hasCapability(session?.roles, "rotate-credentials"));
+
   return (
-    <SecretDetailView store={store} path={path} detail={detail} versions={versions} state={state} />
+    <SecretDetailView
+      store={store}
+      path={path}
+      detail={detail}
+      versions={versions}
+      state={state}
+      canWrite={canWrite}
+    />
   );
 }

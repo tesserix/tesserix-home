@@ -10,6 +10,22 @@ vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   fetchSecretVersions: (...args: unknown[]) => fetchSecretVersions(...args),
 }));
 
+// `getCurrentSession` and `requiresCapability` back the write-affordance gate
+// below. `hasCapability` itself is NOT mocked — same reasoning
+// `billing/catalog/page.test.tsx` gives: a passing gate test here is evidence
+// about the real capability decision, not a stand-in for it.
+const getCurrentSession = vi.fn();
+vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tesserix/platform-auth")>()),
+  getCurrentSession: (...args: unknown[]) => getCurrentSession(...args),
+}));
+
+const requiresCapability = vi.fn((..._args: unknown[]) => true);
+vi.mock("@/lib/internal-access", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/internal-access")>()),
+  requiresCapability: (...args: unknown[]) => requiresCapability(...args),
+}));
+
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { SecretDetail, SecretVersion } from "@/lib/secrets";
 import SecretDetailPage, { detailState, parseStoreParam } from "./page";
@@ -52,6 +68,10 @@ const VERSIONS: SecretVersion[] = [
 beforeEach(() => {
   fetchSecretDetail.mockReset();
   fetchSecretVersions.mockReset();
+  getCurrentSession.mockReset();
+  getCurrentSession.mockResolvedValue(null);
+  requiresCapability.mockReset();
+  requiresCapability.mockReturnValue(true);
 });
 
 describe("parseStoreParam", () => {
@@ -140,5 +160,55 @@ describe("the secret detail surface", () => {
     await expectNotFound(
       renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }),
     );
+  });
+});
+
+describe("the write affordance gate", () => {
+  // Writing requires BOTH `platform` and `rotate-credentials` — `secrets-api`
+  // enforces that itself on `PUT /api/secrets/*path`, so this gate is never
+  // the thing stopping a write. It only decides whether an operator sees a
+  // control that would 403 if they clicked it.
+  beforeEach(() => {
+    fetchSecretDetail.mockResolvedValue(DETAIL);
+    fetchSecretVersions.mockResolvedValue([]);
+  });
+
+  function signIn(roles: readonly string[]) {
+    getCurrentSession.mockResolvedValue({
+      sub: "operator-1",
+      email: "op@tesserix.app",
+      roles,
+      iat: 0,
+      exp: 0,
+    });
+  }
+
+  it("shows the write form to an operator holding platform and rotate-credentials", async () => {
+    signIn(["platform", "rotate-credentials"]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    expect(screen.getByRole("tab", { name: "Write" })).toBeInTheDocument();
+  });
+
+  it("withholds the write form from a platform-only operator, and the detail still renders", async () => {
+    signIn(["platform"]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    expect(screen.queryByRole("tab", { name: "Write" })).toBeNull();
+    // Losing the detail would be the worse bug — hiding the write control
+    // must never take the rest of the page with it.
+    expect(screen.getByRole("heading", { name: "homechef/homechef-api/db-password" })).toBeInTheDocument();
+    expect(screen.getByText("url")).toBeInTheDocument();
+  });
+
+  it("shows the write form under the pre-cutover bypass, same as any other render-path gate", async () => {
+    requiresCapability.mockReturnValue(false);
+    signIn([]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    expect(screen.getByRole("tab", { name: "Write" })).toBeInTheDocument();
   });
 });
