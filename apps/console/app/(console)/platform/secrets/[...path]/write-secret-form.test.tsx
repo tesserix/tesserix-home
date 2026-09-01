@@ -270,6 +270,13 @@ describe("WriteSecretForm", () => {
     expect(await screen.findByText(/^secret rotated\./i)).toBeInTheDocument();
   });
 
+  it("constrains the form to a readable column rather than the full viewport", () => {
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" />);
+    // Same create-form convention `CreateSecretForm` follows: this form had
+    // the identical unconstrained-width defect.
+    expect(screen.getByRole("form", { name: /create secret/i })).toHaveClass("max-w-xl");
+  });
+
   it("the key name field disables autofill so Chrome does not offer the operator's saved email there", () => {
     render(<WriteSecretForm store="openbao" path="mark8ly/db-password" />);
     expect(screen.getByLabelText(/key name/i)).toHaveAttribute("autoComplete", "off");
