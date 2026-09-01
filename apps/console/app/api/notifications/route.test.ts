@@ -14,6 +14,10 @@ vi.mock("@/lib/db/notifications-repo", () => ({
   readLastSeenAt: vi.fn(async () => null),
   writeLastSeenAt: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/secrets-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
+  fetchProposals: vi.fn(async () => []),
+}));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -23,6 +27,7 @@ import {
   recentTicketRows,
   writeLastSeenAt,
 } from "@/lib/db/notifications-repo";
+import { fetchProposals } from "@/lib/secrets-api";
 import { GET, POST } from "./route";
 
 function signIn(roles: readonly string[] | undefined) {
@@ -42,6 +47,7 @@ beforeEach(() => {
   vi.mocked(recentTicketRows).mockResolvedValue([]);
   vi.mocked(recentMerchantReplyRows).mockResolvedValue([]);
   vi.mocked(readLastSeenAt).mockResolvedValue(null);
+  vi.mocked(fetchProposals).mockResolvedValue([]);
 });
 
 describe("GET /api/notifications", () => {
@@ -119,24 +125,78 @@ describe("GET /api/notifications", () => {
     expect(body.unread).toBe(0);
   });
 
-  it("shows an operator only the kinds their held capabilities admit, alongside one who holds none of the relevant ones", async () => {
-    // There was previously no case for an operator holding one relevant
-    // capability but not another (every prior test used exactly ["support"]
-    // or []). This is the case per-kind filtering exists for.
+  const TICKET_ROW = {
+    id: "5f0b2c34-0000-0000-0000-000000000000",
+    product_id: "mark8ly",
+    ticket_number: "M8-1042",
+    subject: "Payout missing",
+    submitted_by_name: "Asha",
+    created_at: "2026-08-16T00:00:00.000Z",
+  };
+
+  const PROPOSAL = {
+    number: 7,
+    title: "Grant mp-payments read on mark8ly/stripe",
+    url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+    branch: "grant/mp-payments-stripe",
+    author: "someone",
+    createdAt: "2026-08-16T00:00:00.000Z",
+    targets: ["mark8ly/stripe"],
+  };
+
+  it("shows an operator only the kinds their held capabilities admit: support sees tickets, not proposals", async () => {
+    // The case Task 3 could not construct with one capability in play: an
+    // operator holding `support` but NOT `rotate-credentials` sees ticket
+    // rows and no proposals.
     signIn(["support"]);
-    vi.mocked(recentTicketRows).mockResolvedValue([
-      {
-        id: "5f0b2c34-0000-0000-0000-000000000000",
-        product_id: "mark8ly",
-        ticket_number: "M8-1042",
-        subject: "Payout missing",
-        submitted_by_name: "Asha",
-        created_at: "2026-08-16T00:00:00.000Z",
-      },
-    ] as never);
+    vi.mocked(recentTicketRows).mockResolvedValue([TICKET_ROW] as never);
+    vi.mocked(fetchProposals).mockResolvedValue([PROPOSAL] as never);
+
     const res = await GET();
     const body = await res.json();
     expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe("ticket_created");
+  });
+
+  it("shows an operator only the kinds their held capabilities admit: rotate-credentials sees proposals, not tickets", async () => {
+    // The mirror case: an operator holding `rotate-credentials` but NOT
+    // `support` sees proposals and no ticket rows.
+    signIn(["rotate-credentials"]);
+    vi.mocked(recentTicketRows).mockResolvedValue([TICKET_ROW] as never);
+    vi.mocked(fetchProposals).mockResolvedValue([PROPOSAL] as never);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe("access_proposal_open");
+    expect(body.items[0].number).toBe(7);
+  });
+
+  it("gates the proposal kind on rotate-credentials, the verb, not on platform, the surface", async () => {
+    // An operator holding `platform` alone (no relevant capability here)
+    // can open the reviews queue page and look, but cannot act on an
+    // entry — so no proposal notification is addressed to them.
+    signIn(["platform"]);
+    vi.mocked(fetchProposals).mockResolvedValue([PROPOSAL] as never);
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.items).toEqual([]);
+  });
+
+  it("still returns the ticket rows, at 200, when the proposals leg rejects", async () => {
+    // secrets-api answers 501 (SECRETS_API_ORIGIN unset) or 503 (no review
+    // repository configured) today — neither may cost the operator their
+    // ticket notifications. The proposals leg is contained on its own.
+    signIn(["support", "rotate-credentials"]);
+    vi.mocked(recentTicketRows).mockResolvedValue([TICKET_ROW] as never);
+    vi.mocked(fetchProposals).mockRejectedValue(new Error("secrets-api returned 503"));
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe("ticket_created");
   });
 
   it("answers 500 without leaking the driver error when a query fails", async () => {

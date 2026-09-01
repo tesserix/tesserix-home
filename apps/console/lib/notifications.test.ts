@@ -3,10 +3,12 @@ import {
   NOTIFICATION_KINDS,
   countUnread,
   mergeEvents,
+  toProposalEvent,
   toReplyEvent,
   toTicketEvent,
   type NotificationItem,
 } from "./notifications";
+import type { Proposal } from "./secrets";
 
 const TICKET_ROW = {
   id: "5f0b2c34-0000-0000-0000-000000000000",
@@ -27,6 +29,16 @@ const REPLY_ROW = {
   subject: "Payout missing",
 };
 
+const PROPOSAL: Proposal = {
+  number: 42,
+  title: "Grant mp-payments read on mark8ly/stripe",
+  url: "https://github.com/tesserix/tesserix-k8s/pull/42",
+  branch: "grant/mp-payments-stripe",
+  author: "someone",
+  createdAt: "2026-08-16T00:00:00.000Z",
+  targets: ["mark8ly/stripe"],
+};
+
 function item(at: string, id = at): NotificationItem {
   return {
     id,
@@ -40,12 +52,30 @@ function item(at: string, id = at): NotificationItem {
   };
 }
 
+/** An `AccessProposalNotification` fixture, `at` defaulting to a real
+ *  timestamp so tests that don't care about the undated case aren't
+ *  accidentally exercising it. */
+function proposalItem(at: string | undefined, number = 1): NotificationItem {
+  return {
+    id: `access_proposal_open:${number}`,
+    kind: "access_proposal_open",
+    number,
+    title: "Grant read",
+    targets: ["mark8ly/stripe"],
+    at,
+  };
+}
+
 describe("NOTIFICATION_KINDS", () => {
-  it("lists exactly the two ticket kinds this build understands", () => {
+  it("lists exactly the three kinds this build understands", () => {
     // The validator in notification-bell.tsx derives its accepted-kind
     // check from this exact list — an entry dropped here silently makes a
     // real, currently-working kind read as unrecognised.
-    expect(NOTIFICATION_KINDS).toEqual(["ticket_created", "merchant_reply"]);
+    expect(NOTIFICATION_KINDS).toEqual([
+      "ticket_created",
+      "merchant_reply",
+      "access_proposal_open",
+    ]);
   });
 });
 
@@ -86,6 +116,32 @@ describe("toReplyEvent", () => {
     // author_name is NOT NULL but can still be the empty string.
     const e = toReplyEvent({ ...REPLY_ROW, author_name: "" });
     expect(e.actor).toBe("Merchant");
+  });
+});
+
+describe("toProposalEvent", () => {
+  it("maps a proposal's number, title, and targets straight through", () => {
+    const e = toProposalEvent(PROPOSAL);
+    expect(e.kind).toBe("access_proposal_open");
+    if (e.kind !== "access_proposal_open") throw new Error("unreachable");
+    expect(e.number).toBe(42);
+    expect(e.title).toBe(PROPOSAL.title);
+    expect(e.targets).toEqual(["mark8ly/stripe"]);
+    expect(e.at).toBe(PROPOSAL.createdAt);
+  });
+
+  it("ids the event by the pull request number, not the ticket convention", () => {
+    const e = toProposalEvent(PROPOSAL);
+    expect(e.id).toBe("access_proposal_open:42");
+  });
+
+  it("passes an undefined createdAt straight through as undefined", () => {
+    // secrets-api discards a time.Parse error upstream and this parser
+    // maps the resulting zero-time literal to undefined (see
+    // Proposal.createdAt's doc comment) — this mapper must not paper over
+    // that with a fabricated timestamp.
+    const e = toProposalEvent({ ...PROPOSAL, createdAt: undefined });
+    expect(e.at).toBeUndefined();
   });
 });
 
@@ -142,6 +198,32 @@ describe("mergeEvents", () => {
       "2026-08-10T00:00:00.000Z",
     ]);
   });
+
+  it("sorts an undated proposal to the bottom of a newest-first list, not the top", () => {
+    // Ruling: an undated item (a proposal whose upstream timestamp failed to
+    // parse) is treated as the OLDEST thing in the list, never the newest —
+    // an accidental empty-string-style comparison would instead leave it in
+    // whatever order Array.flat() produced, or worse, at the top.
+    const merged = mergeEvents(
+      [[proposalItem(undefined, 1), item("2026-08-10T00:00:00.000Z")]],
+      10,
+    );
+    expect(merged.map((e) => e.id)).toEqual([
+      "2026-08-10T00:00:00.000Z",
+      "access_proposal_open:1",
+    ]);
+  });
+
+  it("keeps two undated items stable relative to each other rather than throwing", () => {
+    const merged = mergeEvents(
+      [[proposalItem(undefined, 1), proposalItem(undefined, 2)]],
+      10,
+    );
+    expect(merged.map((e) => e.id)).toEqual([
+      "access_proposal_open:1",
+      "access_proposal_open:2",
+    ]);
+  });
 });
 
 describe("countUnread", () => {
@@ -162,5 +244,19 @@ describe("countUnread", () => {
 
   it("counts nothing when last seen is newer than every event", () => {
     expect(countUnread([item("2026-08-14T00:00:00.000Z")], "2026-08-20T00:00:00.000Z")).toBe(0);
+  });
+
+  it("never counts an undated proposal as unread, even with a real last-seen value", () => {
+    // Ruling: an item with no `at` can never be PROVEN newer than
+    // lastSeenAt, so it must never inflate the badge — a bell that cannot
+    // be cleared for one specific item is the failure this function's own
+    // null-lastSeenAt case already guards against.
+    expect(
+      countUnread([proposalItem(undefined, 1)], "2026-08-01T00:00:00.000Z"),
+    ).toBe(0);
+  });
+
+  it("never counts an undated proposal as unread for an operator who has never opened the panel", () => {
+    expect(countUnread([proposalItem(undefined, 1)], null)).toBe(0);
   });
 });

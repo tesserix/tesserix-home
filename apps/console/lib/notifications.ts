@@ -1,13 +1,20 @@
+import type { Proposal } from "@/lib/secrets";
+
 /**
  * What the bell shows.
  *
- * A notification is DERIVED — a ticket that arrived or a merchant who replied,
- * read from the rows themselves. There is no notifications table and no
+ * A notification is DERIVED — a ticket that arrived, a merchant who replied,
+ * or a secrets-access proposal still waiting on `rotate-credentials` — read
+ * from the rows/PRs themselves. There is no notifications table and no
  * writer, so an item cannot drift from the thing it describes and cannot
- * outlive it. Everything here links to a ticket a human can open.
+ * outlive it. The two ticket kinds link to a ticket a human can open; the
+ * proposal kind links to the review a human can act on.
  */
 
-export type NotificationKind = "ticket_created" | "merchant_reply";
+export type NotificationKind =
+  | "ticket_created"
+  | "merchant_reply"
+  | "access_proposal_open";
 
 /**
  * Every kind a `NotificationItem` can carry, as one exported list rather than
@@ -15,18 +22,27 @@ export type NotificationKind = "ticket_created" | "merchant_reply";
  * incoming item's `kind` against this array — deriving from the same list
  * `NotificationItem` is built from, instead of its own hardcoded literal
  * list, is what keeps the two from drifting apart when a later task adds a
- * third kind.
+ * new kind.
  */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   "ticket_created",
   "merchant_reply",
+  "access_proposal_open",
 ];
 
 export interface TicketNotification {
-  /** `${kind}:${row id}` — the merged list holds both kinds, and a bare row
-   *  id could collide across the two tables. */
+  /** `${kind}:${row id}` — the merged list holds every kind, and a bare row
+   *  id could collide across sources. */
   readonly id: string;
-  readonly kind: NotificationKind;
+  // Narrowed to the two ticket-shaped literals, not the whole
+  // `NotificationKind` union — with `AccessProposalNotification` now a
+  // sibling member, a `kind` field typed to the full union here would let
+  // TypeScript believe a `TicketNotification` could carry
+  // `"access_proposal_open"`, which defeats discrimination: a `switch` over
+  // `NotificationItem["kind"]` could no longer narrow `item` to the right
+  // interface per case, and an exhaustiveness check (`notification-bell.tsx`'s
+  // `assertNever`) would stop being trustworthy.
+  readonly kind: "ticket_created" | "merchant_reply";
   /** The ticket's uuid. The detail route keys on this, never the number. */
   readonly ticketId: string;
   readonly ticketNumber: string;
@@ -36,11 +52,51 @@ export interface TicketNotification {
   readonly at: string;
 }
 
-// A discriminated union with, for now, one member — introduced ahead of the
-// second member (an access proposal awaiting approval, with none of
-// TicketNotification's fields) so that refactor and the new kind land as
-// separately bisectable changes.
-export type NotificationItem = TicketNotification;
+/**
+ * An open pull request against `tesserix-k8s` proposing to add or remove a
+ * secret reader — `fetchProposals()` in `lib/secrets-api.ts`, which the
+ * reviews queue page already renders. Reaching the bell means only
+ * `rotate-credentials` holders are told: someone holding `platform` (the
+ * surface) but not `rotate-credentials` (the verb) cannot approve or merge
+ * a proposal, so surfacing one to them would be exactly the noise a
+ * capability-filtered feed exists to remove — see route.ts's
+ * `CAPABILITY_FOR_KIND` comment.
+ *
+ * No `actor` field: `Proposal` carries a GitHub `author`, but 3b-ii's
+ * design deliberately does not surface who raised a secrets change (the
+ * point is that anyone with the right capability can act on it, not who
+ * asked) — so this interface has nothing to put there, unlike
+ * `TicketNotification`.
+ */
+export interface AccessProposalNotification {
+  /** `${kind}:${pull request number}` — same collision-avoidance reasoning
+   *  as `TicketNotification.id`. */
+  readonly id: string;
+  readonly kind: "access_proposal_open";
+  /** The pull-request number; the review detail route keys on this. */
+  readonly number: number;
+  readonly title: string;
+  /** The namespace/app targets this proposal touches — see `Proposal.targets`
+   *  in `lib/secrets.ts`. Always an array, never `undefined`: the parser
+   *  boundary in `secrets.ts` already normalises GitHub's possible `null`
+   *  to `[]`. */
+  readonly targets: string[];
+  /**
+   * `undefined` when `secrets-api` could not parse the GitHub PR's
+   * timestamp and silently discarded that error (`gitops/review.go:61`,
+   * `created, _ := time.Parse(...)`) — see `Proposal.createdAt`'s doc
+   * comment in `lib/secrets.ts`. Ruling: an item with no `at` sorts OLDEST
+   * in `mergeEvents` and is never counted as unread by `countUnread` — see
+   * both functions' comments below for why.
+   */
+  readonly at: string | undefined;
+}
+
+// A discriminated union: two kinds read from ticket/reply rows, one read
+// from an open pull request. `AccessProposalNotification` was introduced as
+// its own interface (rather than reusing TicketNotification's fields) so
+// this addition and the ticket-kind refactor stayed separately bisectable.
+export type NotificationItem = TicketNotification | AccessProposalNotification;
 
 export interface NotificationFeed {
   readonly items: readonly NotificationItem[];
@@ -70,7 +126,7 @@ export interface ReplyEventRow {
   readonly subject: string;
 }
 
-export function toTicketEvent(row: TicketEventRow): NotificationItem {
+export function toTicketEvent(row: TicketEventRow): TicketNotification {
   return {
     id: `ticket_created:${row.id}`,
     kind: "ticket_created",
@@ -83,7 +139,7 @@ export function toTicketEvent(row: TicketEventRow): NotificationItem {
   };
 }
 
-export function toReplyEvent(row: ReplyEventRow): NotificationItem {
+export function toReplyEvent(row: ReplyEventRow): TicketNotification {
   return {
     id: `merchant_reply:${row.id}`,
     kind: "merchant_reply",
@@ -94,6 +150,48 @@ export function toReplyEvent(row: ReplyEventRow): NotificationItem {
     actor: row.author_name || "Merchant",
     at: row.created_at,
   };
+}
+
+/** Maps one open pull request (`fetchProposals()` in `lib/secrets-api.ts`)
+ *  to the notification the bell renders. `proposal.createdAt` passes
+ *  through unchanged, `undefined` included — see
+ *  `AccessProposalNotification.at`'s doc comment for what an absent value
+ *  means downstream. */
+export function toProposalEvent(proposal: Proposal): AccessProposalNotification {
+  return {
+    id: `access_proposal_open:${proposal.number}`,
+    kind: "access_proposal_open",
+    number: proposal.number,
+    title: proposal.title,
+    targets: proposal.targets,
+    at: proposal.createdAt,
+  };
+}
+
+/**
+ * Orders two items newest-first, with one exception: an item whose `at` is
+ * `undefined` (today, only an `AccessProposalNotification` whose upstream
+ * timestamp failed to parse — see its doc comment) sorts as the OLDEST item
+ * in the list, never the newest.
+ *
+ * This is a deliberate choice, not a fallout of comparing `undefined` with
+ * a string (which the naive `x.at < y.at` form used to do, always false in
+ * both directions, silently leaving undated items in whatever order
+ * `Array.flat()` happened to produce). Sorting an unknown date as the
+ * newest would pin an undated proposal at the top of the feed forever —
+ * `countUnread` would then never see a real timestamp exceed it (there
+ * isn't one to compare against), so it would count as perpetually unread.
+ * A bell that can never be cleared for one specific item is the exact
+ * failure `countUnread`'s own doc comment argues against for the
+ * null-`lastSeenAt` case. Sorting unknown as oldest is also the honest
+ * reading of "we don't know when this happened": absence of evidence that
+ * it's new is not evidence that it's new.
+ */
+function compareByAtDescending(x: NotificationItem, y: NotificationItem): number {
+  if (x.at === undefined && y.at === undefined) return 0;
+  if (x.at === undefined) return 1;
+  if (y.at === undefined) return -1;
+  return x.at < y.at ? 1 : x.at > y.at ? -1 : 0;
 }
 
 /** Newest first, then truncated — truncating before sorting would drop new
@@ -107,10 +205,7 @@ export function mergeEvents(
   sources: readonly (readonly NotificationItem[])[],
   limit: number,
 ): NotificationItem[] {
-  return sources
-    .flat()
-    .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0))
-    .slice(0, limit);
+  return sources.flat().sort(compareByAtDescending).slice(0, limit);
 }
 
 /**
@@ -120,11 +215,18 @@ export function mergeEvents(
  * reads as ZERO rather than as the entire window. The alternative ships a bell
  * with every ticket ever in it on the day it launches, which trains everyone
  * to ignore it.
+ *
+ * An item with no `at` is excluded from the count outright, for the same
+ * reason `compareByAtDescending` sorts it oldest: an undated proposal can
+ * never be PROVEN newer than `lastSeenAt`, so counting it as unread would
+ * badge an item the operator can never clear by "seeing" it (there is no
+ * real timestamp `writeLastSeenAt` could ever record that would exceed an
+ * absent one).
  */
 export function countUnread(
   items: readonly NotificationItem[],
   lastSeenAt: string | null,
 ): number {
   if (!lastSeenAt) return 0;
-  return items.filter((item) => item.at > lastSeenAt).length;
+  return items.filter((item) => item.at !== undefined && item.at > lastSeenAt).length;
 }
