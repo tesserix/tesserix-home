@@ -139,6 +139,38 @@ describe("the secret detail surface", () => {
     expect(screen.queryAllByText("Deleted")).toHaveLength(1);
   });
 
+  // `parseSecretDetail`/`parseSecretVersions` (`lib/secrets.ts`) map Go's
+  // serialised zero `time.Time` to `undefined`, which is what makes these
+  // fallbacks reachable at all — before that fix, a zero timestamp read as a
+  // truthy string and this branch never rendered. `fetchSecretDetail`/
+  // `fetchSecretVersions` are mocked here (this suite exercises the render,
+  // not the parser — `secrets.test.ts` covers the parser itself), but the
+  // detail handed back is already the PARSED shape (`undefined`, not the
+  // zero-time string) — exactly what the real parser would hand this
+  // component after Task's fix.
+  it("omits Created/Updated from the summary, and renders 'Not recorded' for a version, when timestamps are absent", async () => {
+    fetchSecretDetail.mockResolvedValue({
+      path: "homechef/homechef-api/db-password",
+      version: 1,
+      keys: ["password"],
+      // createdAt/updatedAt omitted entirely — the parsed shape for a zero
+      // time.Time, per `parseSecretDetail`.
+    });
+    fetchSecretVersions.mockResolvedValue([
+      { version: 1, createdAt: undefined, destroyed: false, deleted: false },
+    ]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    // "Created" also labels a column header in the Versions table below, so
+    // this checks the summary rail's own `<dt>` labels specifically rather
+    // than any occurrence of the word on the page.
+    const summaryLabels = screen.getAllByRole("term").map((el) => el.textContent);
+    expect(summaryLabels).not.toContain("Created");
+    expect(summaryLabels).not.toContain("Updated");
+    expect(screen.getByText("Not recorded")).toBeInTheDocument();
+  });
+
   it("renders the not-found state when the store parameter is absent", async () => {
     await expectNotFound(
       renderPage({ path: ["homechef", "homechef-api", "db-password"] }),
