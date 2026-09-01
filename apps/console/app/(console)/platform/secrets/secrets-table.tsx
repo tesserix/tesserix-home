@@ -17,10 +17,14 @@ import {
 import { AlertTriangle } from "lucide-react";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
-// Type-only, for the same reason `outbox-table.tsx` imports its lib types this
-// way: this file is `"use client"`, and a value import of anything upstream of
-// `secrets-api.ts` would drag the operator-token store (and through it `pg`)
-// into the browser bundle.
+// Type-only because only types are needed here — this file uses `InventoryRow`,
+// `SecretsInventory` and `SecretStore` purely as shapes, never as values.
+// Unlike `outbox-table.tsx`'s identical-looking `import type` (which really is
+// guarding against dragging `pg` into the browser bundle via `lib/outbox.ts`'s
+// value import of `platform-api`), there is nothing to guard against here:
+// `lib/secrets.ts` has zero imports of its own — it's a dependency-free leaf,
+// downstream of `secrets-api.ts` rather than upstream of it. A value import of
+// it would drag in nothing.
 import type { InventoryRow, SecretsInventory, SecretStore } from "@/lib/secrets";
 
 /**
