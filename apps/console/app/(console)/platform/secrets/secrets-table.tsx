@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -85,6 +86,27 @@ export function IncompleteInventoryNotice() {
       </CalloutDescription>
     </Callout>
   );
+}
+
+/**
+ * The detail route's href for one row: the path becomes the catch-all
+ * segment, and the store rides along as `?store=`, because a path alone does
+ * not identify a secret — the same path can exist in both stores. See the
+ * "How the store reaches this route" comment on `[...path]/page.tsx` for why
+ * a search param was chosen over folding the store into the path segment.
+ *
+ * Each path segment is encoded on its own, matching `encodeSecretPath` in
+ * `lib/secrets-api.ts` — a literal "/" inside a segment is already rejected
+ * at the listing boundary (`parseSecretList`), but encoding per-segment
+ * rather than the joined string keeps this link correct even if that ever
+ * changes.
+ */
+export function secretDetailHref(row: Pick<InventoryRow, "path" | "store">): string {
+  const encodedPath = row.path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  return `/platform/secrets/${encodedPath}?store=${encodeURIComponent(row.store)}`;
 }
 
 type FilterId = "all" | "openbao" | "gcpsm" | "noReader";
@@ -181,7 +203,14 @@ export function SecretsTable({ inventory, state, emptyMessage, reauthReturnTo }:
             <TableBody>
               {visibleRows.map((row: InventoryRow) => (
                 <TableRow key={`${row.store}:${row.path}`}>
-                  <TableCell className="font-mono text-xs">{row.path}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <Link
+                      href={secretDetailHref(row)}
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      {row.path}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline">{STORE_LABEL[row.store]}</Badge>
                   </TableCell>
