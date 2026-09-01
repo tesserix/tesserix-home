@@ -215,6 +215,24 @@ export const platformNav: readonly NavEntry[] = [
       { name: "Lead templates", route: "platform.leadTemplates", icon: "mail" },
       { name: "GDPR queue", route: "platform.gdprQueue", icon: "shield" },
       { name: "Break-glass", route: "platform.breakGlass", icon: "key-round" },
+      // Beside Break-glass: both are credential surfaces, and `key-round`
+      // is reused on purpose rather than picked fresh — the same reasoning
+      // as `scroll-text` on Audit log above, "the same kind of surface
+      // should look the same in both rails". The chart cutover
+      // (tesserix-k8s#808/#809) redeployed `secrets-api` against Zitadel and
+      // it is verified live (602 real secrets across OpenBao and GSM, live
+      // version history, a genuine empty reviews queue), so the condition
+      // that kept these two unlisted no longer holds.
+      { name: "Secrets", route: "platform.secrets", icon: "key-round" },
+      // Listed, reversing an earlier decision to leave it reachable only
+      // from a secret's own page. That reasoning assumed the reader is the
+      // person who just proposed the change; an approver needs to find
+      // SOMEONE ELSE'S proposal proactively, which a door reached only from
+      // the secret they did not touch cannot offer. Governance already lists
+      // Outbox and GDPR queue as exactly this shape of surface — a queue
+      // that is usually empty and exists to be drained — so this fits the
+      // group rather than being an exception to it.
+      { name: "Secrets reviews", route: "platform.secretsReviews", icon: "key-round" },
       { name: "Settings", route: "platform.settings", icon: "settings" },
       // Managing the internal tools directory (#318 follow-up). Beside
       // Settings: both are configuration surfaces for the platform itself,

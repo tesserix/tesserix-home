@@ -287,4 +287,30 @@ describe("platformNav", () => {
     expect(names).toContain("Organisations");
     expect(names.indexOf("Organisations")).toBeLessThan(names.indexOf("Import leads"));
   });
+
+  it("lists Secrets and Secrets reviews in Governance, beside Break-glass", () => {
+    // The chart cutover (tesserix-k8s#808/#809) redeployed `secrets-api`
+    // against Zitadel and it is verified live, so the condition that kept
+    // these two off the rail no longer holds. Asserting position, not just
+    // presence: both are credential surfaces like Break-glass, and that is
+    // the reason they sit beside it rather than anywhere else in the group.
+    const governance = platformNav
+      .filter(isNavGroup)
+      .find((group) => group.name === "Governance");
+    expect(governance).toBeDefined();
+    const names = governance!.items.map((item) => item.name);
+    expect(names).toContain("Secrets");
+    expect(names).toContain("Secrets reviews");
+    expect(names.indexOf("Secrets")).toBe(names.indexOf("Break-glass") + 1);
+    expect(names.indexOf("Secrets reviews")).toBe(names.indexOf("Secrets") + 1);
+  });
+
+  it("links Secrets and Secrets reviews rather than showing them as pending", () => {
+    // Both routes are already built and unpending in routes.ts — only the
+    // rail entry was withheld. `pending` here would render a built surface
+    // inert behind a SOON badge, the same failure the audit log's assertion
+    // above guards.
+    expect(isPending("platform.secrets")).toBe(false);
+    expect(isPending("platform.secretsReviews")).toBe(false);
+  });
 });

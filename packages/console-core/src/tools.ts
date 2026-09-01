@@ -84,17 +84,6 @@ export const INTERNAL_TOOLS: readonly InternalTool[] = [
     group: "identity",
   },
   {
-    name: "Secret service",
-    subdomain: "secret-service",
-    purpose:
-      "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
-    group: "identity",
-    // Recorded because it is deliberate rather than an oversight: the tool
-    // authenticates through its own Google flow and allowlist so that signing
-    // in stays possible when the shared identity path is not.
-    note: "Separate login — independent of the platform's identity on purpose.",
-  },
-  {
     name: "Grafana",
     subdomain: "grafana",
     purpose: "Dashboards and charts over the metrics pipeline.",

@@ -1,0 +1,38 @@
+-- 0042_platform_tools_remove_secret_service.sql
+--
+-- Removes the "Secret service" row seeded by migration 0031 from the
+-- internal tools directory (#485-follow-up).
+--
+-- WHY NOW, AND WHY THIS IS A DEFECT NOT A CLEANUP. The row still points
+-- operators at secret-service.tesserix.app. That standalone UI is deleted —
+-- its Deployment, Service and VirtualService are gone from the cluster, and
+-- the host now answers 403. This was observed live: the "Secret service"
+-- entry rendered in the console's ⌘K palette (sourced from THIS table, not
+-- from the packages/console-core/src/tools.ts fallback that a companion
+-- change already trimmed) and pointed at a dead host.
+--
+-- The row's own `note` column is now false on top of being stale twice
+-- over: "Separate login — independent of the platform's identity on
+-- purpose" described the standalone app's own Google auth flow, which no
+-- longer exists. The capability it described — OpenBao/GSM secret admin —
+-- is served today by `secrets-api` through this console's own Zitadel
+-- session (`platform.secrets` / `platform.secretsReviews` in
+-- packages/console-core/src/routes.ts), not by a separately-authenticated
+-- standalone app. There is no live surface left for this row to describe.
+--
+-- SAFE TO RE-RUN. DELETE ... WHERE subdomain = '...' is naturally
+-- idempotent: a second run matches zero rows and is a silent no-op, exactly
+-- like the ON CONFLICT DO NOTHING inserts in 0031. `schema_migrations`
+-- (scripts/db-migrate.mjs) also only ever applies a given version once, so
+-- this is belt-and-braces rather than load-bearing on its own.
+--
+-- NO FOREIGN KEY RISK. `platform_tools.id` (uuid) and `.subdomain` are not
+-- referenced by any other table in this schema — the only foreign key
+-- touching this pair of tables runs the other direction, from
+-- `platform_tools.group_key` to `platform_tool_groups.key`, and deleting a
+-- tool row does not touch a group row. Checked by grepping every migration
+-- under db/migrations for `platform_tools` and for a `tool_id` column: 0031
+-- is the only file that mentions the table, and no column anywhere
+-- references a tool by id. A bare DELETE cannot orphan or violate anything
+-- here.
+DELETE FROM platform_tools WHERE subdomain = 'secret-service';

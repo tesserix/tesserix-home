@@ -358,19 +358,14 @@ export const ROUTES = {
   // secret-service's own UI, a separate application being retired, which is
   // not what this field records.
   //
-  // NOT pending, and no sidebar entry either — a deliberate mismatch, not an
-  // oversight. The surface is built and this route serves it, so `pending`
-  // (meaning "not built yet") would misdescribe it; but it has no sidebar
-  // entry until the chart cutover redeploys `secrets-api`, which is what
-  // actually answers requests here today. It IS reachable in the meantime,
-  // though: `lib/search.ts` builds the ⌘K command palette from route ids, not
-  // from nav config, so an operator holding `platform` can find "Platform ·
-  // Secrets" and land on it before that cutover. Landing there shows the
-  // calm, honest 501 "not configured" state (`SECRETS_UNAVAILABLE_TITLE` in
-  // `secrets/page.tsx`), never an error. This was accepted deliberately for
-  // the one phase this window lasts, rather than inventing a third
-  // rail-lever ("built but not yet reachable") that `pending`/`retired`
-  // don't already express.
+  // NOT pending: the console serves this page, and the backend it talks to
+  // is real. The chart cutover (tesserix-k8s#808/#809) redeployed
+  // `secrets-api` against Zitadel; verified live in production, the
+  // inventory lists 602 real secrets across OpenBao and GSM and detail pages
+  // render live version history. It now has a sidebar entry in `nav.ts`,
+  // beside Break-glass — a window that used to justify leaving it unlisted
+  // (the backend was pinned pre-cutover) has closed, and there is no longer
+  // a reason to route operators through ⌘K instead of the rail.
   "platform.secrets": { mobile: "/platform/secrets", capability: "platform" },
 
   // The review queue for access-change proposals raised against
@@ -396,8 +391,14 @@ export const ROUTES = {
   // to be at least as wide as the real gate, or the palette misleads by
   // omission.
   //
-  // Unlisted, like `platform.secrets`, and for the same reason: no rail entry
-  // until the chart cutover that redeploys `secrets-api`.
+  // Listed, like `platform.secrets`, now that the chart cutover
+  // (tesserix-k8s#808/#809) has redeployed `secrets-api` against Zitadel and
+  // it is verified live — the reviews queue returns a genuine empty state
+  // from GitHub, not a "not configured" error. It also carries its own
+  // rail-placement reasoning in `nav.ts` beyond just "the backend works
+  // now": an approver needs to find someone else's proposal proactively,
+  // which reaching the queue only from the secret you just changed does not
+  // offer.
   //
   // No `web` predecessor, matching `platform.secrets`.
   //
