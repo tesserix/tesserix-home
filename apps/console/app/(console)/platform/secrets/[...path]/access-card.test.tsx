@@ -199,7 +199,14 @@ describe("AccessCard", () => {
       expect(screen.getByText(/granting access needs `?rotate-credentials`?/i)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /propose access/i })).toBeNull();
       expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
-      expect(screen.queryByLabelText(/add an app/i)).toBeNull();
+      // `queryByLabelText(/add an app/i)` looked like it covered the whole
+      // form, but Testing Library's label matching never resolves a
+      // `<fieldset>`/`<legend>` pairing — that query returns `null`
+      // regardless of whether `AddReaderForm` is rendered, so it could
+      // never fail. `Namespace` is a real `<Label htmlFor>`/`<Input id>`
+      // pair inside that form, so its absence is real evidence the form
+      // itself is gone, not just its submit button.
+      expect(screen.queryByLabelText(/namespace/i)).toBeNull();
     });
 
     it("still lists the readers, just without a Remove control", () => {
