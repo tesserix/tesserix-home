@@ -28,6 +28,16 @@ function bool(value: unknown, path: string): boolean {
   return value;
 }
 
+function num(value: unknown, path: string): number {
+  if (typeof value !== "number") fail(`${path} is not a number`);
+  return value;
+}
+
+function optionalStr(value: unknown, path: string): string | undefined {
+  if (value === undefined) return undefined;
+  return str(value, path);
+}
+
 export type SecretStore = "openbao" | "gcpsm";
 
 /** One entry in a directory listing — either a secret or a folder of them. */
@@ -202,4 +212,68 @@ export function buildInventory(input: {
       noReader: sorted.filter((r) => r.hasReader === false).length,
     },
   };
+}
+
+/**
+ * A secret's shape: `secrets-api`'s `Store` interface has no `Read` method
+ * (the design spec says why: "so no handler can leak one"), so nothing this
+ * console can fetch ever carries a value. `keys` is a list of key NAMES.
+ *
+ * Do not add a `value` field here, ever — see `parseSecretDetail`.
+ */
+export interface SecretDetail {
+  readonly path: string;
+  readonly version: number;
+  readonly keys: string[];
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+}
+
+/** One version in a secret's history. */
+export interface SecretVersion {
+  readonly version: number;
+  readonly createdAt?: string;
+  readonly destroyed: boolean;
+  readonly deleted: boolean;
+}
+
+/**
+ * Parse `GET /api/secrets/*path`'s response — the bare `secrets.Secret`
+ * struct, not wrapped in an envelope — into a `SecretDetail`.
+ *
+ * Built field by field from known keys, never by spreading `json`: a spread
+ * would carry forward any field the input happens to have, including one
+ * shaped like a secret value if the service ever grew a way to return one.
+ * The console has no legitimate use for a value and must never be able to
+ * hold one in a type a UI could render — see `SecretDetail`'s doc comment.
+ */
+export function parseSecretDetail(json: unknown): SecretDetail {
+  if (!isRecord(json)) fail("response is not an object");
+  return {
+    path: str(json.path, "path"),
+    version: num(json.version, "version"),
+    keys: Array.isArray(json.keys)
+      ? json.keys.map((k, i) => str(k, `keys[${i}]`))
+      : fail("keys is not an array"),
+    createdAt: optionalStr(json.createdAt, "createdAt"),
+    updatedAt: optionalStr(json.updatedAt, "updatedAt"),
+  };
+}
+
+/**
+ * Parse `GET /api/secret-versions/*path`'s response
+ * (`{"path":…,"versions":[…]}`) into its version list.
+ */
+export function parseSecretVersions(json: unknown): SecretVersion[] {
+  if (!isRecord(json)) fail("response is not an object");
+  if (!Array.isArray(json.versions)) fail("versions is not an array");
+  return json.versions.map((v, i) => {
+    if (!isRecord(v)) fail(`versions[${i}] is not an object`);
+    return {
+      version: num(v.version, `versions[${i}].version`),
+      createdAt: optionalStr(v.createdAt, `versions[${i}].createdAt`),
+      destroyed: bool(v.destroyed, `versions[${i}].destroyed`),
+      deleted: bool(v.deleted, `versions[${i}].deleted`),
+    };
+  });
 }

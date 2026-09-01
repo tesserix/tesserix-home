@@ -7,8 +7,8 @@
 import "server-only";
 
 import { PlatformApiError } from "./platform-api-error";
-import { buildInventory, parseGrants, parseSecretList } from "./secrets";
-import type { SecretsInventory, SecretStore } from "./secrets";
+import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
+import type { SecretDetail, SecretsInventory, SecretStore, SecretVersion } from "./secrets";
 
 /** A rejection is not guaranteed to be an `Error` — an undefined `.message`
  *  would read as a mystery failure. Narrow before formatting. Mirrors
@@ -384,4 +384,45 @@ export async function fetchSecretsInventory(): Promise<SecretsInventory> {
   const complete = [openbaoResult, gcpsmResult].every((r) => r === null || r.complete);
 
   return { ...data, complete };
+}
+
+/**
+ * `path` is mount-relative, exactly as `fetchSecretPaths` produces it (e.g.
+ * `homechef/homechef-api/db-password`, never `/homechef/...` or
+ * `kv/homechef/...`). `secrets-api` matches `/api/secrets/*path`, so the
+ * leading slash belongs to the URL built here, not to the stored path — see
+ * the module doc comment on `fetchSecretPaths` for why a stray one breaks
+ * every match silently. Each segment is encoded on its own so a literal "/"
+ * inside a segment (which `parseSecretList` already rejects at the listing
+ * boundary — see `secrets.ts`) can never be produced by this call either.
+ */
+function encodeSecretPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * A secret's current shape: `GET /api/secrets/*path?backend=…`, returning
+ * the bare `secrets.Secret` struct (see `parseSecretDetail`'s doc comment for
+ * why nothing here ever carries a value).
+ */
+export async function fetchSecretDetail(store: SecretStore, path: string): Promise<SecretDetail> {
+  const json = await secretsRequest(
+    "secret detail",
+    `/api/secrets/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+  );
+  return parseSecretDetail(json);
+}
+
+/**
+ * A secret's version history: `GET /api/secret-versions/*path?backend=…`.
+ */
+export async function fetchSecretVersions(store: SecretStore, path: string): Promise<SecretVersion[]> {
+  const json = await secretsRequest(
+    "secret versions",
+    `/api/secret-versions/${encodeSecretPath(path)}?backend=${encodeURIComponent(store)}`,
+  );
+  return parseSecretVersions(json);
 }

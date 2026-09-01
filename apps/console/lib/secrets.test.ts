@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInventory, parseGrants, parseSecretList } from "./secrets";
+import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
 
 describe("parseSecretList", () => {
   it("reads the entries array", () => {
@@ -145,5 +145,45 @@ describe("buildInventory", () => {
       grants: [{ namespace: "homechef", app: "homechef-api" }],
     });
     expect(rows[0].hasReader).toBe(true);
+  });
+});
+
+describe("parseSecretDetail", () => {
+  it("reads a secret's shape", () => {
+    expect(parseSecretDetail({ path: "a/b/c", version: 3, keys: ["password"] })).toMatchObject({
+      path: "a/b/c",
+      version: 3,
+      keys: ["password"],
+    });
+  });
+
+  it("rejects a detail with a non-numeric version", () => {
+    expect(() => parseSecretDetail({ path: "a/b/c", version: "3", keys: [] })).toThrow();
+  });
+
+  // A response carrying a value would mean the service grew an endpoint that
+  // returns one. Parse it out rather than passing it along: the console has no
+  // legitimate use for it, and a type that can hold one invites a UI that shows it.
+  it("ignores any value-shaped field rather than surfacing it", () => {
+    const parsed = parseSecretDetail({
+      path: "a/b",
+      version: 1,
+      keys: ["k"],
+      data: { k: "hunter2" },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.data).toBeUndefined();
+    expect(JSON.stringify(parsed)).not.toContain("hunter2");
+  });
+});
+
+describe("parseSecretVersions", () => {
+  it("reads versions, preserving destroyed and deleted", () => {
+    expect(parseSecretVersions({ versions: [{ version: 2, destroyed: false, deleted: true }] })).toEqual([
+      { version: 2, destroyed: false, deleted: true, createdAt: undefined },
+    ]);
+  });
+
+  it("rejects a versions response that is not a list", () => {
+    expect(() => parseSecretVersions({ versions: "nope" })).toThrow();
   });
 });

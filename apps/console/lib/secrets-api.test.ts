@@ -486,3 +486,90 @@ describe("fetchSecretsInventory", () => {
     expect(grantsCalls.length).toBe(0);
   });
 });
+
+describe("fetchSecretDetail", () => {
+  it("requests the exact mount-relative path with no doubled or missing slash", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", version: 1, keys: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretDetail } = await import("./secrets-api");
+    await fetchSecretDetail("openbao", "homechef/api/db");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/secrets/homechef/api/db?backend=openbao");
+  });
+
+  it("returns the parsed detail", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({ path: "homechef/homechef-api/db", version: 3, keys: ["password"] }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const { fetchSecretDetail } = await import("./secrets-api");
+    const detail = await fetchSecretDetail("openbao", "homechef/homechef-api/db");
+
+    expect(detail).toMatchObject({ path: "homechef/homechef-api/db", version: 3, keys: ["password"] });
+  });
+});
+
+describe("fetchSecretVersions", () => {
+  it("requests the exact mount-relative path with no doubled or missing slash", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", versions: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretVersions } = await import("./secrets-api");
+    await fetchSecretVersions("openbao", "homechef/api/db");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/secret-versions/homechef/api/db?backend=openbao");
+  });
+
+  it("returns the parsed version list", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            path: "homechef/homechef-api/db",
+            versions: [{ version: 2, destroyed: false, deleted: true }],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const { fetchSecretVersions } = await import("./secrets-api");
+    const versions = await fetchSecretVersions("openbao", "homechef/homechef-api/db");
+
+    expect(versions).toEqual([{ version: 2, destroyed: false, deleted: true, createdAt: undefined }]);
+  });
+});
