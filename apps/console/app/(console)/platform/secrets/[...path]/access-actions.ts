@@ -3,7 +3,8 @@
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
-import { createGrant, revokeGrant, type AppRef } from "@/lib/secrets-api";
+import { createGrant, deleteSecret, revokeGrant, type AppRef } from "@/lib/secrets-api";
+import type { SecretStore } from "@/lib/secrets";
 import { PlatformApiError } from "@/lib/platform-api-error";
 
 /**
@@ -138,6 +139,38 @@ export async function revokeAccessAction(namespace: string, app: string): Promis
     target,
     () => revokeGrant(namespace, app),
     () => ({ action: "secrets.access.revoke", summary: { revoked: 1 }, target }),
+  );
+  if (!result.ok) return result;
+  return { ok: true };
+}
+
+/**
+ * Delete (soft, reversible via `restoreSecretVersion`) or destroy
+ * (permanent) the secret at `path`. Same gate as grant/revoke — `deleteSecret`
+ * hits the same `secrets-api` `live` route group, so it needs `platform` +
+ * `rotate-credentials` too (see `deleteSecret`'s own doc comment in
+ * `lib/secrets-api.ts`).
+ *
+ * `destroy` reaches `deleteSecret` exactly as given — this action makes no
+ * decision of its own about which lifecycle operation to call, only about
+ * whether the caller is allowed to call either one. The typed-name
+ * confirmation that makes destroy hard to trigger by accident lives entirely
+ * client-side, in `destroy-secret.tsx` — this boundary trusts its caller the
+ * same way `writeSecretAction` trusts the version it is handed.
+ */
+export async function deleteSecretAction(
+  store: SecretStore,
+  path: string,
+  destroy: boolean,
+): Promise<SecretsWriteResult> {
+  const result = await withAccessWrite(
+    path,
+    () => deleteSecret(store, path, destroy),
+    () => ({
+      action: destroy ? "secrets.destroy" : "secrets.delete",
+      summary: destroy ? { destroyed: 1, deleted: 0 } : { destroyed: 0, deleted: 1 },
+      target: path,
+    }),
   );
   if (!result.ok) return result;
   return { ok: true };

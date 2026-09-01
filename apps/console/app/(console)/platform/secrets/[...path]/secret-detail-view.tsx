@@ -19,6 +19,7 @@ import { DetailLayout } from "@/components/kit/detail-layout";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { Grant, SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
 import { AccessCard } from "./access-card";
+import { DestroySecret } from "./destroy-secret";
 import { WriteSecretForm } from "./write-secret-form";
 
 const STORE_LABEL: Record<SecretStore, string> = {
@@ -194,6 +195,20 @@ export function SecretDetailView({
                 content: (
                   <WriteSecretForm store={store} path={path} currentVersion={detail.version} />
                 ),
+              },
+              // Its own tab, not a section tacked onto Write: a version write
+              // and a delete/destroy are different mental models (adding a
+              // version vs. removing the secret entirely), and `DestroySecret`
+              // is the one place in this phase using the destructive button
+              // style — keeping it off the Write tab means that style never
+              // shows up beside the everyday "Rotate secret"/"Create secret"
+              // button. Same `canWrite` gate as Write: `secrets-api` refuses
+              // a `platform`-only caller's delete/destroy outright (403), so
+              // offering the tab to them would be a control they cannot use.
+              {
+                id: "delete",
+                label: "Delete",
+                content: <DestroySecret store={store} path={path} canWrite={canWrite} />,
               },
             ]
           : []),

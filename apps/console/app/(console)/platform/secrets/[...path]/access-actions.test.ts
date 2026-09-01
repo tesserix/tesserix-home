@@ -11,6 +11,7 @@ vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
   createGrant: vi.fn(),
   revokeGrant: vi.fn(),
+  deleteSecret: vi.fn(),
 }));
 // `auditedOperation` itself is NOT mocked — only its leaf database calls
 // are, so a passing test here is evidence about the real audit control
@@ -24,10 +25,10 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 }));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
-import { createGrant, revokeGrant } from "@/lib/secrets-api";
+import { createGrant, revokeGrant, deleteSecret } from "@/lib/secrets-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { grantAccessAction, revokeAccessAction } from "./access-actions";
+import { deleteSecretAction, grantAccessAction, revokeAccessAction } from "./access-actions";
 
 const NO_PERMISSION = "You don't have permission to change who can read this secret.";
 const NOT_SAVED = "That change was not saved.";
@@ -206,5 +207,80 @@ describe("revokeAccessAction", () => {
 
     expect(revokeGrant).not.toHaveBeenCalled();
     expect(result).toEqual({ ok: false, message: NOT_SAVED });
+  });
+});
+
+describe("deleteSecretAction", () => {
+  it("calls deleteSecret with the store, path, and destroy flag unchanged, on a soft delete", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(deleteSecret).mockResolvedValue(undefined);
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", false);
+
+    expect(result).toEqual({ ok: true });
+    expect(deleteSecret).toHaveBeenCalledWith("openbao", "mark8ly/db-password", false);
+    expect(lastAuditInsert()).toEqual({
+      action: "secrets.delete",
+      target: "mark8ly/db-password",
+      summary: { destroyed: 0, deleted: 1 },
+    });
+  });
+
+  it("calls deleteSecret with destroy: true unchanged, on a destroy", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(deleteSecret).mockResolvedValue(undefined);
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", true);
+
+    expect(result).toEqual({ ok: true });
+    expect(deleteSecret).toHaveBeenCalledWith("openbao", "mark8ly/db-password", true);
+    expect(lastAuditInsert()).toEqual({
+      action: "secrets.destroy",
+      target: "mark8ly/db-password",
+      summary: { destroyed: 1, deleted: 0 },
+    });
+  });
+
+  it("refuses a CapabilityError with the fixed no-permission message, and audits the refusal", async () => {
+    signIn(undefined);
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", true);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(lastAuditInsert().action).toBe("capability.refused");
+  });
+
+  it("folds a PlatformApiError 403 into the SAME no-permission message a CapabilityError produces", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(deleteSecret).mockRejectedValue(
+      new PlatformApiError("delete secret: secrets-api returned 403", 403),
+    );
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", false);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+  });
+
+  it("degrades any other failure to a fixed message, never passing the internal text through", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(deleteSecret).mockRejectedValue(
+      new PlatformApiError("delete secret: secrets-api returned 500", 500),
+    );
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", false);
+
+    expect(result).toEqual({ ok: false, message: NOT_SAVED });
+  });
+
+  it("the failure result carries no error instance and no cause — plain data only", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(deleteSecret).mockRejectedValue(new Error("boom, with a stack and everything"));
+
+    const result = await deleteSecretAction("openbao", "mark8ly/db-password", true);
+
+    expect(result).toEqual({ ok: false, message: NOT_SAVED });
+    expect(Object.keys(result)).toEqual(["ok", "message"]);
+    expect((result as { cause?: unknown }).cause).toBeUndefined();
   });
 });
