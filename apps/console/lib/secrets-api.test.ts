@@ -71,7 +71,11 @@ describe("secretsRequest", () => {
     vi.doMock("./auth/platform-token", () => ({
       resolvePlatformApiToken: async () => ({ token: "tok-123", reauthRequired: false }),
     }));
-    const fetchMock = vi.fn(async () =>
+    // Typed with fetch's own (url, init) signature so `.mock.calls[0]` is a
+    // real `[string, RequestInit]` tuple — not the `[]` TypeScript infers from
+    // a zero-arg implementation, which a bare `as` cast would have papered
+    // over instead of fixing.
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
       new Response(JSON.stringify({ prefix: "/", entries: [] }), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -79,7 +83,11 @@ describe("secretsRequest", () => {
     const { secretsRequest } = await import("./secrets-api");
     await secretsRequest("inventory", "/api/secrets");
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // A narrowing check, not a cast: an empty `calls` array (fetch never
+    // invoked) fails the test loudly here instead of being silenced.
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
     expect(url).toBe("http://secrets/api/secrets");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer tok-123");
   });
