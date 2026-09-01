@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "@tesserix/web";
 import { AlertTriangle } from "lucide-react";
+import { consolePath } from "@tesserix/console-core";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 // Type-only because only types are needed here — this file uses `InventoryRow`,
@@ -43,6 +44,39 @@ const STORE_LABEL: Record<SecretStore, string> = {
   openbao: "OpenBao",
   gcpsm: "Google Secret Manager",
 };
+
+/**
+ * The way in to `/platform/secrets/new`.
+ *
+ * The console's create-mode form has always existed and nothing could reach
+ * it — `[...path]/page.tsx` turns a 404 into `notFound()`, so a path holding
+ * nothing has no page to offer a create from. This link is the entry point
+ * whose absence was that bug.
+ *
+ * In the page HEADER's `actions` slot, not under the list: the prototype
+ * (`#screen-secrets`) puts the button below the table, and this console puts
+ * page actions in the header on every other surface that has one
+ * (`billing/page.tsx`'s `CatalogLink`, the ticket and organisation detail
+ * pages). Following the prototype here would make this the one surface where
+ * an operator has to scroll past 602 rows to find the create action.
+ *
+ * Lives in this client module rather than beside the page, for the reason
+ * every kit import in this console has one: `@tesserix/web`'s barrel is
+ * `"use client"` and `Button` resolves to `undefined` inside a server
+ * component. `page.tsx` renders this as a client reference, which is fine —
+ * it never calls it.
+ *
+ * `consolePath` rather than a literal: the route's identity lives in
+ * `packages/console-core/src/routes.ts`, and a second spelling here is
+ * exactly the drift that package exists to prevent.
+ */
+export function NewSecretLink() {
+  return (
+    <Button asChild size="sm">
+      <Link href={consolePath("platform.newSecret")}>New secret</Link>
+    </Button>
+  );
+}
 
 /**
  * The row-level reader chip.

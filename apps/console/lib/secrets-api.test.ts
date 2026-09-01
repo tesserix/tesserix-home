@@ -487,6 +487,77 @@ describe("fetchSecretsInventory", () => {
   });
 });
 
+describe("fetchSecretStores", () => {
+  function stubBackends(body: unknown) {
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+  }
+
+  it("preselects the declared default when both stores are enabled", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: ["openbao", "gcpsm"], default: "gcpsm" });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    const choices = await fetchSecretStores();
+
+    expect(choices.enabled).toEqual(["openbao", "gcpsm"]);
+    expect(choices.preferred).toBe("gcpsm");
+  });
+
+  it("preselects the default when only one store is enabled", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: ["openbao"], default: "openbao" });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    const choices = await fetchSecretStores();
+
+    expect(choices.enabled).toEqual(["openbao"]);
+    expect(choices.preferred).toBe("openbao");
+  });
+
+  it("is null when the default names a store that is not enabled", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: ["openbao"], default: "gcpsm" });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    const choices = await fetchSecretStores();
+
+    expect(choices.enabled).toEqual(["openbao"]);
+    expect(choices.preferred).toBeNull();
+  });
+
+  it("is null when the response carries no default", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: ["openbao", "gcpsm"] });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    const choices = await fetchSecretStores();
+
+    expect(choices.preferred).toBeNull();
+  });
+
+  it("filters an unrecognised backend out of enabled and never prefers it", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: ["openbao", "vault-legacy"], default: "vault-legacy" });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    const choices = await fetchSecretStores();
+
+    expect(choices.enabled).toEqual(["openbao"]);
+    expect(choices.preferred).toBeNull();
+  });
+
+  it("rejects a malformed body", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubBackends({ backends: "openbao" });
+
+    const { fetchSecretStores } = await import("./secrets-api");
+    await expect(fetchSecretStores()).rejects.toThrow();
+  });
+});
+
 describe("fetchSecretDetail", () => {
   it("requests the exact mount-relative path with no doubled or missing slash", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");

@@ -94,6 +94,23 @@ describe("route capability", () => {
     expect(routeCapability("platform.secretsReviews")).toBe("platform");
   });
 
+  it("offers the create route on the surface capability, wider than the write it leads to", () => {
+    // The property `platform.newSecret`'s own comment in `routes.ts` exists
+    // to hold, and it is NOT "creating a secret is a `platform` act": the
+    // page gates itself on `platform` AND `rotate-credentials` together and
+    // refuses to draw the form without both, because `PUT /api/secrets/*path`
+    // sits in secrets-api's `live` tier and refuses the write without both.
+    //
+    // This field is DISCOVERY only — it drives the ⌘K palette and nav
+    // filtering (`lib/search.ts`'s `routeEntries`) and nothing else. Narrowing
+    // it to `rotate-credentials` would hide the surface from an operator who
+    // can reach it and read why they cannot finish, which is a worse answer
+    // than the refusal the page itself gives: they would conclude the console
+    // cannot create secrets at all. Discovery has to be at least as wide as
+    // the real gate or the palette misleads by omission.
+    expect(routeCapability("platform.newSecret")).toBe("platform");
+  });
+
   it("gives the identity lookup a surface, now that one exists", () => {
     // #134 recorded this staying at `read` because none of the seven
     // capabilities described "may look people up" — every one above `read`

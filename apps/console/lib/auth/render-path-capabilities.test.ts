@@ -40,6 +40,8 @@ const RENDER_PATH_FILES = [
   "app/(console)/platform/billing/catalog/page.tsx",
   "app/(console)/platform/secrets/[...path]/page.tsx",
   "app/(console)/platform/secrets/reviews/[number]/page.tsx",
+  "app/(console)/platform/secrets/new/page.tsx",
+  "app/(console)/platform/secrets/page.tsx",
 ] as const;
 
 function source(relative: string): string {

@@ -1,3 +1,4 @@
+import { getCurrentSession, hasCapability } from "@tesserix/platform-auth";
 import { ConsolePageHeader } from "@/components/kit/page-header";
 // Imported from `surface-state` and NOT from `states`: this is a server
 // component, and `states.tsx` carries a load-bearing `"use client"` that turns
@@ -12,9 +13,10 @@ import {
   type SurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
+import { requiresCapability } from "@/lib/internal-access";
 import { fetchSecretsInventory } from "@/lib/secrets-api";
 import type { SecretsInventory } from "@/lib/secrets";
-import { SecretsTable } from "./secrets-table";
+import { NewSecretLink, SecretsTable } from "./secrets-table";
 
 /**
  * The secrets inventory — every secret in the estate, flagging the ones no
@@ -151,11 +153,29 @@ export default async function SecretsInventoryPage() {
     error = caught;
   }
 
+  // THE RENDER PATH, NOT THE CONTROL. Creating a secret requires `platform`
+  // AND `rotate-credentials` together — `secrets-api` enforces that itself on
+  // `PUT /api/secrets/*path` (that route sits in its `live` tier), and
+  // `secrets/new/page.tsx` refuses to draw the form without both. This check
+  // only decides whether the inventory OFFERS the link, so a `platform`-only
+  // operator is not walked into a page that can only tell them no. It is the
+  // same `!requiresCapability() || hasCapability(session?.roles, …)` shape
+  // every other render-path gate in this console uses, reading the session
+  // cookie's snapshot synchronously rather than the live gate: hiding a link
+  // is UX, not authorization, and `render-path-capabilities.test.ts` is what
+  // keeps that distinction from drifting.
+  const session = await getCurrentSession();
+  const canCreate =
+    !requiresCapability() ||
+    (hasCapability(session?.roles, "platform") &&
+      hasCapability(session?.roles, "rotate-credentials"));
+
   return (
     <div className="flex flex-col gap-6">
       <ConsolePageHeader
         title="Secrets"
         description="Every secret in the estate, and which of them no application can read."
+        actions={canCreate ? <NewSecretLink /> : null}
       />
 
       <SecretsTable
