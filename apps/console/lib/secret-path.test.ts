@@ -97,6 +97,20 @@ describe("validateSecretPathForCreate", () => {
     }
   });
 
+  it("rejects a segment containing -- for gcpsm, since that is the path-id join separator", () => {
+    const result = validateSecretPathForCreate("a/b--x/c", "gcpsm");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain('"b--x"');
+      expect(result.message).toContain('"--"');
+    }
+  });
+
+  it("accepts a segment containing -- for openbao, as a near-miss of the gcpsm-only separator rejection", () => {
+    const result = validateSecretPathForCreate("a/b--x/c", "openbao");
+    expect(result).toEqual({ ok: true, cleaned: "a/b--x/c" });
+  });
+
   it("rejects a backslash anywhere in the path", () => {
     const result = validateSecretPathForCreate("a/b\\c/d", "openbao");
     expect(result.ok).toBe(false);

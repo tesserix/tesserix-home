@@ -5,8 +5,9 @@
  * This is a mirror of `secrets-api/internal/secrets/path.go`
  * (`CleanSecretPath`, `validateSegment`, `namespacePattern`,
  * `maxSecretPathLen`, `ParseSecretRef`), plus — for the `gcpsm` store only —
- * `segmentPattern` from `secrets-api/internal/gcpsm/gcpsm.go` (the character
- * set Google Secret Manager accepts for a secret id). The API re-runs every
+ * `segmentPattern` and `pathSeparator` from `secrets-api/internal/gcpsm/gcpsm.go`
+ * (the character set Google Secret Manager accepts for a secret id, and the
+ * `--` a path's segments are joined with to form one). The API re-runs every
  * one of these checks itself and remains the actual control; duplicating
  * them here exists only so an operator learns which specific rule they broke
  * — and on which segment — before a network round trip, rather than after
@@ -34,6 +35,16 @@ const NAMESPACE_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
  * namespace and app, so this validator does the same.
  */
 const GCPSM_SEGMENT_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+/**
+ * Mirrors `pathSeparator` in gcpsm.go. `SecretID` joins a path's segments
+ * with `--` to form the Secret Manager id, and `PathFromSecretID` reverses
+ * that by splitting on `--` — so a segment that itself contains `--` would
+ * not round-trip back to the original path. This is not a Google naming
+ * restriction and not a style convention; it exists solely so the encoding
+ * stays reversible.
+ */
+const GCPSM_PATH_SEPARATOR = "--";
 
 export interface SecretPathProblem {
   readonly message: string;
@@ -119,6 +130,12 @@ export function validateSecretPathForCreate(path: string, store: SecretStore): S
         return {
           ok: false,
           message: `Segment "${seg}" may hold only letters, digits, hyphen and underscore in Google Secret Manager.`,
+        };
+      }
+      if (seg.includes(GCPSM_PATH_SEPARATOR)) {
+        return {
+          ok: false,
+          message: `Segment "${seg}" may not contain "${GCPSM_PATH_SEPARATOR}" — that is how this path is encoded into a Google Secret Manager id, so a segment holding it could not be told apart from a path separator.`,
         };
       }
     }
