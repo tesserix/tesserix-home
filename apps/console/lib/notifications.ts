@@ -11,24 +11,33 @@ import type { Proposal } from "@/lib/secrets";
  * proposal kind links to the review a human can act on.
  */
 
-export type NotificationKind =
-  | "ticket_created"
-  | "merchant_reply"
-  | "access_proposal_open";
-
 /**
- * Every kind a `NotificationItem` can carry, as one exported list rather than
- * a type-only union. `notification-bell.tsx`'s shape validator checks an
- * incoming item's `kind` against this array — deriving from the same list
- * `NotificationItem` is built from, instead of its own hardcoded literal
- * list, is what keeps the two from drifting apart when a later task adds a
- * new kind.
+ * Every kind a `NotificationItem` can carry. This array is the source of
+ * truth: `NotificationKind` is derived FROM it (`(typeof
+ * NOTIFICATION_KINDS)[number]`), not the other way around. That direction is
+ * load-bearing, not stylistic — a `NotificationKind` union declared first
+ * with this array typed as `readonly NotificationKind[]` would let the array
+ * stay a stale 3-element literal after the union grows to four, with no
+ * compile error anywhere, because a shorter array is still assignable to
+ * that element type. Deriving the type from the array instead makes adding a
+ * kind without adding it here a type error at every place a full
+ * `NotificationKind` is expected (`CAPABILITY_FOR_KIND` in `route.ts`, the
+ * `assertNever` switches in `notification-bell.tsx`).
+ *
+ * `notification-bell.tsx`'s shape validator checks an incoming item's `kind`
+ * against this same array — an unlisted kind fails `hasRecognisedKind`,
+ * which fails `isNotificationFeedShape`, which disables the bell entirely
+ * (`UNAVAILABLE`) for every operator on every page. That failure mode is why
+ * this being the actual, compiler-enforced source of truth matters more than
+ * it looks.
  */
-export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
+export const NOTIFICATION_KINDS = [
   "ticket_created",
   "merchant_reply",
   "access_proposal_open",
-];
+] as const;
+
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
 export interface TicketNotification {
   /** `${kind}:${row id}` — the merged list holds every kind, and a bare row
@@ -186,8 +195,16 @@ export function toProposalEvent(proposal: Proposal): AccessProposalNotification 
  * null-`lastSeenAt` case. Sorting unknown as oldest is also the honest
  * reading of "we don't know when this happened": absence of evidence that
  * it's new is not evidence that it's new.
+ *
+ * Exported (only `mergeEvents` below uses it in production code) so
+ * `notifications.test.ts` can assert its symmetry directly —
+ * `cmp(x, y) === -cmp(y, x)` for the two-undefined case — rather than
+ * through `Array.prototype.sort`, whose small-array insertion sort does not
+ * reliably query both comparison directions and so cannot be trusted to
+ * catch a broken comparator here. See that test for the failure this
+ * guards against.
  */
-function compareByAtDescending(x: NotificationItem, y: NotificationItem): number {
+export function compareByAtDescending(x: NotificationItem, y: NotificationItem): number {
   if (x.at === undefined && y.at === undefined) return 0;
   if (x.at === undefined) return 1;
   if (y.at === undefined) return -1;
@@ -222,6 +239,10 @@ export function mergeEvents(
  * badge an item the operator can never clear by "seeing" it (there is no
  * real timestamp `writeLastSeenAt` could ever record that would exceed an
  * absent one).
+ *
+ * `lastSeenAt` is ONE watermark per operator, shared across every kind —
+ * see `lib/db/notifications-repo.ts`'s doc comment for the accepted
+ * consequence (a newly-gained kind's backlog can arrive pre-read).
  */
 export function countUnread(
   items: readonly NotificationItem[],
