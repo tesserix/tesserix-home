@@ -56,6 +56,15 @@ const TICKET_ITEM = {
   at: "2026-08-16T00:00:00.000Z",
 };
 
+const PROPOSAL_ITEM = {
+  id: "access_proposal_open:42",
+  kind: "access_proposal_open",
+  number: 42,
+  title: "Grant reader access to products-db",
+  targets: ["products-db", "orders-db"],
+  at: "2026-08-16T00:00:00.000Z",
+};
+
 describe("NotificationBell", () => {
   it("shows the unread count in the button's accessible name", async () => {
     mockFeed({ items: [ITEM], unread: 1, lastSeenAt: null });
@@ -225,5 +234,45 @@ describe("NotificationBell", () => {
       "href",
       "/platform/tickets/9a1c7e00-0000-0000-0000-000000000000",
     );
+  });
+
+  it("links an access_proposal_open item to the review detail route, not a ticket path", async () => {
+    mockFeed({ items: [PROPOSAL_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    const link = await screen.findByRole("link", { name: /#42/ });
+    expect(link).toHaveAttribute("href", "/platform/secrets/reviews/42");
+  });
+
+  it("renders an access_proposal_open item's targets, not a requester's name", async () => {
+    // secrets-api never parses the requester out of the pull request body,
+    // so the row's content is what is waiting (the targets), not who is
+    // waiting on it.
+    mockFeed({ items: [PROPOSAL_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+    expect(await screen.findByText("Access proposal waiting · #42")).toBeInTheDocument();
+    expect(screen.getByText("products-db, orders-db")).toBeInTheDocument();
+  });
+
+  it("renders a mixed feed with a ticket and a proposal, each linking to its own destination", async () => {
+    mockFeed({ items: [TICKET_ITEM, PROPOSAL_ITEM], unread: 2, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+
+    const ticketLink = await screen.findByRole("link", { name: /M8-2001/ });
+    expect(ticketLink).toHaveAttribute(
+      "href",
+      "/platform/tickets/9a1c7e00-0000-0000-0000-000000000000",
+    );
+
+    const proposalLink = await screen.findByRole("link", { name: /#42/ });
+    expect(proposalLink).toHaveAttribute("href", "/platform/secrets/reviews/42");
   });
 });

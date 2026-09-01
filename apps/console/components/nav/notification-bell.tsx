@@ -108,13 +108,20 @@ function formatRelativeTime(iso: string): string {
   return `${diffDays}d ago`;
 }
 
-/** Throws for a `NotificationItem["kind"]` no `switch` below handles. The
- *  parameter type is `never` only when every case has actually been
- *  handled, so a future kind that falls through a `switch`'s cases (rather
- *  than being deliberately handled) is a COMPILE error here, not a runtime
- *  one — the failure it guards against is a new variant silently rendering
- *  as a broken ticket link, and catching that at the type level is stronger
- *  than any test could be. */
+/** Throws for a `NotificationItem` no `switch` below handles. Called with
+ *  the whole `item`, not `item.kind`: `NotificationItem` is now a
+ *  discriminated union across two separate interfaces, so once a `switch`
+ *  has consumed every member's `kind` literal, TypeScript narrows `item`
+ *  ITSELF to `never` — and property access on a `never`-typed value
+ *  (`item.kind`) is a type error, not a value of type `never`. That only
+ *  showed up once a second interface joined the union; a single-interface
+ *  `kind` field narrowed to `never` while `item` stayed a real object, so
+ *  `item.kind` used to typecheck. The parameter type is `never` only when
+ *  every case has actually been handled, so a future kind that falls
+ *  through a `switch`'s cases (rather than being deliberately handled) is a
+ *  COMPILE error here, not a runtime one — the failure it guards against is
+ *  a new variant silently rendering as a broken ticket link, and catching
+ *  that at the type level is stronger than any test could be. */
 function assertNever(value: never): never {
   throw new Error(`notification-bell: unhandled kind ${JSON.stringify(value)}`);
 }
@@ -128,21 +135,59 @@ function leadingPhrase(item: NotificationItem): string {
       return "New ticket";
     case "merchant_reply":
       return `${item.actor} replied`;
+    case "access_proposal_open":
+      return "Access proposal waiting";
     default:
-      return assertNever(item.kind);
+      return assertNever(item);
   }
 }
 
-/** The href is decided per variant, not assumed — today every kind links to
- *  a ticket, but that is a per-case decision, not a fact about
- *  NotificationItem as a whole. */
+/** The href is decided per variant, not assumed — today every ticket kind
+ *  links to a ticket, but that is a per-case decision, not a fact about
+ *  NotificationItem as a whole. An access proposal links to the review
+ *  detail route (`/platform/secrets/reviews/{number}`), not a ticket path —
+ *  it isn't a ticket, it's an open pull request against tesserix-k8s. */
 function hrefFor(item: NotificationItem): string {
   switch (item.kind) {
     case "ticket_created":
     case "merchant_reply":
       return `/platform/tickets/${item.ticketId}`;
+    case "access_proposal_open":
+      return `/platform/secrets/reviews/${item.number}`;
     default:
-      return assertNever(item.kind);
+      return assertNever(item);
+  }
+}
+
+/** The row's identifying number, next to `leadingPhrase` — a ticket number
+ *  for the two ticket kinds, the pull-request number for a proposal. */
+function identifierFor(item: NotificationItem): string {
+  switch (item.kind) {
+    case "ticket_created":
+    case "merchant_reply":
+      return item.ticketNumber;
+    case "access_proposal_open":
+      return `#${item.number}`;
+    default:
+      return assertNever(item);
+  }
+}
+
+/** The row's second line. For ticket kinds this is the ticket's subject.
+ *  A proposal has no subject and no requester on the wire (see
+ *  `AccessProposalNotification`'s doc comment in `lib/notifications.ts` —
+ *  `secrets-api` never parses the requester out of the pull request body),
+ *  so the honest, useful line here is WHAT is waiting: the namespace/app
+ *  targets the proposal touches, not who raised it. */
+function secondaryFor(item: NotificationItem): string {
+  switch (item.kind) {
+    case "ticket_created":
+    case "merchant_reply":
+      return item.subject;
+    case "access_proposal_open":
+      return item.targets.length > 0 ? item.targets.join(", ") : "No targets recorded";
+    default:
+      return assertNever(item);
   }
 }
 
@@ -153,11 +198,15 @@ function NotificationRow({ item }: { item: NotificationItem }) {
       className="flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-[13px] transition-colors hover:bg-accent"
     >
       <span className="font-medium text-foreground">
-        {leadingPhrase(item)} · {item.ticketNumber}
+        {leadingPhrase(item)} · {identifierFor(item)}
       </span>
-      <span className="truncate text-muted-foreground">{item.subject}</span>
+      <span className="truncate text-muted-foreground">{secondaryFor(item)}</span>
       <span className="text-[11px] text-muted-foreground">
-        {formatRelativeTime(item.at)}
+        {/* `at` is `undefined` only for an access proposal whose upstream
+            GitHub timestamp failed to parse (see AccessProposalNotification's
+            doc comment) — render nothing rather than passing `undefined`
+            into `formatRelativeTime`, which expects a string. */}
+        {item.at !== undefined ? formatRelativeTime(item.at) : null}
       </span>
     </Link>
   );
