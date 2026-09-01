@@ -242,6 +242,34 @@ describe("WriteSecretForm", () => {
     expect(await screen.findByText(/copy failed/i)).toBeInTheDocument();
   });
 
+  // Finding 4: `setIfVersion` (advancing to the version the store just
+  // assigned, for the NEXT write) and `setResult` fire together inside the
+  // same `startTransition` callback, so React batches them — a render that
+  // reads live `isRotate` (`ifVersion !== undefined`) after both updates
+  // always sees the ADVANCED value, which is truthy for a create too (a
+  // create's response carries a real positive version, same shape as a
+  // rotate's). The existing "success state" test's regex
+  // (`/secret (written|created|rotated)/i`) matches either word, so it
+  // cannot catch this — this test pins the exact word for each case.
+  it("a create reports 'written', not 'rotated', even though ifVersion is truthy immediately afterward", async () => {
+    render(<WriteSecretForm store="openbao" path="mark8ly/new-secret" />);
+    typeKeyAndValue("PASSWORD", "hunter2");
+
+    await submit();
+
+    expect(await screen.findByText(/^secret written\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/rotated/i)).toBeNull();
+  });
+
+  it("a rotate reports 'rotated'", async () => {
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
+    typeKeyAndValue("PASSWORD", "hunter2");
+
+    await submit();
+
+    expect(await screen.findByText(/^secret rotated\./i)).toBeInTheDocument();
+  });
+
   it("the success state does not display the value", async () => {
     render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
     typeKeyAndValue("PASSWORD", "a-very-distinctive-secret-value");

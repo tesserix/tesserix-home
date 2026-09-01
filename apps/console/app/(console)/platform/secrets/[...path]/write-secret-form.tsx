@@ -108,7 +108,18 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ version: number } | null>(null);
+  // `wasRotate` is captured at the moment of THIS write, not read back from
+  // `ifVersion`/`isRotate` when the success view renders. `setIfVersion`
+  // below (advancing to the version the store just assigned, for the NEXT
+  // write) and `setResult` both fire in the same `startTransition` callback,
+  // and React batches them — so a render reading live `isRotate` after both
+  // updates always sees the ADVANCED value, which is truthy for a create
+  // too (the store assigns a real positive version on a create, same as a
+  // rotate). Without capturing it here, an operator who just created a
+  // secret would be told "Secret rotated." That is Finding 4 exactly:
+  // advancing `ifVersion` for the next write is correct; reading it back as
+  // a description of the write that just happened is not.
+  const [result, setResult] = useState<{ version: number; wasRotate: boolean } | null>(null);
   // Seeded from the prop once, then OWNED by this component: a successful
   // write returns the version the store actually assigned, and every
   // subsequent write in the same session (via "Write another version") must
@@ -212,7 +223,7 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
       // the seed and the advancement means `isRotate` can never disagree
       // with what was actually sent, regardless of what a future caller
       // (real or a test double) hands back.
-      setResult({ version: outcome.version });
+      setResult({ version: outcome.version, wasRotate: isRotate });
       setIfVersion(asRotateVersion(outcome.version));
       setKey("");
       setValue("");
@@ -231,8 +242,11 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
     return (
       <Callout variant="success" role="status">
         <CalloutDescription>
-          {isRotate ? "Secret rotated." : "Secret written."} Version {result.version} now exists. Nothing here
-          can show you the value again — that moment already passed.
+          {/* `result.wasRotate`, not `isRotate` — see `result`'s state
+           *  comment above for why the live value is the wrong thing to
+           *  read here. */}
+          {result.wasRotate ? "Secret rotated." : "Secret written."} Version {result.version} now exists.
+          Nothing here can show you the value again — that moment already passed.
         </CalloutDescription>
         <Button type="button" variant="outline" size="sm" onClick={handleWriteAnother}>
           Write another version
