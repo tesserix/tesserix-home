@@ -140,3 +140,61 @@ describe("secretsRequest", () => {
     expect(caught).toBeInstanceOf(PlatformApiError);
   });
 });
+
+describe("fetchSecretPaths", () => {
+  function treeFetch(tree: Record<string, Array<{ name: string; isFolder: boolean }>>) {
+    return vi.fn(async (url: string) => {
+      const prefix = new URL(url).searchParams.get("prefix") ?? "/";
+      return new Response(JSON.stringify({ prefix, entries: tree[prefix] ?? [] }), { status: 200 });
+    });
+  }
+
+  it("returns leaf paths, not folders", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal("fetch", treeFetch({
+      "/": [{ name: "mark8ly", isFolder: true }, { name: "root-key", isFolder: false }],
+      "/mark8ly/": [{ name: "db", isFolder: false }],
+    }));
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    expect((await fetchSecretPaths("openbao")).sort()).toEqual(["mark8ly/db", "root-key"]);
+  });
+
+  // A backend that returned a folder containing itself would otherwise walk
+  // forever and hang the page rather than failing.
+  it("stops at the depth limit instead of recursing forever", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const selfReferential = vi.fn(async (url: string) => {
+      const prefix = new URL(url).searchParams.get("prefix") ?? "/";
+      return new Response(
+        JSON.stringify({ prefix, entries: [{ name: "loop", isFolder: true }] }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", selfReferential);
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    await expect(fetchSecretPaths("openbao")).resolves.toBeInstanceOf(Array);
+    expect(selfReferential.mock.calls.length).toBeLessThan(100);
+  });
+
+  it("asks for the requested store", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = treeFetch({ "/": [] });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchSecretPaths } = await import("./secrets-api");
+    await fetchSecretPaths("gcpsm");
+
+    expect(fetchMock.mock.calls[0][0]).toContain("backend=gcpsm");
+  });
+});
