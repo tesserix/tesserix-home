@@ -169,12 +169,18 @@ export function SecretDetailView({
           label: "Versions",
           content: <VersionHistoryTable versions={versions} />,
         },
-        // Shown to every viewer, unlike Write below — this is read-only
-        // (Task 2), so there is nothing here that requires `canWrite`.
+        // The tab itself is shown to every viewer — unlike Write below,
+        // which is offered only to an operator who can write at all. Access
+        // has readers worth seeing regardless of `canWrite`; it is the
+        // add/remove controls INSIDE `AccessCard` that `canWrite` gates, for
+        // the same reason `AccessCard`'s own doc comment gives: the refusal
+        // is copy the card renders itself, not an absent tab.
         {
           id: "access",
           label: "Access",
-          content: <AccessCard store={store} path={path} readers={readers} />,
+          content: (
+            <AccessCard store={store} path={path} readers={readers} canWrite={canWrite} />
+          ),
         },
         // Offered only to an operator whose session holds both `platform`
         // and `rotate-credentials` (see `canWrite`'s doc comment above). A

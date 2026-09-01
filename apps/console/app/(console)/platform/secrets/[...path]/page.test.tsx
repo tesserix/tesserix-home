@@ -29,6 +29,15 @@ vi.mock("@/lib/internal-access", async (importOriginal) => ({
   requiresCapability: (...args: unknown[]) => requiresCapability(...args),
 }));
 
+// `AccessCard` (Task 4) calls `useRouter()` to re-read after a grant/revoke
+// — `notFound()` stays real (see the note below on why it is asserted by
+// its thrown digest), so only `useRouter` is stood in here, via
+// `importOriginal` for everything else `next/navigation` exports.
+vi.mock("next/navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/navigation")>()),
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { SecretDetail, SecretVersion } from "@/lib/secrets";
 import SecretDetailPage, { detailState, parseStoreParam } from "./page";
