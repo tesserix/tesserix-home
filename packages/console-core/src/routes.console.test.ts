@@ -138,12 +138,16 @@ describe("console-native surfaces record no apps/web path", () => {
     //   - platform.onboardingSessions: the same, one level down. The rows
     //     behind the funnel's counts come from a federated read (#447) that
     //     postdates apps/web entirely.
+    //   - platform.secrets: apps/web never served this. Its predecessor is
+    //     secret-service's own UI, a separate application being retired, which
+    //     is not what this field records.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
       "mark8ly.migrationFastPath",
       "platform.tools",
       "platform.auditLog",
+      "platform.secrets",
       "platform.inbox",
       "platform.billing",
       "platform.billingCatalog",

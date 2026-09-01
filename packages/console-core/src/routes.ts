@@ -350,6 +350,15 @@ export const ROUTES = {
   // control that actually applies here; no capability value can express it.
   "platform.auditLog": { mobile: "/platform/audit-log", capability: "platform" },
 
+  // The secrets inventory. `platform` because reading the estate's secret
+  // NAMES and their reader state is a governance read, not a mutation — the
+  // credential verb gates writing a value, not seeing that one exists.
+  //
+  // No `web` path: apps/web never served this. Its predecessor is
+  // secret-service's own UI, a separate application being retired, which is
+  // not what this field records.
+  "platform.secrets": { mobile: "/platform/secrets", capability: "platform" },
+
   // Everything waiting on a human, across every product implementing §3.2,
   // from platform-api's inbox module (#352).
   //
