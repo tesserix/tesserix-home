@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NOTIFICATION_KINDS,
+  compareByAtDescending,
   countUnread,
   mergeEvents,
   toProposalEvent,
@@ -214,7 +215,17 @@ describe("mergeEvents", () => {
     ]);
   });
 
-  it("keeps two undated items stable relative to each other rather than throwing", () => {
+  it("keeps two undated items stable relative to each other, via a comparator that reports them equal", () => {
+    // This exercises the same input as before (two undated items through
+    // mergeEvents), but the previous version of this test asserted the
+    // observed order rather than the comparator's actual return value —
+    // which meant it could not distinguish a correct `return 0` from a
+    // broken comparator, because V8's small-array insertion sort never
+    // queries both `cmp(a, b)` and `cmp(b, a)` for a 2-element array, so a
+    // asymmetric comparator (which is inconsistent, not "unordered") would
+    // still have produced this same stable-looking output. See the
+    // `compareByAtDescending` symmetry test below for the assertion that
+    // actually catches that.
     const merged = mergeEvents(
       [[proposalItem(undefined, 1), proposalItem(undefined, 2)]],
       10,
@@ -223,6 +234,27 @@ describe("mergeEvents", () => {
       "access_proposal_open:1",
       "access_proposal_open:2",
     ]);
+  });
+});
+
+describe("compareByAtDescending", () => {
+  it("reports two undated items equal in both comparison directions", () => {
+    // This is the property `sort()` cannot be trusted to check (see the
+    // comment above): a comparator that returns a nonzero, non-symmetric
+    // value for one direction only (e.g. 1 for both (x, y) and (y, x), which
+    // is what deleting the guard line's `return 0` and falling through to
+    // "b === undefined ? -1" branches would produce) breaks `Array.sort`'s
+    // contract even though a 2-element `sort()` call might not visibly
+    // reorder anything. Asserting both directions directly, and their
+    // relationship to each other, is what actually pins the guard line
+    // down.
+    const a = proposalItem(undefined, 1);
+    const b = proposalItem(undefined, 2);
+    // Both directions must report "equal" — a comparator that returns a
+    // nonzero value for one or both directions here is broken, whether or
+    // not that break happens to be symmetric.
+    expect(compareByAtDescending(a, b)).toBe(0);
+    expect(compareByAtDescending(b, a)).toBe(0);
   });
 });
 
