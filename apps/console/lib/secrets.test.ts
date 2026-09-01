@@ -330,6 +330,25 @@ describe("parseProposals", () => {
     expect(() => parseProposals({ pulls: [pull({ number: "42" })] })).toThrow();
     expect(() => parseProposals({ pulls: [pull({ title: undefined })] })).toThrow();
   });
+
+  // `proposal.url` goes straight into an `<a href>` (`proposals-table.tsx`),
+  // so its scheme is validated at the same parser boundary every other
+  // field is, closing the asymmetry with `patch`'s attacker-influenced-input
+  // reasoning in the same file.
+  it("rejects a url with a non-http(s) scheme", () => {
+    expect(() =>
+      parseProposals({ pulls: [pull({ url: "javascript:alert(1)" })] }),
+    ).toThrow();
+  });
+
+  it("rejects a url that is not a valid URL at all", () => {
+    expect(() => parseProposals({ pulls: [pull({ url: "not a url" })] })).toThrow();
+  });
+
+  it("accepts an http(s) url", () => {
+    const parsed = parseProposals({ pulls: [pull({ url: "http://github.com/x/y/pull/1" })] });
+    expect(parsed[0]?.url).toBe("http://github.com/x/y/pull/1");
+  });
 });
 
 describe("parseProposalDetail", () => {

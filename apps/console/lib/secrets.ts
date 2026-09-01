@@ -39,6 +39,33 @@ function optionalStr(value: unknown, path: string): string | undefined {
 }
 
 /**
+ * A string that must additionally be an `http:`/`https:` URL — for fields
+ * this console later puts straight into an `<a href>` (`proposal.url`,
+ * rendered by `proposals-table.tsx`). React 19 already refuses to run a
+ * `javascript:` href, so this is not closing an exploitable gap; it is
+ * closing an ASYMMETRY in how carefully this file treats attacker-reachable
+ * fields. `proposal.url` comes from GitHub's `html_url` via `secrets-api`,
+ * the same distance from this console's control as `file.patch`
+ * (`proposal-view.tsx`'s `ChangedFileDiff` reasons at length about `patch`
+ * being attacker-influenced) — validating the scheme here, at the same
+ * boundary every other field is validated at, keeps that reasoning honest
+ * rather than applying it selectively.
+ */
+function httpUrl(value: unknown, path: string): string {
+  const url = str(value, path);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    fail(`${path} is not a valid URL`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    fail(`${path} is not an http(s) URL`);
+  }
+  return url;
+}
+
+/**
  * Go's zero `time.Time`, serialised. `secrets.Secret.CreatedAt/UpdatedAt`
  * and `Version.CreatedAt` are `time.Time` fields tagged `json:",omitempty"`
  * — but `encoding/json`'s `omitempty` is a no-op on a struct type (it only
@@ -402,7 +429,7 @@ function parseProposalFields(entry: Record<string, unknown>, prefix: string): Pr
   return {
     number: num(entry.number, `${prefix}number`),
     title: str(entry.title, `${prefix}title`),
-    url: str(entry.url, `${prefix}url`),
+    url: httpUrl(entry.url, `${prefix}url`),
     branch: str(entry.branch, `${prefix}branch`),
     author: str(entry.author, `${prefix}author`),
     createdAt: optionalTimestamp(entry.createdAt, `${prefix}createdAt`),
