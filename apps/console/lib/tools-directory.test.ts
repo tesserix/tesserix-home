@@ -80,7 +80,7 @@ describe("readToolsDirectory", () => {
     // Unset is byte-for-byte the old behaviour, which is what makes this whole
     // phase revert by removing one variable rather than by reverting code.
     expect(directory.source).toBe("builtin");
-    expect(directory.tools).toHaveLength(15);
+    expect(directory.tools).toHaveLength(14);
     expect(directory.groups.map((g) => g.key)).toEqual([
       "identity",
       "observability",
@@ -212,7 +212,7 @@ describe("readToolsDirectory", () => {
     const directory = await readToolsDirectory();
 
     // The directory survives an outage — that is the point of the fallback.
-    expect(directory.tools).toHaveLength(15);
+    expect(directory.tools).toHaveLength(14);
     // And it says so: "degraded", not "builtin" — the origin IS set, so this
     // is "on and broken", which the banner reports, not "off on purpose",
     // which stays silent. A silent fallback is two lists that disagree with
@@ -240,7 +240,7 @@ describe("readToolsDirectory", () => {
     // directory of links. Still "degraded": the origin is set, so this is
     // the API failing to answer, not the phase being switched off.
     expect(directory.source).toBe("degraded");
-    expect(directory.tools).toHaveLength(15);
+    expect(directory.tools).toHaveLength(14);
   });
 
   it("drops a tool whose group is not declared", async () => {
@@ -314,7 +314,7 @@ describe("readToolsDirectory", () => {
     // "degraded", not "builtin": the origin is set, so a malformed field is
     // the API failing, not the phase being off.
     expect(directory.source).toBe("degraded");
-    expect(directory.tools).toHaveLength(15);
+    expect(directory.tools).toHaveLength(14);
   });
 
   it("falls back when a single tool has no id", async () => {
@@ -354,6 +354,6 @@ describe("readToolsDirectory", () => {
     // "degraded", not "builtin": the origin is set, so a malformed field is
     // the API failing, not the phase being off.
     expect(directory.source).toBe("degraded");
-    expect(directory.tools).toHaveLength(15);
+    expect(directory.tools).toHaveLength(14);
   });
 });
