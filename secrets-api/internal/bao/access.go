@@ -38,7 +38,13 @@ type Grant struct {
 	ServiceAccount string `json:"serviceAccount"`
 	TTL            string `json:"ttl,omitempty"`
 	// SecretPrefix is where the app's secrets live, for display and for the
-	// ExternalSecret the console hands the administrator.
+	// ExternalSecret the console hands the administrator. It is deliberately
+	// mount-relative (namespace/app, no "kv/" and no "/data/" or "/metadata/"
+	// infix) because that is the space GET /api/secrets returns paths in — a
+	// consumer can compare this prefix against a secret path without knowing
+	// the mount. If the mount-inclusive form is ever needed (e.g. an
+	// ExternalSecret's remoteRef), derive it at that call site, where the
+	// need for the mount is visible.
 	SecretPrefix string `json:"secretPrefix,omitempty"`
 }
 
@@ -199,7 +205,7 @@ func (c *Client) Grants(ctx context.Context) ([]Grant, error) {
 			Namespace:    namespace,
 			App:          app,
 			TTL:          fmt.Sprint(resp["token_ttl"]),
-			SecretPrefix: c.mount + "/" + namespace + "/" + app,
+			SecretPrefix: namespace + "/" + app,
 		}
 		if sas := stringsFrom(resp["bound_service_account_names"]); len(sas) > 0 {
 			g.ServiceAccount = sas[0]
