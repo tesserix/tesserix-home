@@ -548,3 +548,84 @@ export async function restoreSecretVersion(store: SecretStore, path: string, ver
     { method: "POST", body: { version } },
   );
 }
+
+/**
+ * The app a grant is being created for or identified by: the Kubernetes
+ * namespace/name pair `secrets-api` matches against a secret path prefix,
+ * plus the service account the OpenBao auth role binds to.
+ */
+export interface AppRef {
+  readonly namespace: string;
+  readonly name: string;
+  readonly serviceAccount: string;
+}
+
+/**
+ * Grant `app` a reader on the namespace/app prefix it names: `POST
+ * /api/access/grants`, body `{namespace, apps:[{name, serviceAccount}], ttl?}`.
+ * `secrets-api/internal/api/server.go` puts this route in the `live` group
+ * nested inside `platform` — it requires `platform` + `rotate-credentials`,
+ * not `platform` alone, because it calls `bao.GrantAll` and grants access
+ * immediately (the pull request it opens afterwards is a receipt, not an
+ * approval gate).
+ *
+ * `ttl` is omitted when not given — the API takes an absent `ttl` as `"0"`
+ * (no expiry), so there is nothing to default here.
+ *
+ * The response is deliberately discarded. Its `grants[].secretPrefix` is
+ * mount-relative, while `GET /api/access/grants` (what `readersFor` and the
+ * inventory match against) returns the mount-inclusive form (#476) — the two
+ * shapes cannot be joined against each other. A caller that wants to see the
+ * new grant re-reads the grants list instead, which is the one shape
+ * everything else already matches against.
+ */
+export async function createGrant(app: AppRef, ttl?: string): Promise<void> {
+  const body: {
+    namespace: string;
+    apps: Array<{ name: string; serviceAccount: string }>;
+    ttl?: string;
+  } = {
+    namespace: app.namespace,
+    apps: [{ name: app.name, serviceAccount: app.serviceAccount }],
+  };
+  if (ttl !== undefined) {
+    body.ttl = ttl;
+  }
+  await secretsRequest("create grant", "/api/access/grants", { method: "POST", body });
+}
+
+/**
+ * Revoke a namespace/app's reader grant: `DELETE
+ * /api/access/grants/:namespace/:app`. Same `live` group, same
+ * `platform` + `rotate-credentials` requirement as {@link createGrant} — see
+ * its doc comment for why removing a reader takes the credential verb too
+ * (both directions change `tesserix-k8s` immediately).
+ *
+ * Each segment is encoded on its own, exactly like `encodeSecretPath`, so a
+ * namespace or app name containing a character that is meaningful in a URL
+ * path can never be produced by this call.
+ */
+export async function revokeGrant(namespace: string, app: string): Promise<void> {
+  await secretsRequest(
+    "revoke grant",
+    `/api/access/grants/${encodeURIComponent(namespace)}/${encodeURIComponent(app)}`,
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * Delete or destroy a secret: `DELETE /api/secrets/*path?backend=…`, with
+ * `destroy=true` appended only when `destroy` is true. One route, two
+ * behaviours (`secrets-api/internal/api/handlers/secrets.go`): the query
+ * parameter absent, or anything but the literal `"true"`, calls the store's
+ * soft `Delete` (reversible via `restoreSecretVersion`); `destroy=true` calls
+ * `Destroy`, which is final. Same `live` group, same `platform` +
+ * `rotate-credentials` requirement as {@link createGrant} — this writes the
+ * store either way.
+ */
+export async function deleteSecret(store: SecretStore, path: string, destroy: boolean): Promise<void> {
+  const query = destroy
+    ? `backend=${encodeURIComponent(store)}&destroy=true`
+    : `backend=${encodeURIComponent(store)}`;
+  await secretsRequest("delete secret", `/api/secrets/${encodeSecretPath(path)}?${query}`, { method: "DELETE" });
+}

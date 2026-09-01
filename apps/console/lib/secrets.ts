@@ -184,18 +184,26 @@ export function parseGrants(json: unknown): Grant[] {
 }
 
 /**
- * Does some grant give a reader to the secret at `path`?
+ * Every grant that covers the secret at `path` — the "who can read this"
+ * answer the access card (Task 4) renders, and the one prefix rule
+ * `hasGrantFor` also needs. Extracted so there is exactly one definition of
+ * "covers"; `hasGrantFor` below calls this rather than re-implementing it.
  *
  * A grant covers its own prefix (`namespace/app`) and everything beneath it
  * (`namespace/app/...`). The trailing slash on the "beneath" check is load
  * bearing: without it, a grant for app `api` would also match `api-internal`,
  * claiming a reader that does not exist.
  */
-function hasGrantFor(path: string, grants: readonly Grant[]): boolean {
-  return grants.some((g) => {
+export function readersFor(path: string, grants: readonly Grant[]): Grant[] {
+  return grants.filter((g) => {
     const prefix = `${g.namespace}/${g.app}`;
     return path === prefix || path.startsWith(`${prefix}/`);
   });
+}
+
+/** Does some grant give a reader to the secret at `path`? See {@link readersFor}. */
+function hasGrantFor(path: string, grants: readonly Grant[]): boolean {
+  return readersFor(path, grants).length > 0;
 }
 
 /**
