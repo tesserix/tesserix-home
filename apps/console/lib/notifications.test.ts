@@ -92,8 +92,10 @@ describe("toReplyEvent", () => {
 describe("mergeEvents", () => {
   it("interleaves both sources newest first", () => {
     const merged = mergeEvents(
-      [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
-      [item("2026-08-12T00:00:00.000Z")],
+      [
+        [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z")],
+      ],
       10,
     );
     expect(merged.map((e) => e.at)).toEqual([
@@ -105,8 +107,10 @@ describe("mergeEvents", () => {
 
   it("truncates to the limit after sorting, keeping the newest", () => {
     const merged = mergeEvents(
-      [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
-      [item("2026-08-12T00:00:00.000Z")],
+      [
+        [item("2026-08-10T00:00:00.000Z"), item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z")],
+      ],
       2,
     );
     expect(merged.map((e) => e.at)).toEqual([
@@ -118,7 +122,25 @@ describe("mergeEvents", () => {
   it("does not mutate its inputs", () => {
     const a = [item("2026-08-10T00:00:00.000Z")];
     const frozen = Object.freeze([...a]);
-    expect(() => mergeEvents(frozen, [], 5)).not.toThrow();
+    expect(() => mergeEvents([frozen, []], 5)).not.toThrow();
+  });
+
+  it("merges three or more sources, still newest-first and truncated after sorting", () => {
+    // The feed is gaining a third source (access proposals); this is the
+    // generalization the two-array signature could not express.
+    const merged = mergeEvents(
+      [
+        [item("2026-08-10T00:00:00.000Z")],
+        [item("2026-08-14T00:00:00.000Z")],
+        [item("2026-08-12T00:00:00.000Z"), item("2026-08-09T00:00:00.000Z")],
+      ],
+      3,
+    );
+    expect(merged.map((e) => e.at)).toEqual([
+      "2026-08-14T00:00:00.000Z",
+      "2026-08-12T00:00:00.000Z",
+      "2026-08-10T00:00:00.000Z",
+    ]);
   });
 });
 

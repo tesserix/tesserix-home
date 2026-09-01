@@ -97,13 +97,18 @@ export function toReplyEvent(row: ReplyEventRow): NotificationItem {
 }
 
 /** Newest first, then truncated — truncating before sorting would drop new
- *  events from whichever source happened to be longer. */
+ *  events from whichever source happened to be longer.
+ *
+ *  Takes an array of sources rather than two fixed parameters: the feed is
+ *  gaining a third source (access proposals, §8 of the absorption design),
+ *  and a fixed two-argument signature would need a call-site change at every
+ *  future source count instead of once here. */
 export function mergeEvents(
-  a: readonly NotificationItem[],
-  b: readonly NotificationItem[],
+  sources: readonly (readonly NotificationItem[])[],
   limit: number,
 ): NotificationItem[] {
-  return [...a, ...b]
+  return sources
+    .flat()
     .sort((x, y) => (x.at < y.at ? 1 : x.at > y.at ? -1 : 0))
     .slice(0, limit);
 }

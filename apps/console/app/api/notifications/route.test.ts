@@ -77,11 +77,66 @@ describe("GET /api/notifications", () => {
     expect(recentTicketRows).not.toHaveBeenCalled();
   });
 
-  it("refuses a session without the read capability", async () => {
+  it("answers 200 with an empty feed for a session holding no relevant capability", async () => {
+    // The property this task introduces: entry to the feed is console entry,
+    // not `support`. Holding no capability the feed answers to means nothing
+    // is addressed to this operator — not that they may not enter.
     signIn([]);
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "5f0b2c34-0000-0000-0000-000000000000",
+        product_id: "mark8ly",
+        ticket_number: "M8-1042",
+        subject: "Payout missing",
+        submitted_by_name: "Asha",
+        created_at: "2026-08-16T00:00:00.000Z",
+      },
+    ] as never);
     const res = await GET();
-    expect(res.status).toBe(403);
-    expect(recentTicketRows).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items).toEqual([]);
+    expect(body.unread).toBe(0);
+  });
+
+  it("does not count an unseen ticket row for an operator who cannot see ticket kinds", async () => {
+    // The badge's honesty rests on this: countUnread must run AFTER
+    // filtering, or the bell promises a count the panel will never show.
+    signIn([]);
+    vi.mocked(readLastSeenAt).mockResolvedValue("2026-08-15T00:00:00.000Z");
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "5f0b2c34-0000-0000-0000-000000000000",
+        product_id: "mark8ly",
+        ticket_number: "M8-1042",
+        subject: "Payout missing",
+        submitted_by_name: "Asha",
+        created_at: "2026-08-16T00:00:00.000Z",
+      },
+    ] as never);
+    const res = await GET();
+    const body = await res.json();
+    expect(body.unread).toBe(0);
+  });
+
+  it("shows an operator only the kinds their held capabilities admit, alongside one who holds none of the relevant ones", async () => {
+    // There was previously no case for an operator holding one relevant
+    // capability but not another (every prior test used exactly ["support"]
+    // or []). This is the case per-kind filtering exists for.
+    signIn(["support"]);
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "5f0b2c34-0000-0000-0000-000000000000",
+        product_id: "mark8ly",
+        ticket_number: "M8-1042",
+        subject: "Payout missing",
+        submitted_by_name: "Asha",
+        created_at: "2026-08-16T00:00:00.000Z",
+      },
+    ] as never);
+    const res = await GET();
+    const body = await res.json();
+    expect(body.items).toHaveLength(1);
   });
 
   it("answers 500 without leaking the driver error when a query fails", async () => {
@@ -116,11 +171,13 @@ describe("POST /api/notifications", () => {
     expect(body.ok).toBe(true);
   });
 
-  it("refuses without the read capability and writes nothing", async () => {
+  it("still writes last-seen for a session holding no relevant capability", async () => {
+    // Marking the feed seen requires console entry only, same as reading it —
+    // a session with no `support` grant may still clear the badge.
     signIn([]);
     const res = await POST();
-    expect(res.status).toBe(403);
-    expect(writeLastSeenAt).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(writeLastSeenAt).toHaveBeenCalled();
   });
 
   it("answers 501 rather than writing when the database is not wired up", async () => {
