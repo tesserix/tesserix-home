@@ -678,6 +678,33 @@ describe("writeSecret", () => {
     expect(caught).toBeInstanceOf(PlatformApiError);
     expect((caught as PlatformApiError).status).toBe(409);
   });
+
+  // OpenBao KV v2 assigns versions starting at 1 and only increments, so a
+  // response reporting version 0 (or negative) is not a shape the server
+  // can legitimately return — a wrong response, not a valid "no version"
+  // state. This is the boundary a wrong shape should die at, rather than
+  // travel further as a value a caller (write-secret-form.tsx's
+  // `asRotateVersion` guard exists for exactly this reason) has to remember
+  // to re-check.
+  it("rejects a write response reporting a non-positive version", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ path: "homechef/api/db", version: 0, backend: "openbao" }), {
+          status: 200,
+        }),
+      ),
+    );
+
+    const { writeSecret } = await import("./secrets-api");
+    await expect(writeSecret("openbao", "homechef/api/db", { password: "x" })).rejects.toThrow(
+      /version is not a positive number/,
+    );
+  });
 });
 
 describe("restoreSecretVersion", () => {

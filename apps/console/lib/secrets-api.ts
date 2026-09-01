@@ -467,6 +467,17 @@ export async function fetchSecretVersions(store: SecretStore, path: string): Pro
  * Parse `PUT /api/secrets/*path`'s response body (`{"path":…,"version":…,
  * "backend":…}`) into a typed result. Kept local, like `parseBackendNames`
  * above — nothing else in the console reuses this shape.
+ *
+ * `version` must be a POSITIVE number, not merely a number. OpenBao KV v2
+ * assigns versions starting at 1 and only increments, so a write response
+ * reporting `0` or negative is not a shape the server can legitimately
+ * return — it is a wrong response, and this is where a wrong shape should
+ * die, at the boundary, rather than travel further as a value some caller
+ * has to remember to re-check. `write-secret-form.tsx`'s `asRotateVersion`
+ * guards the same fact on the client for a different reason (a component
+ * should not hold a property that only happens to be true because another
+ * system behaves — see its own doc comment) but this check is the one that
+ * actually stops a malformed response from reaching it in the first place.
  */
 function parseWriteResult(json: unknown): { path: string; version: number; backend: string } {
   if (typeof json !== "object" || json === null || Array.isArray(json)) {
@@ -474,7 +485,9 @@ function parseWriteResult(json: unknown): { path: string; version: number; backe
   }
   const { path, version, backend } = json as Record<string, unknown>;
   if (typeof path !== "string") throw new Error("secrets: write response .path is not a string");
-  if (typeof version !== "number") throw new Error("secrets: write response .version is not a number");
+  if (typeof version !== "number" || version <= 0) {
+    throw new Error("secrets: write response .version is not a positive number");
+  }
   if (typeof backend !== "string") throw new Error("secrets: write response .backend is not a string");
   return { path, version, backend };
 }

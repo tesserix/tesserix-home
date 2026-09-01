@@ -185,6 +185,37 @@ describe("WriteSecretForm", () => {
     expect(call[3]).toBeUndefined();
   });
 
+  // Belt-and-braces alongside `parseWriteResult`'s own rejection of a
+  // non-positive version (`secrets-api.test.ts`): that parser stands between
+  // the real server and this form, so a real response can never carry a `0`
+  // here. This test exercises the form's OWN guard directly, by handing its
+  // mocked action exactly the malformed value the parser exists to block —
+  // proving `asRotateVersion` is applied at advancement, not only at the
+  // initial seed, regardless of what stands upstream of it.
+  it("does not present as a rotate after a write that (hypothetically) reports version 0", async () => {
+    writeSecretAction.mockResolvedValueOnce({ ok: true, version: 0 });
+    render(<WriteSecretForm store="openbao" path="mark8ly/db-password" currentVersion={5} />);
+    typeKeyAndValue("PASSWORD", "first-value");
+    await submit();
+
+    fireEvent.click(screen.getByRole("button", { name: /write another version/i }));
+
+    expect(screen.getByRole("button", { name: /create secret/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /rotate secret/i })).toBeNull();
+
+    typeKeyAndValue("PASSWORD", "second-value");
+    fireEvent.click(screen.getByRole("button", { name: /write secret|create secret|rotate secret/i }));
+    await waitFor(() => expect(writeSecretAction).toHaveBeenCalledTimes(2));
+
+    expect(writeSecretAction).toHaveBeenNthCalledWith(
+      2,
+      "openbao",
+      "mark8ly/db-password",
+      { PASSWORD: "second-value" },
+      undefined,
+    );
+  });
+
   it("Copy surfaces a distinguishable failure when the Clipboard API is unavailable", async () => {
     // A secure-context absence, not a permission denial: `navigator.clipboard`
     // itself is undefined here, exactly as jsdom already has it before the

@@ -201,8 +201,19 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
       // the version the store just assigned, so a second write in this same
       // session (via "Write another version") checks against what is
       // actually there now, not the version this page was rendered from.
+      //
+      // Routed through `asRotateVersion`, same as the initial seed below —
+      // not because a write can legitimately report a non-positive version
+      // today (OpenBao KV v2 assigns versions starting at 1 and only
+      // increments; a `0` here would mean the store itself broke its own
+      // contract), but because that guarantee lives in another system, not
+      // in this component. Finding 3's bug was exactly this shape: correct
+      // until something upstream handed this component a `0`. Guarding both
+      // the seed and the advancement means `isRotate` can never disagree
+      // with what was actually sent, regardless of what a future caller
+      // (real or a test double) hands back.
       setResult({ version: outcome.version });
-      setIfVersion(outcome.version);
+      setIfVersion(asRotateVersion(outcome.version));
       setKey("");
       setValue("");
       setRevealed(false);
