@@ -731,3 +731,197 @@ describe("restoreSecretVersion", () => {
     expect(JSON.parse(init.body as string)).toEqual({ version: 2 });
   });
 });
+
+describe("createGrant", () => {
+  it("POSTs namespace and the single app, with no ttl when none is given", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ grants: [], status: "granted", proposal: "unchanged" }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { createGrant } = await import("./secrets-api");
+    await createGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" });
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/access/grants");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      namespace: "tesserix",
+      apps: [{ name: "console", serviceAccount: "console-sa" }],
+    });
+    expect(body.ttl).toBeUndefined();
+  });
+
+  it("sends ttl when given", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ grants: [], status: "granted", proposal: "unchanged" }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { createGrant } = await import("./secrets-api");
+    await createGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" }, "24h");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [, init] = call;
+    const body = JSON.parse(init.body as string);
+    expect(body.ttl).toBe("24h");
+  });
+
+  // The response's `grants[].secretPrefix` cannot be joined against the
+  // mount-inclusive shape `GET /api/access/grants` returns (#476) — so a 403
+  // (lacks `rotate-credentials`) must still surface as a `PlatformApiError`
+  // the caller can distinguish from a store-side refusal, exactly like
+  // `writeSecret`'s equivalent test.
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { createGrant } = await import("./secrets-api");
+    const caught = await createGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});
+
+describe("revokeGrant", () => {
+  it("DELETEs the URL-encoded namespace/app path", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ namespace: "tesserix", app: "console", status: "revoked" }), {
+        status: 200,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { revokeGrant } = await import("./secrets-api");
+    await revokeGrant("tesserix", "console");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/access/grants/tesserix/console");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("URL-encodes each segment", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ namespace: "a/b", app: "c d", status: "revoked" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { revokeGrant } = await import("./secrets-api");
+    await revokeGrant("a/b", "c d");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/access/grants/a%2Fb/c%20d");
+  });
+
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { revokeGrant } = await import("./secrets-api");
+    const caught = await revokeGrant("tesserix", "console").catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});
+
+describe("deleteSecret", () => {
+  it("sends no destroy parameter for a soft delete", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", destroyed: false }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { deleteSecret } = await import("./secrets-api");
+    await deleteSecret("openbao", "homechef/api/db", false);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    expect(url).toBe("http://secrets/api/secrets/homechef/api/db?backend=openbao");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("sends destroy=true for a destroy", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ path: "homechef/api/db", destroyed: true }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { deleteSecret } = await import("./secrets-api");
+    await deleteSecret("openbao", "homechef/api/db", true);
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/secrets/homechef/api/db?backend=openbao&destroy=true");
+  });
+
+  it("surfaces a 403 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "lacks rotate-credentials" }), { status: 403 })),
+    );
+
+    const { deleteSecret } = await import("./secrets-api");
+    const caught = await deleteSecret("openbao", "homechef/api/db", false).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(403);
+  });
+});

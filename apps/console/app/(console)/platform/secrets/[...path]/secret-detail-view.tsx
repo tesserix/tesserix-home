@@ -17,7 +17,9 @@ import {
 } from "@tesserix/web";
 import { DetailLayout } from "@/components/kit/detail-layout";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import type { SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import type { Grant, SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
+import { AccessCard } from "./access-card";
+import { DestroySecret } from "./destroy-secret";
 import { WriteSecretForm } from "./write-secret-form";
 
 const STORE_LABEL: Record<SecretStore, string> = {
@@ -82,6 +84,10 @@ export interface SecretDetailViewProps {
   path: string;
   detail: SecretDetail | null;
   versions: SecretVersion[];
+  /** Every grant covering this secret, already filtered by `page.tsx` via
+   *  `readersFor` — `[]` for a GSM secret (see the comment at that call
+   *  site), which `AccessCard` never renders as an empty reader list. */
+  readers: Grant[];
   state: SurfaceState;
   /** From `page.tsx`'s render-path gate — see the comment there. Not the
    *  security control: it only decides whether the write tab is offered. */
@@ -104,6 +110,7 @@ export function SecretDetailView({
   path,
   detail,
   versions,
+  readers,
   state,
   canWrite,
 }: SecretDetailViewProps) {
@@ -163,6 +170,19 @@ export function SecretDetailView({
           label: "Versions",
           content: <VersionHistoryTable versions={versions} />,
         },
+        // The tab itself is shown to every viewer — unlike Write below,
+        // which is offered only to an operator who can write at all. Access
+        // has readers worth seeing regardless of `canWrite`; it is the
+        // add/remove controls INSIDE `AccessCard` that `canWrite` gates, for
+        // the same reason `AccessCard`'s own doc comment gives: the refusal
+        // is copy the card renders itself, not an absent tab.
+        {
+          id: "access",
+          label: "Access",
+          content: (
+            <AccessCard store={store} path={path} readers={readers} canWrite={canWrite} />
+          ),
+        },
         // Offered only to an operator whose session holds both `platform`
         // and `rotate-credentials` (see `canWrite`'s doc comment above). A
         // `platform`-only operator never sees this tab at all — the summary
@@ -175,6 +195,20 @@ export function SecretDetailView({
                 content: (
                   <WriteSecretForm store={store} path={path} currentVersion={detail.version} />
                 ),
+              },
+              // Its own tab, not a section tacked onto Write: a version write
+              // and a delete/destroy are different mental models (adding a
+              // version vs. removing the secret entirely), and `DestroySecret`
+              // is the one place in this phase using the destructive button
+              // style — keeping it off the Write tab means that style never
+              // shows up beside the everyday "Rotate secret"/"Create secret"
+              // button. Same `canWrite` gate as Write: `secrets-api` refuses
+              // a `platform`-only caller's delete/destroy outright (403), so
+              // offering the tab to them would be a control they cannot use.
+              {
+                id: "delete",
+                label: "Delete",
+                content: <DestroySecret store={store} path={path} canWrite={canWrite} />,
               },
             ]
           : []),

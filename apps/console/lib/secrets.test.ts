@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { buildInventory, parseGrants, parseSecretDetail, parseSecretList, parseSecretVersions } from "./secrets";
+import {
+  buildInventory,
+  parseGrants,
+  parseSecretDetail,
+  parseSecretList,
+  parseSecretVersions,
+  readersFor,
+} from "./secrets";
 
 describe("parseSecretList", () => {
   it("reads the entries array", () => {
@@ -145,6 +152,40 @@ describe("buildInventory", () => {
       grants: [{ namespace: "homechef", app: "homechef-api" }],
     });
     expect(rows[0].hasReader).toBe(true);
+  });
+});
+
+describe("readersFor", () => {
+  it("returns the grant sitting exactly at the path", () => {
+    const grant = { namespace: "homechef", app: "homechef-api" };
+    expect(readersFor("homechef/homechef-api", [grant])).toEqual([grant]);
+  });
+
+  it("returns a grant on a parent prefix", () => {
+    const grant = { namespace: "homechef", app: "homechef-api" };
+    expect(readersFor("homechef/homechef-api/db-password", [grant])).toEqual([grant]);
+  });
+
+  // The same trailing-slash rule `hasGrantFor`'s doc comment names: without
+  // it, a grant for `api` would also match `api-internal`, claiming a reader
+  // that does not exist.
+  it("does not let a grant on 'api' cover 'api-internal'", () => {
+    const grant = { namespace: "namespace", app: "api" };
+    expect(readersFor("namespace/api-internal", [grant])).toEqual([]);
+  });
+
+  it("returns every grant covering the path when more than one does", () => {
+    // Two independent prefixes that both happen to cover the same secret —
+    // a grant on the app itself, and a (namespace-shaped) grant one level up.
+    const onApp = { namespace: "homechef", app: "homechef-api" };
+    const onParent = { namespace: "homechef", app: "homechef-api/nested" };
+    const path = "homechef/homechef-api/nested/db-password";
+    expect(readersFor(path, [onApp, onParent, { namespace: "other", app: "x" }])).toEqual([onApp, onParent]);
+  });
+
+  it("returns an empty array when no grant covers the path", () => {
+    expect(readersFor("homechef/homechef-api", [{ namespace: "other", app: "x" }])).toEqual([]);
+    expect(readersFor("homechef/homechef-api", [])).toEqual([]);
   });
 });
 
