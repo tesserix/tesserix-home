@@ -41,9 +41,14 @@ import { CreateSecretForm } from "./create-secret-form";
  * `new`. GSM secrets created outside this console carry no namespace and no
  * app (`gcpsm.secretRef` — a flat id), so a one-segment path is a shape that
  * store genuinely produces. OpenBao cannot collide at all: a describe there
- * needs at least three segments (`<namespace>/<app>/<name>`, see
- * `validateSecretPathForCreate`), so no OpenBao path is ever one segment
- * long.
+ * needs at least three segments (`<namespace>/<app>/<name>`), and that
+ * constraint lives in the API, not here — `secrets-api`'s
+ * `internal/secrets/path.go`'s `ParseSecretRef` rejects a path of fewer than
+ * three segments, and `internal/bao/kv.go`'s `Describe` parses through it
+ * before it touches the store. Deliberately NOT cited to this console's
+ * `validateSecretPathForCreate`, which enforces the same shape and has no
+ * authority over it: that is a create-side validator, and loosening or
+ * deleting it would not make a one-segment OpenBao describe start working.
  *
  * Accepted deliberately: `/…/new` is the ordinary shape for a create route,
  * the collision needs a secret literally named `new`, and the alternatives
@@ -71,21 +76,35 @@ export const CANNOT_CREATE_MESSAGE =
   "rotate-credentials capabilities together.";
 
 /**
+ * Copy for a rejection that carried nothing to say — `throw undefined` and
+ * friends, which `toSurfaceError` narrows to `null`.
+ *
+ * Exported so the test asserts the shipped string.
+ */
+export const STORE_READ_FAILED_MESSAGE =
+  "The console could not read which secret stores are enabled.";
+
+/**
  * Which state the create surface is in.
  *
- * `rows` is `[]` and that branch is unreachable by construction: this
- * function is only called with a non-null `error`, which `resolveState`
- * answers before it ever looks at `rows`. Zero enabled stores is NOT an
- * empty state here — `CreateSecretForm` renders its own "nowhere to create a
- * secret" callout for that, because the store list is the form's input, not
- * this surface's content.
+ * Only ever called after the fetch rejected, and the `?? { message }` is what
+ * keeps that true all the way through: `toSurfaceError` returns `null` for a
+ * rejection carrying `null` or `undefined`, and a null error would send
+ * `resolveState` on to `rows` and back with `empty` — the one state whose
+ * copy says no store is ENABLED, which is a claim about configuration this
+ * page has no evidence for after a failed read.
+ *
+ * `rows` is therefore `[]` and unreachable by construction. Zero enabled
+ * stores is NOT an empty state here either — `CreateSecretForm` renders its
+ * own "nowhere to create a secret" callout for that, because the store list
+ * is the form's input, not this surface's content.
  */
 export function createSecretState(error: unknown): SurfaceState {
   return resolveState({
     // The page awaits its fetch before rendering, so there is no client-side
     // pending window — Suspense fallbacks, not this state, cover the wait.
     isLoading: false,
-    error: secretsReadError(error),
+    error: secretsReadError(error) ?? { message: STORE_READ_FAILED_MESSAGE },
     rows: [],
     filtered: false,
   });
@@ -121,21 +140,32 @@ export default async function NewSecretPage() {
   let stores: readonly SecretStore[] = [];
   let preferred: SecretStore | null = null;
   let error: unknown = null;
+  // A separate flag rather than `error !== null`, because a rejection is not
+  // guaranteed to be a value that reads as one. `throw null` is legal, and
+  // `error !== null` reads it as a success: the page would render the form
+  // over `stores = []`, drawing the form's own "no store is enabled" copy —
+  // a claim about CONFIGURATION made on the strength of a read that failed.
+  // (`throw undefined` does enter the narrow branch; what it defeats is
+  // `resolveState`, handled in `createSecretState` above.) The flag records
+  // the only thing actually known here: that the `catch` ran.
+  let failed = false;
   try {
     const choices = await fetchSecretStores();
     stores = choices.enabled;
     preferred = choices.preferred;
   } catch (caught: unknown) {
     error = caught;
+    failed = true;
   }
 
-  if (error !== null) {
+  if (failed) {
     return (
       <Shell>
         <SurfaceStateView
           state={createSecretState(error)}
-          // Unreachable: `createSecretState` is only called with an error, and
-          // `resolveState` never returns `empty` for one. Required by the
+          // Genuinely unreachable, and `createSecretState` is what makes it so
+          // — it never hands `resolveState` a null error, so `empty` (the only
+          // state that reads this prop) cannot be returned. Required by the
           // component's props, so it says what it would say rather than "".
           emptyMessage="No secret store is enabled for this deployment."
           reauthReturnTo="/platform/secrets/new"

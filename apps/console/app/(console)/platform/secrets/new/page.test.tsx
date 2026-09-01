@@ -33,7 +33,7 @@ vi.mock("./actions", () => ({ secretExistsAction: vi.fn() }));
 
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { SECRETS_UNAVAILABLE_TITLE } from "../page";
-import NewSecretPage, { CANNOT_CREATE_MESSAGE } from "./page";
+import NewSecretPage, { CANNOT_CREATE_MESSAGE, STORE_READ_FAILED_MESSAGE } from "./page";
 
 // The page is a server component, exercised the same way every sibling
 // surface is: its default export is awaited and rendered directly.
@@ -131,6 +131,29 @@ describe("the store-list read", () => {
     render(await NewSecretPage());
 
     expect(screen.queryByText(/SECRETS_API_ORIGIN is not set/)).toBeNull();
+  });
+
+  // Both values are legal to `throw` and both defeat a different link in the
+  // chain — `null` slips past a `error !== null` guard, `undefined` reaches
+  // `toSurfaceError`, which narrows it to a null error and sends
+  // `resolveState` back with `empty`. Either way the failure mode is the same
+  // and is the reason this case is tested at all: the operator would be told
+  // no store is ENABLED, a claim about configuration, on the strength of a
+  // read that failed.
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+  ])("renders a failure, not 'no store is enabled', when the rejection carries %s", async (
+    _label,
+    thrown,
+  ) => {
+    fetchSecretStores.mockRejectedValue(thrown);
+
+    render(await NewSecretPage());
+
+    expect(screen.getByText(STORE_READ_FAILED_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByRole("form", { name: "Create secret" })).toBeNull();
+    expect(screen.queryByText(/No secret store is enabled/)).toBeNull();
   });
 
   it("renders the error state on any other rejection, rather than throwing", async () => {
