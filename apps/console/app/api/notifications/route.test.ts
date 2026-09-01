@@ -28,6 +28,7 @@ import {
   writeLastSeenAt,
 } from "@/lib/db/notifications-repo";
 import { fetchProposals } from "@/lib/secrets-api";
+import { FEED_LIMIT } from "@/lib/notifications";
 import { GET, POST } from "./route";
 
 function signIn(roles: readonly string[] | undefined) {
@@ -191,6 +192,34 @@ describe("GET /api/notifications", () => {
     signIn(["support", "rotate-credentials"]);
     vi.mocked(recentTicketRows).mockResolvedValue([TICKET_ROW] as never);
     vi.mocked(fetchProposals).mockRejectedValue(new Error("secrets-api returned 503"));
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe("ticket_created");
+  });
+
+  it("does not let an unbounded proposals source starve out tickets for an operator who cannot see proposals", async () => {
+    // IMPORTANT 1: fetchProposals() is unbounded — it returns every open
+    // grant/* pull request, not capped by a repo-level LIMIT the way the
+    // ticket/reply queries are. Before this fix, mergeEvents() ran on the
+    // full merged list BEFORE capability filtering: with more than
+    // FEED_LIMIT proposals, all newer than the ticket rows, the proposals
+    // would fill every slot of the truncated list, and a `support`-only
+    // operator's filter would then remove every one of them — leaving a
+    // "nothing waiting" feed with real, unshown tickets past the truncation
+    // point. Filtering before merging is what this test pins down.
+    signIn(["support"]);
+    const manyProposals = Array.from({ length: FEED_LIMIT + 5 }, (_, i) => ({
+      ...PROPOSAL,
+      number: 1000 + i,
+      // Newer than every ticket row below, so an unfiltered merge would sort
+      // every one of these ahead of the tickets.
+      createdAt: `2026-08-20T00:00:00.${String(i).padStart(3, "0")}Z`,
+    }));
+    vi.mocked(fetchProposals).mockResolvedValue(manyProposals as never);
+    vi.mocked(recentTicketRows).mockResolvedValue([TICKET_ROW] as never);
 
     const res = await GET();
     expect(res.status).toBe(200);

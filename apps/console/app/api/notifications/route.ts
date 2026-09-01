@@ -53,6 +53,16 @@ export const dynamic = "force-dynamic";
  * telling them one is waiting would be exactly the noise a
  * capability-filtered feed exists to remove: a notification only this map
  * would ever earn a click that goes nowhere.
+ *
+ * This map states only half of the effective gate. `fetchProposals` calls
+ * secrets-api's `/api/reviews` (the `read` group), which requires
+ * `platform` on the CALLING operator's own token — a requirement this map
+ * says nothing about because it lives in secrets-api, not here. An operator
+ * granted `rotate-credentials` without `platform` clears this map's check,
+ * then gets a 403 from secrets-api that `safeProposalEvents` swallows to
+ * `[]`: their bell is permanently, silently empty of proposals. Benign in
+ * outcome (they see nothing, not something wrong), but undiagnosable from
+ * this file alone — the real gate is `rotate-credentials` AND `platform`.
  */
 const CAPABILITY_FOR_KIND: Record<NotificationKind, Capability> = {
   ticket_created: "support",
@@ -67,9 +77,11 @@ const RELEVANT_CAPABILITIES: readonly Capability[] = Array.from(
 /**
  * Fetches open access proposals as notification items, never throwing.
  *
- * `secrets-api` answers 501 when `SECRETS_API_ORIGIN` is unset (not
- * deployed yet) and 503 when no review repository is configured
- * (`fetchProposals`'s doc comment in `lib/secrets-api.ts`) — neither is a
+ * The console itself answers 501 (thrown by `secretsRequest` in
+ * `lib/secrets-api.ts`, before any network call) when `SECRETS_API_ORIGIN`
+ * is unset — `secrets-api` never sees that request and answers nothing.
+ * `secrets-api` DOES answer 503 when no review repository is configured
+ * (`fetchProposals`'s doc comment in `lib/secrets-api.ts`). Neither is a
  * bug, both are "this leg has nothing to say right now" states. Either one
  * — or a genuine network failure — is caught HERE, at the proposals leg
  * alone, so it can never cost the operator their ticket/reply rows from
@@ -87,11 +99,30 @@ const RELEVANT_CAPABILITIES: readonly Capability[] = Array.from(
  * silent notifications feed is a worse outcome than one that always has
  * something to fetch, but neither outcome asserts a fact about the world
  * the way the grants page's empty-list default would.
+ *
+ * Capped at `FEED_LIMIT`, same reasoning as the `LIMIT` the ticket/reply
+ * repo queries already carry: `fetchProposals` is unbounded on this end —
+ * it returns every open `grant/*` pull request on the base branch
+ * (`secrets-api/internal/gitops/review.go`'s `Pulls`, paginated up to 1000)
+ * — so without a cap here this leg alone could hand `route.ts` more than
+ * `FEED_LIMIT` items before capability filtering even runs. GitHub already
+ * returns them newest-first (`Pulls` sorts by `CreatedAt` descending), so
+ * slicing here keeps the newest ones.
+ *
+ * `PROPOSALS_TIMEOUT_MS` bounds this leg's latency, not just its failure
+ * modes: `secretsRequest` (`lib/secrets-api.ts`) passes no `AbortSignal` of
+ * its own, so a `secrets-api` that accepts the connection and never answers
+ * would otherwise hold this `Promise.all` — and the ticket/reply rows
+ * alongside it — open indefinitely. Only `fetchProposals`'s optional
+ * `signal` parameter is used here; see its doc comment for why the reviews
+ * queue page's call is deliberately left without one.
  */
+const PROPOSALS_TIMEOUT_MS = 5_000;
+
 async function safeProposalEvents(): Promise<NotificationItem[]> {
   try {
-    const proposals = await fetchProposals();
-    return proposals.map(toProposalEvent);
+    const proposals = await fetchProposals(AbortSignal.timeout(PROPOSALS_TIMEOUT_MS));
+    return proposals.map(toProposalEvent).slice(0, FEED_LIMIT);
   } catch {
     return [];
   }
@@ -168,14 +199,30 @@ export async function GET(): Promise<NextResponse> {
       safeProposalEvents(),
       readLastSeenAt(auth.sub),
     ]);
-    const merged = mergeEvents(
-      [ticketRows.map(toTicketEvent), replyRows.map(toReplyEvent), proposalEvents],
-      FEED_LIMIT,
-    );
-    // Filtered BEFORE counting: an operator who cannot see a kind must not
-    // have it counted either, or the badge promises items the panel will
-    // never show them.
-    const items = merged.filter((item) => visibleTo(item, auth.capabilities));
+    // Filtered BEFORE merging, and merged BEFORE counting.
+    //
+    // Filtering after `mergeEvents` would let `FEED_LIMIT` apply to the
+    // UNFILTERED union of every source, not to what this operator can
+    // actually see. The ticket and reply repo queries are each bounded by
+    // their own LIMIT, but `fetchProposals()` (via `safeProposalEvents`) can
+    // return every open `grant/*` pull request — so 20+ open proposals sort
+    // newest-first into every one of `FEED_LIMIT`'s slots, and a
+    // `support`-only operator's filter would then remove all of them: their
+    // bell reads "nothing waiting" while real, unshown tickets sit past the
+    // truncation point. Filtering each source first means `FEED_LIMIT`
+    // bounds what the operator can see, the same guarantee the per-source
+    // LIMIT already gives the ticket and reply legs.
+    //
+    // Counting after merging (rather than counting each filtered source on
+    // its own) still has to happen last: an operator who cannot see a kind
+    // must not have it counted either, or the badge promises items the panel
+    // will never show them.
+    const sources = [
+      ticketRows.map(toTicketEvent),
+      replyRows.map(toReplyEvent),
+      proposalEvents,
+    ].map((source) => source.filter((item) => visibleTo(item, auth.capabilities)));
+    const items = mergeEvents(sources, FEED_LIMIT);
     return NextResponse.json({
       items,
       unread: countUnread(items, lastSeenAt),
