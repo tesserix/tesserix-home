@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/gin-gonic/gin v1.12.0
+	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/openbao/openbao/api/v2 v2.6.0
 	golang.org/x/oauth2 v0.36.0
@@ -13,10 +14,7 @@ require (
 	k8s.io/client-go v0.36.3
 )
 
-require (
-	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
-)
+require github.com/coreos/go-oidc/v3 v3.20.0 // indirect
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
