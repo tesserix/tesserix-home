@@ -38,15 +38,15 @@ func TestTheSeedCarriesTodaysDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listing tools: %v", err)
 	}
-	if len(tools) != 15 {
-		t.Fatalf("got %d tools, want the 15 in tools.ts: %+v", len(tools), tools)
+	if len(tools) != 14 {
+		t.Fatalf("got %d tools, want the 14 in tools.ts: %+v", len(tools), tools)
 	}
 	if tools[0].Subdomain != "auth" || tools[0].Name != "Zitadel" {
 		t.Errorf("first tool = %s/%s, want Zitadel/auth", tools[0].Name, tools[0].Subdomain)
 	}
 }
 
-func TestTheTwoToolsWithNotesKeepThem(t *testing.T) {
+func TestTheOneToolWithANoteKeepsIt(t *testing.T) {
 	pool := testdb.New(t)
 
 	tools, err := repository.ListTools(context.Background(), pool)
@@ -60,13 +60,14 @@ func TestTheTwoToolsWithNotesKeepThem(t *testing.T) {
 			noted[tool.Subdomain] = *tool.Note
 		}
 	}
-	// Exactly the two that carry one in tools.ts. A note is present only where
-	// there is something real to say, and the seed must not invent any.
-	if len(noted) != 2 {
-		t.Errorf("got %d notes, want 2 (secret-service and argocd): %+v", len(noted), noted)
-	}
-	if _, ok := noted["secret-service"]; !ok {
-		t.Error("secret-service lost its separate-login note")
+	// Exactly the one that carries one in tools.ts. A note is present only
+	// where there is something real to say, and the seed must not invent any.
+	//
+	// This was two until 0042 deleted the secret-service row, which held the
+	// other one: the standalone secrets UI it described is gone, so its
+	// "separate login" note describes nothing. argocd is the survivor.
+	if len(noted) != 1 {
+		t.Errorf("got %d notes, want 1 (argocd): %+v", len(noted), noted)
 	}
 	if _, ok := noted["argocd"]; !ok {
 		t.Error("argocd lost its outside-the-gateway note")

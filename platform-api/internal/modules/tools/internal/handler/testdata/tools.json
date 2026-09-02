@@ -13,15 +13,6 @@
       },
       {
         "id": "<uuid>",
-        "name": "Secret service",
-        "subdomain": "secret-service",
-        "purpose": "Admin console for OpenBao and GCP Secret Manager, and which namespaces may read each secret.",
-        "note": "Separate login — independent of the platform's identity on purpose.",
-        "group_key": "identity",
-        "sort_order": 2
-      },
-      {
-        "id": "<uuid>",
         "name": "Grafana",
         "subdomain": "grafana",
         "purpose": "Dashboards and charts over the metrics pipeline.",
