@@ -14,6 +14,7 @@ import {
 } from "@tesserix/web";
 import {
   HUMAN_ACTIVITY_KINDS,
+  defaultNextActionAt,
   isContactActivityKind,
   isOpenStage,
   requiresProduct,
@@ -48,22 +49,9 @@ const KIND_LABELS: Record<HumanActivityKind, string> = {
   email_received: "Email received",
 };
 
-/**
- * How far ahead the follow-up prompt points by default. Comfortably inside
- * `DRIFT_DAYS` (14): the whole point of the prompt is that a contacted lead
- * with nothing scheduled drifts back into the queue, so a default that
- * landed on or past the threshold would schedule the drift rather than
- * prevent it. A starting point, not a rule — the field is editable.
- */
-const FOLLOW_UP_DAYS = 3;
-const FOLLOW_UP_HOUR = 9;
-
 /** `datetime-local` wants local wall-clock time, `YYYY-MM-DDTHH:mm` — not an
  *  ISO instant, which would silently shift the value by the UTC offset. */
-function defaultFollowUpAt(now: Date = new Date()): string {
-  const at = new Date(now);
-  at.setDate(at.getDate() + FOLLOW_UP_DAYS);
-  at.setHours(FOLLOW_UP_HOUR, 0, 0, 0);
+function toLocalInputValue(at: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
@@ -74,6 +62,12 @@ function defaultFollowUpAt(now: Date = new Date()): string {
  * (migration 0021's CHECK) — offering one here would be offering a control
  * that cannot succeed, so the prompt stays silent instead. Those deals are
  * fixed on the Opportunities tab, which says so.
+ *
+ * This predicate is `CLOCK_ELIGIBLE_SQL` (crm-repo.ts) in TypeScript, and the
+ * two have to keep agreeing: it is now also the set of deals the log itself
+ * scheduled a follow-up for. If this were the wider of the two, the prompt
+ * would offer to adjust a date that was never written; if it were the
+ * narrower, a date would be written with no way to clear it.
  */
 function schedulable(opportunities: readonly OpportunityRow[]): readonly OpportunityRow[] {
   return opportunities.filter(
@@ -175,7 +169,7 @@ export function ActivityComposer({
       {followUpFor ? (
         <FollowUpPrompt
           organisationId={organisationId}
-          kindLabel={KIND_LABELS[followUpFor]}
+          kind={followUpFor}
           targets={targets}
           onDone={() => setFollowUpFor(null)}
         />
@@ -185,29 +179,43 @@ export function ActivityComposer({
 }
 
 /**
- * Offered after contact, never forced (#245, decision 2).
+ * WHAT THIS IS NOW, AND WHY IT CHANGED (#502).
  *
- * Contact and scheduling are separate writes, and only the second one takes
- * an organisation out of the drifting queue for longer than the 14-day
- * window. Prompting here is what stops a diligently logged call from
- * drifting back in a fortnight later — but an operator who has nothing to
- * schedule can decline, and the contact they just logged is already saved
- * either way. This never blocks, and dismissing it loses nothing.
+ * It used to be the only thing that ever wrote `next_action_at`: contact and
+ * scheduling were two separate writes, and an operator who dismissed this
+ * prompt left the lead with a null next action — which is not "unscheduled",
+ * it is the literal definition of Drifting. Logging a DM therefore filed the
+ * lead as drifting unless the operator remembered a second step, every time.
+ *
+ * `logActivity` now sets the date itself, in the same transaction as the
+ * activity. So this is no longer an OFFER to schedule; it is the operator's
+ * chance to CHANGE OR CLEAR what was just scheduled, which is the other half
+ * of the issue's requirement — "a default, not a rule ... some replies deserve
+ * tomorrow and some leads deserve never". Without a clear control the default
+ * would be exactly the rule that requirement forbids.
+ *
+ * It still never blocks. Dismissing it now KEEPS the default rather than
+ * losing the schedule, which is the safe direction: the failure this fixes was
+ * leads with no date, not leads with one.
  */
 function FollowUpPrompt({
   organisationId,
-  kindLabel,
+  kind,
   targets,
   onDone,
 }: {
   organisationId: string;
-  kindLabel: string;
+  kind: HumanActivityKind;
   targets: readonly OpportunityRow[];
   onDone: () => void;
 }) {
   const router = useRouter();
   const [opportunityId, setOpportunityId] = useState(targets[0].id);
-  const [at, setAt] = useState(() => defaultFollowUpAt());
+  // Prefilled with what the write path just wrote — `defaultNextActionAt` is
+  // the shared rule its SQL twin (`nextActionAssignment`, crm-repo.ts) states
+  // in a CASE expression. Showing a different date from the one in the
+  // database would describe a schedule nobody has.
+  const [at, setAt] = useState(() => toLocalInputValue(defaultNextActionAt(kind)));
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -232,9 +240,9 @@ function FollowUpPrompt({
 
   // `aria-live`: announced, not focused. This region appears in response to
   // something the operator just did, so a screen reader that says nothing
-  // leaves them unaware the offer exists — while moving focus into it would
-  // interrupt someone who is done and moving on. The prompt is optional; its
-  // announcement should be too.
+  // leaves them unaware a date was set — while moving focus into it would
+  // interrupt someone who is done and moving on. Acting on the prompt is
+  // optional; its announcement should be too.
   return (
     <section
       role="group"
@@ -243,10 +251,11 @@ function FollowUpPrompt({
       className="rounded-md border border-border p-4"
     >
       <h3 id="follow-up-heading" className="text-sm font-medium">
-        Schedule a follow-up?
+        Follow-up scheduled
       </h3>
       <p className="mt-1 text-sm text-muted-foreground">
-        {kindLabel} logged. Anything with no next action drifts back into the queue.
+        {KIND_LABELS[kind]} logged, and a follow-up set. Change the date, or clear it if this
+        lead needs none.
       </p>
 
       <div className="mt-3 flex flex-wrap items-end gap-2">
@@ -288,11 +297,21 @@ function FollowUpPrompt({
             onChange={(event) => setNote(event.target.value)}
           />
         </div>
-        <Button type="button" size="sm" disabled={pending || at === ""} onClick={submit}>
-          {pending ? "Saving…" : "Schedule"}
+        {/* NOT disabled on an empty date, which is the change #502 needed here.
+            An empty field submits `at: null`, and null is what "this lead
+            needs no follow-up" is spelled as. While the prompt was the only
+            writer of the column, disabling it was harmless — the date was
+            already null and there was nothing to undo. Now that the log
+            writes a default, a control the operator cannot use to remove it
+            makes the default a rule. */}
+        <Button type="button" size="sm" disabled={pending} onClick={submit}>
+          {pending ? "Saving…" : at === "" ? "Clear follow-up" : "Schedule"}
         </Button>
+        {/* Dismissal KEEPS the scheduled default rather than discarding it, so
+            the wording is "done", not "not now" — there is no longer an offer
+            being declined. */}
         <Button type="button" size="sm" variant="outline" disabled={pending} onClick={onDone}>
-          Not now
+          Leave it
         </Button>
       </div>
 
