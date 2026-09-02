@@ -12,15 +12,17 @@ import {
   recentTicketRows,
   writeLastSeenAt,
 } from "@/lib/db/notifications-repo";
-import { fetchProposals } from "@/lib/secrets-api";
+import { fetchMergedProposals, fetchProposals } from "@/lib/secrets-api";
 import {
   FEED_LIMIT,
   FEED_WINDOW_DAYS,
   countUnread,
   mergeEvents,
+  toMergedProposalEvent,
   toProposalEvent,
   toReplyEvent,
   toTicketEvent,
+  type AccessProposalMergedNotification,
   type NotificationItem,
   type NotificationKind,
 } from "@/lib/notifications";
@@ -63,11 +65,22 @@ export const dynamic = "force-dynamic";
  * `[]`: their bell is permanently, silently empty of proposals. Benign in
  * outcome (they see nothing, not something wrong), but undiagnosable from
  * this file alone — the real gate is `rotate-credentials` AND `platform`.
+ *
+ * This caveat does not apply to `access_proposal_merged`: its map value is
+ * `platform`, the same capability `secrets-api`'s `/api/reviews/merged`
+ * (the `read` group) already requires of the calling operator's own token,
+ * so for this kind the map value IS the whole gate.
  */
 const CAPABILITY_FOR_KIND: Record<NotificationKind, Capability> = {
   ticket_created: "support",
   merchant_reply: "support",
   access_proposal_open: "rotate-credentials",
+  // `platform`, NOT `rotate-credentials`. This kind's recipient is the
+  // operator who raised the proposal and could not clear it — by the premise
+  // of #506 they hold `platform` and may hold nothing else. Gating their own
+  // confirmation behind the verb they lack would make it unreachable by
+  // exactly the person it is for.
+  access_proposal_merged: "platform",
 };
 
 const RELEVANT_CAPABILITIES: readonly Capability[] = Array.from(
@@ -128,6 +141,37 @@ async function safeProposalEvents(): Promise<NotificationItem[]> {
   }
 }
 
+/**
+ * Fetches merged proposals as notification items, never throwing.
+ *
+ * Same reasoning as `safeProposalEvents`: this leg's failure is "nothing to
+ * say right now", and must never cost the ticket rows in the same response.
+ *
+ * Deliberately NOT sliced to `FEED_LIMIT` here, unlike `safeProposalEvents`.
+ * `fetchMergedProposals` returns merges for EVERY operator, not just the
+ * caller's — capping this leg before `visibleTo`'s recipient check runs
+ * would apply `FEED_LIMIT` to the unfiltered superset, exactly the mistake
+ * the comment on `sources` below warns against for `fetchProposals`, except
+ * one level deeper: with 20+ merges in the window, an operator whose own
+ * merge sorts past index `FEED_LIMIT - 1` would never see it, no matter how
+ * recent. The recipient filter in `GET` narrows this list to (at most) the
+ * caller's own items before `mergeEvents` applies `FEED_LIMIT` to the
+ * merged, already-filtered result — so the cap still holds, just later.
+ */
+async function safeMergedProposalEvents(since: Date): Promise<NotificationItem[]> {
+  try {
+    const merged = await fetchMergedProposals(
+      since.toISOString(),
+      AbortSignal.timeout(PROPOSALS_TIMEOUT_MS),
+    );
+    return merged
+      .map(toMergedProposalEvent)
+      .filter((e): e is AccessProposalMergedNotification => e !== undefined);
+  } catch {
+    return [];
+  }
+}
+
 function windowStart(now: Date): string {
   return new Date(
     now.getTime() - FEED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -145,7 +189,7 @@ function windowStart(now: Date): string {
  * allowlist take that short-circuit, so skipping it would change who sees
  * what today, not just in some future edge case. `resolveLiveCapabilities`
  * is not memoised, so this does cost one store resolution per capability;
- * with two capabilities today that is an acceptable price for not
+ * with three capabilities today that is an acceptable price for not
  * re-implementing gate logic that already exists and is already tested.
  */
 async function heldCapabilities(
@@ -176,11 +220,41 @@ async function authorize(): Promise<Authorized | NextResponse> {
   return { sub: session.sub, capabilities: await heldCapabilities(session) };
 }
 
+/**
+ * Capability admits a KIND; `recipientSub` admits a PERSON. Both must pass.
+ *
+ * The capability check alone cannot express "yours": every `platform` holder
+ * would see every merged proposal, which is one operator reading another's
+ * activity. Items with no `recipientSub` are capability-addressed and keep
+ * exactly their previous behaviour.
+ *
+ * Discriminates on `item.kind === "access_proposal_merged"`, not on
+ * `"recipientSub" in item`. The two read the same today, but the KIND check
+ * is the one that stays correct: `recipientSub` is only optional-shaped
+ * because `AccessProposalMergedNotification` declares it required and no
+ * other member declares it at all, a fact enforced two files away
+ * (`lib/notifications.ts`'s interfaces) rather than here. A future kind
+ * that declares an optional `recipientSub` for some other reason would
+ * silently start taking the "PERSON" branch under a presence check with no
+ * compile error anywhere in this file; matching on the literal kind cannot
+ * be perturbed that way, because adding a kind to the union without
+ * teaching this function about it is exactly what `CAPABILITY_FOR_KIND`
+ * being a `Record<NotificationKind, Capability>` already forces a decision
+ * on above.
+ */
 function visibleTo(
   item: NotificationItem,
   capabilities: ReadonlySet<Capability>,
+  sub: string,
 ): boolean {
-  return capabilities.has(CAPABILITY_FOR_KIND[item.kind]);
+  // Fails closed for EVERY kind, not just the recipient-addressed one:
+  // `verifySession` only requires `sub` to be a string, not a non-empty one,
+  // so a session whose `sub` typechecks as `""` must still see nothing
+  // rather than falling through to a capability-only check that would show
+  // it every capability-addressed item in the feed.
+  if (!sub) return false;
+  if (!capabilities.has(CAPABILITY_FOR_KIND[item.kind])) return false;
+  return item.kind === "access_proposal_merged" ? item.recipientSub === sub : true;
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -193,10 +267,16 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     const since = windowStart(new Date());
-    const [ticketRows, replyRows, proposalEvents, lastSeenAt] = await Promise.all([
+    // Derived from the same `since` string `recentTicketRows` and
+    // `recentMerchantReplyRows` use, rather than a second, independent
+    // `now.getTime() - FEED_WINDOW_DAYS * ...` computation — that would
+    // desynchronise the merged leg's window from the ticket/reply legs the
+    // moment either arithmetic changed without the other.
+    const [ticketRows, replyRows, proposalEvents, mergedEvents, lastSeenAt] = await Promise.all([
       recentTicketRows(since, FEED_LIMIT),
       recentMerchantReplyRows(since, FEED_LIMIT),
       safeProposalEvents(),
+      safeMergedProposalEvents(new Date(since)),
       readLastSeenAt(auth.sub),
     ]);
     // Filtered BEFORE merging, and merged BEFORE counting.
@@ -221,7 +301,8 @@ export async function GET(): Promise<NextResponse> {
       ticketRows.map(toTicketEvent),
       replyRows.map(toReplyEvent),
       proposalEvents,
-    ].map((source) => source.filter((item) => visibleTo(item, auth.capabilities)));
+      mergedEvents,
+    ].map((source) => source.filter((item) => visibleTo(item, auth.capabilities, auth.sub)));
     const items = mergeEvents(sources, FEED_LIMIT);
     return NextResponse.json({
       items,

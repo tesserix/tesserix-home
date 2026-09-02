@@ -130,11 +130,11 @@ func TestEveryRouteIsGatedOrExplicitlyPublic(t *testing.T) {
 	// A silently shrinking router — say, NewAccess stops being registered
 	// because Bao went back to nil in this test — would make every remaining
 	// assertion in this test vacuously true: an empty router trivially has no
-	// ungated route. This is the tripwire for that. The service registers 26
-	// routes today (24 gated + the 2 public ones above); update this constant
+	// ungated route. This is the tripwire for that. The service registers 27
+	// routes today (25 gated + the 2 public ones above); update this constant
 	// when a route is deliberately added or removed, not when it silently
 	// stops appearing.
-	const wantRoutes = 26
+	const wantRoutes = 27
 	if len(routes) != wantRoutes {
 		t.Fatalf("router registered %d routes, want %d — did a handler fail to register, or did the route count genuinely change?", len(routes), wantRoutes)
 	}

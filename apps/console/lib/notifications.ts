@@ -35,6 +35,7 @@ export const NOTIFICATION_KINDS = [
   "ticket_created",
   "merchant_reply",
   "access_proposal_open",
+  "access_proposal_merged",
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -101,11 +102,35 @@ export interface AccessProposalNotification {
   readonly at: string | undefined;
 }
 
+/**
+ * A proposal the viewing operator raised has merged: their app now has a
+ * reader. Unlike every other kind, this one is addressed to a PERSON — the
+ * capability check alone cannot express "yours" — so it carries the subject
+ * it is for and route.ts requires that subject to match the session.
+ */
+export interface AccessProposalMergedNotification {
+  readonly id: string;
+  readonly kind: "access_proposal_merged";
+  readonly number: number;
+  readonly title: string;
+  readonly targets: string[];
+  /** The Zitadel subject this is FOR. Never optional: an item that cannot
+   *  name its recipient must not be built — see toMergedProposalEvent. */
+  readonly recipientSub: string;
+  /** The MERGE time, not the creation time. A proposal that waited a week
+   *  would otherwise arrive older than the read watermark and so pre-read. */
+  readonly at: string;
+}
+
 // A discriminated union: two kinds read from ticket/reply rows, one read
-// from an open pull request. `AccessProposalNotification` was introduced as
-// its own interface (rather than reusing TicketNotification's fields) so
-// this addition and the ticket-kind refactor stayed separately bisectable.
-export type NotificationItem = TicketNotification | AccessProposalNotification;
+// from an open pull request, one read from a merged pull request.
+// `AccessProposalNotification` was introduced as its own interface (rather
+// than reusing TicketNotification's fields) so this addition and the
+// ticket-kind refactor stayed separately bisectable.
+export type NotificationItem =
+  | TicketNotification
+  | AccessProposalNotification
+  | AccessProposalMergedNotification;
 
 export interface NotificationFeed {
   readonly items: readonly NotificationItem[];
@@ -174,6 +199,31 @@ export function toProposalEvent(proposal: Proposal): AccessProposalNotification 
     title: proposal.title,
     targets: proposal.targets,
     at: proposal.createdAt,
+  };
+}
+
+/**
+ * Maps a merged proposal to its notification, or `undefined` when the
+ * proposal cannot support one.
+ *
+ * Returning `undefined` rather than a partly-filled item is the point: a
+ * proposal raised before the `requested-by:` trailer existed has no
+ * requester, and an item with no recipient cannot be filtered to one — it
+ * would either reach everybody or nobody, and "everybody" is one operator
+ * seeing another's activity.
+ */
+export function toMergedProposalEvent(
+  proposal: Proposal,
+): AccessProposalMergedNotification | undefined {
+  if (!proposal.requestedBy || !proposal.mergedAt) return undefined;
+  return {
+    id: `access_proposal_merged:${proposal.number}`,
+    kind: "access_proposal_merged",
+    number: proposal.number,
+    title: proposal.title,
+    targets: proposal.targets,
+    recipientSub: proposal.requestedBy,
+    at: proposal.mergedAt,
   };
 }
 

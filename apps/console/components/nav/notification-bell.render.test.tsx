@@ -65,6 +65,16 @@ const PROPOSAL_ITEM = {
   at: "2026-08-16T00:00:00.000Z",
 };
 
+const MERGED_ITEM = {
+  id: "access_proposal_merged:42",
+  kind: "access_proposal_merged",
+  number: 42,
+  title: "Grant reader access to products-db",
+  targets: ["products-db", "orders-db"],
+  recipientSub: "sub-9",
+  at: "2026-08-16T00:00:00.000Z",
+};
+
 describe("NotificationBell", () => {
   it("shows the unread count in the button's accessible name", async () => {
     mockFeed({ items: [ITEM], unread: 1, lastSeenAt: null });
@@ -257,6 +267,19 @@ describe("NotificationBell", () => {
     await user.click(screen.getByRole("button", { name: /unread/i }));
     expect(await screen.findByText("Access proposal waiting · #42")).toBeInTheDocument();
     expect(screen.getByText("products-db, orders-db")).toBeInTheDocument();
+  });
+
+  it("renders an access_proposal_merged item's copy, targets, and review-detail link", async () => {
+    mockFeed({ items: [MERGED_ITEM], unread: 1, lastSeenAt: null });
+    renderBell();
+    const user = userEvent.setup();
+    await waitFor(() => screen.getByRole("button", { name: /unread/i }));
+    await user.click(screen.getByRole("button", { name: /unread/i }));
+
+    expect(await screen.findByText("Your request is live · #42")).toBeInTheDocument();
+    expect(screen.getByText("products-db, orders-db")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /#42/ });
+    expect(link).toHaveAttribute("href", "/platform/secrets/reviews/42");
   });
 
   it("renders a mixed feed with a ticket and a proposal, each linking to its own destination", async () => {

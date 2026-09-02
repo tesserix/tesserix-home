@@ -349,6 +349,53 @@ describe("parseProposals", () => {
     const parsed = parseProposals({ pulls: [pull({ url: "http://github.com/x/y/pull/1" })] });
     expect(parsed[0]?.url).toBe("http://github.com/x/y/pull/1");
   });
+
+  it("reads requestedBy and mergedAt off a merged proposal", () => {
+    const [p] = parseProposals({
+      pulls: [
+        pull({ number: 4, author: "bot", requestedBy: "subject-9", mergedAt: "2026-09-01T10:00:00Z" }),
+      ],
+    });
+    expect(p?.requestedBy).toBe("subject-9");
+    expect(p?.mergedAt).toBe("2026-09-01T10:00:00Z");
+  });
+
+  it("leaves requestedBy undefined on a proposal raised before the trailer existed", () => {
+    const [p] = parseProposals({ pulls: [pull({ number: 5, author: "bot" })] });
+    expect(p?.requestedBy).toBeUndefined();
+  });
+
+  // `requested-by:` is a trailer added after some proposals already existed
+  // — an old proposal serialises the field as `""`, not an absent key, and
+  // `""` must never become a value a recipient filter could match.
+  it("treats an empty requestedBy as absent, not an empty string", () => {
+    const [p] = parseProposals({ pulls: [pull({ requestedBy: "" })] });
+    expect(p?.requestedBy).toBeUndefined();
+  });
+
+  // Absence is legal, a wrong TYPE is not — a drifted upstream sending a
+  // number must surface as a parse failure, not silently read as "absent".
+  it("rejects a non-string requestedBy rather than treating it as absent", () => {
+    expect(() => parseProposals({ pulls: [pull({ requestedBy: 123 })] })).toThrow();
+  });
+
+  // Defense-in-depth: Go's `trailerValue` already `TrimSpace`s when
+  // reading the trailer back, so this shouldn't be reachable from a
+  // correctly-behaving upstream, but a field that gates "may operator A see
+  // operator B's activity" should not treat whitespace as a real value.
+  it("treats a whitespace-only requestedBy as absent", () => {
+    const [p] = parseProposals({ pulls: [pull({ requestedBy: "   " })] });
+    expect(p?.requestedBy).toBeUndefined();
+  });
+
+  // Same fact as `createdAt`'s zero-time trap above, but for `mergedAt`:
+  // `PullRequest.MergedAt` is a `time.Time`, not a pointer, so an open
+  // proposal (never merged) still serialises this field as Go's zero time
+  // rather than omitting it.
+  it("treats a zero-time mergedAt as absent", () => {
+    const [p] = parseProposals({ pulls: [pull({ mergedAt: "0001-01-01T00:00:00Z" })] });
+    expect(p?.mergedAt).toBeUndefined();
+  });
 });
 
 describe("parseProposalDetail", () => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,6 +12,12 @@ import (
 	"github.com/tesserix/tesserix-home/secrets-api/internal/audit"
 	"github.com/tesserix/tesserix-home/secrets-api/internal/gitops"
 )
+
+// mergedWindow bounds how far back the merged listing will walk when the
+// caller names no window. It matches the console feed's FEED_WINDOW_DAYS;
+// an unbounded default would walk the repository's whole closed history on
+// every bell poll.
+const mergedWindow = 14 * 24 * time.Hour
 
 // Reviewer is the queue of console-raised changes an administrator works
 // through: read the diff, then merge it or reject it. ArgoCD syncs what is
@@ -21,6 +28,7 @@ type Reviewer interface {
 	Approve(ctx context.Context, number int, actor string) error
 	Merge(ctx context.Context, number int, actor string) (string, error)
 	Reject(ctx context.Context, number int, actor, reason string) error
+	MergedPulls(ctx context.Context, since time.Time) ([]gitops.PullRequest, error)
 }
 
 type Reviews struct {
@@ -34,6 +42,7 @@ func NewReviews(r Reviewer, log *audit.Logger) *Reviews {
 
 func (h *Reviews) Register(g Groups) {
 	g.Read.GET("/api/reviews", h.List)
+	g.Read.GET("/api/reviews/merged", h.Merged)
 	g.Read.GET("/api/reviews/:number", h.Show)
 
 	g.Live.POST("/api/reviews/:number/approve", h.Approve)
@@ -47,6 +56,32 @@ func (h *Reviews) List(c *gin.Context) {
 	}
 
 	pulls, err := h.reviewer.Pulls(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"pulls": pulls})
+}
+
+// SinceOrDefault parses the caller's `since` query value, falling back to the
+// bounded mergedWindow when it is absent, unparseable, or older than that
+// window — never to the zero time, which would walk the repository's whole
+// closed-pull history on every bell poll.
+func SinceOrDefault(raw string, now time.Time) time.Time {
+	floor := now.Add(-mergedWindow)
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil || parsed.Before(floor) {
+		return floor
+	}
+	return parsed
+}
+
+func (h *Reviews) Merged(c *gin.Context) {
+	if !h.configured(c) {
+		return
+	}
+
+	pulls, err := h.reviewer.MergedPulls(c.Request.Context(), SinceOrDefault(c.Query("since"), time.Now()))
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return

@@ -292,8 +292,8 @@ func (g *GitHub) ProposeWiring(ctx context.Context, req WiringRequest) (string, 
 		summary = fmt.Sprintf("%s reads %s from its own OpenBao store rather than Secret Manager.", req.App, req.RemoteKey)
 	}
 	body := fmt.Sprintf(
-		"%s\n\nRequested by %s in the secret-service console.\n\nThe app must already be whitelisted in the openbao chart, or External Secrets has no store to read from.\n\n%s%s/%s",
-		summary, req.Actor, targetTrailer, req.Namespace, req.App,
+		"%s\n\nRequested by %s in the secret-service console.\n\nThe app must already be whitelisted in the openbao chart, or External Secrets has no store to read from.\n\n%s%s\n%s%s/%s",
+		summary, req.Actor, requesterTrailer, req.Actor, targetTrailer, req.Namespace, req.App,
 	)
 
 	var resp struct {
@@ -371,8 +371,8 @@ func (g *GitHub) pullRequest(ctx context.Context, branch, title string, changes 
 	}
 
 	body := fmt.Sprintf(
-		"%s\n\nRequested by %s in the secret-service console.\n\nMerging this lets External Secrets reach OpenBao for the app named above. It grants no ability to read any secret value through the console.\n\n%s%s",
-		summary, changes[0].Actor, targetTrailer, strings.Join(targets, ", "),
+		"%s\n\nRequested by %s in the secret-service console.\n\nMerging this lets External Secrets reach OpenBao for the app named above. It grants no ability to read any secret value through the console.\n\n%s%s\n%s%s",
+		summary, changes[0].Actor, requesterTrailer, changes[0].Actor, targetTrailer, strings.Join(targets, ", "),
 	)
 
 	var resp struct {

@@ -127,9 +127,9 @@ function assertNever(value: never): never {
 }
 
 function leadingPhrase(item: NotificationItem): string {
-  // Exhaustive switch, not a binary ternary: Task 4 adds a second member to
-  // the NotificationItem union, and the ternary's "else" branch would
-  // silently swallow it instead of failing to compile.
+  // Exhaustive switch, not a binary ternary: the NotificationItem union has
+  // three members today, and a ternary's "else" branch would silently
+  // swallow any member beyond the first two instead of failing to compile.
   switch (item.kind) {
     case "ticket_created":
       return "New ticket";
@@ -137,6 +137,8 @@ function leadingPhrase(item: NotificationItem): string {
       return `${item.actor} replied`;
     case "access_proposal_open":
       return "Access proposal waiting";
+    case "access_proposal_merged":
+      return "Your request is live";
     default:
       return assertNever(item);
   }
@@ -153,6 +155,7 @@ function hrefFor(item: NotificationItem): string {
     case "merchant_reply":
       return `/platform/tickets/${item.ticketId}`;
     case "access_proposal_open":
+    case "access_proposal_merged":
       return `/platform/secrets/reviews/${item.number}`;
     default:
       return assertNever(item);
@@ -167,6 +170,7 @@ function identifierFor(item: NotificationItem): string {
     case "merchant_reply":
       return item.ticketNumber;
     case "access_proposal_open":
+    case "access_proposal_merged":
       return `#${item.number}`;
     default:
       return assertNever(item);
@@ -185,6 +189,7 @@ function secondaryFor(item: NotificationItem): string {
     case "merchant_reply":
       return item.subject;
     case "access_proposal_open":
+    case "access_proposal_merged":
       return item.targets.length > 0 ? item.targets.join(", ") : "No targets recorded";
     default:
       return assertNever(item);
