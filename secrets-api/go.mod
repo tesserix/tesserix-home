@@ -13,7 +13,10 @@ require (
 	k8s.io/client-go v0.36.3
 )
 
-require github.com/coreos/go-oidc/v3 v3.20.0 // indirect
+require (
+	github.com/coreos/go-oidc/v3 v3.20.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+)
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
