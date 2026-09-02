@@ -4,6 +4,7 @@ import {
   compareByAtDescending,
   countUnread,
   mergeEvents,
+  toMergedProposalEvent,
   toProposalEvent,
   toReplyEvent,
   toTicketEvent,
@@ -68,7 +69,7 @@ function proposalItem(at: string | undefined, number = 1): NotificationItem {
 }
 
 describe("NOTIFICATION_KINDS", () => {
-  it("lists exactly the three kinds this build understands", () => {
+  it("lists exactly the four kinds this build understands", () => {
     // The validator in notification-bell.tsx derives its accepted-kind
     // check from this exact list — an entry dropped here silently makes a
     // real, currently-working kind read as unrecognised.
@@ -76,7 +77,12 @@ describe("NOTIFICATION_KINDS", () => {
       "ticket_created",
       "merchant_reply",
       "access_proposal_open",
+      "access_proposal_merged",
     ]);
+  });
+
+  it("lists the merged kind so the bell's shape validator accepts it", () => {
+    expect(NOTIFICATION_KINDS).toContain("access_proposal_merged");
   });
 });
 
@@ -143,6 +149,64 @@ describe("toProposalEvent", () => {
     // that with a fabricated timestamp.
     const e = toProposalEvent({ ...PROPOSAL, createdAt: undefined });
     expect(e.at).toBeUndefined();
+  });
+});
+
+describe("toMergedProposalEvent", () => {
+  it("builds a merged event addressed to the requester", () => {
+    const event = toMergedProposalEvent({
+      number: 7,
+      title: "grant ns/app",
+      url: "u",
+      branch: "b",
+      author: "bot",
+      targets: ["ns/app"],
+      requestedBy: "subject-9",
+      mergedAt: "2026-09-01T10:00:00Z",
+    });
+    expect(event).toEqual({
+      id: "access_proposal_merged:7",
+      kind: "access_proposal_merged",
+      number: 7,
+      title: "grant ns/app",
+      targets: ["ns/app"],
+      recipientSub: "subject-9",
+      at: "2026-09-01T10:00:00Z",
+    });
+  });
+
+  it("builds nothing for a proposal with no requester", () => {
+    // The security-relevant case: an unaddressed item must not exist at all,
+    // because an item with no recipient cannot be filtered to one.
+    expect(
+      toMergedProposalEvent({
+        number: 8,
+        title: "t",
+        url: "u",
+        branch: "b",
+        author: "bot",
+        targets: [],
+        mergedAt: "2026-09-01T10:00:00Z",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("builds nothing for a proposal with no merge time", () => {
+    expect(
+      toMergedProposalEvent({
+        number: 9,
+        title: "t",
+        url: "u",
+        branch: "b",
+        author: "bot",
+        targets: [],
+        requestedBy: "subject-9",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("lists the merged kind so the bell's shape validator accepts it", () => {
+    expect(NOTIFICATION_KINDS).toContain("access_proposal_merged");
   });
 });
 
