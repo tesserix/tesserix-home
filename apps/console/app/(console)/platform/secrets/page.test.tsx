@@ -78,6 +78,43 @@ describe("row-level reader flag", () => {
     // The GSM row renders its own, distinct chip — never the orphan chip.
     expect(screen.getByText("Access via IAM")).toBeInTheDocument();
   });
+
+  // The same property one level UP from the chip. `matchesFilter` holds its
+  // own, second copy of the `hasReader === false` comparison, and that copy
+  // was unpinned: relaxing it to `!row.hasReader` — the exact slip its
+  // neighbouring comment warns about — left all 23 tests in this file green
+  // while sweeping every Google Secret Manager row into a filter named for
+  // the alarm this whole surface exists to raise. The chip test above cannot
+  // catch it, because the chip and the filter read `hasReader` independently.
+  it("narrows the No reader filter to hasReader === false, never to a GSM null", async () => {
+    const user = userEvent.setup();
+    const data = inventory({
+      rows: [
+        { path: "kv/data/mark8ly/stripe", store: "openbao", hasReader: false },
+        { path: "kv/data/mark8ly/sendgrid", store: "openbao", hasReader: true },
+        { path: "prod-zitadel-console-client-secret", store: "gcpsm", hasReader: null },
+      ],
+      counts: { all: 3, openbao: 2, gcpsm: 1, noReader: 1 },
+    });
+    render(
+      <SecretsTable
+        inventory={data}
+        state={secretsState({ error: null, rows: data.rows })}
+        emptyMessage={SECRETS_EMPTY_MESSAGE}
+        reauthReturnTo="/platform/secrets"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /No reader \(1\)/ }));
+
+    // The genuine orphan — an OpenBao secret with no grant — is the only row
+    // this filter is for.
+    expect(screen.getByText("kv/data/mark8ly/stripe")).toBeInTheDocument();
+    // `null` means "the console cannot see GSM's IAM bindings", not "nothing
+    // can read this". A GSM row surfacing here is the false alarm.
+    expect(screen.queryByText("prod-zitadel-console-client-secret")).toBeNull();
+    expect(screen.queryByText("kv/data/mark8ly/sendgrid")).toBeNull();
+  });
 });
 
 // `secretDetailHref` is the only producer of the `?store=` param that
