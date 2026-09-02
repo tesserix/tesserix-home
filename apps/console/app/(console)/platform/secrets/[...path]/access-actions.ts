@@ -63,7 +63,21 @@ import { PlatformApiError } from "@/lib/platform-api-error";
  */
 export type SecretsWriteResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
-const NO_PERMISSION_MESSAGE = "You don't have permission to change who can read this secret.";
+// Named by the capabilities the operator lacks, not by whichever of the
+// five operations `withAccessWrite` wraps was attempted (grant, revoke,
+// delete, destroy, restore) — all five need the SAME PAIR of capabilities
+// (`platform` and `rotate-credentials`, checked below), so naming both here
+// stays true as more callers join `withAccessWrite` and never needs a
+// per-operation update the way a message like "change who can read this
+// secret" would have (that sentence was accurate for grant/revoke and wrong
+// for delete/destroy/restore, which is how tesserix-home#495 happened).
+// Naming only one of the two capabilities would repeat that mistake at a
+// narrower grain: `checkOperatorCapabilityLive` checks `platform` first, so
+// an operator who fails on `platform` alone (e.g. a live-revoked platform
+// grant, see #285) would be told about `rotate-credentials`, which they may
+// well still hold — an untrue message about which capability is missing.
+const NO_PERMISSION_MESSAGE =
+  "You don't have the platform and rotate-credentials capabilities this needs.";
 
 /**
  * Internal error text (a transport failure, a non-2xx status, a body that
