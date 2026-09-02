@@ -128,6 +128,12 @@ export interface SecretDetailViewProps {
    *  security control: it only decides which controls are offered — the
    *  Write and Delete tabs, and the Versions tab's per-row Restore. */
   canWrite: boolean;
+  /** Also from `page.tsx`'s render-path gate: true for an operator holding
+   *  `platform` without `rotate-credentials`. It gates ONE control, inside
+   *  `AccessCard` — the propose form — and no tab: a proposal opens a pull
+   *  request, it does not write a secret, so it unlocks nothing the Write or
+   *  Delete tabs offer. */
+  canPropose: boolean;
 }
 
 /**
@@ -149,6 +155,7 @@ export function SecretDetailView({
   readers,
   state,
   canWrite,
+  canPropose,
 }: SecretDetailViewProps) {
   if (!detail) {
     return (
@@ -223,7 +230,12 @@ export function SecretDetailView({
           id: "access",
           label: "Access",
           content: (
-            <AccessCard store={store} readers={readers} canWrite={canWrite} />
+            <AccessCard
+              store={store}
+              readers={readers}
+              canWrite={canWrite}
+              canPropose={canPropose}
+            />
           ),
         },
         // Offered only to an operator whose session holds both `platform`

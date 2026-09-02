@@ -20,7 +20,7 @@ import {
   Label,
 } from "@tesserix/web";
 import type { Grant, SecretStore } from "@/lib/secrets";
-import { grantAccessAction, revokeAccessAction } from "./access-actions";
+import { grantAccessAction, proposeAccessAction, revokeAccessAction } from "./access-actions";
 
 /**
  * The reader-count chip. `count === 0` is the alarm this whole card exists
@@ -101,8 +101,10 @@ function ReaderRow({
 /**
  * The add-a-reader form in the card's footer.
  *
- * Namespace/App/Service account is the whole shape `grantAccessAction`
- * takes — see `access-actions.ts`. `serviceAccount` prefills from `app` as
+ * Namespace/App/Service account is the whole shape BOTH `grantAccessAction`
+ * and `proposeAccessAction` take — see `access-actions.ts`. That is why one
+ * form serves both modes: the fields do not differ, only which action the
+ * card hands them to and what the button promises. `serviceAccount` prefills from `app` as
  * the operator types it (most apps' service account IS their app name), but
  * only until the operator edits `serviceAccount` themselves: `touched`
  * below is the one piece of state that decides which of those two facts is
@@ -112,9 +114,21 @@ function ReaderRow({
 function AddReaderForm({
   onGrant,
   pending,
+  submitLabel,
 }: {
   onGrant: (input: { namespace: string; app: string; serviceAccount: string }) => void;
   pending: boolean;
+  /** The two modes submit the SAME three fields to different actions, so the
+   *  fields are shared and only the button's promise differs — "Grant
+   *  access" for the immediate path, "Propose in a pull request" for the
+   *  whitelist path.
+   *
+   *  The immediate control must NOT say "propose". It was called "Propose
+   *  access" before tesserix-home#482, directly above copy stating that the
+   *  change "merges immediately" — loose then, false once a real propose
+   *  control exists in the other mode, because the card would present two
+   *  controls with the one that acts immediately named "Propose". */
+  submitLabel: string;
 }) {
   const [namespace, setNamespace] = useState("");
   const [app, setApp] = useState("");
@@ -193,7 +207,7 @@ function AddReaderForm({
         </div>
       </fieldset>
       <Button type="submit" disabled={pending}>
-        Propose access
+        {submitLabel}
       </Button>
     </form>
   );
@@ -208,6 +222,13 @@ export interface AccessCardProps {
    *  `platform`-only caller's grant/revoke outright (403), so this only
    *  decides whether the console offers a control guaranteed to work. */
   canWrite: boolean;
+  /** From the same render-path gate in `page.tsx` — true when the operator
+   *  holds `platform` but NOT `rotate-credentials`, so they cannot grant
+   *  immediately but CAN open a pull request against `tesserix-k8s`
+   *  (`POST /api/access/whitelist` sits in secrets-api's `authed` group).
+   *  Optional and defaulting to false so the absence of the prop can only
+   *  ever withhold a control, never offer one. */
+  canPropose?: boolean;
 }
 
 /**
@@ -222,11 +243,22 @@ export interface AccessCardProps {
  * GSM secret replaces this card with `IamAccessCard` entirely rather than
  * rendering zero rows within it.
  */
-export function AccessCard({ store, readers, canWrite }: AccessCardProps) {
+export function AccessCard({ store, readers, canWrite, canPropose = false }: AccessCardProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // The outcome of the most recent proposal, or null when none has been made
+  // in this render. Held separately from `error` because a proposal that
+  // succeeds still has something to say — a pull request to go and get
+  // reviewed, or the fact that the whitelist already granted this.
+  const [proposal, setProposal] = useState<
+    { status: "proposed"; pullRequest: string } | { status: "unchanged" } | null
+  >(null);
 
+  // Reached before either write mode is considered, so the propose control
+  // can never appear for a GSM secret: its readers are IAM bindings, and
+  // there is no `tesserix-k8s` whitelist to propose against — the copy in
+  // `IamAccessCard` says exactly that.
   if (store !== "openbao") {
     return <IamAccessCard />;
   }
@@ -248,6 +280,29 @@ export function AccessCard({ store, readers, canWrite }: AccessCardProps) {
         return;
       }
       refreshAfterChange();
+    });
+  }
+
+  function handlePropose(input: { namespace: string; app: string; serviceAccount: string }) {
+    setError(null);
+    setProposal(null);
+    startTransition(async () => {
+      const result = await proposeAccessAction(input);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      // Deliberately NO `router.refresh()` here, unlike `handleGrant`. A
+      // proposal changes nothing the reader list is read from — OpenBao holds
+      // no new grant until the pull request is merged and ArgoCD syncs it —
+      // so re-reading would cost a round trip to show the identical list, and
+      // an unchanged list after an apparently successful action reads as a
+      // failure.
+      setProposal(
+        result.status === "proposed"
+          ? { status: "proposed", pullRequest: result.pullRequest }
+          : { status: "unchanged" },
+      );
     });
   }
 
@@ -300,7 +355,7 @@ export function AccessCard({ store, readers, canWrite }: AccessCardProps) {
       <CardFooter className="flex flex-col items-start gap-3">
         {canWrite ? (
           <>
-            <AddReaderForm onGrant={handleGrant} pending={isPending} />
+            <AddReaderForm onGrant={handleGrant} pending={isPending} submitLabel="Grant access" />
             <p className="text-xs text-muted-foreground">
               <strong>Adding or removing a reader here merges immediately</strong>, because you
               hold <code className="font-mono">rotate-credentials</code>. Both directions are a
@@ -308,18 +363,59 @@ export function AccessCard({ store, readers, canWrite }: AccessCardProps) {
               removal is not a local toggle.
             </p>
           </>
+        ) : canPropose ? (
+          <>
+            <AddReaderForm
+              onGrant={handlePropose}
+              pending={isPending}
+              submitLabel="Propose in a pull request"
+            />
+            <p className="text-xs text-muted-foreground">
+              <strong>This opens a pull request against</strong>{" "}
+              <code className="font-mono">tesserix-k8s</code>. Nothing here changes the cluster:
+              access becomes real when that pull request is merged and ArgoCD syncs it. Granting
+              a reader immediately instead needs{" "}
+              <code className="font-mono">rotate-credentials</code>, which you do not hold.
+            </p>
+            {proposal?.status === "proposed" && (
+              <p role="status" className="text-xs text-muted-foreground">
+                Pull request opened —{" "}
+                <a
+                  className="underline"
+                  href={proposal.pullRequest}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  review it in tesserix-k8s
+                </a>
+                . Access becomes real once it is merged and synced.
+              </p>
+            )}
+            {proposal?.status === "unchanged" && (
+              // No link, because there is no pull request: secrets-api
+              // answers `unchanged` when the whitelist already says this, and
+              // omits the URL rather than sending an empty one. This is a
+              // success — the requested state already holds.
+              <p role="status" className="text-xs text-muted-foreground">
+                No pull request was needed — the whitelist already grants this app access.
+              </p>
+            )}
+          </>
         ) : (
-          // The reason there is no control here is that `secrets-api`
-          // refuses a `platform`-only caller's grant/revoke outright (403,
-          // no queue) — NOT that this operator "lacks permission to
-          // propose": there is no proposal step to lack permission for.
+          // Reached only by an operator who does not hold `platform` at all —
+          // a `platform`-only operator takes the propose branch above. So this
+          // names `platform`, not `rotate-credentials`: the previous sentence
+          // here named the ONE capability this reader is not missing and said
+          // nothing about the one they are, which was true about the immediate
+          // grant and useless to the person actually reading it.
           <p className="text-xs text-muted-foreground">
             <strong>
-              Granting access needs <code className="font-mono">rotate-credentials</code>.
+              Changing who can read this needs <code className="font-mono">platform</code>.
             </strong>{" "}
-            Both adding and removing
-            a reader change <code className="font-mono">tesserix-k8s</code> immediately, so both
-            take the credential verb. Someone holding it can make this change for you.
+            Both paths start there: proposing a reader in a pull request, and granting one
+            immediately, which also takes{" "}
+            <code className="font-mono">rotate-credentials</code>. Someone holding these can
+            make the change for you.
           </p>
         )}
       </CardFooter>

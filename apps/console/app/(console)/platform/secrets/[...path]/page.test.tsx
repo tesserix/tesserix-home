@@ -362,6 +362,43 @@ describe("the write affordance gate", () => {
     expect(screen.getByText("Deleted")).toBeInTheDocument();
   });
 
+  // tesserix-home#482: a `platform`-only operator is not offered nothing —
+  // they are offered the propose path, which secrets-api's `authed` group
+  // accepts from them.
+  it("offers the propose control to a platform-only operator on the Access tab", async () => {
+    signIn(["platform"]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    await userEvent.click(screen.getByRole("tab", { name: "Access" }));
+
+    expect(
+      await screen.findByRole("button", { name: /propose in a pull request/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the immediate grant, not the propose control, to an operator holding both", async () => {
+    signIn(["platform", "rotate-credentials"]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    await userEvent.click(screen.getByRole("tab", { name: "Access" }));
+
+    expect(await screen.findByRole("button", { name: "Grant access" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
+  });
+
+  it("withholds the propose control from an operator without platform", async () => {
+    signIn([]);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    await userEvent.click(screen.getByRole("tab", { name: "Access" }));
+
+    await screen.findByText(/changing who can read this needs/i);
+    expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
+  });
+
   it("shows the write form under the pre-cutover bypass, same as any other render-path gate", async () => {
     requiresCapability.mockReturnValue(false);
     signIn([]);
