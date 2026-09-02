@@ -402,41 +402,100 @@ Route ordering note, already verified: Gin v1.12.0 accepts `/api/reviews/merged`
 
 - [ ] **Step 1: Write the failing tests**
 
-Follow the existing handler-test pattern in this file (a fake reviewer/lister injected into the handler).
+Extend `stubReviewer` in `reviews_test.go` first — the handler's dependency is
+`handlers.Reviewer`, so the new method goes on the interface and the stub:
 
 ```go
-func TestMergedRequiresReadGroupOnly(t *testing.T) {
-	// Same gate as /api/reviews: platform alone. A proposer who cannot merge
-	// must still be able to learn that someone merged for them.
-	// Assert the route is registered on g.Read, mirroring how this file's
-	// existing tests assert /api/reviews' group.
+func (s *stubReviewer) MergedPulls(_ context.Context, since time.Time) ([]gitops.PullRequest, error) {
+	s.sinceSeen = since
+	return s.pulls, s.err
+}
+```
+
+adding `sinceSeen time.Time` to the struct.
+
+```go
+func TestMergedIsRegisteredOnReadNotLive(t *testing.T) {
+	// Registers Read and Live on SEPARATE engines. serveReview deliberately
+	// points both at one engine ("no middleware runs here"), which makes group
+	// membership unobservable through it — a test written on that helper would
+	// pass no matter which group the route landed on.
+	gin.SetMode(gin.TestMode)
+	read, live := gin.New(), gin.New()
+	handlers.NewReviews(&stubReviewer{}, audit.New(io.Discard)).
+		Register(handlers.Groups{Read: read, Live: live})
+
+	target := "/api/reviews/merged?since=2026-08-19T00:00:00Z"
+
+	rec := httptest.NewRecorder()
+	read.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code == http.StatusNotFound {
+		t.Fatal("merged is not registered on the read group")
+	}
+
+	rec = httptest.NewRecorder()
+	live.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("merged is registered on the live group (code %d); the proposer this "+
+			"serves holds platform and may not hold rotate-credentials", rec.Code)
+	}
+}
+
+func TestMergedAnswersPullsEnvelope(t *testing.T) {
+	// parseProposals on the console side unwraps {"pulls": [...]}; a bare array
+	// would parse to a hard failure there, not to an empty feed.
+	stub := &stubReviewer{pulls: []gitops.PullRequest{
+		{Number: 7, Title: "grant ns/app", RequestedBy: "subject-9"},
+	}}
+	rec := serveReview(t, stub, http.MethodGet, "/api/reviews/merged?since=2026-08-19T00:00:00Z")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+
+	var body struct {
+		Pulls []struct {
+			Number      int    `json:"number"`
+			RequestedBy string `json:"requestedBy"`
+		} `json:"pulls"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Pulls) != 1 || body.Pulls[0].RequestedBy != "subject-9" {
+		t.Fatalf("pulls = %+v, want one entry requested by subject-9", body.Pulls)
+	}
+}
+
+func TestMergedPassesSinceThrough(t *testing.T) {
+	stub := &stubReviewer{}
+	serveReview(t, stub, http.MethodGet, "/api/reviews/merged?since=2026-08-19T00:00:00Z")
+	want := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	if !stub.sinceSeen.Equal(want) {
+		t.Fatalf("since = %v, want %v", stub.sinceSeen, want)
+	}
 }
 
 func TestMergedDefaultsSinceWhenAbsent(t *testing.T) {
-	// An absent or unparseable `since` must fall back to a bounded default
-	// window, never to the zero time — the zero time would walk the whole
-	// repository history on every bell poll.
-	got := sinceOrDefault("", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	// An absent or unparseable `since` must fall back to a bounded window,
+	// never the zero time — the zero time walks the whole repository history
+	// on every bell poll.
+	got := handlers.SinceOrDefault("", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
 	want := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("since = %v, want %v", got, want)
 	}
 }
 
-func TestMergedRejectsZeroTimeSince(t *testing.T) {
-	got := sinceOrDefault("0001-01-01T00:00:00Z", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+func TestMergedClampsSinceOlderThanTheWindow(t *testing.T) {
+	got := handlers.SinceOrDefault("0001-01-01T00:00:00Z", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
 	if got.Year() < 2026 {
 		t.Fatalf("since = %v, want clamped to the default window", got)
 	}
 }
-
-func TestMergedAnswersPullsEnvelope(t *testing.T) {
-	// The console's parseProposals expects {"pulls": [...]}, the same shape
-	// /api/reviews already returns.
-	// Serve one merged pull through the handler and assert the decoded body
-	// has a "pulls" key holding one entry.
-}
 ```
+
+`SinceOrDefault` is exported because `reviews_test.go` is an external test package
+(`package handlers_test`) and cannot reach an unexported helper.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -455,7 +514,7 @@ Expected: FAIL — `sinceOrDefault` undefined and the route unregistered.
 // every bell poll.
 const mergedWindow = 14 * 24 * time.Hour
 
-func sinceOrDefault(raw string, now time.Time) time.Time {
+func SinceOrDefault(raw string, now time.Time) time.Time {
 	floor := now.Add(-mergedWindow)
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil || parsed.Before(floor) {
@@ -465,7 +524,7 @@ func sinceOrDefault(raw string, now time.Time) time.Time {
 }
 
 func (h *Reviews) Merged(c *gin.Context) {
-	pulls, err := h.lister.MergedPulls(c.Request.Context(), sinceOrDefault(c.Query("since"), time.Now()))
+	pulls, err := h.reviewer.MergedPulls(c.Request.Context(), SinceOrDefault(c.Query("since"), time.Now()))
 	if err != nil {
 		// Mirror this file's existing error handling for List.
 		return
@@ -480,7 +539,7 @@ Register beside the existing routes, before the `:number` route for readability 
 	g.Read.GET("/api/reviews/merged", h.Merged)
 ```
 
-Add `MergedPulls` to whatever interface `h.lister` satisfies, and to the test fake.
+Add `MergedPulls(ctx context.Context, since time.Time) ([]gitops.PullRequest, error)` to the `Reviewer` interface (`reviews.go:18`) and to `stubReviewer`.
 
 - [ ] **Step 4: Run to verify pass, then run the whole service suite**
 
@@ -492,8 +551,8 @@ Expected: PASS. **Count the SKIPs.** This repository's Go suites silently skip d
 
 - [ ] **Step 5: Mutate**
 
-1. `return floor` → `return time.Time{}` in the error branch. `TestMergedRejectsZeroTimeSince` and `TestMergedDefaultsSinceWhenAbsent` MUST fail.
-2. Register the route on `g.Live` instead of `g.Read`. `TestMergedRequiresReadGroupOnly` MUST fail.
+1. `return floor` → `return time.Time{}` in the error branch. `TestMergedDefaultsSinceWhenAbsent` and `TestMergedClampsSinceOlderThanTheWindow` MUST fail.
+2. Register the route on `g.Live` instead of `g.Read`. `TestMergedIsRegisteredOnReadNotLive` MUST fail — and note it fails on the LIVE branch, proving the two engines are what makes group membership observable.
 3. Answer the bare array instead of the envelope. `TestMergedAnswersPullsEnvelope` MUST fail.
 
 - [ ] **Step 6: Commit**
@@ -779,28 +838,113 @@ git commit -m "feat(console): add the merged-proposal notification kind (#483)"
 
 - [ ] **Step 1: Write the failing tests**
 
+First extend the file's existing harness. `signIn` hardcodes `sub: "sub-1"`; give
+it a subject parameter, and register the new mock alongside `fetchProposals`:
+
 ```ts
+vi.mock("@/lib/secrets-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
+  fetchProposals: vi.fn(async () => []),
+  fetchMergedProposals: vi.fn(async () => []),
+}));
+
+function signIn(roles: readonly string[] | undefined, sub = "sub-1") {
+  vi.mocked(getCurrentSession).mockResolvedValue({
+    sub,
+    email: "op@tesserix.app",
+    roles,
+    iat: 0,
+    exp: 0,
+  } as never);
+}
+```
+
+and add `vi.mocked(fetchMergedProposals).mockResolvedValue([]);` to `beforeEach`.
+
+```ts
+const MERGED_PROPOSAL = {
+  number: 7,
+  title: "grant ns/app",
+  url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+  branch: "secret-service/ns-app",
+  author: "tesserix-bot",
+  targets: ["ns/app"],
+  requestedBy: "sub-9",
+  mergedAt: "2026-09-01T10:00:00Z",
+};
+
+function mergedItems(body: { items: { kind: string }[] }) {
+  return body.items.filter((i) => i.kind === "access_proposal_merged");
+}
+
 it("hides a merged notification from an operator who is not its recipient", async () => {
-  // Two operators, one merged proposal raised by subject-9.
-  // Viewing as subject-OTHER must yield no access_proposal_merged item.
+  // The security assertion of this change: platform alone must not show one
+  // operator what another asked for.
+  signIn(["platform"], "sub-OTHER");
+  vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL]);
+
+  const body = await (await GET()).json();
+
+  expect(mergedItems(body)).toHaveLength(0);
 });
 
 it("shows a merged notification to the operator who raised it", async () => {
-  // Viewing as subject-9 must yield exactly one.
+  signIn(["platform"], "sub-9");
+  vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL]);
+
+  const body = await (await GET()).json();
+
+  expect(mergedItems(body)).toHaveLength(1);
+  expect(mergedItems(body)[0]).toMatchObject({
+    number: 7,
+    recipientSub: "sub-9",
+    at: "2026-09-01T10:00:00Z",
+  });
 });
 
 it("leaves capability-addressed kinds unaffected by the recipient check", async () => {
-  // A ticket_created item carries no recipientSub and must still reach a
-  // support holder.
+  // A ticket carries no recipientSub and must still reach a support holder
+  // whose subject matches nothing in the feed.
+  signIn(["support"], "sub-OTHER");
+  vi.mocked(recentTicketRows).mockResolvedValue([
+    {
+      id: "t1",
+      product_id: "homechef",
+      ticket_number: 12,
+      subject: "printer on fire",
+      created_at: "2026-09-01T09:00:00Z",
+    } as never,
+  ]);
+
+  const body = await (await GET()).json();
+
+  expect(body.items.filter((i: { kind: string }) => i.kind === "ticket_created")).toHaveLength(1);
 });
 
 it("keeps the ticket rows when the merged leg fails", async () => {
-  // The merged leg throwing (501/503/timeout) must not cost the other legs,
-  // exactly as safeProposalEvents already guarantees.
+  // Same guarantee safeProposalEvents already gives: one leg's 501/503/timeout
+  // must not cost the operator the rest of the response.
+  signIn(["support", "platform"], "sub-9");
+  vi.mocked(fetchMergedProposals).mockRejectedValue(new Error("secrets-api unreachable"));
+  vi.mocked(recentTicketRows).mockResolvedValue([
+    {
+      id: "t1",
+      product_id: "homechef",
+      ticket_number: 12,
+      subject: "printer on fire",
+      created_at: "2026-09-01T09:00:00Z",
+    } as never,
+  ]);
+
+  const res = await GET();
+
+  expect(res.status).toBe(200);
+  const body = await res.json();
+  expect(body.items.filter((i: { kind: string }) => i.kind === "ticket_created")).toHaveLength(1);
 });
 ```
 
-Follow the existing route test's harness for session and capability stubbing.
+Import `fetchMergedProposals` alongside `fetchProposals` at the top of the file.
 
 - [ ] **Step 2: Run to verify failure**
 
