@@ -95,8 +95,9 @@ func (p pullResource) toPullRequest() PullRequest {
 
 // trailerValue returns the text after the first line beginning with prefix,
 // or "" when no such line exists. An absent trailer is a proposal opened
-// before the trailer existed; "" is the only safe answer, because callers
-// treat it as "addressed to nobody".
+// before the trailer existed; "" is the only safe answer for both callers:
+// the requester trailer treats it as "addressed to nobody", and
+// parseTargets, its other caller, treats it as "no targets".
 func trailerValue(body, prefix string) string {
 	for line := range strings.SplitSeq(body, "\n") {
 		if rest, found := strings.CutPrefix(strings.TrimSpace(line), prefix); found {
