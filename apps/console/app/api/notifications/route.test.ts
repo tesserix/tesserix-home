@@ -330,6 +330,60 @@ describe("GET /api/notifications", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.items.filter((i: { kind: string }) => i.kind === "ticket_created")).toHaveLength(1);
+    expect(mergedItems(body)).toHaveLength(0);
+  });
+
+  it("does not starve an operator's own merge out of a 20-slot-deep window", async () => {
+    // Round 1, Finding 1: fetchMergedProposals returns merges for EVERY
+    // operator, not just the caller's. If the leg capped itself at
+    // FEED_LIMIT before the recipient filter ran, a viewer whose own merge
+    // sorted past index FEED_LIMIT - 1 would never see it, no matter how
+    // recent. The leg must return everything and let the per-recipient
+    // filter, then mergeEvents, do the bounding.
+    signIn(["platform"], "sub-9");
+    const others = Array.from({ length: FEED_LIMIT + 4 }, (_, i) => ({
+      ...MERGED_PROPOSAL,
+      number: 2000 + i,
+      requestedBy: "sub-OTHER",
+      // Newer than the viewer's own merge below, so an unfiltered
+      // slice-then-filter would push it out first.
+      mergedAt: `2026-09-01T11:00:00.${String(i).padStart(3, "0")}Z`,
+    }));
+    const own = { ...MERGED_PROPOSAL, number: 9999, requestedBy: "sub-9", mergedAt: "2026-09-01T10:00:00Z" };
+    vi.mocked(fetchMergedProposals).mockResolvedValue([...others, own] as never);
+
+    const body = await (await GET()).json();
+
+    expect(mergedItems(body)).toHaveLength(1);
+    expect(mergedItems(body)[0]).toMatchObject({ number: 9999, recipientSub: "sub-9" });
+  });
+
+  it("denies a merged notification to an operator who lacks platform, even for their own proposal", async () => {
+    // Round 1, Finding 2: the capability half of the AND needs its own
+    // negative test — nothing previously asserted that holding a DIFFERENT
+    // capability than `platform` still denies the viewer's own merge.
+    signIn(["support"], "sub-9");
+    vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL] as never);
+
+    const body = await (await GET()).json();
+
+    expect(mergedItems(body)).toHaveLength(0);
+  });
+
+  it("shows exactly the viewer's own item out of a mixed batch, not the other operator's", async () => {
+    // Round 1, Finding 3: every prior merged test fed a homogeneous batch,
+    // so an all-or-nothing filter bug (filtering the wrong array, `some`
+    // instead of `filter`) would have passed all of them.
+    signIn(["platform"], "sub-9");
+    vi.mocked(fetchMergedProposals).mockResolvedValue([
+      MERGED_PROPOSAL,
+      { ...MERGED_PROPOSAL, number: 8, requestedBy: "sub-OTHER" },
+    ] as never);
+
+    const body = await (await GET()).json();
+
+    expect(mergedItems(body)).toHaveLength(1);
+    expect(mergedItems(body)[0]).toMatchObject({ recipientSub: "sub-9" });
   });
 });
 
