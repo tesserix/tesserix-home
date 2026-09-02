@@ -597,6 +597,10 @@ function isTerminal(stage: CrmStage): boolean {
  * activity is the failure this design cannot tolerate, so both writes go
  * through `tesserixTx` on one client: either both land or neither does.
  *
+ * The statements themselves live in `advanceStageOnQuery`; this function is
+ * that plus a transaction. The split exists so a caller that already holds
+ * one can honour this rule instead of copying it — see that function.
+ *
  * A same-stage call is not a transition (guards the guard: logging one
  * unconditionally would fill the timeline with noise and undermine the one
  * thing `stage_change` exists to make trustworthy) — UNLESS it also changes
@@ -621,8 +625,138 @@ function isTerminal(stage: CrmStage): boolean {
  * leaves must still be honest.
  */
 export async function advanceStage(input: AdvanceStageInput): Promise<AdvanceStageResult> {
+  // Before `tesserixTx`, not inside it: see `assertAdvanceStageInput`.
+  assertAdvanceStageInput(input);
+
+  return tesserixTx((query) => advanceStageOnQuery(query, input));
+}
+
+/**
+ * Advance a stage on a transaction the CALLER already opened.
+ *
+ * Exported, and this is the whole reason it exists: `tesserixTx` does not
+ * nest, so a caller that must do its own writes in the SAME transaction as
+ * the stage move (`crm-outreach.ts`, logging a templated DM and moving the
+ * lead `new` -> `contacted` as one unit) cannot call `advanceStage` — that
+ * function opens a transaction of its own. Such a caller had exactly two
+ * options: reimplement the stage UPDATE and its `stage_change` INSERT, or
+ * be handed them. A reimplementation is a second copy of the rule that
+ * every transition writes its activity, and a second copy is a copy that
+ * can stop agreeing with the first in one commit — the `crm-identity.ts`
+ * normalisation lesson, where the same rule living in two places is how the
+ * two ended up disagreeing about what a handle is. Handing the logic out is
+ * what keeps one rule in one place.
+ *
+ * So: DO NOT write the stage UPDATE by hand anywhere else, and do not reach
+ * for this from an action or a barrel export. It is for callers already
+ * holding a `TxQuery`, and it carries the atomicity guarantee only because
+ * the caller's transaction supplies it.
+ *
+ * The rules this encodes, the reasons for each, and Ruling 14 are all
+ * documented on `advanceStage` above, which is now just this function plus
+ * a transaction.
+ */
+export async function advanceStageOnQuery(
+  query: TxQuery,
+  input: AdvanceStageInput,
+): Promise<AdvanceStageResult> {
   const { opportunityId, to, actor, product, lostReason } = input;
 
+  // Re-checked here and not only in `advanceStage`, because this function is
+  // reachable without going through it: a guard the second caller can skip
+  // is not a guard. `assertAdvanceStageInput` is pure, so paying for it
+  // twice on the `advanceStage` path costs nothing.
+  assertAdvanceStageInput(input);
+
+  const rows = await query<{
+    stage: CrmStage;
+    organisation_id: string;
+    product: string | null;
+  }>(
+    `SELECT stage, organisation_id, product
+       FROM crm_opportunities
+      WHERE id = $1
+        FOR UPDATE`,
+    [opportunityId],
+  );
+  const current = rows[0];
+  if (!current) {
+    throw new Error(`advanceStage: opportunity ${opportunityId} not found`);
+  }
+
+  const stageChanging = current.stage !== to;
+  const productChanging = product !== undefined && product !== current.product;
+
+  if (!stageChanging && !productChanging) {
+    return { stageChanged: false, productChanged: false };
+  }
+
+  const setClauses = ["updated_at = now()"];
+  const params: unknown[] = [opportunityId];
+  if (stageChanging) {
+    params.push(to);
+    setClauses.push(`stage = $${params.length}`);
+    // Recomputed from `to`, not conditionally appended: entering a
+    // terminal stage sets these, but LEAVING one (Ruling 14's reverse
+    // transition) must clear them just as deliberately, or a corrected
+    // "lost" deal keeps its close date and reason forever.
+    setClauses.push(isTerminal(to) ? "closed_at = now()" : "closed_at = NULL");
+    params.push(to === "lost" ? lostReason : null);
+    setClauses.push(`lost_reason = $${params.length}`);
+  }
+  if (productChanging) {
+    params.push(product);
+    setClauses.push(`product = $${params.length}`);
+  }
+
+  await query(
+    `UPDATE crm_opportunities SET ${setClauses.join(", ")} WHERE id = $1`,
+    params,
+  );
+
+  if (stageChanging) {
+    await query(
+      `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
+       VALUES ($1, $2, 'stage_change', $3, $4, $5::jsonb)`,
+      [
+        current.organisation_id,
+        opportunityId,
+        actor,
+        `${current.stage} → ${to}`,
+        JSON.stringify({ from: current.stage, to }),
+      ],
+    );
+  } else if (productChanging) {
+    // Not a stage_change — the timeline's audience needs to be able to
+    // tell "the deal moved" from "someone re-pointed it to a different
+    // product without moving it" apart, which is exactly what a shared
+    // activity kind would erase.
+    await query(
+      `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
+       VALUES ($1, $2, 'note', $3, $4, $5::jsonb)`,
+      [
+        current.organisation_id,
+        opportunityId,
+        actor,
+        `Product set to ${product} (was ${current.product ?? "none"})`,
+        JSON.stringify({ productFrom: current.product, productTo: product }),
+      ],
+    );
+  }
+
+  return { stageChanged: stageChanging, productChanged: productChanging };
+}
+
+/**
+ * Argument-only preconditions for a stage move.
+ *
+ * Split out so `advanceStage` can run them BEFORE it opens a transaction —
+ * an invalid argument then costs no BEGIN/ROLLBACK, which is the property
+ * `crm-repo.write.integration.test.ts` names when it says the row is
+ * untouched "not because of a rollback but because nothing was ever sent".
+ */
+function assertAdvanceStageInput(input: AdvanceStageInput): void {
+  const { to, product, lostReason } = input;
   // Validated against the argument alone, before any row is read: a
   // transition into a product-required stage always needs the caller to
   // supply one, so this fails fast without a wasted round trip either way.
@@ -632,86 +766,6 @@ export async function advanceStage(input: AdvanceStageInput): Promise<AdvanceSta
   if (to === "lost" && !lostReason) {
     throw new Error('advanceStage: moving to "lost" requires a lostReason');
   }
-
-  return tesserixTx(async (query) => {
-    const rows = await query<{
-      stage: CrmStage;
-      organisation_id: string;
-      product: string | null;
-    }>(
-      `SELECT stage, organisation_id, product
-         FROM crm_opportunities
-        WHERE id = $1
-          FOR UPDATE`,
-      [opportunityId],
-    );
-    const current = rows[0];
-    if (!current) {
-      throw new Error(`advanceStage: opportunity ${opportunityId} not found`);
-    }
-
-    const stageChanging = current.stage !== to;
-    const productChanging = product !== undefined && product !== current.product;
-
-    if (!stageChanging && !productChanging) {
-      return { stageChanged: false, productChanged: false };
-    }
-
-    const setClauses = ["updated_at = now()"];
-    const params: unknown[] = [opportunityId];
-    if (stageChanging) {
-      params.push(to);
-      setClauses.push(`stage = $${params.length}`);
-      // Recomputed from `to`, not conditionally appended: entering a
-      // terminal stage sets these, but LEAVING one (Ruling 14's reverse
-      // transition) must clear them just as deliberately, or a corrected
-      // "lost" deal keeps its close date and reason forever.
-      setClauses.push(isTerminal(to) ? "closed_at = now()" : "closed_at = NULL");
-      params.push(to === "lost" ? lostReason : null);
-      setClauses.push(`lost_reason = $${params.length}`);
-    }
-    if (productChanging) {
-      params.push(product);
-      setClauses.push(`product = $${params.length}`);
-    }
-
-    await query(
-      `UPDATE crm_opportunities SET ${setClauses.join(", ")} WHERE id = $1`,
-      params,
-    );
-
-    if (stageChanging) {
-      await query(
-        `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
-         VALUES ($1, $2, 'stage_change', $3, $4, $5::jsonb)`,
-        [
-          current.organisation_id,
-          opportunityId,
-          actor,
-          `${current.stage} → ${to}`,
-          JSON.stringify({ from: current.stage, to }),
-        ],
-      );
-    } else if (productChanging) {
-      // Not a stage_change — the timeline's audience needs to be able to
-      // tell "the deal moved" from "someone re-pointed it to a different
-      // product without moving it" apart, which is exactly what a shared
-      // activity kind would erase.
-      await query(
-        `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body, metadata)
-         VALUES ($1, $2, 'note', $3, $4, $5::jsonb)`,
-        [
-          current.organisation_id,
-          opportunityId,
-          actor,
-          `Product set to ${product} (was ${current.product ?? "none"})`,
-          JSON.stringify({ productFrom: current.product, productTo: product }),
-        ],
-      );
-    }
-
-    return { stageChanged: stageChanging, productChanged: productChanging };
-  });
 }
 
 export interface SetNextActionInput {
@@ -865,8 +919,17 @@ export async function logActivity(input: LogActivityInput): Promise<void> {
  * Refuse an outbound kind if anyone at this organisation is on the
  * do-not-contact list. Read on the transaction's own client so the check and
  * the insert cannot straddle a concurrent suppression being added.
+ *
+ * Exported for the same reason as `advanceStageOnQuery`: "outbound contact is
+ * refused for a suppressed organisation" is a rule this file owns, and a
+ * second caller that needs it inside its own transaction (`crm-outreach.ts`,
+ * re-checking at commit what the preview could only promise about an older
+ * state) could either reimplement it or be handed it. Reimplementing means
+ * two copies of what counts as suppressed, and the copy that drifts is the
+ * one that lets a message reach someone who asked us to stop. It already
+ * takes a `query`, so handing it out costs nothing but the `export`.
  */
-async function assertNoSuppressedContact(
+export async function assertNoSuppressedContact(
   organisationId: string,
   query: TxQuery,
 ): Promise<void> {
