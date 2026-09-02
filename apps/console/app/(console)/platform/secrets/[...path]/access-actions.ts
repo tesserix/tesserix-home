@@ -63,7 +63,14 @@ import { PlatformApiError } from "@/lib/platform-api-error";
  */
 export type SecretsWriteResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
-const NO_PERMISSION_MESSAGE = "You don't have permission to change who can read this secret.";
+// Named by the capability the operator lacks, not by whichever of the five
+// operations `withAccessWrite` wraps was attempted (grant, revoke, delete,
+// destroy, restore) — the capability is the same for all five, so this
+// wording stays true as more callers join `withAccessWrite` and never needs
+// a per-operation update the way a message like "change who can read this
+// secret" would have (that sentence was accurate for grant/revoke and wrong
+// for delete/destroy/restore, which is how tesserix-home#495 happened).
+const NO_PERMISSION_MESSAGE = "You don't have the rotate-credentials capability this needs.";
 
 /**
  * Internal error text (a transport failure, a non-2xx status, a body that

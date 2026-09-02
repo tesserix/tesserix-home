@@ -36,7 +36,7 @@ import {
   revokeAccessAction,
 } from "./access-actions";
 
-const NO_PERMISSION = "You don't have permission to change who can read this secret.";
+const NO_PERMISSION = "You don't have the rotate-credentials capability this needs.";
 const NOT_SAVED = "That change was not saved.";
 
 function signIn(roles: readonly string[] | undefined) {
