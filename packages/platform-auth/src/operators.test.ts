@@ -55,12 +55,15 @@ describe("the platform operator allowlist", () => {
 });
 
 describe("capabilitiesFor", () => {
-  it("grants an allowlisted operator every capability", () => {
-    // Full access, regardless of what the identity provider granted — the
-    // console must not be unusable because a role assignment is missing.
-    expect(capabilitiesFor("samyak.rout@gmail.com", [], "")).toEqual([
-      ...CAPABILITIES,
-    ]);
+  it("no longer grants an allowlisted operator every capability", () => {
+    // Reversed deliberately. The old contract — full access regardless of the
+    // grant, so a missing role assignment could not make the console unusable
+    // — also made least privilege impossible and left #506's propose path and
+    // #483's notification unreachable, because `platform` without
+    // `rotate-credentials` could not exist. Entry is still the allowlist; the
+    // power now comes from the grant. See capabilitiesFor's comment for the
+    // accepted cost.
+    expect(capabilitiesFor("samyak.rout@gmail.com", [], "")).toEqual([]);
   });
 
   it("narrows everyone else to the roles the provider actually granted", () => {
@@ -74,5 +77,49 @@ describe("capabilitiesFor", () => {
     expect(capabilitiesFor("someone.else@gmail.com", ["admin", "*"], "")).toEqual(
       [],
     );
+  });
+});
+
+describe("an allowlisted operator's POWER comes from their grant, not the list", () => {
+  // The allowlist is the DOOR. It used to be the door and the keys: an
+  // allowlisted address held every capability by construction, which made two
+  // things impossible at once — least privilege for anyone, and the
+  // propose-only operator that the secrets surface was built for (#506, #483).
+  // Entry is unchanged; only the power derived from it moves to Zitadel.
+  const listed = "samyak.rout@gmail.com";
+
+  it("gives an allowlisted operator exactly the capabilities they were granted", () => {
+    expect(capabilitiesFor(listed, ["read", "platform"])).toEqual([
+      "read",
+      "platform",
+    ]);
+  });
+
+  it("no longer promotes an allowlisted operator to every capability", () => {
+    // The specific regression this closes: `platform` without
+    // `rotate-credentials` was unreachable, so the console could never render
+    // the propose path and #483's notification had no possible recipient.
+    expect(capabilitiesFor(listed, ["read", "platform"])).not.toContain(
+      "rotate-credentials",
+    );
+  });
+
+  it("gives an allowlisted operator with no grant no capabilities", () => {
+    // Accepted trade, stated rather than discovered: they can still sign in —
+    // entry is the allowlist — but they arrive able to do nothing until a
+    // grant exists. Previously they arrived able to do everything.
+    expect(capabilitiesFor(listed, [])).toEqual([]);
+    expect(capabilitiesFor(listed, undefined as unknown as string[])).toEqual([]);
+  });
+
+  it("still narrows to the known vocabulary", () => {
+    expect(capabilitiesFor(listed, ["read", "not-a-capability", "*"])).toEqual([
+      "read",
+    ]);
+  });
+
+  it("treats a non-allowlisted identity exactly as before", () => {
+    expect(capabilitiesFor("someone.else@gmail.com", ["read"])).toEqual(["read"]);
+    expect(capabilitiesFor("someone.else@gmail.com", [])).toEqual([]);
   });
 });
