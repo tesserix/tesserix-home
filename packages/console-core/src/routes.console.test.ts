@@ -309,15 +309,20 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
     // `platform.onboardingSessions` (/platform/onboarding/sessions) is nested
     // under `platform.onboarding` but is deliberately absent from the rail.
     // An entry an operator cannot see must not put out the one they can.
+    // Uses the real rail-derived `railRoutes`, not a hand-written list, so
+    // this fails the day `platform.onboardingSessions` joins the rail — the
+    // exact change that would break the behaviour being pinned here.
     expect(
       isMostSpecificActiveRoute(
         "/platform/onboarding/sessions",
         "platform.onboarding",
-        ["platform.onboarding"],
+        railRoutes,
         "console",
       ),
     ).toBe(true);
-    // ...and with it present, the more specific one wins as usual.
+    // ...and if it ever did join a rail, the more specific one would win
+    // instead — a hand-built list stands in here since the real rail
+    // excludes it by design.
     expect(
       isMostSpecificActiveRoute(
         "/platform/onboarding/sessions",

@@ -114,8 +114,29 @@ describe("SecretValueField", () => {
     expect(field).toContainElement(screen.getByRole("button", { name: /copy value/i }));
     expect(field).not.toContainElement(screen.getByRole("button", { name: /generate/i }));
     // Without reserved padding a long revealed value runs underneath the two
-    // buttons overlaying the field.
-    expect(value.className).toMatch(/\bpr-/);
+    // buttons overlaying the field. `pr-1` would also match `/\bpr-/` and
+    // would not clear the ~68px the two icon-sm buttons occupy, so pin the
+    // exact class the component sets rather than merely "some padding".
+    expect(value.className).toMatch(/\bpr-\[4\.5rem\]/);
+  });
+
+  it("shows the retrieval-window hint unconditionally — before typing, after typing, and after Generate", () => {
+    // Spec §7: this sentence must render identically for a pasted value and
+    // a generated one, and must already be present before anything is
+    // typed. A rejected earlier version only showed it after Generate was
+    // clicked, on the reasoning that a pasted value "probably" has another
+    // copy somewhere — review flagged that as unsupported. This pins the
+    // unconditional behaviour so that regression can't come back silently.
+    render(<ControlledField />);
+    const hint = /this is the only moment it can be retrieved/i;
+
+    expect(screen.getByText(hint)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^value$/i), { target: { value: "hunter2" } });
+    expect(screen.getByText(hint)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /generate/i }));
+    expect(screen.getByText(hint)).toBeInTheDocument();
   });
 
   it("sets autoComplete to new-password, not off — Chrome ignores off on credential-classified inputs", () => {
