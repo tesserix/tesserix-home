@@ -375,6 +375,33 @@ describe("parseProposals", () => {
 
   // Absence is legal, a wrong TYPE is not — a drifted upstream sending a
   // number must surface as a parse failure, not silently read as "absent".
+  // secrets-api finds merged proposals through GitHub's search API, which
+  // never returns head.ref — so `branch` (and `author`, which was only ever
+  // the token owner) come back empty on merged results. That is a contract
+  // this parser has to keep accepting: tightening either field to
+  // "non-empty string" would make every merged notification vanish, silently,
+  // because the console's merged leg swallows a parse failure to []. See #513.
+  it("accepts the empty branch and author that a merged proposal carries", () => {
+    const [p] = parseProposals({
+      pulls: [
+        {
+          number: 7,
+          title: "chore(openbao): grant ns/app",
+          url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+          branch: "",
+          author: "",
+          targets: ["ns/app"],
+          requestedBy: "subject-9",
+          mergedAt: "2026-09-01T10:00:00Z",
+        },
+      ],
+    });
+    expect(p?.branch).toBe("");
+    expect(p?.author).toBe("");
+    expect(p?.requestedBy).toBe("subject-9");
+    expect(p?.mergedAt).toBe("2026-09-01T10:00:00Z");
+  });
+
   it("rejects a non-string requestedBy rather than treating it as absent", () => {
     expect(() => parseProposals({ pulls: [pull({ requestedBy: 123 })] })).toThrow();
   });
