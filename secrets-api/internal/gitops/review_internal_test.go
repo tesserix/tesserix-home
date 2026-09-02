@@ -44,6 +44,7 @@ func TestParseTargetsStillWorks(t *testing.T) {
 		t.Fatalf("targets = %v, want [ns/a ns/b]", got)
 	}
 }
+
 // stubSearchServer serves a single fixed /search/issues response and records
 // every request path it received. Recording ALL of them, not just the last, is
 // what lets the tests below assert that the merged listing issues exactly one
