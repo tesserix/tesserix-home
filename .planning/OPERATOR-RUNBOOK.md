@@ -22,8 +22,71 @@ kubectl get ns tesserix mark8ly
 
 ## Step 1 — apply migrations
 
-All four migrations are additive and idempotent (`IF NOT EXISTS` on
-columns, `ON CONFLICT DO NOTHING` on seeds), so re-running is safe.
+### The rule: every migration must be safe to re-run
+
+Not "these ones are" — **all of them, without exception**. `db-migrate.mjs`
+applies files in strict version order and `exit(1)`s on the first one that
+throws, so a migration that cannot survive meeting its own effect a second
+time does not just fail itself: it wedges the runner, and **every migration
+after it silently stops being applied**. There is no partial progress and no
+warning — the next release's schema change simply never lands, and the
+symptom surfaces later as an unrelated feature erroring on a table that does
+not exist.
+
+So a new migration must use `IF NOT EXISTS` on every `CREATE`/`ADD COLUMN`,
+`ON CONFLICT DO NOTHING` on every seed, and a `WHERE`-guarded predicate on
+every data write. Not all existing migrations meet this bar (see
+tesserix-home#509); the ones that do not are only safe because their versions
+are recorded, which is precisely the assumption the recovery below exists for.
+
+### If a migration fails with "already exists"
+
+**Do not retry the run.** Retrying replays the identical statement and fails
+identically. An `already exists` / `duplicate key` failure is not a transient
+error — it is the ledger telling you it is BEHIND the schema: the migration's
+effect was applied out-of-band (by hand, by a restore, by an older deploy) and
+never written to `schema_migrations`. The fix is to reconcile the ledger, not
+to re-run.
+
+This happened on 2026-09-01: `0040_operator_capabilities.sql` failed on
+`column "capabilities" ... already exists`, and 0041, 0042 and 0043 — one of
+them a DPDP erasure table — had been blocked behind it for weeks.
+
+1. **Verify the effect is genuinely present** — for each blocked version, read
+   the file and confirm in the database that what it does has already been
+   done. Do this per version and per statement; do not infer version N+1 from
+   version N. Columns: `\d <table>`. Tables: `\dt`. Data statements: run the
+   predicate as a `SELECT` and confirm it matches zero rows.
+
+   ```bash
+   kubectl exec -n tesserix pod/tesserix-postgres-1 -c postgres -- \
+     env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin \
+     -d tesserix_admin -c "\d operator_api_tokens"
+   ```
+
+2. **If an effect is missing, stop.** The schema is in a partially-applied
+   state and recording the version would bury that permanently. Apply the
+   remaining statements by hand first, then record.
+
+3. **Record the verified versions**, and only those:
+
+   ```bash
+   kubectl exec -i -n tesserix pod/tesserix-postgres-1 -c postgres -- \
+     env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin \
+     -d tesserix_admin -c \
+     "INSERT INTO schema_migrations (version, name) VALUES
+        (40, 'operator_capabilities') ON CONFLICT DO NOTHING;"
+   ```
+
+4. **Re-run `npm run db:migrate`** and watch it get past the blockage. It
+   should now apply everything downstream. Confirm the last line reports the
+   count you expect rather than `no pending migrations`.
+
+5. **Check how far behind the ledger was**, because the gap is the real
+   finding — `SELECT max(version) FROM schema_migrations` should equal the
+   highest `NNNN` in `apps/web/db/migrations/`. A gap of more than one means
+   features have been shipping against a schema that was never applied, and
+   each one needs checking.
 
 ### 1.1 — tesserix-postgres (super-admin DB)
 
