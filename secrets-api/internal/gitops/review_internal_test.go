@@ -44,18 +44,17 @@ func TestParseTargetsStillWorks(t *testing.T) {
 		t.Fatalf("targets = %v, want [ns/a ns/b]", got)
 	}
 }
-
-// stubMergedPullsServer serves a single fixed /pulls response and records the
-// last request path+query it received. It mirrors gitops_test's stubGitHub,
-// but lives here because MergedPulls' tests construct pullResource-shaped
-// stub bodies and rely on unexported constants (pullPageSize) that
-// gitops_test cannot see.
-func stubMergedPullsServer(t *testing.T, handle func(*http.Request) (int, any)) (*GitHub, func() string) {
+// stubSearchServer serves a single fixed /search/issues response and records
+// every request path it received. Recording ALL of them, not just the last, is
+// what lets the tests below assert that the merged listing issues exactly one
+// request — the property whose absence made this endpoint spend ~4s of the
+// console's 5s budget walking 400 pull requests to find none (#513).
+func stubSearchServer(t *testing.T, handle func(*http.Request) (int, any)) (*GitHub, func() []string) {
 	t.Helper()
-	var lastPath string
+	var paths []string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		lastPath = r.URL.String()
+		paths = append(paths, r.URL.String())
 		status, body := handle(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -70,15 +69,32 @@ func stubMergedPullsServer(t *testing.T, handle func(*http.Request) (int, any)) 
 		Branch:  "main",
 		Token:   "test-token",
 	})
-	return client, func() string { return lastPath }
+	return client, func() []string { return paths }
 }
 
-func mergedPullsFromStub(t *testing.T, stub []map[string]any, since time.Time) []PullRequest {
-	t.Helper()
-	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
-		return http.StatusOK, stub
-	})
+// searchItem builds one /search/issues result. Search does NOT return
+// head.ref, which is why the console-raised check reads the body trailer
+// instead of the branch name.
+func searchHit(number int, mergedAt, body string) map[string]any {
+	return map[string]any{
+		"number":     number,
+		"title":      fmt.Sprintf("chore(openbao): grant ns/app-%d", number),
+		"html_url":   fmt.Sprintf("https://github.com/tesserix/tesserix-k8s/pull/%d", number),
+		"body":       body,
+		"created_at": "2026-08-20T09:00:00Z",
+		"pull_request": map[string]any{
+			"merged_at": mergedAt,
+		},
+	}
+}
 
+func searchResponse(items ...map[string]any) map[string]any {
+	return map[string]any{"total_count": len(items), "items": items}
+}
+
+func mergedFromSearch(t *testing.T, resp any, since time.Time) []PullRequest {
+	t.Helper()
+	client, _ := stubSearchServer(t, func(r *http.Request) (int, any) { return http.StatusOK, resp })
 	got, err := client.MergedPulls(context.Background(), since)
 	if err != nil {
 		t.Fatalf("MergedPulls: %v", err)
@@ -86,228 +102,163 @@ func mergedPullsFromStub(t *testing.T, stub []map[string]any, since time.Time) [
 	return got
 }
 
-func capturedPathFromStub(t *testing.T) string {
-	t.Helper()
-	client, path := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
-		return http.StatusOK, []map[string]any{}
+const consoleBody = "summary\n\nrequested-by: subject-9\nwhitelist: ns/app"
+
+func windowStart() time.Time { return time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC) }
+
+// The regression guard for #513. The endpoint was slow because it walked
+// closed pull requests a page at a time and filtered by branch prefix in Go —
+// four sequential round trips scanning 400 pull requests to find none. This
+// pins the fix at the level that caused the problem: one request, and none of
+// them to /pulls. A wall-clock assertion would be flaky and would not say WHY
+// it got slow; a request count says exactly that.
+func TestMergedPullsIssuesOneSearchRequestRatherThanWalkingPages(t *testing.T) {
+	client, paths := stubSearchServer(t, func(r *http.Request) (int, any) {
+		return http.StatusOK, searchResponse(searchHit(1, "2026-08-25T10:00:00Z", consoleBody))
 	})
 
-	if _, err := client.MergedPulls(context.Background(), time.Now()); err != nil {
+	if _, err := client.MergedPulls(context.Background(), windowStart()); err != nil {
 		t.Fatalf("MergedPulls: %v", err)
 	}
-	return path()
+
+	got := paths()
+	if len(got) != 1 {
+		t.Fatalf("issued %d requests (%v), want exactly 1", len(got), got)
+	}
+	if !strings.HasPrefix(got[0], "/search/issues") {
+		t.Fatalf("request went to %q, want /search/issues", got[0])
+	}
+	for _, p := range got {
+		if strings.Contains(p, "/pulls?") {
+			t.Fatalf("fell back to a page walk: %q", p)
+		}
+	}
 }
 
-func TestMergedPullsRejectsClosedButUnmerged(t *testing.T) {
-	// Two closed pull requests on secret-service branches; only one merged.
-	// A rejected proposal must never produce a "your request is live" event.
-	stub := []map[string]any{
-		{"number": 1, "head": map[string]any{"ref": "secret-service/a"}, "merged_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-01T10:00:00Z", "body": "requested-by: s1"},
-		{"number": 2, "head": map[string]any{"ref": "secret-service/b"}, "merged_at": nil, "updated_at": "2026-09-01T10:00:00Z", "body": "requested-by: s2"},
+// The query must narrow server-side. Every qualifier here removes work the old
+// implementation did in Go, and `merged:>=` is what replaces the page walk's
+// `since` early return.
+func TestMergedPullsNarrowsTheSearchServerSide(t *testing.T) {
+	client, paths := stubSearchServer(t, func(r *http.Request) (int, any) {
+		return http.StatusOK, searchResponse()
+	})
+
+	if _, err := client.MergedPulls(context.Background(), windowStart()); err != nil {
+		t.Fatalf("MergedPulls: %v", err)
 	}
-	got := mergedPullsFromStub(t, stub, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
+
+	query := paths()[0]
+	for _, want := range []string{
+		"repo%3Atesserix%2Ftesserix-k8s",
+		"is%3Apr",
+		"is%3Amerged",
+		"base%3Amain",
+		"head%3Asecret-service",
+		"merged%3A%3E%3D2026-08-01",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("query %q is missing %q", query, want)
+		}
+	}
+}
+
+// GitHub tokenises `head:`, so it narrows but does not guarantee: measured,
+// `head:secret-service` and `head:secret-service/grant` return the same set.
+// The console-raised check is therefore the body trailer, which only the
+// console writes — a stronger marker than the branch name it replaces.
+func TestMergedPullsRejectsAPullRequestTheConsoleDidNotRaise(t *testing.T) {
+	got := mergedFromSearch(t, searchResponse(
+		searchHit(1, "2026-08-25T10:00:00Z", consoleBody),
+		searchHit(2, "2026-08-25T11:00:00Z", "a human wrote this one by hand"),
+	), windowStart())
+
 	if len(got) != 1 || got[0].Number != 1 {
 		t.Fatalf("got %+v, want only pull 1", got)
 	}
 }
 
-func TestMergedPullsRejectsForeignBranches(t *testing.T) {
-	// A human's own merged pull request against the same base is none of the
-	// console's business, exactly as Pulls' branch filter already decides.
-	stub := []map[string]any{
-		{"number": 3, "head": map[string]any{"ref": "chore/tidy"}, "merged_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-01T10:00:00Z", "body": ""},
-	}
-	if got := mergedPullsFromStub(t, stub, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)); len(got) != 0 {
-		t.Fatalf("got %+v, want none", got)
+// `merged:>=` is day-granular, so a merge earlier on the boundary day comes
+// back from GitHub and must still be excluded here.
+func TestMergedPullsRejectsAMergeOlderThanSince(t *testing.T) {
+	since := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	got := mergedFromSearch(t, searchResponse(
+		searchHit(1, "2026-08-01T18:00:00Z", consoleBody),
+		searchHit(2, "2026-08-01T06:00:00Z", consoleBody),
+	), since)
+
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("got %+v, want only pull 1", got)
 	}
 }
 
-func TestMergedPullsStopsAtSince(t *testing.T) {
-	// The walk is bounded by time, not by a page count: closed pull requests
-	// accumulate forever, so a page bound would silently start missing recent
-	// merges as history grows.
-	stub := []map[string]any{
-		{"number": 4, "head": map[string]any{"ref": "secret-service/a"}, "merged_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-01T10:00:00Z", "body": "requested-by: s1"},
-		{"number": 5, "head": map[string]any{"ref": "secret-service/b"}, "merged_at": "2026-01-01T10:00:00Z", "updated_at": "2026-01-01T10:00:00Z", "body": "requested-by: s2"},
-	}
-	got := mergedPullsFromStub(t, stub, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
-	if len(got) != 1 || got[0].Number != 4 {
-		t.Fatalf("got %+v, want only pull 4", got)
-	}
-}
+func TestMergedPullsRejectsAnUnmergedResult(t *testing.T) {
+	// is:merged should prevent this, but a null merged_at must never become a
+	// "your request is live" notification if one slips through.
+	got := mergedFromSearch(t, searchResponse(
+		searchHit(1, "2026-08-25T10:00:00Z", consoleBody),
+		map[string]any{
+			"number": 2, "title": "t", "html_url": "https://example.com/2",
+			"body": consoleBody, "created_at": "2026-08-20T09:00:00Z",
+			"pull_request": map[string]any{"merged_at": nil},
+		},
+	), windowStart())
 
-// TestMergedPullsStopsRequestingPagesOnceItCrossesSince is the test that
-// actually carries this task's central claim: the walk is bounded by
-// `since`, not by page count. TestMergedPullsStopsAtSince above serves only
-// two items, so it always exits through the "short page" branch and never
-// reaches the `since` early-return at all — deleting that branch would not
-// fail it. Here the stub serves a FULL page (pullPageSize items), some
-// updated before `since` and some after, so only the early-return can stop
-// the walk short of a second page. Both the returned set and the request
-// count are asserted: the count is what tells "stopped early because of
-// since" apart from "ran out of pages by coincidence".
-func TestMergedPullsStopsRequestingPagesOnceItCrossesSince(t *testing.T) {
-	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-
-	const qualifying = 3
-	batch := make([]map[string]any, pullPageSize)
-	for i := range batch {
-		// GitHub serves this page sorted by updated, newest first, so the
-		// qualifying (after `since`) items lead and the rest trail behind
-		// the point where the walk must stop.
-		updatedAt, mergedAt := "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z"
-		if i < qualifying {
-			updatedAt, mergedAt = "2026-09-01T10:00:00Z", "2026-09-01T10:00:00Z"
-		}
-		batch[i] = map[string]any{
-			"number":     i + 1,
-			"head":       map[string]any{"ref": "secret-service/a"},
-			"merged_at":  mergedAt,
-			"updated_at": updatedAt,
-			"body":       fmt.Sprintf("requested-by: s%d", i+1),
-		}
-	}
-
-	requests := 0
-	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
-		requests++
-		return http.StatusOK, batch
-	})
-
-	got, err := client.MergedPulls(context.Background(), since)
-	if err != nil {
-		t.Fatalf("MergedPulls: %v", err)
-	}
-	if len(got) != qualifying {
-		t.Fatalf("got %d pulls, want %d", len(got), qualifying)
-	}
-	if requests != 1 {
-		t.Fatalf("made %d requests, want 1 — the walk should stop once it crosses `since`, not because a page ran short", requests)
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("got %+v, want only pull 1", got)
 	}
 }
 
 func TestMergedPullsCarriesRequesterAndMergedAt(t *testing.T) {
-	stub := []map[string]any{
-		{"number": 6, "head": map[string]any{"ref": "secret-service/a"}, "merged_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-01T10:00:00Z", "body": "requested-by: subject-9\nwhitelist: ns/app"},
-	}
-	got := mergedPullsFromStub(t, stub, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
+	got := mergedFromSearch(t, searchResponse(
+		searchHit(7, "2026-08-25T10:00:00Z", consoleBody),
+	), windowStart())
+
 	if len(got) != 1 {
 		t.Fatalf("got %d pulls, want 1", len(got))
 	}
 	if got[0].RequestedBy != "subject-9" {
 		t.Fatalf("RequestedBy = %q, want subject-9", got[0].RequestedBy)
 	}
-	if !got[0].MergedAt.Equal(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)) {
-		t.Fatalf("MergedAt = %v, want 2026-09-01T10:00:00Z", got[0].MergedAt)
+	if !got[0].MergedAt.Equal(time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("MergedAt = %v, want 2026-08-25T10:00:00Z", got[0].MergedAt)
+	}
+	if len(got[0].Targets) != 1 || got[0].Targets[0] != "ns/app" {
+		t.Fatalf("Targets = %v, want [ns/app]", got[0].Targets)
 	}
 }
 
-// TestMergedPullsWalksEveryPageRatherThanReturningOnlyTheLast mirrors
-// TestPullsWalksEveryPageRatherThanTruncatingAtAHundred in review_test.go.
-// Every other MergedPulls test either serves a short page (exits on page 1),
-// stops at page 1 via `since`, or serves pullPageSize full pages until the
-// bound error fires (which discards `out` entirely) — none of them would
-// notice `out := make(...)` moved inside the page loop, which drops every
-// page but the last. Here both pages are served in full and both are within
-// `since`, so only walking every page and accumulating across them produces
-// the right count.
-func TestMergedPullsWalksEveryPageRatherThanReturningOnlyTheLast(t *testing.T) {
-	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+func TestMergedPullsSortsNewestFirst(t *testing.T) {
+	got := mergedFromSearch(t, searchResponse(
+		searchHit(1, "2026-08-20T10:00:00Z", consoleBody),
+		searchHit(2, "2026-08-26T10:00:00Z", consoleBody),
+		searchHit(3, "2026-08-23T10:00:00Z", consoleBody),
+	), windowStart())
 
-	firstPage := make([]map[string]any, pullPageSize)
-	for i := range firstPage {
-		firstPage[i] = map[string]any{
-			"number":     i + 1,
-			"head":       map[string]any{"ref": "secret-service/a"},
-			"merged_at":  "2026-09-01T10:00:00Z",
-			"updated_at": "2026-09-01T10:00:00Z",
-			"body":       fmt.Sprintf("requested-by: s%d", i+1),
-		}
+	if len(got) != 3 || got[0].Number != 2 || got[1].Number != 3 || got[2].Number != 1 {
+		t.Fatalf("order = %v, want [2 3 1]", []int{got[0].Number, got[1].Number, got[2].Number})
 	}
-	const secondPageCount = 7
-	secondPage := make([]map[string]any, secondPageCount)
-	for i := range secondPage {
-		secondPage[i] = map[string]any{
-			"number":     pullPageSize + i + 1,
-			"head":       map[string]any{"ref": "secret-service/b"},
-			"merged_at":  "2026-08-01T10:00:00Z",
-			"updated_at": "2026-08-01T10:00:00Z",
-			"body":       fmt.Sprintf("requested-by: t%d", i+1),
-		}
-	}
+}
 
-	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
-		switch r.URL.Query().Get("page") {
-		case "1":
-			return http.StatusOK, firstPage
-		case "2":
-			return http.StatusOK, secondPage
-		default:
-			t.Errorf("MergedPulls asked for page %q after a short page", r.URL.Query().Get("page"))
-			return http.StatusOK, []map[string]any{}
+// The page walk errored rather than returning a quietly truncated list. One
+// request cannot walk, but the same principle applies: if GitHub says there
+// are more results than it returned, say so rather than silently dropping the
+// remainder.
+func TestMergedPullsReportsTruncationRatherThanReturningAShortList(t *testing.T) {
+	client, _ := stubSearchServer(t, func(r *http.Request) (int, any) {
+		return http.StatusOK, map[string]any{
+			"total_count": 250,
+			"items":       []map[string]any{searchHit(1, "2026-08-25T10:00:00Z", consoleBody)},
 		}
 	})
 
-	got, err := client.MergedPulls(context.Background(), since)
-	if err != nil {
-		t.Fatalf("MergedPulls: %v", err)
-	}
-	if want := pullPageSize + secondPageCount; len(got) != want {
-		t.Fatalf("MergedPulls returned %d pulls, want all %d across both pages", len(got), want)
-	}
-
-	byNumber := make(map[int]bool, len(got))
-	for _, p := range got {
-		byNumber[p.Number] = true
-	}
-	if !byNumber[1] {
-		t.Error("missing pull 1 from the first page")
-	}
-	if !byNumber[pullPageSize+1] {
-		t.Errorf("missing pull %d from the second page", pullPageSize+1)
-	}
-}
-
-func TestMergedPullsRequestsClosedStateSortedByUpdated(t *testing.T) {
-	// Asserts the query itself: state=open would return nothing merged, and an
-	// unsorted walk cannot use `since` as its bound.
-	path := capturedPathFromStub(t)
-	for _, want := range []string{"state=closed", "sort=updated", "direction=desc"} {
-		if !strings.Contains(path, want) {
-			t.Fatalf("path %q missing %q", path, want)
-		}
-	}
-}
-
-// TestMergedPullsReportsTheBoundRatherThanReturningAShortList proves the walk
-// cannot loop forever: an upstream that keeps answering full pages of pull
-// requests all updated after `since` must produce an error, not a silently
-// truncated list. In ordinary operation `since` stops the walk long before
-// this; this test exists only to prove the backstop against a misbehaving
-// upstream actually fires, and fires loudly.
-func TestMergedPullsReportsTheBoundRatherThanReturningAShortList(t *testing.T) {
-	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
-		batch := make([]map[string]any, pullPageSize)
-		for i := range batch {
-			batch[i] = map[string]any{
-				"number":     i + 1,
-				"head":       map[string]any{"ref": "secret-service/a"},
-				"merged_at":  "2026-09-01T10:00:00Z",
-				"updated_at": "2026-09-01T10:00:00Z",
-				"body":       "requested-by: s1",
-			}
-		}
-		return http.StatusOK, batch
-	})
-
-	got, err := client.MergedPulls(context.Background(), time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC))
+	got, err := client.MergedPulls(context.Background(), windowStart())
 	if err == nil {
-		t.Fatalf("MergedPulls returned %d pulls and no error, want the truncation reported", len(got))
+		t.Fatalf("returned %d pulls and no error, want an error naming the truncation", len(got))
 	}
 	if got != nil {
-		t.Errorf("MergedPulls returned %d pulls alongside the error; a partial list reads as complete", len(got))
+		t.Fatalf("returned %v alongside the error, want nil", got)
 	}
-	if !strings.Contains(err.Error(), "truncated") {
-		t.Errorf("error = %v, want it to say the list would be truncated", err)
+	if !strings.Contains(err.Error(), "250") {
+		t.Fatalf("error %q does not name how many results were found", err)
 	}
 }

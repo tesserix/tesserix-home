@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -77,6 +78,42 @@ type pullResource struct {
 	// request, and a zero time.Time after parsing cannot be told apart from a
 	// parse failure. The merged filter tests this pointer, not a zero value.
 	MergedAt *string `json:"merged_at"`
+}
+
+// searchPage is GitHub's /search/issues response. It carries everything the
+// merged listing needs — number, title, url, body (and therefore both
+// trailers), and the merge time — with ONE exception: search never returns
+// head.ref, so PullRequest.Branch is left empty for merged results. That is
+// deliberate rather than an oversight: the console parses branch as a string
+// (empty is valid) and renders it only on the proposal detail view, which
+// fetches through Pull() and does have it.
+type searchPage struct {
+	TotalCount int          `json:"total_count"`
+	Items      []searchItem `json:"items"`
+}
+
+type searchItem struct {
+	Number      int    `json:"number"`
+	Title       string `json:"title"`
+	HTMLURL     string `json:"html_url"`
+	Body        string `json:"body"`
+	CreatedAt   string `json:"created_at"`
+	PullRequest struct {
+		MergedAt *string `json:"merged_at"`
+	} `json:"pull_request"`
+}
+
+func (s searchItem) toPullRequest() PullRequest {
+	created, _ := time.Parse(time.RFC3339, s.CreatedAt)
+	return PullRequest{
+		Number:      s.Number,
+		Title:       s.Title,
+		URL:         s.HTMLURL,
+		Author:      "",
+		RequestedBy: trailerValue(s.Body, requesterTrailer),
+		CreatedAt:   created,
+		Targets:     parseTargets(s.Body),
+	}
 }
 
 func (p pullResource) toPullRequest() PullRequest {
@@ -181,53 +218,70 @@ const maxMergedPullPages = 50
 // MergedPulls lists console-raised proposals merged since the given time,
 // newest first.
 //
-// The walk is bounded by `since` rather than by a page count, and that
-// differs from Pulls deliberately. Pulls' maxPullPages describes a state that
-// should never occur — a thousand simultaneously OPEN pull requests is an
-// incident, not a review queue. Closed pull requests carry no such ceiling:
-// they accumulate for the life of the repository, so a page bound here would
-// silently begin missing recent merges as history grows. That is the same
-// quietly-truncated-list failure Pulls' own comment exists to remove.
-// maxMergedPullPages is a separate, much larger backstop against a
-// misbehaving upstream; see its comment.
+// This asks GitHub's search API one question instead of walking closed pull
+// requests a page at a time, and the difference is not academic. The walk
+// could not filter by branch prefix server-side — GitHub has no such
+// qualifier on the list endpoint — so it fetched every closed pull request in
+// the window and discarded almost all of them in Go. Measured against
+// tesserix-k8s on 2026-09-02: four sequential round trips, 400 pull requests
+// scanned, zero of them console-raised, ~4 seconds. The console aborts this
+// leg at five, and the abort is swallowed to an empty feed, so an operator
+// whose access request had just gone live would simply never be told (#513).
+//
+// `head:` narrows but does not decide. GitHub tokenises it — measured,
+// `head:secret-service` and `head:secret-service/grant` return the same set —
+// so it is a hint to the server, and the authority on "did the console raise
+// this" is the whitelist trailer in the body, which only the console writes.
+// That is a stronger test than the branch name it replaces: a branch can be
+// named anything, the trailer is a format this package owns.
+//
+// `merged:>=` is day-granular, so the window is re-applied precisely below;
+// the qualifier is there to shrink the response, not to be the last word.
 func (g *GitHub) MergedPulls(ctx context.Context, since time.Time) ([]PullRequest, error) {
-	out := make([]PullRequest, 0, pullPageSize)
+	query := fmt.Sprintf("repo:%s/%s is:pr is:merged base:%s head:%s merged:>=%s",
+		g.cfg.Owner, g.cfg.Repo, g.cfg.Branch, strings.TrimSuffix(branchPrefix, "/"),
+		since.UTC().Format("2006-01-02"))
 
-	for page := 1; page <= maxMergedPullPages; page++ {
-		var batch []pullResource
-		path := fmt.Sprintf("/repos/%s/%s/pulls?state=closed&per_page=%d&page=%d&base=%s&sort=updated&direction=desc",
-			g.cfg.Owner, g.cfg.Repo, pullPageSize, page, g.cfg.Branch)
-		if err := g.do(ctx, http.MethodGet, path, nil, &batch); err != nil {
-			return nil, err
-		}
+	path := fmt.Sprintf("/search/issues?q=%s&per_page=%d&sort=updated&order=desc",
+		url.QueryEscape(query), pullPageSize)
 
-		for _, p := range batch {
-			updated, err := time.Parse(time.RFC3339, p.UpdatedAt)
-			if err == nil && updated.Before(since) {
-				sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
-				return out, nil
-			}
-			if p.MergedAt == nil || !strings.HasPrefix(p.Head.Ref, branchPrefix) {
-				continue
-			}
-			merged, err := time.Parse(time.RFC3339, *p.MergedAt)
-			if err != nil || merged.Before(since) {
-				continue
-			}
-			pr := p.toPullRequest()
-			pr.MergedAt = merged
-			out = append(out, pr)
-		}
-
-		// A short page is the last page; GitHub fills every page but the last.
-		if len(batch) < pullPageSize {
-			sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
-			return out, nil
-		}
+	var page searchPage
+	if err := g.do(ctx, http.MethodGet, path, nil, &page); err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("gitops: %s/%s has more than %d closed pull requests updated since %s; the merged list would be truncated",
-		g.cfg.Owner, g.cfg.Repo, maxMergedPullPages*pullPageSize, since.Format(time.RFC3339))
+	// The walk this replaced reported hitting its bound rather than returning a
+	// short list, on the reasoning that a quietly truncated list is worse than
+	// none. One request cannot walk, but the same failure is available: if
+	// GitHub found more than it handed back, saying so is the only honest
+	// answer. Nine console proposals exist in total today, so a hundred is
+	// generous — reaching this means something changed that should be looked at.
+	if page.TotalCount > len(page.Items) {
+		return nil, fmt.Errorf("gitops: %s/%s has %d merged proposals since %s but one page returns %d; the merged list would be truncated",
+			g.cfg.Owner, g.cfg.Repo, page.TotalCount, since.Format(time.RFC3339), len(page.Items))
+	}
+
+	out := make([]PullRequest, 0, len(page.Items))
+	for _, item := range page.Items {
+		// Not console-raised. See the head: reasoning above.
+		if len(parseTargets(item.Body)) == 0 {
+			continue
+		}
+		if item.PullRequest.MergedAt == nil {
+			continue
+		}
+		merged, err := time.Parse(time.RFC3339, *item.PullRequest.MergedAt)
+		if err != nil || merged.Before(since) {
+			continue
+		}
+
+		pr := item.toPullRequest()
+		pr.MergedAt = merged
+		out = append(out, pr)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
+	return out, nil
 }
 
 func (g *GitHub) Pull(ctx context.Context, number int) (PullDetail, error) {
