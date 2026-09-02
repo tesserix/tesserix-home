@@ -12,7 +12,7 @@
  * and nothing else admits at all, so a stray grant cannot let anyone else in.
  */
 
-import { CAPABILITIES, toCapabilities, type Capability } from "./capabilities";
+import { toCapabilities, type Capability } from "./capabilities";
 
 /** The operators the console exists for, when no override is configured. */
 export const DEFAULT_PLATFORM_OPERATOR_EMAILS: readonly string[] = [
@@ -71,6 +71,13 @@ export function isPlatformOperator(
  * to admit themselves. Two independent grants are now required to get power
  * here: the allowlist for the door, a Zitadel role for each capability.
  *
+ * The signature takes ONLY the roles. It used to take the email and the raw
+ * allowlist too, and keeping them would leave a function whose parameters
+ * imply the identity still influences the answer — the misleading-interface
+ * shape this codebase keeps having to correct. Allowlist membership decides
+ * ADMISSION, in the callback; it no longer decides power, so it is not an
+ * input here.
+ *
  * ACCEPTED CONSEQUENCE, stated rather than discovered later: an allowlisted
  * operator whose project grant is missing now signs in able to do nothing,
  * where before they signed in able to do everything. That is the safer
@@ -78,9 +85,7 @@ export function isPlatformOperator(
  * broken console rather than as a permissions problem.
  */
 export function capabilitiesFor(
-  email: string | undefined | null,
   roles: readonly string[] | undefined | null,
-  raw?: string | undefined | null,
 ): Capability[] {
   // A missing roles claim is "no capabilities", not a crash. The allowlist
   // branch used to return before `roles` was ever read, so an absent claim was

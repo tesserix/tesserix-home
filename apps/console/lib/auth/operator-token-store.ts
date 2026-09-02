@@ -131,7 +131,7 @@ export interface OperatorTokensInput {
   accessExpiresAt: Date;
   refreshToken?: string | null;
   /**
-   * The mapped capability keys — `capabilitiesFor(email, roles)`'s OUTPUT, not
+   * The mapped capability keys — `capabilitiesFor(roles)`'s OUTPUT, not
    * the raw Zitadel roles. Two representations of one grant that can disagree
    * is the bug class tesserix-home#285 is about, so only the mapped form is
    * ever stored.

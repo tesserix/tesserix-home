@@ -275,7 +275,7 @@ export async function GET(request: NextRequest): Promise<Response> {
   // they start out agreeing — two `capabilitiesFor(...)` calls would be two
   // representations of one grant that can drift, which is exactly the failure
   // this issue is about.
-  const capabilities = capabilitiesFor(identity.email, identity.roles);
+  const capabilities = capabilitiesFor(identity.roles);
 
   const token = await signSession({
     sub: identity.sub,

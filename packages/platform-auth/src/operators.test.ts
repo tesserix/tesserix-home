@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { CAPABILITIES } from "./capabilities";
 import {
   DEFAULT_PLATFORM_OPERATOR_EMAILS,
   capabilitiesFor,
@@ -63,33 +62,37 @@ describe("capabilitiesFor", () => {
     // `rotate-credentials` could not exist. Entry is still the allowlist; the
     // power now comes from the grant. See capabilitiesFor's comment for the
     // accepted cost.
-    expect(capabilitiesFor("samyak.rout@gmail.com", [], "")).toEqual([]);
+    expect(capabilitiesFor([])).toEqual([]);
   });
 
   it("narrows everyone else to the roles the provider actually granted", () => {
-    expect(capabilitiesFor("someone.else@gmail.com", ["read", "crm"], "")).toEqual([
+    expect(capabilitiesFor(["read", "crm"])).toEqual([
       "read",
       "crm",
     ]);
   });
 
   it("drops roles the capability model does not know", () => {
-    expect(capabilitiesFor("someone.else@gmail.com", ["admin", "*"], "")).toEqual(
+    expect(capabilitiesFor(["admin", "*"])).toEqual(
       [],
     );
   });
 });
 
-describe("an allowlisted operator's POWER comes from their grant, not the list", () => {
+describe("capabilities come from the grant, and the grant alone", () => {
   // The allowlist is the DOOR. It used to be the door and the keys: an
   // allowlisted address held every capability by construction, which made two
   // things impossible at once — least privilege for anyone, and the
-  // propose-only operator that the secrets surface was built for (#506, #483).
-  // Entry is unchanged; only the power derived from it moves to Zitadel.
-  const listed = "samyak.rout@gmail.com";
+  // propose-only operator the secrets surface was built for (#506, #483).
+  //
+  // That the identity is no longer an input is now visible in the SIGNATURE:
+  // this function takes roles and nothing else, so "allowlisted" is not a case
+  // it can distinguish and these tests do not pretend to cover it. Admission
+  // is still the allowlist, and that property is tested where it is decided —
+  // `isInternal` above, and the callback's `not_internal` refusal.
 
   it("gives an allowlisted operator exactly the capabilities they were granted", () => {
-    expect(capabilitiesFor(listed, ["read", "platform"])).toEqual([
+    expect(capabilitiesFor(["read", "platform"])).toEqual([
       "read",
       "platform",
     ]);
@@ -99,7 +102,7 @@ describe("an allowlisted operator's POWER comes from their grant, not the list",
     // The specific regression this closes: `platform` without
     // `rotate-credentials` was unreachable, so the console could never render
     // the propose path and #483's notification had no possible recipient.
-    expect(capabilitiesFor(listed, ["read", "platform"])).not.toContain(
+    expect(capabilitiesFor(["read", "platform"])).not.toContain(
       "rotate-credentials",
     );
   });
@@ -108,18 +111,18 @@ describe("an allowlisted operator's POWER comes from their grant, not the list",
     // Accepted trade, stated rather than discovered: they can still sign in —
     // entry is the allowlist — but they arrive able to do nothing until a
     // grant exists. Previously they arrived able to do everything.
-    expect(capabilitiesFor(listed, [])).toEqual([]);
-    expect(capabilitiesFor(listed, undefined as unknown as string[])).toEqual([]);
+    expect(capabilitiesFor([])).toEqual([]);
+    expect(capabilitiesFor(undefined as unknown as string[])).toEqual([]);
   });
 
   it("still narrows to the known vocabulary", () => {
-    expect(capabilitiesFor(listed, ["read", "not-a-capability", "*"])).toEqual([
+    expect(capabilitiesFor(["read", "not-a-capability", "*"])).toEqual([
       "read",
     ]);
   });
 
   it("treats a non-allowlisted identity exactly as before", () => {
-    expect(capabilitiesFor("someone.else@gmail.com", ["read"])).toEqual(["read"]);
-    expect(capabilitiesFor("someone.else@gmail.com", [])).toEqual([]);
+    expect(capabilitiesFor(["read"])).toEqual(["read"]);
+    expect(capabilitiesFor([])).toEqual([]);
   });
 });
