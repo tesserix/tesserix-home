@@ -66,10 +66,14 @@ describe("RestoreVersionControl", () => {
       expect(screen.queryByRole("button", { name: /restore/i })).toBeNull();
     });
 
-    // `destroyed` alone is not a state KV v2 produces (its only path there is
-    // through `deleted`), but the ordering that makes the destroyed+deleted
-    // case above correct is only visible when the two flags disagree: a
-    // `deleted`-first check passes every other case in this block.
+    // Pins the contract that `destroyed` means no control WHATEVER `deleted`
+    // says — so a rewrite that folds the two guards into one composite
+    // condition (`destroyed && deleted`, say) cannot quietly narrow it.
+    // `destroyed` alone is not a state KV v2 produces, its only path there
+    // being through `deleted`; today this input is also caught by the
+    // `!deleted` guard, so this case is a contract pin rather than the thing
+    // that catches a missing `destroyed` guard — the destroyed-AND-deleted
+    // case above is what catches that.
     it("offers nothing for a destroyed version even when `deleted` is false", () => {
       renderControl({ version: 4, destroyed: true, deleted: false });
 

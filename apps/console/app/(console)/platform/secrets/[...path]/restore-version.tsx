@@ -29,16 +29,25 @@ export interface RestoreVersionControlProps {
  * recoverable — restore it from the Versions tab."
  *
  * Which versions it is offered for is the whole of this component's
- * judgement, and it mirrors `VersionStatusBadge`'s ordering deliberately:
- * `destroyed` is checked FIRST, because KV v2's only path to `destroyed`
- * passes through `deleted`, so a version carrying both flags is destroyed —
- * the more final fact — and a `deleted`-first check would offer Restore on
- * it. `secrets-api`'s `Restore` handler would then refuse, and a button that
- * cannot succeed is the same class of defect as copy pointing at a control
- * that does not exist.
+ * judgement: destroyed → nothing (unrecoverable), deleted → Restore,
+ * neither → nothing (there is nothing to restore on a live version).
  *
- * So: destroyed → nothing (unrecoverable), deleted → Restore, neither →
- * nothing (there is nothing to restore on a live version).
+ * THE `destroyed` GUARD BELOW MUST EXIST. That is the load-bearing fact
+ * about it — not where it sits. KV v2's only path to `destroyed` passes
+ * through `deleted`, so a destroyed version carries BOTH flags, and without
+ * its own guard it would fall to the `deleted` one and be offered Restore.
+ * `secrets-api`'s `Restore` handler refuses a destroyed version (see
+ * `restoreSecretVersionAction`'s doc comment), so that button could never
+ * succeed — the same class of defect as copy pointing at a control that
+ * does not exist, which is the defect this whole component was added to fix.
+ *
+ * Its POSITION relative to the `deleted` guard is not load-bearing, and no
+ * future reader should preserve the order at the cost of the guard: both
+ * guards return `null`, so swapping them changes nothing for any input.
+ * `VersionStatusBadge` in `secret-detail-view.tsx` is genuinely different —
+ * each of its branches renders DIFFERENT content, so a destroyed version
+ * reaching the `deleted` branch first would render the wrong label. Do not
+ * carry that rationale across to here; only the guard's existence matters.
  *
  * No typed-name confirmation, unlike the Destroy control in
  * `destroy-secret.tsx`: that confirmation exists because destroy cannot be

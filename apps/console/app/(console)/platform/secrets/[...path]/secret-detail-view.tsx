@@ -38,8 +38,12 @@ const STORE_LABEL: Record<SecretStore, string> = {
  * `destroyed` is checked first and renders its own label rather than falling
  * through to "Deleted": KV v2's only path to `destroyed` passes through
  * `deleted` first, so a version that is both must read as the more final of
- * the two facts, not the earlier one. `RestoreVersionControl` now mirrors
- * this exact ordering for the same reason — see its own doc comment.
+ * the two facts, not the earlier one. The ordering matters HERE because each
+ * branch renders different content. `RestoreVersionControl` makes the same
+ * destroyed-versus-deleted distinction, but its two guards both render
+ * nothing, so what matters there is that its `destroyed` guard EXISTS, not
+ * where it sits — see its own doc comment, and do not read this one as
+ * saying the two components share an ordering requirement.
  */
 export function VersionStatusBadge({ version }: { version: SecretVersion }) {
   if (version.destroyed) {
