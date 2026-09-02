@@ -189,8 +189,8 @@ func TestMergedIsRegisteredOnReadNotLive(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	read.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	if rec.Code == http.StatusNotFound {
-		t.Fatal("merged is not registered on the read group")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merged is not registered on the read group (code %d)", rec.Code)
 	}
 
 	rec = httptest.NewRecorder()
