@@ -141,8 +141,15 @@ Exposed as `GET /api/reviews/merged?since=<RFC3339>` in the `read` group — the
 `fetchMergedProposals(since, signal)` in `lib/secrets-api.ts`, with the same
 501/503-tolerant treatment as the proposals leg (`SECRETS_API_ORIGIN` unset answers
 501 before any network call; no review repository configured answers 503; neither is
-a bug and neither may cost the operator their ticket rows). Capped at `FEED_LIMIT`,
-`since` derived from `FEED_WINDOW_DAYS`.
+a bug and neither may cost the operator their ticket rows). Deliberately NOT capped
+at `FEED_LIMIT` here: `fetchMergedProposals` returns merges for EVERY operator, not
+just the caller's, and capping this leg before the recipient filter runs would apply
+`FEED_LIMIT` to the unfiltered superset — with 20+ merges in the window, an operator
+whose own merge sorted past index `FEED_LIMIT - 1` would never see it, no matter how
+recent. This starved an operator's own merge in exactly that shape and was removed
+for it. The recipient filter narrows this list to the caller's own items before
+`mergeEvents` applies `FEED_LIMIT` to the merged, already-filtered result, so the cap
+still holds, just later. `since` is derived from `FEED_WINDOW_DAYS`.
 
 `access_proposal_merged` joins `NOTIFICATION_KINDS`. The union's `assertNever` guard
 in the bell makes an unhandled variant a compile error, so the type system enforces
@@ -156,10 +163,20 @@ function visibleTo(item, capabilities) {
 }
 ```
 
-This cannot express "addressed to one person." Items gain an optional `recipientSub`;
-when it is present, visibility requires `recipientSub === auth.sub` **in addition to**
-the capability check. Capability-addressed kinds are unchanged — they carry no
-`recipientSub` and keep exactly today's behaviour.
+This cannot express "addressed to one person." `visibleTo` discriminates on
+`item.kind === "access_proposal_merged"`, not on `"recipientSub" in item`: presence
+alone is not a safe discriminator, because `recipientSub` is only optional-shaped in
+the union as a whole — `AccessProposalMergedNotification` declares it required, and
+no other member declares it at all. A future kind that declared an optional
+`recipientSub` for some other reason would silently take the "addressed to one
+person" branch under a presence check with no compile error anywhere; matching on
+the literal kind cannot be perturbed that way, because adding a kind to the union
+without teaching `visibleTo` about it is exactly what `CAPABILITY_FOR_KIND` being a
+`Record<NotificationKind, Capability>` already forces a decision on. For
+`access_proposal_merged`, visibility requires `recipientSub === auth.sub` **in
+addition to** the capability check. Capability-addressed kinds are unchanged — the
+kind check routes them past the recipient comparison entirely, keeping exactly
+today's behaviour.
 
 `CAPABILITY_FOR_KIND` gains `access_proposal_merged: "platform"`. Not
 `rotate-credentials`: the proposer this serves holds `platform` and, by the premise of
@@ -189,6 +206,15 @@ applied.
 The outcome for pre-existing proposals is that merging them produces no notification.
 That is correct and needs no backfill: the notification answers "your request is
 live," and nobody is waiting on a bell that did not exist when they filed.
+
+**`GET /api/reviews/merged` is not a confidentiality boundary.** It returns the
+UNFILTERED superset — every operator's `requestedBy` — to any `platform` holder;
+the recipient property ("this item is yours") lives entirely in `route.ts`'s
+`visibleTo`, on the console side. This is acceptable — the same `requested-by:`
+line is already in the pull request body in `tesserix-k8s`, readable by anyone with
+repo access — but it means the console-side filter is an ADDRESSING/noise property,
+not an access-control boundary. A future caller of this endpoint that skips
+`route.ts` gets every operator's requester data, not just its own.
 
 ## Testing
 
