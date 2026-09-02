@@ -491,4 +491,65 @@ describe("copyAndLogDm — what sending a DM implies", () => {
     expect(change.rows[0].from_stage).toBe("new");
     expect(change.rows[0].to_stage).toBe("contacted");
   });
+
+  /**
+   * #502 — a default, not a rule, on this path as well as the composer's.
+   *
+   * This statement assigned `now() + 4 days` unconditionally, so an operator
+   * who had deliberately parked a lead ("check back in a month") lost that
+   * decision the moment anyone sent it a template. The plain activity log
+   * learned to leave a future date alone; two paths writing one column by two
+   * rules is a difference no operator could predict, so both now run the same
+   * `nextActionAssignment` fragment.
+   *
+   * The note is asserted too, and that is the half a date-only test would
+   * miss: leaving the date but rewriting the note to name this template
+   * describes a plan nobody made.
+   */
+  it("leaves a future next action, and its note, exactly where the operator put them", async () => {
+    const parked = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.query(
+      `UPDATE crm_opportunities
+          SET next_action_at = $2, next_action_note = 'Ring after the season'
+        WHERE id = $1`,
+      [opportunityId, parked.toISOString()],
+    );
+
+    await logVerbatim();
+
+    const opp = await db.query<{ next_action_at: Date; next_action_note: string | null }>(
+      `SELECT next_action_at, next_action_note FROM crm_opportunities WHERE id = $1`,
+      [opportunityId],
+    );
+    const daysOut =
+      (new Date(opp.rows[0].next_action_at).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    expect(Math.round(daysOut)).toBe(30);
+    expect(opp.rows[0].next_action_note).toBe("Ring after the season");
+
+    // And the DM was still recorded — respecting the date is not the same as
+    // declining to log the outreach. (Two rows: the `dm_sent` and the
+    // `stage_change` it implies.)
+    expect(await activities()).toHaveLength(2);
+  });
+
+  // The other half: an overdue date is refreshed, or working a lead could
+  // never take it off the top of Due.
+  it("refreshes a next action that has already passed", async () => {
+    await db.query(
+      `UPDATE crm_opportunities SET next_action_at = now() - interval '9 days' WHERE id = $1`,
+      [opportunityId],
+    );
+
+    await logVerbatim();
+
+    const opp = await db.query<{ next_action_at: Date; next_action_note: string | null }>(
+      `SELECT next_action_at, next_action_note FROM crm_opportunities WHERE id = $1`,
+      [opportunityId],
+    );
+    const daysOut =
+      (new Date(opp.rows[0].next_action_at).getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    expect(daysOut).toBeGreaterThan(3.9);
+    expect(daysOut).toBeLessThan(4.1);
+    expect(opp.rows[0].next_action_note).toBe('Follow up on "Cold intro"');
+  });
 });

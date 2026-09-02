@@ -1,10 +1,17 @@
 import { tesserixTx } from "./tesserix";
-import { advanceStageOnQuery, assertNoSuppressedContact, CLOCK_ELIGIBLE_SQL } from "./crm-repo";
+import {
+  advanceStageOnQuery,
+  assertNoSuppressedContact,
+  nextActionAssignment,
+  CLOCK_ELIGIBLE_SQL,
+  OUTBOUND_RESCHEDULES_SQL,
+} from "./crm-repo";
 // `NEXT_ACTION_DAYS` was declared here. It moved to `lib/crm.ts` when #502
-// gave the plain activity log the same default: two modules scheduling "the
+// gave the plain activity log the same default — two modules scheduling "the
 // follow-up" a different number of days out is a disagreement no reader could
-// resolve, and the composer needs the same number again to prefill with.
-import { NEXT_ACTION_DAYS, type CrmStage } from "../crm";
+// resolve — and this module no longer names it at all: the whole assignment
+// now comes from `nextActionAssignment` below.
+import type { CrmStage } from "../crm";
 
 /**
  * The single transaction behind "copy this DM and log that it was sent"
@@ -281,16 +288,30 @@ export async function recordTemplatedDm(
     // `advanceContactClock`. It is one constant now for the reason its own
     // comment gives: the copy that lacked the 0021 guard aborted the whole
     // transaction and took the activity row with it.
+    //
+    // A DEFAULT, NOT A RULE, on this path too (#502). This statement used to
+    // assign `now() + 4 days` unconditionally, which silently overwrote an
+    // operator's own "check back in a month" every time anyone sent a template
+    // — the plain activity log, six lines of SQL away in `crm-repo.ts`, had by
+    // then learned to leave a future date alone. Two paths writing one column
+    // by two different rules is a difference no operator could predict, so the
+    // rule is imported rather than restated: `nextActionAssignment('dm_sent')`
+    // is the same CASE the composer's log runs.
+    //
+    // The note moves WITH the date, gated on the same condition. A note naming
+    // this template beside a date that was scheduled for some other reason
+    // would describe a plan nobody made.
     const touched = await query<{ id: string; stage: CrmStage }>(
       `UPDATE crm_opportunities
-          SET next_action_at = now() + ($2 || ' days')::interval,
-              next_action_note = $3,
+          SET next_action_at = ${nextActionAssignment("dm_sent")},
+              next_action_note = CASE WHEN ${OUTBOUND_RESCHEDULES_SQL}
+                THEN $2 ELSE next_action_note END,
               last_contacted_at = now(),
               updated_at = now()
         WHERE organisation_id = $1
           AND ${CLOCK_ELIGIBLE_SQL}
         RETURNING id, stage`,
-      [organisationId, String(NEXT_ACTION_DAYS), `Follow up on "${template.name}"`],
+      [organisationId, `Follow up on "${template.name}"`],
     );
 
     // ── 5. THE STAGE MOVE ──────────────────────────────────────────────────

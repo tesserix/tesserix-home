@@ -1069,18 +1069,24 @@ async function advanceContactClock(input: LogActivityInput, query: TxQuery): Pro
  * chase that a reply arrives against stays overdue, because the reply did not
  * make it less late.
  *
- * `next_action_note` is deliberately untouched. It holds the operator's own
- * words about what to do next, and a default date is not grounds to rewrite
- * them; a null note beside a real date reads as "something, soon", which is
- * honest, where a machine-written one would read as a plan nobody made.
+ * `next_action_note` is deliberately untouched HERE. It holds the operator's
+ * own words about what to do next, and a default date is not grounds to
+ * rewrite them; a null note beside a real date reads as "something, soon",
+ * which is honest, where a machine-written one would read as a plan nobody
+ * made. `recordTemplatedDm` does write one, because it has a real fact to put
+ * in it — the name of the template that was sent — and it gates that write on
+ * `OUTBOUND_RESCHEDULES_SQL`, exported below, so the note and the date it
+ * describes can never come apart.
  */
-function nextActionAssignment(kind: CrmActivityKind): string {
+export const OUTBOUND_RESCHEDULES_SQL = `next_action_at IS NULL OR next_action_at <= now()`;
+
+export function nextActionAssignment(kind: CrmActivityKind): string {
   // `NEXT_ACTION_DAYS` is a module constant integer, not caller input, so it
   // interpolates into the interval literal rather than binding as a parameter —
   // this fragment is shared by two statements whose placeholders are numbered
   // differently, and a `$n` here would have to mean something different in each.
   return isOutboundActivityKind(kind)
-    ? `CASE WHEN next_action_at IS NULL OR next_action_at <= now()
+    ? `CASE WHEN ${OUTBOUND_RESCHEDULES_SQL}
                 THEN now() + interval '${NEXT_ACTION_DAYS} days'
                 ELSE next_action_at END`
     : `CASE WHEN next_action_at IS NULL OR next_action_at > now()
