@@ -36,6 +36,11 @@ type PullRequest struct {
 	RequestedBy string `json:"requestedBy"`
 	// Targets are the namespace/app pairs this proposal whitelists.
 	Targets []string `json:"targets"`
+	// MergedAt is when GitHub merged this. It is the notification's timestamp,
+	// not CreatedAt: a proposal that waited a week in the queue would
+	// otherwise produce an event dated to when it was raised, arriving older
+	// than the operator's read watermark and so pre-read.
+	MergedAt time.Time `json:"mergedAt"`
 }
 
 // PullDetail adds what an administrator needs to decide: the diff, who has
@@ -59,6 +64,7 @@ type pullResource struct {
 	Title          string `json:"title"`
 	HTMLURL        string `json:"html_url"`
 	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 	MergeableState string `json:"mergeable_state"`
 	User           struct {
 		Login string `json:"login"`
@@ -67,6 +73,10 @@ type pullResource struct {
 		Ref string `json:"ref"`
 	} `json:"head"`
 	Body string `json:"body"`
+	// MergedAt is nullable: GitHub sends null for a closed-but-unmerged pull
+	// request, and a zero time.Time after parsing cannot be told apart from a
+	// parse failure. The merged filter tests this pointer, not a zero value.
+	MergedAt *string `json:"merged_at"`
 }
 
 func (p pullResource) toPullRequest() PullRequest {
@@ -153,6 +163,70 @@ func (g *GitHub) Pulls(ctx context.Context) ([]PullRequest, error) {
 
 	return nil, fmt.Errorf("gitops: %s/%s has more than %d open pull requests; the review list would be truncated",
 		g.cfg.Owner, g.cfg.Repo, maxPullPages*pullPageSize)
+}
+
+// maxMergedPullPages is a safety net against a misbehaving upstream, not the
+// walk's real bound. `since` is what stops MergedPulls in the ordinary case:
+// an operator polling the notification bell advances the read watermark on
+// every visit, so the walk only ever needs to cross a handful of pages back
+// into history before a page of closed pull requests updated before `since`
+// ends it. This ceiling exists only so that an upstream which keeps
+// answering full pages of recently-updated pull requests forever cannot turn
+// a request the notification bell polls into an unbounded loop. Reaching it
+// is reported as an error rather than the list collected so far, for the same
+// reason Pulls' own ceiling is: a quietly truncated list is worse than none.
+const maxMergedPullPages = 50
+
+// MergedPulls lists console-raised proposals merged since the given time,
+// newest first.
+//
+// The walk is bounded by `since` rather than by a page count, and that
+// differs from Pulls deliberately. Pulls' maxPullPages describes a state that
+// should never occur — a thousand simultaneously OPEN pull requests is an
+// incident, not a review queue. Closed pull requests carry no such ceiling:
+// they accumulate for the life of the repository, so a page bound here would
+// silently begin missing recent merges as history grows. That is the same
+// quietly-truncated-list failure Pulls' own comment exists to remove.
+// maxMergedPullPages is a separate, much larger backstop against a
+// misbehaving upstream; see its comment.
+func (g *GitHub) MergedPulls(ctx context.Context, since time.Time) ([]PullRequest, error) {
+	out := make([]PullRequest, 0, pullPageSize)
+
+	for page := 1; page <= maxMergedPullPages; page++ {
+		var batch []pullResource
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=closed&per_page=%d&page=%d&base=%s&sort=updated&direction=desc",
+			g.cfg.Owner, g.cfg.Repo, pullPageSize, page, g.cfg.Branch)
+		if err := g.do(ctx, http.MethodGet, path, nil, &batch); err != nil {
+			return nil, err
+		}
+
+		for _, p := range batch {
+			updated, err := time.Parse(time.RFC3339, p.UpdatedAt)
+			if err == nil && updated.Before(since) {
+				sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
+				return out, nil
+			}
+			if p.MergedAt == nil || !strings.HasPrefix(p.Head.Ref, branchPrefix) {
+				continue
+			}
+			merged, err := time.Parse(time.RFC3339, *p.MergedAt)
+			if err != nil || merged.Before(since) {
+				continue
+			}
+			pr := p.toPullRequest()
+			pr.MergedAt = merged
+			out = append(out, pr)
+		}
+
+		// A short page is the last page; GitHub fills every page but the last.
+		if len(batch) < pullPageSize {
+			sort.Slice(out, func(i, j int) bool { return out[i].MergedAt.After(out[j].MergedAt) })
+			return out, nil
+		}
+	}
+
+	return nil, fmt.Errorf("gitops: %s/%s has more than %d closed pull requests updated since %s; the merged list would be truncated",
+		g.cfg.Owner, g.cfg.Repo, maxMergedPullPages*pullPageSize, since.Format(time.RFC3339))
 }
 
 func (g *GitHub) Pull(ctx context.Context, number int) (PullDetail, error) {
