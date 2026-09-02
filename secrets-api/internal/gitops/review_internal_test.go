@@ -3,6 +3,7 @@ package gitops
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,6 +133,56 @@ func TestMergedPullsStopsAtSince(t *testing.T) {
 	got := mergedPullsFromStub(t, stub, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
 	if len(got) != 1 || got[0].Number != 4 {
 		t.Fatalf("got %+v, want only pull 4", got)
+	}
+}
+
+// TestMergedPullsStopsRequestingPagesOnceItCrossesSince is the test that
+// actually carries this task's central claim: the walk is bounded by
+// `since`, not by page count. TestMergedPullsStopsAtSince above serves only
+// two items, so it always exits through the "short page" branch and never
+// reaches the `since` early-return at all — deleting that branch would not
+// fail it. Here the stub serves a FULL page (pullPageSize items), some
+// updated before `since` and some after, so only the early-return can stop
+// the walk short of a second page. Both the returned set and the request
+// count are asserted: the count is what tells "stopped early because of
+// since" apart from "ran out of pages by coincidence".
+func TestMergedPullsStopsRequestingPagesOnceItCrossesSince(t *testing.T) {
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	const qualifying = 3
+	batch := make([]map[string]any, pullPageSize)
+	for i := range batch {
+		// GitHub serves this page sorted by updated, newest first, so the
+		// qualifying (after `since`) items lead and the rest trail behind
+		// the point where the walk must stop.
+		updatedAt, mergedAt := "2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z"
+		if i < qualifying {
+			updatedAt, mergedAt = "2026-09-01T10:00:00Z", "2026-09-01T10:00:00Z"
+		}
+		batch[i] = map[string]any{
+			"number":     i + 1,
+			"head":       map[string]any{"ref": "secret-service/a"},
+			"merged_at":  mergedAt,
+			"updated_at": updatedAt,
+			"body":       fmt.Sprintf("requested-by: s%d", i+1),
+		}
+	}
+
+	requests := 0
+	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
+		requests++
+		return http.StatusOK, batch
+	})
+
+	got, err := client.MergedPulls(context.Background(), since)
+	if err != nil {
+		t.Fatalf("MergedPulls: %v", err)
+	}
+	if len(got) != qualifying {
+		t.Fatalf("got %d pulls, want %d", len(got), qualifying)
+	}
+	if requests != 1 {
+		t.Fatalf("made %d requests, want 1 — the walk should stop once it crosses `since`, not because a page ran short", requests)
 	}
 }
 
