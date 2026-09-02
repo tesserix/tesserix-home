@@ -1,5 +1,5 @@
 import { tesserixTx } from "./tesserix";
-import { advanceStageOnQuery, assertNoSuppressedContact } from "./crm-repo";
+import { advanceStageOnQuery, assertNoSuppressedContact, CLOCK_ELIGIBLE_SQL } from "./crm-repo";
 import type { CrmStage } from "../crm";
 
 /**
@@ -279,15 +279,12 @@ export async function recordTemplatedDm(
     // not none of them, and "none" is how every imported organisation ended up
     // permanently Drifting.
     //
-    // GRANDFATHERED ROWS ARE EXCLUDED, and that exclusion is not cosmetic.
-    // Migration 0021's CHECK (`stage IN ('new','contacted') OR product IS NOT
-    // NULL`) is evaluated on the new row version of EVERY update, including a
-    // bare clock bump — so including a qualified/won/lost row with a null
-    // product would abort this transaction and take the activity down with it.
-    // The operator would be told their DM could not be recorded because an
-    // unrelated deal is missing a product. Those rows keep drifting until
-    // someone supplies the product, which is a visible and fixable state;
-    // losing the record of the outreach is not.
+    // GRANDFATHERED AND TERMINAL ROWS ARE EXCLUDED by `CLOCK_ELIGIBLE_SQL`,
+    // which is imported rather than spelled out here — the predicate used to
+    // be written out in this statement and again, twice and inconsistently, in
+    // `advanceContactClock`. It is one constant now for the reason its own
+    // comment gives: the copy that lacked the 0021 guard aborted the whole
+    // transaction and took the activity row with it.
     const touched = await query<{ id: string; stage: CrmStage }>(
       `UPDATE crm_opportunities
           SET next_action_at = now() + ($2 || ' days')::interval,
@@ -295,8 +292,7 @@ export async function recordTemplatedDm(
               last_contacted_at = now(),
               updated_at = now()
         WHERE organisation_id = $1
-          AND stage NOT IN ('won', 'lost')
-          AND (stage IN ('new', 'contacted') OR product IS NOT NULL)
+          AND ${CLOCK_ELIGIBLE_SQL}
         RETURNING id, stage`,
       [organisationId, String(NEXT_ACTION_DAYS), `Follow up on "${template.name}"`],
     );

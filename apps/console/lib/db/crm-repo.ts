@@ -952,6 +952,38 @@ export async function assertNoSuppressedContact(
 }
 
 /**
+ * The rows a bare clock bump may touch, as one SQL fragment both branches of
+ * `advanceContactClock` — and `recordTemplatedDm` — substitute in.
+ *
+ * IT IS ONE CONSTANT BECAUSE IT WAS ONCE TWO COPIES, AND ONE OF THEM WAS
+ * EMPTY. The organisation-wide branch carried both guards from the start; the
+ * by-id branch carried neither, and the two sat six lines apart in this file
+ * disagreeing about which rows a clock bump is allowed to reach. That is not a
+ * cosmetic difference:
+ *
+ *   Migration 0021's CHECK (`stage IN ('new','contacted') OR product IS NOT
+ *   NULL`) is re-evaluated against the NEW row version of every UPDATE,
+ *   including one that only moves a timestamp. So a per-deal log against a
+ *   grandfathered qualified/won/lost opportunity with a null product aborted
+ *   the whole transaction — taking the `crm_activities` insert down with it.
+ *   The operator was told their note could not be saved, and the reason was
+ *   that an unrelated deal is missing a product.
+ *
+ * Losing the record of the contact is the expensive failure; a grandfathered
+ * row that keeps drifting until someone supplies the product `setNextAction`
+ * already asks for is the visible, fixable one. So the predicate skips exactly
+ * the rows the CHECK would reject.
+ *
+ * Terminal deals are excluded for a different reason, unrelated to the CHECK:
+ * a won or lost deal is not being worked, so a clock that exists to say
+ * "nobody has touched this lately" has nothing to say about it. The by-id
+ * branch now agrees with that too — naming a won deal explicitly does not make
+ * it live again.
+ */
+export const CLOCK_ELIGIBLE_SQL = `stage NOT IN ('won', 'lost')
+          AND (stage IN ('new', 'contacted') OR product IS NOT NULL)`;
+
+/**
  * Move `last_contacted_at` — the clock the drifting queue reads — for the
  * deals this contact event actually touched.
  *
@@ -971,22 +1003,16 @@ export async function assertNoSuppressedContact(
  * clock that exists to say "nobody has touched this lately" has nothing to
  * say about it.
  *
- * Grandfathered deals (migration 0021: qualified/won/lost with a null
- * `product`) are excluded too, and that exclusion is not cosmetic. The
- * CHECK is evaluated on the new row version of every UPDATE, including a
- * bare clock bump, so including such a row would abort this transaction and
- * take the activity row down with it — the operator would be told their
- * call could not be recorded because an unrelated deal is missing a
- * product. Those rows keep drifting until someone supplies the product
- * `setNextAction` already asks for, which is the visible, fixable state;
- * losing the record of the contact is not.
+ * WHICH ROWS EITHER BRANCH MAY TOUCH is `CLOCK_ELIGIBLE_SQL` above — the
+ * same predicate for both, which it very deliberately was not before.
  */
 async function advanceContactClock(input: LogActivityInput, query: TxQuery): Promise<void> {
   if (input.opportunityId) {
     await query(
       `UPDATE crm_opportunities
           SET last_contacted_at = now(), updated_at = now()
-        WHERE id = $1`,
+        WHERE id = $1
+          AND ${CLOCK_ELIGIBLE_SQL}`,
       [input.opportunityId],
     );
     return;
@@ -996,8 +1022,7 @@ async function advanceContactClock(input: LogActivityInput, query: TxQuery): Pro
     `UPDATE crm_opportunities
         SET last_contacted_at = now(), updated_at = now()
       WHERE organisation_id = $1
-        AND stage NOT IN ('won', 'lost')
-        AND (stage IN ('new', 'contacted') OR product IS NOT NULL)`,
+        AND ${CLOCK_ELIGIBLE_SQL}`,
     [input.organisationId],
   );
 }

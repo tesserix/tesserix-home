@@ -89,6 +89,28 @@ async function seedOpportunity(
   return rows.rows[0].id;
 }
 
+/**
+ * A row in the state migration 0021 grandfathered: past `contacted` with no
+ * product. It cannot be inserted while the CHECK is on, which is precisely why
+ * these rows only exist in production at all — 0020 dropped the constraint,
+ * the lead backfill loaded them, and 0021 put it back NOT VALID so the
+ * existing rows were never scanned. Dropping and re-adding it around the
+ * insert reproduces that history rather than simulating its result.
+ */
+async function seedGrandfathered(organisationId: string, stage: string): Promise<string> {
+  await db.exec(
+    `ALTER TABLE crm_opportunities DROP CONSTRAINT crm_opp_product_required_when_qualified`,
+  );
+  const id = await seedOpportunity(organisationId, { stage, product: null });
+  await db.exec(
+    `ALTER TABLE crm_opportunities
+       ADD CONSTRAINT crm_opp_product_required_when_qualified CHECK (
+         stage IN ('new', 'contacted') OR product IS NOT NULL
+       ) NOT VALID`,
+  );
+  return id;
+}
+
 async function lastContactedAt(opportunityId: string): Promise<Date | null> {
   const rows = await db.query<{ last_contacted_at: Date | null }>(
     `SELECT last_contacted_at FROM crm_opportunities WHERE id = $1`,
@@ -162,16 +184,7 @@ describe("an organisation-level contact event and the drift clock", () => {
   // already asks for.
   it("skips a grandfathered deal rather than failing the whole log", async () => {
     const orgId = await seedOrganisation("Migrated Co");
-    await db.exec(
-      `ALTER TABLE crm_opportunities DROP CONSTRAINT crm_opp_product_required_when_qualified`,
-    );
-    const grandfathered = await seedOpportunity(orgId, { stage: "qualified", product: null });
-    await db.exec(
-      `ALTER TABLE crm_opportunities
-         ADD CONSTRAINT crm_opp_product_required_when_qualified CHECK (
-           stage IN ('new', 'contacted') OR product IS NOT NULL
-         ) NOT VALID`,
-    );
+    const grandfathered = await seedGrandfathered(orgId, "qualified");
     const healthy = await seedOpportunity(orgId, { stage: "new" });
 
     await logActivity({ organisationId: orgId, kind: "dm_sent", actor: "ava" });
@@ -179,6 +192,67 @@ describe("an organisation-level contact event and the drift clock", () => {
     expect(await activityCount(orgId)).toBe(1);
     expect(await lastContactedAt(healthy)).not.toBeNull();
     expect(await lastContactedAt(grandfathered)).toBeNull();
+  });
+});
+
+/**
+ * The same trap, down the branch that never got the guard.
+ *
+ * `advanceContactClock` has two of them, and until now only the
+ * organisation-wide one excluded the rows migration 0021's CHECK rejects. The
+ * by-id branch ran a bare `WHERE id = $1`, so naming a grandfathered deal —
+ * something the Opportunities tab does routinely — re-evaluated the CHECK
+ * against the new row, failed, and rolled back the `crm_activities` insert
+ * sitting in the same transaction. The operator lost the record of a call
+ * because an unrelated column is null.
+ *
+ * Only a real database can show this: the mocked tests assert the SQL's shape,
+ * and the shape of the broken statement was perfectly reasonable. It is the
+ * CHECK firing on an UPDATE that touches neither `stage` nor `product` that
+ * makes it a bug, and that is a fact about Postgres, not about the string.
+ */
+describe("a contact event that names one deal", () => {
+  it("records a call against a grandfathered deal instead of aborting on 0021's CHECK", async () => {
+    const orgId = await seedOrganisation("Migrated Co");
+    const grandfathered = await seedGrandfathered(orgId, "qualified");
+
+    await expect(
+      logActivity({
+        organisationId: orgId,
+        opportunityId: grandfathered,
+        kind: "call",
+        actor: "ava",
+        body: "spoke to Ana",
+      }),
+    ).resolves.toBeUndefined();
+
+    // The activity survived, which is the whole point — and the clock did not
+    // move, because moving it is the thing the CHECK will not allow.
+    expect(await activityCount(orgId)).toBe(1);
+    expect(await lastContactedAt(grandfathered)).toBeNull();
+  });
+
+  it("still moves the clock for a healthy deal named by id", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const oppId = await seedOpportunity(orgId, { stage: "qualified", product: "mark8ly" });
+
+    await logActivity({ organisationId: orgId, opportunityId: oppId, kind: "call", actor: "ava" });
+
+    expect(await lastContactedAt(oppId)).not.toBeNull();
+  });
+
+  // The guard the by-id branch gained is the organisation-wide one verbatim,
+  // and that one excludes terminal deals as well. Naming a won deal explicitly
+  // does not make it live again: the drift clock says "nobody has touched this
+  // lately", which is not a question a closed deal answers.
+  it("leaves a won deal's clock alone even when the operator names it", async () => {
+    const orgId = await seedOrganisation("Closed Co");
+    const oppId = await seedOpportunity(orgId, { stage: "won", product: "mark8ly" });
+
+    await logActivity({ organisationId: orgId, opportunityId: oppId, kind: "call", actor: "ava" });
+
+    expect(await activityCount(orgId)).toBe(1);
+    expect(await lastContactedAt(oppId)).toBeNull();
   });
 });
 

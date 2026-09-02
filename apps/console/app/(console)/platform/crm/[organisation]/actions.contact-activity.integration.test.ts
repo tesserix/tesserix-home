@@ -94,6 +94,31 @@ async function seedOpportunity(organisationId: string): Promise<string> {
   return rows.rows[0].id;
 }
 
+/**
+ * An opportunity in the state migration 0021 grandfathered: past `contacted`
+ * with no product. Insertable only with the CHECK momentarily off, which is
+ * how these rows came to exist at all — 0020 dropped the constraint, the lead
+ * backfill loaded ~155 of them, 0021 re-added it NOT VALID so they were never
+ * scanned.
+ */
+async function seedGrandfatheredOpportunity(organisationId: string): Promise<string> {
+  await db.exec(
+    `ALTER TABLE crm_opportunities DROP CONSTRAINT crm_opp_product_required_when_qualified`,
+  );
+  const rows = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities (organisation_id, stage, product)
+     VALUES ($1, 'qualified', NULL) RETURNING id`,
+    [organisationId],
+  );
+  await db.exec(
+    `ALTER TABLE crm_opportunities
+       ADD CONSTRAINT crm_opp_product_required_when_qualified CHECK (
+         stage IN ('new', 'contacted') OR product IS NOT NULL
+       ) NOT VALID`,
+  );
+  return rows.rows[0].id;
+}
+
 describe("addActivity, composed all the way to the database", () => {
   it("records a call and moves the drift clock, with no deal named", async () => {
     const orgId = await seedOrganisation("Bondi Baker");
@@ -146,6 +171,45 @@ describe("addActivity, composed all the way to the database", () => {
       `SELECT count(*)::text AS count FROM console_audit_log`,
     );
     expect(audit.rows[0].count).toBe("0");
+  });
+
+  /**
+   * The failure an operator would actually have met, in the words they would
+   * have met it in.
+   *
+   * Logging against one named deal ran a `WHERE id = $1` with none of the
+   * guards the organisation-wide branch carries, so migration 0021's CHECK
+   * fired on the new row of a bare timestamp UPDATE and rolled the whole
+   * transaction back. What reached the operator was `{ ok: false }` and "That
+   * change was not saved." — for a call that has nothing to do with the
+   * product column, on a deal they may not even have been looking at.
+   *
+   * A CONTACT KIND, not a note, and that is the entire test. A `note` does not
+   * move the clock (`CONTACT_ACTIVITY_KINDS`), so it never reaches the
+   * offending UPDATE and saves against a grandfathered deal whether the guard
+   * is there or not — an assertion about one would be green against the bug.
+   * `call` is the cheapest kind that actually runs the statement.
+   *
+   * Asserted through the action rather than the repository because the
+   * misleading message is the harm; `logActivity` merely throws.
+   */
+  it("saves a call against a grandfathered deal instead of refusing it over an unrelated product", async () => {
+    const orgId = await seedOrganisation("Migrated Co");
+    const oppId = await seedGrandfatheredOpportunity(orgId);
+
+    const result = await addActivity({
+      organisationId: orgId,
+      opportunityId: oppId,
+      kind: "call",
+      body: "spoke to Ana",
+    });
+
+    expect(result).toEqual({ ok: true });
+    const activities = await db.query<{ body: string | null }>(
+      `SELECT body FROM crm_activities WHERE opportunity_id = $1`,
+      [oppId],
+    );
+    expect(activities.rows).toEqual([{ body: "spoke to Ana" }]);
   });
 
   it("still records an inbound message from that same suppressed contact", async () => {
