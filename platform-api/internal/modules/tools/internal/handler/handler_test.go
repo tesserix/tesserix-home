@@ -156,8 +156,8 @@ func TestTheToolsListIsTheSeededDirectory(t *testing.T) {
 	if !ok {
 		t.Fatalf(`data.tools is not an array: %v`, got)
 	}
-	if len(list) != 15 {
-		t.Fatalf("got %d tools, want 15", len(list))
+	if len(list) != 14 {
+		t.Fatalf("got %d tools, want 14", len(list))
 	}
 
 	first, _ := list[0].(map[string]any)
@@ -364,10 +364,14 @@ func TestPatchingCanClearANote(t *testing.T) {
 // COALESCE keeps the existing value while the response and the audit trail
 // both claim an update happened. secret-service seeds with a real note, so a
 // bug that leaves it untouched is visible rather than masked by an
-// already-nil column.
+// already-nil column. argocd is that subject: since 0042 removed the
+// secret-service row it is the ONLY seeded tool still carrying a note, so it
+// is the only choice that keeps this test able to fail. It is safe to mutate
+// here even though TestPatchingCanClearANote also patches it, because
+// testdb.New gives every test its own freshly migrated database.
 func TestPatchingWithAnEmptyStringNoteClearsIt(t *testing.T) {
 	a := serve(t)
-	id := a.toolID("secret-service")
+	id := a.toolID("argocd")
 
 	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":""}`, nil)
 
@@ -382,10 +386,11 @@ func TestPatchingWithAnEmptyStringNoteClearsIt(t *testing.T) {
 }
 
 // The whitespace-only sibling of the test above: Normalise trims before
-// collapsing, so "   " must clear exactly like "".
+// collapsing, so "   " must clear exactly like "". Same subject, and for the
+// same reason — argocd is the last seeded tool with a note to clear.
 func TestPatchingWithAWhitespaceOnlyNoteClearsIt(t *testing.T) {
 	a := serve(t)
-	id := a.toolID("secret-service")
+	id := a.toolID("argocd")
 
 	got := a.do(http.MethodPatch, "/v1/platform/tools/"+id, `{"note":"   "}`, nil)
 
@@ -458,8 +463,8 @@ func TestDeletingAToolRemovesItAndAnswersWithIt(t *testing.T) {
 	if tool["subdomain"] != "docs" {
 		t.Errorf("delete answered with %v, want the row as it was", tool)
 	}
-	if after := a.get("/v1/platform/tools").data(t)["tools"].([]any); len(after) != 14 {
-		t.Errorf("after deleting one of 15 there are %d", len(after))
+	if after := a.get("/v1/platform/tools").data(t)["tools"].([]any); len(after) != 13 {
+		t.Errorf("after deleting one of 14 there are %d", len(after))
 	}
 }
 
@@ -479,8 +484,8 @@ func TestARepeatedWriteUnderOneIdempotencyKeyHappensOnce(t *testing.T) {
 	if second.status != first.status {
 		t.Errorf("replay = %d, want the stored %d: %s", second.status, first.status, second.raw)
 	}
-	if got := len(a.get("/v1/platform/tools").data(t)["tools"].([]any)); got != 16 {
-		t.Errorf("after one create and one replay there are %d tools, want 16", got)
+	if got := len(a.get("/v1/platform/tools").data(t)["tools"].([]any)); got != 15 {
+		t.Errorf("after one create and one replay there are %d tools, want 15", got)
 	}
 }
 
