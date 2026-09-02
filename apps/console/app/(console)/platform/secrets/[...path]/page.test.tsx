@@ -336,6 +336,32 @@ describe("the write affordance gate", () => {
     expect(screen.getByText("url")).toBeInTheDocument();
   });
 
+  // The Versions tab is the default tab, so these need no click. `VERSIONS`
+  // carries one row of each lifecycle state, which is what makes "exactly
+  // one Restore button" a real assertion rather than a coincidence.
+  it("offers Restore only on the deleted-but-not-destroyed version, for an operator who can write", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    fetchSecretVersions.mockResolvedValue(VERSIONS);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    expect(screen.getByRole("button", { name: "Restore version 2" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /^Restore version/ })).toHaveLength(1);
+  });
+
+  it("withholds Restore from a platform-only operator, and the Versions table still renders", async () => {
+    signIn(["platform"]);
+    fetchSecretVersions.mockResolvedValue(VERSIONS);
+
+    render(await renderPage({ path: ["homechef", "homechef-api", "db-password"], store: "openbao" }));
+
+    expect(screen.queryByRole("button", { name: /^Restore version/ })).toBeNull();
+    // Hiding the control must never take the table with it — the same
+    // failure mode the write-gate test above guards against.
+    expect(screen.getByRole("table", { name: "Version history" })).toBeInTheDocument();
+    expect(screen.getByText("Deleted")).toBeInTheDocument();
+  });
+
   it("shows the write form under the pre-cutover bypass, same as any other render-path gate", async () => {
     requiresCapability.mockReturnValue(false);
     signIn([]);

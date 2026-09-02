@@ -618,8 +618,13 @@ export async function writeSecret(
  * good, and the store reports that as its own error rather than pretending
  * to bring it back.
  *
- * Not called anywhere yet — this is 3b-ii groundwork (the restore control
- * itself is a later task), so do not go hunting for a caller.
+ * Reached from the Versions tab's Restore control, via
+ * `restoreSecretVersionAction` in
+ * `app/(console)/platform/secrets/[...path]/access-actions.ts` — the server
+ * boundary that holds the `platform` + `rotate-credentials` check this
+ * route's `live` tier requires. Nothing calls this function directly from a
+ * client component, and nothing should: the token this uses is resolved
+ * server-side.
  */
 export async function restoreSecretVersion(store: SecretStore, path: string, version: number): Promise<void> {
   await secretsRequest(

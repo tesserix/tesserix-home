@@ -3,7 +3,13 @@
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
-import { createGrant, deleteSecret, revokeGrant, type AppRef } from "@/lib/secrets-api";
+import {
+  createGrant,
+  deleteSecret,
+  restoreSecretVersion,
+  revokeGrant,
+  type AppRef,
+} from "@/lib/secrets-api";
 import type { SecretStore } from "@/lib/secrets";
 import { PlatformApiError } from "@/lib/platform-api-error";
 
@@ -171,6 +177,42 @@ export async function deleteSecretAction(
       summary: destroy ? { destroyed: 1, deleted: 0 } : { destroyed: 0, deleted: 1 },
       target: path,
     }),
+  );
+  if (!result.ok) return result;
+  return { ok: true };
+}
+
+/**
+ * Restore a soft-deleted version of the secret at `path` — the operation the
+ * Delete tab's copy already promises ("It stays recoverable — restore it
+ * from the Versions tab"). Same gate as delete/destroy, for the same reason:
+ * `restoreSecretVersion` hits `secrets-api`'s `live` route group (`POST
+ * /api/secret-versions/*path`), which requires `platform` +
+ * `rotate-credentials`.
+ *
+ * Only a delete can be reversed. A destroyed version is gone for good and
+ * `secrets-api`'s `Restore` handler says so through the store's own error
+ * rather than pretending otherwise — which is why `restore-version.tsx`
+ * never offers the control for a destroyed version. This boundary does not
+ * re-derive that decision: it is handed one version number and has no
+ * version list to check it against, so it trusts its caller exactly the way
+ * `deleteSecretAction` trusts the `destroy` flag it is handed. A restore
+ * that reaches here for a destroyed version fails at `secrets-api` and
+ * surfaces as {@link NOT_SAVED_MESSAGE}.
+ */
+export async function restoreSecretVersionAction(
+  store: SecretStore,
+  path: string,
+  version: number,
+): Promise<SecretsWriteResult> {
+  const result = await withAccessWrite(
+    path,
+    () => restoreSecretVersion(store, path, version),
+    // `restored: 1` is the count, matching `deleteSecretAction`'s
+    // `{destroyed, deleted}` counters; `version` names WHICH one, which a
+    // grant/revoke/delete row has no equivalent of because those act on the
+    // secret rather than on one version of it.
+    () => ({ action: "secrets.restore", summary: { restored: 1, version }, target: path }),
   );
   if (!result.ok) return result;
   return { ok: true };
