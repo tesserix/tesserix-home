@@ -169,6 +169,21 @@ func TestProposeWiringCommitsTheValuesAndTheChartVersion(t *testing.T) {
 	}
 }
 
+func TestProposeWiringBodyCarriesRequesterTrailer(t *testing.T) {
+	client, seen := stubGitHub(t, chartRoutes(t))
+
+	req := wiringRequest()
+	req.Actor = "subject-7"
+	if _, err := client.ProposeWiring(context.Background(), req); err != nil {
+		t.Fatalf("ProposeWiring: %v", err)
+	}
+
+	body, _ := findCall(t, *seen, http.MethodPost, "/pulls").Body["body"].(string)
+	if !strings.Contains(body, "requested-by: subject-7") {
+		t.Fatalf("body missing requester trailer:\n%s", body)
+	}
+}
+
 func TestProposeWiringRefusesAPathOutsideTheCharts(t *testing.T) {
 	client, seen := stubGitHub(t, chartRoutes(t))
 

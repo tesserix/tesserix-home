@@ -291,6 +291,23 @@ func TestProposeAllNamesItsAppsInAMachineReadableTrailer(t *testing.T) {
 	}
 }
 
+func TestProposeAllBodyCarriesRequesterTrailer(t *testing.T) {
+	client, seen := stubGitHub(t, defaultRoutes(t))
+
+	_, err := client.ProposeAll(context.Background(), []gitops.Change{
+		{Add: &gitops.App{Namespace: "dwellm8", Name: "dwellm8-api", ServiceAccount: "dwellm8-api"}, Actor: "subject-7"},
+		{Add: &gitops.App{Namespace: "dwellm8", Name: "dwellm8-nats", ServiceAccount: "dwellm8-nats"}, Actor: "subject-7"},
+	})
+	if err != nil {
+		t.Fatalf("ProposeAll: %v", err)
+	}
+
+	body, _ := findCall(t, *seen, http.MethodPost, "/pulls").Body["body"].(string)
+	if !strings.Contains(body, "requested-by: subject-7") {
+		t.Fatalf("body missing requester trailer:\n%s", body)
+	}
+}
+
 // A whitelist entry alone is not access: without the namespace in the
 // AppProject, ArgoCD silently declines to create the SecretStore and still
 // reports the app Synced. Both files have to move in the same review.

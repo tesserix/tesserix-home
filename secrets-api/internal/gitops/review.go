@@ -14,6 +14,13 @@ import (
 // half, so the apps are stated once in a form that parses back.
 const targetTrailer = "whitelist: "
 
+// requesterTrailer prefixes the line naming the operator who asked for the
+// change. The body already says "Requested by X" in prose for a human
+// reviewer; that sentence is prose and has been reworded before, so the
+// subject is stated a second time in a form the code owns — the same
+// reasoning that put the apps behind targetTrailer.
+const requesterTrailer = "requested-by: "
+
 // PullRequest is one console-raised change awaiting review.
 type PullRequest struct {
 	Number    int       `json:"number"`
@@ -22,6 +29,11 @@ type PullRequest struct {
 	Branch    string    `json:"branch"`
 	Author    string    `json:"author"`
 	CreatedAt time.Time `json:"createdAt"`
+	// RequestedBy is the Zitadel subject of the operator who raised this, read
+	// back from the requested-by trailer. NOT Author, which is the login of
+	// the token that opened the pull request and is therefore the same
+	// identity for every proposal the console raises.
+	RequestedBy string `json:"requestedBy"`
 	// Targets are the namespace/app pairs this proposal whitelists.
 	Targets []string `json:"targets"`
 }
@@ -60,31 +72,42 @@ type pullResource struct {
 func (p pullResource) toPullRequest() PullRequest {
 	created, _ := time.Parse(time.RFC3339, p.CreatedAt)
 	return PullRequest{
-		Number:    p.Number,
-		Title:     p.Title,
-		URL:       p.HTMLURL,
-		Branch:    p.Head.Ref,
-		Author:    p.User.Login,
-		CreatedAt: created,
-		Targets:   parseTargets(p.Body),
+		Number:      p.Number,
+		Title:       p.Title,
+		URL:         p.HTMLURL,
+		Branch:      p.Head.Ref,
+		Author:      p.User.Login,
+		CreatedAt:   created,
+		RequestedBy: trailerValue(p.Body, requesterTrailer),
+		Targets:     parseTargets(p.Body),
 	}
 }
 
-func parseTargets(body string) []string {
+// trailerValue returns the text after the first line beginning with prefix,
+// or "" when no such line exists. An absent trailer is a proposal opened
+// before the trailer existed; "" is the only safe answer, because callers
+// treat it as "addressed to nobody".
+func trailerValue(body, prefix string) string {
 	for line := range strings.SplitSeq(body, "\n") {
-		rest, found := strings.CutPrefix(strings.TrimSpace(line), targetTrailer)
-		if !found {
-			continue
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), prefix); found {
+			return strings.TrimSpace(rest)
 		}
-		targets := make([]string, 0, 2)
-		for target := range strings.SplitSeq(rest, ",") {
-			if trimmed := strings.TrimSpace(target); trimmed != "" {
-				targets = append(targets, trimmed)
-			}
-		}
-		return targets
 	}
-	return nil
+	return ""
+}
+
+func parseTargets(body string) []string {
+	rest := trailerValue(body, targetTrailer)
+	if rest == "" {
+		return nil
+	}
+	targets := make([]string, 0, 2)
+	for target := range strings.SplitSeq(rest, ",") {
+		if trimmed := strings.TrimSpace(target); trimmed != "" {
+			targets = append(targets, trimmed)
+		}
+	}
+	return targets
 }
 
 // pullPageSize is GitHub's maximum page; a smaller one only costs more requests.
