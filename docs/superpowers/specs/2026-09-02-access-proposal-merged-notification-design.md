@@ -39,7 +39,8 @@ Two facts, both missing in `secrets-api`, neither obvious from the API's shape.
 
 ```go
 body := fmt.Sprintf(
-    "%s\n\nRequested by %s in the secret-service console.\n\n...",
+    "%s\n\nRequested by %s in the secret-service console.\n\n"+
+        "The app must already be whitelisted [...]\n\n%s%s/%s",
     summary, req.Actor, targetTrailer, req.Namespace, req.App,
 )
 ```
@@ -95,6 +96,17 @@ Generalise `parseTargets` into a trailer reader used by both, and add to
 RequestedBy string    `json:"requestedBy"`
 MergedAt    time.Time `json:"mergedAt"`
 ```
+
+On the internal `pullResource`, `merged_at` must decode as a nullable value
+(`*string`), not a bare `string`: GitHub sends `null` for a closed-but-unmerged pull
+request, and a zero-valued `time.Time` after parsing is indistinguishable from a
+parse failure. The merged filter tests the null, not the zero.
+
+`MergedAt` is also the notification's timestamp — what `mergeEvents` orders the feed
+by, and what the shared read watermark is compared against. Using the pull request's
+`CreatedAt` instead would date the event to when the request was *raised*, which for
+a proposal that sat in the queue for a week would arrive already older than the
+watermark and never be seen.
 
 `Author` is deliberately left alone. It is not the proposer, but the reviews queue may
 display it, and renaming it is not this change's business. See "Out of scope" below.
