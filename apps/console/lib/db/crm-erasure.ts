@@ -13,9 +13,12 @@ import {
  *
  * - `eraseContact` answers "forget me". It overwrites the person's
  *   identifying data in place and KEEPS the row — the organisation, its
- *   opportunities and its activity log are untouched, because stage_change
+ *   opportunities and its activity log are not destroyed, because stage_change
  *   activities are the only record of when a stage was entered and deleting
- *   them would leave funnel measurement with holes it cannot explain.
+ *   them would leave funnel measurement with holes it cannot explain. It does
+ *   ANNOTATE the handful of activity rows a human authored, flagging them for
+ *   review; nothing in the log is deleted or rewritten. See "# The residual"
+ *   on `eraseContact` for why annotating and destroying are different answers.
  * - `deleteOrganisation` answers "this business should not exist here" (a
  *   bad import, the wrong company). It is a true cascade: the organisation,
  *   its contacts, its opportunities and its activities all go.
@@ -52,6 +55,27 @@ export interface ErasedContact {
    * honest: a second click must not read as a second erasure.
    */
   erasedAt: string | null;
+  /**
+   * The `crm_activities` rows this erasure could NOT finish — outreach the
+   * operator EDITED before sending, whose `body` therefore holds text a human
+   * actually wrote and may still quote the biography this call just destroyed.
+   *
+   * NOT a diagnostic. This is the unfinished half of a legal obligation, and
+   * the field exists so a caller cannot complete an erasure without being
+   * handed the list of what is still outstanding. See `eraseContact`'s
+   * "# The residual" section for why these rows are surfaced rather than
+   * emptied, and why the same list is ALSO stamped onto the rows themselves
+   * rather than only returned here.
+   *
+   * Ids only, never the text: this value flows out to an action's return and
+   * on towards a screen, and the whole point of the rows is that they contain
+   * something that should not be reproduced anywhere new.
+   *
+   * Reports the same set on a repeat erasure — it is "what is still pending",
+   * not "what this call marked". A second click must not read as "nothing left
+   * to do" (the mirror of `erasedAt`'s reason for being the pre-image).
+   */
+  activitiesPendingRedaction: string[];
 }
 
 /**
@@ -133,6 +157,72 @@ export interface ErasedContact {
  * destroy it if `erased_at` were reset unconditionally. `updated_at` is
  * left moving on every call — that column means something else (last
  * write, full stop).
+ *
+ * # The residual this cannot destroy, and why it is surfaced rather than
+ * # deleted (#507)
+ *
+ * The statement above reaches `crm_contacts` and nothing else. `crm_activities`
+ * is deliberately out of its scope — see this module's header: `stage_change`
+ * rows are the only record of when a stage was entered, and deleting them puts
+ * holes in funnel measurement that nobody can later explain.
+ *
+ * That was harmless while every activity body was console-authored. It stopped
+ * being harmless with the lead-template composer (#503): an operator who edits
+ * one character of a rendered DM keeps the rest of it — `{{contact.biography}}`
+ * included — and `crm-outreach.ts` stores that text in `body`, correctly,
+ * because a log that refused to record what a human actually wrote would be
+ * fiction. So a "forget me" request can complete while scraped biography text
+ * sits in a table this function does not touch. Migration 0027's DPDP paragraph
+ * names that situation "a compliance defect, not a feature".
+ *
+ * THE CHOICE MADE HERE IS TO SURFACE, NOT TO DESTROY, and the alternative was
+ * weighed rather than dismissed:
+ *
+ * - AUTO-REDACTING the body would finish the job in one transaction and need
+ *   nobody to remember anything. It was rejected on what it costs. The stored
+ *   string is ONE string: the operator's own sentence and the quoted biography
+ *   are interleaved in it, and nothing in the row says where one ends. Nulling
+ *   `body` therefore does not redact the biography — it deletes the record of
+ *   what a human said, to get at the part of it that was ours, and it does so
+ *   irreversibly and without review. That record is itself evidence (of what
+ *   outreach was actually performed, to whom, in whose words), so the automated
+ *   version trades one compliance problem for a second one. A machine that
+ *   cannot tell the two halves apart must not be the thing that decides.
+ * - DOCUMENTING IT ONLY was rejected for the opposite reason. An erasure
+ *   request is a legal obligation with a deadline. A control whose entire
+ *   mechanism is "an operator remembers to run a query from a document" fails
+ *   silently, leaves no trace of having failed, and is indistinguishable — from
+ *   the outside, and from the database — from one that was honoured.
+ *
+ * So the residual is made STATE, not advice. In this same transaction each
+ * outstanding row is stamped with `metadata.erasure_pending_review`, and the
+ * ids come back in `activitiesPendingRedaction` for the caller to put in front
+ * of a human. The stamp is what turns "someone must remember" into something
+ * the database itself remembers: `WHERE metadata ? 'erasure_pending_review'`
+ * answers "is any erasure unfinished, and since when" at any time, for anyone,
+ * without having to know which erasures ever happened. A returned count alone
+ * would have lived exactly as long as one HTTP response — an operator whose tab
+ * crashed after the commit would be left with a completed erasure, an audit row
+ * saying so, and no record anywhere that a step remained.
+ *
+ * Stamped, not moved to a queue table: the flag belongs ON the row a human has
+ * to read and edit, so the work and the marker cannot drift apart, and so
+ * redacting the row is what clears it rather than a second bookkeeping write
+ * someone could forget in exactly the way this section exists to prevent.
+ *
+ * COALESCE'd for the same reason as `erased_at`: a repeat erasure keeps the
+ * ORIGINAL review timestamp, because how long an obligation has been
+ * outstanding is the compliance-relevant fact and a second click is precisely
+ * what would reset it.
+ *
+ * SCOPE, STATED SO IT IS NOT MISREAD. This covers rows this console can
+ * attribute to the erased contact: `contact_id = $1` AND `metadata.edited`.
+ * Plain notes written through `logActivity` carry no `contact_id` at all (they
+ * are organisation-scoped), so free text an operator typed about a person into
+ * the ordinary activity log is NOT reachable from here and is not claimed to
+ * be. That is a separate gap with a separate fix; pretending this statement
+ * closed it would be worse than leaving it named. The runbook's erasure section
+ * carries the manual step.
  */
 export async function eraseContact(contactId: string): Promise<ErasedContact | null> {
   // Checked here as well as inside `erasureHashes` below, and the duplication
@@ -206,11 +296,38 @@ export async function eraseContact(contactId: string): Promise<ErasedContact | n
       );
     }
 
+    // The residual (#507). Same transaction as the erasure for the same reason
+    // the hashes are: an erasure and the record of what it left behind are one
+    // fact, and a follow-up statement is a second thing that can fail, be
+    // skipped, or be dropped out of the transaction by a future caller.
+    //
+    // `body IS NOT NULL` as well as `edited`, though `crm-outreach.ts` only
+    // ever sets one with the other: this statement's output is a work list
+    // handed to a human, and a row with nothing in `body` is nothing to redact.
+    // Listing it would spend the one thing this control depends on — an
+    // operator taking the list seriously — on an empty row.
+    //
+    // No `metadata ? 'erasure_pending_review'` filter. Returning only rows
+    // this CALL marked would make the second click report an empty list, which
+    // reads as "finished" at exactly the moment it is least true.
+    const pending = await query<{ id: string }>(
+      `UPDATE crm_activities
+          SET metadata = metadata || jsonb_build_object(
+                'erasure_pending_review',
+                COALESCE(metadata->'erasure_pending_review', to_jsonb(now())))
+        WHERE contact_id = $1
+          AND metadata->>'edited' = 'true'
+          AND body IS NOT NULL
+        RETURNING id`,
+      [contactId],
+    );
+
     return {
       contactId: row.id,
       organisationId: row.organisation_id,
       previousName: row.previous_name,
       erasedAt: row.previous_erased_at,
+      activitiesPendingRedaction: pending.map((activity) => activity.id),
     };
   });
 }

@@ -71,6 +71,19 @@ import type { CrmStage } from "../crm";
  * set of rows a human authored (`metadata->>'edited' = 'true'`) instead of
  * having to read every activity in the table.
  *
+ * WHO ACTS ON THAT, because "accepted" is not the same as "left to chance"
+ * (#507): `eraseContact` reads exactly this flag, stamps the rows it matches
+ * with `metadata.erasure_pending_review`, and returns their ids so an erasure
+ * cannot be reported as finished without a human being told what is still
+ * outstanding. It does NOT delete the text — see "# The residual" in
+ * `crm-erasure.ts` for why auto-redaction was rejected. The hand-review step
+ * is "Honouring a DPDP erasure request" in `.planning/OPERATOR-RUNBOOK.md`.
+ *
+ * A CONSEQUENCE FOR ANYONE CHANGING THE INSERT BELOW: `metadata.edited` is now
+ * load-bearing for erasure, not only for reporting. A writer that stopped
+ * setting it — or set it from a client flag — would put the biography in
+ * `body` AND make the row invisible to the erasure that has to find it.
+ *
  * ══ WHY THIS IS ONE TRANSACTION ══
  *
  * The activity, the next-action clock, the drift clock and the `new` →
