@@ -29,9 +29,8 @@ export interface DestroySecretProps {
  * Delete and Destroy: two different facts about the same secret, spec §9's
  * "Destroy requires typing the secret name" made concrete.
  *
- * Delete is a soft delete — reversible from the Versions tab's restore
- * control (`restoreSecretVersion`, not built by this task) — so it takes the
- * plain secondary style the prototype uses for `Remove`/`Reject`, and no
+ * Delete is a soft delete — reversible from the Versions tab's Restore
+ * control (`restore-version.tsx`) — so it takes the plain secondary style the prototype uses for `Remove`/`Reject`, and no
  * typed confirmation: a click is enough friction for something recoverable.
  * Destroy is permanent, so it is the ONE control in this phase using the
  * destructive style, and it sits behind `DestructiveConfirmDialog` with the

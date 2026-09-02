@@ -20,6 +20,7 @@ import type { SurfaceState } from "@/components/kit/surface-state";
 import type { Grant, SecretDetail, SecretStore, SecretVersion } from "@/lib/secrets";
 import { AccessCard } from "./access-card";
 import { DestroySecret } from "./destroy-secret";
+import { RestoreVersionControl } from "./restore-version";
 import { WriteSecretForm } from "./write-secret-form";
 
 const STORE_LABEL: Record<SecretStore, string> = {
@@ -37,7 +38,12 @@ const STORE_LABEL: Record<SecretStore, string> = {
  * `destroyed` is checked first and renders its own label rather than falling
  * through to "Deleted": KV v2's only path to `destroyed` passes through
  * `deleted` first, so a version that is both must read as the more final of
- * the two facts, not the earlier one.
+ * the two facts, not the earlier one. The ordering matters HERE because each
+ * branch renders different content. `RestoreVersionControl` makes the same
+ * destroyed-versus-deleted distinction, but its two guards both render
+ * nothing, so what matters there is that its `destroyed` guard EXISTS, not
+ * where it sits — see its own doc comment, and do not read this one as
+ * saying the two components share an ordering requirement.
  */
 export function VersionStatusBadge({ version }: { version: SecretVersion }) {
   if (version.destroyed) {
@@ -49,7 +55,27 @@ export function VersionStatusBadge({ version }: { version: SecretVersion }) {
   return <Badge variant="success">Active</Badge>;
 }
 
-function VersionHistoryTable({ versions }: { versions: SecretVersion[] }) {
+/**
+ * The Versions tab. Shown to every viewer regardless of `canWrite` — it is
+ * only the Restore control inside a row that is gated, the same way
+ * `AccessCard` shows its reader list to everyone and gates just the
+ * add/remove buttons.
+ *
+ * The Actions column header is rendered unconditionally so the table keeps
+ * one shape for every operator; which rows put a control in it is
+ * `RestoreVersionControl`'s decision, not this table's.
+ */
+function VersionHistoryTable({
+  store,
+  path,
+  versions,
+  canWrite,
+}: {
+  store: SecretStore;
+  path: string;
+  versions: SecretVersion[];
+  canWrite: boolean;
+}) {
   if (versions.length === 0) {
     return <p className="text-sm text-muted-foreground">No version history recorded.</p>;
   }
@@ -60,6 +86,7 @@ function VersionHistoryTable({ versions }: { versions: SecretVersion[] }) {
           <TableHead>Version</TableHead>
           <TableHead>Created</TableHead>
           <TableHead>Status</TableHead>
+          <TableHead>Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -71,6 +98,14 @@ function VersionHistoryTable({ versions }: { versions: SecretVersion[] }) {
             </TableCell>
             <TableCell>
               <VersionStatusBadge version={version} />
+            </TableCell>
+            <TableCell>
+              <RestoreVersionControl
+                store={store}
+                path={path}
+                version={version}
+                canWrite={canWrite}
+              />
             </TableCell>
           </TableRow>
         ))}
@@ -90,7 +125,8 @@ export interface SecretDetailViewProps {
   readers: Grant[];
   state: SurfaceState;
   /** From `page.tsx`'s render-path gate — see the comment there. Not the
-   *  security control: it only decides whether the write tab is offered. */
+   *  security control: it only decides which controls are offered — the
+   *  Write and Delete tabs, and the Versions tab's per-row Restore. */
   canWrite: boolean;
 }
 
@@ -168,7 +204,14 @@ export function SecretDetailView({
         {
           id: "versions",
           label: "Versions",
-          content: <VersionHistoryTable versions={versions} />,
+          content: (
+            <VersionHistoryTable
+              store={store}
+              path={path}
+              versions={versions}
+              canWrite={canWrite}
+            />
+          ),
         },
         // The tab itself is shown to every viewer — unlike Write below,
         // which is offered only to an operator who can write at all. Access

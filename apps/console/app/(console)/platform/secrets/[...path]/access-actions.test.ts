@@ -12,6 +12,7 @@ vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   createGrant: vi.fn(),
   revokeGrant: vi.fn(),
   deleteSecret: vi.fn(),
+  restoreSecretVersion: vi.fn(),
 }));
 // `auditedOperation` itself is NOT mocked — only its leaf database calls
 // are, so a passing test here is evidence about the real audit control
@@ -25,10 +26,15 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 }));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
-import { createGrant, revokeGrant, deleteSecret } from "@/lib/secrets-api";
+import { createGrant, revokeGrant, deleteSecret, restoreSecretVersion } from "@/lib/secrets-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
-import { deleteSecretAction, grantAccessAction, revokeAccessAction } from "./access-actions";
+import {
+  deleteSecretAction,
+  grantAccessAction,
+  restoreSecretVersionAction,
+  revokeAccessAction,
+} from "./access-actions";
 
 const NO_PERMISSION = "You don't have permission to change who can read this secret.";
 const NOT_SAVED = "That change was not saved.";
@@ -310,5 +316,68 @@ describe("deleteSecretAction", () => {
     expect(result).toEqual({ ok: false, message: NOT_SAVED });
     expect(Object.keys(result)).toEqual(["ok", "message"]);
     expect((result as { cause?: unknown }).cause).toBeUndefined();
+  });
+});
+
+describe("restoreSecretVersionAction", () => {
+  it("calls restoreSecretVersion with the store, path, and version unchanged", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(restoreSecretVersion).mockResolvedValue(undefined);
+
+    const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 2);
+
+    expect(result).toEqual({ ok: true });
+    expect(restoreSecretVersion).toHaveBeenCalledWith("openbao", "mark8ly/db-password", 2);
+    expect(lastAuditInsert()).toEqual({
+      action: "secrets.restore",
+      target: "mark8ly/db-password",
+      summary: { restored: 1, version: 2 },
+    });
+  });
+
+  it("refuses a CapabilityError with the fixed no-permission message, and audits the refusal", async () => {
+    signIn(undefined);
+
+    const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 2);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(restoreSecretVersion).not.toHaveBeenCalled();
+    expect(lastAuditInsert().action).toBe("capability.refused");
+  });
+
+  // The same pair `deleteSecretAction` uses, and for the same reason: with
+  // only the `undefined`-roles case above and the both-capabilities case
+  // at the top, deleting either capability check would leave this describe
+  // passing unchanged.
+  it("refuses an operator who holds `platform` but not `rotate-credentials`", async () => {
+    signIn(["platform"]);
+
+    const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 2);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(restoreSecretVersion).not.toHaveBeenCalled();
+  });
+
+  it("refuses an operator who holds `rotate-credentials` but not `platform`", async () => {
+    signIn(["rotate-credentials"]);
+
+    const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 2);
+
+    expect(result).toEqual({ ok: false, message: NO_PERMISSION });
+    expect(restoreSecretVersion).not.toHaveBeenCalled();
+  });
+
+  // A destroyed version reaching here — the control never offers one, but
+  // nothing stops a direct call — is refused by secrets-api, not by this
+  // boundary, and its internal text must not reach the operator.
+  it("degrades secrets-api's refusal of a destroyed version to the fixed message", async () => {
+    signIn(["platform", "rotate-credentials"]);
+    vi.mocked(restoreSecretVersion).mockRejectedValue(
+      new PlatformApiError("restore secret version: version 1 is destroyed", 400),
+    );
+
+    const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 1);
+
+    expect(result).toEqual({ ok: false, message: NOT_SAVED });
   });
 });
