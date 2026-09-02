@@ -12,15 +12,17 @@ import {
   recentTicketRows,
   writeLastSeenAt,
 } from "@/lib/db/notifications-repo";
-import { fetchProposals } from "@/lib/secrets-api";
+import { fetchMergedProposals, fetchProposals } from "@/lib/secrets-api";
 import {
   FEED_LIMIT,
   FEED_WINDOW_DAYS,
   countUnread,
   mergeEvents,
+  toMergedProposalEvent,
   toProposalEvent,
   toReplyEvent,
   toTicketEvent,
+  type AccessProposalMergedNotification,
   type NotificationItem,
   type NotificationKind,
 } from "@/lib/notifications";
@@ -68,6 +70,12 @@ const CAPABILITY_FOR_KIND: Record<NotificationKind, Capability> = {
   ticket_created: "support",
   merchant_reply: "support",
   access_proposal_open: "rotate-credentials",
+  // `platform`, NOT `rotate-credentials`. This kind's recipient is the
+  // operator who raised the proposal and could not clear it — by the premise
+  // of #506 they hold `platform` and may hold nothing else. Gating their own
+  // confirmation behind the verb they lack would make it unreachable by
+  // exactly the person it is for.
+  access_proposal_merged: "platform",
 };
 
 const RELEVANT_CAPABILITIES: readonly Capability[] = Array.from(
@@ -128,6 +136,30 @@ async function safeProposalEvents(): Promise<NotificationItem[]> {
   }
 }
 
+/**
+ * Fetches merged proposals as notification items, never throwing.
+ *
+ * Same reasoning as `safeProposalEvents`: this leg's failure is "nothing to
+ * say right now", and must never cost the ticket rows in the same response.
+ */
+async function safeMergedProposalEvents(since: Date): Promise<NotificationItem[]> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PROPOSALS_TIMEOUT_MS);
+    try {
+      const merged = await fetchMergedProposals(since.toISOString(), controller.signal);
+      return merged
+        .map(toMergedProposalEvent)
+        .filter((e): e is AccessProposalMergedNotification => e !== undefined)
+        .slice(0, FEED_LIMIT);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return [];
+  }
+}
+
 function windowStart(now: Date): string {
   return new Date(
     now.getTime() - FEED_WINDOW_DAYS * 24 * 60 * 60 * 1000,
@@ -176,11 +208,21 @@ async function authorize(): Promise<Authorized | NextResponse> {
   return { sub: session.sub, capabilities: await heldCapabilities(session) };
 }
 
+/**
+ * Capability admits a KIND; `recipientSub` admits a PERSON. Both must pass.
+ *
+ * The capability check alone cannot express "yours": every `platform` holder
+ * would see every merged proposal, which is one operator reading another's
+ * activity. Items with no `recipientSub` are capability-addressed and keep
+ * exactly their previous behaviour.
+ */
 function visibleTo(
   item: NotificationItem,
   capabilities: ReadonlySet<Capability>,
+  sub: string,
 ): boolean {
-  return capabilities.has(CAPABILITY_FOR_KIND[item.kind]);
+  if (!capabilities.has(CAPABILITY_FOR_KIND[item.kind])) return false;
+  return "recipientSub" in item ? item.recipientSub === sub : true;
 }
 
 export async function GET(): Promise<NextResponse> {
@@ -192,11 +234,14 @@ export async function GET(): Promise<NextResponse> {
   }
 
   try {
-    const since = windowStart(new Date());
-    const [ticketRows, replyRows, proposalEvents, lastSeenAt] = await Promise.all([
+    const now = new Date();
+    const sinceDate = new Date(now.getTime() - FEED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const since = windowStart(now);
+    const [ticketRows, replyRows, proposalEvents, mergedEvents, lastSeenAt] = await Promise.all([
       recentTicketRows(since, FEED_LIMIT),
       recentMerchantReplyRows(since, FEED_LIMIT),
       safeProposalEvents(),
+      safeMergedProposalEvents(sinceDate),
       readLastSeenAt(auth.sub),
     ]);
     // Filtered BEFORE merging, and merged BEFORE counting.
@@ -221,7 +266,8 @@ export async function GET(): Promise<NextResponse> {
       ticketRows.map(toTicketEvent),
       replyRows.map(toReplyEvent),
       proposalEvents,
-    ].map((source) => source.filter((item) => visibleTo(item, auth.capabilities)));
+      mergedEvents,
+    ].map((source) => source.filter((item) => visibleTo(item, auth.capabilities, auth.sub)));
     const items = mergeEvents(sources, FEED_LIMIT);
     return NextResponse.json({
       items,

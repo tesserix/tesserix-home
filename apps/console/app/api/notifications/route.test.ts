@@ -17,6 +17,7 @@ vi.mock("@/lib/db/notifications-repo", () => ({
 vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
   fetchProposals: vi.fn(async () => []),
+  fetchMergedProposals: vi.fn(async () => []),
 }));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
@@ -27,13 +28,13 @@ import {
   recentTicketRows,
   writeLastSeenAt,
 } from "@/lib/db/notifications-repo";
-import { fetchProposals } from "@/lib/secrets-api";
+import { fetchMergedProposals, fetchProposals } from "@/lib/secrets-api";
 import { FEED_LIMIT } from "@/lib/notifications";
 import { GET, POST } from "./route";
 
-function signIn(roles: readonly string[] | undefined) {
+function signIn(roles: readonly string[] | undefined, sub = "sub-1") {
   vi.mocked(getCurrentSession).mockResolvedValue({
-    sub: "sub-1",
+    sub,
     email: "op@tesserix.app",
     roles,
     iat: 0,
@@ -49,6 +50,7 @@ beforeEach(() => {
   vi.mocked(recentMerchantReplyRows).mockResolvedValue([]);
   vi.mocked(readLastSeenAt).mockResolvedValue(null);
   vi.mocked(fetchProposals).mockResolvedValue([]);
+  vi.mocked(fetchMergedProposals).mockResolvedValue([]);
 });
 
 describe("GET /api/notifications", () => {
@@ -247,6 +249,87 @@ describe("GET /api/notifications", () => {
     const res = await GET();
     expect(res.status).toBe(403);
     expect(recentTicketRows).not.toHaveBeenCalled();
+  });
+
+  const MERGED_PROPOSAL = {
+    number: 7,
+    title: "grant ns/app",
+    url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+    branch: "secret-service/ns-app",
+    author: "tesserix-bot",
+    targets: ["ns/app"],
+    requestedBy: "sub-9",
+    mergedAt: "2026-09-01T10:00:00Z",
+  };
+
+  function mergedItems(body: { items: { kind: string }[] }) {
+    return body.items.filter((i) => i.kind === "access_proposal_merged");
+  }
+
+  it("hides a merged notification from an operator who is not its recipient", async () => {
+    // The security assertion of this change: platform alone must not show one
+    // operator what another asked for.
+    signIn(["platform"], "sub-OTHER");
+    vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL] as never);
+
+    const body = await (await GET()).json();
+
+    expect(mergedItems(body)).toHaveLength(0);
+  });
+
+  it("shows a merged notification to the operator who raised it", async () => {
+    signIn(["platform"], "sub-9");
+    vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL] as never);
+
+    const body = await (await GET()).json();
+
+    expect(mergedItems(body)).toHaveLength(1);
+    expect(mergedItems(body)[0]).toMatchObject({
+      number: 7,
+      recipientSub: "sub-9",
+      at: "2026-09-01T10:00:00Z",
+    });
+  });
+
+  it("leaves capability-addressed kinds unaffected by the recipient check", async () => {
+    // A ticket carries no recipientSub and must still reach a support holder
+    // whose subject matches nothing in the feed.
+    signIn(["support"], "sub-OTHER");
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "t1",
+        product_id: "homechef",
+        ticket_number: 12,
+        subject: "printer on fire",
+        created_at: "2026-09-01T09:00:00Z",
+      } as never,
+    ]);
+
+    const body = await (await GET()).json();
+
+    expect(body.items.filter((i: { kind: string }) => i.kind === "ticket_created")).toHaveLength(1);
+  });
+
+  it("keeps the ticket rows when the merged leg fails", async () => {
+    // Same guarantee safeProposalEvents already gives: one leg's 501/503/timeout
+    // must not cost the operator the rest of the response.
+    signIn(["support", "platform"], "sub-9");
+    vi.mocked(fetchMergedProposals).mockRejectedValue(new Error("secrets-api unreachable"));
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "t1",
+        product_id: "homechef",
+        ticket_number: 12,
+        subject: "printer on fire",
+        created_at: "2026-09-01T09:00:00Z",
+      } as never,
+    ]);
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.items.filter((i: { kind: string }) => i.kind === "ticket_created")).toHaveLength(1);
   });
 });
 
