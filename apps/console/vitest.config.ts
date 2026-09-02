@@ -23,6 +23,42 @@ import tsconfigPaths from "vite-tsconfig-paths";
  */
 const SERVER_ONLY_ALIAS = { "server-only": join(import.meta.dirname, "test/server-only-stub.ts") };
 
+/**
+ * `@tesserix/console-core` and `@tesserix/platform-auth` both point their
+ * `main`/`module` at a `dist/` that is gitignored and regenerated only by an
+ * explicit `pnpm -r --filter "./packages/**" build`. Without these aliases the
+ * console's unit tests assert against that build artifact rather than the
+ * source they sit next to, so a `dist` that lags `src` is invisible until it
+ * bites.
+ *
+ * When it bites, it does not look like a stale build. There is no compile
+ * error — the bundle loads fine, it is simply missing whatever was added since
+ * it was written, so the symptom is an absent export or an absent map entry:
+ * `ROUTES["platform.newSecret"]` came back `undefined` and `consolePath` threw
+ * a `TypeError` reading a property of it. And because tsup emits source maps,
+ * the stack frame is mapped back onto `packages/console-core/src/routes.ts`,
+ * which reads exactly like a module-initialisation bug in source you can see is
+ * correct. Two separate investigations chased that ghost — one filed it as an
+ * intermittent flake — before anyone rebuilt `dist` and watched it go green.
+ * It only ever looked intermittent because different worktrees carried `dist`
+ * directories of different ages.
+ *
+ * CI never sees any of this: `ci.yml` builds the packages before running the
+ * tests, so the artifact there is always current and a PR stays green while
+ * every local run is red. That asymmetry is the reason the aliases live here
+ * and not in the CI workflow — `next build` still has to exercise the real
+ * published artifact, so the build step stays exactly as it is.
+ *
+ * Only these two need it. `@tesserix/web` is a genuine published dependency
+ * rather than workspace source (`server.deps.inline` below is what it needs);
+ * `@tesserix/crm-country` ships `index.mjs` directly with no build step, so it
+ * has no artifact to go stale.
+ */
+const WORKSPACE_SRC_ALIAS = {
+  "@tesserix/console-core": join(import.meta.dirname, "../../packages/console-core/src/index.ts"),
+  "@tesserix/platform-auth": join(import.meta.dirname, "../../packages/platform-auth/src/index.ts"),
+};
+
 const SHARED = {
   // @tesserix/web's ESM barrel re-exports via bare directory specifiers,
   // which Node's ESM resolver rejects when a dependency is externalised.
@@ -37,7 +73,7 @@ export default defineConfig({
     projects: [
       {
         plugins: [tsconfigPaths()],
-        resolve: { alias: SERVER_ONLY_ALIAS },
+        resolve: { alias: { ...SERVER_ONLY_ALIAS, ...WORKSPACE_SRC_ALIAS } },
         test: {
           ...SHARED,
           name: "node",
@@ -77,7 +113,10 @@ export default defineConfig({
         // `render()` silently returns an empty container. The root
         // package.json pins react/react-dom to the one version every app
         // declares; this is the belt to those braces.
-        resolve: { dedupe: ["react", "react-dom"], alias: SERVER_ONLY_ALIAS },
+        resolve: {
+          dedupe: ["react", "react-dom"],
+          alias: { ...SERVER_ONLY_ALIAS, ...WORKSPACE_SRC_ALIAS },
+        },
         test: {
           ...SHARED,
           name: "dom",
