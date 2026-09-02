@@ -46,11 +46,21 @@ type Config struct {
 	GitHubBranch      string
 	GitHubValuesPath  string
 	GitHubProjectPath string
+
+	// GitHub App identity (#464). When GitHubAppID is set the service
+	// authenticates as the app and GitHubToken is ignored.
+	GitHubAppID             string
+	GitHubAppInstallationID string
+	GitHubAppPrivateKey     string
 }
 
 // GitOpsEnabled reports whether the console can propose whitelist changes. The
 // token is optional: without it the service runs and refuses only that call.
-func (c Config) GitOpsEnabled() bool { return c.GitHubToken != "" }
+// GitOpsEnabled reports whether the service has ANY credential for the GitOps
+// repository. It deliberately accepts either identity: gating on GITHUB_TOKEN
+// alone would silently disable proposals for an App-only deployment, which is
+// the configuration this is migrating towards (#464).
+func (c Config) GitOpsEnabled() bool { return c.GitHubToken != "" || c.GitHubAppID != "" }
 
 func LoadFromEnv() (Config, error) { return Load(os.Getenv) }
 
@@ -67,12 +77,15 @@ func Load(get Lookup) (Config, error) {
 		ZitadelProjectID: strings.TrimSpace(get("ZITADEL_PROJECT_ID")),
 		ConsoleClientID:  strings.TrimSpace(get("ZITADEL_CONSOLE_CLIENT_ID")),
 
-		GitHubToken:       strings.TrimSpace(get("GITHUB_TOKEN")),
-		GitHubOwner:       valueOr(get("GITHUB_OWNER"), "tesserix"),
-		GitHubRepo:        valueOr(get("GITHUB_REPO"), "tesserix-k8s"),
-		GitHubBranch:      valueOr(get("GITHUB_BRANCH"), "main"),
-		GitHubValuesPath:  valueOr(get("GITHUB_VALUES_PATH"), "charts/thirdparty/openbao/values.yaml"),
-		GitHubProjectPath: valueOr(get("GITHUB_PROJECT_PATH"), "argocd/prod/projects/security.yaml"),
+		GitHubToken:             strings.TrimSpace(get("GITHUB_TOKEN")),
+		GitHubAppID:             strings.TrimSpace(get("GITHUB_APP_ID")),
+		GitHubAppInstallationID: strings.TrimSpace(get("GITHUB_APP_INSTALLATION_ID")),
+		GitHubAppPrivateKey:     strings.TrimSpace(get("GITHUB_APP_PRIVATE_KEY")),
+		GitHubOwner:             valueOr(get("GITHUB_OWNER"), "tesserix"),
+		GitHubRepo:              valueOr(get("GITHUB_REPO"), "tesserix-k8s"),
+		GitHubBranch:            valueOr(get("GITHUB_BRANCH"), "main"),
+		GitHubValuesPath:        valueOr(get("GITHUB_VALUES_PATH"), "charts/thirdparty/openbao/values.yaml"),
+		GitHubProjectPath:       valueOr(get("GITHUB_PROJECT_PATH"), "argocd/prod/projects/security.yaml"),
 	}
 
 	port, err := strconv.Atoi(valueOr(get("PORT"), "8080"))

@@ -103,10 +103,20 @@ func run(log *slog.Logger) error {
 			Path:        cfg.GitHubValuesPath,
 			ProjectPath: cfg.GitHubProjectPath,
 			Token:       cfg.GitHubToken,
+
+			AppID:          cfg.GitHubAppID,
+			InstallationID: cfg.GitHubAppInstallationID,
+			AppPrivateKey:  cfg.GitHubAppPrivateKey,
 		})
+		if cfg.GitHubAppID != "" {
+			log.Info("github identity", "mode", "app", "app_id", cfg.GitHubAppID)
+		} else {
+			log.Warn("github identity", "mode", "personal access token",
+				"reason", "GITHUB_APP_ID is not set; pull requests will be attributed to the token's owner (#464)")
+		}
 		whitelist, reviews = github, github
 	} else {
-		log.Warn("whitelist proposals disabled", "reason", "GITHUB_TOKEN is not set")
+		log.Warn("whitelist proposals disabled", "reason", "neither GITHUB_APP_ID nor GITHUB_TOKEN is set")
 	}
 
 	// Discovery is a network call made once at startup, bounded by
