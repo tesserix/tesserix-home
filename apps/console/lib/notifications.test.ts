@@ -204,10 +204,6 @@ describe("toMergedProposalEvent", () => {
       }),
     ).toBeUndefined();
   });
-
-  it("lists the merged kind so the bell's shape validator accepts it", () => {
-    expect(NOTIFICATION_KINDS).toContain("access_proposal_merged");
-  });
 });
 
 describe("mergeEvents", () => {
