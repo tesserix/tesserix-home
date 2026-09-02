@@ -481,8 +481,27 @@ function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | 
 }
 
 /**
+ * The erasure's own result type, rather than the shared `CrmActionResult`.
+ *
+ * `{ ok: true }` is the wrong shape for this one action: an erasure can succeed
+ * and still be UNFINISHED (#507 — outreach the operator edited before sending
+ * holds text a human wrote, which `eraseContact` flags rather than destroys).
+ * A caller that only checked `ok` would close the dialog on a request that is
+ * not yet honoured, and the type is what stops it: `pendingRedaction` is not
+ * optional, so a consumer has to have seen it to compile.
+ *
+ * A COUNT, never the ids and never the text. The caller's job is to stop and
+ * tell a human; finding the rows is `crm_activities`' job, via the runbook
+ * query. Putting anything richer here would start walking the very text the
+ * erasure exists to get rid of back towards a screen.
+ */
+export type EraseContactResult =
+  | { ok: true; pendingRedaction: number }
+  | { ok: false; message: string };
+
+/**
  * Erase a contact's identifying data (DPDP "forget me" — #213/#154). The
- * organisation, its opportunities and its activity log are untouched; see
+ * organisation, its opportunities and its activity log are not destroyed; see
  * `eraseContact` in crm-erasure.ts for why that split matters.
  *
  * Gated on `hard-delete`, not the `read` every other CRM write shares — this
@@ -498,8 +517,15 @@ function mapEraseAuditFailure(cause: unknown): { ok: false; message: string } | 
  * kept out of THIS action's return value, because echoing it back would put
  * the erased person's name on the exact screen this action was just used to
  * remove it from. Two separate decisions, not one.
+ *
+ * `pendingRedaction` is the third surface the residual appears on, and the
+ * three are not redundant: the row stamp is what a query can find months later,
+ * the audit summary is what the evidence trail records, and this is what the
+ * operator standing at the dialog is told while they still have the request in
+ * front of them. Each covers a failure of the other two — a stamp nobody
+ * queries, an audit row nobody reads, a dialog nobody was looking at.
  */
-export async function eraseContactAction(contactId: string): Promise<CrmActionResult> {
+export async function eraseContactAction(contactId: string): Promise<EraseContactResult> {
   const result = await withCrmWrite(
     contactId,
     { capability: "hard-delete" },
@@ -513,7 +539,25 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
       const alreadyErased = outcome !== null && outcome.erasedAt !== null;
       return {
         action: "crm.contact.erase",
-        summary: { erased: outcome && !alreadyErased ? 1 : 0 },
+        // `pending_redaction` rides in the SAME row as `erased`, not a
+        // separate audit action, and that is the point: #140 reads this row
+        // as evidence the request was honoured, and a row that says "erased:
+        // 1" while text derived from the erased columns is still on disk
+        // overstates what happened. The two counts are one claim.
+        //
+        // Unlike `erased`, it is NOT zeroed on a repeat click. `erased: 0`
+        // means "this call erased nothing new"; `pending_redaction` means
+        // "this much is still outstanding right now", which is as true on the
+        // second click as the first — see `activitiesPendingRedaction`.
+        //
+        // A count, per `AuditSummary`. The ids would not fit its shape and
+        // should not: `console_audit_log` is the other table `eraseContact`
+        // cannot reach, so it gets the number and nothing that could grow
+        // into the text.
+        summary: {
+          erased: outcome && !alreadyErased ? 1 : 0,
+          pending_redaction: outcome ? outcome.activitiesPendingRedaction.length : 0,
+        },
         // The name belongs here, in the free-string audit target, and only
         // here: never in `summary` (counts only) and never in the
         // CrmActionResult below. Keeping it in the audit row is what makes
@@ -536,7 +580,7 @@ export async function eraseContactAction(contactId: string): Promise<CrmActionRe
     // path: a contact that was already gone changed nothing to revalidate.
     revalidatePath("/platform/crm/organisations");
   }
-  return { ok: true };
+  return { ok: true, pendingRedaction: result.value?.activitiesPendingRedaction.length ?? 0 };
 }
 
 /**

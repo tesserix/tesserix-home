@@ -69,6 +69,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * human-authored rows with `metadata->>'edited' = 'true'` instead of reading the
  * whole table.
  *
+ * THAT RESIDUAL NOW HAS ITS OWN CONTROL, AND ITS OWN TESTS, at the bottom of
+ * this file — "eraseContact — the outreach it cannot finish" (#507). Until
+ * then the only thing standing behind it was this paragraph and a SQL query in
+ * a comment, which describes an obligation rather than holding anyone to one.
+ *
  * Own pglite instance — a `vi.mock` in one test file cannot be shared with
  * another (see `crm-erasure.integration.test.ts`).
  */
@@ -267,9 +272,21 @@ async function expectNoSentinelOnDisk(): Promise<void> {
     expect(row.body ?? "").not.toContain(SENTINEL);
     expect(row.metadata_text).not.toContain(SENTINEL);
   }
+  await expectNoSentinelInAuditLog();
+}
+
+/**
+ * The audit half of the scan, split out because the EDITED path needs it
+ * ALONE: there, `crm_activities.body` legitimately holds the operator's text
+ * (sentinel and all), so the whole-disk scan above cannot run — but the claim
+ * about `console_audit_log` is unchanged and, on that path, is being tested
+ * for the first time against free text that actually contains the biography.
+ */
+async function expectNoSentinelInAuditLog(): Promise<void> {
   const audit = await db.query<{ target: string | null; metadata: string | null }>(
     `SELECT target, metadata FROM console_audit_log`,
   );
+  expect(audit.rows.length).toBeGreaterThan(0);
   for (const row of audit.rows) {
     expect(row.target ?? "").not.toContain(SENTINEL);
     expect(row.metadata ?? "").not.toContain(SENTINEL);
@@ -551,5 +568,214 @@ describe("copyAndLogDm — what sending a DM implies", () => {
     expect(daysOut).toBeGreaterThan(3.9);
     expect(daysOut).toBeLessThan(4.1);
     expect(opp.rows[0].next_action_note).toBe('Follow up on "Cold intro"');
+  });
+});
+
+/**
+ * ══ THE RESIDUAL, NOW PROVEN RATHER THAN ONLY STATED (#507) ══
+ *
+ * The suite above proves the NARROW claim: nothing this console authored
+ * reaches `crm_activities`. Its header is explicit that this is not the same
+ * as "the biography can never appear there" — an operator who edits one
+ * character keeps the rest of the render, biography included, and that text is
+ * stored because a log that refused to record what a human wrote would be
+ * fiction.
+ *
+ * That residual had no test at all. What it had was a SQL query in a comment,
+ * which is a description of an obligation rather than a control over one. This
+ * block is the control: it drives the edited path with text that DELIBERATELY
+ * KEEPS the sentinel, runs the real `eraseContact`, and asserts that the
+ * erasure hands back the rows it could not finish and stamps them where a
+ * query can find them months later.
+ *
+ * WHAT IT DOES NOT ASSERT, because the decision was the other way: it does not
+ * assert the text is gone. `eraseContact` deliberately does not destroy it —
+ * the operator's own sentence and the quoted biography are one string with no
+ * boundary between them, so nulling `body` deletes the record of what a human
+ * said in order to reach the part that was ours. See "# The residual" in
+ * `crm-erasure.ts` for the argument and for what auto-redaction would have
+ * cost. A test asserting `body IS NULL` after erasure would be pinning the
+ * option that was rejected.
+ */
+
+/** The dm_sent row, with the fields all four tests below read. */
+async function dmSentRow(): Promise<{
+  id: string;
+  body: string | null;
+  metadata_text: string;
+  pending_review: string | null;
+}> {
+  const rows = await db.query<{
+    id: string;
+    body: string | null;
+    metadata_text: string;
+    pending_review: string | null;
+  }>(
+    `SELECT id, body, metadata::text AS metadata_text,
+            metadata->>'erasure_pending_review' AS pending_review
+       FROM crm_activities WHERE kind = 'dm_sent'`,
+  );
+  expect(rows.rows).toHaveLength(1);
+  return rows.rows[0];
+}
+
+/**
+ * The edited path, driven with text that KEEPS the biography — which is the
+ * only version of "edited" that reproduces the gap. The existing suite's
+ * edited test submits `OPERATOR_TEXT`, which contains no sentinel by design,
+ * so it proves the write path and says nothing about the residual.
+ *
+ * Two negative controls, both of which must run before anything below means
+ * anything: the render leaks the sentinel (`renderAndAssertItLeaks`), and the
+ * text actually submitted still carries it after the edit.
+ */
+async function logEditedKeepingTheBiography(): Promise<string> {
+  const rendered = await renderAndAssertItLeaks();
+  const edited = `${rendered} Let me know if next week suits.`;
+  expect(edited).toContain(SENTINEL);
+  expect(edited).not.toBe(rendered);
+
+  const result = await copyAndLogDm({
+    organisationId: orgId,
+    contactId,
+    templateId,
+    submittedText: edited,
+  });
+  expect(result).toEqual({ ok: true });
+  return edited;
+}
+
+/** The real erasure, with the fixture asserted to have been worth erasing. */
+async function eraseAndAssertItRan(): Promise<{ activitiesPendingRedaction: string[] }> {
+  // NEGATIVE CONTROL. Without this the whole block passes trivially the day
+  // the fixture stops populating `biography` — a green suite evidencing
+  // nothing, which is the failure mode this file's header names.
+  const before = await db.query<{ biography: string | null }>(
+    `SELECT biography FROM crm_contacts WHERE id = $1`,
+    [contactId],
+  );
+  expect(before.rows[0].biography).toContain(SENTINEL);
+
+  const erased = await eraseContact(contactId);
+  if (!erased) throw new Error("eraseContact found no contact");
+
+  // Guards the guard: an erasure that quietly did nothing would leave every
+  // assertion below passing for the wrong reason.
+  const after = await db.query<{ biography: string | null; erased_at: string | null }>(
+    `SELECT biography, erased_at FROM crm_contacts WHERE id = $1`,
+    [contactId],
+  );
+  expect(after.rows[0].biography).toBeNull();
+  expect(after.rows[0].erased_at).not.toBeNull();
+  return erased;
+}
+
+describe("eraseContact — the outreach it cannot finish", () => {
+  it("leaves the biography in an edited DM's body, which is the gap being closed", async () => {
+    // THE PRECONDITION, standing on its own so the rest is legible as a
+    // response to a real defect rather than to a hypothetical one. This is the
+    // exact state #507 describes: scraped biography text sitting in a table
+    // `eraseContact` does not reach.
+    await logEditedKeepingTheBiography();
+
+    const row = await dmSentRow();
+    expect(row.body).toContain(SENTINEL);
+    expect(row.metadata_text).toContain('"edited": true');
+
+    await eraseAndAssertItRan();
+
+    // Still there AFTER the erasure — deliberately, and this is the whole
+    // reason the row has to be flagged instead.
+    const afterErasure = await dmSentRow();
+    expect(afterErasure.body).toContain(SENTINEL);
+  });
+
+  it("hands the erasure's caller the rows it could not finish", async () => {
+    await logEditedKeepingTheBiography();
+    const row = await dmSentRow();
+
+    const erased = await eraseAndAssertItRan();
+
+    // The id itself, not a count: a caller that has to go and find them would
+    // be back to the query-in-a-comment this replaces.
+    expect(erased.activitiesPendingRedaction).toEqual([row.id]);
+  });
+
+  it("stamps the row so the obligation outlives the response that reported it", async () => {
+    // THE LOAD-BEARING ASSERTION. A returned list lives as long as one HTTP
+    // response; an operator whose tab dies after the commit would be left with
+    // a completed erasure, an audit row saying so, and nothing on disk
+    // recording that a step remained. The stamp is what makes "is any erasure
+    // unfinished, and since when" answerable at any time by anyone.
+    await logEditedKeepingTheBiography();
+    await eraseAndAssertItRan();
+
+    const row = await dmSentRow();
+    expect(row.pending_review).not.toBeNull();
+    expect(Number.isNaN(Date.parse(row.pending_review!))).toBe(false);
+
+    // The query the runbook publishes, run for real — the obligation is
+    // findable without knowing which erasures ever happened.
+    const found = await db.query<{ id: string }>(
+      `SELECT id FROM crm_activities WHERE metadata ? 'erasure_pending_review'`,
+    );
+    expect(found.rows.map((r) => r.id)).toEqual([row.id]);
+  });
+
+  it("reports the same outstanding row on a repeat erasure, keeping the original timestamp", async () => {
+    // The mirror of `erased_at`'s COALESCE. A second click erased nothing new,
+    // but the rows are as outstanding as they were — and how LONG they have
+    // been outstanding is the compliance-relevant fact a reset would destroy.
+    await logEditedKeepingTheBiography();
+    const first = await eraseAndAssertItRan();
+    // Asserted, not assumed: two EMPTY lists are equal, so without this the
+    // comparison below passes on an erasure that reports nothing at all —
+    // exactly the regression this test exists to catch.
+    expect(first.activitiesPendingRedaction).toHaveLength(1);
+    const firstStamp = (await dmSentRow()).pending_review;
+    expect(firstStamp).not.toBeNull();
+
+    const second = await eraseContact(contactId);
+    expect(second?.activitiesPendingRedaction).toEqual(first.activitiesPendingRedaction);
+    expect((await dmSentRow()).pending_review).toBe(firstStamp);
+  });
+
+  it("flags nothing when the operator sent our render verbatim", async () => {
+    // The other half, and the one that keeps the list worth reading. A control
+    // that flagged every activity would be discarded by the first operator who
+    // met it, and the verbatim row has a NULL body — there is nothing in it to
+    // redact.
+    await logVerbatim();
+
+    const erased = await eraseAndAssertItRan();
+
+    expect(erased.activitiesPendingRedaction).toEqual([]);
+    const found = await db.query(
+      `SELECT id FROM crm_activities WHERE metadata ? 'erasure_pending_review'`,
+    );
+    expect(found.rows).toHaveLength(0);
+  });
+
+  it("keeps the biography out of console_audit_log even when the operator's own text quotes it", async () => {
+    // THE `console_audit_log` DECISION, made a test rather than a comment.
+    //
+    // That table is the second one `eraseContact` cannot reach, and it is NOT
+    // getting the same flag-for-review treatment — deliberately: it is the
+    // DPDP evidence that the erasure happened, it deliberately retains the
+    // contact's previous name, and redacting evidence to satisfy an erasure
+    // destroys the proof the erasure was performed. The control there is that
+    // no message text is written to it in the first place — `target` is the
+    // handle or the email plus an id, `summary` is counts.
+    //
+    // Until now only a code comment held that line on this path. This is the
+    // first test in which free text CONTAINING the biography flows through
+    // `copyAndLogDm` into the audit writer, so it is the first time the claim
+    // is actually exercised rather than asserted about text that never had the
+    // sentinel in it.
+    await logEditedKeepingTheBiography();
+    await expectNoSentinelInAuditLog();
+
+    await eraseAndAssertItRan();
+    await expectNoSentinelInAuditLog();
   });
 });

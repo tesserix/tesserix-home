@@ -260,6 +260,127 @@ SESSION_COOKIE='tx_session=<paste>' \
 #   within 30s
 ```
 
+## Honouring a DPDP erasure request
+
+Not part of the activation above — this is a standing procedure, kept here
+because this is the file an operator already opens. Applies every time
+someone asks to be forgotten (tesserix-home#507).
+
+### The rule: clicking Erase does not finish the request
+
+`eraseContact` overwrites the contact's personal columns and empties their
+raw-scrape bag. It does **not** empty `crm_activities`, and that is
+deliberate — `stage_change` rows are the only record of when a stage was
+entered, so deleting the activity log puts holes in funnel measurement
+nobody can later explain.
+
+That was harmless until the lead-template composer. A DM this console
+renders embeds `crm_contacts.biography`; on the verbatim path the render is
+never stored (`body` is NULL, only `metadata.template_id` persists), but an
+operator who **edits** the message before sending keeps the rest of the
+render — biography included — and that text **is** stored, because a log
+that refused to record what a human actually wrote would be fiction.
+
+So an erasure can commit and leave scraped biography text on disk. The code
+does not delete it for you and will not: the operator's own sentence and the
+quoted profile are one string with no boundary a machine can cut along, and
+nulling `body` would destroy the record of what a person said in order to
+reach the part that had to go. **A human has to read it and redact it.**
+
+What the code does instead is refuse to let the obligation go unrecorded. It
+stamps every affected row with `metadata.erasure_pending_review` (the time
+the erasure ran), reports the count to the operator in a dialog they must
+acknowledge, and writes `pending_redaction: N` into the `crm.contact.erase`
+audit row. **Do not treat the request as honoured until that count is zero.**
+
+### The steps
+
+1. **Erase the contact** in the console (CRM → organisation → Contacts →
+   Erase). Read the count off the notice. `0` means there is nothing below
+   to do; anything else is work with the same deadline as the erasure.
+
+2. **Find the flagged rows.** The stamp is the index — you do not need to
+   know which erasures happened.
+
+   ```bash
+   kubectl exec -n tesserix pod/tesserix-postgres-1 -c postgres -- \
+     env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin \
+     -d tesserix_admin -c \
+     "SELECT id, organisation_id, contact_id, occurred_at,
+             metadata->>'erasure_pending_review' AS flagged_at
+        FROM crm_activities
+       WHERE metadata ? 'erasure_pending_review'
+       ORDER BY flagged_at;"
+   ```
+
+   For one request, add `AND contact_id = '<contact-uuid>'` — the id is on
+   the dialog. The count here must match `pending_redaction` in the audit
+   row; if it does not, stop and report it rather than redacting a set you
+   cannot account for.
+
+3. **Read each body and rewrite it by hand.** Remove the text that came from
+   the person's profile. Keep what the operator wrote — that is the record
+   of what was actually said, and it is evidence in its own right. Do not
+   delete the row and do not null `body` wholesale.
+
+4. **Clear the flag in the same statement that redacts.** The flag is what
+   says the work is outstanding; clearing it separately is a second write
+   somebody can forget, which is the exact failure this procedure exists to
+   prevent.
+
+   ```bash
+   kubectl exec -i -n tesserix pod/tesserix-postgres-1 -c postgres -- \
+     env PGPASSWORD="$TESSERIX_PASS" psql -h localhost -U tesserix_admin \
+     -d tesserix_admin -c \
+     "UPDATE crm_activities
+         SET body = 'Sent an intro DM. [profile text redacted on erasure]',
+             metadata = metadata - 'erasure_pending_review'
+       WHERE id = '<activity-uuid>';"
+   ```
+
+5. **Check the plain activity log too.** Notes written through the ordinary
+   composer carry no `contact_id` — they are organisation-scoped — so the
+   query in step 2 cannot reach them and does not claim to. Read the erased
+   contact's organisation's notes and redact any that name them:
+
+   ```sql
+   SELECT id, kind, actor, occurred_at, body
+     FROM crm_activities
+    WHERE organisation_id = '<org-uuid>'
+      AND body IS NOT NULL
+    ORDER BY occurred_at DESC;
+   ```
+
+### What to check before calling it done
+
+- **The flag is gone for that contact** — re-run step 2 filtered by
+  `contact_id`; expect zero rows.
+- **The standing count is zero, or you know why it is not.**
+  `SELECT count(*) FROM crm_activities WHERE metadata ? 'erasure_pending_review';`
+  is the whole-system version of the same question, and the oldest
+  `flagged_at` is how long the oldest obligation has been outstanding. A
+  non-zero count with an old timestamp is a missed statutory window, not a
+  backlog item.
+- **The audit row still says what it said.** `crm.contact.erase` keeps
+  `pending_redaction: N` for the number that were outstanding *at erasure
+  time* — that is evidence and is not rewritten when you redact. Do not
+  "fix" it.
+- **You did not re-run the erasure to clear the flag.** Erasing again is
+  idempotent and deliberately keeps the ORIGINAL `erasure_pending_review`
+  timestamp, so a second click cannot make an old obligation look fresh. It
+  clears nothing.
+
+### What is NOT redacted, and why
+
+`console_audit_log` is the other table `eraseContact` cannot reach, and it
+is left alone on purpose. It retains the erased contact's name in `target`
+because it is the evidence the request was honoured, and evidence that
+cannot say whose data was erased evidences nothing. The control there is
+that no message text is ever written to it in the first place — `target` is
+the handle or email plus an id, `summary` is counts only. If you ever find
+message text in an audit row, that is a code defect to report, not something
+to clean up by hand.
+
 ## Things that should NOT be necessary (already done in code)
 
 - ☑ Image rolls — tesserix-home CI does `kubectl set image` on every push to main; mark8ly CI auto-bumps tesserix-k8s/charts/apps/mark8ly-*/values.yaml. No manual image bump.

@@ -832,16 +832,17 @@ describe("eraseContactAction", () => {
       previousName: "Priya Raman",
       // null: this call is the one that erased the contact, not a repeat.
       erasedAt: null,
+      activitiesPendingRedaction: [],
     });
 
     const result = await eraseContactAction(CONTACT_ID);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, pendingRedaction: 0 });
     expect(eraseContact).toHaveBeenCalledWith(CONTACT_ID);
     expect(lastAuditInsert()).toEqual({
       action: "crm.contact.erase",
       target: `Priya Raman (${CONTACT_ID})`,
-      summary: { erased: 1 },
+      summary: { erased: 1, pending_redaction: 0 },
     });
     expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
     // Finding 3: the browse list renders the primary contact's name, so an
@@ -859,6 +860,7 @@ describe("eraseContactAction", () => {
       organisationId: ORG_ID,
       previousName: "Priya Raman",
       erasedAt: null,
+      activitiesPendingRedaction: [],
     });
 
     const result = await eraseContactAction(CONTACT_ID);
@@ -876,7 +878,7 @@ describe("eraseContactAction", () => {
     expect(lastAuditInsert()).toEqual({
       action: "crm.contact.erase",
       target: CONTACT_ID,
-      summary: { erased: 0 },
+      summary: { erased: 0, pending_redaction: 0 },
     });
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -912,15 +914,16 @@ describe("eraseContactAction", () => {
       // Non-null: the PRE-image already carried an erasure timestamp, so
       // this call is a no-op re-erase, not a genuine first one.
       erasedAt: "2026-01-01T00:00:00.000Z",
+      activitiesPendingRedaction: [],
     });
 
     const result = await eraseContactAction(CONTACT_ID);
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, pendingRedaction: 0 });
     expect(lastAuditInsert()).toEqual({
       action: "crm.contact.erase",
       target: `[erased] (${CONTACT_ID})`,
-      summary: { erased: 0 },
+      summary: { erased: 0, pending_redaction: 0 },
     });
   });
 
@@ -933,6 +936,7 @@ describe("eraseContactAction", () => {
       organisationId: ORG_ID,
       previousName: "Priya Raman",
       erasedAt: null,
+      activitiesPendingRedaction: [],
     });
     await eraseContactAction(CONTACT_ID);
     const firstSummary = lastAuditInsert().summary;
@@ -942,13 +946,72 @@ describe("eraseContactAction", () => {
       organisationId: ORG_ID,
       previousName: "[erased]",
       erasedAt: "2026-01-01T00:00:00.000Z",
+      activitiesPendingRedaction: [],
     });
     await eraseContactAction(CONTACT_ID);
     const secondSummary = lastAuditInsert().summary;
 
-    expect(firstSummary).toEqual({ erased: 1 });
-    expect(secondSummary).toEqual({ erased: 0 });
+    expect(firstSummary).toEqual({ erased: 1, pending_redaction: 0 });
+    expect(secondSummary).toEqual({ erased: 0, pending_redaction: 0 });
     expect(secondSummary).not.toEqual(firstSummary);
+  });
+
+  // #507. An erasure that could not finish must say so on BOTH surfaces this
+  // action owns: the operator standing at the dialog, and the audit row later
+  // read as evidence the request was honoured. A row claiming `erased: 1`
+  // with no mention of what survived overstates what happened.
+  it("reports the outreach it could not finish, to the operator and to the audit log", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+      erasedAt: null,
+      activitiesPendingRedaction: ["activity-1", "activity-2"],
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({ ok: true, pendingRedaction: 2 });
+    expect(lastAuditInsert().summary).toEqual({ erased: 1, pending_redaction: 2 });
+  });
+
+  // A count is what a caller is handed, never the ids and never the text —
+  // this value flows out towards a screen, and the whole reason those rows
+  // are a problem is that what they hold must not be reproduced anywhere new.
+  it("hands the caller a count, not the activity ids", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "Priya Raman",
+      erasedAt: null,
+      activitiesPendingRedaction: ["activity-1", "activity-2"],
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(JSON.stringify(result)).not.toContain("activity-1");
+  });
+
+  // The mirror of `erased: 0` above, and the opposite answer: a second click
+  // erased nothing NEW, but the outstanding rows are as outstanding as they
+  // were a minute ago. Zeroing this alongside `erased` would make a repeat
+  // click the thing that makes an unfinished erasure look finished.
+  it("still reports the outstanding rows when the contact was already erased", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(eraseContact).mockResolvedValue({
+      contactId: CONTACT_ID,
+      organisationId: ORG_ID,
+      previousName: "[erased]",
+      erasedAt: "2026-01-01T00:00:00.000Z",
+      activitiesPendingRedaction: ["activity-1"],
+    });
+
+    const result = await eraseContactAction(CONTACT_ID);
+
+    expect(result).toEqual({ ok: true, pendingRedaction: 1 });
+    expect(lastAuditInsert().summary).toEqual({ erased: 0, pending_redaction: 1 });
   });
 
   // Important (fix round 2): the same audit-write-fails-after-commit risk
@@ -963,6 +1026,7 @@ describe("eraseContactAction", () => {
       organisationId: ORG_ID,
       previousName: "Priya Raman",
       erasedAt: null,
+      activitiesPendingRedaction: [],
     });
     vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
 

@@ -7,6 +7,12 @@ import {
   Button,
   Callout,
   CalloutDescription,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Input,
   Label,
   Select,
@@ -158,6 +164,13 @@ function EraseContactButton({
   const [error, setError] = useState<string | null>(null);
   const { value, setValue, matches } = useTypedConfirmation(organisationName);
 
+  // Non-null once an erasure has come back reporting outreach it could not
+  // finish (#507). Held in state rather than shown as a toast because the
+  // operator has to be able to read a count, a contact id and an instruction
+  // off it — and because a notice that disappears on its own is the same
+  // control as no notice, for an obligation with a deadline.
+  const [unfinished, setUnfinished] = useState<number | null>(null);
+
   const reset = () => {
     setValue("");
     setError(null);
@@ -173,7 +186,14 @@ function EraseContactButton({
       }
       setOpen(false);
       reset();
+      // The refresh happens either way — the erasure itself DID commit, and
+      // leaving the person's details on screen while the operator reads about
+      // the residual would be its own defect.
       router.refresh();
+      // Replaces one modal with another rather than returning the operator to
+      // the page. The erasure is not finished, they are the only one who can
+      // finish it, and this is the last moment they are certain to be looking.
+      if (result.pendingRedaction > 0) setUnfinished(result.pendingRedaction);
     });
   };
 
@@ -194,7 +214,10 @@ function EraseContactButton({
           if (!next) reset();
         }}
         title={`Erase ${contactLabel}?`}
-        description={`This overwrites ${contactLabel}'s name, email, phone, and Instagram handle. ${organisationName}'s deal history — its opportunities and activity log — is kept exactly as it is. This cannot be undone.`}
+        // Says up front that the erasure may not finish here (#507). An
+        // operator who learns that only in the notice AFTERWARDS has already
+        // decided; this is the screen where the decision is still theirs.
+        description={`This overwrites ${contactLabel}'s name, email, phone, and Instagram handle. ${organisationName}'s deal history — its opportunities and activity log — is kept exactly as it is. Any DM an operator edited before sending keeps the words they wrote, so those may need redacting by hand afterwards; you will be told how many. This cannot be undone.`}
         confirmLabel="Erase contact"
         confirmId={`erase-confirm-button-${contact.id}`}
         statusId={statusId}
@@ -212,7 +235,83 @@ function EraseContactButton({
           error={error}
         />
       </DestructiveConfirmDialog>
+      <UnfinishedErasureDialog
+        contactId={contact.id}
+        count={unfinished}
+        onAcknowledge={() => setUnfinished(null)}
+      />
     </>
+  );
+}
+
+/**
+ * What an operator is told when an erasure committed but did not finish
+ * (#507).
+ *
+ * `eraseContact` cannot destroy the body of a DM the operator EDITED before
+ * sending — that text is what a human actually wrote, and deleting it to get
+ * at the quoted biography inside it would destroy the record of what was said
+ * along with the part that had to go. It flags those rows instead and reports
+ * how many; this is where a person is told.
+ *
+ * MODAL, AND WITH NO CANCEL. The other two surfaces (`metadata
+ * .erasure_pending_review` on the rows, `pending_redaction` in the audit row)
+ * are durable and survive this dialog being missed, so this one is not the
+ * guarantee — but it is the only one that reaches the operator while the
+ * request is still in their hands, and a toast at the bottom of a page they
+ * are about to navigate away from would be indistinguishable from saying
+ * nothing. There is nothing to cancel: the erasure already committed, so the
+ * only honest control is an acknowledgement.
+ *
+ * NAMES NO PERSON AND SHOWS NO MESSAGE TEXT. The count and the contact id are
+ * enough to run the runbook query, and the whole reason those rows are a
+ * problem is that what they contain must not be reproduced anywhere new — a
+ * dialog that helpfully previewed them would be the defect, on a new surface.
+ */
+function UnfinishedErasureDialog({
+  contactId,
+  count,
+  onAcknowledge,
+}: {
+  contactId: string;
+  count: number | null;
+  onAcknowledge: () => void;
+}) {
+  return (
+    <Dialog open={count !== null} onOpenChange={(next) => !next && onAcknowledge()}>
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>This erasure is not finished</DialogTitle>
+          <DialogDescription>
+            The contact&apos;s details are gone, but {count} logged{" "}
+            {count === 1 ? "message" : "messages"} an operator edited before sending{" "}
+            {count === 1 ? "was" : "were"} kept — that text is what a human wrote, so it was
+            flagged for review rather than deleted. It may still quote this person&apos;s
+            profile.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 text-sm">
+          <p>
+            Review and redact {count === 1 ? "it" : "them"} by hand today. The request is not
+            honoured until you have.
+          </p>
+          <p className="text-muted-foreground">
+            Follow &ldquo;Honouring a DPDP erasure request&rdquo; in{" "}
+            <code>.planning/OPERATOR-RUNBOOK.md</code>. Contact id: <code>{contactId}</code>
+          </p>
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="destructive"
+            id={`erase-unfinished-ack-${contactId}`}
+            onClick={onAcknowledge}
+          >
+            I will redact them
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
