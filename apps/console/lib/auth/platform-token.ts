@@ -708,7 +708,7 @@ async function revalidateUnderLock(
       // is passed through as `undefined` so the upsert leaves the stored list
       // exactly as it found it.
       const capabilities =
-        roles === null ? undefined : (capabilitiesFor(email, roles) as string[]);
+        roles === null ? undefined : (capabilitiesFor(roles) as string[]);
 
       if (roles === null && !warnedUnreadableRoles) {
         warnedUnreadableRoles = true;

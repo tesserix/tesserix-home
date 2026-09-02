@@ -12,7 +12,7 @@
  * and nothing else admits at all, so a stray grant cannot let anyone else in.
  */
 
-import { CAPABILITIES, toCapabilities, type Capability } from "./capabilities";
+import { toCapabilities, type Capability } from "./capabilities";
 
 /** The operators the console exists for, when no override is configured. */
 export const DEFAULT_PLATFORM_OPERATOR_EMAILS: readonly string[] = [
@@ -50,16 +50,49 @@ export function isPlatformOperator(
 }
 
 /**
- * The capabilities a session should carry.
+ * The capabilities a session should carry: exactly what the identity provider
+ * granted, narrowed to the known vocabulary.
  *
- * An allowlisted operator holds every capability; everyone else holds exactly
- * what the identity provider granted, narrowed to the known vocabulary.
+ * The allowlist is the DOOR, and only the door. It used to be the door and the
+ * keys — an allowlisted address returned every capability by construction —
+ * and that made two things impossible at once:
+ *
+ *  - least privilege for anyone who can reach the console at all, since entry
+ *    and omnipotence were the same fact;
+ *  - the propose-only operator the secrets surface was built for. An operator
+ *    holding `platform` without `rotate-credentials` could not exist, so the
+ *    console never rendered the propose path (#506) and the notification that
+ *    tells a proposer their request merged had no possible recipient (#483).
+ *    Both shipped, tested, and were unreachable in production.
+ *
+ * Entry is deliberately NOT widened to compensate. `isPlatformOperator` still
+ * gates the callback, because a role grant must not by itself mint a console
+ * operator — whoever administers the Zitadel project would otherwise be able
+ * to admit themselves. Two independent grants are now required to get power
+ * here: the allowlist for the door, a Zitadel role for each capability.
+ *
+ * The signature takes ONLY the roles. It used to take the email and the raw
+ * allowlist too, and keeping them would leave a function whose parameters
+ * imply the identity still influences the answer — the misleading-interface
+ * shape this codebase keeps having to correct. Allowlist membership decides
+ * ADMISSION, in the callback; it no longer decides power, so it is not an
+ * input here.
+ *
+ * ACCEPTED CONSEQUENCE, stated rather than discovered later: an allowlisted
+ * operator whose project grant is missing now signs in able to do nothing,
+ * where before they signed in able to do everything. That is the safer
+ * direction of the two, but it is a real change — a lost grant reads as a
+ * broken console rather than as a permissions problem.
  */
 export function capabilitiesFor(
-  email: string | undefined | null,
-  roles: readonly string[],
-  raw?: string | undefined | null,
+  roles: readonly string[] | undefined | null,
 ): Capability[] {
-  if (isPlatformOperator(email, raw)) return [...CAPABILITIES];
+  // A missing roles claim is "no capabilities", not a crash. The allowlist
+  // branch used to return before `roles` was ever read, so an absent claim was
+  // survivable for exactly the identities most likely to have one; removing
+  // that branch put this call on the path of every sign-in, where a throw
+  // would surface as a 500 from the auth callback rather than as a refusal.
+  // `hasCapability` already treats absent and empty the same way.
+  if (!roles) return [];
   return toCapabilities(roles);
 }

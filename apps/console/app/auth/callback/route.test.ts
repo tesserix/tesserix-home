@@ -212,9 +212,11 @@ describe("the claims the callback mints", () => {
       email: "samyak.rout@gmail.com",
       name: "Operator One",
     });
-    // Granted roles no longer decide anything: an admitted operator is an
-    // allowlisted one, and an allowlisted one holds everything.
-    expect(state.claims?.roles).toEqual([...CAPABILITIES]);
+    // Granted roles decide everything the session can DO. Admission is still
+    // the allowlist — that is what `not_internal` below guards — but the
+    // capabilities minted here are exactly the Zitadel grant, so an operator
+    // can hold `platform` without `rotate-credentials` (#506, #483).
+    expect(state.claims?.roles).toEqual([...state.identity.roles]);
   });
 
   it("mints a sid", async () => {
@@ -461,7 +463,12 @@ describe("writing the platform API tokens to the store", () => {
 describe("the platform operators the console is for", () => {
   // Zitadel is the source of truth for everyone else. For these two it is
   // not allowed to be the reason the console is unreachable.
-  it("mints a full-capability session for an allowlisted operator with no role grant", async () => {
+  it("still ADMITS an allowlisted operator with no role grant, but mints no capabilities", async () => {
+    // Reversed deliberately, and the split matters. Admission is unchanged —
+    // the allowlist is still the door, and Zitadel is still not allowed to be
+    // the reason the console is unreachable for these two. What changed is
+    // that the door no longer hands over every key: with no grant they get in
+    // and can do nothing, where before they got in and could do everything.
     state.identity = {
       sub: "operator-2",
       email: "Samyak.Rout@gmail.com",
@@ -473,7 +480,25 @@ describe("the platform operators the console is for", () => {
     const response = await runCallback();
 
     expect(response.status).toBe(307);
-    expect(state.claims?.roles).toEqual([...CAPABILITIES]);
+    expect(state.claims?.roles).toEqual([]);
+  });
+
+  it("mints exactly the granted capabilities for an allowlisted operator", async () => {
+    // The state that was unreachable before this change, and the whole reason
+    // for it: `platform` without `rotate-credentials`, which is what makes the
+    // console render the propose path rather than an immediate grant.
+    state.identity = {
+      sub: "operator-2",
+      email: "Samyak.Rout@gmail.com",
+      name: "Samyak",
+      orgId: "org-1",
+      roles: ["read", "platform"],
+    };
+
+    const response = await runCallback();
+
+    expect(response.status).toBe(307);
+    expect(state.claims?.roles).toEqual(["read", "platform"]);
   });
 
   it("refuses anyone else, however completely Zitadel granted them", async () => {

@@ -175,11 +175,12 @@ describe("the bypasses short-circuit BEFORE any I/O", () => {
     expect(state.calls).toEqual([]);
   });
 
-  it("allows an allowlisted operator without consulting the store", async () => {
-    // Load-bearing, not an optimisation: both operators on the current
-    // allowlist take this branch, so in this estate today the mutation path
-    // touches neither Postgres nor Zitadel.
-    state.resolution = fromStore();
+  it("CONSULTS the store for an allowlisted operator", async () => {
+    // Reversed deliberately. This branch used to skip the store entirely for
+    // the two allowlisted operators, which meant a revocation could not reach
+    // the identities with the most power — the opposite of what #285 set out
+    // to fix. The I/O it avoided is the cost of the store being the authority.
+    state.resolution = fromStore("read", "hard-delete");
 
     await expect(
       checkOperatorCapabilityLive(
@@ -188,7 +189,19 @@ describe("the bypasses short-circuit BEFORE any I/O", () => {
         "zitadel",
       ),
     ).resolves.toBeUndefined();
-    expect(state.calls).toEqual([]);
+    expect(state.calls).not.toEqual([]);
+  });
+
+  it("refuses an allowlisted operator whose stored grant lacks the verb", async () => {
+    state.resolution = fromStore("read", "platform");
+
+    await expect(
+      checkOperatorCapabilityLive(
+        { sub: "s", email: "mahesh.sangawar@gmail.com" },
+        "rotate-credentials",
+        "zitadel",
+      ),
+    ).rejects.toThrow();
   });
 });
 
