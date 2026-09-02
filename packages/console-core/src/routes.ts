@@ -739,18 +739,36 @@ export function routeCapability(id: RouteId): Capability {
   return getRoute(id).capability ?? "read";
 }
 
+/**
+ * The path a route resolves to for one renderer, or `undefined` when that
+ * renderer has no path for it.
+ *
+ * Extracted from `isRouteActive` rather than inlined twice, because
+ * `isMostSpecificActiveRoute` compares target LENGTHS and so has to resolve
+ * exactly the same string `isRouteActive` matched against. A second copy of
+ * the `console ?? mobile` fallback would let the two drift, and the drift
+ * would be silent: the comparison would still run, just against the wrong
+ * string.
+ */
+function resolveTarget(
+  id: RouteId,
+  prefix: "web" | "mobile" | "console",
+): string | undefined {
+  const entry = getRoute(id);
+  return prefix === "web"
+    ? entry.web
+    : prefix === "console"
+      ? (entry.console ?? entry.mobile)
+      : entry.mobile;
+}
+
 export function isRouteActive(
   currentPath: string,
   id: RouteId,
   prefix: "web" | "mobile" | "console",
 ): boolean {
   const entry = getRoute(id);
-  const target =
-    prefix === "web"
-      ? entry.web
-      : prefix === "console"
-        ? (entry.console ?? entry.mobile)
-        : entry.mobile;
+  const target = resolveTarget(id, prefix);
   // `web` and `mobile` are both optional (see RouteEntry), so a route can
   // have no path at all for a given renderer — a console-only surface like
   // `platform.tools` has no `mobile`, and a console-native one has no `web`.
@@ -767,4 +785,59 @@ export function isRouteActive(
   // since it merely shares a string prefix with the real nested route
   // "/admin/apps/kora/foods/...".
   return currentPath === target || currentPath.startsWith(`${target}/`);
+}
+
+/**
+ * True when `id` is active for `currentPath` AND no other route in
+ * `candidates` is active with a LONGER target — "most specific wins".
+ *
+ * Why this exists: `isRouteActive` matches on segment boundaries, so a route
+ * whose target is a prefix of a sibling's is active on the sibling's pages
+ * too. With both in one rail, two entries render as the current page at once
+ * — `platform.secrets` (`/platform/secrets`) and `platform.secretsReviews`
+ * (`/platform/secrets/reviews`) did exactly that on the reviews queue.
+ *
+ * WHY NOT `exact: true` on the parent, which fixes that one pair in a line:
+ * `exact` would ALSO stop the parent highlighting on the pages that really
+ * are its own — `/platform/secrets/new` and a secret's detail page
+ * `/platform/secrets/<ns>/<app>/<name>` — where the rail should stay lit
+ * because there is no other entry those pages belong to. `exact` is for a
+ * product root whose children are owned by OTHER rail entries
+ * (`kora.overview`); it is not a way to say "prefer my sibling", which is the
+ * actual rule here. Hence a narrowing that asks what else is in the rail,
+ * rather than a flag on the route.
+ *
+ * This narrows `isRouteActive`, it does not replace it: `exact` still applies
+ * first, inside the delegated call.
+ *
+ * `candidates` is caller-supplied rather than read from `ROUTES`, because the
+ * rule is about what a RAIL renders side by side. A route nested under
+ * another that is not in the same rail (`platform.onboardingSessions`, which
+ * is reached only from the funnel page) must not suppress the entry the
+ * operator can actually see.
+ */
+export function isMostSpecificActiveRoute(
+  currentPath: string,
+  id: RouteId,
+  candidates: readonly RouteId[],
+  prefix: "web" | "mobile" | "console",
+): boolean {
+  if (!isRouteActive(currentPath, id, prefix)) return false;
+  const target = resolveTarget(id, prefix);
+  // Unreachable while `isRouteActive` returned true — it guards the same
+  // `undefined` — but narrowing the type here beats a non-null assertion.
+  if (target === undefined) return false;
+  return !candidates.some((other) => {
+    const otherTarget = resolveTarget(other, prefix);
+    // STRICTLY longer, and that comparison is what excludes `id` itself —
+    // there is no separate identity check, because length alone is the whole
+    // rule. Relaxing this to `>=` would make every entry suppress itself (its
+    // own target is never shorter than its own target) and also make two ids
+    // resolving to the same path put each other out, so nothing would ever
+    // highlight.
+    if (otherTarget === undefined || otherTarget.length <= target.length) {
+      return false;
+    }
+    return isRouteActive(currentPath, other, prefix);
+  });
 }
