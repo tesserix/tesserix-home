@@ -127,9 +127,9 @@ function assertNever(value: never): never {
 }
 
 function leadingPhrase(item: NotificationItem): string {
-  // Exhaustive switch, not a binary ternary: Task 4 adds a second member to
-  // the NotificationItem union, and the ternary's "else" branch would
-  // silently swallow it instead of failing to compile.
+  // Exhaustive switch, not a binary ternary: the NotificationItem union has
+  // three members today, and a ternary's "else" branch would silently
+  // swallow any member beyond the first two instead of failing to compile.
   switch (item.kind) {
     case "ticket_created":
       return "New ticket";

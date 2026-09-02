@@ -111,12 +111,12 @@ export function __resetPlatformTokenModuleForTests(): void {
  * instead of every caller doing its own `JSON.stringify` and remembering the
  * content-type header.
  *
- * `signal` is optional and, today, passed by exactly one caller
- * (`fetchProposals`, guarding the notification bell's proposals leg — see
- * its call site). `fetch` already treats an `undefined` `signal` as "no
- * abort controller," so every other caller's behaviour is unchanged by this
- * field's existence; it is not a blanket timeout for every `secretsRequest`
- * call, only a per-call opt-in.
+ * `signal` is optional and, today, passed by two callers (`fetchProposals`
+ * and `fetchMergedProposals`, both guarding a leg of the notification
+ * bell's feed — see their call sites). `fetch` already treats an
+ * `undefined` `signal` as "no abort controller," so every other caller's
+ * behaviour is unchanged by this field's existence; it is not a blanket
+ * timeout for every `secretsRequest` call, only a per-call opt-in.
  */
 export interface SecretsRequestInit {
   readonly method?: string;
