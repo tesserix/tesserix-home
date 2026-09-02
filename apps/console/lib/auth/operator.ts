@@ -50,9 +50,13 @@ export function checkOperatorCapability(
   if (!requiresCapability(provider)) {
     return;
   }
-  if (isPlatformOperator(session.email)) {
-    return;
-  }
+  // No allowlist short-circuit. It used to sit here, and it made this check a
+  // no-op for exactly the identities that can reach every write: an
+  // allowlisted email returned before any capability was consulted. With
+  // capabilities now derived from the Zitadel grant rather than from list
+  // membership (see `capabilitiesFor`), keeping it would preserve the old
+  // behaviour on the mutation path while the read path enforced the new one —
+  // the worst of both, and invisible until someone tested a write.
   if (!hasCapability(session.roles, required)) {
     throw new CapabilityError(required);
   }
@@ -130,10 +134,14 @@ export async function checkOperatorCapabilityLive(
   if (!requiresCapability(provider)) {
     return;
   }
-  if (isPlatformOperator(session.email)) {
-    return;
-  }
-
+  // The allowlist short-circuit that used to sit here is gone with its
+  // synchronous twin, and its removal has a cost worth naming: both operators
+  // on the allowlist took it, so the live path did no I/O at all for them.
+  // Every gated write by an allowlisted operator now reads the capability
+  // store, and revalidates against Zitadel when that row is stale. That is the
+  // price of the store being the authority — and it is what makes a revocation
+  // actually take effect for these operators rather than only for everyone
+  // else (#285).
   const resolved = await resolveLiveCapabilities(session);
   if (resolved.source === "unavailable") {
     // `no-sid` is an ordinary fact, not a fault: a session minted before the
