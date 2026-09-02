@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // Both action modules cross a "use server" boundary into `lib/secrets-api.ts`
 // (`server-only`, an operator-token store over `pg`), so they are mocked and
@@ -26,6 +27,19 @@ function fillPath(path: string) {
 function fillKeyAndValue(key: string, value: string) {
   fireEvent.change(screen.getByLabelText(/key name/i), { target: { value: key } });
   fireEvent.change(screen.getByLabelText(/^value$/i), { target: { value } });
+}
+
+/**
+ * Drives the design system's `Select` — a Radix combobox, not a native
+ * `<select>`, so `fireEvent.change` has nothing to change. Open the trigger,
+ * then click the option by its visible label, exactly as an operator does.
+ * Radix needs the Pointer Capture and `scrollIntoView` stubs in
+ * `vitest.setup.ts` to get this far.
+ */
+async function chooseStore(label: RegExp) {
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText(/^store$/i));
+  await user.click(await screen.findByRole("option", { name: label }));
 }
 
 function clickCreate() {
@@ -85,7 +99,7 @@ describe("CreateSecretForm", () => {
     // Manager, where it is the separator a path is encoded with.
     fillPath("mark8ly/stripe/web--hook");
 
-    fireEvent.change(screen.getByLabelText(/^store$/i), { target: { value: "gcpsm" } });
+    await chooseStore(/google secret manager/i);
 
     // A "valid" verdict left over from before the switch is a lie the
     // operator would act on, so the switch itself must produce the message.
@@ -224,7 +238,12 @@ describe("CreateSecretForm", () => {
   it("with no preferred store and more than one enabled, nothing is preselected and submitting asks for one", async () => {
     render(<CreateSecretForm stores={BOTH_STORES} preferred={null} />);
 
-    expect((screen.getByLabelText(/^store$/i) as HTMLSelectElement).value).toBe("");
+    // The Radix trigger has no `.value`; what it shows is the accessible
+    // fact here. An unanswered store reads as the placeholder, and neither
+    // store's name appears on it.
+    const trigger = screen.getByLabelText(/^store$/i);
+    expect(trigger).toHaveTextContent(/choose a store/i);
+    expect(trigger).not.toHaveTextContent(/openbao|google secret manager/i);
 
     fillPath("mark8ly/stripe/webhook");
     fillKeyAndValue("STRIPE_WEBHOOK_SECRET", "hunter2");
@@ -238,6 +257,20 @@ describe("CreateSecretForm", () => {
   it("with a single enabled store, that store wins even when preferred names the other one", () => {
     render(<CreateSecretForm stores={["openbao"]} preferred="gcpsm" />);
     expect(screen.getByLabelText(/^store$/i)).toHaveTextContent("OpenBao");
+  });
+
+  it("constrains the form to a readable column rather than the full viewport", () => {
+    render(<CreateSecretForm stores={BOTH_STORES} preferred="openbao" />);
+    // This console's create-form convention
+    // (`platform/crm/organisations/new/page.tsx`), and the prototype's own
+    // `max-width:520px`. Without it the fields ran edge-to-edge across a
+    // ~1500px viewport, which is the defect this pins.
+    expect(screen.getByRole("form", { name: /create secret/i })).toHaveClass("max-w-xl");
+  });
+
+  it("the key name field disables autofill so Chrome does not offer the operator's saved email there", () => {
+    render(<CreateSecretForm stores={BOTH_STORES} preferred="openbao" />);
+    expect(screen.getByLabelText(/key name/i)).toHaveAttribute("autoComplete", "off");
   });
 
   it("an empty key or value never reaches either action", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -9,12 +9,15 @@ import { Check, ChevronRight, ChevronsUpDown } from "lucide-react";
 import {
   isPending,
   isNavGroup,
+  isMostSpecificActiveRoute,
   isRouteActive,
   koraNav,
+  navItems,
   platformNav,
   consolePath,
   type NavEntry,
   type NavGroup,
+  type RouteId,
 } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
 
@@ -230,11 +233,14 @@ export function activeGroupName(nav: readonly NavEntry[], pathname: string): str
 function NavGroupSection({
   group,
   pathname,
+  railRoutes,
   open,
   onToggle,
 }: {
   group: NavGroup;
   pathname: string;
+  /** Passed straight through to `NavLink` — see its own prop doc. */
+  railRoutes: readonly RouteId[];
   open: boolean;
   onToggle: (name: string) => void;
 }) {
@@ -259,14 +265,33 @@ function NavGroupSection({
       </button>
       <div id={panelId} hidden={!open} className="space-y-0.5 pt-1">
         {group.items.map((item) => (
-          <NavLink key={item.name} entry={item} pathname={pathname} />
+          <NavLink
+            key={item.name}
+            entry={item}
+            pathname={pathname}
+            railRoutes={railRoutes}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
+function NavLink({
+  entry,
+  pathname,
+  railRoutes,
+}: {
+  entry: NavEntry;
+  pathname: string;
+  /**
+   * Every route the CURRENT rail renders, groups flattened away. Threaded down
+   * from `Sidebar` rather than derived here, because "most specific wins" is a
+   * statement about the entries an operator can see side by side, and a link
+   * cannot know its own rail's other entries.
+   */
+  railRoutes: readonly RouteId[];
+}) {
   if (isNavGroup(entry)) {
     // Groups render through `NavGroupSection`, which needs the collapse state
     // the sidebar owns. Reaching one here means a caller passed a group where
@@ -274,7 +299,15 @@ function NavLink({ entry, pathname }: { entry: NavEntry; pathname: string }) {
     return null;
   }
 
-  const active = isRouteActive(pathname, entry.route, "console");
+  // Not `isRouteActive`: a rail entry whose target is a prefix of a sibling's
+  // (`platform.secrets` under `platform.secretsReviews`) is active on the
+  // sibling's pages too, and both rendered `aria-current="page"` at once.
+  const active = isMostSpecificActiveRoute(
+    pathname,
+    entry.route,
+    railRoutes,
+    "console",
+  );
 
   // Not built here yet. Deliberately NOT a link to apps/web: the old admin is
   // being retired, and pointing at it would make the console a shell around
@@ -415,6 +448,15 @@ export function ConsoleSidebar() {
   // a rail whose nav is flat (Kora's) simply never contributes to it.
   const { collapsed, toggle } = useCollapsedGroups(activeGroupName(rail.nav, pathname));
 
+  // `navItems` rather than a local flattener: `lib/search.ts` already walks the
+  // rails this way, and a second walker that stopped at groups would report an
+  // empty rail here — every entry would then look "most specific" and nothing
+  // would be narrowed.
+  const railRoutes = useMemo(
+    () => navItems(rail.nav).map((item) => item.route),
+    [rail.nav],
+  );
+
   return (
     <div className="flex h-full w-56 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="p-3">
@@ -443,11 +485,17 @@ export function ConsoleSidebar() {
                 key={entry.name}
                 group={entry}
                 pathname={pathname}
+                railRoutes={railRoutes}
                 open={!collapsed.includes(entry.name)}
                 onToggle={toggle}
               />
             ) : (
-              <NavLink key={entry.name} entry={entry} pathname={pathname} />
+              <NavLink
+                key={entry.name}
+                entry={entry}
+                pathname={pathname}
+                railRoutes={railRoutes}
+              />
             ),
           )}
         </div>

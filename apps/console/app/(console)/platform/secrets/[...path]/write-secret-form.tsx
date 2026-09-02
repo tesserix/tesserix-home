@@ -145,7 +145,7 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
 
   if (result) {
     return (
-      <Callout variant="success" role="status">
+      <Callout variant="success" role="status" className="max-w-xl">
         <CalloutDescription>
           {/* `result.wasRotate`, not `isRotate` — see `result`'s state
            *  comment above for why the live value is the wrong thing to
@@ -161,8 +161,19 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
   }
 
   return (
-    <form onSubmit={handleSubmit} method="post" aria-label={isRotate ? "Rotate secret" : "Create secret"}>
-      <div>
+    // `max-w-xl` plus per-field `flex flex-col gap-1.5`, the same
+    // create-form convention `platform/crm/organisations/new/page.tsx` sets
+    // and `CreateSecretForm` now follows: this form had the identical
+    // missing-layout problem — bare `<div>`s and an unconstrained `<form>`,
+    // so its fields ran the full width of the viewport with no vertical
+    // rhythm.
+    <form
+      onSubmit={handleSubmit}
+      method="post"
+      aria-label={isRotate ? "Rotate secret" : "Create secret"}
+      className="flex max-w-xl flex-col gap-4"
+    >
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor="write-secret-key">Key name</Label>
         <Input
           id="write-secret-key"
@@ -170,6 +181,7 @@ export function WriteSecretForm({ store, path, currentVersion }: WriteSecretForm
           onChange={(event) => setKey(event.target.value)}
           disabled={isPending}
           spellCheck={false}
+          autoComplete="off"
           aria-describedby="write-secret-key-hint"
         />
         <p id="write-secret-key-hint" className="text-xs text-muted-foreground">

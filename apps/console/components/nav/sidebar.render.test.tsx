@@ -191,6 +191,44 @@ describe("ConsoleSidebar", () => {
     );
   });
 
+  // Two rail entries rendered `aria-current="page"` at once on the reviews
+  // queue, because `/platform/secrets` is a segment-boundary prefix of
+  // `/platform/secrets/reviews`. Every row asserts the dark entry as well as
+  // the lit one: only the pairing catches an over-eager narrowing, which
+  // would put Secrets out on its own pages too.
+  describe.each([
+    { path: "/platform/secrets", lit: "Secrets", dark: "Secrets reviews" },
+    { path: "/platform/secrets/new", lit: "Secrets", dark: "Secrets reviews" },
+    {
+      path: "/platform/secrets/openbao/marketplace-api/stripe-key",
+      lit: "Secrets",
+      dark: "Secrets reviews",
+    },
+    {
+      path: "/platform/secrets/reviews",
+      lit: "Secrets reviews",
+      dark: "Secrets",
+    },
+    {
+      path: "/platform/secrets/reviews/42",
+      lit: "Secrets reviews",
+      dark: "Secrets",
+    },
+  ])("on $path", ({ path, lit, dark }) => {
+    it(`marks only ${lit} as the current page`, () => {
+      pathname.current = path;
+      render(<ConsoleSidebar />);
+
+      expect(screen.getByRole("link", { name: lit })).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(
+        screen.getByRole("link", { name: dark }),
+      ).not.toHaveAttribute("aria-current");
+    });
+  });
+
   it("switches to Kora's rail inside Kora routes", () => {
     pathname.current = "/kora/foods";
     render(<ConsoleSidebar />);

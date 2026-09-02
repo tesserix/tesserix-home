@@ -122,37 +122,77 @@ export function SecretValueField({ value, onChange, disabled, id = "secret-value
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-1.5">
       <Label htmlFor={id}>Value</Label>
-      <div className="flex items-center gap-1">
-        <Input
-          id={id}
-          type={revealed ? "text" : "password"}
-          value={value}
-          onChange={(event) => {
-            onChange(event.target.value);
-            setCopied(false);
-            setCopyError(null);
-          }}
-          disabled={disabled}
-          spellCheck={false}
-          placeholder="Paste a value, or generate one"
-          autoComplete="off"
-          aria-describedby={hintId}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-pressed={revealed}
-          aria-label={revealed ? "Hide value" : "Reveal value"}
-          onClick={handleReveal}
-        >
-          {revealed ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-        </Button>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={copied ? "Copied" : "Copy value"} onClick={handleCopy}>
-          {copied ? <CopyCheck aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        </Button>
+      {/* Reveal and Copy live INSIDE the field; only Generate sits outside
+       *  it. That is the prototype's own arrangement (`.valfield` wrapping
+       *  the input and an absolutely-positioned `.valicons`, with the
+       *  Generate button its sibling in `.valrow`), and it was rebuilt here
+       *  after the four-siblings-in-a-flex-row version shipped and read as
+       *  two icons floating loose beside the field rather than belonging to
+       *  it.
+       *
+       *  `pr-[4.5rem]` on the input is load-bearing, not decorative: the two
+       *  `icon-sm` buttons are `h-8 w-8` each and sit `right-1` in, so they
+       *  cover 68px of the field's right edge. Without the reservation a
+       *  revealed long value runs underneath them and is unreadable exactly
+       *  when the operator most needs to read it. */}
+      <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Input
+            id={id}
+            className="pr-[4.5rem]"
+            type={revealed ? "text" : "password"}
+            value={value}
+            onChange={(event) => {
+              onChange(event.target.value);
+              setCopied(false);
+              setCopyError(null);
+            }}
+            disabled={disabled}
+            spellCheck={false}
+            placeholder="Paste a value, or generate one"
+            /* `autoComplete="off"` does NOT work here — observed live in Chrome,
+             * reproducibly, including after the form resets post-create.
+             * Chrome ignores `off` on inputs it heuristically classifies as
+             * credential fields, and this one is `type="password"` whenever
+             * the value is hidden, which is its default state. Chrome then
+             * autofills the field immediately preceding this one — the Key
+             * name text input — as the "username" paired with this
+             * "password", so the operator's saved email/password lands in
+             * Key name/Value. `autocomplete="new-password"` is the documented
+             * opt-out Chrome actually honors for a password-shaped field that
+             * is not a login password. */
+            autoComplete="new-password"
+            aria-describedby={hintId}
+          />
+          {/* Absolutely positioned so they overlay the field's right edge
+           *  rather than displacing it. They stay real `<button>`s in DOM
+           *  order right after the input, so tab order is
+           *  input -> reveal -> copy -> Generate and both keep the
+           *  `aria-label` they are announced by. */}
+          <span className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-pressed={revealed}
+              aria-label={revealed ? "Hide value" : "Reveal value"}
+              onClick={handleReveal}
+            >
+              {revealed ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={copied ? "Copied" : "Copy value"}
+              onClick={handleCopy}
+            >
+              {copied ? <CopyCheck aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </Button>
+          </span>
+        </div>
         <Button type="button" variant="outline" size="sm" onClick={handleGenerate} disabled={disabled}>
           Generate
         </Button>

@@ -9,7 +9,20 @@
 
 import Link from "next/link";
 import { type FormEvent, useState, useTransition } from "react";
-import { Button, Callout, CalloutDescription, CalloutTitle, Input, Label, labelVariants } from "@tesserix/web";
+import {
+  Button,
+  Callout,
+  CalloutDescription,
+  CalloutTitle,
+  Input,
+  Label,
+  labelVariants,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tesserix/web";
 import { SecretValueField } from "@/components/secrets/secret-value-field";
 import { validateSecretPathForCreate } from "@/lib/secret-path";
 import type { SecretStore } from "@/lib/secrets";
@@ -238,7 +251,10 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
   if (result) {
     const href = secretDetailHref({ path: result.path, store: result.store });
     return (
-      <div className="space-y-4">
+      // Same constrained column the form itself uses, so the success card
+      // does not stretch edge-to-edge on the wide viewport the form was just
+      // narrowed against.
+      <div className="flex max-w-xl flex-col gap-4">
         <Callout variant="success" role="status">
           <CalloutTitle>Secret created.</CalloutTitle>
           <CalloutDescription>
@@ -260,7 +276,7 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
          *  that cannot be proposed would be a second thing this surface
          *  claims and cannot back. */}
         {result.store === "openbao" ? (
-          <div>
+          <div className="flex flex-col gap-2">
             <p>Grant an app access to this?</p>
             <p className="text-sm text-muted-foreground">
               If no app is whitelisted for this namespace and app yet, nothing can read it — the secret's own
@@ -273,7 +289,7 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
             </Button>
           </div>
         ) : (
-          <div>
+          <div className="flex flex-col gap-2">
             <p className="text-sm text-muted-foreground">
               Who can read a Google Secret Manager secret is governed by Google Cloud IAM, not from here —
               there is nothing for the console to propose.
@@ -288,8 +304,13 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
   }
 
   return (
-    <form onSubmit={handleSubmit} method="post" aria-label="Create secret">
-      <div>
+    // `max-w-xl` and the per-field `flex flex-col gap-1.5` are this console's
+    // create-form convention (`platform/crm/organisations/new/page.tsx`), and
+    // they independently land on the prototype's own `max-width:520px` for
+    // `#create-form`. Without them the fields stretch the full width of a
+    // 1500px viewport with no vertical rhythm, which is how this shipped.
+    <form onSubmit={handleSubmit} method="post" aria-label="Create secret" className="flex max-w-xl flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
         {onlyStore ? (
           // Static text, not a one-option select: with a single enabled
           // store there is no choice to offer, and a select that cannot
@@ -314,32 +335,45 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
         ) : (
           <>
             <Label htmlFor="create-secret-store">Store</Label>
-            <select
-              id="create-secret-store"
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+            {/* The design system's `Select`, not a native `<select>`: a
+             *  native one renders as an OS-drawn popup that ignores the
+             *  console's dark theme entirely, which is what the product
+             *  owner rejected on the live page.
+             *
+             *  No `aria-label` on the trigger, unlike `kit/filter-bar.tsx`,
+             *  which has no visible label to lose: an `aria-label` here
+             *  would OVERRIDE the `<Label htmlFor>` above rather than add to
+             *  it, so the trigger would stop being findable by the label an
+             *  operator can actually see. `<button>` is a labelable element,
+             *  so `htmlFor` -> the trigger's `id` is a real association.
+             *
+             *  `value=""` is fine on the Select itself — Radix's
+             *  empty-string prohibition is on `SelectItem` values (see
+             *  `filter-bar.tsx`'s note), and `""` is exactly what makes
+             *  `SelectValue` show its placeholder, so "no default" stays
+             *  visibly unanswered instead of adopting whichever store
+             *  happens to be first. */}
+            <Select
               value={store}
               disabled={isPending}
-              onChange={(event) => handleStoreChange(event.target.value as SecretStore)}
+              onValueChange={(next) => handleStoreChange(next as SecretStore)}
             >
-              {/* Present only while nothing is selected, and unselectable, so
-               *  "no default" stays visibly unanswered instead of silently
-               *  adopting whichever store happens to be first. */}
-              {store === "" && (
-                <option value="" disabled>
-                  Choose a store
-                </option>
-              )}
-              {stores.map((candidate) => (
-                <option key={candidate} value={candidate}>
-                  {STORE_LABEL[candidate]}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="create-secret-store">
+                <SelectValue placeholder="Choose a store" />
+              </SelectTrigger>
+              <SelectContent>
+                {stores.map((candidate) => (
+                  <SelectItem key={candidate} value={candidate}>
+                    {STORE_LABEL[candidate]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </>
         )}
       </div>
 
-      <div>
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor="create-secret-path">Path</Label>
         <Input
           id="create-secret-path"
@@ -366,7 +400,7 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
         )}
       </div>
 
-      <div>
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor="create-secret-key">Key name</Label>
         <Input
           id="create-secret-key"
@@ -374,6 +408,7 @@ export function CreateSecretForm({ stores, preferred }: CreateSecretFormProps) {
           onChange={(event) => setKey(event.target.value)}
           disabled={isPending}
           spellCheck={false}
+          autoComplete="off"
           aria-describedby="create-secret-key-hint"
         />
         <p id="create-secret-key-hint" className="text-xs text-muted-foreground">

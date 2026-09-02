@@ -13,3 +13,21 @@ import { cleanup } from "@testing-library/react";
 afterEach(() => {
   cleanup();
 });
+
+// jsdom implements NONE of the Pointer Capture API and no `scrollIntoView`.
+// Radix UI's `Select` — the design system's `Select`, used on the CRM create
+// form and on `platform/secrets/new` — calls `hasPointerCapture` on
+// pointerdown and `scrollIntoView` when it opens its listbox, so without
+// these a test that clicks the trigger throws instead of opening the menu.
+// These four stubs are what make a Radix `Select` driveable under jsdom for
+// the whole console.
+//
+// Deliberately no-ops returning the "not captured" answer: nothing under
+// test asserts on pointer capture itself, only on what Radix does once it
+// stops throwing.
+if (typeof Element !== "undefined") {
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.setPointerCapture ??= () => {};
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+}

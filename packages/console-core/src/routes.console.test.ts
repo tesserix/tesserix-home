@@ -4,11 +4,12 @@ import {
   consolePath,
   isPending,
   isRetired,
+  isMostSpecificActiveRoute,
   isRouteActive,
   mobilePath,
   webPath,
 } from "./routes";
-import { navItems, platformNav } from "./nav";
+import { koraNav, navItems, platformNav } from "./nav";
 
 describe("consolePath", () => {
   it("never serves apps/web's /admin paths", () => {
@@ -211,6 +212,133 @@ describe("isRouteActive understands the console prefix", () => {
   it("does not confuse the web path for the console one", () => {
     expect(
       isRouteActive("/admin/platform-tickets", "platform.tickets", "console"),
+    ).toBe(false);
+  });
+});
+
+describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
+  // The rail as an operator sees it. Derived rather than hand-listed so a
+  // route added to Governance is covered here the day it lands.
+  const railRoutes = navItems(platformNav).map((item) => item.route);
+
+  // The reported defect: on the reviews queue, Secrets and Secrets reviews
+  // both rendered as the current page. Each row asserts BOTH entries, because
+  // "the right one is lit" and "the wrong one is not" are different failures —
+  // and an over-eager narrowing fixes the second by breaking the first.
+  const cases: ReadonlyArray<{
+    path: string;
+    secrets: boolean;
+    reviews: boolean;
+  }> = [
+    { path: "/platform/secrets", secrets: true, reviews: false },
+    // The create form. `platform.secrets` must stay lit: there is no other
+    // rail entry these pages belong to, which is why `exact: true` on the
+    // parent is the wrong fix.
+    { path: "/platform/secrets/new", secrets: true, reviews: false },
+    // A secret's own detail page, `/platform/secrets/[...path]` — no route id
+    // of its own, so it can only ever highlight through its parent.
+    {
+      path: "/platform/secrets/openbao/marketplace-api/stripe-key",
+      secrets: true,
+      reviews: false,
+    },
+    { path: "/platform/secrets/reviews", secrets: false, reviews: true },
+    // The proposal detail route, which is likewise unregistered: it must
+    // highlight the queue, still not the inventory.
+    { path: "/platform/secrets/reviews/42", secrets: false, reviews: true },
+  ];
+
+  for (const { path, secrets, reviews } of cases) {
+    it(`lights ${secrets ? "Secrets" : "Secrets reviews"} on ${path}`, () => {
+      expect(
+        isMostSpecificActiveRoute(path, "platform.secrets", railRoutes, "console"),
+        `Secrets on ${path}`,
+      ).toBe(secrets);
+      expect(
+        isMostSpecificActiveRoute(
+          path,
+          "platform.secretsReviews",
+          railRoutes,
+          "console",
+        ),
+        `Secrets reviews on ${path}`,
+      ).toBe(reviews);
+    });
+  }
+
+  it("applies to the rail's other nested pair — CRM and its three children", () => {
+    // Collateral, pinned deliberately: Secrets is not the only nested pair in
+    // platformNav. `platform.crm` (/platform/crm) is a segment-boundary prefix
+    // of Organisations, Do-not-contact and Import, and all four are rail
+    // entries, so CRM used to stay lit alongside each of them. It is the same
+    // defect and this is the same fix; the change is intended, not incidental.
+    for (const [path, child] of [
+      ["/platform/crm/organisations", "platform.crmOrganisations"],
+      ["/platform/crm/suppressions", "platform.crmSuppressions"],
+      ["/platform/crm/import", "platform.crmImport"],
+    ] as const) {
+      expect(
+        isMostSpecificActiveRoute(path, "platform.crm", railRoutes, "console"),
+        `CRM on ${path}`,
+      ).toBe(false);
+      expect(
+        isMostSpecificActiveRoute(path, child, railRoutes, "console"),
+        `${child} on ${path}`,
+      ).toBe(true);
+    }
+    // The parent's own page is untouched.
+    expect(
+      isMostSpecificActiveRoute("/platform/crm", "platform.crm", railRoutes, "console"),
+    ).toBe(true);
+  });
+
+  it("keeps `exact` working — it narrows isRouteActive, it does not replace it", () => {
+    // `kora.overview` is `exact: true` and its children ARE other rail
+    // entries, so it must stay dark on them for the original reason, not
+    // merely because a longer sibling out-competes it.
+    const koraRoutes = navItems(koraNav).map((item) => item.route);
+    expect(
+      isMostSpecificActiveRoute("/kora", "kora.overview", koraRoutes, "console"),
+    ).toBe(true);
+    expect(
+      isMostSpecificActiveRoute("/kora/foods", "kora.overview", koraRoutes, "console"),
+    ).toBe(false);
+  });
+
+  it("ignores a longer route that is not in the given rail", () => {
+    // `platform.onboardingSessions` (/platform/onboarding/sessions) is nested
+    // under `platform.onboarding` but is deliberately absent from the rail.
+    // An entry an operator cannot see must not put out the one they can.
+    // Uses the real rail-derived `railRoutes`, not a hand-written list, so
+    // this fails the day `platform.onboardingSessions` joins the rail — the
+    // exact change that would break the behaviour being pinned here.
+    expect(
+      isMostSpecificActiveRoute(
+        "/platform/onboarding/sessions",
+        "platform.onboarding",
+        railRoutes,
+        "console",
+      ),
+    ).toBe(true);
+    // ...and if it ever did join a rail, the more specific one would win
+    // instead — a hand-built list stands in here since the real rail
+    // excludes it by design.
+    expect(
+      isMostSpecificActiveRoute(
+        "/platform/onboarding/sessions",
+        "platform.onboarding",
+        ["platform.onboarding", "platform.onboardingSessions"],
+        "console",
+      ),
+    ).toBe(false);
+  });
+
+  it("returns false for a route with no path on the given renderer", () => {
+    // `platform.tools` is console-only, so it has no `web` path — the same
+    // gap `isRouteActive` guards. The narrowing must not resolve `undefined`
+    // and then compare lengths against the literal "undefined".
+    expect(
+      isMostSpecificActiveRoute("/platform/tools", "platform.tools", railRoutes, "web"),
     ).toBe(false);
   });
 });
