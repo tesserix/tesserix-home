@@ -227,11 +227,16 @@ func TestMergedAnswersPullsEnvelope(t *testing.T) {
 }
 
 func TestMergedPassesSinceThrough(t *testing.T) {
+	// 7 days ago is inside the 14-day mergedWindow at every hour of every
+	// day, so this has no expiry the way a fixed calendar literal compared
+	// against a live time.Now() would. Truncated to the second because RFC3339
+	// via time.Parse loses sub-second precision.
+	since := time.Now().Add(-7 * 24 * time.Hour).UTC().Truncate(time.Second)
+
 	stub := &stubReviewer{}
-	serveReview(t, stub, http.MethodGet, "/api/reviews/merged?since=2026-08-19T00:00:00Z")
-	want := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
-	if !stub.sinceSeen.Equal(want) {
-		t.Fatalf("since = %v, want %v", stub.sinceSeen, want)
+	serveReview(t, stub, http.MethodGet, "/api/reviews/merged?since="+since.Format(time.RFC3339))
+	if !stub.sinceSeen.Equal(since) {
+		t.Fatalf("since = %v, want %v", stub.sinceSeen, since)
 	}
 }
 

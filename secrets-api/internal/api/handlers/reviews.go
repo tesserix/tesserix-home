@@ -68,12 +68,7 @@ func (h *Reviews) List(c *gin.Context) {
 // window — never to the zero time, which would walk the repository's whole
 // closed-pull history on every bell poll.
 func SinceOrDefault(raw string, now time.Time) time.Time {
-	// Truncated to the UTC day boundary so the window is a whole number of
-	// days regardless of what time of day the request lands: without this, a
-	// `since` of midnight N days ago reads as "before the floor" any time
-	// after midnight on the day this handler runs, clamping it forward even
-	// though it names exactly the edge of the window.
-	floor := now.Add(-mergedWindow).Truncate(24 * time.Hour)
+	floor := now.Add(-mergedWindow)
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil || parsed.Before(floor) {
 		return floor
