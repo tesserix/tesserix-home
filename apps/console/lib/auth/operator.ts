@@ -6,7 +6,6 @@ import "server-only";
 import {
   CapabilityError,
   hasCapability,
-  isPlatformOperator,
   type Capability,
 } from "@tesserix/platform-auth";
 import { requiresCapability } from "@/lib/internal-access";
@@ -88,16 +87,23 @@ export type LiveCapabilitySession = CapabilitySession & {
  *     fails closed on its own.
  *  2. `!requiresCapability(provider)` → allow. Legacy google sessions carry no
  *     roles at all, so requiring one would refuse every write in local dev.
- *  3. `isPlatformOperator(email)` → allow. The allowlist is the estate's door
- *     and holds every capability by construction.
- *  4. Otherwise consult the store, revalidating it if stale.
+ *  3. Otherwise consult the store, revalidating it if stale.
  *
- * STEPS 2 AND 3 SHORT-CIRCUIT BEFORE ANY I/O, and that is load-bearing rather
- * than an optimisation: both operators on the current allowlist take step 3, so
- * in this estate today the database is not touched and Zitadel is not called on
- * the mutation path at all. Moving the store read above them would put a query
- * — and, every five minutes, an IdP round trip — in front of every write in
- * local dev and for every allowlisted operator, to change no outcome.
+ * THERE USED TO BE A STEP BETWEEN 2 AND 3: `isPlatformOperator(email)` →
+ * allow, on the reasoning that the allowlist is the estate's door and holds
+ * every capability by construction. The second half of that stopped being
+ * true — capabilities now come from the Zitadel grant (`capabilitiesFor`), so
+ * the door no longer hands over every key — and a bypass that outlives its
+ * justification is worse than no bypass: it made this check a no-op for
+ * exactly the identities that can reach every write.
+ *
+ * ONLY STEP 2 SHORT-CIRCUITS BEFORE I/O NOW, and the cost of that is real and
+ * accepted: both operators on the allowlist used to take the removed step, so
+ * the mutation path touched neither Postgres nor Zitadel for them. Every gated
+ * write by those operators now reads the capability store, and revalidates
+ * against Zitadel when the row is stale. That is the price of the store being
+ * the authority — and it is what makes a revocation reach the two identities
+ * it previously could not (#285).
  *
  * # A REVOCATION REFUSES THE ACTION AND KEEPS THE SESSION
  *
