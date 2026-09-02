@@ -327,7 +327,7 @@ three; the third can be merged and held.
 | 1 | `platform-auth/` module + alias layer in `platform-api` | **yes** — behaviour-neutral, and proves the alias layer in production before anything depends on it |
 | 2 | `secrets-api`: bearer auth in, cookie/session/CSRF/allowlist/Google config out | **no** — the pinned tag holds it |
 | 3 | Console secrets surface, behind an env flag so the nav entry is dark | yes, visibly nothing |
-| 4 | Notifications (§8 of the predecessor) | yes |
+| 4 | Notifications (§8 of the predecessor) | **yes** — console-only for `access_proposal_open`. `access_proposal_merged` additionally requires the `requested-by:` trailer and `GET /api/reviews/merged` in secrets-api, which must deploy first — see the [merged-notification design](2026-09-02-access-proposal-merged-notification-design.md) |
 | 5 | **The chart PR** — bump the tag, drop the VirtualService and host, narrow the AuthorizationPolicy, delete the web workload, delete `adminEmails` | **yes — this is the cutover.** Flip the console flag after it is verified |
 | 6 | Retirement: delete `secret-service`'s `rollout restart` steps, then archive | n/a |
 
