@@ -25,6 +25,15 @@ on:
       # path, that break lands on main with nothing to catch it -- which is
       # exactly what happened in #408.
       - 'packages/platform-auth/**'
+      # The Go tests run against a schema and its SEED, both built by applying
+      # these migrations -- internal/platform/testdb migrates a scratch
+      # database from this directory before every DB-backed test. A
+      # migration-only change is therefore a change to the fixtures every
+      # tools, tickets and crm test asserts against, and can break Go tests
+      # while touching no Go file. #486 deleted one seeded platform_tools row;
+      # nothing here ran, and the tools handler and repository suites went red
+      # on main unnoticed.
+      - 'apps/web/db/migrations/**'
   pull_request:
     branches: [main]
     paths:
@@ -38,6 +47,15 @@ on:
       # path, that break lands on main with nothing to catch it -- which is
       # exactly what happened in #408.
       - 'packages/platform-auth/**'
+      # The Go tests run against a schema and its SEED, both built by applying
+      # these migrations -- internal/platform/testdb migrates a scratch
+      # database from this directory before every DB-backed test. A
+      # migration-only change is therefore a change to the fixtures every
+      # tools, tickets and crm test asserts against, and can break Go tests
+      # while touching no Go file. #486 deleted one seeded platform_tools row;
+      # nothing here ran, and the tools handler and repository suites went red
+      # on main unnoticed.
+      - 'apps/web/db/migrations/**'
   workflow_dispatch:
 
 concurrency:
