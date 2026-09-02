@@ -202,6 +202,72 @@ func TestMergedPullsCarriesRequesterAndMergedAt(t *testing.T) {
 	}
 }
 
+// TestMergedPullsWalksEveryPageRatherThanReturningOnlyTheLast mirrors
+// TestPullsWalksEveryPageRatherThanTruncatingAtAHundred in review_test.go.
+// Every other MergedPulls test either serves a short page (exits on page 1),
+// stops at page 1 via `since`, or serves pullPageSize full pages until the
+// bound error fires (which discards `out` entirely) — none of them would
+// notice `out := make(...)` moved inside the page loop, which drops every
+// page but the last. Here both pages are served in full and both are within
+// `since`, so only walking every page and accumulating across them produces
+// the right count.
+func TestMergedPullsWalksEveryPageRatherThanReturningOnlyTheLast(t *testing.T) {
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	firstPage := make([]map[string]any, pullPageSize)
+	for i := range firstPage {
+		firstPage[i] = map[string]any{
+			"number":     i + 1,
+			"head":       map[string]any{"ref": "secret-service/a"},
+			"merged_at":  "2026-09-01T10:00:00Z",
+			"updated_at": "2026-09-01T10:00:00Z",
+			"body":       fmt.Sprintf("requested-by: s%d", i+1),
+		}
+	}
+	const secondPageCount = 7
+	secondPage := make([]map[string]any, secondPageCount)
+	for i := range secondPage {
+		secondPage[i] = map[string]any{
+			"number":     pullPageSize + i + 1,
+			"head":       map[string]any{"ref": "secret-service/b"},
+			"merged_at":  "2026-08-01T10:00:00Z",
+			"updated_at": "2026-08-01T10:00:00Z",
+			"body":       fmt.Sprintf("requested-by: t%d", i+1),
+		}
+	}
+
+	client, _ := stubMergedPullsServer(t, func(r *http.Request) (int, any) {
+		switch r.URL.Query().Get("page") {
+		case "1":
+			return http.StatusOK, firstPage
+		case "2":
+			return http.StatusOK, secondPage
+		default:
+			t.Errorf("MergedPulls asked for page %q after a short page", r.URL.Query().Get("page"))
+			return http.StatusOK, []map[string]any{}
+		}
+	})
+
+	got, err := client.MergedPulls(context.Background(), since)
+	if err != nil {
+		t.Fatalf("MergedPulls: %v", err)
+	}
+	if want := pullPageSize + secondPageCount; len(got) != want {
+		t.Fatalf("MergedPulls returned %d pulls, want all %d across both pages", len(got), want)
+	}
+
+	byNumber := make(map[int]bool, len(got))
+	for _, p := range got {
+		byNumber[p.Number] = true
+	}
+	if !byNumber[1] {
+		t.Error("missing pull 1 from the first page")
+	}
+	if !byNumber[pullPageSize+1] {
+		t.Errorf("missing pull %d from the second page", pullPageSize+1)
+	}
+}
+
 func TestMergedPullsRequestsClosedStateSortedByUpdated(t *testing.T) {
 	// Asserts the query itself: state=open would return nothing merged, and an
 	// unsorted walk cannot use `since` as its bound.
