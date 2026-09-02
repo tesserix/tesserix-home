@@ -65,7 +65,6 @@ type pullResource struct {
 	Title          string `json:"title"`
 	HTMLURL        string `json:"html_url"`
 	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
 	MergeableState string `json:"mergeable_state"`
 	User           struct {
 		Login string `json:"login"`
@@ -202,18 +201,6 @@ func (g *GitHub) Pulls(ctx context.Context) ([]PullRequest, error) {
 	return nil, fmt.Errorf("gitops: %s/%s has more than %d open pull requests; the review list would be truncated",
 		g.cfg.Owner, g.cfg.Repo, maxPullPages*pullPageSize)
 }
-
-// maxMergedPullPages is a safety net against a misbehaving upstream, not the
-// walk's real bound. `since` is what stops MergedPulls in the ordinary case:
-// an operator polling the notification bell advances the read watermark on
-// every visit, so the walk only ever needs to cross a handful of pages back
-// into history before a page of closed pull requests updated before `since`
-// ends it. This ceiling exists only so that an upstream which keeps
-// answering full pages of recently-updated pull requests forever cannot turn
-// a request the notification bell polls into an unbounded loop. Reaching it
-// is reported as an error rather than the list collected so far, for the same
-// reason Pulls' own ceiling is: a quietly truncated list is worse than none.
-const maxMergedPullPages = 50
 
 // MergedPulls lists console-raised proposals merged since the given time,
 // newest first.
