@@ -1221,6 +1221,90 @@ describe("fetchProposals", () => {
   });
 });
 
+describe("fetchMergedProposals", () => {
+  it("requests the merged listing with the since window", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(JSON.stringify({ pulls: [] }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMergedProposals } = await import("./secrets-api");
+    await fetchMergedProposals("2026-08-19T00:00:00Z");
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url] = call;
+    expect(url).toBe("http://secrets/api/reviews/merged?since=2026-08-19T00%3A00%3A00Z");
+  });
+
+  it("GETs /api/reviews/merged and unwraps pulls, including requestedBy and mergedAt", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) =>
+      new Response(
+        JSON.stringify({
+          pulls: [
+            {
+              number: 7,
+              title: "grant homechef reader access",
+              url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+              branch: "console/homechef-grant",
+              author: "console-bot",
+              createdAt: "2026-08-30T09:30:00Z",
+              targets: ["homechef/homechef-api"],
+              requestedBy: "subject-9",
+              mergedAt: "2026-09-01T10:00:00Z",
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { fetchMergedProposals } = await import("./secrets-api");
+    const proposals = await fetchMergedProposals("2026-08-19T00:00:00Z");
+
+    expect(proposals).toEqual([
+      {
+        number: 7,
+        title: "grant homechef reader access",
+        url: "https://github.com/tesserix/tesserix-k8s/pull/7",
+        branch: "console/homechef-grant",
+        author: "console-bot",
+        createdAt: "2026-08-30T09:30:00Z",
+        targets: ["homechef/homechef-api"],
+        requestedBy: "subject-9",
+        mergedAt: "2026-09-01T10:00:00Z",
+      },
+    ]);
+  });
+
+  // Same 503 passthrough reasoning as `fetchProposals` above.
+  it("surfaces a 503 (no review repository configured) as a PlatformApiError carrying that status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: "no review repository is configured" }), { status: 503 })),
+    );
+
+    const { fetchMergedProposals } = await import("./secrets-api");
+    const caught = await fetchMergedProposals("2026-08-19T00:00:00Z").catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(503);
+  });
+});
+
 describe("fetchProposal", () => {
   it("GETs /api/reviews/:number and parses the bare (unwrapped) detail", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");

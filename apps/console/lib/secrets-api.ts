@@ -838,6 +838,17 @@ export async function fetchProposals(signal?: AbortSignal): Promise<Proposal[]> 
 }
 
 /**
+ * Proposals merged since `sinceIso`: `GET /api/reviews/merged`, the `read`
+ * group (`platform` alone), same 501/503 reasoning as {@link fetchProposals}.
+ */
+export async function fetchMergedProposals(sinceIso: string, signal?: AbortSignal): Promise<Proposal[]> {
+  const json = await secretsRequest("merged reviews", `/api/reviews/merged?since=${encodeURIComponent(sinceIso)}`, {
+    signal,
+  });
+  return parseProposals(json);
+}
+
+/**
  * One proposal's full detail: `GET /api/reviews/:number`, the `read` group
  * (`platform` alone), same 503-passthrough reasoning as {@link fetchProposals}.
  *

@@ -375,6 +375,12 @@ export interface Proposal {
   readonly author: string;
   readonly createdAt?: string;
   readonly targets: string[];
+  /** The Zitadel subject of the operator who raised this, from secrets-api's
+   *  `requested-by:` trailer. `undefined` for proposals opened before the
+   *  trailer existed — which must address nobody, never everybody. */
+  readonly requestedBy?: string;
+  /** When GitHub merged this, RFC3339. `undefined` for an open proposal. */
+  readonly mergedAt?: string;
 }
 
 /** One file changed by a proposal: `gitops.ChangedFile`. */
@@ -434,6 +440,9 @@ function parseProposalFields(entry: Record<string, unknown>, prefix: string): Pr
     author: str(entry.author, `${prefix}author`),
     createdAt: optionalTimestamp(entry.createdAt, `${prefix}createdAt`),
     targets: nullableArray(entry.targets, `${prefix}targets`, (item, itemPath) => str(item, itemPath)),
+    requestedBy:
+      typeof entry.requestedBy === "string" && entry.requestedBy !== "" ? entry.requestedBy : undefined,
+    mergedAt: optionalTimestamp(entry.mergedAt, `${prefix}mergedAt`),
   };
 }
 
