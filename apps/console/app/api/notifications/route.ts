@@ -65,6 +65,11 @@ export const dynamic = "force-dynamic";
  * `[]`: their bell is permanently, silently empty of proposals. Benign in
  * outcome (they see nothing, not something wrong), but undiagnosable from
  * this file alone — the real gate is `rotate-credentials` AND `platform`.
+ *
+ * This caveat does not apply to `access_proposal_merged`: its map value is
+ * `platform`, the same capability `secrets-api`'s `/api/reviews/merged`
+ * (the `read` group) already requires of the calling operator's own token,
+ * so for this kind the map value IS the whole gate.
  */
 const CAPABILITY_FOR_KIND: Record<NotificationKind, Capability> = {
   ticket_created: "support",
@@ -155,16 +160,13 @@ async function safeProposalEvents(): Promise<NotificationItem[]> {
  */
 async function safeMergedProposalEvents(since: Date): Promise<NotificationItem[]> {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PROPOSALS_TIMEOUT_MS);
-    try {
-      const merged = await fetchMergedProposals(since.toISOString(), controller.signal);
-      return merged
-        .map(toMergedProposalEvent)
-        .filter((e): e is AccessProposalMergedNotification => e !== undefined);
-    } finally {
-      clearTimeout(timer);
-    }
+    const merged = await fetchMergedProposals(
+      since.toISOString(),
+      AbortSignal.timeout(PROPOSALS_TIMEOUT_MS),
+    );
+    return merged
+      .map(toMergedProposalEvent)
+      .filter((e): e is AccessProposalMergedNotification => e !== undefined);
   } catch {
     return [];
   }
@@ -187,7 +189,7 @@ function windowStart(now: Date): string {
  * allowlist take that short-circuit, so skipping it would change who sees
  * what today, not just in some future edge case. `resolveLiveCapabilities`
  * is not memoised, so this does cost one store resolution per capability;
- * with two capabilities today that is an acceptable price for not
+ * with three capabilities today that is an acceptable price for not
  * re-implementing gate logic that already exists and is already tested.
  */
 async function heldCapabilities(
@@ -245,6 +247,11 @@ function visibleTo(
   capabilities: ReadonlySet<Capability>,
   sub: string,
 ): boolean {
+  // Fails closed for EVERY kind, not just the recipient-addressed one:
+  // `verifySession` only requires `sub` to be a string, not a non-empty one,
+  // so a session whose `sub` typechecks as `""` must still see nothing
+  // rather than falling through to a capability-only check that would show
+  // it every capability-addressed item in the feed.
   if (!sub) return false;
   if (!capabilities.has(CAPABILITY_FOR_KIND[item.kind])) return false;
   return item.kind === "access_proposal_merged" ? item.recipientSub === sub : true;

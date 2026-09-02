@@ -370,6 +370,29 @@ describe("GET /api/notifications", () => {
     expect(mergedItems(body)).toHaveLength(0);
   });
 
+  it("hides everything, including capability-addressed kinds, for a session with an empty sub", async () => {
+    // `verifySession` only requires `typeof sub === "string"`, so `sub: ""`
+    // typechecks through it. The `!sub` guard in `visibleTo` is what stops
+    // that from reaching a capability-only check and showing every
+    // capability-addressed item (tickets included) to a session with no
+    // real identity to gate a recipient check against.
+    signIn(["support", "platform"], "");
+    vi.mocked(recentTicketRows).mockResolvedValue([
+      {
+        id: "t1",
+        product_id: "homechef",
+        ticket_number: 12,
+        subject: "printer on fire",
+        created_at: "2026-09-01T09:00:00Z",
+      } as never,
+    ]);
+    vi.mocked(fetchMergedProposals).mockResolvedValue([MERGED_PROPOSAL] as never);
+
+    const body = await (await GET()).json();
+
+    expect(body.items).toHaveLength(0);
+  });
+
   it("shows exactly the viewer's own item out of a mixed batch, not the other operator's", async () => {
     // Round 1, Finding 3: every prior merged test fed a homogeneous batch,
     // so an all-or-nothing filter bug (filtering the wrong array, `some`
