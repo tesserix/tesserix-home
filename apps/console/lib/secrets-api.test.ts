@@ -881,6 +881,158 @@ describe("createGrant", () => {
   });
 });
 
+describe("proposeGrant", () => {
+  function stubToken() {
+    vi.doMock("./auth/platform-token", () => ({
+      resolvePlatformApiToken: async () => ({ token: "t", reauthRequired: false }),
+    }));
+  }
+
+  it("POSTs the whitelist route — NOT the grants route — with namespace and the single app", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            namespace: "tesserix",
+            app: "console",
+            pullRequest: "https://github.com/tesserix/tesserix-k8s/pull/7",
+            status: "proposed",
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { proposeGrant } = await import("./secrets-api");
+    const result = await proposeGrant({
+      namespace: "tesserix",
+      name: "console",
+      serviceAccount: "console-sa",
+    });
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("expected fetch to have been called");
+    const [url, init] = call;
+    // The route is the whole point: `/api/access/grants` is the `live` group
+    // (grants immediately, needs `rotate-credentials`); `/api/access/whitelist`
+    // is `authed` and only opens a pull request.
+    expect(url).toBe("http://secrets/api/access/whitelist");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      namespace: "tesserix",
+      apps: [{ name: "console", serviceAccount: "console-sa" }],
+    });
+    expect(result).toEqual({
+      status: "proposed",
+      pullRequest: "https://github.com/tesserix/tesserix-k8s/pull/7",
+    });
+  });
+
+  // The load-bearing case: secrets-api answers 200 with NO `pullRequest` key
+  // when the whitelist already says this. That is a success, and there is no
+  // URL to hand back.
+  it("returns unchanged, with no pullRequest, when the whitelist already says this", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ namespace: "tesserix", app: "console", status: "unchanged" }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    const { proposeGrant } = await import("./secrets-api");
+    const result = await proposeGrant({
+      namespace: "tesserix",
+      name: "console",
+      serviceAccount: "console-sa",
+    });
+
+    expect(result).toEqual({ status: "unchanged" });
+    expect("pullRequest" in result).toBe(false);
+  });
+
+  it("throws rather than reporting proposed when the URL is missing from a proposed response", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ namespace: "tesserix", app: "console", status: "proposed" }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    const { proposeGrant } = await import("./secrets-api");
+    await expect(
+      proposeGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" }),
+    ).rejects.toThrow(/pullRequest/);
+  });
+
+  // An unrecognised status is a contract the console does not know, not a
+  // success with an unfamiliar label — treating it as success would report
+  // "proposed" for something that may have granted nothing.
+  it("throws on a status that is neither proposed nor unchanged", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ status: "queued" }), { status: 200 })),
+    );
+
+    const { proposeGrant } = await import("./secrets-api");
+    await expect(
+      proposeGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" }),
+    ).rejects.toThrow(/status/);
+  });
+
+  it("throws when the body is not an object at all", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(["proposed"]), { status: 200 })),
+    );
+
+    const { proposeGrant } = await import("./secrets-api");
+    await expect(
+      proposeGrant({ namespace: "tesserix", name: "console", serviceAccount: "console-sa" }),
+    ).rejects.toThrow(/not an object/);
+  });
+
+  // 503 is what secrets-api answers when no whitelist repository is
+  // configured. It must reach the action as a PlatformApiError carrying the
+  // status, not be swallowed into a success.
+  it("surfaces a 503 as a PlatformApiError carrying the upstream status", async () => {
+    vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");
+    stubToken();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "no whitelist repository is configured" }), { status: 503 }),
+      ),
+    );
+
+    const { proposeGrant } = await import("./secrets-api");
+    const caught = await proposeGrant({
+      namespace: "tesserix",
+      name: "console",
+      serviceAccount: "console-sa",
+    }).catch((e: unknown) => e);
+
+    expect(caught).toBeInstanceOf(PlatformApiError);
+    expect((caught as PlatformApiError).status).toBe(503);
+  });
+});
+
 describe("revokeGrant", () => {
   it("DELETEs the URL-encoded namespace/app path", async () => {
     vi.stubEnv("SECRETS_API_ORIGIN", "http://secrets");

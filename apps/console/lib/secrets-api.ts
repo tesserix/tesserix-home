@@ -680,6 +680,99 @@ export async function createGrant(app: AppRef, ttl?: string): Promise<void> {
 }
 
 /**
+ * The outcome of a whitelist proposal, as `secrets-api` reports it.
+ *
+ * `pullRequest` is present on `"proposed"` and ABSENT on `"unchanged"`, and
+ * that is deliberate on the Go side rather than an accident of the encoder:
+ * `Whitelist.submit` omits the key "rather than leaving an empty URL for the
+ * console to render as a broken link"
+ * (`secrets-api/internal/api/handlers/whitelist.go`). A DISCRIMINATED UNION,
+ * not one member with an optional field, carries that same guarantee into the
+ * type system: a caller cannot reach `pullRequest` at all without first
+ * narrowing on `status`, so the broken link the Go side declined to send
+ * cannot be reintroduced here.
+ */
+export type GrantProposal =
+  | { readonly status: "proposed"; readonly pullRequest: string }
+  | { readonly status: "unchanged" };
+
+/**
+ * Validate the whitelist-propose response at the boundary, the same way
+ * {@link writeSecret}'s `parseWriteResult` does: a malformed body dies here
+ * rather than travelling on as a value some component has to re-check.
+ *
+ * An UNRECOGNISED `status` throws. It is not treated as a success with an
+ * unknown label, because the two statuses this route can answer with mean
+ * materially different things to the operator ("a pull request is waiting for
+ * review" vs "the whitelist already says this"), and a third value would mean
+ * the console is talking to a `secrets-api` whose contract it does not know.
+ */
+function parseGrantProposal(json: unknown): GrantProposal {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    throw new Error("secrets: whitelist response is not an object");
+  }
+  const { status, pullRequest } = json as Record<string, unknown>;
+  if (status === "unchanged") {
+    // The URL is dropped rather than passed through even if a future
+    // `secrets-api` were to send one: "unchanged" means no pull request was
+    // opened, so anything in that field would not be a link to this
+    // proposal.
+    return { status: "unchanged" };
+  }
+  if (status !== "proposed") {
+    throw new Error('secrets: whitelist response .status is neither "proposed" nor "unchanged"');
+  }
+  if (typeof pullRequest !== "string" || pullRequest === "") {
+    throw new Error("secrets: whitelist response .pullRequest is not a non-empty string");
+  }
+  return { status: "proposed", pullRequest };
+}
+
+/**
+ * Propose that `app` be granted a reader on its namespace/app prefix: `POST
+ * /api/access/whitelist`, body `{namespace, apps:[{name, serviceAccount}]}`.
+ *
+ * # HOW THIS DIFFERS FROM {@link createGrant}
+ *
+ * Not "the same thing, but reviewed" — a different route group and a
+ * different moment at which access becomes real:
+ *
+ *   - {@link createGrant} is registered on the `live` group, so it needs
+ *     `platform` + `rotate-credentials`, and it calls `bao.GrantAll`: OpenBao
+ *     holds the grant the moment the call returns. The pull request it opens
+ *     afterwards is a RECEIPT of a change already made.
+ *   - This one is registered on `authed` (`secrets-api/internal/api/server.go`
+ *     — `handlers.NewWhitelist(...).Register(authed)`), so `platform` ALONE is
+ *     enough, and it writes nothing live. It only opens a pull request adding
+ *     the app to `namespaceWhitelist` in `tesserix-k8s`. In the handler's own
+ *     words: "Nothing here changes the cluster: access becomes real when that
+ *     pull request is merged and ArgoCD syncs it."
+ *
+ * What makes the merge sufficient — and what tesserix-home#482's original
+ * body got wrong — is that the whitelist entry DOES produce an OpenBao role.
+ * The chart's bootstrap ConfigMap renders `policy-app-<ns>_<app>.hcl` and
+ * `role-app-<ns>_<app>.json` for EVERY entry in `namespaceWhitelist`
+ * (`charts/thirdparty/openbao/templates/bootstrap-configmap.yaml`), and the
+ * Job's name carries a hash of that ConfigMap, so a whitelist change makes
+ * ArgoCD run a fresh, idempotent bootstrap that creates the policy and the
+ * Kubernetes auth role. Do not "correct" this doc comment back to the claim
+ * that the whitelist path creates no role.
+ *
+ * `ttl` has no counterpart here: this route's body carries no `ttl` field at
+ * all (`whitelistRequest` in the handler), so there is nothing to pass.
+ */
+export async function proposeGrant(app: AppRef): Promise<GrantProposal> {
+  const json = await secretsRequest("propose grant", "/api/access/whitelist", {
+    method: "POST",
+    body: {
+      namespace: app.namespace,
+      apps: [{ name: app.name, serviceAccount: app.serviceAccount }],
+    },
+  });
+  return parseGrantProposal(json);
+}
+
+/**
  * Revoke a namespace/app's reader grant: `DELETE
  * /api/access/grants/:namespace/:app`. Same `live` group, same
  * `platform` + `rotate-credentials` requirement as {@link createGrant} — see

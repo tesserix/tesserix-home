@@ -6,9 +6,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 // (the form, the prefill wiring, the render-path gate), same discipline
 // `write-secret-form.test.tsx` applies to `./actions`.
 const grantAccessAction = vi.fn();
+const proposeAccessAction = vi.fn();
 const revokeAccessAction = vi.fn();
 vi.mock("./access-actions", () => ({
   grantAccessAction: (...args: unknown[]) => grantAccessAction(...args),
+  proposeAccessAction: (...args: unknown[]) => proposeAccessAction(...args),
   revokeAccessAction: (...args: unknown[]) => revokeAccessAction(...args),
 }));
 
@@ -23,6 +25,8 @@ vi.mock("next/navigation", () => ({
 import { AccessCard } from "./access-card";
 import type { Grant } from "@/lib/secrets";
 
+const PULL_REQUEST = "https://github.com/tesserix/tesserix-k8s/pull/7";
+
 const READERS: Grant[] = [
   { namespace: "mark8ly", app: "storefront" },
   { namespace: "mark8ly", app: "admin" },
@@ -31,9 +35,15 @@ const READERS: Grant[] = [
 describe("AccessCard", () => {
   beforeEach(() => {
     grantAccessAction.mockReset();
+    proposeAccessAction.mockReset();
     revokeAccessAction.mockReset();
     refresh.mockReset();
     grantAccessAction.mockResolvedValue({ ok: true });
+    proposeAccessAction.mockResolvedValue({
+      ok: true,
+      status: "proposed",
+      pullRequest: PULL_REQUEST,
+    });
     revokeAccessAction.mockResolvedValue({ ok: true });
   });
 
@@ -226,5 +236,133 @@ describe("AccessCard", () => {
       expect(screen.getByText(/mark8ly\/storefront/)).toBeInTheDocument();
       expect(screen.getByText(/mark8ly\/admin/)).toBeInTheDocument();
     });
+  });
+
+  describe("with canPropose (platform, without rotate-credentials)", () => {
+    function renderProposeMode(readers: Grant[] = []) {
+      return render(
+        <AccessCard store="openbao" readers={readers} canWrite={false} canPropose />,
+      );
+    }
+
+    it("offers the propose control instead of the refusal sentence", () => {
+      renderProposeMode(READERS);
+
+      expect(
+        screen.getByRole("button", { name: /propose in a pull request/i }),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText(/namespace/i)).toBeInTheDocument();
+      // The immediate path is still not offered: no Remove, and none of the
+      // "merges immediately" copy that belongs to `rotate-credentials`.
+      expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
+      expect(screen.queryByText(/merges immediately/i)).toBeNull();
+    });
+
+    it("says what actually happens: a pull request, real only once merged and synced", () => {
+      renderProposeMode();
+
+      // Matched on the <p> itself: the sentence is split across <strong> and
+      // <code> children, so every ancestor's textContent matches too and an
+      // unscoped matcher finds several elements rather than failing.
+      const copy = screen.getByText(
+        (_, element) =>
+          element?.tagName === "P" &&
+          /opens a pull request against tesserix-k8s/i.test(element.textContent ?? ""),
+      );
+      expect(copy).toHaveTextContent(
+        /access becomes real when that pull request is merged and ArgoCD syncs it/i,
+      );
+    });
+
+    it("submitting calls proposeAccessAction — not grantAccessAction — with the three fields", async () => {
+      renderProposeMode();
+
+      fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
+      fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
+      fireEvent.change(screen.getByLabelText(/service account/i), {
+        target: { value: "mark8ly-orders" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /propose in a pull request/i }));
+
+      await waitFor(() => expect(proposeAccessAction).toHaveBeenCalledTimes(1));
+      expect(proposeAccessAction).toHaveBeenCalledWith({
+        namespace: "mark8ly",
+        app: "orders",
+        serviceAccount: "mark8ly-orders",
+      });
+      expect(grantAccessAction).not.toHaveBeenCalled();
+    });
+
+    async function propose() {
+      fireEvent.change(screen.getByLabelText(/namespace/i), { target: { value: "mark8ly" } });
+      fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
+      fireEvent.change(screen.getByLabelText(/service account/i), {
+        target: { value: "mark8ly-orders" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /propose in a pull request/i }));
+      await waitFor(() => expect(proposeAccessAction).toHaveBeenCalledTimes(1));
+    }
+
+    it("links the pull request on a proposed answer", async () => {
+      renderProposeMode();
+      await propose();
+
+      const link = await screen.findByRole("link", { name: /review it in tesserix-k8s/i });
+      expect(link).toHaveAttribute("href", PULL_REQUEST);
+    });
+
+    it("reports unchanged as a success and renders NO link, because there is no pull request", async () => {
+      proposeAccessAction.mockResolvedValue({ ok: true, status: "unchanged" });
+      renderProposeMode();
+      await propose();
+
+      const status = await screen.findByRole("status");
+      expect(status).toHaveTextContent(/the whitelist already grants this app access/i);
+      // The failure this guards: rendering an anchor whose href is the
+      // absent URL, which secrets-api deliberately omits rather than
+      // sending empty (see `Whitelist.submit`). Asserted on the ELEMENT,
+      // not on `queryByRole("link")` — an `<a href="">` is exactly what a
+      // missing URL produces, and Testing Library does not resolve that to
+      // the `link` role, so a role query would pass straight over the very
+      // anchor this test exists to catch (verified by mutation).
+      expect(status.querySelector("a")).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("shows the refusal message on a failure, and no proposal outcome", async () => {
+      proposeAccessAction.mockResolvedValue({ ok: false, message: "That change was not saved." });
+      renderProposeMode();
+      await propose();
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("That change was not saved.");
+      expect(screen.queryByRole("status")).toBeNull();
+    });
+
+    it("does not re-read the page: a proposal changes nothing the reader list is read from", async () => {
+      renderProposeMode();
+      await propose();
+
+      await screen.findByRole("status");
+      expect(refresh).not.toHaveBeenCalled();
+    });
+
+    // A GSM secret's readers are IAM bindings; there is no `tesserix-k8s`
+    // whitelist to propose against, so the control must not appear even when
+    // the operator holds `platform`.
+    it("is never offered for a GSM secret, whatever the capabilities say", () => {
+      render(<AccessCard store="gcpsm" readers={[]} canWrite canPropose />);
+
+      expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /propose access/i })).toBeNull();
+      expect(screen.queryByLabelText(/namespace/i)).toBeNull();
+      expect(screen.getByText(/governed by/i)).toBeInTheDocument();
+    });
+  });
+
+  it("prefers the immediate control when the operator can do both", () => {
+    render(<AccessCard store="openbao" readers={[]} canWrite canPropose />);
+
+    expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
+    expect(screen.getByText(/adding or removing a reader here merges immediately/i)).toBeInTheDocument();
   });
 });

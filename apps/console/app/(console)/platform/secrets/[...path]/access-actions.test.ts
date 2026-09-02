@@ -10,6 +10,7 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 vi.mock("@/lib/secrets-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/secrets-api")>()),
   createGrant: vi.fn(),
+  proposeGrant: vi.fn(),
   revokeGrant: vi.fn(),
   deleteSecret: vi.fn(),
   restoreSecretVersion: vi.fn(),
@@ -26,18 +27,20 @@ vi.mock("@/lib/db/tesserix", async (importOriginal) => ({
 }));
 
 import { getCurrentSession } from "@tesserix/platform-auth";
-import { createGrant, revokeGrant, deleteSecret, restoreSecretVersion } from "@/lib/secrets-api";
+import { createGrant, proposeGrant, revokeGrant, deleteSecret, restoreSecretVersion } from "@/lib/secrets-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import {
   deleteSecretAction,
   grantAccessAction,
+  proposeAccessAction,
   restoreSecretVersionAction,
   revokeAccessAction,
 } from "./access-actions";
 
 const NO_PERMISSION = "You don't have the platform and rotate-credentials capabilities this needs.";
 const NOT_SAVED = "That change was not saved.";
+const NO_PLATFORM = "You don't have the platform capability this needs.";
 
 function signIn(roles: readonly string[] | undefined) {
   vi.mocked(getCurrentSession).mockResolvedValue({
@@ -379,5 +382,109 @@ describe("restoreSecretVersionAction", () => {
     const result = await restoreSecretVersionAction("openbao", "mark8ly/db-password", 1);
 
     expect(result).toEqual({ ok: false, message: NOT_SAVED });
+  });
+});
+
+describe("proposeAccessAction", () => {
+  const PULL_REQUEST = "https://github.com/tesserix/tesserix-k8s/pull/7";
+
+  const INPUT = {
+    namespace: "homechef",
+    app: "homechef-api",
+    serviceAccount: "homechef-api-sa",
+  } as const;
+
+  // THE WHOLE POINT OF tesserix-home#482. A `platform`-only operator is
+  // exactly who this path exists for; requiring `rotate-credentials` here
+  // would reproduce the refusal it removes.
+  it("proposes for a platform-only operator, with no rotate-credentials", async () => {
+    signIn(["platform"]);
+    vi.mocked(proposeGrant).mockResolvedValue({ status: "proposed", pullRequest: PULL_REQUEST });
+
+    const result = await proposeAccessAction({ ...INPUT });
+
+    expect(result).toEqual({ ok: true, status: "proposed", pullRequest: PULL_REQUEST });
+    // The arguments, not merely that it was called: `app` becomes `name` on
+    // the `AppRef`, and a silent swap of the two would still "call" it.
+    expect(proposeGrant).toHaveBeenCalledWith({
+      namespace: "homechef",
+      name: "homechef-api",
+      serviceAccount: "homechef-api-sa",
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "secrets.access.propose",
+      target: "homechef/homechef-api",
+      summary: { proposed: 1, unchanged: 0 },
+    });
+  });
+
+  it("never reaches the immediate-grant route", async () => {
+    signIn(["platform"]);
+    vi.mocked(proposeGrant).mockResolvedValue({ status: "proposed", pullRequest: PULL_REQUEST });
+
+    await proposeAccessAction({ ...INPUT });
+
+    expect(createGrant).not.toHaveBeenCalled();
+  });
+
+  // `unchanged` is a SUCCESS carrying no URL — reporting it as a failure
+  // would tell an operator their proposal broke when the state they asked
+  // for already held.
+  it("reports unchanged as a success, with no pullRequest, and audits it distinguishably", async () => {
+    signIn(["platform"]);
+    vi.mocked(proposeGrant).mockResolvedValue({ status: "unchanged" });
+
+    const result = await proposeAccessAction({ ...INPUT });
+
+    expect(result).toEqual({ ok: true, status: "unchanged" });
+    expect(result).not.toHaveProperty("pullRequest");
+    expect(lastAuditInsert()).toEqual({
+      action: "secrets.access.propose",
+      target: "homechef/homechef-api",
+      summary: { proposed: 0, unchanged: 1 },
+    });
+  });
+
+  it("refuses an operator without platform, and audits the refusal", async () => {
+    signIn(["rotate-credentials"]);
+
+    const result = await proposeAccessAction({ ...INPUT });
+
+    expect(result).toEqual({ ok: false, message: NO_PLATFORM });
+    expect(proposeGrant).not.toHaveBeenCalled();
+    // Inside `auditedOperation`, not before it — a refused proposal is
+    // recorded rather than vanishing.
+    expect(lastAuditInsert().action).toBe("capability.refused");
+  });
+
+  // The refusal copy must not name a capability this path never asks for.
+  it("does not tell a refused operator they are missing rotate-credentials", async () => {
+    signIn(["rotate-credentials"]);
+
+    const result = await proposeAccessAction({ ...INPUT });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).not.toMatch(/rotate-credentials/);
+  });
+
+  it("folds a 403 from secrets-api into the same no-platform message", async () => {
+    signIn(["platform"]);
+    vi.mocked(proposeGrant).mockRejectedValue(
+      new PlatformApiError("propose grant: secrets-api returned 403", 403),
+    );
+
+    expect(await proposeAccessAction({ ...INPUT })).toEqual({ ok: false, message: NO_PLATFORM });
+  });
+
+  // 503 (no whitelist repository configured) and 502 (the proposer failed)
+  // are not things an operator can act on, and the upstream text can carry
+  // secrets-api's origin — so both degrade to the fixed sentence.
+  it("degrades a 503 to the fixed not-saved sentence, leaking no upstream text", async () => {
+    signIn(["platform"]);
+    vi.mocked(proposeGrant).mockRejectedValue(
+      new PlatformApiError("propose grant: no whitelist repository is configured", 503),
+    );
+
+    expect(await proposeAccessAction({ ...INPUT })).toEqual({ ok: false, message: NOT_SAVED });
   });
 });

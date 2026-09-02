@@ -6,6 +6,7 @@ import { auditedOperation, type AuditDescription } from "@/lib/db/audit-repo";
 import {
   createGrant,
   deleteSecret,
+  proposeGrant,
   restoreSecretVersion,
   revokeGrant,
   type AppRef,
@@ -230,4 +231,120 @@ export async function restoreSecretVersionAction(
   );
   if (!result.ok) return result;
   return { ok: true };
+}
+
+/**
+ * What {@link proposeAccessAction} answers with. `SecretsWriteResult`'s
+ * success arm carries no payload, and this one has to: an operator who has
+ * just proposed a change needs the pull request's URL to go and get it
+ * reviewed, and — when the whitelist already said what they asked it to say —
+ * needs to be told that no pull request exists rather than being handed a
+ * dead link.
+ *
+ * The two success arms are separate members rather than one member with an
+ * optional `pullRequest`, so a caller that renders a link cannot reach the
+ * field without first narrowing on `status`. That is the same property
+ * `GrantProposal` holds at the client boundary, carried through to the UI.
+ */
+export type SecretsProposeResult =
+  | { readonly ok: true; readonly status: "proposed"; readonly pullRequest: string }
+  | { readonly ok: true; readonly status: "unchanged" }
+  | { readonly ok: false; readonly message: string };
+
+// Names only `platform`, because `platform` is the only capability
+// `proposeAccessAction` checks. Reusing NO_PERMISSION_MESSAGE here would tell
+// an operator they lack `rotate-credentials` on a path that never asks for it
+// — and telling someone they are missing a capability the operation does not
+// need is exactly the untrue-message failure that constant's own comment
+// warns about, in the other direction.
+const NO_PLATFORM_MESSAGE = "You don't have the platform capability this needs.";
+
+/**
+ * The propose-only sibling of {@link withAccessWrite} — a SEPARATE wrapper on
+ * purpose, not a widened version of that one.
+ *
+ * `withAccessWrite` requires `platform` AND `rotate-credentials` because
+ * everything it wraps changes OpenBao or `tesserix-k8s` immediately. This
+ * route does neither: `POST /api/access/whitelist` sits in `secrets-api`'s
+ * `authed` group (`secrets-api/internal/api/server.go`), which asks for
+ * `platform` alone, and all it does is open a pull request. Requiring
+ * `rotate-credentials` here would have the console refuse a call the API
+ * would have accepted — the exact refusal tesserix-home#482 exists to
+ * remove.
+ *
+ * Everything else is deliberately identical to `withAccessWrite`, and for the
+ * same reasons written out at length there: the capability check runs INSIDE
+ * `auditedOperation`'s `operation` callback so a `CapabilityError` is written
+ * as a `capability.refused` row instead of escaping before the audit path is
+ * entered, and no internal error text reaches the operator.
+ */
+async function withProposeWrite<T>(
+  target: string,
+  run: () => Promise<T>,
+  describe: (result: T) => AuditDescription,
+): Promise<{ ok: true; value: T } | { ok: false; message: string }> {
+  try {
+    const session = await getCurrentSession();
+    const actor = session?.sub ?? "unknown";
+    const value = await auditedOperation({
+      actor,
+      target,
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, "platform");
+        return run();
+      },
+      describe,
+    });
+    return { ok: true, value };
+  } catch (cause) {
+    if (cause instanceof CapabilityError || isForbidden(cause)) {
+      return { ok: false, message: NO_PLATFORM_MESSAGE };
+    }
+    return { ok: false, message: NOT_SAVED_MESSAGE };
+  }
+}
+
+/**
+ * Propose that `namespace`/`app`'s service account be granted a reader on the
+ * secret prefix — the path open to an operator who holds `platform` but not
+ * `rotate-credentials`. Nothing is granted here; a pull request against
+ * `tesserix-k8s` is opened, and access becomes real when it is merged and
+ * ArgoCD syncs it (see {@link proposeGrant}'s doc comment for why the merge
+ * is sufficient — the chart's bootstrap Job creates the policy and role).
+ *
+ * `unchanged` is a SUCCESS, not a failure: it means the whitelist already
+ * grants this app access, which is the state the operator asked for. The
+ * audit summary records the two outcomes differently, mirroring
+ * `secrets-api`'s own `reasonNoChange` distinction — a trail that cannot tell
+ * a proposal which opened a pull request from one that found the work already
+ * done evidences nothing.
+ */
+export async function proposeAccessAction(input: {
+  namespace: string;
+  app: string;
+  serviceAccount: string;
+}): Promise<SecretsProposeResult> {
+  const appRef: AppRef = {
+    namespace: input.namespace,
+    name: input.app,
+    serviceAccount: input.serviceAccount,
+  };
+  const target = `${input.namespace}/${input.app}`;
+  const result = await withProposeWrite(
+    target,
+    () => proposeGrant(appRef),
+    (proposal) => ({
+      action: "secrets.access.propose",
+      summary:
+        proposal.status === "proposed"
+          ? { proposed: 1, unchanged: 0 }
+          : { proposed: 0, unchanged: 1 },
+      target,
+    }),
+  );
+  if (!result.ok) return result;
+  const proposal = result.value;
+  return proposal.status === "proposed"
+    ? { ok: true, status: "proposed", pullRequest: proposal.pullRequest }
+    : { ok: true, status: "unchanged" };
 }

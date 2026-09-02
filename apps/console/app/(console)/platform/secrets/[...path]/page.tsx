@@ -157,10 +157,22 @@ export default async function SecretDetailPage({
   // authorization, and `render-path-capabilities.test.ts` is what keeps that
   // distinction from drifting.
   const session = await getCurrentSession();
-  const canWrite =
-    !requiresCapability() ||
-    (hasCapability(session?.roles, "platform") &&
-      hasCapability(session?.roles, "rotate-credentials"));
+  const bypass = !requiresCapability();
+  const holdsPlatform = bypass || hasCapability(session?.roles, "platform");
+  const holdsRotate = bypass || hasCapability(session?.roles, "rotate-credentials");
+  const canWrite = holdsPlatform && holdsRotate;
+  // The propose path, and the reason it is derived here rather than assumed:
+  // `POST /api/access/whitelist` sits in secrets-api's `authed` group, which
+  // asks for `platform` ALONE, so an operator who cannot grant immediately can
+  // still open a pull request that grants on merge. `platform` is spelled out
+  // rather than taken for granted from "they can see this page" — the page's
+  // own visibility is decided by the operator allowlist in `internal-access.ts`,
+  // which admits on email and does not imply any capability grant.
+  //
+  // `&& !canWrite` is not a security decision — it decides which of two
+  // controls to offer, because an operator who can grant immediately has no
+  // use for the slower path, and showing both would ask them to pick.
+  const canPropose = holdsPlatform && !canWrite;
 
   return (
     <SecretDetailView
@@ -171,6 +183,7 @@ export default async function SecretDetailPage({
       readers={readers}
       state={state}
       canWrite={canWrite}
+      canPropose={canPropose}
     />
   );
 }
