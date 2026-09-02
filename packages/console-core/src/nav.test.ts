@@ -288,6 +288,36 @@ describe("platformNav", () => {
     expect(names.indexOf("Organisations")).toBeLessThan(names.indexOf("Import leads"));
   });
 
+  it("links the CRM's templates rather than showing them as pending", () => {
+    // The console serves this page. `pending` would render it inert behind a
+    // SOON badge — a built surface unreachable from the rail, the same failure
+    // the audit log's and the onboarding funnel's assertions above guard.
+    //
+    // It also has to be ON the rail at all, which is why presence is asserted
+    // rather than assumed: authoring is the only way a template comes into
+    // existence, and the composer on the organisation detail page tells an
+    // operator with no templates to go to "CRM → Templates". An unrailed
+    // surface would make that instruction unfollowable.
+    const templates = collectItems(platformNav).find(
+      (item) => item.route === "platform.crmTemplates",
+    );
+    expect(templates).toBeDefined();
+    expect(templates!.name).toBe("Templates");
+    expect(isPending("platform.crmTemplates")).toBe(false);
+  });
+
+  it("puts Templates in Growth, after Do-not-contact", () => {
+    // Position, not just presence. Do-not-contact is the constraint that binds
+    // every outreach path; templates are the copy those paths carry. Naming
+    // the constraint before the thing it constrains is the order the CRM's
+    // rail already tells its story in, and it is the same reason Organisations
+    // sits ahead of Import above.
+    const growth = platformNav.filter(isNavGroup).find((group) => group.name === "Growth");
+    const names = growth?.items.map((item) => item.name) ?? [];
+    expect(names).toContain("Templates");
+    expect(names.indexOf("Do-not-contact")).toBeLessThan(names.indexOf("Templates"));
+  });
+
   it("lists Secrets and Secrets reviews in Governance, beside Break-glass", () => {
     // The chart cutover (tesserix-k8s#808/#809) redeployed `secrets-api`
     // against Zitadel and it is verified live, so the condition that kept

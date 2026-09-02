@@ -22,8 +22,10 @@ import type {
   ContactRow,
   OpportunityRow,
 } from "@/lib/db/crm-repo";
+import type { TemplateRow } from "@/lib/db/crm-templates";
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
 import { ActivityComposer } from "./activity-composer";
+import { TemplateComposer } from "./template-composer";
 import { ErrorNote } from "./error-note";
 import {
   addContactAction,
@@ -490,15 +492,32 @@ export function ActivityTab({
   organisationId,
   activities,
   opportunities,
+  contacts,
+  templates,
 }: {
   organisationId: string;
   activities: readonly ActivityRow[];
   /** Passed only so the composer can offer a follow-up against a real deal
    *  once contact is logged (#245) — the timeline itself does not use them. */
   opportunities: readonly OpportunityRow[];
+  /** `ContactRow`, not the renderer's `TemplateContactRow`: the composer needs
+   *  a name for a dropdown, not a scraped biography. See
+   *  `template-composer.tsx`. */
+  contacts: readonly ContactRow[];
+  /** Live `dm` templates. Empty is an ordinary state — the composer says so
+   *  and points at the authoring surface. */
+  templates: readonly TemplateRow[];
 }) {
   return (
     <div className="flex flex-col gap-4">
+      {/* ABOVE the free-text composer, because for a stage-`new` lead the
+          templated path is the common case and hand-writing the DM is the
+          fallback — 259 of them is the reason this feature exists. */}
+      <TemplateComposer
+        organisationId={organisationId}
+        templates={templates}
+        contacts={contacts}
+      />
       <ActivityComposer organisationId={organisationId} opportunities={opportunities} />
       {activities.length === 0 ? (
         <p className="text-sm text-muted-foreground">No activity recorded yet.</p>

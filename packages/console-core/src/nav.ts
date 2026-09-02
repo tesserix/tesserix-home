@@ -304,6 +304,12 @@ export const platformNav: readonly NavEntry[] = [
       // duplicate icon is the cheaper wrong thing.
       { name: "Organisations", route: "platform.crmOrganisations", icon: "users" },
       { name: "Do-not-contact", route: "platform.crmSuppressions", icon: "shield" },
+      // `mail` for the same reason `platform.leadTemplates` carries it: this is
+      // outreach copy. The two are different route ids for different surfaces
+      // (see routes.ts) but they are the same KIND of thing to an operator
+      // scanning the rail, so an icon that disagreed would be the confusing
+      // part.
+      { name: "Templates", route: "platform.crmTemplates", icon: "mail" },
       // `inbox` rather than a new "upload" key, for the reason already
       // recorded on "Identity lookup" above: IconKey is consumed as
       // `Record<IconKey, ...>` in web, mobile and console, so a new key is

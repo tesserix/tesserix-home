@@ -11,6 +11,7 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 import { dbReadError } from "@/lib/db-read-error";
 import { requiresCapability } from "@/lib/internal-access";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
+import { listTemplates, type TemplateRow } from "@/lib/db/crm-templates";
 import {
   ActivityTab,
   ContactsTab,
@@ -106,6 +107,28 @@ export default async function OrganisationDetailPage({
   const { organisation, contacts, opportunities, activities } = detail;
   const products = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 
+  // Live `dm` templates for the composer, read in its OWN try/catch rather
+  // than alongside `organisationDetail` above.
+  //
+  // The split is deliberate: a template read that fails must not take the
+  // organisation page down with it. Everything else on this page — the
+  // timeline, the contacts, the deals, the edit form — is unaffected by
+  // `crm_templates` being unreadable, and failing the whole surface for the
+  // one composer would trade a working page for an outage. The failure the
+  // console can actually be in here is 0043 not yet applied, and an operator
+  // meeting an empty composer that points at the authoring surface will find
+  // that surface refuses too. Logged so the cause is not silent.
+  //
+  // Not `channel` un-narrowed: this composer logs `dm_sent`, and
+  // `recordTemplatedDm` refuses an email template server-side. Filtering here
+  // is what stops the operator being offered one at all.
+  let templates: TemplateRow[] = [];
+  try {
+    templates = await listTemplates({ channel: "dm" });
+  } catch (caught) {
+    console.error("[console] failed to read DM templates from tesserix-postgres", caught);
+  }
+
   return (
     <DetailLayout
       title={organisation.name}
@@ -177,6 +200,8 @@ export default async function OrganisationDetailPage({
               organisationId={organisation.id}
               activities={activities}
               opportunities={opportunities}
+              contacts={contacts}
+              templates={templates}
             />
           ),
         },

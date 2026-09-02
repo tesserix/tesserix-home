@@ -2,8 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { ESTATE } from "@tesserix/console-core";
+import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import {
   advanceStage,
+  assertNoSuppressedContact,
   logActivity,
   linkConversion as linkConversionRow,
   MissingProductError,
@@ -11,6 +14,24 @@ import {
   SuppressedContactError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
+import { listTemplates, templateContext } from "@/lib/db/crm-templates";
+import {
+  recordTemplatedDm,
+  ContactUnavailableError,
+  TemplateRenderRefusedError,
+  TemplateUnavailableError,
+} from "@/lib/db/crm-outreach";
+import {
+  MERGE_FIELDS,
+  renderTemplate,
+  UnknownMergeFieldError,
+  type MergeFieldToken,
+} from "@/lib/crm-merge-fields";
+// `assertNoSuppressedContact` takes the query it should run on, so that the
+// write path can hand it a transaction. This caller holds no transaction — a
+// preview reads and stops — so it passes the pooled query explicitly rather
+// than the function acquiring a default nothing else here would see.
+import { tesserixQuery } from "@/lib/db/tesserix";
 import { saveNextAction } from "@/lib/crm-queues";
 import {
   createContact,
@@ -29,6 +50,13 @@ import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
 import { isCrmStage, isHumanActivityKind, requiresProduct } from "@/lib/crm";
+
+/**
+ * What a caller without the `crm` capability is told, whatever the truth is.
+ * Shared by every refusal that must not distinguish "you may not" from "it is
+ * not there" — see `previewTemplate`.
+ */
+const PREVIEW_UNAVAILABLE_MESSAGE = "That template preview is not available.";
 
 
 /**
@@ -701,5 +729,404 @@ export async function updateOrganisationAction(
   // The browse surface renders each organisation's name and location, so an
   // edit to either leaves a stale row there without this.
   revalidatePath("/platform/crm/organisations");
+  return { ok: true };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * LEAD-TEMPLATE PREVIEW (#LDQ)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * What a preview can come back as. A DISCRIMINATED UNION, NEVER A PARTIAL:
+ * there is no branch that carries both `text` and a complaint, because the
+ * only way to stop a caller shipping a half-rendered message is to not hand
+ * it one. `renderTemplate` makes the same choice for the same reason, and
+ * this type is that contract carried up to the composer intact rather than
+ * flattened into `{ text, error }` at the action boundary.
+ *
+ * Each failure carries BOTH a machine field and a `message`. The message is
+ * what the operator reads; `missing`/`unknown` exist so the composer can
+ * highlight the offending fields without parsing prose.
+ */
+export type PreviewTemplateResult =
+  | { ok: true; text: string; subject?: string }
+  | { ok: false; reason: "suppressed"; message: string }
+  | { ok: false; reason: "missing-fields"; missing: string[]; message: string }
+  | { ok: false; reason: "unknown-fields"; unknown: string[]; message: string }
+  | { ok: false; reason: "not-found" | "erased"; message: string };
+
+export interface PreviewTemplateInput {
+  organisationId: string;
+  contactId: string;
+  templateId: string;
+}
+
+/**
+ * `renderTemplate` types `missing` as `string[]`, not `MergeFieldToken[]`,
+ * because `unknown` shares the shape and cannot be narrowed. At runtime every
+ * entry in `missing` came from the allowlist scan and is therefore a real
+ * token — but "is therefore" is an argument, not a guarantee, and indexing
+ * `MERGE_FIELDS` on the strength of one would break the day the renderer's
+ * failure shapes are merged. This guard costs a line and makes the claim
+ * checkable instead.
+ */
+function isMergeFieldToken(token: string): token is MergeFieldToken {
+  return Object.hasOwn(MERGE_FIELDS, token);
+}
+
+/**
+ * The refusal an operator can act on.
+ *
+ * IT NAMES THE FIELDS. An operator told only "cannot render" does the thing
+ * this feature exists to remove: retypes the message by hand. Told "no bio
+ * recorded for this contact", they pick another template or another lead in a
+ * second. `MERGE_FIELDS[token].label` is the operator-facing wording and the
+ * reason that registry carries a `label` at all.
+ *
+ * WHERE the data is missing changes the sentence, because "no location
+ * recorded for this contact" would send the operator to the contact record to
+ * look for a field that lives on the organisation. Three phrasings rather
+ * than one generic "for this lead" is the difference between a message that
+ * points somewhere and a message that only apologises.
+ */
+function missingFieldsMessage(missing: readonly string[]): string {
+  const labels = missing
+    .filter(isMergeFieldToken)
+    .map((token) => MERGE_FIELDS[token].label);
+  const names = labels.length > 0 ? labels.join(", ") : missing.join(", ");
+
+  const scopes = new Set(missing.map((token) => token.split(".")[0]));
+  const subject =
+    scopes.size === 1 && scopes.has("org")
+      ? "this organisation"
+      : scopes.size === 1 && scopes.has("contact")
+        ? "this contact"
+        : "this lead";
+
+  return `Cannot use this template: no ${names} recorded for ${subject}.`;
+}
+
+/**
+ * Render one template against one lead, or refuse and say why.
+ *
+ * ══ THIS IS A READ, AND IT IS DELIBERATELY NOT `withCrmWrite` ══
+ *
+ * `withCrmWrite` wraps `auditedOperation`, and a preview is not an operation
+ * worth an audit row. The composer calls this every time an operator changes
+ * the template or the contact in a dropdown, so auditing it would write rows
+ * at roughly the rate of a keystroke and bury the `crm.outreach.dm` rows that
+ * record what was actually sent — an audit trail nobody can read is not an
+ * audit trail. What IS audited is the send, in Task 7, which is the event
+ * anyone querying this log is looking for.
+ *
+ * IT STILL NEEDS THE CAPABILITY GATE, because it returns
+ * `crm_contacts.biography` — scrape-derived personal data that no other
+ * console read exposes (see `crm-templates.ts`'s header). Dropping the audit
+ * row is a decision about noise; dropping the gate would be a decision about
+ * who can read a stranger's Instagram bio through our server. So
+ * `checkOperatorCapabilityLive` is called directly here rather than inherited
+ * from a wrapper this function does not use.
+ *
+ * ══ THE ORDER OF THE THREE STEPS IS LOAD-BEARING ══
+ *
+ * 1. SUPPRESSION FIRST, BEFORE ANY RENDER. A suppressed person's message is
+ *    not produced at all — not produced and discarded, not produced and
+ *    hidden behind a disabled button: never produced. Rendering first and
+ *    refusing afterwards would put the text in this process's memory, in the
+ *    action's return path, and one careless `console.log` or error report
+ *    away from existing somewhere, for someone who asked us to stop. The CSV
+ *    import already holds this at BOTH ends (`previewImport` and
+ *    `commitImport` both call `isSuppressed` — "a preview is a promise about
+ *    a state that may already be old"), and this surface takes the same
+ *    shape: refused here, refused AGAIN inside Task 7's transaction.
+ *
+ *    `assertNoSuppressedContact` rather than a per-contact `isSuppressed`,
+ *    even though this preview is about one chosen contact, because that is
+ *    exactly the function the write path re-checks with. A preview that
+ *    scoped the check more narrowly than the commit would pass here and throw
+ *    there, and the operator would meet the refusal only after clicking the
+ *    control that copies to their clipboard — the one moment the two ends
+ *    disagreeing is most expensive.
+ *
+ * 2. THEN `templateContext`, which already excludes `erased_at IS NOT NULL`.
+ *    That is why a contact erased between the page render and this call comes
+ *    back as `erased` rather than rendering "Hi [erased]" into a greeting —
+ *    `eraseContact` writes that literal string into `name`, so an erased
+ *    contact sails through every null check in this feature. The exclusion in
+ *    the read is the only thing that catches it.
+ *
+ * 3. THEN `renderTemplate`, whose all-or-nothing contract is the only reason
+ *    the `missing-fields` branch below is reachable at all. A renderer that
+ *    substituted "" would return `ok: true` here forever.
+ */
+export async function previewTemplate(
+  input: PreviewTemplateInput,
+): Promise<PreviewTemplateResult> {
+  const session = await getCurrentSession();
+  try {
+    await checkOperatorCapabilityLive(session, "crm");
+  } catch (cause) {
+    if (!(cause instanceof CapabilityError)) throw cause;
+    // `not-found`, not a distinct "forbidden", and not the wrapper's "you
+    // don't have permission". An operator without `crm` should not learn from
+    // this response whether the organisation, the contact or the template
+    // exists — every one of those is a fact about the lead list, which is the
+    // thing the capability gates. The composer is not rendered for them
+    // anyway, so this is the hand-crafted-request case.
+    return { ok: false, reason: "not-found", message: PREVIEW_UNAVAILABLE_MESSAGE };
+  }
+
+  return renderForLead(input);
+}
+
+/**
+ * The three steps above, WITHOUT the session gate — shared by `previewTemplate`
+ * and by `copyAndLogDm`'s server-side re-render.
+ *
+ * SHARED RATHER THAN COPIED, and that is the point. `copyAndLogDm` decides
+ * whether `crm_activities.body` receives text by comparing the submitted string
+ * to this render (see `crm-outreach.ts`). If the two paths rendered through
+ * separate code, the comparison would be against a string this console might
+ * not actually have produced, and the day the two copies stopped agreeing —
+ * one commit is enough, per the `crm-identity.ts` lesson — every verbatim send
+ * would start classifying itself as "edited" and storing the biography. The
+ * defence only works if the preview and the check are literally the same
+ * render.
+ *
+ * THE GATE IS NOT IN HERE, deliberately. `previewTemplate` calls
+ * `checkOperatorCapabilityLive` itself before this runs; `copyAndLogDm` gets
+ * the same check from `withCrmWrite`, INSIDE `auditedOperation`, so a refusal
+ * is written as a `capability.refused` row (#409). Folding the gate in here
+ * would move the write path's check outside `auditedOperation` and lose that
+ * row — a deliberate refusal made indistinguishable from a request never made.
+ */
+async function renderForLead(input: PreviewTemplateInput): Promise<PreviewTemplateResult> {
+  // Step 1. Before the template is even loaded: nothing about a suppressed
+  // organisation is worth a second query.
+  try {
+    await assertNoSuppressedContact(input.organisationId, tesserixQuery);
+  } catch (cause) {
+    if (!(cause instanceof SuppressedContactError)) throw cause;
+    // Not `cause.message`: that one ends "remove the suppression before
+    // logging outreach", which is the instruction for the WRITE path. Here
+    // the operator has not tried to log anything, and the fact worth telling
+    // them is that no message exists to copy.
+    return {
+      ok: false,
+      reason: "suppressed",
+      message:
+        "This organisation is on the do-not-contact list. No message was rendered for it.",
+    };
+  }
+
+  // Live templates only. An archived one is not offered by the composer, so
+  // reaching this with its id means the page was open while someone retired
+  // it — and `not-found` is the honest answer: the copy was deliberately
+  // withdrawn, and rendering it anyway would be the failure archiving exists
+  // to prevent.
+  const templates = await listTemplates();
+  const template = templates.find((row) => row.id === input.templateId);
+  if (!template) {
+    return {
+      ok: false,
+      reason: "not-found",
+      message: "That template is no longer available.",
+    };
+  }
+
+  // Step 2.
+  const context = await templateContext(input.organisationId);
+  if (!context) {
+    return {
+      ok: false,
+      reason: "not-found",
+      message: "That organisation is no longer available.",
+    };
+  }
+
+  // Scoped to the organisation the caller named, so a `contactId` belonging
+  // to a different organisation resolves to nothing rather than to a contact
+  // (T-LDQ-03). The list is already erasure-filtered, so "absent" covers both
+  // "erased" and "not yours" — and the two deliberately share a message,
+  // because distinguishing them would answer the question the scoping exists
+  // to refuse.
+  const contact = context.contacts.find((row) => row.id === input.contactId);
+  if (!contact) {
+    return {
+      ok: false,
+      reason: "erased",
+      message: "That contact is no longer available. It may have been erased.",
+    };
+  }
+
+  // Step 3.
+  const rendered = renderTemplate({
+    body: template.body,
+    subject: template.subject,
+    values: {
+      "org.name": context.organisation.name,
+      "org.location": context.organisation.location,
+      "org.category": [...context.organisation.category],
+      "contact.name": contact.name,
+      "contact.instagram_handle": contact.instagramHandle,
+      "contact.biography": contact.biography,
+    },
+  });
+
+  if (!rendered.ok) {
+    // UNKNOWN OUTRANKS MISSING, the same precedence `renderTemplate` itself
+    // applies: an unknown token is broken for EVERY lead, so reporting this
+    // lead's absent bio first would send the operator to the next lead to hit
+    // the identical wall. (`renderTemplate` never returns both, so this is a
+    // narrowing rather than a choice — but the precedence is why its union is
+    // shaped that way, and it belongs written down at the surface that
+    // renders the sentence.)
+    if ("unknown" in rendered) {
+      return {
+        ok: false,
+        reason: "unknown-fields",
+        unknown: rendered.unknown,
+        // Reusing `UnknownMergeFieldError`'s message rather than composing a
+        // second one: the authoring form and this preview must name a bad
+        // token identically, or an operator who sees both learns they are two
+        // different problems.
+        message: new UnknownMergeFieldError(rendered.unknown).message,
+      };
+    }
+    return {
+      ok: false,
+      reason: "missing-fields",
+      missing: rendered.missing,
+      message: missingFieldsMessage(rendered.missing),
+    };
+  }
+
+  return rendered.subject === undefined
+    ? { ok: true, text: rendered.text }
+    : { ok: true, text: rendered.text, subject: rendered.subject };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * COPY AND LOG (#LDQ)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface CopyAndLogDmInput {
+  organisationId: string;
+  contactId: string;
+  templateId: string;
+  /**
+   * What the operator is about to paste — the textarea's contents, which may
+   * be our render untouched or their own rewrite of it. UNTRUSTED: it crosses
+   * the browser → server boundary, and it is the only free text this feature
+   * accepts. Whether it is ours or theirs is decided below, by re-rendering;
+   * the client never says.
+   */
+  submittedText: string;
+}
+
+/**
+ * The two allowlisted exceptions on the copy-and-log path.
+ *
+ * `SuppressedContactError` is the do-not-contact list refusing outreach at the
+ * transaction's own re-check, and its message is already operator-facing.
+ * `TemplateRenderRefusedError` carries the preview's wording for a render that
+ * has stopped being possible (the bio was cleared, the template archived)
+ * between the preview and the click. `TemplateUnavailableError` and
+ * `ContactUnavailableError` come through the same door for the same reason:
+ * each is a specific, actionable fact about a lead the operator is looking at,
+ * and every one of them would otherwise surface as "That change was not saved."
+ * and read as a bug in a feature that had in fact worked correctly.
+ *
+ * An allowlist, per exception type — never "anything that is an Error".
+ */
+function mapOutreachRefusal(cause: unknown): { ok: false; message: string } | undefined {
+  if (
+    cause instanceof SuppressedContactError ||
+    cause instanceof TemplateRenderRefusedError ||
+    cause instanceof TemplateUnavailableError ||
+    cause instanceof ContactUnavailableError
+  ) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
+/**
+ * Log that a templated DM was sent, and move everything sending one implies.
+ *
+ * ══ THE RE-RENDER IS WHAT DECIDES `body`, NOT THE CLIENT ══
+ *
+ * This action re-renders the template from `templateId` plus the LIVE contact
+ * row (`renderForLead`, the same code the preview ran) and compares that string
+ * to `submittedText`. Identical → the operator sent our render → `bodyIfEdited`
+ * is null → `crm_activities.body` stays NULL. Different → the text is theirs
+ * and is stored.
+ *
+ * The alternative — an `edited: boolean` on the request — was rejected outright
+ * rather than merely disliked. A caller that claimed `edited: true` while
+ * submitting the verbatim render would write `crm_contacts.biography` into
+ * `crm_activities.body`, which is the one table `eraseContact` does not reach;
+ * see `crm-outreach.ts`'s header for why that is a compliance defect rather
+ * than a leak of no consequence. `body` is the only door in this feature that
+ * accepts free text, so a client flag on it would defeat every other control at
+ * once. `metadata.edited` is still recorded — derived here, never read from the
+ * request.
+ *
+ * COMPARED EXACTLY, not trimmed or normalised. The asymmetry is deliberate: a
+ * false "unedited" verdict stores LESS than the truth (nothing), while a false
+ * "edited" verdict stores our render — including the biography — under the
+ * banner of the operator's own words. Exact equality is the only comparison
+ * that can never produce the second, and an operator whose sole edit was a
+ * trailing space keeps their text stored, which costs nothing.
+ *
+ * ══ THE REFUSAL IS THROWN, NOT RETURNED ══
+ *
+ * A render that has stopped being possible since the preview must abort the
+ * write, and inside `withCrmWrite` the only way to abort is to throw:
+ * returning a value would have `auditedOperation` write a `crm.outreach.dm`
+ * row claiming a DM was logged when none was.
+ */
+export async function copyAndLogDm(input: CopyAndLogDmInput): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    input.contactId,
+    { capability: "crm" },
+    async (actor) => {
+      const rendered = await renderForLead({
+        organisationId: input.organisationId,
+        contactId: input.contactId,
+        templateId: input.templateId,
+      });
+      if (!rendered.ok) throw new TemplateRenderRefusedError(rendered.message);
+
+      return recordTemplatedDm({
+        organisationId: input.organisationId,
+        contactId: input.contactId,
+        templateId: input.templateId,
+        bodyIfEdited: input.submittedText === rendered.text ? null : input.submittedText,
+        actor: actor.email,
+      });
+    },
+    (outcome) => ({
+      action: "crm.outreach.dm",
+      // Counts only, per `AuditSummary`. `edited` is carried as 1/0 rather
+      // than omitted, because "was this row's text authored by a human" is
+      // exactly the question an erasure request has to ask of this log.
+      summary: { logged: 1, edited: outcome.edited ? 1 : 0 },
+      // The handle or the email — NEVER the message text. The message embeds
+      // the biography, and `console_audit_log` is another table `eraseContact`
+      // does not reach: putting the render here would reintroduce, through the
+      // audit row, precisely what `crm_activities.body` was kept clean of.
+      // The id alongside it, Ruling 20-style, so the row can still be joined
+      // back to a contact whose handle later changes.
+      target: `${outcome.contactLabel ?? "(no handle or email on file)"} (${input.contactId})`,
+    }),
+    mapOutreachRefusal,
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  // The queue and the browse list both read `next_action_at` and
+  // `last_contacted_at`, and a lead that just moved `new` → `contacted` is
+  // gone from the stage-`new` working set this feature exists to clear.
+  revalidatePath("/platform/crm");
   return { ok: true };
 }
