@@ -52,13 +52,13 @@ describe("AccessCard", () => {
   });
 
   describe("with canWrite", () => {
-    it("renders the Add an app field group, the Propose access button, and a Remove button per reader", () => {
+    it("renders the Add an app field group, the Grant access button, and a Remove button per reader", () => {
       render(
         <AccessCard store="openbao" readers={READERS} canWrite />,
       );
 
       expect(screen.getByText(/add an app/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /propose access/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /grant access/i })).toBeInTheDocument();
       expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(READERS.length);
     });
 
@@ -71,7 +71,7 @@ describe("AccessCard", () => {
         target: { value: "mark8ly-orders" },
       });
 
-      fireEvent.click(screen.getByRole("button", { name: /propose access/i }));
+      fireEvent.click(screen.getByRole("button", { name: /grant access/i }));
 
       await waitFor(() => expect(grantAccessAction).toHaveBeenCalledTimes(1));
       expect(grantAccessAction).toHaveBeenCalledWith({
@@ -117,7 +117,7 @@ describe("AccessCard", () => {
       fireEvent.change(screen.getByLabelText(/^app$/i), { target: { value: "orders" } });
       fireEvent.change(screen.getByLabelText(/service account/i), { target: { value: "" } });
 
-      fireEvent.click(screen.getByRole("button", { name: /propose access/i }));
+      fireEvent.click(screen.getByRole("button", { name: /grant access/i }));
 
       // Give any accidental async work a tick to run.
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -134,7 +134,7 @@ describe("AccessCard", () => {
       fireEvent.change(screen.getByLabelText(/service account/i), {
         target: { value: "mark8ly-orders" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /propose access/i }));
+      fireEvent.click(screen.getByRole("button", { name: /grant access/i }));
 
       await waitFor(() => expect(grantAccessAction).toHaveBeenCalledTimes(1));
 
@@ -152,7 +152,7 @@ describe("AccessCard", () => {
         target: { value: "mark8ly-orders" },
       });
 
-      fireEvent.submit(screen.getByRole("button", { name: /propose access/i }).closest("form")!);
+      fireEvent.submit(screen.getByRole("button", { name: /grant access/i }).closest("form")!);
 
       await waitFor(() => expect(grantAccessAction).toHaveBeenCalledTimes(1));
     });
@@ -178,7 +178,7 @@ describe("AccessCard", () => {
       fireEvent.change(screen.getByLabelText(/service account/i), {
         target: { value: "mark8ly-orders" },
       });
-      fireEvent.click(screen.getByRole("button", { name: /propose access/i }));
+      fireEvent.click(screen.getByRole("button", { name: /grant access/i }));
 
       await waitFor(() => expect(refresh).toHaveBeenCalled());
       // The reader list rendered here is still exactly the `readers` prop —
@@ -196,7 +196,7 @@ describe("AccessCard", () => {
   });
 
   describe("without canWrite", () => {
-    it("shows the refusal sentence and renders neither Propose access nor Remove", () => {
+    it("names the capability the reader is actually missing, and renders no write control", () => {
       render(
         <AccessCard
           store="openbao"
@@ -205,14 +205,24 @@ describe("AccessCard", () => {
         />,
       );
 
-      // Rendered as "Granting access needs " + a <code> element, not a
-      // single text node with literal backticks — matched by function so
-      // the code-formatted credential name isn't required to be inline text.
+      // This branch is reached ONLY by an operator without `platform`, so
+      // `platform` is what the copy must name. It previously read "Granting
+      // access needs rotate-credentials." — true about the immediate grant,
+      // but it named the one capability this reader is NOT missing and said
+      // nothing about the one they are.
+      //
+      // Rendered as text plus a <code> element, not a single text node with
+      // literal backticks — matched by function so the code-formatted
+      // capability name isn't required to be inline text.
       expect(
-        screen.getByText((_, element) => element?.textContent === "Granting access needs rotate-credentials."),
+        screen.getByText(
+          (_, element) => element?.textContent === "Changing who can read this needs platform.",
+        ),
       ).toBeInTheDocument();
-      expect(screen.getByText("rotate-credentials").tagName).toBe("CODE");
-      expect(screen.queryByRole("button", { name: /propose access/i })).toBeNull();
+      expect(screen.getByText("platform").tagName).toBe("CODE");
+      // Neither write control, under either label.
+      expect(screen.queryByRole("button", { name: /grant access/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
       expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
       // `queryByLabelText(/add an app/i)` looked like it covered the whole
       // form, but Testing Library's label matching never resolves a
@@ -320,11 +330,17 @@ describe("AccessCard", () => {
       expect(status).toHaveTextContent(/the whitelist already grants this app access/i);
       // The failure this guards: rendering an anchor whose href is the
       // absent URL, which secrets-api deliberately omits rather than
-      // sending empty (see `Whitelist.submit`). Asserted on the ELEMENT,
-      // not on `queryByRole("link")` — an `<a href="">` is exactly what a
-      // missing URL produces, and Testing Library does not resolve that to
-      // the `link` role, so a role query would pass straight over the very
-      // anchor this test exists to catch (verified by mutation).
+      // sending empty (see `Whitelist.submit`).
+      //
+      // ASSERTED ON THE ELEMENT, NOT ON `queryByRole("link", …)`. WARNING FOR
+      // ANY FUTURE LINK ASSERTION IN THIS REPO: Testing Library does NOT
+      // resolve `<a href="">` to the `link` role, and `href=""` is exactly
+      // what a missing URL renders — so `expect(queryByRole("link", …))
+      // .toBeNull()` PASSES while the broken anchor is on screen. That is an
+      // assertion that cannot fail. Confirmed by mutation: adding
+      // `<a href="">review it in tesserix-k8s</a>` to the unchanged branch
+      // left the role-query version green, and only `querySelector("a")`
+      // caught it.
       expect(status.querySelector("a")).toBeNull();
       expect(screen.queryByRole("alert")).toBeNull();
     });
@@ -363,6 +379,12 @@ describe("AccessCard", () => {
     render(<AccessCard store="openbao" readers={[]} canWrite canPropose />);
 
     expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
+    // The immediate control must NOT be named "propose": it sits directly
+    // above copy saying the change "merges immediately", and a card offering
+    // both modes cannot have the one that acts immediately called Propose.
+    const immediate = screen.getByRole("button", { name: /grant access/i });
+    expect(immediate).toHaveTextContent("Grant access");
+    expect(immediate.textContent).not.toMatch(/propose/i);
     expect(screen.getByText(/adding or removing a reader here merges immediately/i)).toBeInTheDocument();
   });
 });

@@ -119,9 +119,15 @@ function AddReaderForm({
   onGrant: (input: { namespace: string; app: string; serviceAccount: string }) => void;
   pending: boolean;
   /** The two modes submit the SAME three fields to different actions, so the
-   *  fields are shared and only the button's promise differs — "Propose
-   *  access" for the immediate grant, "Propose in a pull request" for the
-   *  whitelist path, which really does end in a pull request. */
+   *  fields are shared and only the button's promise differs — "Grant
+   *  access" for the immediate path, "Propose in a pull request" for the
+   *  whitelist path.
+   *
+   *  The immediate control must NOT say "propose". It was called "Propose
+   *  access" before tesserix-home#482, directly above copy stating that the
+   *  change "merges immediately" — loose then, false once a real propose
+   *  control exists in the other mode, because the card would present two
+   *  controls with the one that acts immediately named "Propose". */
   submitLabel: string;
 }) {
   const [namespace, setNamespace] = useState("");
@@ -349,7 +355,7 @@ export function AccessCard({ store, readers, canWrite, canPropose = false }: Acc
       <CardFooter className="flex flex-col items-start gap-3">
         {canWrite ? (
           <>
-            <AddReaderForm onGrant={handleGrant} pending={isPending} submitLabel="Propose access" />
+            <AddReaderForm onGrant={handleGrant} pending={isPending} submitLabel="Grant access" />
             <p className="text-xs text-muted-foreground">
               <strong>Adding or removing a reader here merges immediately</strong>, because you
               hold <code className="font-mono">rotate-credentials</code>. Both directions are a
@@ -396,17 +402,20 @@ export function AccessCard({ store, readers, canWrite, canPropose = false }: Acc
             )}
           </>
         ) : (
-          // Reached only by an operator who does not hold `platform` at all.
-          // A `platform`-only operator takes the propose branch above; the
-          // sentence here is about the immediate grant, which genuinely does
-          // take the credential verb in both directions.
+          // Reached only by an operator who does not hold `platform` at all —
+          // a `platform`-only operator takes the propose branch above. So this
+          // names `platform`, not `rotate-credentials`: the previous sentence
+          // here named the ONE capability this reader is not missing and said
+          // nothing about the one they are, which was true about the immediate
+          // grant and useless to the person actually reading it.
           <p className="text-xs text-muted-foreground">
             <strong>
-              Granting access needs <code className="font-mono">rotate-credentials</code>.
+              Changing who can read this needs <code className="font-mono">platform</code>.
             </strong>{" "}
-            Both adding and removing
-            a reader change <code className="font-mono">tesserix-k8s</code> immediately, so both
-            take the credential verb. Someone holding it can make this change for you.
+            Both paths start there: proposing a reader in a pull request, and granting one
+            immediately, which also takes{" "}
+            <code className="font-mono">rotate-credentials</code>. Someone holding these can
+            make the change for you.
           </p>
         )}
       </CardFooter>

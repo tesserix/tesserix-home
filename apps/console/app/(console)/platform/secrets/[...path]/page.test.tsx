@@ -384,7 +384,7 @@ describe("the write affordance gate", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Access" }));
 
-    expect(await screen.findByRole("button", { name: "Propose access" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Grant access" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
   });
 
@@ -395,7 +395,7 @@ describe("the write affordance gate", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Access" }));
 
-    await screen.findByText(/granting access needs/i);
+    await screen.findByText(/changing who can read this needs/i);
     expect(screen.queryByRole("button", { name: /propose in a pull request/i })).toBeNull();
   });
 
