@@ -78,6 +78,92 @@ export function requiresProduct(stage: CrmStage): boolean {
 export const DRIFT_DAYS = 14;
 
 /**
+ * How far ahead logging a piece of outbound contact pushes the next action
+ * (#502).
+ *
+ * Comfortably inside `DRIFT_DAYS` (14), and that relationship is the whole
+ * reason the number exists: a lead that has just been worked should come back
+ * for a chase before it falls past the drift threshold and gets re-discovered
+ * as neglected. A default, not a rule — every caller lets the operator move or
+ * remove it.
+ *
+ * Four rather than the three the composer's prompt used to prefill. It is one
+ * number now because it was two: `crm-outreach.ts` scheduled four days out and
+ * the follow-up prompt suggested three, so an operator who accepted the offer
+ * silently moved the date the write path had just chosen, and nobody could say
+ * which of the two was the product's answer. Four is the one that was already
+ * reasoned about (a cold DM waits on a stranger's reply, not on a conversation
+ * already underway), so it is the one that survived.
+ */
+export const NEXT_ACTION_DAYS = 4;
+
+/**
+ * The contact kinds that are US reaching OUT, as opposed to a reply arriving.
+ *
+ * TWO RULES READ THIS LIST, and they must read the same one.
+ *
+ * 1. The do-not-contact gate (`logActivity`). Only outbound kinds are refused
+ *    for a suppressed organisation: recording that someone emailed *us* is not
+ *    outreach, and refusing to record it would destroy the record of the very
+ *    contact that most needs one.
+ * 2. The follow-up clock (#502). Outbound schedules a chase
+ *    `NEXT_ACTION_DAYS` out; inbound is due NOW, because a reply is the moment
+ *    to act. Neither leaves `next_action_at` null, which is the definition of
+ *    Drifting.
+ *
+ * `note` is not here and not a contact kind at all — it is something we did to
+ * our own record, not contact with anyone.
+ *
+ * WHY `call` COUNTS AS OUTBOUND. It is the genuinely ambiguous one: the CRM has
+ * no `call_received`, so an inbound call is logged with the same kind as a cold
+ * one. Three reasons it sits here anyway. First, this list already classified
+ * `call` as outbound for the suppression gate before #502 existed; a second,
+ * contradictory classification of the same kind — outbound for one rule,
+ * inbound for the other — is exactly the pair of copies that stops agreeing in
+ * a single commit. Second, the costs are not symmetric: a follow-up the
+ * operator did not want costs one click to clear, while no follow-up files the
+ * lead into Drifting, which is the defect this is fixing. Third, a call that
+ * did land and was hot is a case the operator is already in front of — they
+ * pull the date forward in the same interaction. The ambiguous case is the one
+ * where nothing further has been agreed, and that case wants a chase.
+ */
+export const OUTBOUND_ACTIVITY_KINDS = [
+  "dm_sent", "email_sent", "call",
+] as const satisfies readonly CrmActivityKind[];
+
+export function isOutboundActivityKind(value: CrmActivityKind): boolean {
+  return (OUTBOUND_ACTIVITY_KINDS as readonly string[]).includes(value);
+}
+
+/** Nine in the morning: a follow-up days out wants a time of day an operator
+ *  would actually start work at, not whatever minute they happened to log the
+ *  DM at. */
+const NEXT_ACTION_HOUR = 9;
+
+/**
+ * When contact of this kind schedules the next action for, in JavaScript.
+ *
+ * The write path states the same rule in SQL (`nextActionAssignment`,
+ * crm-repo.ts) because a `CASE` expression cannot call a TypeScript function.
+ * This copy exists so the composer can PREFILL the control the operator uses to
+ * change it: a prompt offering a different date from the one just written would
+ * be describing a schedule the database does not have. Both copies are asserted
+ * against the same `NEXT_ACTION_DAYS`, on their own side of the seam.
+ *
+ * Outbound lands on 09:00 local; inbound lands on the instant the reply was
+ * logged. The hour is a nicety for a date days away — for "now" it would be a
+ * lie, and possibly one in the past.
+ */
+export function defaultNextActionAt(kind: CrmActivityKind, now: Date = new Date()): Date {
+  if (!isOutboundActivityKind(kind)) return new Date(now);
+  const at = new Date(now);
+  at.setDate(at.getDate() + NEXT_ACTION_DAYS);
+  at.setHours(NEXT_ACTION_HOUR, 0, 0, 0);
+  return at;
+}
+
+
+/**
  * CSV import (Task 8).
  *
  * `parseImportCsv` is pure — no database, no session — so it can run either

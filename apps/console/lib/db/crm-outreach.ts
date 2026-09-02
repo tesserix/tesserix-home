@@ -1,5 +1,16 @@
 import { tesserixTx } from "./tesserix";
-import { advanceStageOnQuery, assertNoSuppressedContact } from "./crm-repo";
+import {
+  advanceStageOnQuery,
+  assertNoSuppressedContact,
+  nextActionAssignment,
+  CLOCK_ELIGIBLE_SQL,
+  OUTBOUND_RESCHEDULES_SQL,
+} from "./crm-repo";
+// `NEXT_ACTION_DAYS` was declared here. It moved to `lib/crm.ts` when #502
+// gave the plain activity log the same default — two modules scheduling "the
+// follow-up" a different number of days out is a disagreement no reader could
+// resolve — and this module no longer names it at all: the whole assignment
+// now comes from `nextActionAssignment` below.
 import type { CrmStage } from "../crm";
 
 /**
@@ -71,14 +82,6 @@ import type { CrmStage } from "../crm";
  * `assertNoSuppressedContact` are handed out by `crm-repo.ts` rather than
  * reimplemented here.
  */
-
-/** How far ahead a templated DM pushes the next action. Comfortably inside
- *  `DRIFT_DAYS` (14) for the same reason `FOLLOW_UP_DAYS` is: a lead that has
- *  just been DMed should come back for a chase, not fall past the drift
- *  threshold and be re-discovered as neglected. Four rather than the
- *  composer's three because a cold DM waits on a stranger's reply, not on a
- *  conversation already underway. */
-const NEXT_ACTION_DAYS = 4;
 
 /**
  * Thrown when the template a caller named cannot be used for this write.
@@ -279,26 +282,36 @@ export async function recordTemplatedDm(
     // not none of them, and "none" is how every imported organisation ended up
     // permanently Drifting.
     //
-    // GRANDFATHERED ROWS ARE EXCLUDED, and that exclusion is not cosmetic.
-    // Migration 0021's CHECK (`stage IN ('new','contacted') OR product IS NOT
-    // NULL`) is evaluated on the new row version of EVERY update, including a
-    // bare clock bump — so including a qualified/won/lost row with a null
-    // product would abort this transaction and take the activity down with it.
-    // The operator would be told their DM could not be recorded because an
-    // unrelated deal is missing a product. Those rows keep drifting until
-    // someone supplies the product, which is a visible and fixable state;
-    // losing the record of the outreach is not.
+    // GRANDFATHERED AND TERMINAL ROWS ARE EXCLUDED by `CLOCK_ELIGIBLE_SQL`,
+    // which is imported rather than spelled out here — the predicate used to
+    // be written out in this statement and again, twice and inconsistently, in
+    // `advanceContactClock`. It is one constant now for the reason its own
+    // comment gives: the copy that lacked the 0021 guard aborted the whole
+    // transaction and took the activity row with it.
+    //
+    // A DEFAULT, NOT A RULE, on this path too (#502). This statement used to
+    // assign `now() + 4 days` unconditionally, which silently overwrote an
+    // operator's own "check back in a month" every time anyone sent a template
+    // — the plain activity log, six lines of SQL away in `crm-repo.ts`, had by
+    // then learned to leave a future date alone. Two paths writing one column
+    // by two different rules is a difference no operator could predict, so the
+    // rule is imported rather than restated: `nextActionAssignment('dm_sent')`
+    // is the same CASE the composer's log runs.
+    //
+    // The note moves WITH the date, gated on the same condition. A note naming
+    // this template beside a date that was scheduled for some other reason
+    // would describe a plan nobody made.
     const touched = await query<{ id: string; stage: CrmStage }>(
       `UPDATE crm_opportunities
-          SET next_action_at = now() + ($2 || ' days')::interval,
-              next_action_note = $3,
+          SET next_action_at = ${nextActionAssignment("dm_sent")},
+              next_action_note = CASE WHEN ${OUTBOUND_RESCHEDULES_SQL}
+                THEN $2 ELSE next_action_note END,
               last_contacted_at = now(),
               updated_at = now()
         WHERE organisation_id = $1
-          AND stage NOT IN ('won', 'lost')
-          AND (stage IN ('new', 'contacted') OR product IS NOT NULL)
+          AND ${CLOCK_ELIGIBLE_SQL}
         RETURNING id, stage`,
-      [organisationId, String(NEXT_ACTION_DAYS), `Follow up on "${template.name}"`],
+      [organisationId, `Follow up on "${template.name}"`],
     );
 
     // ── 5. THE STAGE MOVE ──────────────────────────────────────────────────

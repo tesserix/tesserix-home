@@ -35,6 +35,7 @@ vi.mock("./crm-repo", async (importOriginal) => ({
 }));
 
 import { assertNoSuppressedContact, advanceStageOnQuery, SuppressedContactError } from "./crm-repo";
+import { NEXT_ACTION_DAYS } from "../crm";
 import {
   recordTemplatedDm,
   ContactUnavailableError,
@@ -238,15 +239,34 @@ describe("recordTemplatedDm — the template and the contact", () => {
 });
 
 describe("recordTemplatedDm — the clocks and the stage", () => {
-  it("moves the next action four days out and touches the drift clock", async () => {
+  // The interval is `NEXT_ACTION_DAYS` inlined rather than bound as `$n`: the
+  // assignment is now `nextActionAssignment` (crm-repo.ts), a fragment two
+  // statements with differently-numbered placeholders share. Asserted against
+  // the constant so changing it moves this test with it.
+  it("moves the next action NEXT_ACTION_DAYS out and touches the drift clock", async () => {
     await recordTemplatedDm(input());
 
     const call = tx.query.mock.calls.find(([sql]) =>
       (sql as string).includes("UPDATE crm_opportunities"),
     );
-    expect(call?.[0]).toContain("next_action_at");
+    expect(call?.[0]).toContain(`now() + interval '${NEXT_ACTION_DAYS} days'`);
     expect(call?.[0]).toContain("last_contacted_at = now()");
-    expect((call?.[1] as unknown[])[1]).toBe("4");
+  });
+
+  // #502 — a future date is the operator's decision, and sending a template
+  // does not un-make it. This path used to assign unconditionally while the
+  // plain activity log did not; one column written by two rules is a
+  // difference no operator could predict.
+  it("fills or refreshes the next action rather than overwriting a future one", async () => {
+    await recordTemplatedDm(input());
+
+    const call = tx.query.mock.calls.find(([sql]) =>
+      (sql as string).includes("UPDATE crm_opportunities"),
+    );
+    expect(call?.[0]).toContain("next_action_at IS NULL OR next_action_at <= now()");
+    // The note is gated on the same condition — a note naming this template
+    // beside a date scheduled for another reason describes a plan nobody made.
+    expect(call?.[0]).toContain("next_action_note = CASE WHEN");
   });
 
   it("excludes closed and grandfathered deals, which would abort the transaction", async () => {

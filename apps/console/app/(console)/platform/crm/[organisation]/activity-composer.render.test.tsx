@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SuppressedContactError } from "@/lib/db/crm-repo";
+import { NEXT_ACTION_DAYS } from "@/lib/crm";
 import type { OpportunityRow } from "@/lib/db/crm-repo";
 
 const refresh = vi.fn();
@@ -67,6 +68,29 @@ beforeAll(() => {
 // click through that by default.
 function setupUser() {
   return userEvent.setup({ pointerEventsCheck: 0 });
+}
+
+/**
+ * The calendar day a `datetime-local` value falls on, `YYYY-MM-DD`.
+ *
+ * CALENDAR DAYS, NOT ELAPSED HOURS, and that is not a convenience. The prompt
+ * lands the default on 09:00 local, so the gap between "now" and the prefilled
+ * value is anywhere from 3.4 to 4.4 days depending on the time of day the test
+ * runs — an elapsed-hours assertion passes in the morning and fails after
+ * lunch. What the product actually promises is a day, so that is what is
+ * asserted.
+ */
+function dayOf(value: string): string {
+  return value.slice(0, 10);
+}
+
+/** `YYYY-MM-DD` of local midnight `days` from now — built the same way the
+ *  composer builds it, so it crosses months and DST identically. */
+function dayFromNow(days: number): string {
+  const at = new Date();
+  at.setDate(at.getDate() + days);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
 }
 
 function renderComposer(opportunities: readonly OpportunityRow[] = [OPEN_DEAL]) {
@@ -190,7 +214,10 @@ describe("ActivityComposer", () => {
       );
     });
 
-    it("lets the operator decline — it prompts, it does not force", async () => {
+    // Dismissal now KEEPS the date the log wrote instead of leaving the lead
+    // unscheduled, which is why the control says "Leave it" rather than "Not
+    // now": there is no offer being declined any more.
+    it("lets the operator walk away, keeping the follow-up the log scheduled", async () => {
       const user = setupUser();
       renderComposer([OPEN_DEAL]);
 
@@ -198,10 +225,76 @@ describe("ActivityComposer", () => {
       await log(user);
       await screen.findByRole("group", { name: /follow-up/i });
 
-      await user.click(screen.getByRole("button", { name: /not now/i }));
+      await user.click(screen.getByRole("button", { name: /leave it/i }));
 
       await waitFor(() => expect(screen.queryByRole("group", { name: /follow-up/i })).toBeNull());
       expect(scheduleNextAction).not.toHaveBeenCalled();
+    });
+
+    /**
+     * "A default, not a rule" (#502): the operator must be able to CLEAR the
+     * date in the same interaction, not only move it. Some leads deserve
+     * never, and `next_action_at = NULL` is the only way to say so.
+     *
+     * The button was disabled on an empty field until now, which was harmless
+     * while nothing else wrote the column and is not harmless once the log
+     * writes a default — a default you cannot remove is a rule.
+     */
+    it("lets the operator clear the follow-up entirely", async () => {
+      const user = setupUser();
+      renderComposer([OPEN_DEAL]);
+
+      await chooseKind(user, "DM sent");
+      await log(user);
+      const prompt = await screen.findByRole("group", { name: /follow-up/i });
+
+      await user.clear(screen.getByLabelText(/when/i));
+
+      const clear = within(prompt).getByRole("button", { name: /clear follow-up/i });
+      expect(clear).toBeEnabled();
+      await user.click(clear);
+
+      await waitFor(() =>
+        expect(scheduleNextAction).toHaveBeenCalledWith(
+          expect.objectContaining({ opportunityId: OPEN_DEAL.id, at: null }),
+        ),
+      );
+    });
+
+    /**
+     * The prompt prefills the date the WRITE PATH just wrote, not a different
+     * one of its own. It used to suggest three days while `crm-outreach.ts`
+     * scheduled four, so accepting the offer silently moved the date and no
+     * reader could say which number was the product's answer.
+     *
+     * Asserted as a day offset from `NEXT_ACTION_DAYS` rather than a literal,
+     * so changing the constant moves both ends or neither.
+     */
+    it("prefills the date the log just scheduled, for an outbound kind", async () => {
+      const user = setupUser();
+      renderComposer([OPEN_DEAL]);
+
+      await chooseKind(user, "DM sent");
+      await log(user);
+      await screen.findByRole("group", { name: /follow-up/i });
+
+      const when = screen.getByLabelText(/when/i) as HTMLInputElement;
+      expect(dayOf(when.value)).toBe(dayFromNow(NEXT_ACTION_DAYS));
+    });
+
+    // A reply is due NOW — the write path sets `next_action_at = now()`, so a
+    // prompt suggesting four days out would describe a schedule the database
+    // does not have and quietly push the hottest lead in the queue back.
+    it("prefills today for a reply, which is due now", async () => {
+      const user = setupUser();
+      renderComposer([OPEN_DEAL]);
+
+      await chooseKind(user, "DM received");
+      await log(user);
+      await screen.findByRole("group", { name: /follow-up/i });
+
+      const when = screen.getByLabelText(/when/i) as HTMLInputElement;
+      expect(dayOf(when.value)).toBe(dayFromNow(0));
     });
 
     it("asks which deal only when there is more than one open", async () => {
