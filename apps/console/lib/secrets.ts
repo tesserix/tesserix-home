@@ -42,10 +42,10 @@ function optionalStr(value: unknown, path: string): string | undefined {
  * `optionalStr`, plus treating a whitespace-only string as absent — for
  * `requestedBy`, whose whole job is deciding whether one operator may see
  * another operator's activity. Go's `trailerValue` already `TrimSpace`s
- * before writing the trailer, so a legitimately-produced value can never be
- * whitespace-only today; this is defense-in-depth, not a case reachable from
- * a correctly-behaving upstream. A non-string still throws via `str` inside
- * `optionalStr` — absence is legal, a wrong TYPE is not.
+ * when reading the trailer back, so a legitimately-produced value can never
+ * be whitespace-only today; this is defense-in-depth, not a case reachable
+ * from a correctly-behaving upstream. A non-string still throws via `str`
+ * inside `optionalStr` — absence is legal, a wrong TYPE is not.
  */
 function optionalNonEmptyStr(value: unknown, path: string): string | undefined {
   const parsed = optionalStr(value, path);
@@ -369,7 +369,7 @@ export function parseSecretVersions(json: unknown): SecretVersion[] {
  * `PullRequest.CreatedAt` is a `time.Time` with no `omitempty` that would do
  * anything (see `ZERO_TIME`'s doc comment) — but here the trigger is not a
  * store quirk, it's `toPullRequest` discarding `time.Parse`'s error
- * (`review.go:61`, `created, _ := time.Parse(...)`), so ANY GitHub
+ * (`review.go:83`, `created, _ := time.Parse(...)`), so ANY GitHub
  * timestamp this service fails to parse becomes the zero time and reaches
  * this parser as the literal `ZERO_TIME` string. `optionalTimestamp` is
  * reused rather than re-implemented for exactly that string.

@@ -379,8 +379,8 @@ describe("parseProposals", () => {
     expect(() => parseProposals({ pulls: [pull({ requestedBy: 123 })] })).toThrow();
   });
 
-  // Defense-in-depth: Go's `trailerValue` already `TrimSpace`s before
-  // writing the trailer, so this shouldn't be reachable from a
+  // Defense-in-depth: Go's `trailerValue` already `TrimSpace`s when
+  // reading the trailer back, so this shouldn't be reachable from a
   // correctly-behaving upstream, but a field that gates "may operator A see
   // operator B's activity" should not treat whitespace as a real value.
   it("treats a whitespace-only requestedBy as absent", () => {
