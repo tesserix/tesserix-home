@@ -29,6 +29,43 @@
 -- currently holds, and is already pruned when the session dies. A second table
 -- would need the same key, the same lifetime and the same sweep, and would add
 -- a second place for the two facts to disagree.
+--
+-- ─── AMENDED 2026-09-02, tesserix-home#509 ───────────────────────────────
+--
+-- Both statements below gained `IF NOT EXISTS`. EDITING AN ALREADY-APPLIED
+-- MIGRATION IS NORMALLY WRONG — a file that has run somewhere is a historical
+-- record, and rewriting it lets two databases reporting the same
+-- `schema_migrations` version disagree about their actual schema. That
+-- objection does not apply here, and why it does not is the only thing that
+-- makes this edit legitimate: `ADD COLUMN IF NOT EXISTS` and `ADD COLUMN` are
+-- the same statement wherever the column is absent, and wherever it is present
+-- the original ABORTS rather than doing something different. There is no
+-- database this change can move to a state the unamended file would not also
+-- have produced. It is provably a no-op on every environment that has already
+-- run it.
+--
+-- What it is not a no-op on is an environment that has not RECORDED it. On
+-- 2026-09-01 this migration's effect existed in production — applied by hand,
+-- never written to `schema_migrations` — so the runner re-attempted it and got
+-- `column "capabilities" of relation "operator_api_tokens" already exists`.
+-- The blast radius was not this file. `scripts/db-migrate.mjs` applies files in
+-- version order and exits on the first failure, so 0041, 0042 and 0043 never
+-- ran, for as long as nobody looked — and 0041 creates
+-- `crm_erased_identifiers`, which `eraseContact` writes to, so a DPDP erasure
+-- path was one coincidence away from failing in production while the ledger
+-- merely looked "behind". What eventually surfaced was a console page
+-- reporting its tables did not exist: four migrations and one subsystem away
+-- from the cause.
+--
+-- Leaving the file as it was would leave that trap armed for anyone restoring
+-- from an older ledger, standing up a rebuilt environment, or working against a
+-- database that drifted the same way this one did. The general rule the
+-- incident produced — EVERY migration must be safe to re-run, without
+-- exception, because the runner stops at the first failure and takes every
+-- later migration down with it — is in .planning/OPERATOR-RUNBOOK.md §1, with
+-- the procedure for reconciling a ledger that has fallen behind its schema.
+-- apps/console/lib/db/migration-idempotency.integration.test.ts asserts the
+-- property this file now has, by applying it twice.
 BEGIN;
 
 -- =======================================================================
@@ -63,8 +100,12 @@ BEGIN;
 -- deliberately and the distinction is load-bearing; do not collapse them with
 -- `DEFAULT '{}'`, which would turn "never checked" into "checked, and holds
 -- nothing" for every pre-existing row.
+--
+-- IF NOT EXISTS: see the amendment note in the header. Skipping on NAME is
+-- exactly right here — a column called `capabilities` on this table can only
+-- be the one this statement creates.
 ALTER TABLE operator_api_tokens
-  ADD COLUMN capabilities text[];
+  ADD COLUMN IF NOT EXISTS capabilities text[];
 
 -- When `capabilities` above was last confirmed against Zitadel, set by the
 -- application at login and on every proactive revalidation.
@@ -87,7 +128,7 @@ ALTER TABLE operator_api_tokens
 -- enforces that in the schema because the only writer is `saveTokens`, which
 -- writes them as a pair.
 ALTER TABLE operator_api_tokens
-  ADD COLUMN capabilities_checked_at timestamptz;
+  ADD COLUMN IF NOT EXISTS capabilities_checked_at timestamptz;
 
 -- No index. The only read is by primary key — `WHERE sid = $1`, the same point
 -- lookup 0029 describes for the tokens — and `capabilities_checked_at` is
