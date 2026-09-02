@@ -27,6 +27,8 @@ import {
   parseMetadataCell,
   requiresProduct,
   CONTACT_ACTIVITY_KINDS,
+  isOutboundActivityKind,
+  NEXT_ACTION_DAYS,
   type CrmActivityKind,
   type CrmStage,
   type ImportRow,
@@ -829,17 +831,6 @@ export interface LogActivityInput {
  *  about what "contact" means. A Set only for the membership test below. */
 const CONTACT_KIND_SET: ReadonlySet<CrmActivityKind> = new Set(CONTACT_ACTIVITY_KINDS);
 
-/** The subset of the contact kinds that is US reaching OUT. Only these are gated on
- *  the do-not-contact list: recording that someone emailed *us*, or that we
- *  took their call, is not outreach and must stay loggable — refusing to
- *  record an inbound message from a suppressed person would destroy the
- *  record of the very contact that most needs one. */
-const OUTBOUND_ACTIVITY_KINDS: ReadonlySet<CrmActivityKind> = new Set([
-  "dm_sent",
-  "email_sent",
-  "call",
-]);
-
 /**
  * Thrown when the do-not-contact list refuses a write. design.md:224 says the
  * list is checked "at import and when logging outreach"; before this, only
@@ -880,20 +871,28 @@ export class SuppressedContactError extends Error {
  *     organisation's contacts is suppressed — read on the transaction's own
  *     client, so the check and the insert cannot straddle a concurrent
  *     suppression being added.
- * (2) The drift clock. `last_contacted_at` was written by NOTHING in the
+ * (2) The queue clocks. `last_contacted_at` was written by NOTHING in the
  *     application — only the migration set it — so logging a DM or a call
  *     left the queue still reporting the organisation as quiet since
- *     whenever the backfill said. The activity row and the timestamp it
- *     implies must land together or not at all; a logged call with a stale
- *     "quiet since" is worse than either alone. Which deals that timestamp
- *     moves for — and why an activity naming no deal moves it for all of
- *     the open ones — is `advanceContactClock` below.
+ *     whenever the backfill said. `next_action_at` then had the opposite
+ *     problem (#502): still unwritten here, and because null IS the drifting
+ *     predicate, a contacted lead was filed as drifting by the very act of
+ *     contacting it. The activity row and the timestamps it implies must land
+ *     together or not at all; a logged call with a stale "quiet since", or one
+ *     with no follow-up, is worse than either alone. Which deals they move
+ *     for — and why an activity naming no deal moves them for all of the open
+ *     ones — is `advanceContactClock` below.
  *
  * `updated_at` is set explicitly. There are no triggers on these tables.
  */
 export async function logActivity(input: LogActivityInput): Promise<void> {
   await tesserixTx(async (query) => {
-    if (OUTBOUND_ACTIVITY_KINDS.has(input.kind)) {
+    // `isOutboundActivityKind` (lib/crm.ts) rather than a list held here.
+    // The do-not-contact gate and the follow-up clock below both need to know
+    // which kinds are us reaching out, and one list is the only way they can
+    // never disagree about it — see that constant's comment for why `call` is
+    // on it.
+    if (isOutboundActivityKind(input.kind)) {
       await assertNoSuppressedContact(input.organisationId, query);
     }
 
@@ -984,8 +983,12 @@ export const CLOCK_ELIGIBLE_SQL = `stage NOT IN ('won', 'lost')
           AND (stage IN ('new', 'contacted') OR product IS NOT NULL)`;
 
 /**
- * Move `last_contacted_at` — the clock the drifting queue reads — for the
- * deals this contact event actually touched.
+ * Move both queue clocks — `last_contacted_at`, which Drifting reads, and
+ * `next_action_at`, which decides whether the lead is in Drifting at all — for
+ * the deals this contact event actually touched.
+ *
+ * What each kind does to `next_action_at` is `nextActionAssignment` below;
+ * this function's own subject is WHICH DEALS.
  *
  * WHICH DEALS, AND WHY THIS REVERSES WHAT THIS FUNCTION USED TO SAY (#245).
  * The previous comment here reasoned that an organisation-level activity
@@ -1007,10 +1010,14 @@ export const CLOCK_ELIGIBLE_SQL = `stage NOT IN ('won', 'lost')
  * same predicate for both, which it very deliberately was not before.
  */
 async function advanceContactClock(input: LogActivityInput, query: TxQuery): Promise<void> {
+  const set = `next_action_at = ${nextActionAssignment(input.kind)},
+              last_contacted_at = now(),
+              updated_at = now()`;
+
   if (input.opportunityId) {
     await query(
       `UPDATE crm_opportunities
-          SET last_contacted_at = now(), updated_at = now()
+          SET ${set}
         WHERE id = $1
           AND ${CLOCK_ELIGIBLE_SQL}`,
       [input.opportunityId],
@@ -1020,11 +1027,65 @@ async function advanceContactClock(input: LogActivityInput, query: TxQuery): Pro
 
   await query(
     `UPDATE crm_opportunities
-        SET last_contacted_at = now(), updated_at = now()
+        SET ${set}
       WHERE organisation_id = $1
         AND ${CLOCK_ELIGIBLE_SQL}`,
     [input.organisationId],
   );
+}
+
+/**
+ * What this contact event does to `next_action_at` — the column that decides
+ * which queue a lead is in (#502).
+ *
+ * THE COLUMN IS NOT OPTIONAL METADATA. `crm_opp_due_idx` and
+ * `crm_opp_drifting_idx` are two partial indexes over the same rows split on
+ * exactly this predicate: `next_action_at IS NOT NULL` is Due, `IS NULL` is
+ * Drifting. So a clock bump that moved `last_contacted_at` and left this null
+ * did not fail to schedule a follow-up — it actively filed the lead as
+ * drifting. That is the production state the issue describes: Due empty,
+ * Drifting holding all 259, every one of them reading "waiting 121d".
+ *
+ * OUTBOUND schedules a chase `NEXT_ACTION_DAYS` out. INBOUND is due NOW.
+ *
+ * The inbound half is where this departs from the issue as written, which said
+ * a reply "shouldn't schedule anything, because it means act now". The
+ * reasoning is right and the conclusion inverts it: null is not "act now", it
+ * is the literal definition of Drifting, so leaving a reply unscheduled files
+ * the hottest lead in the queue into the same bucket as the ones nobody has
+ * touched since May. `now()` is what "act now" actually spells.
+ *
+ * A DEFAULT, NOT A RULE, and the `CASE` is where that is enforced. A date
+ * already in the FUTURE is a decision the operator made about something that
+ * has not happened yet, and sending a DM today does not un-make it — an
+ * unconditional assignment would silently overwrite "check back in a month"
+ * with "check back on Friday" every time anyone logged anything.
+ *
+ * A date in the PAST is not spared, and that is the other half. It described an
+ * action that is now overdue, and this event is very likely that action having
+ * been taken; leaving it would pin the lead permanently at the top of Due, so
+ * working a lead could never take it off the list. Outbound therefore moves a
+ * stale date forward, and inbound only ever pulls a date EARLIER — an overdue
+ * chase that a reply arrives against stays overdue, because the reply did not
+ * make it less late.
+ *
+ * `next_action_note` is deliberately untouched. It holds the operator's own
+ * words about what to do next, and a default date is not grounds to rewrite
+ * them; a null note beside a real date reads as "something, soon", which is
+ * honest, where a machine-written one would read as a plan nobody made.
+ */
+function nextActionAssignment(kind: CrmActivityKind): string {
+  // `NEXT_ACTION_DAYS` is a module constant integer, not caller input, so it
+  // interpolates into the interval literal rather than binding as a parameter —
+  // this fragment is shared by two statements whose placeholders are numbered
+  // differently, and a `$n` here would have to mean something different in each.
+  return isOutboundActivityKind(kind)
+    ? `CASE WHEN next_action_at IS NULL OR next_action_at <= now()
+                THEN now() + interval '${NEXT_ACTION_DAYS} days'
+                ELSE next_action_at END`
+    : `CASE WHEN next_action_at IS NULL OR next_action_at > now()
+                THEN now()
+                ELSE next_action_at END`;
 }
 
 /**

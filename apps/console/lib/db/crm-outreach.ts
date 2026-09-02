@@ -1,6 +1,10 @@
 import { tesserixTx } from "./tesserix";
 import { advanceStageOnQuery, assertNoSuppressedContact, CLOCK_ELIGIBLE_SQL } from "./crm-repo";
-import type { CrmStage } from "../crm";
+// `NEXT_ACTION_DAYS` was declared here. It moved to `lib/crm.ts` when #502
+// gave the plain activity log the same default: two modules scheduling "the
+// follow-up" a different number of days out is a disagreement no reader could
+// resolve, and the composer needs the same number again to prefill with.
+import { NEXT_ACTION_DAYS, type CrmStage } from "../crm";
 
 /**
  * The single transaction behind "copy this DM and log that it was sent"
@@ -71,14 +75,6 @@ import type { CrmStage } from "../crm";
  * `assertNoSuppressedContact` are handed out by `crm-repo.ts` rather than
  * reimplemented here.
  */
-
-/** How far ahead a templated DM pushes the next action. Comfortably inside
- *  `DRIFT_DAYS` (14) for the same reason `FOLLOW_UP_DAYS` is: a lead that has
- *  just been DMed should come back for a chase, not fall past the drift
- *  threshold and be re-discovered as neglected. Four rather than the
- *  composer's three because a cold DM waits on a stranger's reply, not on a
- *  conversation already underway. */
-const NEXT_ACTION_DAYS = 4;
 
 /**
  * Thrown when the template a caller named cannot be used for this write.

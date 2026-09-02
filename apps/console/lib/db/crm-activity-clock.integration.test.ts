@@ -39,8 +39,10 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { logActivity, driftingOpportunities, SuppressedContactError } =
+const { logActivity, dueOpportunities, driftingOpportunities, SuppressedContactError } =
   await import("./crm-repo");
+
+const { NEXT_ACTION_DAYS } = await import("../crm");
 
 const MIGRATIONS = ["0019_crm_schema.sql", "0022_crm_suppressions_normalize.sql"];
 
@@ -117,6 +119,34 @@ async function lastContactedAt(opportunityId: string): Promise<Date | null> {
     [opportunityId],
   );
   return rows.rows[0].last_contacted_at;
+}
+
+async function nextActionAt(opportunityId: string): Promise<Date | null> {
+  const rows = await db.query<{ next_action_at: Date | null }>(
+    `SELECT next_action_at FROM crm_opportunities WHERE id = $1`,
+    [opportunityId],
+  );
+  return rows.rows[0].next_action_at;
+}
+
+/** How many days from now the next action sits, to one decimal. Days rather
+ *  than an instant because the statement uses the database's `now()` and the
+ *  test uses the process's, and the two are milliseconds apart. */
+async function daysUntilNextAction(opportunityId: string): Promise<number> {
+  const at = await nextActionAt(opportunityId);
+  if (at === null) throw new Error("next_action_at is null");
+  return Math.round(((at.getTime() - Date.now()) / (24 * 60 * 60 * 1000)) * 10) / 10;
+}
+
+async function setNextActionAt(opportunityId: string, at: Date): Promise<void> {
+  await db.query(`UPDATE crm_opportunities SET next_action_at = $2 WHERE id = $1`, [
+    opportunityId,
+    at.toISOString(),
+  ]);
+}
+
+function daysFromNow(days: number): Date {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
 async function activityCount(organisationId: string): Promise<number> {
@@ -331,5 +361,166 @@ describe("Drifting, end to end", () => {
     await logActivity({ organisationId: orgId, kind: "note", actor: "ava", body: "looks promising" });
 
     expect(await driftingIds()).toContain(oppId);
+  });
+});
+
+/**
+ * #502 — the follow-up clock, and why `last_contacted_at` alone was not the fix.
+ *
+ * `crm_opp_due_idx` and `crm_opp_drifting_idx` split the same rows on
+ * `next_action_at IS NOT NULL` versus `IS NULL`. Nothing in the application
+ * wrote that column when an activity was logged, so contacting a lead moved
+ * only the drift clock and left it satisfying the DRIFTING predicate — Due
+ * empty, Drifting holding all 259, each one reading "waiting 121d". These are
+ * row-level claims about a partial-index predicate, so they are made against a
+ * real Postgres; the mocked tests can only see the SQL's shape.
+ */
+describe("the follow-up clock", () => {
+  it("schedules a chase NEXT_ACTION_DAYS out when a DM goes out", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const oppId = await seedOpportunity(orgId, { stage: "new" });
+
+    await logActivity({ organisationId: orgId, kind: "dm_sent", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(NEXT_ACTION_DAYS);
+  });
+
+  it("does the same for an email", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const oppId = await seedOpportunity(orgId, { stage: "new" });
+
+    await logActivity({ organisationId: orgId, kind: "email_sent", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(NEXT_ACTION_DAYS);
+  });
+
+  // The decision on `call`, asserted rather than left to the reader. It is the
+  // ambiguous kind — there is no `call_received` — and it is treated as
+  // outbound, for the reasons `OUTBOUND_ACTIVITY_KINDS` (lib/crm.ts) gives.
+  // If that judgement is ever revisited, this is the test that has to change
+  // with it, which is the point of asserting it either way.
+  it("treats a call as outbound and schedules a chase for it too", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const oppId = await seedOpportunity(orgId, { stage: "new" });
+
+    await logActivity({ organisationId: orgId, kind: "call", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(NEXT_ACTION_DAYS);
+  });
+
+  /**
+   * The correction to the issue as filed, which said a reply "shouldn't
+   * schedule anything, because it means act now".
+   *
+   * Null is not "act now" — it is the literal drifting predicate, so leaving a
+   * reply unscheduled files the hottest lead in the queue alongside the ones
+   * nobody has touched since May. The assertion is deliberately made on the
+   * QUEUE and not only on the column: `not.toBeNull()` would also pass for a
+   * date a year out, and being in Due is the thing that was wanted.
+   */
+  it("makes a reply due now, not null — a reply is the moment to act", async () => {
+    const orgId = await seedOrganisation("They Replied");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+
+    await logActivity({ organisationId: orgId, kind: "dm_received", actor: "ava" });
+
+    expect(await nextActionAt(oppId)).not.toBeNull();
+    const due = await dueOpportunities({}, 50);
+    expect(due.rows.map((row) => row.id)).toContain(oppId);
+  });
+
+  it("does the same for an inbound email", async () => {
+    const orgId = await seedOrganisation("They Replied");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+
+    await logActivity({ organisationId: orgId, kind: "email_received", actor: "ava" });
+
+    const due = await dueOpportunities({}, 50);
+    expect(due.rows.map((row) => row.id)).toContain(oppId);
+  });
+
+  it("leaves next_action_at alone for a note — nobody was contacted", async () => {
+    const orgId = await seedOrganisation("Still Quiet");
+    const oppId = await seedOpportunity(orgId, { stage: "new" });
+
+    await logActivity({ organisationId: orgId, kind: "note", actor: "ava", body: "a thought" });
+
+    expect(await nextActionAt(oppId)).toBeNull();
+  });
+
+  it("schedules against a deal named by id, not only organisation-wide", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const oppId = await seedOpportunity(orgId, { stage: "new" });
+
+    await logActivity({ organisationId: orgId, opportunityId: oppId, kind: "dm_sent", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(NEXT_ACTION_DAYS);
+  });
+});
+
+/**
+ * A DEFAULT, NOT A RULE (issue #502's first "thing to keep").
+ *
+ * The schedule fills a gap and refreshes a stale date. It does not overwrite a
+ * decision the operator has already made about a moment that has not arrived
+ * yet — "check back in a month" must survive somebody logging a DM today, or
+ * the field is not editable in any way that lasts.
+ */
+describe("the operator's own date", () => {
+  it("survives an outbound log — a future date is a decision, not a gap", async () => {
+    const orgId = await seedOrganisation("Check Back In A Month");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+    const chosen = daysFromNow(30);
+    await setNextActionAt(oppId, chosen);
+
+    await logActivity({ organisationId: orgId, kind: "dm_sent", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(30);
+    // And the contact itself still registered — respecting the date is not
+    // the same as declining to record the DM.
+    expect(await lastContactedAt(oppId)).not.toBeNull();
+  });
+
+  /**
+   * The other half, and the reason this is a `CASE` rather than a COALESCE.
+   *
+   * An overdue date describes an action that was owed and, on the evidence of
+   * this activity, has now been taken. Preserving it would pin the lead at the
+   * top of Due for ever: working a lead could never take it off the list, which
+   * is the same "no list to work tomorrow" failure from the other direction.
+   */
+  it("is refreshed by an outbound log once it has passed", async () => {
+    const orgId = await seedOrganisation("Overdue Co");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+    await setNextActionAt(oppId, daysFromNow(-9));
+
+    await logActivity({ organisationId: orgId, kind: "dm_sent", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(NEXT_ACTION_DAYS);
+    expect(await dueOpportunities({}, 50).then((p) => p.rows.map((r) => r.id))).not.toContain(oppId);
+  });
+
+  it("is pulled forward to now by a reply — that is what a reply is for", async () => {
+    const orgId = await seedOrganisation("They Replied Early");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+    await setNextActionAt(oppId, daysFromNow(30));
+
+    await logActivity({ organisationId: orgId, kind: "dm_received", actor: "ava" });
+
+    expect(await dueOpportunities({}, 50).then((p) => p.rows.map((r) => r.id))).toContain(oppId);
+  });
+
+  // Inbound only ever pulls EARLIER. A reply arriving against a chase that was
+  // already nine days late does not make it less late, and resetting it to
+  // `now()` would push it down a queue sorted by next_action_at — quietly
+  // demoting the most neglected lead in the list at the moment it answered.
+  it("is left overdue by a reply, rather than reset to now", async () => {
+    const orgId = await seedOrganisation("Late And Replied");
+    const oppId = await seedOpportunity(orgId, { stage: "contacted" });
+    await setNextActionAt(oppId, daysFromNow(-9));
+
+    await logActivity({ organisationId: orgId, kind: "email_received", actor: "ava" });
+
+    expect(await daysUntilNextAction(oppId)).toBe(-9);
   });
 });
