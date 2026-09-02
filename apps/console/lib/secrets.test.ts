@@ -373,6 +373,21 @@ describe("parseProposals", () => {
     expect(p?.requestedBy).toBeUndefined();
   });
 
+  // Absence is legal, a wrong TYPE is not — a drifted upstream sending a
+  // number must surface as a parse failure, not silently read as "absent".
+  it("rejects a non-string requestedBy rather than treating it as absent", () => {
+    expect(() => parseProposals({ pulls: [pull({ requestedBy: 123 })] })).toThrow();
+  });
+
+  // Defense-in-depth: Go's `trailerValue` already `TrimSpace`s before
+  // writing the trailer, so this shouldn't be reachable from a
+  // correctly-behaving upstream, but a field that gates "may operator A see
+  // operator B's activity" should not treat whitespace as a real value.
+  it("treats a whitespace-only requestedBy as absent", () => {
+    const [p] = parseProposals({ pulls: [pull({ requestedBy: "   " })] });
+    expect(p?.requestedBy).toBeUndefined();
+  });
+
   // Same fact as `createdAt`'s zero-time trap above, but for `mergedAt`:
   // `PullRequest.MergedAt` is a `time.Time`, not a pointer, so an open
   // proposal (never merged) still serialises this field as Go's zero time

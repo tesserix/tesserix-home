@@ -39,6 +39,20 @@ function optionalStr(value: unknown, path: string): string | undefined {
 }
 
 /**
+ * `optionalStr`, plus treating a whitespace-only string as absent — for
+ * `requestedBy`, whose whole job is deciding whether one operator may see
+ * another operator's activity. Go's `trailerValue` already `TrimSpace`s
+ * before writing the trailer, so a legitimately-produced value can never be
+ * whitespace-only today; this is defense-in-depth, not a case reachable from
+ * a correctly-behaving upstream. A non-string still throws via `str` inside
+ * `optionalStr` — absence is legal, a wrong TYPE is not.
+ */
+function optionalNonEmptyStr(value: unknown, path: string): string | undefined {
+  const parsed = optionalStr(value, path);
+  return parsed === undefined || parsed.trim() === "" ? undefined : parsed;
+}
+
+/**
  * A string that must additionally be an `http:`/`https:` URL — for fields
  * this console later puts straight into an `<a href>` (`proposal.url`,
  * rendered by `proposals-table.tsx`). React 19 already refuses to run a
@@ -440,8 +454,7 @@ function parseProposalFields(entry: Record<string, unknown>, prefix: string): Pr
     author: str(entry.author, `${prefix}author`),
     createdAt: optionalTimestamp(entry.createdAt, `${prefix}createdAt`),
     targets: nullableArray(entry.targets, `${prefix}targets`, (item, itemPath) => str(item, itemPath)),
-    requestedBy:
-      typeof entry.requestedBy === "string" && entry.requestedBy !== "" ? entry.requestedBy : undefined,
+    requestedBy: optionalNonEmptyStr(entry.requestedBy, `${prefix}requestedBy`),
     mergedAt: optionalTimestamp(entry.mergedAt, `${prefix}mergedAt`),
   };
 }
