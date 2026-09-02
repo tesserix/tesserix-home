@@ -36,16 +36,38 @@ type GitHubConfig struct {
 	// ProjectPath is the AppProject whose destinations decide which namespaces
 	// ArgoCD may render into. Left empty, that half of a grant is not proposed.
 	ProjectPath string
-	Token       string
+
+	// Token is the personal-access-token path. Prefer the App fields below;
+	// this remains so that reverting is a configuration change (#464).
+	Token string
+
+	// AppID, InstallationID and AppPrivateKey select the GitHub App identity.
+	// When AppID is set the App is used and Token is ignored. Scope the app to
+	// this repository with contents:write + pull_requests:write and NOT admin —
+	// the whole point is that branch protection binds the service rather than
+	// merely advising it, which an admin or a ruleset bypass would undo.
+	AppID          string
+	InstallationID string
+	AppPrivateKey  string
 
 	HTTPClient *http.Client
 }
 
-// GitHub proposes whitelist changes as pull requests. It holds no permission to
-// merge: main is protected, so a grant still needs a second administrator.
+// GitHub proposes whitelist changes as pull requests, and can also merge them:
+// Merge issues PUT /pulls/{n}/merge, reachable from POST
+// /api/reviews/:number/merge.
+//
+// An earlier version of this comment claimed the opposite — "it holds no
+// permission to merge" — and #274 was written on that belief. It was false in
+// the code and false in the data: every secret-service/* pull request in
+// tesserix-k8s was opened AND merged by the same identity. Whether a second
+// person is required is decided entirely by branch protection on the target
+// repository and by which identity this client authenticates as (#464, #313),
+// never by this type.
 type GitHub struct {
-	cfg  GitHubConfig
-	http *http.Client
+	cfg    GitHubConfig
+	http   *http.Client
+	tokens tokenSource
 }
 
 func NewGitHub(cfg GitHubConfig) *GitHub {
@@ -59,7 +81,19 @@ func NewGitHub(cfg GitHubConfig) *GitHub {
 	if client == nil {
 		client = &http.Client{Timeout: 20 * time.Second}
 	}
-	return &GitHub{cfg: cfg, http: client}
+
+	var tokens tokenSource = staticToken(cfg.Token)
+	if cfg.AppID != "" {
+		tokens = &appToken{
+			appID:          cfg.AppID,
+			installationID: cfg.InstallationID,
+			privateKeyPEM:  cfg.AppPrivateKey,
+			baseURL:        cfg.BaseURL,
+			http:           client,
+		}
+	}
+
+	return &GitHub{cfg: cfg, http: client, tokens: tokens}
 }
 
 // Change is one whitelist edit: exactly one of Add or Remove.
@@ -403,7 +437,11 @@ func (g *GitHub) do(ctx context.Context, method, path string, body, out any) err
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+g.cfg.Token)
+	tok, err := g.tokens.token(ctx)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	if payload != nil {
