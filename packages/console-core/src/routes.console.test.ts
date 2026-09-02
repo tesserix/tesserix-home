@@ -120,6 +120,12 @@ describe("console-native surfaces record no apps/web path", () => {
     //     DOES record a `web` path). There is nothing separate to point at.
     //   - platform.crmSuppressions: a suppression list never existed in
     //     apps/web at all. This is genuinely console-native, not a migration.
+    //   - platform.crmTemplates: CRM outreach copy is console-native. The
+    //     surface apps/web DID serve — `/admin/notifications/lead-templates` —
+    //     is the marketing-email registry recorded on `platform.leadTemplates`,
+    //     a different route id for a different thing (see routes.ts). Recording
+    //     it here too would say this surface has a predecessor it does not,
+    //     and would make "fall back to web" land an operator on the wrong page.
     //   - platform.crmOrganisations: same as suppressions — the old leads
     //     page was a flat list of lead rows with no concept of a business
     //     distinct from the person, so there is no predecessor to record.
@@ -164,18 +170,36 @@ describe("console-native surfaces record no apps/web path", () => {
       "platform.aiUsage",
       "platform.crmImport",
       "platform.crmSuppressions",
+      "platform.crmTemplates",
       "platform.crmOrganisations",
     ]);
   });
 });
 
-describe("the CRM serves its queue, its do-not-contact list, and its import flow", () => {
-  it("serves the CRM, the suppression list, and the import flow — nothing left pending", () => {
+describe("the CRM serves its queue, its do-not-contact list, its templates, and its import flow", () => {
+  it("serves the CRM, the suppression list, the templates and the import flow — nothing left pending", () => {
     expect(isPending("platform.crm")).toBe(false);
     // Task 8 built the CSV import flow this id points at.
     expect(isPending("platform.crmImport")).toBe(false);
     // Task 7 built the do-not-contact list this id points at.
     expect(isPending("platform.crmSuppressions")).toBe(false);
+    // #LDQ Task 4 built the authoring surface this id points at.
+    expect(isPending("platform.crmTemplates")).toBe(false);
+  });
+
+  it("keeps the CRM's templates and the marketing-email registry as two distinct ids", () => {
+    // The confusion this exists to catch: the names differ by one word and the
+    // paths differ by one segment, so a later change that "tidied up" one onto
+    // the other would look like a cleanup. It is not — `platform.leadTemplates`
+    // is the versioned marketing-email registry apps/mobile already renders
+    // against `GET /lead-templates`, with a test-send behind it;
+    // `platform.crmTemplates` is CRM outreach copy with no send path at all.
+    // Collapsing them would give one id two meanings across two renderers.
+    expect(consolePath("platform.crmTemplates")).toBe("/platform/crm/templates");
+    expect(consolePath("platform.leadTemplates")).toBe("/platform/lead-templates");
+    // And the marketing registry is still unbuilt in the console — this task
+    // did not quietly satisfy it by building something else.
+    expect(isPending("platform.leadTemplates")).toBe(true);
   });
 
   it("records apps/web's leads page as the CRM's predecessor", () => {
@@ -266,15 +290,22 @@ describe("isMostSpecificActiveRoute picks one rail entry, not two", () => {
     });
   }
 
-  it("applies to the rail's other nested pair — CRM and its three children", () => {
+  it("applies to the rail's other nested pair — CRM and its four children", () => {
     // Collateral, pinned deliberately: Secrets is not the only nested pair in
     // platformNav. `platform.crm` (/platform/crm) is a segment-boundary prefix
-    // of Organisations, Do-not-contact and Import, and all four are rail
-    // entries, so CRM used to stay lit alongside each of them. It is the same
-    // defect and this is the same fix; the change is intended, not incidental.
+    // of Organisations, Do-not-contact, Templates and Import, and all five are
+    // rail entries, so CRM used to stay lit alongside each of them. It is the
+    // same defect and this is the same fix; the change is intended, not
+    // incidental.
+    //
+    // Templates is listed here for the same reason the other three are, rather
+    // than trusted to inherit the fix: every new CRM child is a fresh chance
+    // for the rail to light two entries at once, and the only thing that
+    // catches it is a row in this loop.
     for (const [path, child] of [
       ["/platform/crm/organisations", "platform.crmOrganisations"],
       ["/platform/crm/suppressions", "platform.crmSuppressions"],
+      ["/platform/crm/templates", "platform.crmTemplates"],
       ["/platform/crm/import", "platform.crmImport"],
     ] as const) {
       expect(

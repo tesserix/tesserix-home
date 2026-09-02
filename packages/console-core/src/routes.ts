@@ -638,6 +638,33 @@ export const ROUTES = {
     mobile: "/platform/crm/suppressions",
     capability: "crm",
   },
+  // CRM outreach copy: the DM/email templates an operator authors, renders per
+  // lead in the composer, and archives. No `web` — nothing like it existed in
+  // apps/web.
+  //
+  // ══ NOT `platform.leadTemplates`, AND THE NAMES ARE CLOSE ENOUGH TO MATTER ══
+  //
+  // `platform.leadTemplates` (above) is a DIFFERENT SURFACE that already
+  // exists. It is the versioned MARKETING EMAIL registry the platform API
+  // serves at `GET /lead-templates` — `htmlBody`/`textBody`/`version`/`status`,
+  // plus a `POST /lead-templates/:key/test-send`, which is why its comment
+  // names `mass-send`. `apps/mobile/app/platform/lead-templates.tsx` renders it
+  // today.
+  //
+  // THIS id is CRM outreach copy: operator-authored, `crm_*`-scoped, and with
+  // NO send path of any kind — an operator copies the rendered text and pastes
+  // it into Instagram by hand. Reusing the other id would give one route id two
+  // meanings across two renderers, and each renderer would have to guess which
+  // it had been handed. Two surfaces, two ids.
+  //
+  // `mass-send` is therefore not asserted here and must not be added: nothing
+  // on this surface sends. `crm`, like every other CRM route.
+  //
+  // NOT `pending`: this plan's Task 4 builds the surface this id points at.
+  "platform.crmTemplates": {
+    mobile: "/platform/crm/templates",
+    capability: "crm",
+  },
   // No `web`: an organisation browse surface never existed in apps/web. The
   // old leads page was a single flat list of lead rows with no concept of a
   // business distinct from the person, so there is no predecessor path to
