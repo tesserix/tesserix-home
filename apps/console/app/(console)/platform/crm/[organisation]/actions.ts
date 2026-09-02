@@ -16,6 +16,12 @@ import {
 } from "@/lib/db/crm-repo";
 import { listTemplates, templateContext } from "@/lib/db/crm-templates";
 import {
+  recordTemplatedDm,
+  ContactUnavailableError,
+  TemplateRenderRefusedError,
+  TemplateUnavailableError,
+} from "@/lib/db/crm-outreach";
+import {
   MERGE_FIELDS,
   renderTemplate,
   UnknownMergeFieldError,
@@ -870,6 +876,31 @@ export async function previewTemplate(
     return { ok: false, reason: "not-found", message: PREVIEW_UNAVAILABLE_MESSAGE };
   }
 
+  return renderForLead(input);
+}
+
+/**
+ * The three steps above, WITHOUT the session gate — shared by `previewTemplate`
+ * and by `copyAndLogDm`'s server-side re-render.
+ *
+ * SHARED RATHER THAN COPIED, and that is the point. `copyAndLogDm` decides
+ * whether `crm_activities.body` receives text by comparing the submitted string
+ * to this render (see `crm-outreach.ts`). If the two paths rendered through
+ * separate code, the comparison would be against a string this console might
+ * not actually have produced, and the day the two copies stopped agreeing —
+ * one commit is enough, per the `crm-identity.ts` lesson — every verbatim send
+ * would start classifying itself as "edited" and storing the biography. The
+ * defence only works if the preview and the check are literally the same
+ * render.
+ *
+ * THE GATE IS NOT IN HERE, deliberately. `previewTemplate` calls
+ * `checkOperatorCapabilityLive` itself before this runs; `copyAndLogDm` gets
+ * the same check from `withCrmWrite`, INSIDE `auditedOperation`, so a refusal
+ * is written as a `capability.refused` row (#409). Folding the gate in here
+ * would move the write path's check outside `auditedOperation` and lose that
+ * row — a deliberate refusal made indistinguishable from a request never made.
+ */
+async function renderForLead(input: PreviewTemplateInput): Promise<PreviewTemplateResult> {
   // Step 1. Before the template is even loaded: nothing about a suppressed
   // organisation is worth a second query.
   try {
@@ -973,4 +1004,129 @@ export async function previewTemplate(
   return rendered.subject === undefined
     ? { ok: true, text: rendered.text }
     : { ok: true, text: rendered.text, subject: rendered.subject };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * COPY AND LOG (#LDQ)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface CopyAndLogDmInput {
+  organisationId: string;
+  contactId: string;
+  templateId: string;
+  /**
+   * What the operator is about to paste — the textarea's contents, which may
+   * be our render untouched or their own rewrite of it. UNTRUSTED: it crosses
+   * the browser → server boundary, and it is the only free text this feature
+   * accepts. Whether it is ours or theirs is decided below, by re-rendering;
+   * the client never says.
+   */
+  submittedText: string;
+}
+
+/**
+ * The two allowlisted exceptions on the copy-and-log path.
+ *
+ * `SuppressedContactError` is the do-not-contact list refusing outreach at the
+ * transaction's own re-check, and its message is already operator-facing.
+ * `TemplateRenderRefusedError` carries the preview's wording for a render that
+ * has stopped being possible (the bio was cleared, the template archived)
+ * between the preview and the click. `TemplateUnavailableError` and
+ * `ContactUnavailableError` come through the same door for the same reason:
+ * each is a specific, actionable fact about a lead the operator is looking at,
+ * and every one of them would otherwise surface as "That change was not saved."
+ * and read as a bug in a feature that had in fact worked correctly.
+ *
+ * An allowlist, per exception type — never "anything that is an Error".
+ */
+function mapOutreachRefusal(cause: unknown): { ok: false; message: string } | undefined {
+  if (
+    cause instanceof SuppressedContactError ||
+    cause instanceof TemplateRenderRefusedError ||
+    cause instanceof TemplateUnavailableError ||
+    cause instanceof ContactUnavailableError
+  ) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
+/**
+ * Log that a templated DM was sent, and move everything sending one implies.
+ *
+ * ══ THE RE-RENDER IS WHAT DECIDES `body`, NOT THE CLIENT ══
+ *
+ * This action re-renders the template from `templateId` plus the LIVE contact
+ * row (`renderForLead`, the same code the preview ran) and compares that string
+ * to `submittedText`. Identical → the operator sent our render → `bodyIfEdited`
+ * is null → `crm_activities.body` stays NULL. Different → the text is theirs
+ * and is stored.
+ *
+ * The alternative — an `edited: boolean` on the request — was rejected outright
+ * rather than merely disliked. A caller that claimed `edited: true` while
+ * submitting the verbatim render would write `crm_contacts.biography` into
+ * `crm_activities.body`, which is the one table `eraseContact` does not reach;
+ * see `crm-outreach.ts`'s header for why that is a compliance defect rather
+ * than a leak of no consequence. `body` is the only door in this feature that
+ * accepts free text, so a client flag on it would defeat every other control at
+ * once. `metadata.edited` is still recorded — derived here, never read from the
+ * request.
+ *
+ * COMPARED EXACTLY, not trimmed or normalised. The asymmetry is deliberate: a
+ * false "unedited" verdict stores LESS than the truth (nothing), while a false
+ * "edited" verdict stores our render — including the biography — under the
+ * banner of the operator's own words. Exact equality is the only comparison
+ * that can never produce the second, and an operator whose sole edit was a
+ * trailing space keeps their text stored, which costs nothing.
+ *
+ * ══ THE REFUSAL IS THROWN, NOT RETURNED ══
+ *
+ * A render that has stopped being possible since the preview must abort the
+ * write, and inside `withCrmWrite` the only way to abort is to throw:
+ * returning a value would have `auditedOperation` write a `crm.outreach.dm`
+ * row claiming a DM was logged when none was.
+ */
+export async function copyAndLogDm(input: CopyAndLogDmInput): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    input.contactId,
+    { capability: "crm" },
+    async (actor) => {
+      const rendered = await renderForLead({
+        organisationId: input.organisationId,
+        contactId: input.contactId,
+        templateId: input.templateId,
+      });
+      if (!rendered.ok) throw new TemplateRenderRefusedError(rendered.message);
+
+      return recordTemplatedDm({
+        organisationId: input.organisationId,
+        contactId: input.contactId,
+        templateId: input.templateId,
+        bodyIfEdited: input.submittedText === rendered.text ? null : input.submittedText,
+        actor: actor.email,
+      });
+    },
+    (outcome) => ({
+      action: "crm.outreach.dm",
+      // Counts only, per `AuditSummary`. `edited` is carried as 1/0 rather
+      // than omitted, because "was this row's text authored by a human" is
+      // exactly the question an erasure request has to ask of this log.
+      summary: { logged: 1, edited: outcome.edited ? 1 : 0 },
+      // The handle or the email — NEVER the message text. The message embeds
+      // the biography, and `console_audit_log` is another table `eraseContact`
+      // does not reach: putting the render here would reintroduce, through the
+      // audit row, precisely what `crm_activities.body` was kept clean of.
+      // The id alongside it, Ruling 20-style, so the row can still be joined
+      // back to a contact whose handle later changes.
+      target: `${outcome.contactLabel ?? "(no handle or email on file)"} (${input.contactId})`,
+    }),
+    mapOutreachRefusal,
+  );
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${input.organisationId}`);
+  // The queue and the browse list both read `next_action_at` and
+  // `last_contacted_at`, and a lead that just moved `new` → `contacted` is
+  // gone from the stage-`new` working set this feature exists to clear.
+  revalidatePath("/platform/crm");
+  return { ok: true };
 }
