@@ -7,6 +7,7 @@ import {
   fetchOnboardingSessions,
   fetchPlatformSources,
   fetchProductEntities,
+  fetchProductKpis,
   parseDashboard,
   fetchSupportAnalytics,
   fetchTicketDetail,
@@ -1341,5 +1342,86 @@ describe("fetchOnboardingSessions", () => {
     await expect(fetchOnboardingSessions("mark8ly")).rejects.toThrow(
       /an unreadable list is not an empty one/,
     );
+  });
+});
+
+describe("fetchProductKpis", () => {
+  /** The console-facing wire shape, as the kpis handler's own Go test pins it:
+   *  the metrics map sits directly in the envelope's `data`. */
+  function kpisResponse(metrics: unknown) {
+    return new Response(JSON.stringify(envelope(metrics)), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  function stubFetch(response: Response) {
+    vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
+    withToken("access-token-1");
+    const fetchMock = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("reads the metrics map straight out of `data`, with no second wrapper", async () => {
+    // The one shape mistake this read can make. There are two `data` wrappers
+    // on the path and only one of them survives to here: §8.6's is unwrapped
+    // by `service.go` on the product's response, and go-shared's is unwrapped
+    // by `platformRequest`. A parser expecting one more would reject every
+    // real answer.
+    stubFetch(kpisResponse({ orders_today: 128, payments_health: "healthy" }));
+
+    expect(await fetchProductKpis("mark8ly")).toEqual({
+      orders_today: 128,
+      payments_health: "healthy",
+    });
+  });
+
+  it("sends the source as an encoded query parameter", async () => {
+    const fetchMock = stubFetch(kpisResponse({ n: 1 }));
+
+    await fetchProductKpis("mark8ly");
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://platform-api.test/v1/kpis?source=mark8ly");
+  });
+
+  it("escapes a source rather than letting it add a parameter", async () => {
+    // The endpoint answers 400 for a query parameter it does not read, so an
+    // unescaped `&` would turn a bad slug into a confusing rejection about the
+    // wrong thing.
+    const fetchMock = stubFetch(kpisResponse({ n: 1 }));
+
+    await fetchProductKpis("mark8ly&source=kora");
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toBe("http://platform-api.test/v1/kpis?source=mark8ly%26source%3Dkora");
+  });
+
+  it("preserves a 501 so the surface can report instrumentation-unavailable", async () => {
+    // Kora's live answer: the product reports no headline metrics yet.
+    stubFetch(
+      new Response(
+        JSON.stringify({ success: false, error: { code: "NOT_IMPLEMENTED", message: "no metrics" } }),
+        { status: 501, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(fetchProductKpis("kora")).rejects.toMatchObject({ status: 501 });
+  });
+
+  it("preserves a 503 as a distinct status, not as the 501", async () => {
+    // An outage must never reach the page as "no metrics" — see
+    // `writeReadError`, which calls that the more dangerous mistake.
+    stubFetch(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: "SERVICE_UNAVAILABLE", message: "unreachable" },
+        }),
+        { status: 503, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await expect(fetchProductKpis("mark8ly")).rejects.toMatchObject({ status: 503 });
   });
 });
