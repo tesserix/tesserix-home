@@ -9,7 +9,7 @@ Read against `packages/console-core/src/routes.ts`, which is the source of
 truth. If this file and that table disagree, the table is right and this file
 is stale.
 
-**Verified against production Zitadel on 2026-09-03**, project
+**Verified against production Zitadel on 2026-09-04**, project
 `platform-console` (`386377618200461939`), org `TESSERIX`
 (`386377229942128837`).
 
@@ -20,7 +20,7 @@ is stale.
 | `mahesh.sangawar@gmail.com` | all 12 human capabilities |
 | `samyak.rout@gmail.com` | all 12 human capabilities |
 | `unidevidp@gmail.com` | all 12, plus `read-plan-catalog` |
-| `mark8ly-catalog-reader` *(machine)* | `read-plan-catalog` only |
+| `mark8ly-catalog-reader` *(machine)* | `read-plan-catalog`, `read-promo-catalog` |
 
 The 12: `read`, `platform`, `crm`, `support`, `respond`, `billing`,
 `mass-send`, `hard-delete`, `rotate-credentials`, `publish-catalog`,
@@ -35,14 +35,42 @@ the first time a grant is narrowed is the first time the gate can bite.
 human needs it; `mark8ly-catalog-reader` uses it to pull the plan catalog.
 
 `read-promo-catalog` (tesserix-home#521) is the second machine capability, and
-it guards `GET /api/v1/promo-catalog`. **It is not granted to anything yet** —
-the role must be created on the Platform Console project and assigned to a
-service user before mark8ly can read promo codes; until then that endpoint
-answers 403 to every caller, which is the correct answer and not a defect. It
-is deliberately NOT implied by `read-plan-catalog`: reading published prices
-and enumerating every promo code in the estate are different grants, and
-folding them together would silently widen the grant
-`mark8ly-catalog-reader` already holds.
+it guards `GET /api/v1/promo-catalog`. **Created and granted to
+`mark8ly-catalog-reader` on 2026-09-04**, verified against production: a token
+for that service user carries exactly `["read-plan-catalog",
+"read-promo-catalog"]` and the endpoint answers `200`. It is deliberately NOT
+implied by `read-plan-catalog`: reading published prices and enumerating every
+promo code in the estate are different grants, and folding them together would
+silently widen the grant `mark8ly-catalog-reader` already holds.
+
+### Minting a machine token to test either endpoint
+
+The scope matters more than it looks, and getting it wrong costs an hour. Three
+variants were measured against production Zitadel:
+
+| scope | audience | roles claim |
+|---|---|---|
+| `openid …:{projectId}:aud` | correct | **NONE** |
+| `openid …:{projectId}:aud urn:zitadel:iam:org:projects:roles` | correct | correct |
+| `openid urn:zitadel:iam:org:projects:roles` | **wrong** (the client id) | NONE |
+
+Only the middle one works:
+
+```bash
+curl -s -X POST https://auth.tesserix.app/oauth/v2/token \
+  -u "$CLIENT_ID:$CLIENT_SECRET" \
+  -d grant_type=client_credentials \
+  --data-urlencode 'scope=openid urn:zitadel:iam:org:project:id:386377618200461939:aud urn:zitadel:iam:org:projects:roles'
+```
+
+**A token minted without the roles scope fails with `401`, not `403`**, which
+is the part that misleads. `verifyMachineAuthHeader` derives `orgId` from
+inside the roles claim, so a token with no roles fails the `isInternal` check,
+and the catch block wraps any failure as `MachineTokenError`. The token
+verifies perfectly against the JWKS and still answers 401 — indistinguishable
+from a bad credential, so it reads as "my token is wrong" rather than "my scope
+is wrong". Credentials for `mark8ly-catalog-reader` live in the
+`mark8ly-console-catalog` secret in the `mark8ly` namespace.
 
 ## Surfaces, by capability
 
