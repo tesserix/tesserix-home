@@ -16,11 +16,19 @@
  * there and needs no conversion; VND has none, so the x100 must be undone
  * before comparing — see {@link toStripeUnitAmount}.
  *
- * Mirrors mark8ly's Go `zeroDecimalCurrencies` map
- * (`internal/billing/stripe/price.go`) rather than importing it — the console
- * deliberately does not depend on mark8ly's Go module. The two held the
- * identical 16 currencies when last checked; if they ever diverge, this check
- * REPORTS the difference rather than hiding it.
+ * THIS IS NOW THE ONLY COPY. It began as a mirror of mark8ly's Go
+ * `zeroDecimalCurrencies` map in `internal/billing/stripe/price.go`, held
+ * separately rather than imported because the console deliberately does not
+ * depend on mark8ly's Go module. That map was deleted with
+ * tesserix/mark8ly#639, which retired `billing-bootstrap` and every Stripe
+ * product/price WRITE in mark8ly — the console is the sole writer now, so
+ * mark8ly no longer needs to convert anything at a Stripe boundary it never
+ * reaches.
+ *
+ * The drift risk the duplication carried is therefore gone, and what
+ * replaced it is a single point of failure: if this list is wrong, nothing
+ * else holds a copy to disagree with it. Both halves of that trade are worth
+ * knowing — there is no second opinion here any more.
  *
  * MOVED HERE FROM `parity.ts`, and the direction matters: `parity.ts` imports
  * this module, so importing back would be a cycle. This is also the more
@@ -80,12 +88,17 @@ export interface SourcePolicy {
   /**
    * Does this catalog store zero-decimal amounts multiplied by 100?
    *
-   * mark8ly's does, for internal consistency, and `billing-bootstrap` divides
-   * at the Stripe boundary (`internal/billing/stripe/price.go`). That is a
-   * mark8ly decision, not a Stripe rule — and it lived in the shared
-   * comparator until 2026-08-27, where a second product storing genuine minor
-   * units would have had every VND, JPY and KRW price divided by 100 on write
-   * and mis-compared on read.
+   * mark8ly's does, for internal consistency. The division at the Stripe
+   * boundary used to happen in mark8ly's own `billing-bootstrap`; since
+   * tesserix/mark8ly#639 retired it, this console does it — see
+   * {@link toStripeUnitAmount}, which is now the only place the convention
+   * is undone before an amount reaches Stripe.
+   *
+   * It remains a mark8ly decision, not a Stripe rule — and it lived in the
+   * shared comparator until 2026-08-27, where a second product storing
+   * genuine minor units would have had every VND, JPY and KRW price divided
+   * by 100 on write and mis-compared on read. That is why it sits on the
+   * per-source policy rather than in the comparator.
    */
   readonly amountsAreScaledBy100: boolean;
   /**
