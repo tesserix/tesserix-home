@@ -7,28 +7,24 @@
 import "server-only";
 
 import { compareCatalogToStripe } from "@/lib/billing/parity";
-import { policyFor, SINGLE_SOURCE } from "@/lib/billing/source-policy";
+import { policyFor, type CatalogSource } from "@/lib/billing/source-policy";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
 import { readCatalogAmounts, readLivePublication, type ParityRun } from "@/lib/db/plan-catalog-repo";
 
-// Re-exported so this module's own existing importers keep working — moved to
-// `source-policy.ts` (see that module's doc comment) so `bootstrap.ts` and
-// the catalog surface's `page.tsx` can share the one constant without
-// importing this module, which reaches `stripe-read.ts` and `pg` (through
-// `plan-catalog-repo.ts`).
-export { SINGLE_SOURCE };
-
-// SINGLE-SOURCE ASSUMPTION, used below. Every row `plan_catalog_prices` holds
-// today is `source = 'mark8ly'`, so `SINGLE_SOURCE` is currently the only
-// source there is to check.
+// PER (MODE, SOURCE). `performParityCheck` takes both axes and neither has a
+// default, because a run that does not name the catalog it read cannot be
+// filed against one: `plan_catalog_parity_runs.source` (0044) is what makes
+// "every pair clean for 7 days" mean seven days of EVERY catalog agreeing
+// rather than one source answering for all of them. tesserix-home#392 closed that gap
+// end to end — the column, the two reads in `plan-catalog-repo.ts`, both
+// runners and the console surface — so there is no single-source assumption
+// left in this module to describe.
 //
-// This is the exact thing tesserix-home#381 exists to fix threading, not to
-// remove: the moment a second source's rows land in the same revision, one
-// `mode`-keyed run can no longer speak for both catalogs at once, because
-// `plan_catalog_parity_runs` has no `source` column to record which one a row
-// checked. Making this check run per `(mode, source)` needs that column —
-// filed separately; this change deliberately does not add it or touch the
-// `plan_catalog_parity_runs` schema.
+// `SINGLE_SOURCE` (`source-policy.ts`) still exists and is still correct for
+// callers that must pick ONE source because they have nowhere to put a second
+// answer — `bootstrap.ts`, the catalog surface's `page.tsx`. This is not one
+// of them, and it is no longer re-exported from here: every importer already
+// takes it from `source-policy.ts` directly.
 
 /**
  * One parity check, decided but not yet recorded — the body both runners share.
@@ -107,18 +103,27 @@ export function sanitizeReason(cause: unknown): string {
  * one method and holds its `Stripe` instances privately. That is enforced
  * there, not asserted here.
  *
- * # One mode per call, and the mode travels with the answer
+ * # One (mode, source) PAIR per call, and both travel with the answer
  *
- * The returned {@link ParityRun} carries the mode it checked, so the row that
- * gets written names the account it actually read. A run recorded under the
- * wrong mode would make #327's "both modes clean" satisfiable by one mode
- * answering twice, which is the whole gate defeated by one mislabelled row.
+ * The returned {@link ParityRun} carries the mode AND the source it checked,
+ * so the row that gets written names both the account it read and the catalog
+ * it compared. A run recorded under the wrong mode would make #327's gate
+ * satisfiable by one mode answering twice; a run recorded under the wrong
+ * source does the same thing one axis over, which is the omission
+ * tesserix-home#392 closed. Either way the whole gate is defeated by one
+ * mislabelled row.
  *
- * The catalog side is the SAME for both modes — there is one
- * `plan_catalog_amounts` table and it is what mark8ly intends to charge,
- * everywhere. Only the Stripe side differs.
+ * Within a mode, the SOURCE decides which catalog rows are read
+ * (`readCatalogAmounts(mode, source)`) and which `lookup_key` prefix and
+ * amount convention the comparison uses (`policyFor(source)`). Within a
+ * source, the MODE decides which Stripe account is listed. Neither parameter
+ * has a default: this is the check #327 revokes a Stripe write key on the
+ * strength of, and it must say what it read rather than assume.
  */
-export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
+export async function performParityCheck(
+  mode: StripeMode,
+  source: CatalogSource,
+): Promise<ParityRun> {
   try {
     // Read first, and read once: `readCatalogAmounts` and `readLivePublication`
     // answer related questions about the SAME row (see their shared `WHERE` in
@@ -128,13 +133,20 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
     // normal answer for a mode that has never been published, not a failure;
     // it flows straight through to every branch below, including
     // `not_bootstrapped`.
+    //
+    // BY MODE ALONE, and that is correct rather than an oversight: a
+    // publication is a fact about a (mode, revision) pair and a revision holds
+    // prices for every source (0035), so one publication legitimately serves
+    // both sources' runs within a mode. 0044 states the same thing from the
+    // schema's side, and says so explicitly to stop a later reader "fixing"
+    // 0036's constraint to match the new per-pair runs.
     const publication = await readLivePublication(mode);
     const publicationId = publication ? publication.id : null;
 
     // Sequential, not `Promise.all`: a catalog read that fails should not also
     // spend a Stripe request, and the ordering makes "which side broke"
     // legible in the stored reason.
-    const catalog = await readCatalogAmounts(mode, SINGLE_SOURCE);
+    const catalog = await readCatalogAmounts(mode, source);
     const prices = await stripePriceReader.listPrices(mode);
     // The source's own policy and lookup-key prefix, threaded through
     // explicitly rather than left to `compareCatalogToStripe`'s defaults.
@@ -142,7 +154,7 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
     // check #327 revokes a Stripe write key on the strength of, and it must
     // say what it means rather than fall back to whatever the comparator
     // assumes when nobody says.
-    const sourcePolicy = policyFor(SINGLE_SOURCE);
+    const sourcePolicy = policyFor(source);
     const { differences, stripePriceCount } = compareCatalogToStripe(
       catalog,
       prices,
@@ -189,11 +201,12 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
       // hard-coded: a publication that exists with zero Stripe Prices behind
       // it (a bootstrap that never ran) still names the catalog this run
       // checked, so the read above's answer travels through unchanged.
-      return { mode, outcome: "not_bootstrapped", differences: [], error: null, publicationId };
+      return { mode, source, outcome: "not_bootstrapped", differences: [], error: null, publicationId };
     }
 
     return {
       mode,
+      source,
       outcome: differences.length === 0 ? "clean" : "differences",
       differences,
       error: null,
@@ -209,6 +222,7 @@ export async function performParityCheck(mode: StripeMode): Promise<ParityRun> {
     // says it cannot prove.
     return {
       mode,
+      source,
       outcome: "failed",
       differences: [],
       error: sanitizeReason(cause),

@@ -13,6 +13,11 @@ vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
 import { stripePriceReader, StripeReadUnavailableError } from "@/lib/billing/stripe-read";
 import { readCatalogAmounts, readLivePublication } from "@/lib/db/plan-catalog-repo";
 import * as parityModule from "@/lib/billing/parity";
+// The source axis every call below names explicitly. `performParityCheck` has
+// no default for it (tesserix-home#392), so there is no shorter way to write
+// these calls — which is the point: a run that does not name its catalog
+// cannot be filed against one.
+import { CATALOG_SOURCES, SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import { MAX_ERROR_LENGTH, performParityCheck, sanitizeReason } from "./parity-run";
 
@@ -82,8 +87,9 @@ beforeEach(() => {
 
 describe("performParityCheck", () => {
   it("reports clean when the two sides agree", async () => {
-    expect(await performParityCheck("test")).toEqual({
+    expect(await performParityCheck("test", SINGLE_SOURCE)).toEqual({
       mode: "test",
+      source: SINGLE_SOURCE,
       outcome: "clean",
       differences: [],
       error: null,
@@ -91,19 +97,24 @@ describe("performParityCheck", () => {
     });
   });
 
-  it("carries its own mode, on every outcome", async () => {
+  it("carries its own mode AND source, on every outcome", async () => {
     // The run is handed straight to `recordParityRun`, and a row that named
-    // the wrong account would make "both modes clean" satisfiable by one mode
-    // answering twice.
-    expect((await performParityCheck("live")).mode).toBe("live");
+    // the wrong account would make #327's gate satisfiable by one mode
+    // answering twice. Since tesserix-home#392 the same is true of the
+    // source: a run filed under the wrong catalog lets one source answer for
+    // another, which is the omission the column was added to close. Asserted
+    // on `failed` as well as `clean`, because a `failed` row is a day of the
+    // window too and has to name the pair it belongs to.
+    const clean = await performParityCheck("live", SINGLE_SOURCE);
+    expect(clean).toMatchObject({ mode: "live", source: SINGLE_SOURCE });
 
     vi.mocked(stripePriceReader.listPrices).mockRejectedValue(new Error("stripe down"));
-    const failed = await performParityCheck("live");
-    expect(failed).toMatchObject({ mode: "live", outcome: "failed" });
+    const failed = await performParityCheck("live", SINGLE_SOURCE);
+    expect(failed).toMatchObject({ mode: "live", source: SINGLE_SOURCE, outcome: "failed" });
   });
 
   it("reads the mode it was asked for, and no other", async () => {
-    await performParityCheck("live");
+    await performParityCheck("live", SINGLE_SOURCE);
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
   });
 
@@ -121,7 +132,7 @@ describe("performParityCheck", () => {
       publishedAt: "2026-08-01T00:00:00.000Z",
     });
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("clean");
     expect(run.publicationId).toBe(KNOWN_TEST_PUBLICATION_ID);
@@ -140,7 +151,7 @@ describe("performParityCheck", () => {
     // finding, not a failure).
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
 
-    const run = await performParityCheck("live");
+    const run = await performParityCheck("live", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("not_bootstrapped");
     expect(run.publicationId).toBeNull();
@@ -157,7 +168,7 @@ describe("performParityCheck", () => {
       { ...matching[0], unit_amount: 32_900_000 },
     ]);
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("differences");
     expect(run.error).toBeNull();
@@ -179,7 +190,7 @@ describe("performParityCheck", () => {
     // in the stored reason.
     vi.mocked(readCatalogAmounts).mockRejectedValue(new Error("relation does not exist"));
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("failed");
     expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
@@ -192,7 +203,7 @@ describe("performParityCheck", () => {
       ),
     );
 
-    const run = await performParityCheck("live");
+    const run = await performParityCheck("live", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("failed");
     expect(run.differences).toEqual([]);
@@ -210,7 +221,7 @@ describe("performParityCheck", () => {
       ),
     );
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("failed");
     expect(run.error).toContain("holds a live mode key");
@@ -221,7 +232,7 @@ describe("performParityCheck", () => {
       new Error("connect ETIMEDOUT api.stripe.com:443"),
     );
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("failed");
     expect(run.error).toContain("ETIMEDOUT");
@@ -233,7 +244,7 @@ describe("performParityCheck", () => {
     // clean day to whoever reads the table a week later.
     vi.mocked(readCatalogAmounts).mockRejectedValue("a bare string, not an Error");
 
-    const run = await performParityCheck("test");
+    const run = await performParityCheck("test", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("failed");
     expect(run.error).toContain("a bare string");
@@ -249,9 +260,31 @@ describe("performParityCheck", () => {
       // that actually arrive, not just that the outcome comes out `clean`
       // for the one source that exists today (a wrong call that happens to
       // agree with itself would still pass an outcome-only assertion).
-      await performParityCheck("test");
+      await performParityCheck("test", SINGLE_SOURCE);
 
       expect(readCatalogAmounts).toHaveBeenCalledWith("test", "mark8ly");
+    },
+  );
+
+  it(
+    "reads the catalog for the source it was ASKED for, not one of its own choosing — tesserix-home#392",
+    async () => {
+      // The companion to "reads the mode it was asked for, and no other".
+      // Before #392 this function reached for `SINGLE_SOURCE` itself, so
+      // every call read mark8ly's catalog whatever the caller meant — and
+      // with one source in existence the outcome was identical either way,
+      // which is precisely why an outcome assertion cannot catch it. This
+      // pins the argument that actually arrives at the read.
+      //
+      // `CATALOG_SOURCES` holds one entry today, so the value asserted is
+      // still `mark8ly`; what is asserted is that it came from the PARAMETER.
+      // A second source added to `CATALOG_SOURCES` without threading it
+      // through would fail here rather than silently read mark8ly's rows.
+      for (const source of CATALOG_SOURCES) {
+        vi.mocked(readCatalogAmounts).mockClear();
+        await performParityCheck("live", source);
+        expect(readCatalogAmounts).toHaveBeenCalledWith("live", source);
+      }
     },
   );
 
@@ -266,7 +299,7 @@ describe("performParityCheck", () => {
       // 4-argument one naming mark8ly's policy and prefix explicitly.
       const spy = vi.spyOn(parityModule, "compareCatalogToStripe");
       try {
-        await performParityCheck("test");
+        await performParityCheck("test", SINGLE_SOURCE);
 
         expect(spy).toHaveBeenCalledWith(
           catalog,
@@ -298,8 +331,9 @@ describe("a mode that has never been bootstrapped", () => {
   it("is not_bootstrapped when the namespace holds exactly zero prices", async () => {
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
 
-    expect(await performParityCheck("live")).toEqual({
+    expect(await performParityCheck("live", SINGLE_SOURCE)).toEqual({
       mode: "live",
+      source: SINGLE_SOURCE,
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
@@ -318,7 +352,7 @@ describe("a mode that has never been bootstrapped", () => {
     ]);
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
 
-    const run = await performParityCheck("live");
+    const run = await performParityCheck("live", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("not_bootstrapped");
     expect(run.differences).toEqual([]);
@@ -335,7 +369,7 @@ describe("a mode that has never been bootstrapped", () => {
         unit_amount: 100, tax_behavior: "unspecified" },
     ]);
 
-    expect((await performParityCheck("live")).outcome).toBe("not_bootstrapped");
+    expect((await performParityCheck("live", SINGLE_SOURCE)).outcome).toBe("not_bootstrapped");
   });
 
   it("is NOT not_bootstrapped for a partial bootstrap", async () => {
@@ -349,7 +383,7 @@ describe("a mode that has never been bootstrapped", () => {
     // One of the two keys exists in Stripe. The other does not.
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue(matching);
 
-    const run = await performParityCheck("live");
+    const run = await performParityCheck("live", SINGLE_SOURCE);
 
     expect(run.outcome).toBe("differences");
     expect(run.outcome).not.toBe("not_bootstrapped");
@@ -363,7 +397,7 @@ describe("a mode that has never been bootstrapped", () => {
 
   it("is not clean, which is what parks #327 behind a live bootstrap", async () => {
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
-    expect((await performParityCheck("live")).outcome).not.toBe("clean");
+    expect((await performParityCheck("live", SINGLE_SOURCE)).outcome).not.toBe("clean");
   });
 
   it("is not_bootstrapped rather than failed — the check ran and answered", async () => {
@@ -372,7 +406,7 @@ describe("a mode that has never been bootstrapped", () => {
     // CronJob's alerting fire nightly for a state nobody intends to change
     // this month.
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
-    const run = await performParityCheck("live");
+    const run = await performParityCheck("live", SINGLE_SOURCE);
     expect(run.outcome).not.toBe("failed");
     expect(run.error).toBeNull();
   });

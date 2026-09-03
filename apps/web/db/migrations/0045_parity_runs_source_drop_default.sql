@@ -1,0 +1,56 @@
+-- APPLY THIS ONLY AFTER the console image carrying the source-aware
+-- `recordParityRun` is live in prod.
+--
+-- This is NOT part of the same apply step as
+-- `0044_parity_runs_source.sql`. 0044 keeps `source`'s default precisely so the
+-- previously-deployed image — whose `recordParityRun` INSERT names no source
+-- (see 0044, which cites that image's column list) — keeps
+-- writing rows during the window between the migration landing and Kargo
+-- rolling out the new image. Applying this file inside that window re-creates
+-- exactly the hazard 0044 was shaped to avoid: the nightly
+-- `console-parity-check` CronJob's insert raises, no row is written for that
+-- day, and `readWindowStatus` reads a day with no clean row as not clean. That
+-- is a broken 7-day streak, and the streak is the evidence tesserix-home#327
+-- revokes a Stripe write key on. Rebuilding it costs seven calendar days, which
+-- is the one cost in this arc that cannot be paid faster.
+--
+-- The check before applying is therefore a live-system state and not a merge:
+-- the running console/CronJob image must be one that inserts `source`.
+--
+-- # Why the default must eventually go at all
+--
+-- 0034's reasoning for `mode`, one axis over. With the default in place a
+-- writer that forgot the source would file a second product's run as a mark8ly
+-- run, and "every (mode, source) pair clean" would be satisfiable by one source
+-- answering twice — the exact failure the column exists to prevent. Every
+-- future writer states its source.
+--
+-- Idempotent as written: `DROP DEFAULT` on a column that has none is a no-op,
+-- so this file survives being applied twice, which matters because these files
+-- are applied by hand.
+ALTER TABLE plan_catalog_parity_runs
+    ALTER COLUMN source DROP DEFAULT;
+
+-- # The second thing that is only safe once the new image is live
+--
+-- 0034's `(mode, ran_at DESC)` index. 0044 replaced it with
+-- `(mode, source, ran_at DESC)` and explains there why it is now redundant:
+-- both remaining readers of this table are per-(mode, source), and the new
+-- index is exactly `readLatestRuns`'s
+-- (`apps/console/lib/db/plan-catalog-repo.ts:631`)
+-- `ORDER BY mode, source, ran_at DESC`.
+--
+-- It is dropped HERE and not there for the same reason the `DROP DEFAULT`
+-- above is. In the window between the two applies the OLD image is still
+-- serving, and its `readLatestRuns` is still the per-mode
+-- `SELECT DISTINCT ON (mode) ... ORDER BY mode, ran_at DESC` — a query the
+-- new index cannot order, because `source` sits between the two columns it
+-- needs. Dropping the old index in 0044 would make that query sort on top for
+-- the whole rollout. Unlike the `DROP DEFAULT`, this one is a performance
+-- regression rather than a broken write, so it would not put a hole in the
+-- window; it is nonetheless a cost with no reason to pay it, and both halves
+-- of "safe only after the new image is live" belong in the same file.
+--
+-- `IF EXISTS` because these files are applied by hand and must survive being
+-- run twice.
+DROP INDEX IF EXISTS plan_catalog_parity_runs_mode_ran_at;

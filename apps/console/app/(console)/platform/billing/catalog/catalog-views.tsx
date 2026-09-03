@@ -20,7 +20,7 @@ import { formatMoney } from "@/lib/money";
 import type {
   CatalogRow,
   LivePublication,
-  ModeLatestRun,
+  PairLatestRun,
   ParityOutcome,
   ParityWindowDay,
   ParityWindowStatus,
@@ -624,9 +624,17 @@ export function summarizeDifferences(differences: readonly Difference[]): Differ
 }
 
 const NO_RUNS_MESSAGE =
-  "No parity check has run yet for this mode. Nothing is broken — the nightly check has not recorded its first run.";
+  "No parity check has run yet for this mode and product. Nothing is broken — the nightly check has not recorded its first run.";
 
-function LatestRunSummary({ run, mode }: { run: ModeLatestRun["run"]; mode: StripeMode }) {
+function LatestRunSummary({
+  run,
+  mode,
+  source,
+}: {
+  run: PairLatestRun["run"];
+  mode: StripeMode;
+  source: CatalogSource;
+}) {
   if (run === null) {
     return <p className="text-sm text-muted-foreground">{NO_RUNS_MESSAGE}</p>;
   }
@@ -645,7 +653,7 @@ function LatestRunSummary({ run, mode }: { run: ModeLatestRun["run"]; mode: Stri
       {summary.length > 0 ? (
         <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
           {summary.map((row) => (
-            <li key={`${mode}-${row.kind}`}>
+            <li key={`${mode}-${source}-${row.kind}`}>
               <span className="font-medium text-foreground">{row.label}</span>
               {` (${row.count}): `}
               <span className="font-mono">{row.lookupKeys.join(", ")}</span>
@@ -666,7 +674,7 @@ function ObservationWindow({
 }: {
   windowStatus: ParityWindowStatus | null;
   windowState: SurfaceState;
-  runs: readonly ModeLatestRun[];
+  runs: readonly PairLatestRun[];
   runsState: SurfaceState;
   windowDays: number;
 }) {
@@ -681,24 +689,40 @@ function ObservationWindow({
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        Stated per PAIR, because that is what the gate is. #327's rule — and
+        0044's and 0045's comments on the column that makes it expressible —
+        is that EVERY (mode, source) pair is clean for every day of the window;
+        a sentence about modes alone would be the same ambiguity
+        tesserix-home#392 closes, one that an operator reads rather than one a
+        query returns.
+      */}
       <p className="text-sm text-muted-foreground">
         {windowStatus!.satisfied
-          ? `Both modes have been clean for all ${windowDays} days. #327's gate is satisfied.`
-          : `Not every mode is clean across the last ${windowDays} days — #327's gate is not satisfied yet.`}
+          ? `Every mode and product pair has been clean for all ${windowDays} days. #327's gate is satisfied.`
+          : `Not every mode and product pair is clean across the last ${windowDays} days — #327's gate is not satisfied yet.`}
       </p>
-      {windowStatus!.modes.map((mode) => {
-        const modeRun = runs.find((r) => r.mode === mode.mode)?.run ?? null;
+      {windowStatus!.pairs.map((pair) => {
+        const pairRun =
+          runs.find((r) => r.mode === pair.mode && r.source === pair.source)?.run ?? null;
         return (
-          <div key={mode.mode} className="flex flex-col gap-2 rounded-lg border p-3">
+          <div
+            key={`${pair.mode}-${pair.source}`}
+            className="flex flex-col gap-2 rounded-lg border p-3"
+          >
             <div className="flex items-center justify-between">
-              <span className="font-medium capitalize">{mode.mode}</span>
-              <Badge variant={mode.satisfied ? "success" : "neutral"}>
-                {mode.satisfied ? "satisfied" : "not satisfied"}
+              {/* Both axes in the heading: a card headed by the mode alone
+                  cannot say which catalog its strip is evidence about. */}
+              <span className="font-medium capitalize">
+                {pair.mode} · {catalogSourceLabel(pair.source)}
+              </span>
+              <Badge variant={pair.satisfied ? "success" : "neutral"}>
+                {pair.satisfied ? "satisfied" : "not satisfied"}
               </Badge>
             </div>
-            <DayStrip days={mode.days} />
+            <DayStrip days={pair.days} />
             {runsState.kind === "ready" ? (
-              <LatestRunSummary run={modeRun} mode={mode.mode} />
+              <LatestRunSummary run={pairRun} mode={pair.mode} source={pair.source} />
             ) : (
               <SurfaceStateView state={runsState} emptyMessage={NO_RUNS_MESSAGE} />
             )}
@@ -793,7 +817,7 @@ export interface CatalogViewsProps {
   windowState: SurfaceState;
   catalog: readonly CatalogRow[];
   catalogState: SurfaceState;
-  runs: readonly ModeLatestRun[];
+  runs: readonly PairLatestRun[];
   runsState: SurfaceState;
   /** Who published the mode's currently-live revision, and when — `null`
    *  for a mode that has never been published. A fourth, independently

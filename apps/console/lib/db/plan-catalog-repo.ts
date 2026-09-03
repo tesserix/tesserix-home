@@ -5,7 +5,13 @@
 import "server-only";
 
 import type { Difference, CatalogAmount, TaxBehavior } from "@/lib/billing/parity";
-import type { CatalogSource } from "@/lib/billing/source-policy";
+// A VALUE import, not type-only: `CATALOG_SOURCES` is what makes
+// `readWindowStatus` and `readLatestRuns` report every (mode, source) pair
+// rather than only the pairs they happened to find rows for — the same job
+// `STRIPE_MODES` does one axis over. `source-policy.ts` is a plain constants
+// module with no `server-only` and no `pg` ancestry, so importing it as a
+// value costs this module nothing.
+import { CATALOG_SOURCES, type CatalogSource } from "@/lib/billing/source-policy";
 import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { tesserixQuery } from "./tesserix";
 
@@ -20,6 +26,7 @@ import { tesserixQuery } from "./tesserix";
 
 interface WindowRow {
   mode: StripeMode;
+  source: CatalogSource;
   day: string;
   clean: boolean;
   /** Whether ANY run — clean or not — was recorded for this day. See
@@ -268,6 +275,14 @@ export interface ParityRun {
    *  defaulted: 0034 dropped the column's default precisely so a writer that
    *  forgot could not file a live run under `test`. */
   readonly mode: StripeMode;
+  /** Which catalog this run compared. Required, never defaulted, for the
+   *  reason 0044/0045 give: with a default in place a writer that forgot
+   *  would file a second product's run as a mark8ly run, and "every (mode,
+   *  source) pair clean" would be satisfiable by one source answering twice —
+   *  the exact failure the column exists to prevent. 0045 drops the database
+   *  default once the source-aware image is live; this field is what makes
+   *  that drop safe. See tesserix-home#392. */
+  readonly source: CatalogSource;
   readonly outcome: ParityOutcome;
   /** Empty on `clean`, on `failed`, and on `not_bootstrapped` — the last of
    *  which is the one worth stating, because the comparator DOES produce a
@@ -307,10 +322,14 @@ export interface ParityRun {
  */
 export async function recordParityRun(run: ParityRun): Promise<void> {
   await tesserixQuery(
-    `INSERT INTO plan_catalog_parity_runs (mode, outcome, difference_count, differences, error, publication_id)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+    `INSERT INTO plan_catalog_parity_runs (mode, source, outcome, difference_count, differences, error, publication_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
     [
       run.mode,
+      // Stated, never left to the column default — 0045 removes that default
+      // once this image is live, and a writer that relied on it would file
+      // every source's run as mark8ly's. See {@link ParityRun.source}.
+      run.source,
       run.outcome,
       run.differences.length,
       JSON.stringify(run.differences),
@@ -323,7 +342,7 @@ export async function recordParityRun(run: ParityRun): Promise<void> {
   );
 }
 
-/** One day of one mode's window. `day` is `YYYY-MM-DD` in UTC. */
+/** One day of one (mode, source) pair's window. `day` is `YYYY-MM-DD` in UTC. */
 export interface ParityWindowDay {
   readonly day: string;
   readonly clean: boolean;
@@ -337,8 +356,8 @@ export interface ParityWindowDay {
    * rendered both in the same "not clean" red — the exact overstatement this
    * function's own "absence of evidence, never evidence of agreement" comment
    * exists to prevent, reintroduced one layer up. `ran` is what lets a caller
-   * draw that line for every day, not just the ones after the mode's most
-   * recent run.
+   * draw that line for every day, not just the ones after the (mode, source)
+   * pair's most recent run.
    *
    * As far as this module's author could confirm, `page.tsx` in
    * `platform/billing/catalog` is this function's only consumer, which is
@@ -348,17 +367,29 @@ export interface ParityWindowDay {
   readonly ran: boolean;
 }
 
-/** One mode's answer. `satisfied` means every day in the window is clean. */
-export interface ParityWindowMode {
+/**
+ * One (mode, source) pair's answer. `satisfied` means every day in the window
+ * is clean for THAT pair.
+ *
+ * Named for a pair rather than a mode since tesserix-home#392, and the shape
+ * is FLAT — one entry per pair — rather than sources nested inside modes. The
+ * check is run once per pair and #327's gate is stated once per pair, so a
+ * mode-level container would imply a mode-level verdict that no longer exists:
+ * "test is satisfied" is not a fact this table can produce once two catalogs
+ * are checked under the same account.
+ */
+export interface ParityWindowPair {
   readonly mode: StripeMode;
+  readonly source: CatalogSource;
   readonly days: readonly ParityWindowDay[];
   readonly satisfied: boolean;
 }
 
-/** Both modes' answers, and the conjunction that is #327's gate. */
+/** Every (mode, source) pair's answer, and the conjunction that is #327's
+ *  gate: every pair clean for every day of the window. */
 export interface ParityWindowStatus {
   readonly days: number;
-  readonly modes: readonly ParityWindowMode[];
+  readonly pairs: readonly ParityWindowPair[];
   readonly satisfied: boolean;
 }
 
@@ -367,7 +398,7 @@ export interface ParityWindowStatus {
 const MAX_WINDOW_DAYS = 366;
 
 /**
- * Is the observation window satisfied, per mode?
+ * Is the observation window satisfied, per (mode, source) pair?
  *
  * This is the query #327 will cite, and it exists so "is the window
  * satisfied?" has a mechanical answer rather than one assembled by reading
@@ -381,6 +412,16 @@ const MAX_WINDOW_DAYS = 366;
  * A window satisfied by a check that never ran is the one outcome that must be
  * impossible here, and it is the outcome a CronJob that silently failed to
  * start produces. Absence of evidence, never evidence of agreement.
+ *
+ * # Per PAIR, not per mode
+ *
+ * The check is asked once per (mode, source) pair, because a run recorded
+ * against one catalog says nothing about another — see 0044 and
+ * tesserix-home#392. Asking per mode was accidentally sufficient while
+ * `mark8ly` was the only source, and became a SILENT omission the moment a
+ * second source's rows landed: that source's drift would never be compared
+ * against anything, while the mark8ly rows still came back `clean` and the
+ * window still read as satisfied.
  *
  * # Days, not runs
  *
@@ -431,19 +472,34 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
        ),
        modes AS (
          SELECT unnest($2::text[]) AS mode
+       ),
+       -- The second axis, and a CROSS JOIN rather than a third correlated
+       -- EXISTS: the question is asked once per (mode, source, day) cell, so
+       -- the sources belong in the same cross product the modes and days are
+       -- already in. Passed in from CATALOG_SOURCES rather than read off a
+       -- SELECT DISTINCT source over this table, for the same reason the modes
+       -- are: a source with no rows at all must still produce cells, and
+       -- deriving the list from the table would make a source that has never
+       -- been checked invisible instead of unsatisfied -- which is exactly the
+       -- tesserix-home#392 omission, reintroduced inside the fix for it.
+       sources AS (
+         SELECT unnest($3::text[]) AS source
        )
      SELECT m.mode,
+            s.source,
             to_char(d.day, 'YYYY-MM-DD') AS day,
             (
               EXISTS (
                 SELECT 1 FROM plan_catalog_parity_runs r
                  WHERE r.mode = m.mode
+                   AND r.source = s.source
                    AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
                    AND r.outcome = 'clean'
               )
               AND NOT EXISTS (
                 SELECT 1 FROM plan_catalog_parity_runs r
                  WHERE r.mode = m.mode
+                   AND r.source = s.source
                    AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
                    AND r.outcome <> 'clean'
               )
@@ -456,39 +512,48 @@ export async function readWindowStatus(days: number): Promise<ParityWindowStatus
             EXISTS (
               SELECT 1 FROM plan_catalog_parity_runs r
                WHERE r.mode = m.mode
+                 AND r.source = s.source
                  AND date_trunc('day', r.ran_at AT TIME ZONE 'UTC') = d.day
             ) AS ran
        FROM modes m
+       CROSS JOIN sources s
        CROSS JOIN window_days d
       ORDER BY d.day`,
-    [days, [...STRIPE_MODES]],
+    [days, [...STRIPE_MODES], [...CATALOG_SOURCES]],
   );
 
-  // Grouped in the order `STRIPE_MODES` declares rather than the order the
-  // rows arrive, so a caller rendering this gets test then live every time —
-  // and so a mode with NO rows at all is still present. A query returning only
-  // the modes found in the table would omit live entirely today, and a caller
-  // reducing over "every mode returned" would find the gate satisfied because
-  // the failing side was invisible.
-  const modes = STRIPE_MODES.map((mode) => {
-    const modeDays = rows
-      .filter((row) => row.mode === mode)
-      .map((row) => ({ day: row.day, clean: row.clean, ran: row.ran }));
-    return {
-      mode,
-      days: modeDays,
-      // `every` on an empty list is `true`, which would be exactly the wrong
-      // answer for a mode the query somehow returned no days for. The length
-      // check is what keeps "no days" from reading as "all days clean".
-      satisfied: modeDays.length === days && modeDays.every((d) => d.clean),
-    };
-  });
+  // Grouped by iterating `STRIPE_MODES` x `CATALOG_SOURCES` rather than the
+  // order the rows arrive, so a caller rendering this gets the same pairs in
+  // the same order every time — and so a pair with NO rows at all is still
+  // present. A query returning only the pairs found in the table would omit
+  // live entirely today, and a caller reducing over "every pair returned"
+  // would find the gate satisfied because the failing side was invisible.
+  // That property is now load-bearing on BOTH axes: tesserix-home#392 is
+  // precisely the case where an unchecked source is invisible rather than
+  // unsatisfied.
+  const pairs = STRIPE_MODES.flatMap((mode) =>
+    CATALOG_SOURCES.map((source) => {
+      const pairDays = rows
+        .filter((row) => row.mode === mode && row.source === source)
+        .map((row) => ({ day: row.day, clean: row.clean, ran: row.ran }));
+      return {
+        mode,
+        source,
+        days: pairDays,
+        // `every` on an empty list is `true`, which would be exactly the wrong
+        // answer for a pair the query somehow returned no days for. The length
+        // check is what keeps "no days" from reading as "all days clean".
+        satisfied: pairDays.length === days && pairDays.every((d) => d.clean),
+      };
+    }),
+  );
 
-  return { days, modes, satisfied: modes.every((m) => m.satisfied) };
+  return { days, pairs, satisfied: pairs.every((p) => p.satisfied) };
 }
 
 interface LatestRunRow {
   mode: StripeMode;
+  source: CatalogSource;
   outcome: ParityOutcome;
   /** `pg`/pglite hand a `timestamptz` back as a `Date`, not a string — see
    *  {@link readLatestRuns}. */
@@ -497,7 +562,8 @@ interface LatestRunRow {
   differences: unknown;
 }
 
-/** One mode's most recent run, or `null` when the mode has never run. */
+/** One (mode, source) pair's most recent run, or `null` when the pair has
+ *  never run. */
 export interface LatestParityRun {
   readonly outcome: ParityOutcome;
   /** ISO 8601, UTC. */
@@ -506,9 +572,13 @@ export interface LatestParityRun {
   readonly differences: readonly Difference[];
 }
 
-/** One mode's answer — always present, per {@link readLatestRuns}. */
-export interface ModeLatestRun {
+/** One (mode, source) pair's answer — always present, per
+ *  {@link readLatestRuns}. Named for a pair rather than a mode since
+ *  tesserix-home#392, alongside {@link ParityWindowPair}: both reads are now
+ *  keyed the way the check is actually run. */
+export interface PairLatestRun {
   readonly mode: StripeMode;
+  readonly source: CatalogSource;
   readonly run: LatestParityRun | null;
 }
 
@@ -527,37 +597,48 @@ function toLatestParityRun(row: LatestRunRow): LatestParityRun {
 }
 
 /**
- * The most recent `plan_catalog_parity_runs` row for each mode.
+ * The most recent `plan_catalog_parity_runs` row for each (mode, source) pair.
  *
  * `readWindowStatus` answers "was the week clean?" as a single boolean per
- * mode; it does not carry a single difference. Without this function, a red
+ * pair; it does not carry a single difference. Without this function, a red
  * day is a dot on the strip nobody can interrogate — an operator deciding
  * whether #327's revocation is safe has to open `psql` to see what actually
  * differed. This is that read, and it exists purely for a human, unlike
  * `readCatalogAmounts`/`readCatalogRows` which exist for a comparator and a
  * table respectively.
  *
- * `DISTINCT ON (mode)` ordered by `ran_at DESC` per mode is Postgres's
- * (and pglite's) native "top 1 per group" — cheaper and more direct here than
- * a window function, since the whole result set is at most two rows.
+ * `DISTINCT ON (mode, source)` ordered by `ran_at DESC` within the group is
+ * Postgres's (and pglite's) native "top 1 per group" — cheaper and more direct
+ * here than a window function, since the whole result set is at most one row
+ * per (mode, source) pair.
  *
- * Same "both modes, always" discipline as {@link readWindowStatus}: a mode
+ * PER PAIR, not per mode, since tesserix-home#392. "What did the last run of
+ * each mode say" stopped being an answerable question once one mode's account
+ * can hold two catalogs: the latest row for `test` would be whichever source
+ * happened to run last, and an operator reading it would take one catalog's
+ * verdict for both. This is the read that backs each pair's card on the
+ * console's observation-window surface, so it has to be keyed the way the
+ * cards are.
+ *
+ * Same "every pair, always" discipline as {@link readWindowStatus}: a pair
  * with zero rows is reported with `run: null` rather than omitted, so a
  * caller iterating the result cannot mistake "never ran" for "not asked
  * about". This is also the function that answers #326's "no runs recorded
- * yet" state — `run === null` for a mode IS that state, not an error.
+ * yet" state — `run === null` for a pair IS that state, not an error.
  */
-export async function readLatestRuns(): Promise<ModeLatestRun[]> {
+export async function readLatestRuns(): Promise<PairLatestRun[]> {
   const rows = await tesserixQuery<LatestRunRow>(
-    `SELECT DISTINCT ON (mode) mode, outcome, ran_at, difference_count, differences
+    `SELECT DISTINCT ON (mode, source) mode, source, outcome, ran_at, difference_count, differences
        FROM plan_catalog_parity_runs
-      ORDER BY mode, ran_at DESC`,
+      ORDER BY mode, source, ran_at DESC`,
   );
 
-  return STRIPE_MODES.map((mode) => {
-    const row = rows.find((r) => r.mode === mode);
-    return { mode, run: row ? toLatestParityRun(row) : null };
-  });
+  return STRIPE_MODES.flatMap((mode) =>
+    CATALOG_SOURCES.map((source) => {
+      const row = rows.find((r) => r.mode === mode && r.source === source);
+      return { mode, source, run: row ? toLatestParityRun(row) : null };
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------

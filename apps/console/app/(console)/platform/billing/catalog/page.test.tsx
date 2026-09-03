@@ -4,7 +4,8 @@ import { render, screen } from "@testing-library/react";
 import { migrationsPendingMessage, stripeUnavailableMessage } from "@/lib/db-read-error";
 import { StripeReadUnavailableError } from "@/lib/billing/stripe-read";
 import { PlatformApiError } from "@/lib/platform-api";
-import type { CatalogRow, ParityWindowStatus, ModeLatestRun } from "@/lib/db/plan-catalog-repo";
+import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
+import type { CatalogRow, ParityWindowStatus, PairLatestRun } from "@/lib/db/plan-catalog-repo";
 
 const getCurrentSession = vi.fn();
 
@@ -292,15 +293,18 @@ describe("the mounted authoring surface", () => {
   const WINDOW_STATUS: ParityWindowStatus = {
     days: 7,
     satisfied: true,
-    modes: [
-      { mode: "test", satisfied: true, days: [] },
-      { mode: "live", satisfied: true, days: [] },
+    // One entry per (mode, source) pair — `readWindowStatus`'s shape since
+    // tesserix-home#392, which is what `page.tsx` hands `CatalogViews` and
+    // what `resolveState` counts as `rows`.
+    pairs: [
+      { mode: "test", source: SINGLE_SOURCE, satisfied: true, days: [] },
+      { mode: "live", source: SINGLE_SOURCE, satisfied: true, days: [] },
     ],
   };
 
-  const RUNS: ModeLatestRun[] = [
-    { mode: "test", run: null },
-    { mode: "live", run: null },
+  const RUNS: PairLatestRun[] = [
+    { mode: "test", source: SINGLE_SOURCE, run: null },
+    { mode: "live", source: SINGLE_SOURCE, run: null },
   ];
 
   const PUBLISHED_ROW: CatalogRow = {
