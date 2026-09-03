@@ -686,3 +686,39 @@ export async function readStripeCoupons(
   );
   return rows.map(toStripeCoupon);
 }
+
+/**
+ * The minted coupon id for each of `promoCodeIds` IN ONE MODE, as a map keyed
+ * by definition id.
+ *
+ * The batched form of {@link readStripeCoupons}, and it exists because the
+ * served promo catalog needs every definition's coupon in one mode at once:
+ * calling `readStripeCoupons` per definition would be an N+1 on a contract
+ * endpoint, against a `db-f1-micro` with a five-connection pool.
+ *
+ * A MAP THAT SIMPLY OMITS THE MODES NOTHING WAS MINTED INTO, for the same
+ * reason `readStripeCoupons` returns only the rows that exist: a definition
+ * with no coupon in the requested mode is the NORM, not a defect — nothing in
+ * this estate has ever bootstrapped live — and `Map.get` returning `undefined`
+ * says "not minted here" without a caller having to distinguish it from a
+ * padded null that might mean something else.
+ *
+ * Returns an empty map without touching the database when handed no ids: `= ANY
+ * ('{}')` is a valid query but a pointless round trip, and the empty case is
+ * reached on every request until the first definition is authored.
+ */
+export async function readStripeCouponIdsForMode(
+  mode: StripeMode,
+  promoCodeIds: readonly string[],
+): Promise<ReadonlyMap<string, string>> {
+  if (promoCodeIds.length === 0) return new Map();
+
+  const rows = await tesserixQuery<{ promo_code_id: string; stripe_coupon_id: string }>(
+    `SELECT promo_code_id, stripe_coupon_id
+       FROM promo_code_stripe_coupons
+      WHERE mode = $1
+        AND promo_code_id = ANY($2::uuid[])`,
+    [mode, [...promoCodeIds]],
+  );
+  return new Map(rows.map((row) => [row.promo_code_id, row.stripe_coupon_id]));
+}
