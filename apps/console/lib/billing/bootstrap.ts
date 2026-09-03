@@ -428,7 +428,7 @@ export async function runBootstrap(
     // would overstate a dry run against exactly that mode.
     let productsToCreate = 0;
     for (const planName of plan.products) {
-      const found = await stripeCatalogWriter.findProductByPlan(mode, planName);
+      const found = await stripeCatalogWriter.findProductByPlan(mode, planName, SINGLE_SOURCE);
       if (!found) productsToCreate += 1;
     }
     return { productsCreated: productsToCreate, pricesCreated: plan.prices.length, skipped };
@@ -437,12 +437,12 @@ export async function runBootstrap(
   const productIds = new Map<string, string>();
   let productsCreated = 0;
   for (const planName of plan.products) {
-    const found = await stripeCatalogWriter.findProductByPlan(mode, planName);
+    const found = await stripeCatalogWriter.findProductByPlan(mode, planName, SINGLE_SOURCE);
     if (found) {
       productIds.set(planName, found.id);
       continue;
     }
-    const created = await stripeCatalogWriter.createProduct(mode, planName, productIdempotencyKey(planName));
+    const created = await stripeCatalogWriter.createProduct(mode, planName, SINGLE_SOURCE, productIdempotencyKey(planName));
     productIds.set(planName, created.id);
     productsCreated += 1;
   }

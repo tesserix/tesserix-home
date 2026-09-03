@@ -17,14 +17,14 @@ describe("source policy", () => {
     // would have every VND/JPY/KRW price divided by 100 if the x100 rule
     // stayed hard-coded in the shared comparator.
     expect(
-      toStripeUnitAmount("vnd", 329_000, { amountsAreScaledBy100: false, lookupKeyPrefix: "acme_" }),
+      toStripeUnitAmount("vnd", 329_000, { amountsAreScaledBy100: false, lookupKeyPrefix: "acme_", productBrand: "Acme" }),
     ).toBe(329_000);
   });
 
   it("leaves ordinary currencies alone under either policy", () => {
     expect(toStripeUnitAmount("usd", 2900, policyFor("mark8ly"))).toBe(2900);
     expect(
-      toStripeUnitAmount("usd", 2900, { amountsAreScaledBy100: false, lookupKeyPrefix: "acme_" }),
+      toStripeUnitAmount("usd", 2900, { amountsAreScaledBy100: false, lookupKeyPrefix: "acme_", productBrand: "Acme" }),
     ).toBe(2900);
   });
 
