@@ -31,6 +31,7 @@ import {
   formatCatalogAmount,
   formatRanAt,
   groupCatalogRows,
+  ObservationWindow,
   organizeCatalogByPlan,
   outcomeLabel,
   outcomeTone,
@@ -387,18 +388,34 @@ function renderViews(over: Partial<Parameters<typeof CatalogViews>[0]> = {}) {
   return render(
     <CatalogViews
       mode="live"
-      windowDays={7}
-      windowStatus={readyWindow}
-      windowState={resolveState({ isLoading: false, error: null, rows: readyWindow.pairs, filtered: false })}
       catalog={[]}
       catalogState={resolveState({ isLoading: false, error: null, rows: [], filtered: false })}
-      runs={noRuns}
-      runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
       // Defaults to "never published" — the normal state for `live` before
       // #037, and for any mode/source a future task adds before its first
       // publish.
       publication={null}
       publicationState={resolveState({ isLoading: false, error: null, rows: [], filtered: false })}
+      {...over}
+    />,
+  );
+}
+
+/**
+ * `ObservationWindow` still lives in `catalog-views.tsx`, but `CatalogViews`
+ * no longer renders it: the strip that wraps it moved ABOVE the Browse /
+ * Draft & Publish tabs, because the parity verdict is a fact about the whole
+ * page rather than about one tab (`catalog-surface.tsx`). The window
+ * assertions below therefore render the component directly, which is what
+ * they were always really about.
+ */
+function renderWindow(over: Partial<Parameters<typeof ObservationWindow>[0]> = {}) {
+  return render(
+    <ObservationWindow
+      windowDays={7}
+      windowStatus={readyWindow}
+      windowState={resolveState({ isLoading: false, error: null, rows: readyWindow.pairs, filtered: false })}
+      runs={noRuns}
+      runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
       {...over}
     />,
   );
@@ -463,7 +480,7 @@ describe("CatalogViews", () => {
       ],
     };
 
-    renderViews({
+    renderWindow({
       windowStatus: twoSources,
       windowState: resolveState({ isLoading: false, error: null, rows: twoSources.pairs, filtered: false }),
     });
@@ -478,7 +495,7 @@ describe("CatalogViews", () => {
     // same rule the migrations state: every (mode, source) pair clean for
     // every day of the window. "Both modes" was true only while one catalog
     // existed.
-    renderViews();
+    renderWindow();
 
     expect(screen.getByText(/Every mode and product pair has been clean for all 7 days/)).toBeInTheDocument();
   });
@@ -549,7 +566,7 @@ describe("CatalogViews", () => {
   });
 
   it("says so, calmly, when no runs have ever been recorded", () => {
-    renderViews();
+    renderWindow();
     expect(screen.getAllByText(/no parity check has run yet/i).length).toBeGreaterThan(0);
   });
 
@@ -627,9 +644,9 @@ describe("publication attribution", () => {
     });
     // The catalog table rendered from its own, independently-resolved state.
     expect(screen.getByRole("tab", { name: "Pro" })).toBeInTheDocument();
-    // The observation window rendered from its own, independently-resolved
-    // state — untouched by the publication read failing.
-    expect(screen.getByText(/#327's gate is satisfied/)).toBeInTheDocument();
+    // (The observation window is no longer part of this component's render —
+    // it is above the tabs now. That the publication read cannot touch it is
+    // asserted where it lives: `page.test.tsx`'s narrowing tests.)
     // The publication failure is visible, on its own, rather than silently
     // dropped.
     expect(screen.getByText("could not load who published this")).toBeInTheDocument();

@@ -5,7 +5,7 @@
 "use client";
 
 import { useEffect, useState, useTransition, type ReactNode } from "react";
-import { Button } from "@tesserix/web";
+import { Button, Callout, CalloutDescription } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import type { SurfaceState } from "@/components/kit/surface-state";
@@ -27,6 +27,11 @@ import {
   type PublishPlanSummary,
 } from "./actions";
 import { DraftEditor, type DraftEditorCell, type DraftEditorRow } from "./draft-editor";
+import {
+  CatalogSearchEmpty,
+  CatalogSearchField,
+  filterDraftEditorRowsBySearch,
+} from "./catalog-search";
 import { PublishView } from "./publish-view";
 // `PublishOutcome` and `OrphansCallout` are VALUE imports, safely:
 // `publish-outcome.tsx` is itself a `"use client"` module and imports
@@ -152,6 +157,35 @@ export function buildDraftEditorRows(
   }
 
   return order.map((key) => byKey.get(key)!);
+}
+
+/**
+ * How many of the draft's rows differ from what is published — the number the
+ * Draft tab's badge carries, so an operator on the Browse tab can see that a
+ * draft is waiting without opening it.
+ *
+ * Derived from {@link buildDraftEditorRows} rather than from a second walk
+ * over the two row sets, because that join is already the definition of
+ * "changed" on this surface: it is what `DraftEditor` renders an "edited"
+ * marker from, cell by cell (`draft-editor.tsx`'s own `dirty`). A separate
+ * comparison here could disagree with the editor the badge is counting, and
+ * the badge would be the one nobody checks.
+ *
+ * A row counts once however many of its currencies moved — the editor's rows
+ * are per lookup key, and the tab is telling an operator how many prices to
+ * look at, not how many cells.
+ *
+ * `publishedUnitAmountMinor` is `null` for a lookup key the published catalog
+ * does not have, which counts as changed: an added price is a change to
+ * publish. That is the same reading `DraftEditor` gives it.
+ */
+export function countChangedDraftRows(
+  draftRows: readonly CatalogRow[],
+  publishedRows: readonly CatalogRow[],
+): number {
+  return buildDraftEditorRows(draftRows, publishedRows).filter((row) =>
+    row.amounts.some((cell) => cell.draftUnitAmountMinor !== cell.publishedUnitAmountMinor),
+  ).length;
 }
 
 /**
@@ -424,10 +458,19 @@ export interface AuthoringPanelProps {
 }
 
 /**
- * The draft section's own body — everything ABOVE the publish-outcome
- * section. Split out of {@link AuthoringPanel} so that component's `return`
- * can render this conditionally while the outcome section below it never
- * is — see that component's own comment on why the split matters.
+ * The draft section's own body — the two-column split, editor and publish
+ * rail. Split out of {@link AuthoringPanel} so that component's `return` can
+ * render this conditionally while the publish-outcome section above it never
+ * is — see that component's own comment on why that hoist matters.
+ *
+ * # Why the editor and the rail are siblings in one grid
+ *
+ * Stacked, the rail sat below all 42 lookup keys: an operator editing amounts
+ * could not see what they were about to publish without scrolling to the
+ * bottom, and could not see the editor while reading the plan. Side by side,
+ * with the rail stuck to the top of the viewport, both are on screen at once.
+ * The grid is the only thing that changed — every prop, every branch and
+ * every control below is what it was.
  */
 function DraftSection({
   mode,
@@ -452,6 +495,15 @@ function DraftSection({
   canPublish: boolean;
   onOutcome: (result: Extract<PublishActionResult, { readonly ok: true }>) => void;
 }) {
+  // Declared above the early returns below, as every hook must be, and local
+  // to this panel: the Browse tab holds its own (see `CatalogViews`), and the
+  // two never share. Searching here narrows only what `DraftEditor` RENDERS —
+  // the draft on the server is untouched, `PublishSection`'s plan is built by
+  // `planPublishAction` from the revision rather than from these rows, and the
+  // Draft tab's changed count is computed by `catalog-surface.tsx` from
+  // `page.tsx`'s unfiltered rows. A row hidden here still publishes.
+  const [search, setSearch] = useState("");
+
   // `resolveState` resolves "no draft exists" (an ordinary, common outcome —
   // `readDraft` succeeded and simply found nothing) to `empty`, not `ready`
   // — see `surface-state.ts`. `ready` and `empty` are therefore BOTH
@@ -483,12 +535,45 @@ function DraftSection({
   // `AuthoringPanelProps`.
   const catalogUnavailable = catalogState.kind !== "ready" && catalogState.kind !== "empty";
 
+  // Built once here rather than inside the JSX, so the search below filters
+  // exactly the rows the editor would otherwise have rendered.
+  const editorRows =
+    draftRowsState.kind === "ready" && draftRows
+      ? buildDraftEditorRows(draftRows, catalogUnavailable ? [] : catalog)
+      : [];
+  const searchedRows = filterDraftEditorRowsBySearch(editorRows, search);
+  const searchedToNothing = searchedRows.length === 0 && editorRows.length > 0;
+
   return (
-    <>
-      <section className="flex flex-col gap-3" aria-label="Draft">
+    // The split. `lg:items-start` is not decoration and not interchangeable
+    // with the default: a grid item stretches to the row's height, and a
+    // `position: sticky` box that is already as tall as its containing block
+    // has nowhere to travel, so the rail would simply sit still. With
+    // `items-start` the rail is content-height inside a container as tall as
+    // the editor, which is the space it sticks within.
+    //
+    // Below `lg` this collapses to one column and the rail becomes an
+    // ordinary block under the editor — the same single DOM subtree, moved,
+    // never a second copy and never `hidden`. That is what keeps publishing
+    // reachable at every width: there is exactly one publish control on this
+    // surface and no viewport can remove it.
+    <div className="grid gap-8 lg:grid-cols-3 lg:items-start">
+      <section className="flex flex-col gap-3 lg:col-span-2" aria-label="Draft">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Draft</h2>
-          {canDraft ? <DiscardDraftButton revisionId={draftId} /> : null}
+          <div className="flex items-center gap-2">
+            {/* Only where there is an editor to narrow. A search box above a
+                "no draft is open" message or a capability notice would offer
+                to filter something that is not on screen. */}
+            {draftRowsState.kind === "ready" && draftRows && canDraft ? (
+              <CatalogSearchField
+                label="Search the draft"
+                value={search}
+                onChange={setSearch}
+              />
+            ) : null}
+            {canDraft ? <DiscardDraftButton revisionId={draftId} /> : null}
+          </div>
         </div>
         {draftRowsState.kind === "ready" && draftRows ? (
           canDraft ? (
@@ -501,10 +586,11 @@ function DraftSection({
                   server-side before anything reaches Stripe.
                 </p>
               ) : null}
-              <DraftEditor
-                revisionId={draftId}
-                rows={buildDraftEditorRows(draftRows, catalogUnavailable ? [] : catalog)}
-              />
+              {searchedToNothing ? (
+                <CatalogSearchEmpty query={search} onClear={() => setSearch("")} />
+              ) : (
+                <DraftEditor revisionId={draftId} rows={searchedRows} />
+              )}
             </>
           ) : (
             <CapabilityNotice>
@@ -519,8 +605,24 @@ function DraftSection({
         )}
       </section>
 
-      <section className="flex flex-col gap-3" aria-label="Publish">
+      {/* The rail. `sticky`, never `fixed`: the console layout puts a fixed
+          sidebar and a `sticky top-0 z-20 h-14` header
+          (`components/nav/console-header.tsx`) around every page, and a
+          `fixed` box here would be positioned against the viewport and sit on
+          top of both. `top-[4.5rem]` is that header's own 3.5rem (`h-14`)
+          plus a 1rem gap, so the rail parks just clear of it rather than
+          under it. */}
+      <section
+        className="flex flex-col gap-3 lg:sticky lg:top-[4.5rem]"
+        aria-label="Publish"
+      >
         <h2 className="text-sm font-medium">Publish</h2>
+        {/* Unchanged, deliberately: `PublishSection` still fetches the same
+            plan and still renders `PublishView`, whose typed-mode gate, guard
+            verdict and refusal path are what they were. This task moves where
+            that renders, not what it does — and the operation lines the rail
+            shows are `PublishView`'s own `operationLines`, not a second
+            summary written here that could disagree with it. */}
         <PublishSection
           revisionId={draftId}
           mode={mode}
@@ -528,7 +630,7 @@ function DraftSection({
           onOutcome={onOutcome}
         />
       </section>
-    </>
+    </div>
   );
 }
 
@@ -599,20 +701,32 @@ export function AuthoringPanel({
   // hoist fixes. A FAILED publish never promotes, so the draft (and
   // `DraftSection`'s draft-editing branch) survives either way, which is why
   // this was invisible in every failed-publish test written before this fix.
+  //
+  // ORDER, since the split: both of the blocks below sit ABOVE
+  // `DraftSection` and outside its grid, full width. Inside the rail they
+  // would be in a column an operator scrolls past on a narrow viewport —
+  // where the two-column layout collapses and the rail lands under a
+  // 42-row editor — and "a live publish failed" and "this panel is editing
+  // the real Stripe account" are the two facts on this surface that must not
+  // be findable only by scrolling.
   return (
     <div className="flex flex-col gap-8">
-      <DraftSection
-        mode={mode}
-        catalog={catalog}
-        catalogState={catalogState}
-        draftState={draftState}
-        draftId={draftId}
-        draftRows={draftRows}
-        draftRowsState={draftRowsState}
-        canDraft={canDraft}
-        canPublish={canPublish}
-        onOutcome={setOutcome}
-      />
+      {/* Which Stripe account this panel edits, said once at panel level.
+          NOT a duplicate of `publish-view.tsx`'s `LIVE_CONFIRMATION_NOTE`,
+          which is a different statement made at a different moment: that one
+          belongs to a built plan and to the typed-mode gate in front of it,
+          arrives only once `planPublishAction` has returned a `mode` breach,
+          and after this task renders inside the rail. This one is true of
+          the whole panel from first paint, before any plan exists. */}
+      {mode === "live" ? (
+        <Callout role="status">
+          <CalloutDescription>
+            This is the live Stripe account. Edits here are still private to the draft —
+            nothing reaches Stripe until a publish is confirmed — but what publishing does
+            is real prices for real customers.
+          </CalloutDescription>
+        </Callout>
+      ) : null}
 
       {showOutcomeSection ? (
         <section className="flex flex-col gap-3" aria-label="Publish outcome">
@@ -667,6 +781,19 @@ export function AuthoringPanel({
           )}
         </section>
       ) : null}
+
+      <DraftSection
+        mode={mode}
+        catalog={catalog}
+        catalogState={catalogState}
+        draftState={draftState}
+        draftId={draftId}
+        draftRows={draftRows}
+        draftRowsState={draftRowsState}
+        canDraft={canDraft}
+        canPublish={canPublish}
+        onOutcome={setOutcome}
+      />
     </div>
   );
 }
