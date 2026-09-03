@@ -58,10 +58,22 @@ A user with no roles on the project therefore **authenticates at Zitadel
 perfectly well**. They are refused afterwards, by the console, at one of two
 gates:
 
-| Gate | Code | Symptom |
-|---|---|---|
-| `/auth/callback` | `isInternal` in `packages/platform-auth/src/zitadel.ts` — refuses an identity whose `roles` array is empty | 403 `not_internal`, returned as JSON |
-| `middleware.ts` | `isInternal` in `apps/console/lib/internal-access.ts` — refuses a session lacking `CONSOLE_ENTRY_CAPABILITY` (`read`) | the "platform console is restricted" page |
+| Gate | Code | Refuses when | Symptom |
+|---|---|---|---|
+| `/auth/callback` | `isInternal` in `packages/platform-auth/src/zitadel.ts` | the identity's `roles` array is empty, **or** its `orgId` is not `internalOrgId` | 403 `not_internal`, as JSON |
+| `middleware.ts` | `isInternal` in `apps/console/lib/internal-access.ts` | the email is not on the platform-operator allowlist | 403 — `{"error":"Forbidden"}` under `/api/`, otherwise the plain-text "The platform console is restricted to internal operators." |
+
+**The second gate does not look at roles.** Its signature accepts them and
+ignores them: the allowlist is the door, and since #519 the grant decides only
+what an admitted operator can *do*, not whether they get in
+(`capabilitiesFor` in `packages/platform-auth/src/operators.ts`).
+`CONSOLE_ENTRY_CAPABILITY` is `read`, and it is what route entries in
+`routes.ts` default to — it is not this gate's condition.
+
+So the two gates fail differently, and the difference is the diagnosis: **no
+roles** is refused at the callback with JSON; **not on the allowlist** is
+refused by the middleware with the restricted message. An operator who is
+allowlisted but role-less never reaches the second gate.
 
 So the diagnostic is the opposite of what this page used to say: **a role
 problem looks like a console refusal after a successful sign-in, not like a
@@ -73,7 +85,13 @@ the credential — see the traps below.
 Remove their **role assignment** on `platform-console`. That is sufficient, but
 *not* for the reason this page used to give: the removal takes effect at the
 console's gates above, not at Zitadel's login. The operator can still sign in to
-Zitadel; they just cannot get past `/auth/callback`.
+Zitadel; they just cannot get past `/auth/callback`, because removing every role
+is what empties the array that gate checks.
+
+There is a second, independent lever: the platform-operator **allowlist** the
+middleware reads. Removing the address there refuses them even if a role
+assignment survives somewhere. Use the role assignment as the normal path and
+the allowlist when you want the door shut regardless of grants.
 
 **Do not delete the user to revoke access.** Deleting a Zitadel user discards
 its role grants silently, and if that user is the one carrying the grants you
