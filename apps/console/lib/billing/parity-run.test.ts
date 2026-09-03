@@ -305,7 +305,7 @@ describe("performParityCheck", () => {
           catalog,
           matching,
           "mark8ly_",
-          { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_" },
+          { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_", productBrand: "Mark8ly" },
         );
       } finally {
         spy.mockRestore();

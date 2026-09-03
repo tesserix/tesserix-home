@@ -11,6 +11,7 @@ import Stripe from "stripe";
 import { expectedInterval } from "../parity";
 import type { TaxBehavior } from "../parity";
 import type { StripeMode } from "../stripe-read";
+import { policyFor, SINGLE_SOURCE, type CatalogSource } from "../source-policy";
 
 /**
  * The console's ONLY way to WRITE to Stripe — Products and Prices, in either
@@ -212,26 +213,50 @@ export interface CreatePriceSpec {
  */
 export interface StripeCatalogWriter {
   /**
-   * Looks up an existing Product by `metadata.plan`, mirroring mark8ly's
-   * `FindProductByMetadata`. Lists ACTIVE products, first page only
-   * (limit=100) — the same bound mark8ly's bootstrap accepted, because the
-   * account will never hold more than a handful of plan Products.
+   * Looks up an existing Product for one (source, plan). Lists ACTIVE
+   * products, first page only (limit=100) — the same bound mark8ly's
+   * bootstrap accepted, because the account will never hold more than a
+   * handful of plan Products.
+   *
+   * # `source` is part of the identity, and was missing
+   *
+   * This matched on `metadata.plan` ALONE. That was accidentally correct
+   * while `mark8ly` was the only source, because `plan` was then a unique
+   * key — and it becomes a data-corruption bug the moment it is not:
+   * `findProductByPlan(mode, "pro")` for a second source would resolve to
+   * MARK8LY's Pro Product and quietly attach the other source's Prices to
+   * it. Stripe has no product-merge; unpicking that afterwards means
+   * archiving prices customers may already hold.
+   *
+   * tesserix-home#392 added the `source` axis to parity runs and to
+   * `plan_catalog_prices` for exactly this class of reason. Product
+   * resolution is the place it did not reach.
    *
    * Returns `null`, not a thrown error, when nothing matches: the console
    * has no `ErrNotFound` idiom, and `createProduct`'s whole reason to exist
    * is the case where this returns `null`.
    */
-  findProductByPlan(mode: StripeMode, plan: string): Promise<StripeProductRef | null>;
+  findProductByPlan(
+    mode: StripeMode,
+    plan: string,
+    source: CatalogSource,
+  ): Promise<StripeProductRef | null>;
 
   /**
-   * Creates a Product named `"Mark8ly " + plan`, tagged `metadata.plan` so a
-   * later `findProductByPlan` call succeeds without the caller storing the
-   * Stripe id anywhere — mirrors mark8ly's `CreateProduct` exactly.
+   * Creates a Product named `"<brand> <plan>"` — the brand taken from the
+   * source's own {@link SourcePolicy}, not hardcoded — tagged with BOTH
+   * `metadata.plan` and `metadata.source` so a later `findProductByPlan`
+   * can tell two sources' identically-named plans apart.
    *
    * `idempotencyKey` is a required parameter, not minted here — see the
    * module header.
    */
-  createProduct(mode: StripeMode, plan: string, idempotencyKey: string): Promise<StripeProductRef>;
+  createProduct(
+    mode: StripeMode,
+    plan: string,
+    source: CatalogSource,
+    idempotencyKey: string,
+  ): Promise<StripeProductRef>;
 
   /** Creates one Price from {@link CreatePriceSpec}. */
   createPrice(mode: StripeMode, spec: CreatePriceSpec): Promise<StripePriceRef>;
@@ -332,17 +357,53 @@ function intervalOf(period: CreatePriceSpec["period"]): "year" | "month" {
 }
 
 export const stripeCatalogWriter: StripeCatalogWriter = {
-  async findProductByPlan(mode, plan) {
+  async findProductByPlan(mode, plan, source) {
     const products = await client(mode)
       .products.list({ active: true, limit: 100 })
       .autoPagingToArray({ limit: 100 });
-    const match = products.find((p) => p.metadata?.plan === plan);
-    return match ? { id: match.id } : null;
+
+    // Exact match first: both axes present and both agreeing.
+    const exact = products.find(
+      (p) => p.metadata?.plan === plan && p.metadata?.source === source,
+    );
+    if (exact) return { id: exact.id };
+
+    // COMPATIBILITY, and deliberately narrow.
+    //
+    // Every Product that exists today predates `metadata.source` — the
+    // three in the live account were created by hand on 2026-08-28, and
+    // the bootstrap has never written the tag. Requiring it outright would
+    // stop resolving all of them, and the next publish would create
+    // DUPLICATE Products beside the ones already carrying live Prices.
+    //
+    // So an untagged Product is claimable, but ONLY by the single source
+    // that could have created it. A second source can never inherit a
+    // Product it did not make, which is the whole point of the fix; and
+    // mark8ly keeps resolving exactly what it resolves today.
+    //
+    // This branch is removable once every Product carries `metadata.source`
+    // -- a backfill, not a code change. Left until then rather than
+    // coordinating a migration with a deploy, because getting that ordering
+    // wrong creates duplicate Products in a live billing account.
+    if (source === SINGLE_SOURCE) {
+      const legacy = products.find(
+        (p) => p.metadata?.plan === plan && p.metadata?.source === undefined,
+      );
+      if (legacy) return { id: legacy.id };
+    }
+
+    return null;
   },
 
-  async createProduct(mode, plan, idempotencyKey) {
+  async createProduct(mode, plan, source, idempotencyKey) {
     const created = await client(mode).products.create(
-      { name: `Mark8ly ${plan}`, metadata: { plan } },
+      // `metadata.source` is what makes the lookup above able to tell two
+      // sources apart. Written on every create from now on; the Products
+      // that predate it are handled by that function's compatibility branch.
+      {
+        name: `${policyFor(source).productBrand} ${plan}`,
+        metadata: { plan, source },
+      },
       { idempotencyKey },
     );
     return { id: created.id };

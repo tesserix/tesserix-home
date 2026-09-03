@@ -383,7 +383,9 @@ describe("runBootstrap", () => {
     await runBootstrap("test");
 
     for (const call of writerMock.createProduct.mock.calls) {
-      const idempotencyKey = call[2] as string;
+      // Index 3, not 2: `createProduct` takes (mode, plan, source,
+      // idempotencyKey) since product resolution became source-aware.
+      const idempotencyKey = call[3] as string;
       expect(idempotencyKey).toMatch(/^console:bootstrap:v1:product:/);
     }
     for (const call of writerMock.createPrice.mock.calls) {

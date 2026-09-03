@@ -107,14 +107,14 @@ it("never returns the underlying Stripe instance", () => {
 
 it("fails clearly when the mode's key is absent", async () => {
   vi.stubEnv("STRIPE_WRITE_KEY_TEST", "");
-  await expect(stripeCatalogWriter.findProductByPlan("test", "pro")).rejects.toThrow(
+  await expect(stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).rejects.toThrow(
     /STRIPE_WRITE_KEY_TEST/,
   );
 });
 
 it("fails with StripeWriteUnavailableError, not a bare Error", async () => {
   vi.stubEnv("STRIPE_WRITE_KEY_TEST", "");
-  await expect(stripeCatalogWriter.findProductByPlan("test", "pro")).rejects.toThrow(
+  await expect(stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).rejects.toThrow(
     StripeWriteUnavailableError,
   );
 });
@@ -124,7 +124,7 @@ it("refuses a key whose prefix contradicts its mode", async () => {
   // produced a report claiming all 42 prices were missing. The WRITE-side
   // version creates 42 prices in the wrong account.
   vi.stubEnv("STRIPE_WRITE_KEY_TEST", ["sk", "live", "abc123"].join("_"));
-  await expect(stripeCatalogWriter.findProductByPlan("test", "pro")).rejects.toThrow(/mode/i);
+  await expect(stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).rejects.toThrow(/mode/i);
 });
 
 it("reads a separate environment variable per mode", () => {
@@ -146,7 +146,7 @@ describe("findProductByPlan", () => {
       ),
     );
 
-    const found = await stripeCatalogWriter.findProductByPlan("test", "pro");
+    const found = await stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly");
 
     expect(found).toEqual({ id: "prod_pro" });
     expect(stripeMock.productsList).toHaveBeenCalledWith(
@@ -160,18 +160,106 @@ describe("findProductByPlan", () => {
       productPagesOf({ id: "prod_other", metadata: { plan: "starter" } }),
     );
 
-    const found = await stripeCatalogWriter.findProductByPlan("test", "pro");
+    const found = await stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly");
 
     expect(found).toBeNull();
   });
 });
 
-describe("createProduct", () => {
-  it("names the product 'Mark8ly ' + plan and tags metadata.plan", async () => {
-    await stripeCatalogWriter.createProduct("test", "pro", "product:v1:pro");
+describe("findProductByPlan is scoped by source", () => {
+  /**
+   * THE BUG THIS FIXES. `plan` alone was the match key, which is unique
+   * only while there is exactly one source. With two, a second source's
+   * "pro" resolved to MARK8LY's Pro Product and its Prices would have been
+   * attached there. Stripe has no product-merge.
+   */
+  it("does not hand one source's Product to another source", async () => {
+    stripeMock.productsList.mockReturnValue(
+      productPagesOf({ id: "prod_mark8ly_pro", metadata: { plan: "pro", source: "mark8ly" } }),
+    );
 
+    // Cast past the union: `kora` is not a CatalogSource yet, and the whole
+    // point is that this must already be safe BEFORE one exists — by then
+    // the damage would be Prices on the wrong Product.
+    const found = await stripeCatalogWriter.findProductByPlan(
+      "test",
+      "pro",
+      "kora" as never,
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it("matches when plan and source both agree", async () => {
+    stripeMock.productsList.mockReturnValue(
+      productPagesOf(
+        { id: "prod_other_pro", metadata: { plan: "pro", source: "kora" } },
+        { id: "prod_mark8ly_pro", metadata: { plan: "pro", source: "mark8ly" } },
+      ),
+    );
+
+    expect(await stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).toEqual({
+      id: "prod_mark8ly_pro",
+    });
+  });
+
+  /**
+   * Every Product that exists today predates `metadata.source` — the three
+   * in the live account were created by hand on 2026-08-28. Refusing them
+   * would not fail safe: the next publish would create DUPLICATE Products
+   * beside the ones already carrying live Prices.
+   */
+  it("still resolves an untagged Product for the single source that could have created it", async () => {
+    stripeMock.productsList.mockReturnValue(
+      productPagesOf({ id: "prod_legacy_pro", metadata: { plan: "pro" } }),
+    );
+
+    expect(await stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).toEqual({
+      id: "prod_legacy_pro",
+    });
+  });
+
+  /**
+   * ...and the compatibility branch must not become the hole the fix was
+   * closing. An untagged Product is claimable ONLY by the source that could
+   * have made it; a newcomer inherits nothing.
+   */
+  it("refuses to let a second source claim an untagged Product", async () => {
+    stripeMock.productsList.mockReturnValue(
+      productPagesOf({ id: "prod_legacy_pro", metadata: { plan: "pro" } }),
+    );
+
+    expect(
+      await stripeCatalogWriter.findProductByPlan("test", "pro", "kora" as never),
+    ).toBeNull();
+  });
+
+  it("prefers an exactly-tagged Product over an untagged one with the same plan", async () => {
+    stripeMock.productsList.mockReturnValue(
+      productPagesOf(
+        { id: "prod_legacy_pro", metadata: { plan: "pro" } },
+        { id: "prod_tagged_pro", metadata: { plan: "pro", source: "mark8ly" } },
+      ),
+    );
+
+    expect(await stripeCatalogWriter.findProductByPlan("test", "pro", "mark8ly")).toEqual({
+      id: "prod_tagged_pro",
+    });
+  });
+});
+
+describe("createProduct", () => {
+  it("names the product from the SOURCE's brand and tags both plan and source", async () => {
+    await stripeCatalogWriter.createProduct("test", "pro", "mark8ly", "product:v1:pro");
+
+    // `metadata.source` is the half that was missing. Without it
+    // `findProductByPlan` cannot tell two sources' "pro" apart, and the
+    // brand came from a hardcoded template rather than the source.
     expect(stripeMock.productsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "Mark8ly pro", metadata: { plan: "pro" } }),
+      expect.objectContaining({
+        name: "Mark8ly pro",
+        metadata: { plan: "pro", source: "mark8ly" },
+      }),
       { idempotencyKey: "product:v1:pro" },
     );
   });
@@ -183,7 +271,7 @@ describe("createProduct", () => {
       metadata: { plan: "pro" },
     });
 
-    const created = await stripeCatalogWriter.createProduct("test", "pro", "product:v1:pro");
+    const created = await stripeCatalogWriter.createProduct("test", "pro", "mark8ly", "product:v1:pro");
 
     expect(created).toEqual({ id: "prod_new" });
   });
@@ -353,7 +441,7 @@ describe("mode isolation", () => {
     vi.stubEnv("STRIPE_WRITE_KEY_TEST", "sk_test_aaa");
     vi.stubEnv("STRIPE_WRITE_KEY_LIVE", "sk_live_bbb");
 
-    await stripeCatalogWriter.findProductByPlan("live", "pro");
+    await stripeCatalogWriter.findProductByPlan("live", "pro", "mark8ly");
 
     expect(stripeMock.constructedWith.map((c) => c.key)).toEqual(["sk_live_bbb"]);
   });

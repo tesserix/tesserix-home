@@ -100,10 +100,27 @@ export interface SourcePolicy {
    * module) so the string exists in exactly one place.
    */
   readonly lookupKeyPrefix: string;
+  /**
+   * The brand this source's Stripe Products are named after.
+   *
+   * `createProduct` used to hardcode `"Mark8ly " + plan`. That was correct
+   * while `mark8ly` was the only source and silently wrong the moment it
+   * was not: a second source's Product would have been created named
+   * "Mark8ly ...". A product name is customer-visible in Stripe and there
+   * is no product-merge to undo it with, so this is a fact about the
+   * SOURCE, exactly like the two above, and belongs on the same record.
+   *
+   * This is a DEFAULT, not the final word. tesserix-home#327's redesign
+   * work introduces an operator-confirmed product name read from the live
+   * Stripe account rather than generated; until that lands this keeps the
+   * generated name at least correct per source instead of correct only by
+   * coincidence.
+   */
+  readonly productBrand: string;
 }
 
 const POLICIES: Record<CatalogSource, SourcePolicy> = {
-  mark8ly: { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_" },
+  mark8ly: { amountsAreScaledBy100: true, lookupKeyPrefix: "mark8ly_", productBrand: "Mark8ly" },
 };
 
 /**

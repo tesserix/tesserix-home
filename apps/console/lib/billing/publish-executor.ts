@@ -311,7 +311,7 @@ async function resolveProductId(
   const known = productIds.get(plan);
   if (known) return known;
 
-  const existing = await deps.writer.findProductByPlan(mode, plan);
+  const existing = await deps.writer.findProductByPlan(mode, plan, SINGLE_SOURCE);
   if (!existing) {
     throw new Error(
       `executePublish: no Stripe Product found for plan "${plan}", and none was created earlier in this attempt`,
@@ -503,7 +503,8 @@ async function runOperation(
           stripePriceId: null,
           sequence: nextSequence(),
           captureIdOnSuccess: false,
-          call: (idempotencyKey) => deps.writer.createProduct(attempt.mode, op.plan, idempotencyKey),
+          call: (idempotencyKey) =>
+            deps.writer.createProduct(attempt.mode, op.plan, SINGLE_SOURCE, idempotencyKey),
         });
         productIds.set(op.plan, product.id);
         return { kind: op.kind, lookupKey: null, status: "succeeded" };
