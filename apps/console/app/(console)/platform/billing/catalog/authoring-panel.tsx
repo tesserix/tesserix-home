@@ -5,7 +5,7 @@
 "use client";
 
 import { useEffect, useState, useTransition, type ReactNode } from "react";
-import { Button } from "@tesserix/web";
+import { Button, Callout, CalloutDescription } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import type { SurfaceState } from "@/components/kit/surface-state";
@@ -458,10 +458,19 @@ export interface AuthoringPanelProps {
 }
 
 /**
- * The draft section's own body — everything ABOVE the publish-outcome
- * section. Split out of {@link AuthoringPanel} so that component's `return`
- * can render this conditionally while the outcome section below it never
- * is — see that component's own comment on why the split matters.
+ * The draft section's own body — the two-column split, editor and publish
+ * rail. Split out of {@link AuthoringPanel} so that component's `return` can
+ * render this conditionally while the publish-outcome section above it never
+ * is — see that component's own comment on why that hoist matters.
+ *
+ * # Why the editor and the rail are siblings in one grid
+ *
+ * Stacked, the rail sat below all 42 lookup keys: an operator editing amounts
+ * could not see what they were about to publish without scrolling to the
+ * bottom, and could not see the editor while reading the plan. Side by side,
+ * with the rail stuck to the top of the viewport, both are on screen at once.
+ * The grid is the only thing that changed — every prop, every branch and
+ * every control below is what it was.
  */
 function DraftSection({
   mode,
@@ -536,8 +545,20 @@ function DraftSection({
   const searchedToNothing = searchedRows.length === 0 && editorRows.length > 0;
 
   return (
-    <>
-      <section className="flex flex-col gap-3" aria-label="Draft">
+    // The split. `lg:items-start` is not decoration and not interchangeable
+    // with the default: a grid item stretches to the row's height, and a
+    // `position: sticky` box that is already as tall as its containing block
+    // has nowhere to travel, so the rail would simply sit still. With
+    // `items-start` the rail is content-height inside a container as tall as
+    // the editor, which is the space it sticks within.
+    //
+    // Below `lg` this collapses to one column and the rail becomes an
+    // ordinary block under the editor — the same single DOM subtree, moved,
+    // never a second copy and never `hidden`. That is what keeps publishing
+    // reachable at every width: there is exactly one publish control on this
+    // surface and no viewport can remove it.
+    <div className="grid gap-8 lg:grid-cols-3 lg:items-start">
+      <section className="flex flex-col gap-3 lg:col-span-2" aria-label="Draft">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Draft</h2>
           <div className="flex items-center gap-2">
@@ -584,8 +605,24 @@ function DraftSection({
         )}
       </section>
 
-      <section className="flex flex-col gap-3" aria-label="Publish">
+      {/* The rail. `sticky`, never `fixed`: the console layout puts a fixed
+          sidebar and a `sticky top-0 z-20 h-14` header
+          (`components/nav/console-header.tsx`) around every page, and a
+          `fixed` box here would be positioned against the viewport and sit on
+          top of both. `top-[4.5rem]` is that header's own 3.5rem (`h-14`)
+          plus a 1rem gap, so the rail parks just clear of it rather than
+          under it. */}
+      <section
+        className="flex flex-col gap-3 lg:sticky lg:top-[4.5rem]"
+        aria-label="Publish"
+      >
         <h2 className="text-sm font-medium">Publish</h2>
+        {/* Unchanged, deliberately: `PublishSection` still fetches the same
+            plan and still renders `PublishView`, whose typed-mode gate, guard
+            verdict and refusal path are what they were. This task moves where
+            that renders, not what it does — and the operation lines the rail
+            shows are `PublishView`'s own `operationLines`, not a second
+            summary written here that could disagree with it. */}
         <PublishSection
           revisionId={draftId}
           mode={mode}
@@ -593,7 +630,7 @@ function DraftSection({
           onOutcome={onOutcome}
         />
       </section>
-    </>
+    </div>
   );
 }
 
@@ -664,20 +701,32 @@ export function AuthoringPanel({
   // hoist fixes. A FAILED publish never promotes, so the draft (and
   // `DraftSection`'s draft-editing branch) survives either way, which is why
   // this was invisible in every failed-publish test written before this fix.
+  //
+  // ORDER, since the split: both of the blocks below sit ABOVE
+  // `DraftSection` and outside its grid, full width. Inside the rail they
+  // would be in a column an operator scrolls past on a narrow viewport —
+  // where the two-column layout collapses and the rail lands under a
+  // 42-row editor — and "a live publish failed" and "this panel is editing
+  // the real Stripe account" are the two facts on this surface that must not
+  // be findable only by scrolling.
   return (
     <div className="flex flex-col gap-8">
-      <DraftSection
-        mode={mode}
-        catalog={catalog}
-        catalogState={catalogState}
-        draftState={draftState}
-        draftId={draftId}
-        draftRows={draftRows}
-        draftRowsState={draftRowsState}
-        canDraft={canDraft}
-        canPublish={canPublish}
-        onOutcome={setOutcome}
-      />
+      {/* Which Stripe account this panel edits, said once at panel level.
+          NOT a duplicate of `publish-view.tsx`'s `LIVE_CONFIRMATION_NOTE`,
+          which is a different statement made at a different moment: that one
+          belongs to a built plan and to the typed-mode gate in front of it,
+          arrives only once `planPublishAction` has returned a `mode` breach,
+          and after this task renders inside the rail. This one is true of
+          the whole panel from first paint, before any plan exists. */}
+      {mode === "live" ? (
+        <Callout role="status">
+          <CalloutDescription>
+            This is the live Stripe account. Edits here are still private to the draft —
+            nothing reaches Stripe until a publish is confirmed — but what publishing does
+            is real prices for real customers.
+          </CalloutDescription>
+        </Callout>
+      ) : null}
 
       {showOutcomeSection ? (
         <section className="flex flex-col gap-3" aria-label="Publish outcome">
@@ -732,6 +781,19 @@ export function AuthoringPanel({
           )}
         </section>
       ) : null}
+
+      <DraftSection
+        mode={mode}
+        catalog={catalog}
+        catalogState={catalogState}
+        draftState={draftState}
+        draftId={draftId}
+        draftRows={draftRows}
+        draftRowsState={draftRowsState}
+        canDraft={canDraft}
+        canPublish={canPublish}
+        onOutcome={setOutcome}
+      />
     </div>
   );
 }

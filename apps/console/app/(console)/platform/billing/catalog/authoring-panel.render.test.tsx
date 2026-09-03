@@ -372,3 +372,258 @@ describe("AuthoringPanel — the outcome that survives a reload", () => {
     expect(screen.getByText(/stripe timed out/i)).toBeInTheDocument();
   });
 });
+
+/* ------------------------------------------------------------------------ *
+ * The sticky publish rail
+ * ------------------------------------------------------------------------ */
+
+/**
+ * The split: the draft editor on the left, the publish rail on the right,
+ * stuck in view while the editor scrolls.
+ *
+ * The rail is `PublishSection` exactly as it was — `PublishView`, its typed
+ * mode gate, its guard verdict and its refusal path are moved, not rewritten,
+ * so what this suite asserts about them is where they RENDER. What publishing
+ * DOES is `publish-view.render.test.tsx`'s and `actions.test.ts`' subject and
+ * is deliberately not restated here.
+ */
+
+/** Type into a `SearchFilterInput` and flush its debounce — blur commits
+ *  immediately. Same helper `catalog-search.test.tsx` uses, for the same
+ *  reason: it keeps this suite off fake timers. */
+function searchDraft(text: string) {
+  const input = screen.getByLabelText(/search the draft/i);
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+}
+
+const rail = () => screen.getByRole("region", { name: "Publish" });
+
+/** Every operation kind at once, so `operationLines` emits all five of its
+ *  lines and this suite is asserting the real function's output rather than
+ *  one lucky branch of it. */
+const EVERY_KIND_PLAN = {
+  ...READY_PLAN,
+  counts: {
+    create_product: 1,
+    create_price: 2,
+    replace_price: 3,
+    add_currency_option: 1,
+    update_tax_behavior: 1,
+    archive_price: 4,
+    total: 12,
+    intended: 5,
+    driftCorrection: 7,
+    unactionable: 0,
+  },
+};
+
+describe("AuthoringPanel — the publish rail's contents", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("renders the operation lines, by kind and in execution order, inside the rail", async () => {
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+    render(<AuthoringPanel {...baseProps()} />);
+
+    // Awaited on the rail itself: the plan arrives over `planPublishAction`,
+    // so nothing below is on screen until it resolves.
+    expect(await screen.findByText(/1 Stripe Product created/)).toBeInTheDocument();
+
+    const lines = within(rail())
+      .getAllByRole("listitem")
+      .map((item) => item.textContent ?? "");
+
+    // The vocabulary is `operationLines`' own, per OPERATION KIND — not an
+    // invented pair of counts. `add_currency_option` and
+    // `update_tax_behavior` are one line ("updated in place"), which is why
+    // 1 + 1 reads as 2.
+    expect(lines).toEqual([
+      "1 Stripe Product created",
+      "2 created — a Price that does not exist in Stripe yet",
+      "2 updated in place — the existing Price object is kept",
+      expect.stringContaining("3 replaced"),
+      expect.stringContaining("4 archived"),
+    ]);
+  });
+
+  it("keeps the publish action itself in the rail, and only there", async () => {
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+    render(<AuthoringPanel {...baseProps()} />);
+
+    const review = await screen.findByRole("button", { name: /review changes/i });
+    // Exactly one, never a narrow-viewport duplicate: a second copy is how a
+    // surface ends up with two controls matching the same verb and an
+    // operator unable to tell which one commits.
+    expect(screen.getAllByRole("button", { name: /review changes/i })).toHaveLength(1);
+    expect(rail().contains(review)).toBe(true);
+  });
+
+  it("keeps PublishView's typed-mode gate intact in its new position", async () => {
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+    render(<AuthoringPanel {...baseProps()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /review changes/i }));
+    const confirm = screen.getByRole("button", { name: /publish to test/i });
+
+    // Disabled until the mode is typed — the gate, unchanged by the move.
+    expect(confirm).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/type the mode name/i), { target: { value: "test" } });
+    expect(screen.getByRole("button", { name: /publish to test/i })).toBeEnabled();
+    expect(publishAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("AuthoringPanel — the split, and publishing at every width", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+  });
+
+  it("sticks the rail within the panel rather than to the viewport", async () => {
+    render(<AuthoringPanel {...baseProps()} />);
+    await screen.findByRole("button", { name: /review changes/i });
+
+    const railClasses = rail().className.split(/\s+/);
+    // `sticky`, never `fixed`: the console layout wraps every page in a fixed
+    // sidebar and a `sticky top-0 z-20` header, and a `fixed` rail would be
+    // positioned against the viewport and sit on top of both.
+    expect(railClasses).toContain("lg:sticky");
+    expect(railClasses).not.toContain("fixed");
+    // The console header is `h-14` (3.5rem) — this is that plus a 1rem gap,
+    // so the rail parks clear of it rather than under it.
+    expect(railClasses).toContain("lg:top-[4.5rem]");
+
+    const grid = rail().parentElement!;
+    expect(grid.className).toContain("lg:grid-cols-3");
+    // Not decoration: a stretched grid item is already its container's height
+    // and a sticky box with no room to travel simply sits still.
+    expect(grid.className).toContain("lg:items-start");
+  });
+
+  it("leaves the rail an ordinary stacked block below the breakpoint, so publishing stays reachable narrow", async () => {
+    render(<AuthoringPanel {...baseProps()} />);
+    await screen.findByRole("button", { name: /review changes/i });
+
+    const railClasses = rail().className.split(/\s+/);
+    // Never hidden at any width, and every breakpoint-scoped class it carries
+    // is `lg:`-prefixed — so below `lg` the rail is a plain block under the
+    // editor, the same single DOM subtree, and the publish control it holds
+    // is on screen at every width rather than behind a media query.
+    expect(railClasses).not.toContain("hidden");
+    expect(railClasses.filter((cls) => cls.includes(":")).every((cls) => cls.startsWith("lg:"))).toBe(
+      true,
+    );
+    expect(rail().parentElement!.className.split(/\s+/)).not.toContain("hidden");
+  });
+});
+
+describe("AuthoringPanel — what must not be inside a column", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+  });
+
+  const PERSISTED_FAILURE_FOR_SPLIT = {
+    attemptId: "attempt-rail",
+    outcome: "failed" as const,
+    promoted: false,
+    operations: [
+      {
+        sequence: 1,
+        kind: "archive_price",
+        lookupKey: "mark8ly_pro_annual_ppp_v1",
+        status: "failed" as const,
+        error: "rate_limit",
+      },
+    ],
+  };
+
+  /** True when `earlier` comes before `later` in document order. */
+  function precedes(earlier: Element, later: Element): boolean {
+    return Boolean(
+      earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  }
+
+  it("puts the live-mode warning above the split, full width, not in the rail", async () => {
+    render(<AuthoringPanel {...baseProps()} mode="live" />);
+    await screen.findByRole("button", { name: /review changes/i });
+
+    const warning = screen.getByText(/this is the live stripe account/i);
+    const grid = rail().parentElement!;
+    expect(grid.contains(warning)).toBe(false);
+    expect(precedes(warning, grid)).toBe(true);
+  });
+
+  it("says nothing about live on the test mode", async () => {
+    render(<AuthoringPanel {...baseProps()} />);
+    await screen.findByRole("button", { name: /review changes/i });
+
+    expect(screen.queryByText(/this is the live stripe account/i)).toBeNull();
+  });
+
+  it("puts the failed-attempt alert above the split, full width, not in the rail", async () => {
+    render(
+      <AuthoringPanel
+        {...baseProps()}
+        persistedOutcome={PERSISTED_FAILURE_FOR_SPLIT}
+        attemptState={READY}
+        operationsState={READY}
+        orphans={[]}
+        orphansState={EMPTY}
+      />,
+    );
+    await screen.findByRole("button", { name: /review changes/i });
+
+    const outcome = screen.getByRole("region", { name: "Publish outcome" });
+    const grid = rail().parentElement!;
+    expect(grid.contains(outcome)).toBe(false);
+    // An operator must not have to scroll a 42-row editor past to learn that
+    // a publish failed.
+    expect(precedes(outcome, grid)).toBe(true);
+  });
+});
+
+/** Four changed rows across three lookup keys, so a search on one plan hides
+ *  changed rows the rail's plan still counts. */
+const SPLIT_PUBLISHED: readonly CatalogRow[] = [
+  PUBLISHED_ROW,
+  { ...PUBLISHED_ROW, lookupKey: "mark8ly_starter_monthly_developed_v1", plan: "starter", unitAmountMinor: 1900 },
+  { ...PUBLISHED_ROW, lookupKey: "mark8ly_studio_annual_ppp_inr_v1", plan: "studio", currency: "inr", unitAmountMinor: 1200000 },
+];
+
+const SPLIT_DRAFT: readonly CatalogRow[] = SPLIT_PUBLISHED.map((row) => ({
+  ...row,
+  unitAmountMinor: row.unitAmountMinor + 100,
+}));
+
+describe("AuthoringPanel — a search narrows the editor and nothing else", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    planPublishAction.mockResolvedValue({ ok: true, plan: EVERY_KIND_PLAN });
+  });
+
+  it("leaves the rail byte-for-byte unchanged by a search that hides changed rows", async () => {
+    render(
+      <AuthoringPanel {...baseProps()} catalog={SPLIT_PUBLISHED} draftRows={SPLIT_DRAFT} />,
+    );
+    await screen.findByRole("button", { name: /review changes/i });
+
+    const before = rail().innerHTML;
+    expect(screen.getAllByText(/^mark8ly_[a-z0-9_]+_v1$/)).toHaveLength(3);
+
+    searchDraft("starter");
+
+    // The editor narrowed…
+    expect(screen.getAllByText(/^mark8ly_[a-z0-9_]+_v1$/)).toHaveLength(1);
+    // …and the rail did not. The rail describes the WHOLE revision: a hidden
+    // changed row is still a changed row and still publishes, so a search
+    // that quietly shrank what the rail says it will do would let an operator
+    // publish edits they believe are not there. Same invariant
+    // `catalog-search.test.tsx` holds over the Draft tab's badge.
+    expect(rail().innerHTML).toBe(before);
+    expect(planPublishAction).toHaveBeenCalledTimes(1);
+  });
+});
