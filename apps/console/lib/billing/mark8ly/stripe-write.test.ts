@@ -28,12 +28,14 @@ const stripeMock = vi.hoisted(() => {
   const pricesUpdate = vi.fn();
   const productsList = vi.fn();
   const productsCreate = vi.fn();
+  const couponsCreate = vi.fn();
   const constructedWith: Array<{ key: string; config: unknown }> = [];
   return {
     pricesCreate,
     pricesUpdate,
     productsList,
     productsCreate,
+    couponsCreate,
     constructedWith,
   };
 });
@@ -42,14 +44,21 @@ vi.mock("stripe", () => ({
   default: class FakeStripe {
     readonly prices = { create: stripeMock.pricesCreate, update: stripeMock.pricesUpdate };
     readonly products = { list: stripeMock.productsList, create: stripeMock.productsCreate };
+    readonly coupons = { create: stripeMock.couponsCreate };
     constructor(key: string, config: unknown) {
       stripeMock.constructedWith.push({ key, config });
     }
   },
 }));
 
-import { stripeCatalogWriter, StripeWriteUnavailableError, WRITE_KEY_ENV } from "./stripe-write";
-import type { CreatePriceSpec } from "./stripe-write";
+import {
+  stripeCatalogWriter,
+  StripeCouponTermsError,
+  StripeWriteUnavailableError,
+  WRITE_KEY_ENV,
+} from "./stripe-write";
+import type { CreateCouponSpec, CreatePriceSpec } from "./stripe-write";
+import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
 
 /** Every page the fake `products.list` hands back, as `autoPagingToArray`
  *  would return them. */
@@ -80,13 +89,14 @@ beforeEach(() => {
   stripeMock.pricesCreate.mockResolvedValue({ id: "price_new", currency_options: {} });
   stripeMock.pricesUpdate.mockResolvedValue({ id: "price_updated" });
   stripeMock.productsList.mockReturnValue(productPagesOf());
+  stripeMock.couponsCreate.mockResolvedValue({ id: "co_new" });
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("exposes exactly six methods, named individually so this fails on the next change", () => {
+it("exposes exactly seven methods, named individually so this fails on the next change", () => {
   // Named individually, not counted, so this fails on the NEXT method added
   // rather than merely on a count changing — see the module header.
   // `updatePriceCurrencyOptions` is deliberately absent: §1.6a proved an
@@ -94,6 +104,7 @@ it("exposes exactly six methods, named individually so this fails on the next ch
   expect(Object.keys(stripeCatalogWriter).sort()).toEqual([
     "addCurrencyOption",
     "archivePrice",
+    "createCoupon",
     "createPrice",
     "createProduct",
     "findProductByPlan",
@@ -435,6 +446,209 @@ describe("updatePriceTaxBehavior", () => {
     expect(updated).toEqual({ id: "price_abc" });
   });
 });
+
+/* ------------------------------------------------------------------------ *
+ * createCoupon — every assertion here is on the REQUEST
+ * ------------------------------------------------------------------------ */
+
+/**
+ * WHY THESE READ THE PAYLOAD AND NOT THE RETURN VALUE.
+ *
+ * `stripeMock.couponsCreate` resolves successfully whatever it is handed, so
+ * a test that asserted on the returned `{ id }` would pass against a request
+ * Stripe rejects outright. That is not hypothetical here: a missing
+ * `transfer_lookup_key` on `prices.create` survived this suite green and made
+ * every price change impossible for 18 days, because the plan, the ordering
+ * and the operation log were all right and the only wrong thing was a field
+ * in the payload no test looked at. Every assertion below reads
+ * `couponsCreate.mock.calls[0]`.
+ */
+const percentOff: PromoCodeDiscount = {
+  kind: "percent_off",
+  percentOff: 25,
+  duration: "forever",
+  durationInMonths: null,
+};
+
+const amountOff: PromoCodeDiscount = {
+  kind: "amount_off",
+  amountOffMinor: 1500,
+  currency: "usd",
+  duration: "once",
+  durationInMonths: null,
+};
+
+/** The params object handed to `coupons.create` on the first (and only) call. */
+function couponParams(): Record<string, unknown> {
+  expect(stripeMock.couponsCreate).toHaveBeenCalledTimes(1);
+  return stripeMock.couponsCreate.mock.calls[0][0] as Record<string, unknown>;
+}
+
+async function createCoupon(spec: CreateCouponSpec, key = "coupon:v1:k1") {
+  return stripeCatalogWriter.createCoupon("test", spec, key);
+}
+
+describe("createCoupon sends the discount shape Stripe names", () => {
+  it("sends percent_off for a percent-off discount, and NEITHER amount_off nor a currency", async () => {
+    // Stripe refuses a Coupon carrying both amounts. A currency alongside a
+    // percentage is worse than refused — 0046's
+    // `promo_codes_discount_currency_accompanies_amount_off` exists because a
+    // percentage with a currency reads as a currency-scoped discount on every
+    // surface that renders it, and is not one.
+    await createCoupon({ discount: percentOff });
+
+    const params = couponParams();
+    expect(params.percent_off).toBe(25);
+    expect(params).not.toHaveProperty("amount_off");
+    expect(params).not.toHaveProperty("currency");
+  });
+
+  it("sends amount_off WITH its currency, and no percent_off", async () => {
+    // The mirror. An amount without a currency is an amount in no unit;
+    // Stripe requires the pair.
+    await createCoupon({ discount: amountOff });
+
+    const params = couponParams();
+    expect(params.amount_off).toBe(1500);
+    expect(params.currency).toBe("usd");
+    expect(params).not.toHaveProperty("percent_off");
+  });
+
+  it("sends the authored duration through untouched", async () => {
+    await createCoupon({ discount: { ...percentOff, duration: "once" } });
+
+    expect(couponParams().duration).toBe("once");
+  });
+});
+
+describe("createCoupon and duration_in_months", () => {
+  it("carries duration_in_months for a repeating discount", async () => {
+    // The field Stripe REQUIRES for `repeating`. Dropping it does not produce
+    // a quiet wrong answer — the create fails — but it fails at publish time,
+    // against a live account, for whoever is publishing.
+    await createCoupon({
+      discount: { ...percentOff, duration: "repeating", durationInMonths: 3 },
+    });
+
+    const params = couponParams();
+    expect(params.duration).toBe("repeating");
+    expect(params.duration_in_months).toBe(3);
+  });
+
+  it("omits duration_in_months for 'once'", async () => {
+    // Stripe REJECTS the field on a non-repeating coupon, so sending it is
+    // not harmlessly redundant.
+    await createCoupon({ discount: { ...amountOff, duration: "once" } });
+
+    expect(couponParams()).not.toHaveProperty("duration_in_months");
+  });
+
+  it("omits duration_in_months for 'forever'", async () => {
+    await createCoupon({ discount: { ...percentOff, duration: "forever" } });
+
+    expect(couponParams()).not.toHaveProperty("duration_in_months");
+  });
+
+  it("refuses 'repeating' with no month count rather than sending a create Stripe will reject", async () => {
+    await expect(
+      createCoupon({ discount: { ...percentOff, duration: "repeating", durationInMonths: null } }),
+    ).rejects.toThrow(StripeCouponTermsError);
+
+    expect(stripeMock.couponsCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a month count on a non-repeating discount rather than dropping it silently", async () => {
+    // THE DANGEROUS DIRECTION. An operator who authored "3 months at 25% off"
+    // against a `forever` duration would otherwise get a successful create
+    // and a PERMANENT discount in a live account, with nothing anywhere
+    // reading as wrong.
+    await expect(
+      createCoupon({ discount: { ...percentOff, duration: "forever", durationInMonths: 3 } }),
+    ).rejects.toThrow(/month count/);
+
+    expect(stripeMock.couponsCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("createCoupon refuses a definition with no discount terms", () => {
+  /**
+   * THE RULE THE DATABASE CANNOT ENFORCE. 0046's closing paragraph states it
+   * outright: nothing in Postgres refuses a `promo_code_stripe_coupons` row
+   * against a definition carrying no terms, because a cross-table CHECK is
+   * not expressible. It does not need to be, as long as a terms-less
+   * definition can never obtain a `co_...` to record — and this method is the
+   * only place one comes from.
+   *
+   * The type system carries the first half: `PromoCodeRow.discount` is
+   * `PromoCodeDiscount | null` and {@link CreateCouponSpec.discount} is not
+   * nullable, so a caller that has not narrowed the null does not compile.
+   * The cast below is what that leaves, and it is exactly what a caller in a
+   * hurry reaches for.
+   */
+  it("throws, and makes no Stripe call at all, when the terms are absent", async () => {
+    await expect(
+      createCoupon({ discount: null as unknown as PromoCodeDiscount }),
+    ).rejects.toThrow(StripeCouponTermsError);
+
+    expect(stripeMock.couponsCreate).not.toHaveBeenCalled();
+  });
+
+  it("says a trial-extension-only definition has nothing to mint, not something generic", async () => {
+    // The operator reading this is looking at a code that works. The message
+    // has to say why it has no coupon rather than that something failed.
+    await expect(
+      createCoupon({ discount: undefined as unknown as PromoCodeDiscount }),
+    ).rejects.toThrow(/extends the trial only/);
+  });
+});
+
+describe("createCoupon passes through what it is given, and nothing it was not", () => {
+  it("passes the idempotency key as a request option, never minting one", async () => {
+    await createCoupon({ discount: percentOff }, "coupon:v1:LAUNCH25:test");
+
+    expect(stripeMock.couponsCreate.mock.calls[0][1]).toEqual({
+      idempotencyKey: "coupon:v1:LAUNCH25:test",
+    });
+  });
+
+  it("forwards a name and Stripe's own redemption cap when the caller supplies them", async () => {
+    // `maxRedemptions` here is STRIPE's cap on the Coupon. It is not
+    // `promo_codes.max_redemptions`, which 0046 keeps out of the terms
+    // deliberately: that one is the cap mark8ly enforces on the CODE, counted
+    // transactionally at signup, and the two count different events.
+    await createCoupon({ discount: percentOff, name: "LAUNCH25", maxRedemptions: 50 });
+
+    const params = couponParams();
+    expect(params.name).toBe("LAUNCH25");
+    expect(params.max_redemptions).toBe(50);
+  });
+
+  it("omits name and max_redemptions entirely when they are not supplied", async () => {
+    // Not sent as null. An absent `max_redemptions` is uncapped, which is
+    // what the caller declining to set one means.
+    await createCoupon({ discount: percentOff });
+
+    const params = couponParams();
+    expect(params).not.toHaveProperty("name");
+    expect(params).not.toHaveProperty("max_redemptions");
+  });
+
+  it("returns only the created coupon's id, not the raw SDK object", async () => {
+    stripeMock.couponsCreate.mockResolvedValue({
+      id: "co_abc",
+      percent_off: 25,
+      livemode: false,
+      valid: true,
+    });
+
+    expect(await createCoupon({ discount: percentOff })).toEqual({ id: "co_abc" });
+  });
+});
+// No per-mode key test here: `mode isolation` below already asserts it, and
+// the module's client cache is keyed on (mode, key) and outlives a single
+// test file's `beforeEach` — a second call that constructs the live client
+// leaves the later test with nothing new constructed to observe. Adding one
+// here turned that test red, which is the cache working as designed.
 
 describe("mode isolation", () => {
   it("never reaches the other mode's key", async () => {

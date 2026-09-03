@@ -194,6 +194,13 @@ function makeFakeWriter(opts: {
       if (opts.archivePriceImpl) return opts.archivePriceImpl(mode, priceId);
       return { id: priceId };
     },
+    // Never reached from a publish plan: `createCoupon` (#521) belongs to
+    // promo-code publishing, a different caller entirely. Present so the cast
+    // below stays a widening of a complete shape rather than one that hides a
+    // missing method.
+    async createCoupon(): Promise<never> {
+      throw new Error("the publish path does not mint coupons");
+    },
   } as StripeCatalogWriter;
 }
 
@@ -429,6 +436,13 @@ describe("executePublish", () => {
       async archivePrice() {
         throw new Error("not used by this fixture");
       },
+      // The publish path mints Products and Prices and never a Coupon —
+      // `createCoupon` (#521) is called by promo-code publishing, which is a
+      // different caller entirely. Throwing rather than returning a stub id
+      // so a plan that ever reaches it here fails loudly.
+      async createCoupon() {
+        throw new Error("not used by this fixture");
+      },
     };
 
     const deps = makeDeps({
@@ -631,6 +645,10 @@ function makeRecordingWriter(specs: CreatePriceSpec[]): StripeCatalogWriter {
     },
     async archivePrice(_mode: string, priceId: string): Promise<StripePriceRef> {
       return { id: priceId };
+    },
+    // Never reached from a publish plan; see the fixture above.
+    async createCoupon(): Promise<never> {
+      throw new Error("the publish path does not mint coupons");
     },
   };
 }

@@ -73,6 +73,29 @@ vi.mock("@/lib/billing/orphans", async (importOriginal) => ({
   findOrphans: (...args: unknown[]) => findOrphans(...args),
 }));
 
+// #521 T4's two reads. Stood in for the same reason every other repo read on
+// this page is: these tests are about what the page ASKS and what it mounts,
+// not about SQL — and unmocked they reach a real `pg` pool that no test
+// environment here has.
+const listPromoCodes = vi.fn();
+const readStripeCoupons = vi.fn();
+
+vi.mock("@/lib/db/promo-codes-repo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/promo-codes-repo")>()),
+  listPromoCodes: (...args: unknown[]) => listPromoCodes(...args),
+  readStripeCoupons: (...args: unknown[]) => readStripeCoupons(...args),
+}));
+
+// The promo write path is `promo-actions.test.ts`'s; this page's tests are
+// about which controls render for which capability set.
+vi.mock("./promo-actions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./promo-actions")>()),
+  createPromoCodeAction: vi.fn(),
+  updatePromoCodeAction: vi.fn(),
+  deactivatePromoCodeAction: vi.fn(),
+  mintCouponAction: vi.fn(),
+}));
+
 // The write path itself is exercised by `actions.test.ts`; this page's own
 // tests are about WHICH controls render for WHICH capability set, not about
 // what a click on one of them ultimately does to Stripe.
@@ -340,6 +363,9 @@ describe("the mounted authoring surface", () => {
     // and Stripe holds no archived-but-active Price. Neither is a failure.
     latestPublishAttempt.mockResolvedValue(null);
     findOrphans.mockResolvedValue([]);
+    // No promo code has been authored — the state this surface ships in.
+    listPromoCodes.mockResolvedValue([]);
+    readStripeCoupons.mockResolvedValue([]);
   }
 
   function signIn(roles: readonly string[]) {
@@ -389,6 +415,95 @@ describe("the mounted authoring surface", () => {
     unactionable: [],
     verdict: { ok: true as const },
   };
+
+  function openPromoTab() {
+    fireEvent.click(screen.getByRole("tab", { name: "Promo codes" }));
+  }
+
+  it("mounts the promo-code panel behind its own tab, with the definitions it read", async () => {
+    setUpSuccessfulReads();
+    listPromoCodes.mockResolvedValue([
+      {
+        id: "promo-1",
+        source: "mark8ly",
+        code: "LAUNCH50",
+        trialExtensionDays: 30,
+        discount: {
+          kind: "percent_off",
+          percentOff: 50,
+          duration: "repeating",
+          durationInMonths: 3,
+        },
+        validFrom: "2026-09-01T00:00:00.000Z",
+        validUntil: null,
+        maxRedemptions: null,
+        isActive: true,
+        createdBy: "operator-1",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+    readStripeCoupons.mockResolvedValue([]);
+    signIn(["billing", "publish-catalog"]);
+
+    await renderCatalogPage();
+    openPromoTab();
+
+    expect(screen.getByText("LAUNCH50")).toBeInTheDocument();
+    // Retired definitions belong on THIS surface and nowhere else — it is the
+    // one place whose job is to show an operator what they have retired.
+    expect(listPromoCodes).toHaveBeenCalledWith({ includeInactive: true });
+    expect(readStripeCoupons).toHaveBeenCalledWith("promo-1");
+  });
+
+  it("offers minting only to an operator holding publish-catalog", async () => {
+    setUpSuccessfulReads();
+    listPromoCodes.mockResolvedValue([
+      {
+        id: "promo-1",
+        source: "mark8ly",
+        code: "LAUNCH50",
+        trialExtensionDays: null,
+        discount: {
+          kind: "percent_off",
+          percentOff: 50,
+          duration: "once",
+          durationInMonths: null,
+        },
+        validFrom: "2026-09-01T00:00:00.000Z",
+        validUntil: null,
+        maxRedemptions: null,
+        isActive: true,
+        createdBy: "operator-1",
+        createdAt: "2026-09-01T00:00:00.000Z",
+        updatedAt: "2026-09-01T00:00:00.000Z",
+      },
+    ]);
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+    openPromoTab();
+
+    // `billing` authors; `publish-catalog` mints. Independent checks, exactly
+    // as `promo-actions.ts` re-checks them.
+    expect(screen.getByRole("form", { name: /Author a promo code/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Mint coupon/ })).toBeNull();
+  });
+
+  it("says the promo read failed without taking the rest of the page down", async () => {
+    setUpSuccessfulReads();
+    listPromoCodes.mockRejectedValue(undefinedTable());
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    // Browse and the observation window are unaffected — `allSettled`, per
+    // this page's own header.
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+    openPromoTab();
+    expect(screen.getByText(migrationsPendingMessage("promo codes"))).toBeInTheDocument();
+  });
 
   it("mounts the draft editor for an operator holding billing but withholds the publish control without publish-catalog", async () => {
     setUpSuccessfulReads();

@@ -34,6 +34,16 @@ the first time a grant is narrowed is the first time the gate can bite.
 `read-plan-catalog` is a MACHINE capability. No route requires it, and no
 human needs it; `mark8ly-catalog-reader` uses it to pull the plan catalog.
 
+`read-promo-catalog` (tesserix-home#521) is the second machine capability, and
+it guards `GET /api/v1/promo-catalog`. **It is not granted to anything yet** —
+the role must be created on the Platform Console project and assigned to a
+service user before mark8ly can read promo codes; until then that endpoint
+answers 403 to every caller, which is the correct answer and not a defect. It
+is deliberately NOT implied by `read-plan-catalog`: reading published prices
+and enumerating every promo code in the estate are different grants, and
+folding them together would silently widen the grant
+`mark8ly-catalog-reader` already holds.
+
 ## Surfaces, by capability
 
 Retired routes are omitted. *pending* means the surface is declared but not yet
@@ -86,7 +96,9 @@ of the surfaces they do hold. The shell is not a surface.
 
 `publish-catalog`, `adjust-balance`, `execute-refund` are **verbs**, asserted by
 actions rather than by routes — #261 took every action off `read` and gave it
-its own. `read-plan-catalog` is the machine capability above.
+its own. `read-plan-catalog` and `read-promo-catalog` are the machine
+capabilities above; each guards a versioned API route rather than a console
+surface.
 
 ## What the review shows
 

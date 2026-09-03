@@ -141,6 +141,27 @@ export const CAPABILITIES = [
    * while authorization silently fails for every caller.
    */
   "read-plan-catalog",
+
+  /**
+   * Read the promo-code catalog — the definitions a product's onboarding
+   * redeems (tesserix-home#521). Held by a Zitadel service user, never an
+   * operator.
+   *
+   * SEPARATE FROM `read-plan-catalog`, and not implied by it. The two
+   * contracts answer different questions and a machine may legitimately need
+   * one without the other: a redeemer that only extends trials never reads a
+   * price, and the price reader that mark8ly runs today has no business
+   * enumerating every promo code in the estate. Folding this into
+   * `read-plan-catalog` would silently widen a grant already made, which is
+   * the one direction a capability must never move on its own.
+   *
+   * DEPLOY PRECONDITION, same shape as `read-plan-catalog`: this string is a
+   * contract with Zitadel. The role must exist on the Platform Console
+   * project AND be granted to the service user before a caller can use the
+   * endpoint — until then verification succeeds and authorization answers
+   * 403, which is the correct answer and not a bug in the route.
+   */
+  "read-promo-catalog",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -191,7 +212,10 @@ export const RISK_CAPABILITIES = [
  * letting a reviewer see, at a glance, which strings a human should never be
  * granted for console access alone.
  */
-export const MACHINE_CAPABILITIES = ["read-plan-catalog"] as const satisfies readonly Capability[];
+export const MACHINE_CAPABILITIES = [
+  "read-plan-catalog",
+  "read-promo-catalog",
+] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {
   return (CAPABILITIES as readonly string[]).includes(value);

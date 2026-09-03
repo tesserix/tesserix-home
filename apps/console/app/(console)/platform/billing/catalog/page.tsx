@@ -62,6 +62,13 @@ import { AuthoringPanel } from "./authoring-panel";
 // when a page needs a value out of one, and this file's `resolveState` import
 // comment for the same trap with a helper.
 import { CatalogSurface } from "./catalog-surface";
+import { PromoCodesPanel } from "./promo-codes-panel";
+// Type-only: `promo-codes-panel.tsx` is a `"use client"` module, so a VALUE
+// import of anything but the component itself would be a client reference
+// this server component could not call — the trap `draftRows`' comment in
+// `catalog-surface.tsx` records.
+import type { PromoCodeView } from "./promo-codes-panel";
+import { listPromoCodes, readStripeCoupons } from "@/lib/db/promo-codes-repo";
 import { ObservationStrip } from "./observation-strip";
 // Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
 // `"use client"`, and these two are the display shapes this page maps its
@@ -188,6 +195,11 @@ export const ORPHANS_SURFACE = "the orphaned Stripe price check";
  *  can see neither. */
 export const OPERATIONS_SURFACE = "the publish attempt's operations";
 
+/** #521 T4's read: the promo-code definitions and the coupons minted for
+ *  them. One surface name for both tables, because an operator loses the
+ *  same thing whichever of the two failed — the tab has nothing to show. */
+export const PROMO_CODES_SURFACE = "promo codes";
+
 /** Query params this page reads. Matches `TenantSearchParams`'s shape —
  *  `string | string[] | undefined` is what Next actually hands a page. */
 export type CatalogSearchParams = Record<string, string | string[] | undefined>;
@@ -282,6 +294,9 @@ export function orphansReadError(caught: unknown): SurfaceError | null {
 export function operationsReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, OPERATIONS_SURFACE);
 }
+export function promoCodesReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, PROMO_CODES_SURFACE);
+}
 
 /** Thrown by each guarded read below when the console has no database
  *  connection configured at all — distinct from a query that ran and failed,
@@ -309,6 +324,44 @@ async function readCatalog(mode: StripeMode): Promise<CatalogRow[]> {
   // yet, so there is nothing else to name here until a second source's rows
   // exist to choose between.
   return readCatalogRows(mode, SINGLE_SOURCE);
+}
+
+/**
+ * The promo tab's rows: every definition, INCLUDING the inactive ones, plus
+ * what has been minted for each.
+ *
+ * `includeInactive` is `true` here and nowhere else — `listPromoCodes`
+ * excludes them by default precisely so a picker or a redeemer never sees a
+ * retired code, and this is the one surface whose job is to show an operator
+ * what they have retired. The table marks them.
+ *
+ * The per-definition coupon read is a loop over `readStripeCoupons`, N+1 by
+ * construction. Deliberate, and bounded: this is an operator surface with a
+ * handful of rows, not the `/api/v1/promo-catalog` contract endpoint —
+ * `readStripeCouponIdsForMode` exists for that one because it serves every
+ * definition on every request. Batching here would need a second batched read
+ * per mode and would still be two round trips; the honest limit is the row
+ * count, and if it ever grows this is the place to notice.
+ */
+async function readPromoCodes(): Promise<PromoCodeView[]> {
+  if (!isDatabaseConfigured()) notConfigured();
+  const rows = await listPromoCodes({ includeInactive: true });
+  return Promise.all(
+    rows.map(async (row) => ({
+      id: row.id,
+      code: row.code,
+      trialExtensionDays: row.trialExtensionDays,
+      discount: row.discount,
+      validFrom: row.validFrom,
+      validUntil: row.validUntil,
+      maxRedemptions: row.maxRedemptions,
+      isActive: row.isActive,
+      coupons: (await readStripeCoupons(row.id)).map((coupon) => ({
+        mode: coupon.mode,
+        stripeCouponId: coupon.stripeCouponId,
+      })),
+    })),
+  );
 }
 
 async function readRuns(): Promise<PairLatestRun[]> {
@@ -493,6 +546,7 @@ export default async function PlanCatalog({
     draftResult,
     attemptResult,
     orphansResult,
+    promoCodesResult,
   ] = await Promise.allSettled([
     readWindow(),
     readCatalog(mode),
@@ -504,6 +558,7 @@ export default async function PlanCatalog({
     // `readOrphans`'s doc comment for the bug that gating it would
     // reintroduce.
     readOrphans(mode),
+    readPromoCodes(),
   ]);
 
   const window = windowResult.status === "fulfilled" ? windowResult.value : null;
@@ -515,6 +570,19 @@ export default async function PlanCatalog({
     // always" guarantee — so this can only resolve to `ready` or the
     // error/unavailable states, never `empty`.
     rows: window?.pairs ?? [],
+    filtered: false,
+  });
+
+  const promoCodes = promoCodesResult.status === "fulfilled" ? promoCodesResult.value : [];
+  const promoCodesState: SurfaceState = resolveState({
+    isLoading: false,
+    error:
+      promoCodesResult.status === "rejected"
+        ? promoCodesReadError(promoCodesResult.reason)
+        : null,
+    // Genuinely can be empty: no promo code has been authored yet, which is
+    // the state this surface ships in.
+    rows: promoCodes,
     filtered: false,
   });
 
@@ -726,6 +794,21 @@ export default async function PlanCatalog({
             catalogState={catalogState}
             publication={publication}
             publicationState={publicationState}
+          />
+        }
+        promoCodes={
+          <PromoCodesPanel
+            mode={mode}
+            codes={promoCodes}
+            codesState={promoCodesState}
+            // The same two capabilities the catalog half uses, read the same
+            // way and — as there — each checked independently rather than
+            // nested, because `promo-actions.ts` checks them independently
+            // too. `canDraft` is `billing` (authoring a definition touches
+            // nothing Stripe has seen) and `canPublish` is `publish-catalog`
+            // (minting creates a live, redeemable coupon in a real account).
+            canAuthor={canDraft}
+            canMint={canPublish}
           />
         }
         authoring={

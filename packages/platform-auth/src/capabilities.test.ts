@@ -119,6 +119,13 @@ describe("the capability set is a contract with Zitadel", () => {
       "hard-delete",
       "publish-catalog",
       "read-plan-catalog",
+      // #521. A MACHINE capability, which is why adding it here does not lock
+      // an operator out the way the note above warns about: no operator holds
+      // it and no console surface gates on it. The precondition it does carry
+      // is on the other side — until the role exists on the Platform Console
+      // project and is granted to a service user, `/api/v1/promo-catalog`
+      // answers 403 to every caller.
+      "read-promo-catalog",
     ]);
   });
 
@@ -220,5 +227,33 @@ describe("read-plan-catalog capability", () => {
     expect(SURFACE_CAPABILITIES).not.toContain("read-plan-catalog");
     expect(RISK_CAPABILITIES).not.toContain("read-plan-catalog");
     expect(MACHINE_CAPABILITIES).toContain("read-plan-catalog");
+  });
+});
+
+describe("read-promo-catalog capability", () => {
+  it("maps the promo-catalog read role to its capability", () => {
+    expect(toCapabilities(["read-promo-catalog"])).toContain("read-promo-catalog");
+  });
+
+  it("is not implied by read-plan-catalog, in either direction", () => {
+    // The two published contracts are separate grants. If holding one ever
+    // starts admitting the other, a grant already made to a price reader
+    // silently widens to every promo code in the estate.
+    expect(hasCapability(["read-plan-catalog"], "read-promo-catalog")).toBe(false);
+    expect(hasCapability(["read-promo-catalog"], "read-plan-catalog")).toBe(false);
+  });
+
+  it("does not grant the billing surface to a promo-catalog reader", () => {
+    expect(toCapabilities(["read-promo-catalog"])).not.toContain("billing");
+  });
+
+  it("does not let the console-entry capability imply it", () => {
+    expect(toCapabilities(["read"])).not.toContain("read-promo-catalog");
+  });
+
+  it("is classified as neither a surface nor a risk verb", () => {
+    expect(SURFACE_CAPABILITIES).not.toContain("read-promo-catalog");
+    expect(RISK_CAPABILITIES).not.toContain("read-promo-catalog");
+    expect(MACHINE_CAPABILITIES).toContain("read-promo-catalog");
   });
 });
