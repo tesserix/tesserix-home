@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { CapabilityError, getCurrentSession, toCapabilities } from "@tesserix/platform-auth";
 import { capabilityForPath } from "@tesserix/console-core";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
+import { recordDeniedAttempt } from "@/lib/db/denied-attempts";
 import { CONSOLE_PATHNAME_HEADER } from "@/lib/auth/console-pathname";
 import { ConsoleSidebar } from "@/components/nav/sidebar";
 import { ConsoleHeader } from "@/components/nav/console-header";
@@ -83,7 +84,25 @@ export default async function ConsoleLayout({
     try {
       await checkOperatorCapabilityLive(session, required);
     } catch (cause) {
-      if (cause instanceof CapabilityError) notFound();
+      if (cause instanceof CapabilityError) {
+        // Recorded BEFORE notFound(), because notFound() throws to unwind the
+        // render — anything after it never runs. Awaited rather than fired and
+        // forgotten: a floating promise in a server component can be cut short
+        // when the render ends, which would drop exactly the rows this exists
+        // to write. It cannot fail the refusal — see recordDeniedAttempt.
+        // `recordDeniedAttempt` promises never to throw. This does not RELY on
+        // that promise: the refusal is an access-control outcome, and the one
+        // thing worse than an unrecorded denial is a denial that turns into a
+        // 500 because the log failed. Belt and braces on the path where the
+        // cost of being wrong is highest.
+        await recordDeniedAttempt({
+          actor: session?.sub ?? session?.email ?? "unknown",
+          required,
+          target: pathname,
+          kind: "surface",
+        }).catch(() => {});
+        notFound();
+      }
       throw cause;
     }
   }
