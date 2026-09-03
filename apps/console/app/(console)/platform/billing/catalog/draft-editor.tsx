@@ -216,28 +216,69 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
     });
   }
 
+  const dirty = String(cell.publishedUnitAmountMinor ?? "") !== value;
+
   return (
-    <div>
-      <span>{cell.currency}</span>
-      {/* The published value beside the draft, unformatted — an operator
-       *  editing needs to see what they are changing FROM in the same units
-       *  the input edits, not a currency-formatted string that would only
-       *  have to be mentally converted back. */}
-      <span>{cell.publishedUnitAmountMinor === null ? "not yet published" : cell.publishedUnitAmountMinor}</span>
-      <label htmlFor={inputId} className="sr-only">
-        {inputLabel}
-      </label>
-      <input
-        id={inputId}
-        inputMode="numeric"
-        value={value}
-        disabled={isPending}
-        onChange={(e) => handleChange(e.target.value)}
-        onBlur={handleBlur}
-      />
-      {error && <span role="alert">{error}</span>}
-      {!error && warning && <span role="status">{warning}</span>}
-      {saveMessage && <span role="alert">{saveMessage}</span>}
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {/* Fixed width so every currency code in a row starts at the same
+         *  x, and the inputs beside them form a column. Unaligned, 78 cells
+         *  read as a wall of digits -- which is what this surface looked
+         *  like before it had any styling at all. */}
+        <span className="w-10 shrink-0 font-mono text-xs uppercase text-muted-foreground">
+          {cell.currency}
+        </span>
+        <label htmlFor={inputId} className="sr-only">
+          {inputLabel}
+        </label>
+        <input
+          id={inputId}
+          inputMode="numeric"
+          value={value}
+          disabled={isPending}
+          aria-invalid={error ? true : undefined}
+          onChange={(e) => handleChange(e.target.value)}
+          onBlur={handleBlur}
+          className={`w-44 rounded-md border bg-background px-2 py-1 font-mono text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${
+            error ? "border-destructive" : dirty ? "border-foreground" : ""
+          }`}
+        />
+        {/* The published value beside the draft, unformatted — an operator
+         *  editing needs to see what they are changing FROM in the same units
+         *  the input edits, not a currency-formatted string that would only
+         *  have to be mentally converted back.
+         *
+         *  Labelled "published", because an unlabelled second number beside
+         *  an editable one is a number nobody can identify: before this the
+         *  cell rendered `aud178800178800` and the reader had to guess where
+         *  one value ended and the next began. */}
+        <span className="text-xs text-muted-foreground">
+          published{" "}
+          <span className="font-mono tabular-nums text-foreground">
+            {cell.publishedUnitAmountMinor === null ? "—" : cell.publishedUnitAmountMinor}
+          </span>
+        </span>
+        {dirty && !error && (
+          <span className="text-xs font-medium text-foreground">edited</span>
+        )}
+      </div>
+      {/* Indented to the input's column so a message is visibly attached to
+       *  the cell it belongs to rather than floating between two rows. */}
+      {error && (
+        <span role="alert" className="pl-[3.25rem] text-xs text-destructive">
+          {error}
+        </span>
+      )}
+      {!error && warning && (
+        <span role="status" className="pl-[3.25rem] text-xs text-muted-foreground">
+          {warning}
+        </span>
+      )}
+      {saveMessage && (
+        <span role="alert" className="pl-[3.25rem] text-xs text-destructive">
+          {saveMessage}
+        </span>
+      )}
     </div>
   );
 }
@@ -250,23 +291,38 @@ function AmountCell({ revisionId, row, cell }: AmountCellProps) {
  */
 function DraftEditorRowView({ revisionId, row }: { revisionId: string; row: DraftEditorRow }) {
   return (
-    <fieldset>
-      <legend>
-        {row.plan} · {row.period} · {row.tier} — {row.lookupKey}
+    <fieldset className="flex flex-col gap-2 rounded-lg border p-3">
+      {/* The human-readable identity leads; the lookup key follows in mono
+       *  and muted. Both are needed -- the first is what an operator thinks
+       *  in, the second is what Stripe and every log line key on -- but
+       *  rendering them at equal weight, as this did, made the key compete
+       *  with the name for the same glance. */}
+      <legend className="flex flex-wrap items-baseline gap-x-2 px-1">
+        <span className="text-sm font-medium capitalize">
+          {row.plan} · {row.period} · {row.tier}
+        </span>
+        <span className="font-mono text-xs text-muted-foreground">{row.lookupKey}</span>
       </legend>
-      {row.amounts.map((cell) => (
-        <AmountCell key={cell.currency} revisionId={revisionId} row={row} cell={cell} />
-      ))}
+      <div className="flex flex-col gap-1.5">
+        {row.amounts.map((cell) => (
+          <AmountCell key={cell.currency} revisionId={revisionId} row={row} cell={cell} />
+        ))}
+      </div>
     </fieldset>
   );
 }
 
 export function DraftEditor({ revisionId, rows }: DraftEditorProps) {
   return (
-    <div>
+    <div className="flex flex-col gap-3">
       {/* Once for the whole surface — see {@link SUBSCRIBER_SAFETY_NOTE}'s
-       *  doc comment on why this moved out of `AmountCell`. */}
-      <p>{SUBSCRIBER_SAFETY_NOTE}</p>
+       *  doc comment on why this moved out of `AmountCell`. Given its own
+       *  bordered block rather than a bare paragraph: it is the one safety
+       *  statement on this surface, and an unstyled line of prose above 78
+       *  numeric cells is the thing an eye skips first. */}
+      <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+        {SUBSCRIBER_SAFETY_NOTE}
+      </p>
       {rows.map((row) => (
         <DraftEditorRowView key={row.lookupKey} revisionId={revisionId} row={row} />
       ))}
