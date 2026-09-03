@@ -1,4 +1,3 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { ESTATE } from "@tesserix/console-core";
 import { ConsolePageHeader } from "@/components/kit/page-header";
@@ -326,7 +325,7 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
  * caller-side bug — is caught here rather than left to reject the worker
  * that's awaiting it.
  */
-async function fetchRowSignal(row: HandoffRow, cookieHeader: string): Promise<ConversionSignal> {
+async function fetchRowSignal(row: HandoffRow): Promise<ConversionSignal> {
   // A migrated deal has no product (0020/0021 grandfather those rows), so
   // there is no product admin API to address the question to — the same
   // "nothing to ask" case as a missing email, and the same honest
@@ -337,7 +336,7 @@ async function fetchRowSignal(row: HandoffRow, cookieHeader: string): Promise<Co
     return { product: row.product, state: "unknown" };
   }
   try {
-    return await fetchConversionSignal(row.product, row.primaryEmail, cookieHeader);
+    return await fetchConversionSignal(row.product, row.primaryEmail);
   } catch {
     return { product: row.product, state: "unknown" };
   }
@@ -368,7 +367,6 @@ async function fetchRowSignal(row: HandoffRow, cookieHeader: string): Promise<Co
  */
 export async function buildHandoffItems(
   rows: readonly HandoffRow[],
-  cookieHeader: string,
   options: { deadlineMs?: number } = {},
 ): Promise<HandoffItem[]> {
   const deadlineMs = options.deadlineMs ?? HANDOFF_FETCH_DEADLINE_MS;
@@ -378,7 +376,7 @@ export async function buildHandoffItems(
   async function worker(): Promise<void> {
     while (cursor < rows.length) {
       const index = cursor++;
-      results[index] = await fetchRowSignal(rows[index], cookieHeader);
+      results[index] = await fetchRowSignal(rows[index]);
     }
   }
   const workerCount = Math.min(HANDOFF_FETCH_CONCURRENCY, rows.length);
@@ -709,12 +707,12 @@ async function renderWorkTab({
  * `tabHref`'s doc comment for why the Work tab must never pay for this.
  */
 async function renderHandoffTab(reauthReturnTo: string) {
-  const cookieHeader = (await cookies()).toString();
-
-  let handoffRows: HandoffRow[] = [];
+  let handoffRows: readonly HandoffRow[] = [];
+  let handoffHasMore = false;
   let handoffRowsError: unknown = null;
   try {
-    handoffRows = await wonWithoutConversion(HANDOFF_LIMIT);
+    ({ rows: handoffRows, hasMore: handoffHasMore } =
+      await wonWithoutConversion(HANDOFF_LIMIT));
   } catch (caught) {
     handoffRowsError = caught;
   }
@@ -722,7 +720,7 @@ async function renderHandoffTab(reauthReturnTo: string) {
   // Only fanned out once the row read itself succeeded — a failed
   // `wonWithoutConversion` has no rows to fan a signal fetch out over, and
   // fanning out zero rows is a no-op either way.
-  const handoffItems = handoffRowsError ? [] : await buildHandoffItems(handoffRows, cookieHeader);
+  const handoffItems = handoffRowsError ? [] : await buildHandoffItems(handoffRows);
 
   const handoffState = resolveState({
     isLoading: false,
@@ -738,6 +736,7 @@ async function renderHandoffTab(reauthReturnTo: string) {
       items={handoffItems}
       state={handoffState}
       emptyMessage={HANDOFF_EMPTY_MESSAGE}
+      hasMore={handoffHasMore}
       products={products}
       reauthReturnTo={reauthReturnTo}
     />

@@ -1646,7 +1646,7 @@ describe("wonWithoutConversion", () => {
         primary_email: "priya@bondibaker.example",
       },
     ]);
-    const rows = await wonWithoutConversion(50);
+    const { rows } = await wonWithoutConversion(50);
     expect(rows).toEqual([
       {
         opportunityId: "o1",
@@ -1657,6 +1657,49 @@ describe("wonWithoutConversion", () => {
         closedAt: "2026-08-10T00:00:00.000Z",
       },
     ]);
+  });
+
+  // #246. The cap used to be silent, so a backlog past it looked like a queue
+  // that ended there.
+  it("asks for one row past the cap, and reports the overflow without rendering it", async () => {
+    query.mockResolvedValueOnce(
+      Array.from({ length: 3 }, (_unused, i) => ({
+        id: `o${i}`,
+        organisation_id: `g${i}`,
+        organisation_name: `Org ${i}`,
+        product: "mark8ly",
+        closed_at: new Date("2026-08-10T00:00:00Z"),
+        primary_email: null,
+      })),
+    );
+
+    const page = await wonWithoutConversion(2);
+
+    const [, params] = query.mock.calls[0];
+    expect(params, "the probe row is what makes hasMore knowable").toEqual([3]);
+    expect(page.rows).toHaveLength(2);
+    expect(page.hasMore).toBe(true);
+  });
+
+  // The boundary: a queue of exactly the cap has nothing past it. Inferring
+  // from `rows.length === limit` would be wrong here, which is why the probe
+  // row exists at all.
+  it("reports no overflow when the queue ends exactly at the cap", async () => {
+    query.mockResolvedValueOnce(
+      Array.from({ length: 2 }, (_unused, i) => ({
+        id: `o${i}`,
+        organisation_id: `g${i}`,
+        organisation_name: `Org ${i}`,
+        product: "mark8ly",
+        closed_at: null,
+        primary_email: null,
+      })),
+    );
+
+    const page = await wonWithoutConversion(2);
+
+    expect(page.rows).toHaveLength(2);
+    expect(page.hasMore).toBe(false);
   });
 
   it("carries a null primary email through rather than failing the row", async () => {
@@ -1670,7 +1713,7 @@ describe("wonWithoutConversion", () => {
         primary_email: null,
       },
     ]);
-    const [row] = await wonWithoutConversion(50);
+    const { rows: [row] } = await wonWithoutConversion(50);
     expect(row.primaryEmail).toBeNull();
   });
 
@@ -1695,7 +1738,7 @@ describe("wonWithoutConversion", () => {
         primary_email: null,
       },
     ]);
-    const [row] = await wonWithoutConversion(50);
+    const { rows: [row] } = await wonWithoutConversion(50);
     expect(row.product).toBeNull();
     expect(row.organisationName).toBe("Migrated Co");
   });

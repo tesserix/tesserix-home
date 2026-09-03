@@ -2266,7 +2266,25 @@ function toHandoffRow(row: RawHandoffRow): HandoffRow {
  * hide the entire migrated backlog on day one, the exact bug this queue was
  * fixed for once already.
  */
-export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]> {
+export interface HandoffPage {
+  readonly rows: readonly HandoffRow[];
+  /**
+   * There are won deals past `limit` that this page does not contain.
+   *
+   * Carried rather than left to the caller to infer from `rows.length ===
+   * limit`, which is wrong exactly at the boundary: a queue of precisely
+   * `limit` rows would claim there is more waiting when there is not, and an
+   * operator who works the queue to empty would never see it go quiet.
+   *
+   * Discovered by asking for one row more than `limit` and discarding it —
+   * one query, not a second COUNT. The instance is a shared db-f1-micro and
+   * this queue's exact depth is not worth a second scan; "more are waiting"
+   * is the whole decision an operator makes from it.
+   */
+  readonly hasMore: boolean;
+}
+
+export async function wonWithoutConversion(limit: number): Promise<HandoffPage> {
   const rows = await tesserixQuery<RawHandoffRow>(
     `SELECT o.id, o.organisation_id, g.name AS organisation_name, o.product, o.closed_at,
             c.email AS primary_email
@@ -2285,9 +2303,14 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffRow[]>
         )
       ORDER BY o.closed_at ASC NULLS LAST
       LIMIT $1`,
-    [limit],
+    // One more than asked for: the extra row is never rendered, it only
+    // answers "is there anything past the cap".
+    [limit + 1],
   );
-  return rows.map(toHandoffRow);
+  return {
+    rows: rows.slice(0, limit).map(toHandoffRow),
+    hasMore: rows.length > limit,
+  };
 }
 
 export interface LinkConversionInput {

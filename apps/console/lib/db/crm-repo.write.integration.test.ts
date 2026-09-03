@@ -631,7 +631,7 @@ describe("linkConversion, against a real crm_organisations row", () => {
 // UPDATE on a grandfathered `won` row — both facts about a real database.
 describe("linkConversion clears a migrated won deal out of the handoff queue", () => {
   const queueIds = async () =>
-    (await wonWithoutConversion(100)).map((row) => row.opportunityId);
+    (await wonWithoutConversion(100)).rows.map((row) => row.opportunityId);
 
   it("shows the migrated, product-less won deal in the queue to begin with", async () => {
     expect(await queueIds()).toContain(migratedWonOppId);
