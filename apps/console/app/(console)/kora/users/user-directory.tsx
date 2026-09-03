@@ -17,17 +17,18 @@ import {
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
-import { formatCreated } from "../foods/food-index";
+import { formatCreated } from "@/components/kit/entity-format";
 import type { EntityPage } from "@/lib/entities";
-import type { PagerLinks } from "../entity-page";
+import type { PagerLinks } from "@/components/kit/entity-page";
 
 /**
  * The client half of Kora's user directory.
  *
- * `formatCreated` is imported from the food index rather than copied: both
- * render the same §4.3 timestamp from the same endpoint, and a second copy is
- * a second place for the "render an unparseable date verbatim" rule to drift
- * out of.
+ * `formatCreated` is imported from `components/kit` rather than copied: every
+ * §3.4 index renders the same §4.3 timestamp from the same endpoint, and a
+ * second copy is a second place for the "render an unparseable date verbatim"
+ * rule to drift out of. It used to be imported from the food index next door,
+ * and moved when the generic entity index became a third caller.
  */
 
 export interface UserDirectoryProps {

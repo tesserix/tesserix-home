@@ -6,7 +6,7 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // `platform/billing/catalog/page.tsx`'s identical comment.
 import { resolveState, toSurfaceError, type SurfaceState } from "@/components/kit/surface-state";
 import { fetchKoraAiMetricsPage, fetchProductEntities } from "@/lib/platform-api";
-import { pagerLinks, readPage, type PagerLinks } from "../entity-page";
+import { pagerLinks, readPage, type PagerLinks } from "@/components/kit/entity-page";
 import type { EntityPagination, EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
 import { AiMetricsView } from "./ai-metrics-view";

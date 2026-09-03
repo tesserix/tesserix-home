@@ -1,12 +1,17 @@
 import { ENTITIES_LIMIT } from "@/lib/platform-api";
 
 /**
- * Paging shared by Kora's two index surfaces.
+ * Paging shared by every §3.4 index surface.
  *
- * Extracted rather than written twice: the food index and the user directory
- * page the same endpoint with the same bound, and the one thing a pager must
- * never get wrong — an off-by-one that offers a next page which is empty —
- * should have a single definition and a single set of tests.
+ * Extracted rather than written twice: Kora's food index and user directory,
+ * its AI metrics list and the generic `[product]/[entity]` index all page the
+ * same endpoint with the same bound, and the one thing a pager must never get
+ * wrong — an off-by-one that offers a next page which is empty — should have a
+ * single definition and a single set of tests.
+ *
+ * It lived under `kora/` while Kora's two pages were its only callers. It
+ * moved here unchanged when the generic entity index became a third: a shared
+ * util under one product's rail invites the next caller to copy it instead.
  */
 
 export type IndexSearchParams = Record<string, string | string[] | undefined>;

@@ -19,7 +19,8 @@ import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView } from "@/components/kit/states";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { EntityPage } from "@/lib/entities";
-import type { PagerLinks } from "../entity-page";
+import { formatCreated } from "@/components/kit/entity-format";
+import type { PagerLinks } from "@/components/kit/entity-page";
 
 /**
  * The client half of Kora's food index.
@@ -30,17 +31,11 @@ import type { PagerLinks } from "../entity-page";
  * directory.
  */
 
-/** Renders a §4.3 timestamp, falling back to the raw value.
- *
- *  Verbatim rather than "unknown" on an unparseable date: the product sent
- *  something, and showing what it sent is how someone finds out what is wrong
- *  with it. Inventing a placeholder hides a contract deviation. */
-export function formatCreated(value: string | undefined): string {
-  if (!value) return "—";
-  const at = new Date(value);
-  if (Number.isNaN(at.getTime())) return value;
-  return at.toISOString().slice(0, 10);
-}
+// Re-exported, not redefined: `formatCreated` moved to `components/kit` when
+// the generic `[product]/[entity]` index became its third caller, and this
+// module keeps the name so `page.test.tsx` and anything else reaching for it
+// here is unaffected by where it now lives.
+export { formatCreated };
 
 /**
  * The id of the detail row a given food's trigger controls.

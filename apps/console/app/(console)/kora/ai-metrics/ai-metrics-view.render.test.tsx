@@ -44,7 +44,7 @@ function pushedQuery(call = 0): URLSearchParams {
 
 import type { EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics } from "@/lib/kora-ai-metrics";
-import type { PagerLinks } from "../entity-page";
+import type { PagerLinks } from "@/components/kit/entity-page";
 import { AiMetricsView, type AiMetricsViewProps } from "./ai-metrics-view";
 
 // The real ten kinds `resolveoutcome.AllKinds` declares (kora's

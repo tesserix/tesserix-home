@@ -8,11 +8,19 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
  * segments nested under it, so this file serves both `[product]/page.tsx` and
  * `[product]/[entity]/page.tsx`. The nested half was an expectation when this
  * file was written; it has since been measured, on Next 16.2.11, with a
- * matched pair of production builds of a minimal app with this exact segment
- * shape: with a `[product]/not-found.tsx` present, a refusal from the nested
- * `[product]/[entity]` page rendered it; with that one file removed and
- * nothing else changed, the same refusal fell through to the root
- * `not-found`.
+ * matched pair of production builds of a THROWAWAY MINIMAL APP that reproduced
+ * this segment shape — not the console itself, whose layout gate needs a
+ * session and a live capability store. With a `[product]/not-found.tsx`
+ * present, a refusal from the nested `[product]/[entity]` page rendered it;
+ * with that one file removed and nothing else changed, the same refusal fell
+ * through to the root `not-found`.
+ *
+ * So the claim is about Next's boundary resolution for this segment shape at
+ * this version, which the console shares, and not an observation of the
+ * console serving a request. Nothing sits between `[product]` and
+ * `[product]/[entity]` here that the probe lacked, but a future layout or
+ * parallel route between them is a reason to re-measure rather than to trust
+ * this note.
  *
  * So the copy names no metric, no entity type and no specific page: it has to
  * stay true of every surface on this segment.

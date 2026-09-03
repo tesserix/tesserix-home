@@ -246,11 +246,14 @@ describe("every declared entity type has a route id that gates its page", () => 
   // THE NEGATIVE CONTROL. Without it the two rows above are consistent with
   // `capabilityForPath` returning `platform` for every path under a product
   // root, which would make them measure the prefix rather than the
-  // declaration. `mark8ly-only-type` and `kora-only-type` are declared by
-  // nobody, so nothing claims these paths and each falls back to the entry
-  // ticket. This is also the only place either product's `exact: true` bites:
-  // drop it from `kora.overview` or `mark8ly.overview` and that product's row
-  // goes red, because the root would then claim every undeclared descendant.
+  // declaration. `no-such-declared-type` is declared by nobody, so nothing
+  // claims these paths and each falls back to the entry ticket.
+  //
+  // It also bites on `exact: true`: drop it from `kora.overview` or
+  // `mark8ly.overview` and that product's row goes red, because the root would
+  // then claim every undeclared descendant. It is NOT the only such row —
+  // `routes.ts` names the `/mark8ly/foods` control above as the pin for that
+  // behaviour, and this covers kora as well rather than replacing it.
   it.each(PRODUCT_IDS)("falls back to the entry ticket for an undeclared type on %s", (id) => {
     const undeclared = `/${id}/no-such-declared-type`;
     expect(productEntities(id)).not.toContain("no-such-declared-type");

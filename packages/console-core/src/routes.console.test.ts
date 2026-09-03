@@ -433,9 +433,13 @@ describe("pending reflects what the console actually serves", () => {
     // `app/(console)/[product]/page.tsx` serves `/mark8ly` and
     // `app/(console)/[product]/[entity]/page.tsx` serves the two entity
     // indexes — none has a mark8ly page file of its own, which is the point of
-    // the generic route. If one of these flips back to pending while the
-    // generic page still serves it, the rail renders a working surface as an
-    // inert SOON badge.
+    // the generic route. `pending` is a claim about what the console SERVES,
+    // so with those pages in place the claim would simply be false.
+    //
+    // Not "the rail would badge them SOON": `mark8lyNav` holds only
+    // `mark8ly.migrationFastPath` today, so none of these three is rendered
+    // anywhere a badge could appear. The rail is a later change than the
+    // pages, and this row must stay true before and after it.
     expect(isPending("mark8ly.overview")).toBe(false);
     expect(isPending("mark8ly.tenants")).toBe(false);
     expect(isPending("mark8ly.users")).toBe(false);

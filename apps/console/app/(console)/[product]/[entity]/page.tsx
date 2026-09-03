@@ -16,14 +16,16 @@ import {
 } from "@/components/kit/surface-state";
 import { fetchProductEntities } from "@/lib/platform-api";
 import type { EntityPage } from "@/lib/entities";
-// `readPage`/`pagerLinks`/`pageHref` are imported from Kora's rail rather than
-// copied. That module's own header says why it exists: an off-by-one that
-// offers an empty next page should have ONE definition and one set of tests.
-// It reads nothing Kora-specific — only `ENTITIES_LIMIT`, the bound every
-// §3.4 index page asks for — so the import is the shared util it already is,
-// not a dependency on Kora's pages. It is left where it is because this task
-// must not modify `kora/`.
-import { pageHref, pagerLinks, readPage, type PagerLinks } from "../../kora/entity-page";
+// The shared §3.4 pager: an off-by-one that offers an empty next page should
+// have ONE definition and one set of tests, and that module's header says so.
+// It lived under `kora/` while Kora's pages were its only callers and moved to
+// `components/kit` when this page became a third.
+import {
+  pageHref,
+  pagerLinks,
+  readPage,
+  type PagerLinks,
+} from "@/components/kit/entity-page";
 import { resolveEntitySurface } from "./entity-param";
 import { EntityIndex } from "./entity-index";
 

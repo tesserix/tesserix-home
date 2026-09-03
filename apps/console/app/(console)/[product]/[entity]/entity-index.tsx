@@ -16,14 +16,28 @@ import {
 } from "@/components/kit/filter-bar";
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView } from "@/components/kit/states";
-// `import type` only — never a value import. `surface-state.ts` is reachable
-// from server-only modules, and a client component importing a VALUE from it
-// would drag that chain into the browser bundle. tsc and vitest cannot see
-// this; only `next build` fails — see `[product]/overview-view.tsx`'s note.
+// THE RULE: a client component taking a VALUE from a module that reaches
+// `lib/platform-api` drags that chain — `lib/auth/platform-token`, `pg` — into
+// the browser bundle. tsc and vitest cannot see it; only `next build` fails.
+// `[product]/overview-view.tsx` states the same rule at its `kpis.ts` import.
+//
+// The two `import type`s below are not equally load-bearing, and it is worth
+// saying which is which so a later reader does not draw the wrong conclusion
+// from finding no chain:
+//
+//   - `lib/entities.ts` DOES reach `platform-api` — it value-imports
+//     `PlatformApiError` from it — so `import type` there is the rule.
+//   - `components/kit/surface-state.ts` imports NOTHING at all (its own
+//     comment says it is free of `lib/` imports, and a test asserts it pulls
+//     in neither React nor `@tesserix/web`). Nothing can be dragged through
+//     it, so `import type` there is hygiene, not a fix.
+//
+// `components/kit/entity-page.ts` value-imports `ENTITIES_LIMIT` from
+// `platform-api`, which is why only its TYPE is taken here.
 import type { SurfaceState } from "@/components/kit/surface-state";
 import type { EntityPage } from "@/lib/entities";
-import type { PagerLinks } from "../../kora/entity-page";
-import { formatCreated } from "../../kora/foods/food-index";
+import type { PagerLinks } from "@/components/kit/entity-page";
+import { formatCreated } from "@/components/kit/entity-format";
 
 /**
  * The client half of the generic entity index.
@@ -33,10 +47,13 @@ import { formatCreated } from "../../kora/foods/food-index";
  * server and the search stays server-side — the same split Kora's two index
  * surfaces make.
  *
- * `formatCreated` is imported rather than copied, for the reason Kora's user
- * directory gives at its own import of it: every §3.4 index renders the same
- * §4.3 timestamp from the same endpoint, and a second copy is a second place
- * for the "render an unparseable date verbatim" rule to drift out of.
+ * `formatCreated` is imported from `components/kit` rather than copied: every
+ * §3.4 index renders the same §4.3 timestamp from the same endpoint, and a
+ * second copy is a second place for the "render an unparseable date verbatim"
+ * rule to drift out of. It is a five-line pure module of its own — this page
+ * deliberately does not reach into Kora's food index for it, which would put
+ * `FoodIndex` in this surface's client graph and leave dropping it to
+ * tree-shaking.
  *
  * # No per-product or per-type columns
  *
