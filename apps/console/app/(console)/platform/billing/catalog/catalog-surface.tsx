@@ -29,10 +29,16 @@ import type { ReactNode } from "react";
  *
  * # Why N tabs and not a hardcoded pair
  *
- * `tesserix-home#521` adds promo codes under `/platform/billing`. Adding that
- * surface here is appending one entry to the array below — an id, a label, a
- * panel, optionally a badge — and nothing else: no new tab implementation, no
- * change to this component's props, no change to `SurfaceTabs`.
+ * `tesserix-home#521` added promo codes under `/platform/billing`, and that is
+ * what this arrangement was built for. What it actually cost, recorded here
+ * rather than left as a promise: one entry in the array below, one `ReactNode`
+ * prop to carry the panel, and the corresponding construction in `page.tsx`.
+ * No new tab implementation and no change to `SurfaceTabs`.
+ *
+ * The one correction to this paragraph's earlier wording — which claimed "no
+ * change to this component's props" — is that a THIRD panel does need a third
+ * prop, because the panels arrive as nodes (see below). "One array entry plus
+ * one prop" is the honest price; the array is what stays open-ended.
  *
  * # Why the panels arrive as nodes
  *
@@ -92,6 +98,17 @@ export interface CatalogSurfaceProps {
   readonly browse: ReactNode;
   readonly authoring: ReactNode;
   /**
+   * The promo-code surface (#521, T4) — the third tab, and the first test of
+   * the claim above.
+   *
+   * It cost exactly what that paragraph promised of THIS file: one prop and
+   * one array entry. The reason it is a prop at all is the same reason
+   * `browse` and `authoring` are — `page.tsx` does the reading and hands the
+   * finished element down, so this component never learns the panel's props
+   * and never imports a module that reaches `pg`.
+   */
+  readonly promoCodes: ReactNode;
+  /**
    * The draft's rows and the published rows, for the Draft tab's changed
    * count and nothing else — both are already inside `authoring`.
    *
@@ -119,6 +136,7 @@ export function CatalogSurface({
   observation,
   browse,
   authoring,
+  promoCodes,
   draftRows,
   catalog,
   attemptNeedsAttention,
@@ -167,6 +185,7 @@ export function CatalogSurface({
             badge: draftBadge,
             content: authoring,
           },
+          { id: "promo", label: "Promo codes", content: promoCodes },
         ]}
       />
     </div>

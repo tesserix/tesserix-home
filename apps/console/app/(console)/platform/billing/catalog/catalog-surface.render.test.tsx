@@ -47,6 +47,7 @@ function renderSurface(over: Partial<Parameters<typeof CatalogSurface>[0]> = {})
       observation={<p>Satisfied — 7/7 days clean, both pairs</p>}
       browse={<p>the published catalog</p>}
       authoring={<p>the authoring panel</p>}
+      promoCodes={<p>the promo codes panel</p>}
       draftRows={null}
       catalog={[PUBLISHED_ROW]}
       attemptNeedsAttention={false}
@@ -94,6 +95,38 @@ describe("CatalogSurface — both panels are reachable, one at a time", () => {
       "aria-selected",
       "true",
     );
+  });
+});
+
+describe("the Promo codes tab", () => {
+  it("is reachable, and renders its panel only when selected", () => {
+    // #521 T4's tab. The shell's claim was that a third surface is one array
+    // entry plus one prop; this is what that bought.
+    renderSurface();
+
+    expect(screen.queryByText("the promo codes panel")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Promo codes" }));
+
+    expect(screen.getByText("the promo codes panel")).toBeInTheDocument();
+    expect(screen.queryByText("the published catalog")).toBeNull();
+    expect(screen.queryByText("the authoring panel")).toBeNull();
+  });
+
+  it("leaves Browse as the landing tab — promo codes are not the page's job", () => {
+    renderSurface();
+
+    expect(screen.getByRole("tab", { name: "Browse" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Promo codes" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
+  it("carries no badge — nothing about a promo code needs the operator's attention from Browse", () => {
+    renderSurface({ attemptNeedsAttention: true, draftRows: [{ ...PUBLISHED_ROW, unitAmountMinor: 5900 }] });
+
+    expect(screen.getByRole("tab", { name: "Promo codes" })).toHaveAccessibleName("Promo codes");
   });
 });
 
