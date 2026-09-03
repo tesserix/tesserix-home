@@ -37,7 +37,11 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 }));
 
 const requiresCapability = vi.fn(() => true);
-vi.mock("@/lib/internal-access", () => ({ requiresCapability: () => requiresCapability() }));
+const enforcesRouteCapabilities = vi.fn(() => true);
+vi.mock("@/lib/internal-access", () => ({
+  requiresCapability: () => requiresCapability(),
+  enforcesRouteCapabilities: () => enforcesRouteCapabilities(),
+}));
 vi.mock("@/lib/tools-directory", () => ({ readToolsDirectory: async () => ({ tools: [] }) }));
 vi.mock("@/lib/health", () => ({ readEstateHealth: async () => null }));
 vi.mock("@/components/nav/sidebar", () => ({ ConsoleSidebar: () => null }));
@@ -52,6 +56,7 @@ beforeEach(() => {
   getCurrentSession.mockResolvedValue({ sub: "op-1", email: "ops@tesserix.app", roles: ["crm"] });
   checkOperatorCapabilityLive.mockResolvedValue(undefined);
   requiresCapability.mockReturnValue(true);
+  enforcesRouteCapabilities.mockReturnValue(true);
 });
 
 async function renderAt(pathname: string) {
@@ -113,6 +118,7 @@ describe("the console access gate", () => {
   // surface it still served, or serve one it hid.
   it("does not enforce when the provider carries no capabilities", async () => {
     requiresCapability.mockReturnValue(false);
+    enforcesRouteCapabilities.mockReturnValue(false);
 
     await expect(renderAt(consolePath("platform.secrets"))).resolves.toBeTruthy();
     expect(checkOperatorCapabilityLive).not.toHaveBeenCalled();
@@ -127,10 +133,29 @@ describe("the console access gate", () => {
   // without identity rather than fail the whole console.
   it("renders with no session at all when enforcement is off", async () => {
     requiresCapability.mockReturnValue(false);
+    enforcesRouteCapabilities.mockReturnValue(false);
     getCurrentSession.mockResolvedValue(null);
 
     await expect(renderAt("/")).resolves.toBeTruthy();
     expect(notFound).not.toHaveBeenCalled();
   });
 
+  // #266 R6.2: the way back from a grant narrowed by mistake. The gate stops
+  // refusing without a code change and without touching Zitadel.
+  it("stops refusing when the kill switch is off, even under zitadel", async () => {
+    enforcesRouteCapabilities.mockReturnValue(false);
+    checkOperatorCapabilityLive.mockRejectedValue(new CapabilityError("platform"));
+
+    await expect(renderAt(consolePath("platform.secrets"))).resolves.toBeTruthy();
+    expect(checkOperatorCapabilityLive).not.toHaveBeenCalled();
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  // The landing page must survive a narrow grant, or a fresh sign-in — which
+  // `safeReturnPath` sends to "/" — is a 404 with no shell and no rail.
+  it("admits an operator with no surface capability to the shell", async () => {
+    await renderAt("/");
+
+    expect(checkOperatorCapabilityLive).toHaveBeenCalledWith(expect.anything(), "read");
+  });
 });

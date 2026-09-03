@@ -72,7 +72,34 @@ export function routeForPath(currentPath: string): RouteId | undefined {
  * fallback is exactly today's behaviour, so it cannot make anything less safe
  * than it already is. What it does is make declared surfaces safer.
  */
+/**
+ * The console's landing page. `safeReturnPath` sends every fresh sign-in here.
+ */
+const CONSOLE_HOME = "/";
+
 export function capabilityForPath(currentPath: string): Capability {
+  // THE SHELL IS NOT A SURFACE, and the landing page is the shell.
+  //
+  // `platform.dashboard` declares `platform` and its console target is `/`, so
+  // without this an operator holding `crm` and `support` but not `platform`
+  // signed in — `safeReturnPath` defaults to `/` — and got a 404. No shell, no
+  // rail, no route to the two surfaces they did hold. That is #266's R6.4,
+  // "the case most likely to be missed", and worse than it anticipated: it
+  // strikes operators who hold surfaces, not only those who hold none.
+  //
+  // Fixed HERE rather than by putting `read` on the route, which was the first
+  // attempt and was wrong: `routes.test.ts` holds an invariant from #261 that
+  // NO route may resolve to the entry ticket, because a surface gated on the
+  // ticket every operator already holds is not gated at all. That rule is
+  // about surfaces. `/` is not one — it renders the estate map and the tools
+  // directory, which is orientation, and #261's own note on `read` says it
+  // "grants the shell and home".
+  //
+  // The rail entry for Dashboard still declares `platform` and is still hidden
+  // from an operator without it. That is deliberate: they land on the shell,
+  // and the rail offers them only what they can reach.
+  if (currentPath === CONSOLE_HOME || currentPath === "") return ENTRY_CAPABILITY;
+
   const id = routeForPath(currentPath);
   return id ? routeCapability(id) : ENTRY_CAPABILITY;
 }

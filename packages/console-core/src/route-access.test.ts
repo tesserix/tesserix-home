@@ -68,6 +68,29 @@ describe("capabilityForPath", () => {
   it("falls back to console entry for a path no surface declares", () => {
     expect(capabilityForPath("/nothing/here")).toBe("read");
   });
+
+  /**
+   * THE LOCKOUT INVARIANT. `safeReturnPath` defaults to `/`, so the landing
+   * page must be reachable by anyone who can enter the console at all — or a
+   * narrow operator signs in and receives a 404 with no shell, no rail, and no
+   * route to the surfaces they DO hold.
+   *
+   * Pinned as an invariant rather than as "the dashboard is `read`", because
+   * the failure is about the LANDING PAGE, whatever route happens to own it.
+   * `platform.dashboard` owns `/` today and correctly declares `platform` for
+   * its web and mobile dashboards; a future route change must not be able to
+   * make `/` unreachable without failing here.
+   */
+  it("keeps the landing page reachable by anyone who can enter", () => {
+    expect(capabilityForPath("/")).toBe("read");
+  });
+
+  // The surface's own capability is untouched — this exempts the SHELL, not
+  // the dashboard. An operator without `platform` still cannot reach
+  // /admin/dashboard or the rail entry that points at it.
+  it("does not weaken the dashboard surface itself", () => {
+    expect(routeCapability("platform.dashboard")).toBe("platform");
+  });
 });
 
 import { visibleNav } from "./route-access";

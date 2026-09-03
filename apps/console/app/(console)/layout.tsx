@@ -6,7 +6,7 @@ import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
 import { CONSOLE_PATHNAME_HEADER } from "@/lib/auth/console-pathname";
 import { ConsoleSidebar } from "@/components/nav/sidebar";
 import { ConsoleHeader } from "@/components/nav/console-header";
-import { requiresCapability } from "@/lib/internal-access";
+import { enforcesRouteCapabilities, requiresCapability } from "@/lib/internal-access";
 import { readToolsDirectory } from "@/lib/tools-directory";
 import { readEstateHealth } from "@/lib/health";
 
@@ -24,7 +24,12 @@ export default async function ConsoleLayout({
   // ever null in a misconfiguration — render the header without identity
   // rather than failing the whole console.
   const session = await getCurrentSession();
+  // Whether this session CARRIES capabilities — what the operator menu shows.
   const showCapabilities = requiresCapability();
+  // Whether the console ACTS on them (#266 R6.2). One value for the gate and
+  // the rail: they must not disagree, or the console hides a surface it would
+  // still serve, or offers one it refuses.
+  const enforcing = enforcesRouteCapabilities();
 
   // THE ACCESS GATE (#262, R2). Until this existed every operator who could
   // log in could reach every page by typing its URL — `routes.ts` says of its
@@ -46,9 +51,10 @@ export default async function ConsoleLayout({
   // API routes are deliberately NOT covered: per R2.3 they keep their own
   // `assertCapability` checks, so routing is never the only thing between an
   // operator and a verb.
-  // Gated on `showCapabilities` — i.e. `requiresCapability()` — which is the
-  // SAME switch the rail filter and the command palette already use. Two
-  // reasons, and the second is not a test convenience:
+  // Gated on `enforcesRouteCapabilities()`, the SAME value the rail filter
+  // below is given — the two must not disagree, or the console hides a surface
+  // it would still serve, or offers one it refuses. Two reasons it is a
+  // condition at all, and the second is not a test convenience:
   //
   //  1. The legacy provider carries no capability claims at all, so enforcing
   //     would refuse every surface to every operator. "Off means unchanged" is
@@ -64,10 +70,14 @@ export default async function ConsoleLayout({
   //     how it broke the e2e run: the auth bypass returns from middleware
   //     before a session exists.
   //
-  // In production `AUTH_PROVIDER=zitadel`, so this is true and the gate runs.
-  // A null session THERE is still refused, which is the fail-closed direction
-  // for an access control.
-  if (showCapabilities) {
+  // In production `AUTH_PROVIDER=zitadel` and the kill switch is unset, so
+  // this is true and the gate runs. A null session THERE is still refused,
+  // which is the fail-closed direction for an access control.
+  //
+  // Setting `CONSOLE_RBAC_ENFORCEMENT=off` on the deployment turns both the
+  // gate and the rail filter off together, which is the way back from a grant
+  // narrowed by mistake — see `enforcesRouteCapabilities`.
+  if (enforcing) {
     const pathname = (await headers()).get(CONSOLE_PATHNAME_HEADER) ?? "";
     const required = capabilityForPath(pathname);
     try {
@@ -93,7 +103,7 @@ export default async function ConsoleLayout({
   return (
     <div className="flex min-h-screen">
       <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex">
-        <ConsoleSidebar capabilities={capabilities} enforceCapabilities={showCapabilities} />
+        <ConsoleSidebar capabilities={capabilities} enforceCapabilities={enforcing} />
       </div>
       <main id="main-content" className="flex-1 lg:pl-56">
         <ConsoleHeader
