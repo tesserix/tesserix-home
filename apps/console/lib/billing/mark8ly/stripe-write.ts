@@ -145,6 +145,25 @@ export interface StripePriceRef {
 export interface CreatePriceSpec {
   readonly productId: string;
   readonly lookupKey: string;
+  /**
+   * Take {@link lookupKey} off whichever Price currently holds it, as part
+   * of this create.
+   *
+   * REQUIRED whenever the key is already in use, which is every
+   * `replace_price`: Stripe refuses `prices.create` with a `lookup_key`
+   * another Price holds, and the refusal is not a warning — the create
+   * simply fails. Verified against the live account on 2026-09-03, on the
+   * first amount change this console ever attempted:
+   * "A price (`price_1U94tmCyiazmanuP0CU2s7MA`) already uses that lookup
+   * key."
+   *
+   * Left unset for a `create_price`, which mints a key nothing holds yet.
+   * Asking to transfer a free key would work, but it would also silence the
+   * one error that tells us a "new" price is not new — that a lookup key
+   * believed unused is in fact live on some other Price is exactly the
+   * surprise a bootstrap should stop on rather than absorb.
+   */
+  readonly transferLookupKey?: boolean;
   /** The Price's own (baseline) currency. MUST NOT appear as a key of
    *  `currencyOptions` — see `createPrice`. */
   readonly currency: string;
@@ -349,6 +368,12 @@ export const stripeCatalogWriter: StripeCatalogWriter = {
         currency: spec.currency,
         unit_amount: spec.unitAmount,
         lookup_key: spec.lookupKey,
+        // Only sent when asked for. `transfer_lookup_key: false` is Stripe's
+        // default, so omitting it and sending it false are the same request
+        // -- but omitting keeps the field out of the create for the path
+        // that must never transfer, where its presence would invite someone
+        // to flip it.
+        ...(spec.transferLookupKey ? { transfer_lookup_key: true } : {}),
         tax_behavior: spec.taxBehavior,
         recurring: { interval: intervalOf(spec.period) },
         currency_options: currencyOptions,

@@ -594,3 +594,131 @@ describe("executePublish", () => {
     await expect(executePublish("does-not-exist", deps)).rejects.toThrow(/no publish attempt/);
   });
 });
+
+/* ------------------------------------------------------------------------ *
+ * transfer_lookup_key — the field a replace cannot succeed without
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A writer that records the specs it is handed, so a test can assert on the
+ * REQUEST rather than on the outcome.
+ *
+ * The distinction is the whole point of this block. Every other writer stub
+ * in this file returns success unconditionally, so an executor that builds a
+ * request Stripe would reject still produces `outcome: "succeeded"` here.
+ * That is exactly how the missing `transferLookupKey` survived a green
+ * suite: the plan was right, the ordering was right, the operation log was
+ * right, and the one thing that was wrong was a field in the payload that no
+ * test looked at.
+ */
+function makeRecordingWriter(specs: CreatePriceSpec[]): StripeCatalogWriter {
+  return {
+    async findProductByPlan(): Promise<StripeProductRef | null> {
+      return { id: "prod_existing" };
+    },
+    async createProduct(): Promise<StripeProductRef> {
+      return { id: "prod_new" };
+    },
+    async createPrice(_mode: string, spec: CreatePriceSpec): Promise<StripePriceRef> {
+      specs.push(spec);
+      return { id: "price_new" };
+    },
+    async addCurrencyOption(): Promise<StripePriceRef> {
+      return { id: "price_updated" };
+    },
+    async updatePriceTaxBehavior(): Promise<StripePriceRef> {
+      return { id: "price_updated" };
+    },
+    async archivePrice(_mode: string, priceId: string): Promise<StripePriceRef> {
+      return { id: priceId };
+    },
+  };
+}
+
+describe("replace_price asks Stripe to transfer the lookup key", () => {
+  /**
+   * Stripe refuses `prices.create` when the `lookup_key` is held by another
+   * Price unless the create also asks to transfer it. On a `replace_price`
+   * the key is ALWAYS held — by the very Price being replaced — so without
+   * this field the operation cannot succeed at all.
+   *
+   * It never could. The first amount change this console ever attempted, run
+   * against the live account on 2026-09-03, failed here with: "A price
+   * (`price_1U94tmCyiazmanuP0CU2s7MA`) already uses that lookup key." The
+   * create failed, so the archive that follows it never ran and nothing was
+   * written — the executor's failure handling was correct throughout. Only
+   * the request was wrong.
+   */
+  it("sets transferLookupKey on the create, because the key is held by the price being replaced", async () => {
+    const { start, getAttempt, finishPublishAttempt } = makeFakeAttempts();
+    const log = makeFakeLog();
+    const specs: CreatePriceSpec[] = [];
+
+    const ancestor = [amount(KEY_A, "usd", 1000)];
+    const draft = [amount(KEY_A, "usd", 1500)];
+    const observed = [price({ lookup_key: KEY_A, currency: "usd", unit_amount: 1000, id: "price_old" })];
+    const plan = buildPublishPlan({ ancestor, draft, observed });
+    expect(plan.operations).toEqual([expect.objectContaining({ kind: "replace_price" })]);
+
+    const attempt = start(plan.fingerprint);
+    const result = await executePublish(
+      attempt.id,
+      makeDeps({
+        getAttempt,
+        finishPublishAttempt,
+        readAncestor: async () => ancestor,
+        readDraft: async () => draft,
+        observe: async () => observed,
+        writer: makeRecordingWriter(specs),
+        recordOperation: log.recordOperation,
+        completeOperation: log.completeOperation,
+      }),
+    );
+
+    expect(result.outcome).toBe("succeeded");
+    expect(specs).toHaveLength(1);
+    expect(specs[0].lookupKey).toBe(KEY_A);
+    expect(specs[0].transferLookupKey).toBe(true);
+  });
+
+  /**
+   * The mirror, and not symmetry for its own sake: a `create_price` mints a
+   * key nothing holds yet, so asking to transfer would succeed and would
+   * also SILENCE Stripe's rejection — the one signal that a key believed
+   * unused is in fact live on some other Price. That is a surprise a
+   * bootstrap should stop on, not absorb, so the flag must stay off here.
+   */
+  it("does NOT set transferLookupKey on a create_price, so a key that is not new still fails loudly", async () => {
+    const { start, getAttempt, finishPublishAttempt } = makeFakeAttempts();
+    const log = makeFakeLog();
+    const specs: CreatePriceSpec[] = [];
+
+    const ancestor: CatalogAmount[] = [];
+    const draft = [amount(KEY_A, "usd", 1500)];
+    const observed: StripePriceLike[] = [];
+    const plan = buildPublishPlan({ ancestor, draft, observed });
+    // A from-scratch draft mints the Product before the Price that
+    // references it, so the plan is two operations; only the create_price
+    // reaches `createPrice`, which is what `specs` records.
+    expect(plan.operations.map((o) => o.kind)).toEqual(["create_product", "create_price"]);
+
+    const attempt = start(plan.fingerprint);
+    const result = await executePublish(
+      attempt.id,
+      makeDeps({
+        getAttempt,
+        finishPublishAttempt,
+        readAncestor: async () => ancestor,
+        readDraft: async () => draft,
+        observe: async () => observed,
+        writer: makeRecordingWriter(specs),
+        recordOperation: log.recordOperation,
+        completeOperation: log.completeOperation,
+      }),
+    );
+
+    expect(result.outcome).toBe("succeeded");
+    expect(specs).toHaveLength(1);
+    expect(specs[0].transferLookupKey).toBeFalsy();
+  });
+});
