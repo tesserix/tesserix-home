@@ -35,6 +35,8 @@ import { TemplateComposer } from "./template-composer";
 import { ErrorNote } from "./error-note";
 import {
   addContactAction,
+  updateContactAction,
+  setPrimaryContactAction,
   changeStage,
   createOpportunityAction,
   deleteOrganisationAction,
@@ -846,6 +848,216 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
   );
 }
 
+/**
+ * One contact, with its correction affordances.
+ *
+ * The edit form is collapsed by default. Contacts are a LIST — an
+ * organisation can have several — and four always-open inputs per row would
+ * turn a reference view into a wall of form fields, burying the thing an
+ * operator usually comes here to read.
+ */
+function ContactRowItem({
+  organisationId,
+  organisationName,
+  contact,
+  canHardDelete,
+}: {
+  organisationId: string;
+  organisationName: string;
+  contact: ContactRow;
+  canHardDelete: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <li className="border-t border-border pt-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{displayContactName(contact.name)}</span>
+          {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
+        </div>
+        <div className="flex items-center gap-2">
+          {contact.isPrimary ? null : (
+            <MakePrimaryButton organisationId={organisationId} contact={contact} />
+          )}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setEditing((open) => !open)}
+          >
+            {editing ? "Cancel" : "Edit"}
+          </Button>
+          {canHardDelete ? (
+            <EraseContactButton organisationName={organisationName} contact={contact} />
+          ) : null}
+        </div>
+      </div>
+      {editing ? (
+        <EditContactForm
+          organisationId={organisationId}
+          contact={contact}
+          onDone={() => setEditing(false)}
+        />
+      ) : (
+        <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
+          {contact.email ? <span>{contact.email}</span> : null}
+          {contact.phone ? <span>{contact.phone}</span> : null}
+          {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function MakePrimaryButton({
+  organisationId,
+  contact,
+}: {
+  organisationId: string;
+  contact: ContactRow;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={pending}
+        onClick={() => {
+          setError(null);
+          startTransition(async () => {
+            const result = await setPrimaryContactAction(organisationId, contact.id);
+            if (!result.ok) {
+              setError(result.message);
+              return;
+            }
+            router.refresh();
+          });
+        }}
+      >
+        {pending ? "Saving…" : "Make primary"}
+      </Button>
+      <ErrorNote message={error} />
+    </>
+  );
+}
+
+/**
+ * Correct a contact's fields.
+ *
+ * Seeded from the contact as it stands, so a correction is an edit of what is
+ * there rather than a re-entry of all four fields — clearing a field is then
+ * something an operator does on purpose, not something they do by forgetting
+ * to retype it.
+ */
+function EditContactForm({
+  organisationId,
+  contact,
+  onDone,
+}: {
+  organisationId: string;
+  contact: ContactRow;
+  onDone: () => void;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState(contact.name ?? "");
+  const [email, setEmail] = useState(contact.email ?? "");
+  const [phone, setPhone] = useState(contact.phone ?? "");
+  const [instagramHandle, setInstagramHandle] = useState(contact.instagramHandle ?? "");
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  // The same floor the add form applies. Editing is the one path that can
+  // reach "every identifying field cleared" from a valid row, which is why
+  // the button is gated here as well as in the action.
+  const hasField = [name, email, phone, instagramHandle].some((v) => v.trim().length > 0);
+
+  const submit = () => {
+    setError(null);
+    const formData = new FormData();
+    formData.set("name", name);
+    formData.set("email", email);
+    formData.set("phone", phone);
+    formData.set("instagramHandle", instagramHandle);
+    startTransition(async () => {
+      const result = await updateContactAction(organisationId, contact.id, formData);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      onDone();
+      router.refresh();
+    });
+  };
+
+  return (
+    <form
+      // Named, so it is a landmark a screen reader can jump to and so the
+      // four labels below do not collide with the add-contact form's
+      // identical ones — an operator tabbing the page hears which contact
+      // they are editing, not a second anonymous "Email".
+      aria-label={`Edit ${displayContactName(contact.name)}`}
+      className="mt-2 flex flex-wrap items-end gap-2 rounded-md border border-border p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <div>
+        <Label htmlFor={`edit-contact-name-${contact.id}`}>Name</Label>
+        <Input
+          id={`edit-contact-name-${contact.id}`}
+          className="mt-1 h-9"
+          value={name}
+          disabled={pending}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor={`edit-contact-email-${contact.id}`}>Email</Label>
+        <Input
+          id={`edit-contact-email-${contact.id}`}
+          className="mt-1 h-9"
+          type="email"
+          value={email}
+          disabled={pending}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor={`edit-contact-phone-${contact.id}`}>Phone</Label>
+        <Input
+          id={`edit-contact-phone-${contact.id}`}
+          className="mt-1 h-9"
+          value={phone}
+          disabled={pending}
+          onChange={(event) => setPhone(event.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor={`edit-contact-handle-${contact.id}`}>Instagram handle</Label>
+        <Input
+          id={`edit-contact-handle-${contact.id}`}
+          className="mt-1 h-9"
+          value={instagramHandle}
+          disabled={pending}
+          placeholder="@bondibaker"
+          onChange={(event) => setInstagramHandle(event.target.value)}
+        />
+      </div>
+      <Button type="submit" size="sm" disabled={pending || !hasField}>
+        {pending ? "Saving…" : "Save contact"}
+      </Button>
+      <ErrorNote message={error} />
+    </form>
+  );
+}
+
 export function ContactsTab({
   organisationId,
   organisationName,
@@ -865,22 +1077,13 @@ export function ContactsTab({
       ) : (
         <ul className="flex flex-col gap-3">
           {contacts.map((contact) => (
-            <li key={contact.id} className="border-t border-border pt-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{displayContactName(contact.name)}</span>
-                  {contact.isPrimary ? <Badge variant="secondary">Primary</Badge> : null}
-                </div>
-                {canHardDelete ? (
-                  <EraseContactButton organisationName={organisationName} contact={contact} />
-                ) : null}
-              </div>
-              <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
-                {contact.email ? <span>{contact.email}</span> : null}
-                {contact.phone ? <span>{contact.phone}</span> : null}
-                {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
-              </div>
-            </li>
+            <ContactRowItem
+              key={contact.id}
+              organisationId={organisationId}
+              organisationName={organisationName}
+              contact={contact}
+              canHardDelete={canHardDelete}
+            />
           ))}
         </ul>
       )}

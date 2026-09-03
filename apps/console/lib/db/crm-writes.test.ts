@@ -20,8 +20,14 @@ vi.mock("./tesserix", () => ({
   isDatabaseConfigured: () => true,
 }));
 
-const { updateOrganisation, createContact, createOrganisation, DuplicateContactError } =
-  await import("./crm-writes");
+const {
+  updateOrganisation,
+  updateContact,
+  setPrimaryContact,
+  createContact,
+  createOrganisation,
+  DuplicateContactError,
+} = await import("./crm-writes");
 
 /** The current row `SELECT ... FOR UPDATE` returns, unless a test overrides. */
 const CURRENT = {
@@ -316,5 +322,195 @@ describe("createContact and the instagram handle it hands to the INSERT", () => 
 
   it("still stores null for an absent or blank handle", async () => {
     expect((await insertParams("   "))[4]).toBeNull();
+  });
+});
+
+
+/** The contact row `SELECT … FOR UPDATE` returns, unless a test overrides. */
+const CURRENT_CONTACT = {
+  organisation_id: "g1",
+  name: "Priya",
+  email: "priya@bondibaker.example",
+  phone: null,
+  instagram_handle: "bondibaker",
+};
+
+const UNCHANGED_CONTACT = {
+  contactId: "c1",
+  actor: "ops@tesserix.app",
+  name: "Priya",
+  email: "priya@bondibaker.example",
+  phone: null,
+  instagramHandle: "bondibaker",
+};
+
+describe("updateContact", () => {
+  beforeEach(() => {
+    query.mockReset();
+    query.mockResolvedValue([CURRENT_CONTACT]);
+  });
+
+  it("locks the current row before diffing it", async () => {
+    await updateContact(UNCHANGED_CONTACT);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toMatch(/FOR UPDATE/);
+    expect(params).toEqual(["c1"]);
+  });
+
+  it("throws when the contact does not exist", async () => {
+    query.mockResolvedValue([]);
+    await expect(updateContact(UNCHANGED_CONTACT)).rejects.toThrow(/c1/);
+  });
+
+  // The organisation edit's rule, and for the same reason: opening the form
+  // and pressing save did not happen to this business, so the timeline must
+  // not claim it did.
+  it("writes nothing at all when nothing changed", async () => {
+    const { changed } = await updateContact(UNCHANGED_CONTACT);
+
+    expect(changed).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1); // the SELECT, and nothing after it
+  });
+
+  it("updates the changed field and records a per-field diff on the timeline", async () => {
+    const { changed } = await updateContact({
+      ...UNCHANGED_CONTACT,
+      email: "priya@newdomain.example",
+    });
+
+    expect(changed).toEqual([
+      { field: "email", from: "priya@bondibaker.example", to: "priya@newdomain.example" },
+    ]);
+
+    const [updateSql] = query.mock.calls[1];
+    expect(updateSql).toMatch(/UPDATE crm_contacts/);
+
+    const [activitySql, activityParams] = query.mock.calls[2];
+    expect(activitySql).toMatch(/INSERT INTO crm_activities/);
+    expect(activityParams[2]).toBe("Edited email");
+    expect(JSON.parse(activityParams[3] as string)).toEqual({
+      email: { from: "priya@bondibaker.example", to: "priya@newdomain.example" },
+    });
+  });
+
+  // A correction is not contact. `logActivity` bumps `last_contacted_at` and
+  // runs the suppression check; borrowing it here would make fixing a typo
+  // look like an outbound touch and reset the follow-up clock.
+  it("writes the activity row directly, so a correction is not a touch", async () => {
+    await updateContact({ ...UNCHANGED_CONTACT, name: "Priya S" });
+
+    const [activitySql] = query.mock.calls[2];
+    expect(activitySql).not.toMatch(/last_contacted_at/);
+  });
+
+  // #236: the string stored must be the string `isSuppressed` keys its check
+  // on, or an edited handle silently escapes the do-not-contact list. The
+  // contract is exactly `normalizeInstagramHandle`'s — trim, strip leading
+  // `@`, lowercase — and this asserts update applies the same one as insert,
+  // not a richer one it invented.
+  it("normalises an Instagram handle on update, as the insert path does", async () => {
+    // The handle must actually differ from the stored one, or the diff is
+    // empty and there is no UPDATE to inspect — which is itself the point of
+    // normalising before diffing: re-submitting `@BondiBaker` over a stored
+    // `bondibaker` is not a change, and must not write a timeline entry
+    // saying it was.
+    await updateContact({ ...UNCHANGED_CONTACT, instagramHandle: "  @BondiBakerHQ  " });
+
+    const [, params] = query.mock.calls[1];
+    expect(params).toContain("bondibakerhq");
+  });
+
+  it("treats a differently-cased resubmission of the same handle as no change", async () => {
+    const { changed } = await updateContact({
+      ...UNCHANGED_CONTACT,
+      instagramHandle: "@BondiBaker",
+    });
+
+    expect(changed).toEqual([]);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("lowercases and trims an edited email, as the insert path does", async () => {
+    await updateContact({ ...UNCHANGED_CONTACT, email: "  Priya@NewDomain.Example " });
+
+    const [, params] = query.mock.calls[1];
+    expect(params).toContain("priya@newdomain.example");
+  });
+
+  // #237's message, not a generic failure: an operator who has just typed an
+  // address that is already in the CRM needs to be told to search for it.
+  it("raises DuplicateContactError when an edited email collides", async () => {
+    query.mockImplementation((sql: string) => {
+      if (String(sql).includes("FOR UPDATE")) return Promise.resolve([CURRENT_CONTACT]);
+      if (String(sql).includes("UPDATE crm_contacts")) {
+        return Promise.reject(
+          Object.assign(new Error("duplicate key"), {
+            code: "23505",
+            constraint: "crm_contacts_email_lower_uq",
+          }),
+        );
+      }
+      return Promise.resolve([]);
+    });
+
+    await expect(
+      updateContact({ ...UNCHANGED_CONTACT, email: "taken@example.com" }),
+    ).rejects.toBeInstanceOf(DuplicateContactError);
+  });
+
+  // A 23505 on some other constraint is a different fact and must not borrow
+  // the "search for it rather than adding a second one" sentence.
+  it("re-throws a collision on any other constraint untouched", async () => {
+    query.mockImplementation((sql: string) => {
+      if (String(sql).includes("FOR UPDATE")) return Promise.resolve([CURRENT_CONTACT]);
+      if (String(sql).includes("UPDATE crm_contacts")) {
+        return Promise.reject(
+          Object.assign(new Error("duplicate key"), {
+            code: "23505",
+            constraint: "some_other_uq",
+          }),
+        );
+      }
+      return Promise.resolve([]);
+    });
+
+    await expect(
+      updateContact({ ...UNCHANGED_CONTACT, email: "taken@example.com" }),
+    ).rejects.not.toBeInstanceOf(DuplicateContactError);
+  });
+});
+
+describe("setPrimaryContact", () => {
+  beforeEach(() => {
+    query.mockReset();
+    query.mockResolvedValue([{ organisation_id: "g1", is_primary: false, name: "Priya" }]);
+  });
+
+  // Two primaries would make `primaryContactOrder`'s `is_primary DESC` tiebreak
+  // arbitrary across the seven queries that share it — the browse list and the
+  // follower-band filter could then disagree about who the primary is.
+  it("demotes the siblings in the same statement sequence as the promotion", async () => {
+    await setPrimaryContact({ contactId: "c2", actor: "ops@tesserix.app" });
+
+    const sql = query.mock.calls.map(([s]) => String(s)).join("\n");
+    expect(sql).toMatch(/is_primary = false/);
+    expect(sql).toMatch(/is_primary = true/);
+  });
+
+  it("writes nothing when the contact is already primary", async () => {
+    query.mockResolvedValue([{ organisation_id: "g1", is_primary: true, name: "Priya" }]);
+
+    await setPrimaryContact({ contactId: "c1", actor: "ops@tesserix.app" });
+
+    expect(query).toHaveBeenCalledTimes(1); // the SELECT, and nothing after it
+  });
+
+  it("records the promotion on the timeline", async () => {
+    await setPrimaryContact({ contactId: "c2", actor: "ops@tesserix.app" });
+
+    const activity = query.mock.calls.find(([s]) =>
+      String(s).includes("INSERT INTO crm_activities"),
+    );
+    expect(activity, "a promotion that left no trace").toBeDefined();
   });
 });
