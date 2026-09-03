@@ -600,3 +600,247 @@ async function writeEditActivity(
     ],
   );
 }
+
+// =========================================================================
+// CONTACT CORRECTIONS (#247)
+//
+// Until this existed the only way to fix a contact was `eraseContact`, the
+// DPDP erasure path — which pseudonymises the row, stamps `erased_at`, and
+// therefore writes an erasure event that no data subject ever requested. Using
+// the "forget me" log as an edit mechanism fills the evidence of honouring
+// erasure requests with events that were not erasure requests, and loses
+// `created_at` on the way through.
+//
+// It also blocks something concrete: the conversion signal (#246) matches on
+// EMAIL, and 256 of the 259 leads in production carry only an Instagram
+// handle. An email arrives when a lead replies, and before this there was
+// nowhere to put it.
+// =========================================================================
+
+/** The contact fields an operator may correct. `is_primary` is deliberately
+ *  not among them — it is not this contact's property alone, so it moves
+ *  through `setPrimaryContact` where the siblings can be demoted with it. */
+export type ContactField = "name" | "email" | "phone" | "instagramHandle";
+
+export interface ChangedContactField {
+  field: ContactField;
+  from: string | null;
+  to: string | null;
+}
+
+export interface UpdateContactInput {
+  contactId: string;
+  /** Who is making the correction — `crm_activities.actor`, never defaulted
+   *  here, for the reason `UpdateOrganisationInput` states. */
+  actor: string;
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  instagramHandle?: string | null;
+}
+
+interface NormalisedContact {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  instagramHandle: string | null;
+}
+
+/**
+ * Correct a contact's own fields.
+ *
+ * The row is locked (`FOR UPDATE`) and diffed inside the transaction, so the
+ * diff on the timeline is against the state this UPDATE actually replaced and
+ * not one a concurrent edit had already moved past — same discipline as
+ * `updateOrganisation`.
+ *
+ * An edit that changes nothing writes nothing.
+ */
+export async function updateContact(
+  input: UpdateContactInput,
+): Promise<{ changed: ChangedContactField[] }> {
+  const next = normaliseContactInput(input);
+
+  return tesserixTx(async (query) => {
+    const current = await selectContactForUpdate(query, input.contactId);
+    const changed = diffContact(current, next);
+    if (changed.length === 0) return { changed };
+
+    await writeContact(query, input.contactId, next);
+    await writeContactEditActivity(query, current.organisationId, input.actor, changed);
+    return { changed };
+  });
+}
+
+/** The same normalisation `insertContact` applies, so a corrected value is
+ *  stored in the form the indexes and `isSuppressed` expect (#236). */
+function normaliseContactInput(input: UpdateContactInput): NormalisedContact {
+  return {
+    name: input.name?.trim() || null,
+    email: input.email ? input.email.trim().toLowerCase() || null : null,
+    phone: input.phone?.trim() || null,
+    instagramHandle: input.instagramHandle
+      ? normalizeInstagramHandle(input.instagramHandle) || null
+      : null,
+  };
+}
+
+async function selectContactForUpdate(
+  query: TxQuery,
+  contactId: string,
+): Promise<NormalisedContact & { organisationId: string }> {
+  const rows = await query<{
+    organisation_id: string;
+    name: string | null;
+    email: string | null;
+    phone: string | null;
+    instagram_handle: string | null;
+  }>(
+    `SELECT organisation_id, name, email, phone, instagram_handle
+       FROM crm_contacts
+      WHERE id = $1
+        FOR UPDATE`,
+    [contactId],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`updateContact: contact ${contactId} not found`);
+  }
+  return {
+    organisationId: row.organisation_id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    instagramHandle: row.instagram_handle,
+  };
+}
+
+function diffContact(
+  current: NormalisedContact,
+  next: NormalisedContact,
+): ChangedContactField[] {
+  const fields: readonly ContactField[] = ["name", "email", "phone", "instagramHandle"];
+  return fields
+    .filter((field) => current[field] !== next[field])
+    .map((field) => ({ field, from: current[field], to: next[field] }));
+}
+
+async function writeContact(
+  query: TxQuery,
+  contactId: string,
+  next: NormalisedContact,
+): Promise<void> {
+  // The collision is translated at the UPDATE the same way `insertContact`
+  // translates it at the INSERT, and on the same evidence — `code` and
+  // `constraint`, never the driver's message text. An operator editing an
+  // address into one the CRM already holds gets #237's sentence, not a
+  // generic failure.
+  try {
+    await query(
+      `UPDATE crm_contacts
+          SET name = $2,
+              email = $3,
+              phone = $4,
+              instagram_handle = $5,
+              updated_at = now()
+        WHERE id = $1`,
+      [contactId, next.name, next.email, next.phone, next.instagramHandle],
+    );
+  } catch (cause) {
+    const key = duplicateContactKey(cause);
+    if (key) throw new DuplicateContactError(key);
+    throw cause;
+  }
+}
+
+async function writeContactEditActivity(
+  query: TxQuery,
+  organisationId: string,
+  actor: string,
+  changed: readonly ChangedContactField[],
+): Promise<void> {
+  // Inlined rather than delegated to `logActivity`, for the reason
+  // `writeEditActivity` gives: that helper bumps `last_contacted_at` and runs
+  // the suppression check, and a field correction is neither an outbound
+  // message nor contact. Fixing a typo must not reset the follow-up clock.
+  const metadata = Object.fromEntries(
+    changed.map(({ field, from, to }) => [field, { from, to }]),
+  );
+  await query(
+    `INSERT INTO crm_activities (organisation_id, kind, actor, body, metadata)
+     VALUES ($1, 'note', $2, $3, $4::jsonb)`,
+    [
+      organisationId,
+      actor,
+      `Edited ${changed.map((c) => c.field).join(", ")}`,
+      JSON.stringify(metadata),
+    ],
+  );
+}
+
+export interface SetPrimaryContactInput {
+  contactId: string;
+  actor: string;
+}
+
+/**
+ * Make one contact the organisation's primary, demoting the others.
+ *
+ * Promotion and demotion share a transaction because two primaries would make
+ * `primaryContactOrder`'s `is_primary DESC` tiebreak arbitrary — and that
+ * ordering is the tiebreak in SEVEN queries, including the follower-band
+ * filter. The browse list and the filter could then disagree about who the
+ * primary is, which is the class of bug `primaryContactOrder` exists to stop.
+ *
+ * Promoting the contact that is already primary writes nothing.
+ */
+export async function setPrimaryContact(
+  input: SetPrimaryContactInput,
+): Promise<{ changed: boolean }> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      organisation_id: string;
+      is_primary: boolean;
+      name: string | null;
+    }>(
+      `SELECT organisation_id, is_primary, name
+         FROM crm_contacts
+        WHERE id = $1
+          FOR UPDATE`,
+      [input.contactId],
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new Error(`setPrimaryContact: contact ${input.contactId} not found`);
+    }
+    if (row.is_primary) return { changed: false };
+
+    // Demote first, then promote. The other order would leave two primaries
+    // visible to a concurrent reader mid-transaction on a weaker isolation
+    // level; this order leaves none, which the ordering degrades to gracefully
+    // (it falls through to `created_at ASC, id ASC`) where two would not.
+    await query(
+      `UPDATE crm_contacts
+          SET is_primary = false, updated_at = now()
+        WHERE organisation_id = $1 AND is_primary`,
+      [row.organisation_id],
+    );
+    await query(
+      `UPDATE crm_contacts
+          SET is_primary = true, updated_at = now()
+        WHERE id = $1`,
+      [input.contactId],
+    );
+    await query(
+      `INSERT INTO crm_activities (organisation_id, kind, actor, body, metadata)
+       VALUES ($1, 'note', $2, $3, $4::jsonb)`,
+      [
+        row.organisation_id,
+        input.actor,
+        `Made ${row.name ?? "a contact"} the primary contact`,
+        JSON.stringify({ isPrimary: { from: false, to: true } }),
+      ],
+    );
+    return { changed: true };
+  });
+}

@@ -37,8 +37,11 @@ import {
   createContact,
   createOpportunity as createOpportunityRow,
   updateOrganisation,
+  updateContact,
+  setPrimaryContact,
   DuplicateContactError,
   type ChangedField,
+  type ChangedContactField,
   type OrganisationField,
 } from "@/lib/db/crm-writes";
 import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
@@ -1173,4 +1176,106 @@ export async function copyAndLogDm(input: CopyAndLogDmInput): Promise<CrmActionR
   // gone from the stage-`new` working set this feature exists to clear.
   revalidatePath("/platform/crm");
   return { ok: true };
+}
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * CONTACT CORRECTIONS (#247)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Correct a contact's own fields from the detail page.
+ *
+ * Until this existed the only way to fix a mistyped email was `eraseContact`
+ * — the DPDP erasure path — which stamps `erased_at` and so records an
+ * erasure request that never happened, needs the `hard-delete` capability for
+ * a typo, and loses `created_at`.
+ *
+ * `crm`, not `hard-delete`: this is an ordinary correction, and requiring the
+ * erasure capability to fix a typo is what pushed operators onto the erasure
+ * path in the first place.
+ */
+export async function updateContactAction(
+  organisationId: string,
+  contactId: string,
+  formData: FormData,
+): Promise<CrmActionResult> {
+  const name = optionalField(formData, "name");
+  const email = optionalField(formData, "email");
+  const phone = optionalField(formData, "phone");
+  const instagramHandle = optionalField(formData, "instagramHandle");
+
+  // The same floor `addContactAction` applies, and for the same reason: a
+  // contact with every identifying field cleared is unfindable and
+  // unreachable. Editing is also the one path that can REACH that state from
+  // a valid row, which the create form cannot.
+  if (!name && !email && !phone && !instagramHandle) {
+    return {
+      ok: false,
+      message: "A contact needs at least a name, email, phone, or Instagram handle.",
+    };
+  }
+
+  const result = await withCrmWrite(
+    `${name ?? email ?? contactId} (${contactId})`,
+    { capability: "crm" },
+    (actor) =>
+      updateContact({ contactId, actor: actor.email, name, email, phone, instagramHandle }),
+    (outcome) => ({
+      action: "crm.contact.update",
+      summary: summariseContactChanges(outcome.changed),
+    }),
+    // Editing an address into one the CRM already holds must produce #237's
+    // sentence, not the generic "That change was not saved." — the operator's
+    // next move is to search for the existing contact, and only that message
+    // says so.
+    mapDuplicateContact);
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${organisationId}`);
+  return { ok: true };
+}
+
+/**
+ * Make a contact the organisation's primary.
+ *
+ * Not part of the field edit: `is_primary` is not this contact's property
+ * alone — promoting one demotes its siblings — so it moves through its own
+ * action and its own transaction. See `setPrimaryContact` for why two
+ * primaries would be worse than a stale badge.
+ */
+export async function setPrimaryContactAction(
+  organisationId: string,
+  contactId: string,
+): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    contactId,
+    { capability: "crm" },
+    (actor) => setPrimaryContact({ contactId, actor: actor.email }),
+    (outcome) => ({
+      action: "crm.contact.setPrimary",
+      summary: { changed: outcome.changed ? 1 : 0 },
+    }));
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${organisationId}`);
+  // The browse surface filters and displays on the PRIMARY contact's follower
+  // band, so a promotion that is not revalidated there leaves an organisation
+  // filed under the old primary's band — the silent mis-filing #247 describes.
+  revalidatePath("/platform/crm/organisations");
+  return { ok: true };
+}
+
+const CONTACT_SUMMARY_KEYS: Readonly<Record<ChangedContactField["field"], string>> = {
+  name: "name",
+  email: "email",
+  phone: "phone",
+  instagramHandle: "instagram",
+};
+
+function summariseContactChanges(
+  changed: readonly ChangedContactField[],
+): Record<string, number> {
+  return changed.reduce<Record<string, number>>(
+    (summary, { field }) => ({ ...summary, [CONTACT_SUMMARY_KEYS[field]]: 1 }),
+    { fields: changed.length },
+  );
 }
