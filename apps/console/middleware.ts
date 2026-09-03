@@ -9,6 +9,7 @@ import {
 } from "@tesserix/platform-auth";
 
 import { isInternal, requiresCapability } from "@/lib/internal-access";
+import { CONSOLE_PATHNAME_HEADER } from "@/lib/auth/console-pathname";
 import { publicOrigin } from "@/lib/public-origin";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
@@ -207,5 +208,20 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return forbidden(request);
   }
 
-  return NextResponse.next();
+  // Forward the path so the console layout can gate on it (#262).
+  //
+  // A Next.js server LAYOUT receives no pathname — there is no prop and no
+  // API for it — so the capability gate cannot resolve which surface is being
+  // requested without this. It is set here rather than the gate moving into
+  // middleware because middleware holds only the session cookie, whose roles
+  // are up to seven days old; the layout can consult the live capability
+  // store, which is the authority every write already uses (#285). Enforcing
+  // on the cookie would leave a revoked operator reading restricted surfaces
+  // for a week while their writes were already refused.
+  //
+  // Request header, not response: it travels INTO the render and never
+  // reaches the browser.
+  const forwarded = new Headers(request.headers);
+  forwarded.set(CONSOLE_PATHNAME_HEADER, pathname);
+  return NextResponse.next({ request: { headers: forwarded } });
 }

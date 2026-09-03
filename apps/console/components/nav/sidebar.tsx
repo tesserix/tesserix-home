@@ -15,6 +15,7 @@ import {
   navItems,
   platformNav,
   consolePath,
+  visibleNav,
   type NavEntry,
   type NavGroup,
   type RouteId,
@@ -428,7 +429,17 @@ function RailSwitcher({
   );
 }
 
-export function ConsoleSidebar() {
+export function ConsoleSidebar({
+  capabilities = [],
+  enforceCapabilities = false,
+}: {
+  /** The operator's held capabilities, from the layout. */
+  capabilities?: readonly string[];
+  /** False on the legacy provider, which carries no capability claims — the
+   *  rail then renders whole, the same contract the palette's `visibleTo`
+   *  has. Defaulted so an existing render call is unchanged. */
+  enforceCapabilities?: boolean;
+}) {
   const pathname = usePathname();
   // The switcher changes CONTEXT, not location. Every surface in both rails is
   // still served by apps/web, so navigating on select would eject the operator
@@ -443,18 +454,25 @@ export function ConsoleSidebar() {
 
   const railKey = selected ?? fromPath;
   const rail = RAILS[railKey];
+  // #263: a surface the operator cannot reach is not offered. The refusal
+  // itself is the layout's `capabilityForPath` gate — hiding alone would be
+  // presentation, and #244 decided "hidden AND enforced".
+  const nav = useMemo(
+    () => visibleNav(rail.nav, capabilities, enforceCapabilities),
+    [rail.nav, capabilities, enforceCapabilities],
+  );
 
   // Group names are unique across both rails, so one stored set serves both;
   // a rail whose nav is flat (Kora's) simply never contributes to it.
-  const { collapsed, toggle } = useCollapsedGroups(activeGroupName(rail.nav, pathname));
+  const { collapsed, toggle } = useCollapsedGroups(activeGroupName(nav, pathname));
 
   // `navItems` rather than a local flattener: `lib/search.ts` already walks the
   // rails this way, and a second walker that stopped at groups would report an
   // empty rail here — every entry would then look "most specific" and nothing
   // would be narrowed.
   const railRoutes = useMemo(
-    () => navItems(rail.nav).map((item) => item.route),
-    [rail.nav],
+    () => navItems(nav).map((item) => item.route),
+    [nav],
   );
 
   return (
@@ -473,13 +491,13 @@ export function ConsoleSidebar() {
       >
         {/* A flat rail still gets its section label; a grouped one carries its
             own, so this only renders when the nav has no groups of its own. */}
-        {rail.nav.some(isNavGroup) ? null : (
+        {nav.some(isNavGroup) ? null : (
           <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/50">
             {rail.section}
           </p>
         )}
         <div className="space-y-0.5">
-          {rail.nav.map((entry) =>
+          {nav.map((entry) =>
             isNavGroup(entry) ? (
               <NavGroupSection
                 key={entry.name}
