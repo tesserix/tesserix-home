@@ -41,31 +41,57 @@ organization"*.
    plus the surfaces they work in (`crm`, `support`, `platform`).
 4. Have them sign in once and confirm the surfaces render.
 
-### Roles are not optional, and their absence does not look like a permissions error
+### Roles are not optional, but their absence is not a login failure
 
-The project has **"Only authorized users can authenticate"** ON:
+An earlier version of this page said the `platform-console` project has
+**"Only authorized users can authenticate"** ON, so that a role-less operator
+would be refused at the Zitadel password prompt. **It is off.** The live project
+carries only `projectRoleAssertion: true`; `projectRoleCheck` is absent, which
+in proto3 means false:
 
-> *"Deny authentication if the user has no roles assigned to this project."*
+```json
+{"project": {"id": "386377618200461939", "name": "platform-console",
+             "state": "PROJECT_STATE_ACTIVE", "projectRoleAssertion": true}}
+```
 
-So an operator with no role assignment fails at **login**, with
-`Username or Password is invalid` — indistinguishable from a wrong password.
-Check the role assignment before debugging the credential.
+A user with no roles on the project therefore **authenticates at Zitadel
+perfectly well**. They are refused afterwards, by the console, at one of two
+gates:
+
+| Gate | Code | Symptom |
+|---|---|---|
+| `/auth/callback` | `isInternal` in `packages/platform-auth/src/zitadel.ts` — refuses an identity whose `roles` array is empty | 403 `not_internal`, returned as JSON |
+| `middleware.ts` | `isInternal` in `apps/console/lib/internal-access.ts` — refuses a session lacking `CONSOLE_ENTRY_CAPABILITY` (`read`) | the "platform console is restricted" page |
+
+So the diagnostic is the opposite of what this page used to say: **a role
+problem looks like a console refusal after a successful sign-in, not like a
+rejected password.** If the password prompt itself is refusing, the problem is
+the credential — see the traps below.
 
 ## Removing an operator
 
-Remove their **role assignment** on `platform-console`. That is sufficient: with
-the setting above, they can no longer authenticate.
+Remove their **role assignment** on `platform-console`. That is sufficient, but
+*not* for the reason this page used to give: the removal takes effect at the
+console's gates above, not at Zitadel's login. The operator can still sign in to
+Zitadel; they just cannot get past `/auth/callback`.
 
 **Do not delete the user to revoke access.** Deleting a Zitadel user discards
 its role grants silently, and if that user is the one carrying the grants you
 depended on, they are gone with it — see the traps below.
 
-### Revocation is not immediate
+### Revocation takes about five minutes
 
 Roles are copied into the `tx_session` cookie **at login**, and sessions last
-7 days. Removing a grant does not reach a live session. Until #285 lands, the
-revocation procedure is: remove the grant **and** confirm the person's session
-has ended.
+7 days, so the cookie alone would leave a revoked operator working for a week.
+It no longer decides: #285 (PR #458) revalidates capabilities against Zitadel
+on a `CAPABILITY_REVALIDATE_SECONDS = 300` window
+(`apps/console/lib/auth/platform-token.ts`), so a removed grant reaches a live
+session within about five minutes.
+
+Two cases still need the session ended by hand: a session minted before the
+token store existed (no `sid` claim), and one whose revalidation cannot run
+because the refresh token is spent. Both resolve to `unavailable`, which is
+deliberately **not** read as a refusal.
 
 ## The traps, each of which cost time on 2026-08-19
 
@@ -151,8 +177,8 @@ Read off the live instance afterwards:
 
 - Exactly **one** user exists for the operator's email, in TESSERIX. Not a
   duplicate, not in the default org.
-- It holds **all eleven** `platform-console` roles, so the project's
-  "Only authorized users can authenticate" check passes.
+- It holds **all eleven** `platform-console` roles, so both console gates
+  admit it.
 - It has **no passkey, no IdP link and no MFA factor** — a password is its only
   credential — and `passwordChanged` is **05:10:42Z**.
 
