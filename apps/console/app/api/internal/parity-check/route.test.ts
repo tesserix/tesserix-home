@@ -22,9 +22,11 @@ import { getCurrentSession } from "@tesserix/platform-auth";
 import {
   stripePriceReader,
   StripeReadUnavailableError,
+  STRIPE_MODES,
   type StripeMode,
 } from "@/lib/billing/stripe-read";
 import { isDatabaseConfigured } from "@/lib/db/tesserix";
+import { CATALOG_SOURCES, SINGLE_SOURCE, type CatalogSource } from "@/lib/billing/source-policy";
 import { readCatalogAmounts, recordParityRun } from "@/lib/db/plan-catalog-repo";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
 import { POST } from "./route";
@@ -39,17 +41,23 @@ import { POST } from "./route";
 const LIVE_KEY_FIXTURE = ["rk", "live", "9aZbQ2mmSECRETvalue"].join("_");
 
 /**
- * The operator-triggered runner, which now runs BOTH modes.
+ * The operator-triggered runner, which runs every (mode, source) pair.
  *
  * The property this suite exists for is stated once, because it is the single
  * worst failure this design can have: EVERY FAILURE PATH WRITES A `failed` ROW,
- * FOR EVERY MODE. A check that silently does nothing when Stripe is unreachable
+ * FOR EVERY PAIR. A check that silently does nothing when Stripe is unreachable
  * leaves a gap in the 7-day window that is indistinguishable from a clean day —
  * and a clean day is what P2 revokes mark8ly's Stripe write key on.
  *
- * The second property, new here: one mode's failure must not cost the other its
- * row. A route that gave up on the first error would make an absent live
+ * The second property: one pair's failure must not cost the others their rows.
+ * A route that gave up on the first error would make an absent live
  * credential — which is today's state — silently stop test's window too.
+ *
+ * Pairs and not modes since tesserix-home#392. `CATALOG_SOURCES` holds one
+ * entry today, so the assertions below still describe two rows; they are
+ * written against the CONSTANTS so that a second source not being iterated
+ * fails here rather than going unnoticed, which is the shape of the original
+ * omission.
  */
 
 const KEY = "mark8ly_starter_monthly_ppp_vnd_v1";
@@ -75,6 +83,12 @@ const matching: StripePriceLike[] = [
 
 const drifted: StripePriceLike[] = [{ ...matching[0], unit_amount: 32_900_000 }];
 
+/** How many rows one request must write. Derived, never the literal 2: the
+ *  point of tesserix-home#392 is that the runner covers the whole cross
+ *  product, and a hardcoded count would keep passing the day a second source
+ *  is added and not iterated. */
+const PAIR_COUNT = STRIPE_MODES.length * CATALOG_SOURCES.length;
+
 function pricesPerMode(per: Partial<Record<StripeMode, StripePriceLike[]>>) {
   vi.mocked(stripePriceReader.listPrices).mockImplementation(async (mode) => {
     const prices = per[mode];
@@ -95,6 +109,7 @@ const recordedFor = (mode: StripeMode) =>
 
 interface RunBody {
   mode: StripeMode;
+  source: CatalogSource;
   outcome: string;
   differenceCount: number;
   differences: unknown[];
@@ -156,16 +171,39 @@ describe("the guard", () => {
   });
 });
 
-describe("one request covers both modes", () => {
-  it("writes exactly one row per mode and reports each", async () => {
+describe("one request covers every (mode, source) pair", () => {
+  it("writes exactly one row per pair and reports each", async () => {
     const res = await POST();
 
     expect(res.status).toBe(200);
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(await runsOf(res)).toEqual([
-      { mode: "test", outcome: "clean", differenceCount: 0, differences: [], error: null },
-      { mode: "live", outcome: "clean", differenceCount: 0, differences: [], error: null },
+      { mode: "test", source: SINGLE_SOURCE, outcome: "clean", differenceCount: 0, differences: [], error: null },
+      { mode: "live", source: SINGLE_SOURCE, outcome: "clean", differenceCount: 0, differences: [], error: null },
     ]);
+  });
+
+  it("covers the whole cross product, not just the modes — tesserix-home#392", async () => {
+    // The row count and the pairs written, both derived from the constants
+    // rather than written out. A runner that still looped over modes alone
+    // would write two rows for a two-source estate and leave the second
+    // catalog's drift compared against nothing — while the rows it DID write
+    // still came back clean, which is why this asserts the SET of pairs and
+    // not merely that something was recorded.
+    await POST();
+
+    expect(vi.mocked(recordParityRun).mock.calls.map((c) => `${c[0].mode}/${c[0].source}`)).toEqual(
+      STRIPE_MODES.flatMap((mode) => CATALOG_SOURCES.map((source) => `${mode}/${source}`)),
+    );
+  });
+
+  it("names the source in the response body, not only the mode", async () => {
+    // A payload naming only the mode cannot say which catalog answered, which
+    // is the ambiguity tesserix-home#392 closes; an operator reading a 502's
+    // body has to be able to tell which pair failed.
+    const runs = await runsOf(await POST());
+
+    expect(runs.every((r) => r.source === SINGLE_SOURCE)).toBe(true);
   });
 
   it("reads each mode's Stripe account separately", async () => {
@@ -230,6 +268,7 @@ describe("a mode that has never been bootstrapped", () => {
     expect(res.status).toBe(200);
     expect(recordedFor("live")).toEqual({
       mode: "live",
+      source: SINGLE_SOURCE,
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
@@ -292,7 +331,7 @@ describe("every failure path writes a failed row", () => {
 
     await POST();
 
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(recordedFor("test")).toMatchObject({ outcome: "clean" });
     expect(recordedFor("live")).toMatchObject({ outcome: "failed" });
   });
@@ -331,7 +370,7 @@ describe("every failure path writes a failed row", () => {
     const res = await POST();
 
     expect(res.status).toBe(502);
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(recordedFor("test")).toMatchObject({ outcome: "failed" });
     expect(recordedFor("live")).toMatchObject({ outcome: "failed" });
     expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
@@ -393,10 +432,9 @@ describe("every failure path writes a failed row", () => {
 
     await POST();
 
-    expect(vi.mocked(recordParityRun).mock.calls.map((c) => c[0].mode)).toEqual([
-      "test",
-      "live",
-    ]);
+    expect(vi.mocked(recordParityRun).mock.calls.map((c) => `${c[0].mode}/${c[0].source}`)).toEqual(
+      STRIPE_MODES.flatMap((mode) => CATALOG_SOURCES.map((source) => `${mode}/${source}`)),
+    );
   });
 
   it("answers 500 without leaking the driver error", async () => {

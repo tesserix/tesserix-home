@@ -4,6 +4,13 @@ vi.mock("./tesserix", () => ({
   tesserixQuery: vi.fn(async () => []),
 }));
 
+// Iterated rather than written out as ["test/mark8ly", ...]: the assertions
+// below are about the reads covering the WHOLE cross product, so hardcoding
+// today's one-source list would make them pass unchanged the day a second
+// source is added and not covered — the tesserix-home#392 failure, in the test
+// meant to prevent it.
+import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
+import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { tesserixQuery } from "./tesserix";
 import { readCatalogAmounts, readCatalogRows, readLatestRuns, recordParityRun } from "./plan-catalog-repo";
 
@@ -84,15 +91,30 @@ describe("readCatalogAmounts", () => {
 });
 
 describe("recordParityRun", () => {
-  it("writes the mode, so a row can be read a week later", async () => {
-    // Without this the row is unreadable the moment there are two accounts:
-    // `clean` means nothing if you cannot tell which account it was clean
-    // against, and #327's gate is "both modes clean".
-    await recordParityRun({ mode: "live", outcome: "clean", differences: [], error: null, publicationId: null });
+  it("writes the mode AND the source, so a row can be read a week later", async () => {
+    // Without the mode the row is unreadable the moment there are two
+    // accounts: `clean` means nothing if you cannot tell which account it was
+    // clean against. Without the source it is unreadable the moment there are
+    // two catalogs, for the identical reason one axis over — 0044, and
+    // tesserix-home#392. #327's gate is "every (mode, source) pair clean", and
+    // a row that names only one of the two cannot count towards it.
+    await recordParityRun({
+      mode: "live",
+      source: "mark8ly",
+      outcome: "clean",
+      differences: [],
+      error: null,
+      publicationId: null,
+    });
 
     const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(String(sql)).toContain("mode");
-    expect(params).toEqual(["live", "clean", 0, "[]", null, null]);
+    // Asserted on the SQL as well as the params, because 0045 drops the
+    // column's database default: an INSERT that omitted `source` compiled and
+    // ran against the 0044 schema and would start failing outright once 0045
+    // is applied — in the nightly CronJob, at 02:15 UTC, as a day-shaped hole.
+    expect(String(sql)).toContain("source");
+    expect(params).toEqual(["live", "mark8ly", "clean", 0, "[]", null, null]);
   });
 
   it("writes the publication a clean run was checked against", async () => {
@@ -104,6 +126,7 @@ describe("recordParityRun", () => {
 
     await recordParityRun({
       mode: "live",
+      source: "mark8ly",
       outcome: "clean",
       differences: [],
       error: null,
@@ -112,7 +135,7 @@ describe("recordParityRun", () => {
 
     const [sql, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(String(sql)).toContain("publication_id");
-    expect(params).toEqual(["live", "clean", 0, "[]", null, publicationId]);
+    expect(params).toEqual(["live", "mark8ly", "clean", 0, "[]", null, publicationId]);
   });
 
   it("derives difference_count from the report rather than trusting a caller", async () => {
@@ -121,11 +144,19 @@ describe("recordParityRun", () => {
         catalogUnitAmountMinor: 1, stripeUnitAmountMinor: 2, zeroDecimalSuspect: false },
     ];
 
-    await recordParityRun({ mode: "test", outcome: "differences", differences, error: null, publicationId: null });
+    await recordParityRun({
+      mode: "test",
+      source: "mark8ly",
+      outcome: "differences",
+      differences,
+      error: null,
+      publicationId: null,
+    });
 
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
     expect(params).toEqual([
       "test",
+      "mark8ly",
       "differences",
       1,
       JSON.stringify(differences),
@@ -135,9 +166,16 @@ describe("recordParityRun", () => {
   });
 
   it("writes an empty array and a null reason for a clean run", async () => {
-    await recordParityRun({ mode: "test", outcome: "clean", differences: [], error: null, publicationId: null });
+    await recordParityRun({
+      mode: "test",
+      source: "mark8ly",
+      outcome: "clean",
+      differences: [],
+      error: null,
+      publicationId: null,
+    });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["test", "clean", 0, "[]", null, null]);
+    expect(params).toEqual(["test", "mark8ly", "clean", 0, "[]", null, null]);
   });
 
   it("writes no differences for a not_bootstrapped run", async () => {
@@ -146,13 +184,14 @@ describe("recordParityRun", () => {
     // incoherence the constraint exists to make unstorable.
     await recordParityRun({
       mode: "live",
+      source: "mark8ly",
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
       publicationId: null,
     });
     const [, params] = vi.mocked(tesserixQuery).mock.calls[0];
-    expect(params).toEqual(["live", "not_bootstrapped", 0, "[]", null, null]);
+    expect(params).toEqual(["live", "mark8ly", "not_bootstrapped", 0, "[]", null, null]);
   });
 });
 
@@ -214,14 +253,17 @@ describe("readCatalogRows", () => {
 });
 
 describe("readLatestRuns", () => {
-  it("returns both modes even when only one has ever run", async () => {
+  it("returns every (mode, source) pair even when only one has ever run", async () => {
     // Same discipline as `readWindowStatus`: a query that only returned the
-    // modes present in the table would omit live entirely the day live has
-    // never run, and a caller iterating "every mode returned" would never
-    // notice the gap.
+    // pairs present in the table would omit live entirely the day live has
+    // never run, and a caller iterating "every pair returned" would never
+    // notice the gap. Since tesserix-home#392 that discipline covers the
+    // source axis too — an unchecked catalog must be reported as never having
+    // run, not left out of the answer.
     vi.mocked(tesserixQuery).mockResolvedValue([
       {
         mode: "test",
+        source: "mark8ly",
         outcome: "clean",
         ran_at: "2026-08-27T12:00:00.000Z",
         difference_count: 0,
@@ -231,14 +273,44 @@ describe("readLatestRuns", () => {
 
     const runs = await readLatestRuns();
 
-    expect(runs.map((r) => r.mode)).toEqual(["test", "live"]);
-    expect(runs.find((r) => r.mode === "test")?.run).toEqual({
+    expect(runs.map((r) => `${r.mode}/${r.source}`)).toEqual(
+      STRIPE_MODES.flatMap((mode) => CATALOG_SOURCES.map((source) => `${mode}/${source}`)),
+    );
+    expect(runs.find((r) => r.mode === "test" && r.source === "mark8ly")?.run).toEqual({
       outcome: "clean",
       ranAt: "2026-08-27T12:00:00.000Z",
       differenceCount: 0,
       differences: [],
     });
-    expect(runs.find((r) => r.mode === "live")?.run).toBeNull();
+    expect(runs.find((r) => r.mode === "live" && r.source === "mark8ly")?.run).toBeNull();
+  });
+
+  it("keys the top-1-per-group on BOTH axes — tesserix-home#392", async () => {
+    // The query is `DISTINCT ON (mode, source) ... ORDER BY mode, source,
+    // ran_at DESC`. Keyed on `mode` alone it returns whichever source ran
+    // last for that mode, and the console then shows one catalog's verdict
+    // under a card that claims to speak for the mode. Asserted on the SQL
+    // because with one source in `CATALOG_SOURCES` the two queries return
+    // identical rows, so no fixture can tell them apart.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+    await readLatestRuns();
+    const [sql] = vi.mocked(tesserixQuery).mock.calls[0];
+    expect(String(sql)).toContain("DISTINCT ON (mode, source)");
+    expect(String(sql)).toContain("ORDER BY mode, source, ran_at DESC");
+  });
+
+  it("reports a pair that has never run rather than omitting it — tesserix-home#392", async () => {
+    // The whole shape of the omission this issue closes: a source nothing has
+    // ever written a row for must come back as `run: null`, an ANSWER, and
+    // never be absent from the list. Absent, a caller reducing over the
+    // result finds every pair it can see agreeing and calls the gate
+    // satisfied.
+    vi.mocked(tesserixQuery).mockResolvedValue([] as never);
+
+    const runs = await readLatestRuns();
+
+    expect(runs).toHaveLength(STRIPE_MODES.length * CATALOG_SOURCES.length);
+    expect(runs.every((r) => r.run === null)).toBe(true);
   });
 
   it("carries the stored differences through untouched, so a red day is interrogable", async () => {
@@ -255,6 +327,7 @@ describe("readLatestRuns", () => {
     vi.mocked(tesserixQuery).mockResolvedValue([
       {
         mode: "live",
+        source: "mark8ly",
         outcome: "differences",
         ran_at: "2026-08-27T03:00:00.000Z",
         difference_count: 1,
@@ -263,6 +336,8 @@ describe("readLatestRuns", () => {
     ] as never);
 
     const runs = await readLatestRuns();
-    expect(runs.find((r) => r.mode === "live")?.run?.differences).toEqual(differences);
+    expect(
+      runs.find((r) => r.mode === "live" && r.source === "mark8ly")?.run?.differences,
+    ).toEqual(differences);
   });
 });

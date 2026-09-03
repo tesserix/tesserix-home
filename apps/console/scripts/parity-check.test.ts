@@ -24,6 +24,7 @@ vi.mock("@/lib/billing/parity", async (importOriginal) => {
 });
 
 import { compareCatalogToStripe } from "@/lib/billing/parity";
+import { CATALOG_SOURCES, SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import {
   STRIPE_MODES,
   stripePriceReader,
@@ -123,6 +124,17 @@ function loggedLines(): Record<string, unknown>[] {
 }
 
 /** The run recorded for one mode, or undefined if none was. */
+/** How many rows one invocation must write, and how many log lines it must
+ *  emit. Derived from the two constants, never the literal 2: tesserix-home#392
+ *  is exactly the case where a runner covering only the modes still looks
+ *  correct, and a hardcoded count would keep agreeing with it. */
+const PAIR_COUNT = STRIPE_MODES.length * CATALOG_SOURCES.length;
+
+/** Every pair, in the order the job walks them — mode-major. */
+const PAIR_KEYS = STRIPE_MODES.flatMap((mode) =>
+  CATALOG_SOURCES.map((source) => `${mode}/${source}`),
+);
+
 const recordedFor = (mode: StripeMode) =>
   vi.mocked(recordParityRun).mock.calls.map((c) => c[0]).find((run) => run.mode === mode);
 
@@ -141,72 +153,84 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("one run covers both modes", () => {
-  it("writes exactly one row per mode and exits 0", async () => {
+describe("one run covers every (mode, source) pair", () => {
+  it("writes exactly one row per pair and exits 0", async () => {
     const code = await runParityCheckJob();
 
     expect(code).toBe(EXIT_OK);
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(recordParityRun).mock.calls.map((c) => c[0].mode)).toEqual([
-      "test",
-      "live",
-    ]);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(vi.mocked(recordParityRun).mock.calls.map((c) => `${c[0].mode}/${c[0].source}`)).toEqual(
+      PAIR_KEYS,
+    );
+  });
+
+  it("covers the whole cross product, not just the modes — tesserix-home#392", async () => {
+    // A job that still looped over modes alone would write one row per mode
+    // and leave a second source's catalog compared against nothing — while
+    // the rows it DID write still came back clean, so nothing looks wrong.
+    // Asserted as the SET of pairs, derived from the constants.
+    await runParityCheckJob();
+
+    expect(vi.mocked(recordParityRun).mock.calls.map((c) => c[0].source)).toEqual(
+      STRIPE_MODES.flatMap(() => [...CATALOG_SOURCES]),
+    );
   });
 
   it("reads each mode's Stripe account separately", async () => {
     await runParityCheckJob();
 
-    expect(stripePriceReader.listPrices).toHaveBeenCalledTimes(2);
+    expect(stripePriceReader.listPrices).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("test");
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
   });
 
-  it("logs one structured line per mode, each naming its mode", async () => {
+  it("logs one structured line per pair, each naming its mode AND source", async () => {
     // The CronJob's stdout is the cluster's log sink and, for most of the
     // week, the only thing anyone actually reads. A line that did not name its
-    // mode would be unattributable the moment there are two.
+    // mode would be unattributable the moment there are two accounts; a line
+    // that names only the mode is unattributable the moment there are two
+    // catalogs, which is the same defect one axis over (tesserix-home#392).
     await runParityCheckJob();
 
     const lines = loggedLines();
-    expect(lines).toHaveLength(2);
-    expect(lines.map((l) => l.mode).sort()).toEqual(["live", "test"]);
+    expect(lines).toHaveLength(PAIR_COUNT);
+    expect(lines.map((l) => `${l.mode}/${l.source}`)).toEqual(PAIR_KEYS);
     for (const line of lines) {
       expect(line).toMatchObject({ outcome: "clean", differenceCount: 0 });
     }
   });
 });
 
-describe("the modes are independent", () => {
-  it("still writes the other mode's row when one mode fails", async () => {
-    // The property the whole two-mode split turns on. Live has no restricted
+describe("the pairs are independent", () => {
+  it("still writes the other pairs' rows when one pair fails", async () => {
+    // The property the whole split turns on. Live has no restricted
     // key provisioned yet; if that cost test its row, one absent secret would
     // put a hole in every day of the window rather than in live's half of it.
     failMode("live", new Error("connect ETIMEDOUT api.stripe.com:443"));
 
     await runParityCheckJob();
 
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(recordedFor("test")).toMatchObject({ outcome: "clean" });
     expect(recordedFor("live")).toMatchObject({ outcome: "failed" });
   });
 
-  it("still writes the other mode's row when one mode's row cannot be written", async () => {
-    // A per-mode write failure, not a dead database. Returning early here
-    // would let a transient error on the first mode silently cost the second
-    // its evidence.
+  it("still writes the other pairs' rows when one pair's row cannot be written", async () => {
+    // A per-pair write failure, not a dead database. Returning early here
+    // would let a transient error on the first pair silently cost the rest
+    // their evidence.
     vi.mocked(recordParityRun).mockImplementation(async (run) => {
       if (run.mode === "test") throw new Error("write failed");
     });
 
     await runParityCheckJob();
 
-    expect(vi.mocked(recordParityRun).mock.calls.map((c) => c[0].mode)).toEqual([
-      "test",
-      "live",
-    ]);
+    expect(vi.mocked(recordParityRun).mock.calls.map((c) => `${c[0].mode}/${c[0].source}`)).toEqual(
+      PAIR_KEYS,
+    );
   });
 
-  it("reports a mode that could not be recorded, distinguishably", async () => {
+  it("reports a pair that could not be recorded, distinguishably", async () => {
     vi.mocked(recordParityRun).mockImplementation(async (run) => {
       if (run.mode === "live") throw Object.assign(new Error("nope"), { code: "28P01" });
     });
@@ -215,7 +239,14 @@ describe("the modes are independent", () => {
 
     expect(code).toBe(EXIT_UNRECORDABLE);
     const line = loggedLines().find((l) => l.outcome === "unrecordable");
-    expect(line).toMatchObject({ mode: "live", errorName: "Error", errorCode: "28P01" });
+    // Both axes on the unrecordable line too: an operator reading it has to
+    // know which catalog's evidence is missing, not just which account's.
+    expect(line).toMatchObject({
+      mode: "live",
+      source: SINGLE_SOURCE,
+      errorName: "Error",
+      errorCode: "28P01",
+    });
   });
 
   it("records each mode's own outcome rather than one answer for both", async () => {
@@ -240,6 +271,7 @@ describe("a mode that has never been bootstrapped", () => {
 
     expect(recordedFor("live")).toEqual({
       mode: "live",
+      source: SINGLE_SOURCE,
       outcome: "not_bootstrapped",
       differences: [],
       error: null,
@@ -293,6 +325,7 @@ describe("a run with differences", () => {
 
     expect(recordedFor("test")).toEqual({
       mode: "test",
+      source: SINGLE_SOURCE,
       outcome: "differences",
       // A missing conversion, arriving as a named finding rather than an
       // unexplained number.
@@ -386,15 +419,16 @@ describe("every failure path writes a failed row", () => {
     expect(recordedFor("test")).toMatchObject({ outcome: "failed", differences: [] });
   });
 
-  it("records a failed row for BOTH modes when the catalog itself cannot be read", async () => {
-    // The catalog is shared, so this breaks both — and both rows must exist,
-    // or the window has a hole on the side that was never written.
+  it("records a failed row for EVERY pair when the catalog itself cannot be read", async () => {
+    // `readCatalogAmounts` is mocked to reject for any (mode, source), so this
+    // breaks every pair — and every row must exist, or the window has a hole
+    // on whichever side was never written.
     vi.mocked(readCatalogAmounts).mockRejectedValue(new Error("relation does not exist"));
 
     const code = await runParityCheckJob();
 
     expect(code).toBe(EXIT_CHECK_FAILED);
-    expect(recordParityRun).toHaveBeenCalledTimes(2);
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
     expect(recordedFor("test")).toMatchObject({ outcome: "failed" });
     expect(recordedFor("live")).toMatchObject({ outcome: "failed" });
     expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
@@ -541,7 +575,7 @@ describe("it is a caller, not a second implementation", () => {
     // route uses, so the 7-day window would hold rows decided two ways.
     await runParityCheckJob();
 
-    expect(compareCatalogToStripe).toHaveBeenCalledTimes(STRIPE_MODES.length);
+    expect(compareCatalogToStripe).toHaveBeenCalledTimes(PAIR_COUNT);
     // The full 4-argument call `performParityCheck` (`parity-run.ts`) makes as
     // of tesserix-home#381 — mark8ly's own prefix and policy, threaded
     // through explicitly rather than left to the comparator's defaults.
@@ -554,13 +588,13 @@ describe("it is a caller, not a second implementation", () => {
   it("takes the catalog from the repo and the prices from the read-only reader", async () => {
     await runParityCheckJob();
 
-    // The catalog is read once PER MODE. Both modes compare against the same
-    // intended prices — there is one catalog — but re-reading keeps
-    // `performParityCheck` a single self-contained definition rather than a
-    // function whose correctness depends on its caller having cached
-    // something.
-    expect(readCatalogAmounts).toHaveBeenCalledTimes(STRIPE_MODES.length);
-    expect(stripePriceReader.listPrices).toHaveBeenCalledTimes(STRIPE_MODES.length);
+    // The catalog is read once PER PAIR. Both modes compare against the same
+    // intended prices for a given source — there is one catalog per source —
+    // but re-reading keeps `performParityCheck` a single self-contained
+    // definition rather than a function whose correctness depends on its
+    // caller having cached something.
+    expect(readCatalogAmounts).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(stripePriceReader.listPrices).toHaveBeenCalledTimes(PAIR_COUNT);
   });
 
   it("exposes no way to write to Stripe", async () => {

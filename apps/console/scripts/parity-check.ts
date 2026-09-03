@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import { performParityCheck } from "@/lib/billing/parity-run";
+import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import { STRIPE_MODES } from "@/lib/billing/stripe-read";
 import { recordParityRun } from "@/lib/db/plan-catalog-repo";
 import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -57,18 +58,23 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  * If either fact changes — a Next default, or `serverExternalPackages` in
  * `next.config.ts` — `--external:` in `build:cron` has to change with it.
  *
- * # It covers BOTH Stripe modes, in one invocation
+ * # It covers every (mode, source) PAIR, in one invocation
  *
- * One process, two comparisons, two rows — not two CronJobs. The modes share a
- * catalog read's worth of nothing and a pool's worth of everything, and
- * splitting them would double the schedule, the manifest and the number of
- * places a `TESSERIX_DB_*` typo can hide.
+ * One process, one comparison and one row per pair of `STRIPE_MODES` x
+ * `CATALOG_SOURCES` — not a CronJob each. The pairs share a pool's worth of
+ * everything, and splitting them would multiply the schedule, the manifest and
+ * the number of places a `TESSERIX_DB_*` typo can hide.
  *
- * They are nonetheless INDEPENDENT where it counts: a mode that fails, or
- * whose row cannot be written, must not cost the other mode its row. Live has
- * no restricted key provisioned yet and may not for some time; if that took
- * test down with it, one absent secret would put a hole in every day of the
- * window rather than in live's half of it.
+ * Pairs and not modes since tesserix-home#392: a run recorded against one
+ * catalog says nothing about another, so a mode-keyed run would leave a second
+ * source's drift compared against nothing while the window still read as
+ * satisfied — the silent omission, not a wrong answer.
+ *
+ * They are nonetheless INDEPENDENT where it counts: a pair that fails, or
+ * whose row cannot be written, must not cost the other pairs their rows. Live
+ * has no restricted key provisioned yet and may not for some time; if that
+ * took test down with it, one absent secret would put a hole in every day of
+ * the window rather than in live's half of it.
  *
  * # Not in this repo
  *
@@ -81,7 +87,7 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
  */
 
 /**
- * Every mode ran and answered.
+ * Every (mode, source) pair ran and answered.
  *
  * `differences` IS SUCCESS, and so is `not_bootstrapped`. Both are the check's
  * OUTPUT, not a crash, and neither must be reported as one: a non-zero exit
@@ -98,21 +104,23 @@ import { closeTesserixPool, isDatabaseConfigured } from "@/lib/db/tesserix";
 export const EXIT_OK = 0;
 
 /**
- * At least one mode could not run, and said so in a `failed` row.
+ * At least one (mode, source) pair could not run, and said so in a `failed`
+ * row.
  *
  * Non-zero so the CronJob's own alerting fires: an unreadable catalog, an
  * unreachable Stripe or a credential that names the wrong mode is an upstream
  * problem, categorically different from "the catalog has drifted", and the two
  * must be distinguishable without opening `psql`.
  *
- * KEPT DESPITE COVERING ONLY SOME MODES. One mode failing while the other is
+ * KEPT DESPITE COVERING ONLY SOME PAIRS. One pair failing while the others are
  * clean still means a day of the window has a `failed` row in it, and nobody
  * finds that out by reading a green job list.
  */
 export const EXIT_CHECK_FAILED = 1;
 
 /**
- * There was nowhere to write the evidence, for at least one mode.
+ * There was nowhere to write the evidence, for at least one (mode, source)
+ * pair.
  *
  * The one failure this design cannot record. Distinct from
  * {@link EXIT_CHECK_FAILED} on purpose: that code means a row EXISTS saying
@@ -168,28 +176,29 @@ function log(line: Record<string, unknown>, stream: "out" | "err"): void {
 }
 
 /**
- * Run the check for every mode, record exactly one row each, and report an
- * exit code.
+ * Run the check for every (mode, source) pair, record exactly one row each,
+ * and report an exit code.
  *
  * Returns the code rather than calling `process.exit` so the whole thing is
  * testable — including the cases a naive implementation gets wrong, which are
- * `differences` exiting non-zero and one mode's failure swallowing the other's
+ * `differences` exiting non-zero and one pair's failure swallowing another's
  * row.
  *
- * EXACTLY ONE ROW PER MODE, ON EVERY PATH IT CAN REACH. Never zero: a run that
+ * EXACTLY ONE ROW PER PAIR, ON EVERY PATH IT CAN REACH. Never zero: a run that
  * dies silently leaves a gap in the 7-day window. Never two: a duplicate makes
  * a single day's finding look like two.
  *
  * Sequential rather than `Promise.all`, for three reasons that all point the
- * same way: the log lines come out in a fixed order (test, then live), the two
- * modes do not contend for the same small connection pool, and a rate limit hit
- * on one account cannot be blamed on the other.
+ * same way: the log lines come out in a fixed order (mode-major — test's
+ * sources, then live's), the pairs do not contend for the same small
+ * connection pool, and a rate limit hit on one account cannot be blamed on
+ * another.
  */
 export async function runParityCheckJob(): Promise<number> {
   try {
     if (!isDatabaseConfigured()) {
-      // Refuse before ANY Stripe call, and refuse once rather than per mode:
-      // nothing mode-specific has happened yet. The stored row IS the
+      // Refuse before ANY Stripe call, and refuse once rather than per pair:
+      // nothing pair-specific has happened yet. The stored row IS the
       // deliverable, so a run that could not be recorded is not a run — and
       // failing early keeps a misconfigured job from spending both restricted
       // keys' rate limits on every tick.
@@ -204,45 +213,56 @@ export async function runParityCheckJob(): Promise<number> {
     }
 
     // Accumulated rather than returned early, which IS the independence
-    // property: an early return on the first mode's failure would cost the
-    // second its row, and a missing row is the day-shaped hole this whole
+    // property: an early return on the first pair's failure would cost the
+    // rest their rows, and a missing row is the day-shaped hole this whole
     // design exists to prevent.
     let unrecordable = false;
     let checkFailed = false;
 
+    // Nested rather than a precomputed list of pairs: two loops over the two
+    // constant arrays is the whole cross product, and it fixes the log order
+    // as mode-major.
     for (const mode of STRIPE_MODES) {
-      // Never throws — every failure comes back as a `failed` run to record.
-      const run = await performParityCheck(mode);
+      for (const source of CATALOG_SOURCES) {
+        // Never throws — every failure comes back as a `failed` run to record.
+        const run = await performParityCheck(mode, source);
 
-      try {
-        await recordParityRun(run);
-      } catch (cause) {
+        try {
+          await recordParityRun(run);
+        } catch (cause) {
+          log(
+            {
+              mode,
+              // Logged beside `mode` for the same reason it is stored beside
+              // it: a line naming only the mode cannot say which catalog
+              // failed to be recorded, which is the ambiguity
+              // tesserix-home#392 closes.
+              source,
+              outcome: "unrecordable",
+              reason: "the parity run could not be written to plan_catalog_parity_runs",
+              ...describeWriteFailure(cause),
+            },
+            "err",
+          );
+          unrecordable = true;
+          continue;
+        }
+
         log(
           {
             mode,
-            outcome: "unrecordable",
-            reason: "the parity run could not be written to plan_catalog_parity_runs",
-            ...describeWriteFailure(cause),
+            source,
+            outcome: run.outcome,
+            differenceCount: run.differences.length,
+            // Already redacted by `performParityCheck`; null on every outcome
+            // except `failed`.
+            error: run.error,
           },
-          "err",
+          run.outcome === "failed" ? "err" : "out",
         );
-        unrecordable = true;
-        continue;
+
+        if (run.outcome === "failed") checkFailed = true;
       }
-
-      log(
-        {
-          mode,
-          outcome: run.outcome,
-          differenceCount: run.differences.length,
-          // Already redacted by `performParityCheck`; null on every outcome
-          // except `failed`.
-          error: run.error,
-        },
-        run.outcome === "failed" ? "err" : "out",
-      );
-
-      if (run.outcome === "failed") checkFailed = true;
     }
 
     // Precedence, worst first. See {@link EXIT_UNRECORDABLE}: a `failed` row is

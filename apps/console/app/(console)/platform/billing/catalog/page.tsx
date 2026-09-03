@@ -22,7 +22,7 @@ import {
   readWindowStatus,
   type CatalogRow,
   type LivePublication,
-  type ModeLatestRun,
+  type PairLatestRun,
   type ParityWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
 // A VALUE import, not `import type` — `currentDraft` runs HERE, server-side,
@@ -304,7 +304,7 @@ async function readCatalog(mode: StripeMode): Promise<CatalogRow[]> {
   return readCatalogRows(mode, SINGLE_SOURCE);
 }
 
-async function readRuns(): Promise<ModeLatestRun[]> {
+async function readRuns(): Promise<PairLatestRun[]> {
   if (!isDatabaseConfigured()) notConfigured();
   return readLatestRuns();
 }
@@ -503,10 +503,11 @@ export default async function PlanCatalog({
   const windowState: SurfaceState = resolveState({
     isLoading: false,
     error: windowResult.status === "rejected" ? windowReadError(windowResult.reason) : null,
-    // `window?.modes` is always length 2 when the read succeeds — see
-    // `readWindowStatus`'s "both modes, always" guarantee — so this can only
-    // resolve to `ready` or the error/unavailable states, never `empty`.
-    rows: window?.modes ?? [],
+    // `window?.pairs` is always `STRIPE_MODES.length * CATALOG_SOURCES.length`
+    // entries when the read succeeds — see `readWindowStatus`'s "every pair,
+    // always" guarantee — so this can only resolve to `ready` or the
+    // error/unavailable states, never `empty`.
+    rows: window?.pairs ?? [],
     filtered: false,
   });
 
@@ -524,11 +525,11 @@ export default async function PlanCatalog({
   const runsState: SurfaceState = resolveState({
     isLoading: false,
     error: runsResult.status === "rejected" ? runsReadError(runsResult.reason) : null,
-    // Same "both modes, always" guarantee as `window` above — `runs` is
-    // length 2 whenever the read succeeds, even on a database with zero rows
-    // in `plan_catalog_parity_runs`. That "no runs recorded yet" case is a
-    // `run: null` entry inside a `ready` state, not an `empty` surface state;
-    // `CatalogViews` renders it explicitly.
+    // Same "every pair, always" guarantee as `window` above — `runs` holds one
+    // entry per (mode, source) pair whenever the read succeeds, even on a
+    // database with zero rows in `plan_catalog_parity_runs`. That "no runs
+    // recorded yet" case is a `run: null` entry inside a `ready` state, not an
+    // `empty` surface state; `CatalogViews` renders it explicitly.
     rows: runs,
     filtered: false,
   });

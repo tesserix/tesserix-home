@@ -19,7 +19,8 @@ vi.mock("@/lib/billing/source-policy", async (importOriginal) => {
   };
 });
 
-import type { CatalogRow, ModeLatestRun, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
+import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
+import type { CatalogRow, PairLatestRun, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
 import type { Difference } from "@/lib/billing/parity";
 import { resolveState } from "@/components/kit/surface-state";
 import {
@@ -352,26 +353,34 @@ describe("dayVerdict — a day with no run must never read as a dirty one", () =
   });
 });
 
+// One entry per (mode, source) pair, matching `readWindowStatus`'s own
+// "every pair, always" guarantee — the shape `ObservationWindow` renders a
+// card from since tesserix-home#392. `satisfied: true` at the top with a
+// not-satisfied pair inside it is deliberate: the fixture is exercising the
+// rendering of both card states, not the conjunction, which
+// `parity-window.integration.test.ts` owns against a real engine.
 const readyWindow: ParityWindowStatus = {
   days: 7,
   satisfied: true,
-  modes: [
+  pairs: [
     {
       mode: "test",
+      source: SINGLE_SOURCE,
       satisfied: true,
       days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: true, ran: true })),
     },
     {
       mode: "live",
+      source: SINGLE_SOURCE,
       satisfied: false,
       days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: false, ran: true })),
     },
   ],
 };
 
-const noRuns: ModeLatestRun[] = [
-  { mode: "test", run: null },
-  { mode: "live", run: null },
+const noRuns: PairLatestRun[] = [
+  { mode: "test", source: SINGLE_SOURCE, run: null },
+  { mode: "live", source: SINGLE_SOURCE, run: null },
 ];
 
 function renderViews(over: Partial<Parameters<typeof CatalogViews>[0]> = {}) {
@@ -380,7 +389,7 @@ function renderViews(over: Partial<Parameters<typeof CatalogViews>[0]> = {}) {
       mode="live"
       windowDays={7}
       windowStatus={readyWindow}
-      windowState={resolveState({ isLoading: false, error: null, rows: readyWindow.modes, filtered: false })}
+      windowState={resolveState({ isLoading: false, error: null, rows: readyWindow.pairs, filtered: false })}
       catalog={[]}
       catalogState={resolveState({ isLoading: false, error: null, rows: [], filtered: false })}
       runs={noRuns}
@@ -428,6 +437,50 @@ describe("CatalogViews", () => {
     expect(screen.getByText("One price, 2 currencies")).toBeInTheDocument();
     expect(screen.getByText("One price each")).toBeInTheDocument();
     expect(screen.getByTitle("mark8ly_pro_annual_ppp_idr_v1")).toBeInTheDocument();
+  });
+
+  it("renders one observation-window card per (mode, source) pair, headed by both axes — tesserix-home#392", () => {
+    // One card per PAIR, not per mode. A card headed by the mode alone cannot
+    // say which catalog its day strip is evidence about, which is the
+    // ambiguity #392 closes at every other layer; leaving it in the UI would
+    // put it back where an operator reads it.
+    //
+    // Cast past the union-of-one `CatalogSource` on purpose, the same way the
+    // source-filter test below does: a second product does not exist in this
+    // codebase's TYPES yet, but the card must already render one per pair on
+    // the day it does.
+    const twoSources: ParityWindowStatus = {
+      days: 7,
+      satisfied: false,
+      pairs: [
+        ...readyWindow.pairs,
+        {
+          mode: "test",
+          source: "acme" as CatalogRow["source"],
+          satisfied: false,
+          days: Array.from({ length: 7 }, (_, i) => ({ day: `2026-08-2${i}`, clean: false, ran: false })),
+        },
+      ],
+    };
+
+    renderViews({
+      windowStatus: twoSources,
+      windowState: resolveState({ isLoading: false, error: null, rows: twoSources.pairs, filtered: false }),
+    });
+
+    expect(screen.getByText("test · Mark8ly")).toBeInTheDocument();
+    expect(screen.getByText("live · Mark8ly")).toBeInTheDocument();
+    expect(screen.getByText("test · Acme")).toBeInTheDocument();
+  });
+
+  it("states the gate in terms of pairs, matching what 0044 and 0045 say the rule is", () => {
+    // This string IS the gate as an operator reads it, so it has to state the
+    // same rule the migrations state: every (mode, source) pair clean for
+    // every day of the window. "Both modes" was true only while one catalog
+    // existed.
+    renderViews();
+
+    expect(screen.getByText(/Every mode and product pair has been clean for all 7 days/)).toBeInTheDocument();
   });
 
   it("shows the source filter, trivially satisfied, with the sole source today", () => {
