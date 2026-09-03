@@ -12,10 +12,22 @@ import { expectedInterval } from "../parity";
 import type { TaxBehavior } from "../parity";
 import type { StripeMode } from "../stripe-read";
 import { policyFor, SINGLE_SOURCE, type CatalogSource } from "../source-policy";
+// TYPE-ONLY, and that is what makes it safe: `promo-codes-repo` is
+// `server-only` and reaches `pg`, and a value import would drag the driver
+// into this module's graph. `import type` is erased, so this costs nothing at
+// runtime and nothing at bundle time.
+//
+// Imported rather than re-declared because `PromoCodeDiscount` is already the
+// exact shape a Stripe Coupon's discount takes — a discriminated union whose
+// arms ARE `percent_off` and `amount_off`, with `currency` on the amount-off
+// arm only. A parallel declaration here would be a second copy of the rules
+// 0046 states as CHECK constraints, free to drift from the columns those
+// terms are stored in.
+import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
 
 /**
- * The console's ONLY way to WRITE to Stripe — Products and Prices, in either
- * mode.
+ * The console's ONLY way to WRITE to Stripe — Products, Prices and Coupons,
+ * in either mode.
  *
  * # Why the surface is this small
  *
@@ -25,7 +37,9 @@ import { policyFor, SINGLE_SOURCE, type CatalogSource } from "../source-policy";
  * in reverse: the surface is exactly the six operations the publish plan
  * (design spec §4) needs — `findProductByPlan`, `createProduct`,
  * `createPrice`, `addCurrencyOption`, `updatePriceTaxBehavior`,
- * `archivePrice` — and no more, so a seventh cannot arrive quietly:
+ * `archivePrice` — plus `createCoupon`, the one operation tesserix-home#521
+ * needs and the only one on this surface that is not a Product or a Price.
+ * And no more, so an eighth cannot arrive quietly:
  *
  *  - The `Stripe` instances below are PRIVATE to this module and are never
  *    returned, exported, or attached to anything that is. Handing one back
@@ -132,6 +146,73 @@ export interface StripeProductRef {
 /** The shape `createPrice` and `addCurrencyOption` hand back. */
 export interface StripePriceRef {
   readonly id: string;
+}
+
+/** The shape `createCoupon` hands back — the `co_...` and nothing else. */
+export interface StripeCouponRef {
+  readonly id: string;
+}
+
+/**
+ * Raised when {@link CreateCouponSpec.discount} is not a set of terms Stripe
+ * could mint a Coupon from.
+ *
+ * ITS OWN CLASS, distinct from {@link StripeWriteUnavailableError}, because
+ * the two say opposite things to the operator holding the authoring surface:
+ * one means the console is misconfigured and nobody's definition can be
+ * published, the other means THIS definition has nothing to publish. A caller
+ * that could only match on message text would have to choose between
+ * conflating them and grepping English.
+ */
+export class StripeCouponTermsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StripeCouponTermsError";
+  }
+}
+
+/**
+ * What `createCoupon` needs to mint one Stripe Coupon.
+ *
+ * `discount` is `PromoCodeDiscount` — the terms an operator authored, read
+ * back off `promo_codes` — and it is NOT NULLABLE. That is the type-level
+ * half of the rule 0046's closing paragraph says this layer owns: Postgres
+ * cannot express a cross-table CHECK, so nothing in the database refuses a
+ * `promo_code_stripe_coupons` row against a definition carrying no terms. It
+ * does not have to, because a `co_...` to record can only come from here, and
+ * a definition with no terms cannot get one — `PromoCodeRow.discount` is
+ * `PromoCodeDiscount | null`, so a caller that has not narrowed away the null
+ * does not compile. {@link StripeCouponTermsError} is the same rule at
+ * runtime, for the caller who casts.
+ */
+export interface CreateCouponSpec {
+  /**
+   * The authored terms. Percent-off vs amount-off, the three durations,
+   * months for `repeating` and a currency for amount-off are all STRIPE's
+   * semantics, forwarded rather than reimplemented — see `createCoupon`.
+   */
+  readonly discount: PromoCodeDiscount;
+  /**
+   * The Coupon's customer-visible label.
+   *
+   * Optional, and worth setting: a Coupon created without one shows in the
+   * Stripe dashboard as its generated `co_...` and nothing else, and this
+   * surface offers no later call that could add it. Nothing here derives it —
+   * this module does not know what a promo code is, so it cannot know that
+   * the code string is the obvious label.
+   */
+  readonly name?: string;
+  /**
+   * STRIPE's OWN CAP, on the Coupon object, forwarded untouched.
+   *
+   * NOT the same number as `promo_codes.max_redemptions`, and the two must
+   * never be wired together: 0046 leaves Stripe's cap deliberately out of the
+   * definition's terms because that column is the cap MARK8LY enforces on the
+   * CODE, counted transactionally at signup, and a coupon counts a different
+   * event in a different system. Carrying both would be two numbers that must
+   * agree with no way to make them.
+   */
+  readonly maxRedemptions?: number;
 }
 
 /**
@@ -338,6 +419,55 @@ export interface StripeCatalogWriter {
    * caller that gets the ordering wrong.
    */
   archivePrice(mode: StripeMode, priceId: string, idempotencyKey: string): Promise<StripePriceRef>;
+
+  /**
+   * Creates one Stripe Coupon from a set of authored discount terms.
+   *
+   * # It does not know what a promo code is
+   *
+   * tesserix-home#521 decision 4. Promo-code publishing calls this; this does
+   * not call promo-code anything. It takes TERMS and returns a `co_...`, and
+   * has no opinion about what the coupon will be attached to, which code
+   * names it, or which definition it was minted for — recording that pair is
+   * `recordStripeCoupon`'s job, one layer up. tesserix-home#331 (a
+   * customer-scoped coupon for one tenant, with a mandatory reason) reuses
+   * this method unchanged and adds its own apply/remove calls beside it.
+   *
+   * # Stripe's semantics are forwarded, not reimplemented
+   *
+   * Percent-off vs amount-off, the three durations, `duration_in_months` and
+   * the currency an amount-off needs are all decided by Stripe and validated
+   * by Stripe. This method maps the union's arms onto the fields Stripe names
+   * and sends them; there is no local model of which combinations are legal.
+   * 0046 holds the same rules as named CHECK constraints so an operator meets
+   * them at authoring time rather than at publish time, but Stripe remains
+   * the enforcer of its own API.
+   *
+   * The ONE thing this method decides for itself is that it will not send a
+   * request it can see is incoherent — see {@link StripeCouponTermsError} and
+   * `duration_in_months` below. A dropped field is the failure mode this
+   * surface has already been bitten by once (`transfer_lookup_key`), and a
+   * silently dropped `duration_in_months` would turn "3 months half price"
+   * into a permanent discount in a live account.
+   *
+   * # There is no `updateCoupon`, and there cannot be a useful one
+   *
+   * A Coupon's discount fields are fixed once it exists — the reason
+   * `promo-codes-repo.ts`'s `UpdatePromoCodeInput` refuses to edit terms at
+   * all. Changing a discount means minting a new Coupon, which is a new
+   * definition, not a second call against this one.
+   *
+   * `idempotencyKey` is a trailing parameter and is never minted here — the
+   * shape `createProduct`, `addCurrencyOption`, `updatePriceTaxBehavior` and
+   * `archivePrice` all use. (`createPrice` carries its key on the spec
+   * instead; that is the minority of one, and copying it here would make the
+   * split look like a rule rather than an accident.)
+   */
+  createCoupon(
+    mode: StripeMode,
+    spec: CreateCouponSpec,
+    idempotencyKey: string,
+  ): Promise<StripeCouponRef>;
 }
 
 /**
@@ -354,6 +484,66 @@ export interface StripeCatalogWriter {
  */
 function intervalOf(period: CreatePriceSpec["period"]): "year" | "month" {
   return expectedInterval(`_${period}_`);
+}
+
+/**
+ * The union's arm, as the two fields Stripe names for it.
+ *
+ * EXACTLY ONE of `percent_off` / `amount_off` is ever produced, and `currency`
+ * only ever accompanies the second — which is what makes the pair of rules
+ * 0046 states (`promo_codes_discount_is_percent_off_xor_amount_off` and
+ * `promo_codes_discount_currency_accompanies_amount_off`) unexpressible in a
+ * request built here, rather than merely unlikely. Stripe refuses both fields
+ * together and refuses neither.
+ */
+function discountFields(
+  discount: PromoCodeDiscount,
+): Pick<Stripe.CouponCreateParams, "percent_off" | "amount_off" | "currency"> {
+  return discount.kind === "percent_off"
+    ? { percent_off: discount.percentOff }
+    : { amount_off: discount.amountOffMinor, currency: discount.currency };
+}
+
+/**
+ * Refuse a request this module can already see Stripe cannot honour, or would
+ * honour as something other than what was authored.
+ *
+ * Two rules, and only two — everything else about a discount is Stripe's to
+ * judge:
+ *
+ *  1. NO TERMS AT ALL. The cross-table rule 0046's closing paragraph hands to
+ *     this layer: a trial-extension-only definition has nothing to mint, and
+ *     a `co_...` it should never have is the only way it could acquire a row
+ *     in `promo_code_stripe_coupons`. Unreachable through the types; reachable
+ *     through a cast, which is what this catches.
+ *  2. `duration_in_months` NOT MATCHING `repeating`. Stripe requires the field
+ *     for `repeating` and rejects it for the other two, so the mapping below
+ *     sends it iff the duration is `repeating` — and the dangerous half is the
+ *     silent one: an operator who authored "3 months at 50% off" against a
+ *     `forever` duration would get a permanent discount in a live account,
+ *     with a successful create and nothing to read as wrong.
+ */
+function checkedDiscount(discount: PromoCodeDiscount): PromoCodeDiscount {
+  // `!discount` and not `discount === null`: the caller this guard exists for
+  // is one that cast past the type, and `undefined` reaches here just as
+  // easily as `null` does.
+  if (!discount) {
+    throw new StripeCouponTermsError(
+      "createCoupon was given no discount terms; a definition without them extends the trial only and has no coupon to mint",
+    );
+  }
+
+  const repeating = discount.duration === "repeating";
+  const months = discount.durationInMonths !== null && discount.durationInMonths !== undefined;
+  if (repeating !== months) {
+    throw new StripeCouponTermsError(
+      `createCoupon was given duration '${discount.duration}' with ` +
+        `${months ? `durationInMonths ${String(discount.durationInMonths)}` : "no durationInMonths"}; ` +
+        "Stripe requires a month count for 'repeating' and rejects one for 'once' and 'forever'",
+    );
+  }
+
+  return discount;
 }
 
 export const stripeCatalogWriter: StripeCatalogWriter = {
@@ -477,5 +667,37 @@ export const stripeCatalogWriter: StripeCatalogWriter = {
       { idempotencyKey },
     );
     return { id: updated.id };
+  },
+
+  async createCoupon(mode, spec, idempotencyKey) {
+    // BEFORE the client is asked for, so a bad spec fails the same way in a
+    // mode whose key is missing as in one whose key is present. A guard after
+    // `client(mode)` would report the credential problem first and hide this
+    // one until the credential was fixed.
+    const discount = checkedDiscount(spec.discount);
+
+    const created = await client(mode).coupons.create(
+      {
+        ...discountFields(discount),
+        duration: discount.duration,
+        // Sent iff `repeating`, which is the whole of Stripe's rule. The
+        // months are non-null here — `checkedDiscount` refused the pairing
+        // otherwise — but that is a runtime fact TypeScript cannot see
+        // through the guard's return type, so `?? undefined` is what makes
+        // the `number | null` fit the field. It is unreachable, not a default.
+        ...(discount.duration === "repeating"
+          ? { duration_in_months: discount.durationInMonths ?? undefined }
+          : {}),
+        // Both omitted rather than sent as null when absent. Stripe treats an
+        // absent `max_redemptions` as uncapped and an absent `name` as
+        // unnamed, which is exactly what an undefined here means; sending the
+        // key explicitly would put a value in the request for a decision the
+        // caller declined to make.
+        ...(spec.name !== undefined ? { name: spec.name } : {}),
+        ...(spec.maxRedemptions !== undefined ? { max_redemptions: spec.maxRedemptions } : {}),
+      },
+      { idempotencyKey },
+    );
+    return { id: created.id };
   },
 };
