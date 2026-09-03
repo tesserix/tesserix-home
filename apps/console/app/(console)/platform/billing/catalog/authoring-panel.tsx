@@ -27,6 +27,11 @@ import {
   type PublishPlanSummary,
 } from "./actions";
 import { DraftEditor, type DraftEditorCell, type DraftEditorRow } from "./draft-editor";
+import {
+  CatalogSearchEmpty,
+  CatalogSearchField,
+  filterDraftEditorRowsBySearch,
+} from "./catalog-search";
 import { PublishView } from "./publish-view";
 // `PublishOutcome` and `OrphansCallout` are VALUE imports, safely:
 // `publish-outcome.tsx` is itself a `"use client"` module and imports
@@ -481,6 +486,15 @@ function DraftSection({
   canPublish: boolean;
   onOutcome: (result: Extract<PublishActionResult, { readonly ok: true }>) => void;
 }) {
+  // Declared above the early returns below, as every hook must be, and local
+  // to this panel: the Browse tab holds its own (see `CatalogViews`), and the
+  // two never share. Searching here narrows only what `DraftEditor` RENDERS —
+  // the draft on the server is untouched, `PublishSection`'s plan is built by
+  // `planPublishAction` from the revision rather than from these rows, and the
+  // Draft tab's changed count is computed by `catalog-surface.tsx` from
+  // `page.tsx`'s unfiltered rows. A row hidden here still publishes.
+  const [search, setSearch] = useState("");
+
   // `resolveState` resolves "no draft exists" (an ordinary, common outcome —
   // `readDraft` succeeded and simply found nothing) to `empty`, not `ready`
   // — see `surface-state.ts`. `ready` and `empty` are therefore BOTH
@@ -512,12 +526,33 @@ function DraftSection({
   // `AuthoringPanelProps`.
   const catalogUnavailable = catalogState.kind !== "ready" && catalogState.kind !== "empty";
 
+  // Built once here rather than inside the JSX, so the search below filters
+  // exactly the rows the editor would otherwise have rendered.
+  const editorRows =
+    draftRowsState.kind === "ready" && draftRows
+      ? buildDraftEditorRows(draftRows, catalogUnavailable ? [] : catalog)
+      : [];
+  const searchedRows = filterDraftEditorRowsBySearch(editorRows, search);
+  const searchedToNothing = searchedRows.length === 0 && editorRows.length > 0;
+
   return (
     <>
       <section className="flex flex-col gap-3" aria-label="Draft">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Draft</h2>
-          {canDraft ? <DiscardDraftButton revisionId={draftId} /> : null}
+          <div className="flex items-center gap-2">
+            {/* Only where there is an editor to narrow. A search box above a
+                "no draft is open" message or a capability notice would offer
+                to filter something that is not on screen. */}
+            {draftRowsState.kind === "ready" && draftRows && canDraft ? (
+              <CatalogSearchField
+                label="Search the draft"
+                value={search}
+                onChange={setSearch}
+              />
+            ) : null}
+            {canDraft ? <DiscardDraftButton revisionId={draftId} /> : null}
+          </div>
         </div>
         {draftRowsState.kind === "ready" && draftRows ? (
           canDraft ? (
@@ -530,10 +565,11 @@ function DraftSection({
                   server-side before anything reaches Stripe.
                 </p>
               ) : null}
-              <DraftEditor
-                revisionId={draftId}
-                rows={buildDraftEditorRows(draftRows, catalogUnavailable ? [] : catalog)}
-              />
+              {searchedToNothing ? (
+                <CatalogSearchEmpty query={search} onClear={() => setSearch("")} />
+              ) : (
+                <DraftEditor revisionId={draftId} rows={searchedRows} />
+              )}
             </>
           ) : (
             <CapabilityNotice>

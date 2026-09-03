@@ -7,6 +7,11 @@ import Link from "next/link";
 import { Badge } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
+import {
+  CatalogSearchEmpty,
+  CatalogSearchField,
+  filterCatalogRowsBySearch,
+} from "./catalog-search";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
 import { formatMoney } from "@/lib/money";
@@ -869,16 +874,41 @@ export function CatalogViews({
     [catalog, effectiveSource],
   );
 
+  // Local, and deliberately not in the URL: the page already owns `?mode=`,
+  // and `SurfaceTabs`' own comment records why a second query param on this
+  // surface collides. Independent of the draft editor's search for the same
+  // reason the source filter is independent of the draft — this control
+  // slices the PUBLISHED rows, and cannot reach the authoring side at all.
+  const [search, setSearch] = useState("");
+  const searchedCatalog = useMemo(
+    () => filterCatalogRowsBySearch(filteredCatalog, search),
+    [filteredCatalog, search],
+  );
+  // "the search matched nothing", never "this source has nothing published" —
+  // the second is `catalogState`'s `empty` and has its own copy below.
+  const searchedToNothing = searchedCatalog.length === 0 && filteredCatalog.length > 0;
+
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3" aria-label="Plan catalog">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Plan catalog</h2>
-          <SourceFilter sources={sources} selected={effectiveSource} onChange={setRequestedSource} />
+          <div className="flex items-center gap-2">
+            <CatalogSearchField
+              label="Search the published catalog"
+              value={search}
+              onChange={setSearch}
+            />
+            <SourceFilter sources={sources} selected={effectiveSource} onChange={setRequestedSource} />
+          </div>
         </div>
         <PublicationAttribution mode={mode} publication={publication} publicationState={publicationState} />
         {catalogState.kind === "ready" ? (
-          <PlanCatalogTabs rows={filteredCatalog} />
+          searchedToNothing ? (
+            <CatalogSearchEmpty query={search} onClear={() => setSearch("")} />
+          ) : (
+            <PlanCatalogTabs rows={searchedCatalog} />
+          )
         ) : (
           <SurfaceStateView
             state={catalogState}
