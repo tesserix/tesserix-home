@@ -429,6 +429,23 @@ describe("pending reflects what the console actually serves", () => {
     expect(consolePath("platform.outbox")).toBe("/platform/outbox");
   });
 
+  it("has all three generic mark8ly surfaces built, and the fast path still pending", () => {
+    // `app/(console)/[product]/page.tsx` serves `/mark8ly` and
+    // `app/(console)/[product]/[entity]/page.tsx` serves the two entity
+    // indexes — none has a mark8ly page file of its own, which is the point of
+    // the generic route. If one of these flips back to pending while the
+    // generic page still serves it, the rail renders a working surface as an
+    // inert SOON badge.
+    expect(isPending("mark8ly.overview")).toBe(false);
+    expect(isPending("mark8ly.tenants")).toBe(false);
+    expect(isPending("mark8ly.users")).toBe(false);
+    // The control, and the reason this is one test rather than three: the
+    // fast path has no page and no generic surface can serve it — it renders
+    // mark8ly's own migration vocabulary — so it must stay pending. A change
+    // that cleared `pending` across the whole mark8ly block would go red here.
+    expect(isPending("mark8ly.migrationFastPath")).toBe(true);
+  });
+
   it("reports kora.audit as retired rather than pending", () => {
     // The other half of the test this replaces, which held `kora.audit` pending
     // "until Task 3 retires it" so the sequencing was visible from here. Task 3

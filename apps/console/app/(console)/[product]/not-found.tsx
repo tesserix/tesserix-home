@@ -4,13 +4,18 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 /**
  * The unknown-product state for every `[product]` surface.
  *
- * Per Next's documented boundary resolution, `not-found.tsx` serves
- * `notFound()` raised in its own segment and in the segments nested under it —
- * so this file is written to serve `[product]/page.tsx` and, once Task 5 lands
- * it, `[product]/[entity]/page.tsx`. Nothing in this repo exercises that
- * nesting yet, so the second half is an expectation about Next rather than
- * something observed here. Either way the copy names no metric, no entity type
- * and no specific page: it has to stay true of every surface on this segment.
+ * `not-found.tsx` serves `notFound()` raised in its own segment AND in the
+ * segments nested under it, so this file serves both `[product]/page.tsx` and
+ * `[product]/[entity]/page.tsx`. The nested half was an expectation when this
+ * file was written; it has since been measured, on Next 16.2.11, with a
+ * matched pair of production builds of a minimal app with this exact segment
+ * shape: with a `[product]/not-found.tsx` present, a refusal from the nested
+ * `[product]/[entity]` page rendered it; with that one file removed and
+ * nothing else changed, the same refusal fell through to the root
+ * `not-found`.
+ *
+ * So the copy names no metric, no entity type and no specific page: it has to
+ * stay true of every surface on this segment.
  *
  * # It does not name the product, and it does not list the ones that exist
  *

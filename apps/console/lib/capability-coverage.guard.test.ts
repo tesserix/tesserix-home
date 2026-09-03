@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { PRODUCT_IDS, routeForPath } from "@tesserix/console-core";
+import { PRODUCT_IDS, productEntities, routeForPath } from "@tesserix/console-core";
 
 /**
  * Guard: every console page is reachable by the access gate, and every server
@@ -93,16 +93,20 @@ function urlForPage(file: string): string {
 /**
  * The request paths a page file actually answers.
  *
- * One each, except for the generic product page. `app/(console)/[product]/`
- * has no literal path of its own — `routeForPath("/[product]")` matches
- * nothing, because `[product]` is a filesystem notation and the route table
- * holds request paths. Its real paths are one per registry product, and that
- * set IS enumerable: `resolveProductParam` refuses every segment outside
- * `PRODUCT_IDS`, so those are exactly the paths this page can render.
+ * One each, except for the two generic product pages.
+ * `app/(console)/[product]/` and `app/(console)/[product]/[entity]/` have no
+ * literal path of their own — `routeForPath("/[product]")` matches nothing,
+ * because `[product]` is a filesystem notation and the route table holds
+ * request paths. Their real paths are enumerable, because the param checks
+ * enumerate them: `resolveProductParam` refuses every segment outside
+ * `PRODUCT_IDS`, and `resolveEntitySurface` refuses every second segment
+ * outside `productEntities(product)`. So the expansion below is exactly the
+ * set these two pages can render, product by product.
  *
- * Expanding it here rather than excepting it is what keeps the guard's promise
- * for this page: a product added to `PRODUCTS` without its route ids fails
- * this walk, instead of the page quietly rendering on the entry capability.
+ * Expanding rather than excepting is what keeps the guard's promise for them:
+ * a product — or an entity type — added to `PRODUCTS` without its route ids
+ * fails this walk, instead of the page quietly rendering on the entry
+ * capability.
  *
  * Other dynamic segments need no expansion — `/platform/tickets/[id]` resolves
  * through `routeForPath`'s prefix match to `platform.tickets`, which is the
@@ -111,7 +115,11 @@ function urlForPage(file: string): string {
 function urlsForPage(file: string): string[] {
   const url = urlForPage(file);
   if (!url.includes("[product]")) return [url];
-  return PRODUCT_IDS.map((id) => url.replace("[product]", id));
+  return PRODUCT_IDS.flatMap((id) => {
+    const forProduct = url.replace("[product]", id);
+    if (!forProduct.includes("[entity]")) return [forProduct];
+    return productEntities(id).map((type) => forProduct.replace("[entity]", type));
+  });
 }
 
 const PAGES = walk(PAGES_ROOT, (f) => f === "page.tsx").sort();

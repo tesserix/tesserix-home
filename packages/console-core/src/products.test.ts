@@ -12,7 +12,7 @@ import {
   type ProductId,
 } from "./products";
 import { navItems, platformNav } from "./nav";
-import { ROUTE_IDS, routeProduct, webPath } from "./routes";
+import { ROUTE_IDS, routeProduct, webPath, type RouteId } from "./routes";
 import { capabilityForPath, routeForPath } from "./route-access";
 import { ESTATE } from "./estate";
 
@@ -189,6 +189,72 @@ describe("the generic mark8ly surfaces are gated, not left on the entry ticket",
     // line — alone in this file — goes red. It also keeps the assertions above
     // honest: they measure the declaration, not merely the `/mark8ly` prefix.
     expect(capabilityForPath("/mark8ly/foods")).toBe("read");
+  });
+});
+
+describe("every declared entity type has a route id that gates its page", () => {
+  // THE SECURITY ASSERTION OF THE GENERIC `[product]/[entity]` PAGE, stated
+  // over the WHOLE registry rather than over mark8ly's three paths above.
+  //
+  // `app/(console)/[product]/[entity]/page.tsx` matches an arbitrary two-
+  // segment path and renders any type `productEntities` declares. It is gated
+  // by nothing but `capabilityForPath`, which falls back to `read` — the
+  // ticket every operator who can reach the console holds — for a path no
+  // route id claims. So a type added to `PRODUCTS` without its route id would
+  // ship a page of one product's records readable by every signed-in
+  // operator, and nothing would report an error: the fallback is not a
+  // failure path. This is the row that must go red instead.
+  //
+  // The path is `/<product id>/<type>`: the first URL segment is the REGISTRY
+  // KEY, because that is what `[product]` matches and what
+  // `resolveProductParam` compares against `PRODUCT_IDS`. It equals
+  // `productSource(id)` for both products today, and `ProductEntry.source` is
+  // where the two are allowed to diverge.
+  const declared = PRODUCT_IDS.flatMap((id) =>
+    productEntities(id).map((type) => [id, type, `/${id}/${type}`] as const),
+  );
+
+  it("covers both products' types, so the rows below are not vacuous", () => {
+    // A `flatMap` over an empty list produces an empty `it.each`, which passes
+    // by running nothing. Four pairs: kora's users and foods, mark8ly's
+    // tenants and users.
+    expect(declared.map(([, , path]) => path)).toEqual([
+      "/kora/users",
+      "/kora/foods",
+      "/mark8ly/tenants",
+      "/mark8ly/users",
+    ]);
+  });
+
+  it.each(declared)("gives %s's %s a route id at %s", (id, _type, path) => {
+    const route = routeForPath(path);
+    expect(route, `no route id claims ${path}`).toBeDefined();
+    // Its OWN product's id, not merely "some id": a route claiming this path
+    // while belonging to another product would be borrowing its neighbour's
+    // capability, which is the same silent mis-gating the fallback produces.
+    expect(routeProduct(route as RouteId), `${path} is claimed by another product`).toBe(id);
+  });
+
+  it.each(declared)("requires `platform` for %s's %s, not the read fallback", (_id, _type, path) => {
+    expect(capabilityForPath(path)).toBe("platform");
+    // Spelled out as well as compared, because "not the entry ticket" is the
+    // actual requirement and a future capability rename could satisfy the line
+    // above while quietly reintroducing the fallback.
+    expect(capabilityForPath(path)).not.toBe("read");
+  });
+
+  // THE NEGATIVE CONTROL. Without it the two rows above are consistent with
+  // `capabilityForPath` returning `platform` for every path under a product
+  // root, which would make them measure the prefix rather than the
+  // declaration. `mark8ly-only-type` and `kora-only-type` are declared by
+  // nobody, so nothing claims these paths and each falls back to the entry
+  // ticket. This is also the only place either product's `exact: true` bites:
+  // drop it from `kora.overview` or `mark8ly.overview` and that product's row
+  // goes red, because the root would then claim every undeclared descendant.
+  it.each(PRODUCT_IDS)("falls back to the entry ticket for an undeclared type on %s", (id) => {
+    const undeclared = `/${id}/no-such-declared-type`;
+    expect(productEntities(id)).not.toContain("no-such-declared-type");
+    expect(capabilityForPath(undeclared)).toBe("read");
   });
 });
 

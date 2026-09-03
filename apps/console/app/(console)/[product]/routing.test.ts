@@ -103,11 +103,76 @@ describe("the [product] segment against Next's own route precedence", () => {
     expect(resolve("/platform")).toEqual({ page: "/[product]", params: { product: "platform" } });
   });
 
-  // Not a statement about fall-through under a static parent: `/[product]` is
-  // ONE segment, so it cannot match a two-segment path whatever the precedence
-  // rules say. Recorded so a reader does not take it for evidence it is not.
-  it("does not match a two-segment path, being a one-segment route", () => {
-    expect(resolve("/platform/nope")).toBeNull();
-    expect(resolve("/kora/nope")).toBeNull();
+});
+
+/**
+ * The two-segment half, added when `[product]/[entity]/page.tsx` landed.
+ *
+ * Task 4 recorded that `/platform/nope` and `/kora/nope` matched NOTHING, and
+ * was explicit that this was a segment-count fact — `/[product]` is one
+ * segment — rather than evidence about fall-through. Adding a two-segment
+ * dynamic route is what puts the question to the test, and it turns out the
+ * same way `/platform` did: paths that previously produced the framework 404
+ * now match, and the param checks are the only thing refusing them.
+ *
+ * Same methodology and same limits as above: Next's own sorter and matcher
+ * over the on-disk page list, not a running server.
+ */
+describe("the [product]/[entity] segment against Next's own route precedence", () => {
+  it("discovers the two-segment dynamic page and the static children it must not swallow", () => {
+    // If this fails, every other row below is measuring the wrong file set.
+    expect(PAGES).toContain("/[product]/[entity]");
+    expect(PAGES).toContain("/kora/foods");
+    expect(PAGES).toContain("/kora/users");
+    expect(PAGES).toContain("/platform/tenants");
+  });
+
+  it("keeps Kora's own index pages on their bespoke files", () => {
+    // Kora's food index renders an expandable detail row the generic page has
+    // no equivalent for, so these winning is load-bearing, not cosmetic.
+    expect(resolve("/kora/foods")?.page).toBe("/kora/foods");
+    expect(resolve("/kora/users")?.page).toBe("/kora/users");
+  });
+
+  it("keeps /platform/tenants on the platform rail's own page", () => {
+    // Same word as `mark8ly.tenants`, different surface — the estate-wide
+    // directory. A dynamic route swallowing it would show one product's rows
+    // under the estate's heading.
+    expect(resolve("/platform/tenants")?.page).toBe("/platform/tenants");
+  });
+
+  it("resolves /mark8ly/tenants and /mark8ly/users to the generic entity page", () => {
+    expect(resolve("/mark8ly/tenants")).toEqual({
+      page: "/[product]/[entity]",
+      params: { product: "mark8ly", entity: "tenants" },
+    });
+    expect(resolve("/mark8ly/users")).toEqual({
+      page: "/[product]/[entity]",
+      params: { product: "mark8ly", entity: "users" },
+    });
+  });
+
+  // THE BEHAVIOUR CHANGE. Both of these matched nothing before this page
+  // existed and produced the framework 404; they now reach a rendered segment
+  // and produce the console's `not-found.tsx` instead. Recorded here because
+  // it is a change to previously-404ing URLs, and because it is exactly why
+  // `resolveEntitySurface` refuses both — `platform` is not a product, and
+  // `nope` is not one of Kora's declared types.
+  it("gives a previously-unmatched two-segment path a match, which the param checks then refuse", () => {
+    expect(resolve("/platform/nope")).toEqual({
+      page: "/[product]/[entity]",
+      params: { product: "platform", entity: "nope" },
+    });
+    expect(resolve("/kora/nope")).toEqual({
+      page: "/[product]/[entity]",
+      params: { product: "kora", entity: "nope" },
+    });
+  });
+
+  // The negative control for this block: `/[product]/[entity]` is TWO
+  // segments, so it cannot match a three-segment path. Without a row like this
+  // the ones above would be consistent with a route that matched everything.
+  it("does not match a three-segment path, being a two-segment route", () => {
+    expect(resolve("/mark8ly/tenants/some-tenant-id")).toBeNull();
   });
 });

@@ -37,10 +37,12 @@ import { ProductOverview } from "./overview-view";
  *   - `/platform` resolves to `/[product]` with `product: "platform"`. It has
  *     no `page.tsx` of its own, so adding this file gave a previously-404
  *     path a match.
- *   - `/platform/inbox` resolves to `/platform/inbox`, and `/platform/nope`
- *     resolves to nothing. That is a segment-count fact — `/[product]` is one
- *     segment — and NOT evidence about how a deeper unmatched child behaves;
- *     Task 5's `[entity]` is what will put that question to the test.
+ *   - `/platform/inbox` resolves to `/platform/inbox`. `/platform/nope`
+ *     resolved to nothing while `/[product]` was the only dynamic route,
+ *     which was a segment-count fact rather than evidence about fall-through
+ *     — and `[product]/[entity]` has since settled the question: it now
+ *     resolves to `/[product]/[entity]`, and `resolveEntitySurface` refuses
+ *     it. `routing.test.ts` measures both depths.
  *
  * `/platform` landing here is exactly why `resolveProductParam` is the first
  * thing this page does. `platform` is not in `PRODUCTS` (`products.ts` says

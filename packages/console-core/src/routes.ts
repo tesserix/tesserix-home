@@ -299,10 +299,15 @@ export const ROUTES = {
   // explicit that a renderer must not link a pending entry. Declaring an id is
   // not the same act as advertising a door.
   //
-  // `mark8ly.overview` is no longer pending: `app/(console)/[product]/page.tsx`
-  // serves `/mark8ly`. `tenants` and `users` stay pending until their own page
-  // exists. Neither gains an entry in `mark8lyNav` here either way — the rail
-  // is a later change than the pages.
+  // None of the three is pending any more. `app/(console)/[product]/page.tsx`
+  // serves `/mark8ly`, and `app/(console)/[product]/[entity]/page.tsx` serves
+  // `/mark8ly/tenants` and `/mark8ly/users` — one generic file per depth, with
+  // no mark8ly page file of their own. `mark8ly.migrationFastPath` above stays
+  // pending: it is #406's follow-up and renders mark8ly's own vocabulary, so
+  // no generic surface can serve it.
+  //
+  // None of them gains an entry in `mark8lyNav` here either way — the rail is
+  // a later change than the pages.
   //
   // No `web` and no `mobile`: apps/web's mark8ly rail is eight
   // tenant/onboarding/subscription screens over its own tables, not a
@@ -337,13 +342,11 @@ export const ROUTES = {
   // `platform.leadTemplates` already records.
   "mark8ly.tenants": {
     console: "/mark8ly/tenants",
-    pending: true,
     capability: "platform",
     product: "mark8ly",
   },
   "mark8ly.users": {
     console: "/mark8ly/users",
-    pending: true,
     capability: "platform",
     product: "mark8ly",
   },
