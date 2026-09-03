@@ -277,12 +277,20 @@ function DiscardDraftButton({ revisionId }: { revisionId: string }) {
  * comment) only when `canPublish` is true, so an operator who will never see
  * the result never triggers the Stripe read behind it.
  *
- * `live` needs no special case here: `checkGuards`' own `checkMode` rule
- * refuses `mode === "live"` inside the plan this fetches (`publish-guards.ts`),
- * so `PublishView` receives a `verdict` that already carries the refusal and
- * renders `LIVE_REFUSAL_NOTE` itself — mounting this section for `live`
- * cannot create a path that reaches a live publish; it can only show why
- * one is refused.
+ * `live` still needs no special case here, but for a different reason than
+ * it used to (#327 P2b): `checkGuards`' `mode` rule now returns a
+ * CONFIRMATION for `mode === "live"` rather than a refusal
+ * (`publish-guards.ts`), so `PublishView` receives a `verdict` carrying that
+ * breach and renders `LIVE_CONFIRMATION_NOTE` in front of its typed-mode
+ * gate. Mounting this section for `live` still cannot reach a live publish
+ * by itself — it can only show what one would do and ask the operator to
+ * name the mode.
+ *
+ * The one thing that DID change: this section's `planPublishAction` call
+ * now reads Stripe for `live` too, where the mode refusal used to
+ * short-circuit it (`actions.ts`'s `observeAndPlan`). That read is the plan
+ * the operator is being asked to confirm; there is nothing to confirm
+ * without it.
  */
 function PublishSection({
   revisionId,
