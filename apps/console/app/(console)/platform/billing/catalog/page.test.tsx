@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 import { migrationsPendingMessage, stripeUnavailableMessage } from "@/lib/db-read-error";
 import { StripeReadUnavailableError } from "@/lib/billing/stripe-read";
@@ -356,6 +356,21 @@ describe("the mounted authoring surface", () => {
     render(await PlanCatalog({ searchParams: Promise.resolve({ mode }) }));
   }
 
+  /**
+   * Browse and Draft & Publish are `SurfaceTabs` panels, and `TabsContent`
+   * renders `null` for the inactive one (see `@tesserix/web`'s `tabs`), so the
+   * authoring panel is genuinely not in the document until an operator asks
+   * for it. Every assertion about a draft, a publish control or a publish
+   * outcome below therefore opens the tab first — which is also the operator's
+   * own path to it.
+   *
+   * Assertions about the OBSERVATION STRIP and the mode toggle need no click:
+   * both sit above the tab bar, which is the point of `catalog-surface.tsx`.
+   */
+  function openDraftTab() {
+    fireEvent.click(screen.getByRole("tab", { name: /Draft & Publish/ }));
+  }
+
   const READY_PLAN = {
     revisionId: "draft-1",
     mode: "test" as const,
@@ -383,8 +398,11 @@ describe("the mounted authoring surface", () => {
 
     await renderCatalogPage();
 
-    // The read-only catalog table (`catalog-views.tsx`) still renders.
+    // The read-only catalog table (`catalog-views.tsx`) still renders — on
+    // Browse, the tab an operator lands on.
     expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+
+    openDraftTab();
     // The draft editor (`draft-editor.tsx`) is mounted and usable — its
     // subscriber-safety note is the one thing it always renders.
     expect(
@@ -408,6 +426,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage();
+    openDraftTab();
 
     expect(await screen.findByRole("button", { name: /review changes/i })).toBeInTheDocument();
     expect(planPublishAction).toHaveBeenCalledWith("draft-1", "test");
@@ -428,6 +447,7 @@ describe("the mounted authoring surface", () => {
     signIn([]);
 
     await renderCatalogPage();
+    openDraftTab();
 
     expect(await screen.findByRole("button", { name: /review changes/i })).toBeInTheDocument();
     expect(planPublishAction).toHaveBeenCalledWith("draft-1", "test");
@@ -442,6 +462,8 @@ describe("the mounted authoring surface", () => {
     await renderCatalogPage();
 
     expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+
+    openDraftTab();
     expect(screen.getByRole("button", { name: /start a draft/i })).toBeInTheDocument();
     expect(readRevisionRows).not.toHaveBeenCalled();
     expect(planPublishAction).not.toHaveBeenCalled();
@@ -458,6 +480,8 @@ describe("the mounted authoring surface", () => {
     // not be dressed up as broken by the draft read's own failure.
     expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
+
+    openDraftTab();
     // The draft section itself shows a genuine failure — never a draft
     // editor built on nothing, and never dressed up as "no draft yet".
     expect(screen.queryByRole("button", { name: /start a draft/i })).toBeNull();
@@ -492,6 +516,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage("live");
+    openDraftTab();
 
     expect(planPublishAction).toHaveBeenCalledWith("draft-1", "live");
     // `PublishView`'s own live copy — shown, not hidden. The point this
@@ -639,6 +664,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage();
+    openDraftTab();
 
     expect(screen.getByText(/Publish attempt attempt-1/i)).toBeInTheDocument();
     // The failed operation's own row — the per-operation detail that is the
@@ -660,6 +686,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage();
+    openDraftTab();
 
     expect(screen.getByText(/Orphaned Stripe prices/i)).toBeInTheDocument();
     expect(screen.getByText(/price_stranded/)).toBeInTheDocument();
@@ -679,6 +706,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage();
+    openDraftTab();
 
     expect(screen.queryByText(/0 operation\(s\) failed/)).toBeNull();
     expect(screen.queryByText(/No operations were recorded for this attempt/i)).toBeNull();
@@ -699,6 +727,7 @@ describe("the mounted authoring surface", () => {
     signIn(["billing", "publish-catalog"]);
 
     await renderCatalogPage("live");
+    openDraftTab();
 
     expect(screen.getByText(stripeUnavailableMessage(ORPHANS_SURFACE))).toBeInTheDocument();
     expect(screen.queryByText(/Could not load the orphaned Stripe price check\. Try again shortly\./)).toBeNull();

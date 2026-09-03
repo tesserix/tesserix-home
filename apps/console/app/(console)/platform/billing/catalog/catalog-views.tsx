@@ -7,7 +7,6 @@ import Link from "next/link";
 import { Badge } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
-import { ObservationStrip } from "./observation-strip";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
 import { formatMoney } from "@/lib/money";
@@ -31,14 +30,17 @@ import type { CatalogSource } from "@/lib/billing/source-policy";
 import type { Difference, DifferenceKind, TaxBehavior } from "@/lib/billing/parity";
 
 /**
- * The client half of the plan catalog surface: the observation window (#327's
- * evidence) and the published catalog table, per mode.
+ * The published catalog table, per mode — the Browse half of the plan catalog
+ * surface.
  *
- * Two independently-resolved SECTIONS, not two tabs — unlike `billing-views.tsx`'s
- * trials/subscriptions split. The window and the catalog answer different
- * questions ("is the check passing?" vs. "what does the catalog say?") that an
- * operator deciding on #327's revocation wants to see at the same time, not
- * behind a click.
+ * `ObservationWindow` (#327's evidence) still lives in this file, but this
+ * component no longer renders it: `catalog-surface.tsx` mounts the strip that
+ * wraps it ABOVE the Browse / Draft & Publish tabs, because the check's
+ * verdict is true of the whole page and not of one tab. `ModeToggle` moved out
+ * for the same reason and is exported below for that one caller.
+ *
+ * What stays here is what is genuinely about the published catalog: the source
+ * filter, the publication attribution, and the per-plan table.
  */
 
 /* ------------------------------------------------------------------------ *
@@ -740,7 +742,19 @@ export function ObservationWindow({
 
 const STRIPE_MODES_FOR_TOGGLE: readonly StripeMode[] = ["test", "live"];
 
-function ModeToggle({ mode }: { mode: StripeMode }) {
+/**
+ * Which Stripe mode the whole page is about. Mounted by
+ * `catalog-surface.tsx` above the tabs, not inside Browse: the mode governs
+ * the draft's publish target as much as it governs which catalog is listed,
+ * so an operator on the Draft & Publish tab must be able to see and change it
+ * without leaving the tab they are publishing from.
+ *
+ * A `next/link` to `?mode=`, so switching is a soft navigation to the same
+ * route and every read on the page re-runs server-side. Local state elsewhere
+ * on the page survives it — see `observation-strip.tsx`'s re-sync comment for
+ * the one place that matters.
+ */
+export function ModeToggle({ mode }: { mode: StripeMode }) {
   return (
     <div className="flex gap-1" role="tablist" aria-label="Stripe mode">
       {STRIPE_MODES_FOR_TOGGLE.map((m) => (
@@ -763,13 +777,22 @@ function ModeToggle({ mode }: { mode: StripeMode }) {
 }
 
 /**
- * The product (source) filter, sitting beside `ModeToggle` and built in the
- * SAME idiom on purpose — an exclusive row of pills, `role="tab"` /
- * `aria-selected`, no separate "All" state — rather than a new control shape
- * for what is, structurally, the same kind of choice `ModeToggle` already
- * makes (which slice of the catalog am I looking at).
+ * The product (source) filter, built in the SAME idiom as `ModeToggle` on
+ * purpose — an exclusive row of pills, `role="tab"` / `aria-selected`, no
+ * separate "All" state — rather than a new control shape for what is,
+ * structurally, the same kind of choice that control already makes (which
+ * slice of the catalog am I looking at).
  *
- * Unlike `ModeToggle`, this does NOT drive the URL: `readCatalogRows` already
+ * It stays INSIDE Browse while `ModeToggle` sits above the tabs, because the
+ * two have different reach. Mode is a page-wide fact: `page.tsx` reads it off
+ * `?mode=` and scopes the catalog, the publication, the latest attempt and the
+ * publish target with it. Source is not: `page.tsx` reads both the published
+ * catalog and the DRAFT's rows at `SINGLE_SOURCE`, fixed server-side
+ * (`readCatalog`, `readDraftRows`), so this control cannot reach the authoring
+ * side at all — it slices rows already on the page. Hoisting it above the tabs
+ * would advertise a scope it does not have.
+ *
+ * It does NOT drive the URL: `readCatalogRows` already
  * returns every source for the selected mode in one read (see its own doc
  * comment — it does not filter by source), so narrowing to one is a client-side
  * slice of data already on the page, not a reason to round-trip the server.
@@ -813,13 +836,8 @@ function SourceFilter({
 
 export interface CatalogViewsProps {
   mode: StripeMode;
-  windowDays: number;
-  windowStatus: ParityWindowStatus | null;
-  windowState: SurfaceState;
   catalog: readonly CatalogRow[];
   catalogState: SurfaceState;
-  runs: readonly PairLatestRun[];
-  runsState: SurfaceState;
   /** Who published the mode's currently-live revision, and when — `null`
    *  for a mode that has never been published. A fourth, independently
    *  resolved read; see `page.tsx`'s module doc comment. */
@@ -829,13 +847,8 @@ export interface CatalogViewsProps {
 
 export function CatalogViews({
   mode,
-  windowDays,
-  windowStatus,
-  windowState,
   catalog,
   catalogState,
-  runs,
-  runsState,
   publication,
   publicationState,
 }: CatalogViewsProps) {
@@ -858,26 +871,10 @@ export function CatalogViews({
 
   return (
     <div className="flex flex-col gap-8">
-      {/* One line by default (see `observation-strip.tsx`): this section was
-          the first thing on the page and pushed the catalog and the authoring
-          panel below the fold for every operator who came to do either. */}
-      <section className="flex flex-col gap-3" aria-label="Observation window">
-        <ObservationStrip
-          windowStatus={windowStatus}
-          windowState={windowState}
-          runs={runs}
-          runsState={runsState}
-          windowDays={windowDays}
-        />
-      </section>
-
       <section className="flex flex-col gap-3" aria-label="Plan catalog">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium">Plan catalog</h2>
-          <div className="flex items-center gap-2">
-            <SourceFilter sources={sources} selected={effectiveSource} onChange={setRequestedSource} />
-            <ModeToggle mode={mode} />
-          </div>
+          <SourceFilter sources={sources} selected={effectiveSource} onChange={setRequestedSource} />
         </div>
         <PublicationAttribution mode={mode} publication={publication} publicationState={publicationState} />
         {catalogState.kind === "ready" ? (

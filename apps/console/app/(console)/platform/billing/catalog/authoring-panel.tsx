@@ -155,6 +155,35 @@ export function buildDraftEditorRows(
 }
 
 /**
+ * How many of the draft's rows differ from what is published — the number the
+ * Draft tab's badge carries, so an operator on the Browse tab can see that a
+ * draft is waiting without opening it.
+ *
+ * Derived from {@link buildDraftEditorRows} rather than from a second walk
+ * over the two row sets, because that join is already the definition of
+ * "changed" on this surface: it is what `DraftEditor` renders an "edited"
+ * marker from, cell by cell (`draft-editor.tsx`'s own `dirty`). A separate
+ * comparison here could disagree with the editor the badge is counting, and
+ * the badge would be the one nobody checks.
+ *
+ * A row counts once however many of its currencies moved — the editor's rows
+ * are per lookup key, and the tab is telling an operator how many prices to
+ * look at, not how many cells.
+ *
+ * `publishedUnitAmountMinor` is `null` for a lookup key the published catalog
+ * does not have, which counts as changed: an added price is a change to
+ * publish. That is the same reading `DraftEditor` gives it.
+ */
+export function countChangedDraftRows(
+  draftRows: readonly CatalogRow[],
+  publishedRows: readonly CatalogRow[],
+): number {
+  return buildDraftEditorRows(draftRows, publishedRows).filter((row) =>
+    row.amounts.some((cell) => cell.draftUnitAmountMinor !== cell.publishedUnitAmountMinor),
+  ).length;
+}
+
+/**
  * A publish outcome as `page.tsx` reads it back out of
  * `plan_catalog_publish_attempts` — the durable half of what
  * `publishAction` returns in-session, and deliberately only that half.

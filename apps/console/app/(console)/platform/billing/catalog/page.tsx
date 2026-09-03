@@ -56,6 +56,13 @@ import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { isStripeReadUnavailable, STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { CatalogViews } from "./catalog-views";
 import { AuthoringPanel } from "./authoring-panel";
+// Client components, rendered as ELEMENTS from this server component — never
+// called as functions. Every export of a `"use client"` module is a client
+// reference here; see `catalog-surface.tsx`'s `draftRows` for what that costs
+// when a page needs a value out of one, and this file's `resolveState` import
+// comment for the same trap with a helper.
+import { CatalogSurface } from "./catalog-surface";
+import { ObservationStrip } from "./observation-strip";
 // Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
 // `"use client"`, and these two are the display shapes this page maps its
 // server-side rows INTO — never a value this server component calls.
@@ -689,31 +696,53 @@ export default async function PlanCatalog({
         description="The published Stripe catalog and the nightly parity check that watches it, per mode."
       />
 
-      <CatalogViews
+      {/* Browse and Draft & Publish, with the observation strip and the mode
+          toggle above them — see `catalog-surface.tsx` for why those two are
+          not inside a tab, and why the tabs are an array. Both panels are
+          constructed HERE, from reads this component already did, and handed
+          down as elements. */}
+      <CatalogSurface
         mode={mode}
-        windowDays={OBSERVATION_WINDOW_DAYS}
-        windowStatus={window}
-        windowState={windowState}
-        catalog={catalog}
-        catalogState={catalogState}
-        runs={runs}
-        runsState={runsState}
-        publication={publication}
-        publicationState={publicationState}
-      />
-
-      <AuthoringPanel
-        mode={mode}
-        catalog={catalog}
-        catalogState={catalogState}
-        draftState={draftState}
-        draftId={draft?.id ?? null}
+        observation={
+          <ObservationStrip
+            windowStatus={window}
+            windowState={windowState}
+            runs={runs}
+            runsState={runsState}
+            windowDays={OBSERVATION_WINDOW_DAYS}
+          />
+        }
         draftRows={draftRows}
-        draftRowsState={draftRowsState}
-        canDraft={canDraft}
-        canPublish={canPublish}
-        replanHref={`/platform/billing/catalog?mode=${mode}`}
-        {...persistedOutcomeProps}
+        catalog={catalog}
+        // `surfacedAttempt` has already withheld a `succeeded` attempt, so a
+        // non-null one here is exactly an attempt that did not succeed —
+        // the same fact that mounts the alert inside the panel, which is the
+        // alert an operator sitting on Browse would otherwise never see.
+        attemptNeedsAttention={attempt !== null}
+        browse={
+          <CatalogViews
+            mode={mode}
+            catalog={catalog}
+            catalogState={catalogState}
+            publication={publication}
+            publicationState={publicationState}
+          />
+        }
+        authoring={
+          <AuthoringPanel
+            mode={mode}
+            catalog={catalog}
+            catalogState={catalogState}
+            draftState={draftState}
+            draftId={draft?.id ?? null}
+            draftRows={draftRows}
+            draftRowsState={draftRowsState}
+            canDraft={canDraft}
+            canPublish={canPublish}
+            replanHref={`/platform/billing/catalog?mode=${mode}`}
+            {...persistedOutcomeProps}
+          />
+        }
       />
     </div>
   );
