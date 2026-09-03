@@ -300,6 +300,15 @@ export function SecretsTable({ inventory, state, emptyMessage, reauthReturnTo }:
                   <TableCell className="font-mono text-xs">
                     <Link
                       href={secretDetailHref(row)}
+                      // One link per row, and the inventory is ~600 rows. The
+                      // detail route is fully dynamic and fans out to
+                      // fetchSecretDetail + fetchSecretVersions + fetchGrants
+                      // (the last for OpenBao rows), so leaving this to Next's
+                      // viewport heuristic bills secrets-api three calls for
+                      // every row an operator merely SCROLLS PAST. Same
+                      // argument, and the same fix, as the Handoff tab in
+                      // crm/page.tsx.
+                      prefetch={false}
                       className="underline underline-offset-2 hover:text-foreground"
                     >
                       {row.path}
