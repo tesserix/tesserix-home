@@ -103,6 +103,31 @@ interface RouteEntry {
    * the whole reason this package exists.
    */
   capability: Capability;
+  /**
+   * This route's CONSOLE path is part of the shell, not a surface.
+   *
+   * The shell is what every admitted operator can reach: the landing page and
+   * the operator's own record. It carries orientation and identity, never
+   * product data — so gating it on a surface capability would lock an operator
+   * out of the console for holding the wrong surface, which is exactly what
+   * `/` did before #266 (an operator with `crm` and `support` but not
+   * `platform` signed in to a 404).
+   *
+   * Two things read it, and they are why it is a declared property rather than
+   * a path literal somewhere:
+   *
+   *  - `capabilityForPath` answers the entry capability for a shell route, so
+   *    the access gate admits anyone who can enter.
+   *  - `routes.test.ts` allows a shell route to declare `read`, which #261
+   *    otherwise forbids — that rule is about SURFACES, and a surface gated on
+   *    the ticket every operator holds is not gated at all. The shell is not a
+   *    surface, and this flag is how the table says so.
+   *
+   * It is per-route, not per-path, because a route's console path can be the
+   * shell while its web and mobile paths are an ordinary surface —
+   * `platform.dashboard` is exactly that.
+   */
+  shell?: true;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -224,13 +249,32 @@ export const ROUTES = {
   // Served at the console root: the estate map plus the internal tools
   // directory already live there, and it is the only way back to the
   // console home once a rail link has navigated away from it.
-  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/", capability: "platform" },
+  // `shell: true` — its CONSOLE path is `/`, the landing page every sign-in
+  // arrives at. `capability` stays `platform` for the web and mobile
+  // dashboards, which are ordinary surfaces. See `shell` on RouteEntry.
+  "platform.dashboard": { web: "/admin/dashboard", mobile: "/platform", console: "/", capability: "platform", shell: true },
   // Managing the internal tools directory (#318 follow-up). `platform`
   // because every write on /v1/platform/tools requires it — the two READS
   // moved to `read` so the home page's directory renders for everyone, and
   // this surface is the other half of that split: one place where the write
   // affordances live, so the UI's gate and the API's cannot drift.
   "platform.tools": { console: "/platform/tools", capability: "platform" },
+  /**
+   * The operator's own record: what they hold, and when it was last checked
+   * against Zitadel.
+   *
+   * `read` and `shell: true`. Every admitted operator must reach it, and for a
+   * reason that only became true once #262 landed: a refusal is a 404 that is
+   * deliberately indistinguishable from "never built", so an operator who hits
+   * one has no way to answer "what do I actually hold?". This is that answer.
+   * Gating it on a surface would mean the operators most likely to need it —
+   * the narrowly granted ones — are the ones who cannot open it.
+   *
+   * It is also where per-operator settings will live: TOTP enrolment
+   * (#440 part 3) belongs here rather than on the login page, since it is a
+   * thing you do to your own account while signed in.
+   */
+  "platform.profile": { console: "/platform/profile", capability: "read", shell: true },
   "platform.apps": { web: "/admin/apps", mobile: "/platform/apps", exact: true, pending: true, capability: "platform" },
   // First surface built in the console — hence no `pending`. Served at
   // /platform/tickets there; apps/web keeps /admin/platform-tickets until it
@@ -764,6 +808,19 @@ export function isRetired(id: RouteId): boolean {
  */
 export function routeCapability(id: RouteId): Capability {
   return getRoute(id).capability ?? "read";
+}
+
+/**
+ * Is this route's console path part of the shell rather than a surface?
+ *
+ * An accessor rather than `ROUTES[id].shell`, because `ROUTES` is
+ * `as const satisfies` — the literal type of an entry that omits `shell` has
+ * no such property at all, so reading it directly is a type error at every
+ * call site. Colocated with `routeCapability` for the same reason that one
+ * exists: the table's knowledge stays in this file.
+ */
+export function isShellRoute(id: RouteId): boolean {
+  return getRoute(id).shell === true;
 }
 
 /**

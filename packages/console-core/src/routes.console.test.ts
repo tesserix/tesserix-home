@@ -42,13 +42,17 @@ describe("consolePath", () => {
     // "platform.onboardingSessions" likewise, and more so: the session list is
     // reached only from the funnel and carries merchant email addresses, which
     // is not a surface to put on a phone by default.
+    // "platform.profile" is excluded for the second reason as well: it is the
+    // operator's own record in the CONSOLE, and the mobile app has no screen
+    // for it. Writing a `mobile` path to satisfy this loop would claim one.
     for (const id of ROUTE_IDS) {
       if (
         id === "platform.dashboard" ||
         id === "platform.tools" ||
         id === "mark8ly.migrationFastPath" ||
         id === "platform.onboarding" ||
-        id === "platform.onboardingSessions"
+        id === "platform.onboardingSessions" ||
+        id === "platform.profile"
       )
         continue;
       expect(consolePath(id)).toBe(mobilePath(id));
@@ -152,11 +156,15 @@ describe("console-native surfaces record no apps/web path", () => {
     //     apps/web never served a review queue for secret access changes.
     //   - platform.newSecret: same predecessor gap again. secret-service's own
     //     UI had a create dialog; apps/web never did.
+    //   - platform.profile: the operator's own record. apps/web had no such
+    //     page — capabilities did not exist as a vocabulary until #261, so
+    //     there was nothing for it to show.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
       "mark8ly.migrationFastPath",
       "platform.tools",
+      "platform.profile",
       "platform.auditLog",
       "platform.secrets",
       "platform.secretsReviews",

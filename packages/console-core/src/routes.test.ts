@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { webPath, mobilePath, isRouteActive, routeCapability, ROUTE_IDS, ROUTES } from "./routes";
+import { webPath, mobilePath, isRouteActive, isShellRoute, routeCapability, ROUTE_IDS, ROUTES } from "./routes";
 
 describe("route identity", () => {
   it("prefixes the same id differently per renderer", () => {
@@ -70,7 +70,14 @@ describe("route capability", () => {
     // `read` means "may enter the console" and nothing else, so a route
     // resolving to it would be a surface gated on the ticket every operator
     // already holds.
-    const onEntry = ROUTE_IDS.filter((id) => routeCapability(id) === "read");
+    // SHELL routes are the exception, and a declared one. The rule is about
+    // SURFACES: a surface gated on the ticket every operator already holds is
+    // not gated at all. The shell — the landing page and the operator's own
+    // record — is not a surface, and gating it on a surface capability locks a
+    // narrowly-granted operator out of the console entirely (#266 R6.4).
+    const onEntry = ROUTE_IDS.filter(
+      (id) => routeCapability(id) === "read" && !isShellRoute(id),
+    );
 
     expect(onEntry).toEqual([]);
   });
