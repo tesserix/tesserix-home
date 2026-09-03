@@ -380,6 +380,18 @@ async function runReplacePrice(
         period: periodFromInterval(expectedInterval(op.lookupKey)),
         taxBehavior: op.taxBehavior,
         currencyOptions: op.currencyOptions,
+        // THE KEY IS ALREADY TAKEN -- by the very Price this operation
+        // replaces. Stripe refuses a create carrying a `lookup_key` another
+        // Price holds unless the create also asks to transfer it, so without
+        // this a `replace_price` cannot succeed at all. It never could: the
+        // first amount change this console ever attempted, against live on
+        // 2026-09-03, failed here with "A price
+        // (`price_1U94tmCyiazmanuP0CU2s7MA`) already uses that lookup key."
+        //
+        // Set HERE and not in `createPrice` itself, because the other caller
+        // (`create_price`, below) mints a key nothing holds and must keep
+        // Stripe's rejection as its signal that a "new" key was not new.
+        transferLookupKey: true,
         idempotencyKey,
       }),
   });
@@ -388,7 +400,13 @@ async function runReplacePrice(
   // `ReplacePriceOperation.oldPriceId`'s own doc comment and
   // `stripe-write.ts`'s `archivePrice`: resolving "the price to archive" by
   // lookup key here instead would resolve to the price just created above,
-  // because `transfer_lookup_key` has already moved the key to it.
+  // because `transfer_lookup_key` has moved the key to it.
+  //
+  // That reasoning was correct and the code did not implement it until
+  // 2026-09-03: the create above carried the lookup key but never asked to
+  // transfer it, so it failed outright and the archive was never reached.
+  // The comment described the intended mechanism as though it were running,
+  // which is why nothing here looked wrong -- see the create's own note.
   await runCall({
     attempt,
     deps,
