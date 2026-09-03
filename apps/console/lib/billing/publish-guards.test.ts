@@ -171,10 +171,48 @@ describe("checkGuards", () => {
     expect(v).toMatchObject({ refused: [expect.objectContaining({ rule: "currency-coverage" })] });
   });
 
-  it("refuses any live publish in v1", () => {
-    expect(checkGuards(TRIVIAL_PLAN, ANY, "live")).toMatchObject({
-      refused: [expect.objectContaining({ rule: "mode" })],
+  it("asks for confirmation on a live publish, and refuses nothing", () => {
+    // #327 P2b: live is ENABLED and the `mode` rule moved from `refused` to
+    // `requiresConfirmation`. The distinction is the whole point — a refusal
+    // cannot be acted on by an operator at all (`publish-view.tsx` keeps the
+    // confirm button disabled through it), so a live publish behind one was
+    // reachable only by editing `checkMode`. `refused` must be ABSENT, not
+    // merely non-empty-in-the-other-bucket: a verdict carrying both would
+    // still be a refusal by `checkGuards`' own precedence.
+    const v = checkGuards(TRIVIAL_PLAN, ANY, "live");
+    expect(v).toMatchObject({
+      ok: false,
+      requiresConfirmation: [expect.objectContaining({ rule: "mode" })],
     });
+    expect(v).not.toHaveProperty("refused");
+  });
+
+  it("adds nothing at all to a test publish", () => {
+    // The regression this pins: a `checkMode` that returned a breach for
+    // every mode — or a `checkGuards` that added one unconditionally — would
+    // put a confirmation in front of every routine test publish, and an
+    // operator who confirms daily stops reading (the argument
+    // `MAGNITUDE_THRESHOLD` makes for its own number). `toEqual`, not
+    // `toMatchObject`: `{ok: true}` exactly, with no breach list hiding
+    // beside it.
+    expect(checkGuards(TRIVIAL_PLAN, ANY, "test")).toEqual({ ok: true });
+    expect(checkGuards(planWithAmountChange(1000, 1100), ancestorAt(1000), "test")).toEqual({
+      ok: true,
+    });
+  });
+
+  it("still refuses — not merely confirms — when a live plan also drops a currency", () => {
+    // A refusal outranks a confirmation (`publish-guards.ts`'s header), and
+    // moving `mode` into the confirmation bucket must not have inverted
+    // that: a currency-coverage breach is unfixable by publishing, so
+    // offering an operator a live confirmation they could type past would be
+    // a UI asking for input that changes nothing.
+    const v = checkGuards(planDropping("gbp"), ANY, "live");
+    expect(v).toMatchObject({
+      ok: false,
+      refused: [expect.objectContaining({ rule: "currency-coverage" })],
+    });
+    expect(v).not.toHaveProperty("requiresConfirmation");
   });
 
   it("treats a bootstrap as requiring confirmation, not refusal", () => {

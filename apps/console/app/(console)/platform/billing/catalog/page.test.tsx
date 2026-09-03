@@ -464,7 +464,7 @@ describe("the mounted authoring surface", () => {
     expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
   });
 
-  it("refuses live from the mounted surface, with the reason shown — never hidden", async () => {
+  it("shows the live warning on the mounted surface, with the reason stated — never hidden", async () => {
     setUpSuccessfulReads();
     currentDraft.mockResolvedValue({ id: "draft-1", basedOn: "rev-0" });
     readRevisionRows.mockResolvedValue([DRAFT_ROW]);
@@ -475,10 +475,15 @@ describe("the mounted authoring surface", () => {
         mode: "live",
         verdict: {
           ok: false,
-          refused: [
+          // #327 P2b: live is enabled, and its `mode` breach arrives as a
+          // CONFIRMATION. The fixture mirrors what `checkGuards` now
+          // returns; `publish-guards.test.ts` is what pins that shape at the
+          // source, and `publish-view.render.test.tsx` renders the real
+          // verdict rather than a fixture.
+          requiresConfirmation: [
             {
               rule: "mode",
-              message: 'Publishing to Stripe mode "live" is refused in v1.',
+              message: 'Publishing to Stripe mode "live" writes to the real billing account.',
             },
           ],
         },
@@ -489,16 +494,12 @@ describe("the mounted authoring surface", () => {
     await renderCatalogPage("live");
 
     expect(planPublishAction).toHaveBeenCalledWith("draft-1", "live");
-    // `PublishView`'s own live-refusal copy — shown, not hidden.
-    expect(
-      await screen.findByText(/live publishing is not enabled/i),
-    ).toBeInTheDocument();
-    const confirmButton = screen.getByRole("button", { name: /review changes/i });
-    expect(confirmButton).toBeInTheDocument();
-    // The control stays reachable (so the reason is announced to a
-    // screen-reader operator too) but the actual publish stays refused: the
-    // dialog it opens can never enable its own confirm button while `mode`
-    // is a refused rule — see `publish-view.tsx`'s `confirmDisabled`.
+    // `PublishView`'s own live copy — shown, not hidden. The point this
+    // surface test owns is that mounting the panel for `live` routes the
+    // verdict through to the operator at all; whether the confirm button
+    // then unlocks is `publish-view.render.test.tsx`'s subject.
+    expect(await screen.findByText(/real stripe account/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /review changes/i })).toBeInTheDocument();
   });
 
   /**

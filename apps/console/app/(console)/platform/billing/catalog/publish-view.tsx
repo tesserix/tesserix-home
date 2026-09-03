@@ -53,24 +53,26 @@ import { publishAction, type PublishActionResult } from "./actions";
  * `publish-guards.ts`'s two verdict shapes mean two different things and get
  * two different treatments here:
  *
- *   - REFUSED (`mode`, `currency-coverage`): the confirm button stays
- *     disabled and no amount of typing enables it. The control is NOT
- *     hidden and the reason is stated — a control that vanishes teaches an
- *     operator nothing, and `checkMode`'s live refusal in particular is a
- *     policy an operator needs to be able to read.
- *   - REQUIRES CONFIRMATION (`magnitude`, `breadth`): the breaches are shown
- *     and the typed-mode gate is what clears them. Disabling the button here
- *     too would make spec §7's two legitimate-but-large shapes
+ *   - REFUSED (`currency-coverage`): the confirm button stays disabled and
+ *     no amount of typing enables it. The control is NOT hidden and the
+ *     reason is stated — a control that vanishes teaches an operator
+ *     nothing.
+ *   - REQUIRES CONFIRMATION (`mode`, `magnitude`, `breadth`): the breaches
+ *     are shown and the typed-mode gate is what clears them. Disabling the
+ *     button here too would make spec §7's legitimate-but-large shapes
  *     unpublishable, which is precisely the collapse `publish-guards.ts`'s
  *     header rejects.
  *
- * # The typed-mode gate is built for live from day one
+ * # The typed-mode gate is the whole of what stands in front of live
  *
- * Spec §7: the estate lost an hour to a live/test key mix-up on 2026-08-27,
- * and live's first publish is a 42-price bootstrap — the largest single
- * action this tool will ever take. v1 refuses live in code, so this gate
- * only ever sees `test` today; it is built for both anyway, because the day
- * live is turned on is not the day to be writing the confirmation for it.
+ * Live publishing is enabled (#327 P2b) and its `mode` breach arrives in
+ * the second bucket: this view shows {@link LIVE_CONFIRMATION_NOTE} and the
+ * operator types `live` to proceed. That is not a smaller gate than the code
+ * change it replaced — it is the gate spec §7 asked for, applied by the
+ * person doing the publish rather than by a reviewer days earlier. The
+ * estate lost an hour to a live/test key mix-up on 2026-08-27, and a live
+ * publish is the largest single action this tool takes; naming the mode out
+ * loud is what that costs.
  */
 
 export interface PublishViewProps {
@@ -97,17 +99,18 @@ export interface PublishViewProps {
 const MAGNITUDE_PERCENT = `${Math.round(MAGNITUDE_THRESHOLD * 100)}%`;
 
 /**
- * The live refusal, in the operator's words rather than the guard's.
+ * The live confirmation, in the operator's words rather than the guard's.
  *
- * `checkMode`'s own message ("Publishing to Stripe mode \"live\" is refused
- * in v1") is shown too, immediately after this — but it describes the rule,
- * not why the rule exists, and "why" is the part that stops someone filing a
- * bug about a broken button.
+ * `checkMode`'s own breach message is shown too, immediately after this —
+ * but it names the consequence in one clause, and this says why the
+ * confirmation is being asked for at all. That "why" is what makes a
+ * deliberate live publish feel deliberate instead of like an obstacle to
+ * clear; the guard message alone reads as a warning to click past.
  */
-const LIVE_REFUSAL_NOTE =
-  "Live publishing is not enabled. v1 publishes to Stripe test only — the refusal is in code (publish-guards.ts), not a setting, " +
-  "because the estate lost an hour to a live/test key mix-up on 2026-08-27 and live's first publish is a 42-price bootstrap. " +
-  "Turning it on is a deliberate change, reviewed on its own.";
+const LIVE_CONFIRMATION_NOTE =
+  "This publishes to the real Stripe account: live prices, real customers, real charges. Live is enabled — this typed " +
+  "confirmation is the whole of the gate, because the estate lost an hour to a live/test key mix-up on 2026-08-27 and a live " +
+  "publish is the largest single action this tool takes. Read the operations above before typing.";
 
 function refusedBreaches(verdict: GuardVerdict): readonly GuardBreach[] {
   return !verdict.ok && "refused" in verdict ? verdict.refused : [];
@@ -216,8 +219,13 @@ function BreachList({ breaches, tone }: { breaches: readonly GuardBreach[]; tone
       {/* The list is a SIBLING of `CalloutDescription`, not a child of it:
           that component renders a `<p>`, and a `<ul>` inside a paragraph is
           invalid HTML the browser reparents out from under React. */}
+      {/* Keyed on the RULE, not on `tone`: the `mode` breach reaches this
+          component in the confirmation list since #327 P2b, and would reach
+          it in the refused list again if a future rule change put it back
+          there. Either way the operator gets the same account-level warning
+          before the breach message. */}
       {breaches.some((breach) => breach.rule === "mode") ? (
-        <CalloutDescription>{LIVE_REFUSAL_NOTE}</CalloutDescription>
+        <CalloutDescription>{LIVE_CONFIRMATION_NOTE}</CalloutDescription>
       ) : null}
       <ul>
         {breaches.map((breach) => (
@@ -438,6 +446,12 @@ function dialogDescription(params: {
   }
 
   const reasons: string[] = [];
+  // First, deliberately: which Stripe account is being written to changes
+  // how everything after it should be read. A screen-reader operator hears
+  // this before the thresholds, not after them.
+  if (confirmations.some((breach) => breach.rule === "mode")) {
+    reasons.push(`this writes to the real Stripe ${mode} account, not test`);
+  }
   if (confirmations.some((breach) => breach.rule === "magnitude")) {
     reasons.push(`an amount moves more than ${MAGNITUDE_PERCENT} from the last published revision`);
   }

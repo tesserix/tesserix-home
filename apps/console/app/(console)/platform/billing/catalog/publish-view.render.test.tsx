@@ -107,9 +107,11 @@ function toBreaches(fixtures: readonly BreachFixture[] | undefined): GuardBreach
 /**
  * A verdict the fixture named, or — when it named none — the REAL
  * `checkGuards` verdict for this plan and mode. That default is what makes
- * test 4 evidence about the shipped refusal rather than about a hand-written
- * fixture: `renderPlan({ mode: "live" })` names no guards at all, and the
- * refusal it renders comes from `publish-guards.ts`'s own `checkMode`.
+ * the live tests evidence about the shipped rule rather than about a
+ * hand-written fixture: `renderPlan({ mode: "live" })` names no guards at
+ * all, and the confirmation it renders comes from `publish-guards.ts`'s own
+ * `checkMode`. The same default is what lets the test-mode case assert that
+ * NO breach appears, which a fixture verdict could never show.
  */
 function buildVerdict(guards: GuardsFixture | undefined, plan: PublishPlan, mode: StripeMode): GuardVerdict {
   if (guards?.refused?.length) return { ok: false, refused: toBreaches(guards.refused) };
@@ -155,8 +157,9 @@ describe("PublishView", () => {
   });
 
   it("requires the mode to be typed before publishing", () => {
-    // v1 is test-only, but the control is built for live from the start: live's
-    // first publish is a 42-price bootstrap, the largest action this tool takes.
+    // Applies to both modes — test included. The typed gate is what stops a
+    // slip of the mouse; the live case below is what stops the mode being
+    // the wrong one.
     renderPlan({ mode: "test" });
     const confirm = screen.getByRole("button", { name: /publish/i });
     expect(confirm).toBeDisabled();
@@ -164,25 +167,39 @@ describe("PublishView", () => {
     expect(confirm).toBeEnabled();
   });
 
-  it("refuses a live publish and says why", () => {
+  it("makes a live publish deliberate — says what live means, then lets the typed mode through", () => {
+    // #327 P2b. This test used to assert the opposite (the confirm button
+    // stayed disabled however the operator typed), which is what a refusal
+    // buys. Live is enabled now, so the gate is the operator's own word:
+    // the note must be SHOWN — a live publish that looks identical to a test
+    // one is the 2026-08-27 mix-up waiting to happen again — and typing the
+    // mode must then enable the confirm button.
     renderPlan({ mode: "live" });
-    expect(screen.getByRole("alert")).toHaveTextContent(/live publishing is not enabled/i);
-    expect(screen.queryByRole("button", { name: /publish/i })).toBeDisabled();
-    // Review 2026-08-28: the assertion above holds for EVERY un-typed dialog,
-    // so on its own it does not distinguish a refusal from an empty field —
-    // an implementation that dropped the `refused.length > 0` term from
-    // `confirmDisabled` would pass it while making a live publish reachable
-    // by typing "live". This line is what pins the refusal as unbypassable.
-    fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "live" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/real stripe account/i);
     expect(screen.getByRole("button", { name: /publish/i })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "live" } });
+    expect(screen.getByRole("button", { name: /publish/i })).toBeEnabled();
+  });
+
+  it("shows no live warning, and no extra breach at all, on a test publish", () => {
+    // The regression that would train operators to click through the live
+    // note: showing it (or any breach callout) on the routine mode. The real
+    // `checkGuards` runs here — `renderPlan` names no fixture guards — so
+    // this fails if the `mode` rule ever starts breaching for "test".
+    renderPlan({ mode: "test" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/real stripe account/i)).toBeNull();
   });
 
   it("blocks entirely on a refusal, and only warns on a confirmation breach", () => {
     renderPlan({ guards: { refused: [{ rule: "currency-coverage", detail: "gbp missing from pro monthly" }] } });
     expect(screen.getByRole("button", { name: /publish/i })).toBeDisabled();
     expect(screen.getByText(/gbp missing/i)).toBeInTheDocument();
-    // Same reasoning as the live case above: a refusal must survive the
-    // typed-mode gate being satisfied. The companion test below proves a
+    // A refusal must survive the typed-mode gate being satisfied — an
+    // implementation that dropped the `refused.length > 0` term from
+    // `confirmDisabled` would pass every assertion above it. Since #327 P2b
+    // `currency-coverage` is the only rule that reaches this branch, so this
+    // is the only test left pinning it. The companion test below proves a
     // CONFIRMATION breach does not, which is the other half of this test's
     // own name.
     fireEvent.change(screen.getByLabelText(/type the mode/i), { target: { value: "test" } });

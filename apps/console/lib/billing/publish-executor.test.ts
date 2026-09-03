@@ -38,6 +38,7 @@ function price(overrides: {
   unit_amount: number;
   id?: string;
   tax_behavior?: TaxBehavior;
+  currency_options?: StripePriceLike["currency_options"];
 }): StripePriceLike {
   return {
     id: overrides.id ?? `price_${overrides.lookup_key}`,
@@ -46,6 +47,7 @@ function price(overrides: {
     unit_amount: overrides.unit_amount,
     tax_behavior: overrides.tax_behavior ?? "unspecified",
     active: true,
+    currency_options: overrides.currency_options,
   };
 }
 
@@ -494,20 +496,39 @@ describe("executePublish", () => {
     expect((await getAttempt(attempt.id))?.outcome).toBe("failed");
   });
 
-  it("aborts on a mode refusal without executing any operation", async () => {
+  it("aborts on a guard REFUSAL without executing any operation, even one it could have run", async () => {
+    // #327 P2b retargeted this test. It used to use `mode: "live"` as its
+    // refusal, which stopped being one when live became a confirmation;
+    // `currency-coverage` is now the only rule that reaches this branch, so
+    // it is the only vehicle left for the behaviour under test — the
+    // executor's own defence-in-depth re-run of `checkGuards` (module
+    // header, point 4).
+    //
+    // The plan deliberately carries a RUNNABLE operation alongside the
+    // refusal: KEY_A is a real repricing. Without it, "no Stripe calls" would
+    // be true of an empty plan too and this assertion would prove nothing.
     const { start, getAttempt, finishPublishAttempt } = makeFakeAttempts();
     const log = makeFakeLog();
     const stripeCalls: string[] = [];
 
-    const ancestor: CatalogAmount[] = [];
-    const draft: CatalogAmount[] = [];
-    const observed = [price({ lookup_key: KEY_A, currency: "usd", unit_amount: 1000 })];
+    const ancestor = [amount(KEY_A, "usd", 1000), amount(KEY_B, "usd", 500)];
+    const draft = [amount(KEY_A, "usd", 1500), amount(KEY_B, "usd", 500)];
+    const observed = [
+      price({ lookup_key: KEY_A, currency: "usd", unit_amount: 1000, id: "price_old" }),
+      // Stripe carries a currency the catalog does not, and no Stripe call
+      // can remove a `currency_options` entry — `checkCurrencyCoverage`'s
+      // own reason for being a refusal rather than a confirmation.
+      price({
+        lookup_key: KEY_B,
+        currency: "usd",
+        unit_amount: 500,
+        currency_options: { eur: { unit_amount: 400, tax_behavior: "unspecified" } },
+      }),
+    ];
     const plan = buildPublishPlan({ ancestor, draft, observed });
+    expect(plan.operations).toEqual([expect.objectContaining({ kind: "replace_price" })]);
 
-    // `live` is refused outright in v1 (publish-guards.ts) — a defence-in-depth
-    // check that has to hold even though nothing in this plan builds a `live`
-    // attempt today.
-    const attempt = start(plan.fingerprint, { mode: "live" });
+    const attempt = start(plan.fingerprint);
     const deps = makeDeps({
       getAttempt,
       finishPublishAttempt,
@@ -523,6 +544,41 @@ describe("executePublish", () => {
 
     expect(result.outcome).toBe("aborted");
     expect(stripeCalls).toHaveLength(0);
+  });
+
+  it("executes a LIVE attempt — a mode confirmation is not a refusal here", async () => {
+    // #327 P2b, and the reason this test is worth its space: the operator
+    // acknowledged the live confirmation in `publish-view.tsx` before
+    // `publishAction` ever opened this attempt, and nothing reaching
+    // `executePublish` can re-derive that they did (module header, point 4).
+    // If `mode` were ever moved back into `checkGuards`' `refused` bucket,
+    // every confirmed live publish would abort HERE, after the operator had
+    // done everything asked of them — a live catalog that silently never
+    // updates. This is the test that would say so.
+    const { start, getAttempt, finishPublishAttempt } = makeFakeAttempts();
+    const log = makeFakeLog();
+
+    const ancestor = [amount(KEY_A, "usd", 1000)];
+    const draft = [amount(KEY_A, "usd", 1500)];
+    const observed = [price({ lookup_key: KEY_A, currency: "usd", unit_amount: 1000, id: "price_old" })];
+    const plan = buildPublishPlan({ ancestor, draft, observed });
+
+    const attempt = start(plan.fingerprint, { mode: "live" });
+    const deps = makeDeps({
+      getAttempt,
+      finishPublishAttempt,
+      readAncestor: async () => ancestor,
+      readDraft: async () => draft,
+      observe: async () => observed,
+      writer: makeFakeWriter(),
+      recordOperation: log.recordOperation,
+      completeOperation: log.completeOperation,
+    });
+
+    const result = await executePublish(attempt.id, deps);
+
+    expect(result.outcome).toBe("succeeded");
+    expect((await getAttempt(attempt.id))?.outcome).toBe("succeeded");
   });
 
   it("refuses to execute an attempt that has already finished", async () => {

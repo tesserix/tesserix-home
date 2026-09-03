@@ -51,8 +51,9 @@ import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-r
  *    has moved, the world changed since planning and this ABORTS rather than
  *    executing a plan built against a state that no longer exists.
  * 4. A second, narrower safety net: `checkGuards` (Task 4) runs again, and a
- *    REFUSAL (mode, currency-coverage — the two rules spec §7 says are never
- *    legitimate) also aborts. A CONFIRMATION-only verdict does not: that
+ *    REFUSAL (currency-coverage — since #327 P2b the only rule this system
+ *    treats as never legitimate) also aborts. A CONFIRMATION-only verdict
+ *    does not, and that now includes a live publish's own `mode` breach: that
  *    decision was already made by a human before this attempt was started,
  *    and nothing this function receives lets it re-derive "was it confirmed"
  *    — see `checkExecutionGuards` below for the reasoning spelled out.

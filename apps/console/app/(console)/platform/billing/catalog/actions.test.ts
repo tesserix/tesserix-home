@@ -342,9 +342,12 @@ describe("publishAction", () => {
 
   function observeNothing() {
     // An empty ancestor, an empty draft and an empty Stripe: a plan with no
-    // operations, which `checkGuards` passes in `test` and refuses in `live`
-    // on the MODE rule alone. Exactly the isolation these tests want — the
-    // plan's own construction is `publish-plan.test.ts`'s subject.
+    // operations, which `checkGuards` passes outright in `test` and — since
+    // #327 P2b — asks a `mode` confirmation for in `live`, nothing more.
+    // Exactly the isolation these tests want: the plan's own construction is
+    // `publish-plan.test.ts`'s subject, and the empty plan is also the shape
+    // the first real live publish will have (one revision, both modes
+    // publish it, live Stripe already matches — verified 2026-09-03).
     vi.mocked(readCatalogAmounts).mockResolvedValue([]);
     vi.mocked(readRevisionAmounts).mockResolvedValue([]);
     vi.mocked(stripePriceReader.listPrices).mockResolvedValue([]);
@@ -484,32 +487,86 @@ describe("publishAction", () => {
     });
   });
 
-  it("refuses live before opening an attempt, and says the guard's own reason", async () => {
+  it("refuses a live publish the operator never acknowledged as live", async () => {
+    // #327 P2b: live is enabled and its `mode` breach is a CONFIRMATION, so
+    // typing "live" alone is not enough — the operator must also have been
+    // shown, and have acknowledged, the breach saying which account this
+    // writes to. `acknowledged: []` is a caller that skipped that screen.
     signIn(["billing", "publish-catalog"]);
 
     const result = await publishAction("draft-1", "live", { typedMode: "live", acknowledged: [] });
 
-    // The caller's own contract does not change (#409 task 2, requirement
-    // 3): same shape, same verbatim guard message, as before this task.
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.message).toMatch(/refused in v1/);
+    expect(result.ok === false && result.message).toMatch(/changed since it was reviewed/);
     expect(startPublishAttempt).not.toHaveBeenCalled();
     expect(executePublish).not.toHaveBeenCalled();
     expect(promotePublication).not.toHaveBeenCalled();
-    // `checkMode` refuses "live" on its own, with no observed data — see
-    // `observeAndPlan`'s short-circuit in `actions.ts`. Nothing justifies
-    // spending a paid `prices.list` call to learn a refusal the mode string
-    // alone already carries.
-    expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
 
-    // #409 task 2: a refused LIVE attempt is the single most interesting row
-    // this whole change adds. The row must name the attempted mode — "live",
-    // not "test" — and which rule refused it, and must NOT reuse a
+    // #409 task 2: a refused LIVE attempt is still the single most
+    // interesting row in this file. The row must name the attempted mode —
+    // "live", not "test" — and which rule refused it, and must NOT reuse a
     // successful publish's action name.
     const insert = lastAuditInsert();
     expect(insert.action).toBe("billing.catalog.publish.refused");
     expect(insert.action).not.toBe("billing.catalog.publish");
     expect(insert.summary).toEqual({ mode_live: 1, rule_mode: 1 });
+  });
+
+  it("observes live Stripe and publishes to it once the mode breach is acknowledged", async () => {
+    // The behaviour #327 P2b exists to produce, and the two halves of it
+    // that a deleted-guard implementation would also pass are asserted
+    // separately below, so this test fails for the right reason:
+    //
+    //   1. Stripe IS read for live. `observeAndPlan` used to refuse the mode
+    //      BEFORE `prices.list`, returning a plan built from no observation
+    //      at all; a confirmation over an unobserved plan would be asking an
+    //      operator to approve a blank page.
+    //   2. The attempt opens against `mode: "live"` and carries the
+    //      fingerprint of that observation — the field the short-circuited
+    //      path structurally could not supply.
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(executePublish).mockResolvedValue({ outcome: "succeeded", operations: [] });
+
+    const result = await publishAction("draft-1", "live", {
+      typedMode: "live",
+      acknowledged: ["mode"],
+    });
+
+    expect(result).toMatchObject({ ok: true, outcome: "succeeded", promoted: true });
+    expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
+    expect(readCatalogAmounts).toHaveBeenCalledWith("live", expect.anything());
+    expect(startPublishAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revisionId: "draft-1",
+        mode: "live",
+        startedBy: "operator-1",
+        // A real SHA-256 over the observation, not "" — the empty string is
+        // what the refused path used to hand `startPublishAttempt` before
+        // #411's minor 3 made it a type error to try.
+        fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      }),
+    );
+    expect(promotePublication).toHaveBeenCalledWith("live", "draft-1", "operator-1");
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.publish",
+      target: "live (draft-1)",
+      summary: { failed: 0, promoted: 1 },
+    });
+  });
+
+  it("asks for NO extra acknowledgement on a routine test publish", async () => {
+    // The regression that would put a confirmation in front of every
+    // ordinary test publish: a `mode` breach raised for all modes rather
+    // than for live. `CONFIRMED` acknowledges nothing, so if `checkGuards`
+    // produced any breach for "test" this publish would be refused as
+    // unreviewed instead of running.
+    signIn(["billing", "publish-catalog"]);
+    vi.mocked(executePublish).mockResolvedValue({ outcome: "succeeded", operations: [] });
+
+    const result = await publishAction("draft-1", "test", CONFIRMED);
+
+    expect(result).toMatchObject({ ok: true, outcome: "succeeded" });
+    expect(startPublishAttempt).toHaveBeenCalledWith(expect.objectContaining({ mode: "test" }));
   });
 
   it("maps a second concurrent publish to a sentence the operator can act on", async () => {
@@ -543,13 +600,14 @@ describe("publishAction", () => {
     expect(promotePublication).not.toHaveBeenCalled();
   });
 
-  // #409 task 2: the `"refused" in verdict` throw at actions.ts covers TWO
-  // guards, not one — `checkMode` (above) and `checkCurrencyCoverage` here.
-  // Both go through the same throw site, so the row is the only place they
-  // are told apart: the source change that would make this fail is deleting
-  // `verdict.refused.map((breach) => breach.rule)` from that throw (or
-  // hardcoding a fixed rule list), which would collapse this case's
-  // `rule_currency_coverage` back to whatever the mode test asserts.
+  // #409 task 2, restated for #327 P2b: `checkCurrencyCoverage` is now the
+  // only rule that reaches the `"refused" in verdict` throw in `actions.ts`
+  // (`mode` moved to the confirmation branch, which the live test above
+  // covers). The rule name still has to survive into the audit row: the
+  // source change that would make this fail is deleting
+  // `verdict.refused.map((breach) => breach.rule)` from that throw, or
+  // hardcoding a fixed rule list, which would collapse
+  // `rule_currency_coverage` into whatever another test asserts.
   it("refuses a plan that would drop a currency, and names currency-coverage as the rule", async () => {
     signIn(["billing", "publish-catalog"]);
     const key = `${MARK8LY_LOOKUP_KEY_PREFIX}k_currency_drop`;
@@ -634,29 +692,29 @@ describe("planPublishAction", () => {
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("test");
   });
 
-  // The bug this guards: `AuthoringPanel`'s `PublishSection` calls this
-  // action from a `useEffect` on every render of an open draft, including
-  // `mode=live` — and `checkGuards`' `mode` rule refuses "live"
-  // unconditionally (see `publish-guards.ts`), so that call's Stripe read
-  // could only ever confirm what the mode string alone already says. It
-  // must not run.
-  it("never reads Stripe for live — checkMode refuses it before any observation happens", async () => {
+  // The inverse of the test that used to live here. `observeAndPlan` once
+  // refused the mode BEFORE reading Stripe, because a refused mode could not
+  // pass whatever `prices.list` returned. #327 P2b turned live into a
+  // CONFIRMATION, so that reasoning is gone: `AuthoringPanel`'s
+  // `PublishSection` mounts this for `mode=live` precisely so the operator
+  // can see the plan they are being asked to confirm, and an unobserved
+  // plan would be a blank page with a confirmation attached to it.
+  it("builds a real plan for live, and asks for confirmation rather than refusing", async () => {
     signIn(["billing"]);
 
     const result = await planPublishAction("draft-1", "live");
 
     expect(result.ok).toBe(true);
-    expect(result.ok && result.plan.verdict).toEqual({
+    expect(result.ok && result.plan.verdict).toMatchObject({
       ok: false,
-      refused: [
-        {
-          rule: "mode",
-          message: 'Publishing to Stripe mode "live" is refused in v1 — only "test" is enabled.',
-        },
-      ],
+      requiresConfirmation: [expect.objectContaining({ rule: "mode" })],
     });
-    expect(stripePriceReader.listPrices).not.toHaveBeenCalled();
-    expect(readCatalogAmounts).not.toHaveBeenCalled();
-    expect(readRevisionAmounts).not.toHaveBeenCalled();
+    expect(result.ok && result.plan.verdict).not.toHaveProperty("refused");
+    // All three reads happen for live now, and against LIVE — a plan built
+    // from the test account's prices would be a confirmation about the wrong
+    // Stripe account, which is the 2026-08-27 mix-up wearing a new hat.
+    expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
+    expect(readCatalogAmounts).toHaveBeenCalledWith("live", expect.anything());
+    expect(readRevisionAmounts).toHaveBeenCalledWith("draft-1", expect.anything());
   });
 });

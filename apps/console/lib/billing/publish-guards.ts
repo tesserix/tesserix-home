@@ -26,19 +26,23 @@
  *
  * # Refusal vs. confirmation
  *
- * Spec §7 names four rules and splits them two ways:
+ * Spec §7 names four rules, split one-to-three:
  *
- *   - **Mode** and **currency coverage** are REFUSALS. Neither is ever
- *     legitimate in v1 — there is no scenario where an operator should be
- *     allowed to type a confirmation past them. Mode because live is
- *     disabled by policy, not by judgement call; currency coverage because a
- *     dropped currency is checkout failing for real customers, and no
- *     operation in `publish-plan.ts` can even repair it (see that module's
- *     header) — confirming past it would not fix anything, it would just
- *     silence the warning.
- *   - **Magnitude** and **breadth** are CONFIRMATIONS. Both describe shapes a
- *     plan can legitimately take — a real repricing, a real bootstrap — so a
- *     human is asked to look and proceed, not blocked outright.
+ *   - **Currency coverage** is the module's only REFUSAL. A dropped currency
+ *     is checkout failing for real customers, and no operation in
+ *     `publish-plan.ts` can even repair it (see that module's header) —
+ *     confirming past it would not fix anything, it would just silence the
+ *     warning. There is no scenario in which an operator should be allowed
+ *     to type past it, which is the test a rule has to meet to be a refusal
+ *     at all.
+ *   - **Mode**, **magnitude** and **breadth** are CONFIRMATIONS. Each
+ *     describes a shape a plan can legitimately take — a real live publish,
+ *     a real repricing, a real bootstrap — so a human is asked to look and
+ *     proceed, not blocked outright.
+ *
+ * Mode moved from the first bucket to the second in #327 P2b, when live
+ * publishing was turned on; see {@link checkMode} for why a confirmation is
+ * the right severity for it and a refusal never was.
  *
  * A plan that trips both a refusal and a confirmation rule is reported as
  * refused: a confirmation an operator cannot legally act on (because the
@@ -132,23 +136,39 @@ export type GuardVerdict =
 // ---------------------------------------------------------------------------
 
 /**
- * v1 is test-only, enforced in code (spec §7) — not a judgement call an
- * operator can override with a confirmation. The estate lost an hour to a
- * live/test key mix-up on 2026-08-27 (spec §7); live's first publish will
- * also be the largest single action this tool ever takes, so it stays behind
- * a code change, not a checkbox, until live is deliberately turned on.
+ * Live publishing is ENABLED, and every live publish requires an explicit
+ * typed confirmation (#327 P2b). Test publishes return no breach at all, so
+ * an ordinary test publish gains nothing new to click through — the reason
+ * that matters, because a confirmation an operator sees on every routine
+ * action is one they stop reading, which is the same argument
+ * {@link MAGNITUDE_THRESHOLD} makes for its own number.
  *
- * Exported so a caller (`actions.ts`'s `observeAndPlan`) can check this rule
- * BEFORE reading Stripe: the rule takes no observed data as input, so a mode
- * it refuses stays refused no matter what `prices.list` returns, and there
- * is no reason to spend that call finding that out.
+ * A CONFIRMATION, because live's first publish is the largest single action
+ * this tool ever takes, and because the estate lost an hour to a live/test
+ * key mix-up on 2026-08-27 (spec §7). That incident is why this rule exists
+ * and it has not stopped being true; what changed is the mechanism. An
+ * operator may publish to live — they have to name the mode to do it, in
+ * front of a breach message that says which account they are about to write
+ * to.
+ *
+ * NOT a refusal, because a refusal is for a plan no operator can
+ * legitimately act on, and `checkCurrencyCoverage` below is the only rule
+ * here that still meets that test. While live was refused, the only way to
+ * publish to live was to edit this function — a code review standing in for
+ * an operator decision, which is neither a better review nor a faster one.
+ *
+ * Not exported: it is a rule of {@link checkGuards} like the three below it.
+ * It used to be exported so `actions.ts`'s `observeAndPlan` could refuse a
+ * mode BEFORE spending a paid `prices.list` call on it; that short-circuit
+ * went with the refusal, because a confirmation is worthless unless the plan
+ * the operator is confirming was actually built.
  */
-export function checkMode(mode: StripeMode): GuardBreach[] {
+function checkMode(mode: StripeMode): GuardBreach[] {
   if (mode === "test") return [];
   return [
     {
       rule: "mode",
-      message: `Publishing to Stripe mode "${mode}" is refused in v1 — only "test" is enabled.`,
+      message: `Publishing to Stripe mode "${mode}" writes to the real billing account — live prices, real customers; confirm before publishing.`,
     },
   ];
 }
@@ -354,10 +374,20 @@ export function checkGuards(
   ancestor: readonly CatalogAmount[],
   mode: StripeMode,
 ): GuardVerdict {
-  const refused = [...checkMode(mode), ...checkCurrencyCoverage(plan)];
+  const refused = checkCurrencyCoverage(plan);
   if (refused.length > 0) return { ok: false, refused };
 
-  const requiresConfirmation = [...checkMagnitude(plan, ancestor), ...checkBreadth(plan)];
+  // `checkMode` first, so a live publish that ALSO trips magnitude or
+  // breadth leads with the fact that decides how carefully the rest is read:
+  // "this is the live account" changes what "42 entries change at once"
+  // means. Order is presentational — every breach in this array has to be
+  // acknowledged before `publishAction` will proceed, none of them ranks
+  // above another.
+  const requiresConfirmation = [
+    ...checkMode(mode),
+    ...checkMagnitude(plan, ancestor),
+    ...checkBreadth(plan),
+  ];
   if (requiresConfirmation.length > 0) return { ok: false, requiresConfirmation };
 
   return { ok: true };
