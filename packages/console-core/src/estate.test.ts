@@ -62,9 +62,11 @@ describe("estate", () => {
     const mark8ly = ESTATE.find((p) => p.context === "mark8ly");
     expect(mark8ly?.entries).toBe(mark8lyNav.length);
     // Guards the guard: an empty rail on both sides would satisfy the line
-    // above. The rail is deliberately one entry — see nav.ts for why the
-    // design's other two are deferred rather than forgotten.
-    expect(mark8lyNav).toHaveLength(1);
+    // above. Four since #137 — the three generic `[product]` surfaces plus
+    // the migration fast-path queue. Still not §2.3's three: see nav.ts for
+    // why arbitrage appeals and app credentials are deferred rather than
+    // forgotten.
+    expect(mark8lyNav).toHaveLength(4);
   });
 
   it("declares the contracts Mark8ly's rail renders from, and nothing for anyone else", () => {

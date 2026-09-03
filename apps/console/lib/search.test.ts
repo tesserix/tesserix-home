@@ -163,6 +163,31 @@ describe("routeEntries", () => {
     }
   });
 
+  it("keeps Mark8ly's pending queue, now that a rail advertises it", () => {
+    // The palette's rule is "pending AND unadvertised". `mark8lyNav` used to
+    // be rendered by nothing, so this route was correctly dropped. #137 wired
+    // the mark8ly rail into the sidebar, and `RAILED_ROUTES` now walks every
+    // rail in `RAIL_IDS` — so the rail shows a SOON badge and the palette says
+    // the same thing, which is the agreement the rule is for.
+    const entry = routeEntries().find(
+      (e) => e.id === "route:mark8ly.migrationFastPath",
+    );
+    expect(entry).toBeDefined();
+    expect(entry?.disabled).toBe(true);
+  });
+
+  it("offers Mark8ly's built pages as real destinations", () => {
+    for (const id of [
+      "route:mark8ly.overview",
+      "route:mark8ly.tenants",
+      "route:mark8ly.users",
+    ]) {
+      const entry = routeEntries().find((e) => e.id === id);
+      expect(entry, `${id} missing from the palette`).toBeDefined();
+      expect(entry?.disabled, `${id} should be linkable`).toBeFalsy();
+    }
+  });
+
   it("keeps the estate health page, which is built and has no rail entry", () => {
     // Not pending, so the "unadvertised" half of the rule never applies. This
     // is the one surface reached only from the header indicator, and the

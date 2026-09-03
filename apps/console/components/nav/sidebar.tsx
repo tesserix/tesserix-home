@@ -11,47 +11,115 @@ import {
   isNavGroup,
   isMostSpecificActiveRoute,
   isRouteActive,
-  koraNav,
   navItems,
-  platformNav,
   consolePath,
+  productLabel,
   visibleNav,
+  PRODUCT_IDS,
+  RAIL_IDS,
+  railNav,
   type NavEntry,
   type NavGroup,
+  type RailId,
   type RouteId,
 } from "@tesserix/console-core";
 import { NavIcon } from "./icon";
 
-// The console's rails. Platform is the default — it is the context the
-// console's own home page serves — and a product rail takes over inside that
-// product's routes. apps/web calls this the RailContext; the console needs
-// only the two it can actually render today.
-// `logo` wins over `mark` when present, and `onLight` says whether the artwork
-// needs a background painted for it.
-//
-// The two marks differ in kind, not just in image. Tesserix is navy on
-// TRANSPARENT: it needs a light chip in both themes, or it vanishes against a
-// dark sidebar. Kora's app icon is SELF-CONTAINED — its own dark gradient,
-// already a rounded square — so painting anything behind it would show as a
-// halo. Hence the flag rather than one shared wrapper.
-const RAILS = {
+/**
+ * How a rail is DRAWN. Which rails exist is console-core's answer, not this
+ * file's — `RAIL_IDS` and `railNav` supply the set and its contents, so adding
+ * a product to the registry gives it a rail with no edit here. Pinned by
+ * "offers every rail the registry declares, in registry order" and "dresses a
+ * rail that has no entry in the presentation map" in sidebar.render.test.tsx.
+ *
+ * Presentation stays here because `logo` is an `apps/console/public/` path and
+ * console-core is a pure data package compiled into web, mobile and console —
+ * `routes.ts` refuses even a value import of `Capability` to keep it that way.
+ *
+ * `logo` wins over `mark` when present, and `onLight` says whether the artwork
+ * needs a background painted for it. The two logos differ in kind, not just in
+ * image. Tesserix is navy on TRANSPARENT: it needs a light chip in both
+ * themes, or it vanishes against a dark sidebar. Kora's app icon is
+ * SELF-CONTAINED — its own dark gradient, already a rounded square — so
+ * painting anything behind it would show as a halo. Hence the flag rather than
+ * one shared wrapper.
+ *
+ * PARTIAL, and that is the mechanism rather than an omission. A
+ * `Record<RailId, …>` would make every new product a compile error here, which
+ * is exactly the fourth list `products.ts` exists to remove. A rail with no
+ * entry falls back to `railPresentation` below.
+ */
+interface RailPresentation {
+  readonly mark: string;
+  readonly logo?: string;
+  readonly onLight?: boolean;
+  readonly section: string;
+}
+
+const RAIL_PRESENTATION: Readonly<Partial<Record<RailId, RailPresentation>>> = {
   platform: {
-    label: "Platform",
     mark: "T",
     logo: "/tesserix-mark.png",
     onLight: true,
-    nav: platformNav,
     section: "Operate",
   },
   kora: {
-    label: "Kora",
     mark: "K",
     logo: "/kora-mark.png",
     onLight: false,
-    nav: koraNav,
     section: "Product",
   },
-} as const;
+  // No `logo`: `apps/console/public/` holds `kora-mark.png` and
+  // `tesserix-mark.png` and nothing for mark8ly, so a letter mark is what
+  // there is. `RailMark` already renders that shape.
+  mark8ly: { mark: "M", section: "Product" },
+};
+
+/** The rail's display name. */
+function railLabel(id: RailId): string {
+  // `productLabel` cannot answer for "platform" — it is not a product, and
+  // `products.ts` is explicit that it must not become one. So the platform
+  // rail's name lives here. That is not a gap in console-core: every other
+  // field on this rail is presentation and lives here too.
+  return id === "platform" ? "Platform" : productLabel(id);
+}
+
+/**
+ * Presentation for a rail, including one this file has never heard of.
+ *
+ * The fallback is what makes the registry the only place a rail is added: a
+ * letter mark from the product's own label, and "Product" for the section
+ * heading, which is right for every rail except the platform one — and that
+ * one is in the map.
+ *
+ * `label` is a PARAMETER rather than read from `railLabel` inside, so this can
+ * be exercised for a rail id that is not in the registry. `railLabel` would
+ * throw on one (`productLabel` looks the id up in `PRODUCTS`), which would
+ * make the only testable case the one already in the map above — i.e. not the
+ * fallback at all.
+ */
+export function railPresentation(id: RailId, label: string): RailPresentation {
+  return (
+    RAIL_PRESENTATION[id] ?? {
+      mark: label.charAt(0).toUpperCase(),
+      section: "Product",
+    }
+  );
+}
+
+/**
+ * Everything the sidebar needs to draw one rail: identity plus presentation.
+ *
+ * Named `railView` rather than `rail` because `RailMark` takes a prop called
+ * `rail`, and a same-named module function would be shadowed inside it.
+ */
+function railView(id: RailId): RailPresentation & {
+  readonly label: string;
+  readonly nav: readonly NavEntry[];
+} {
+  const label = railLabel(id);
+  return { ...railPresentation(id, label), label, nav: railNav(id) };
+}
 
 /** The rail's chip: real logo where we have one, letter mark otherwise. */
 function RailMark({
@@ -104,18 +172,29 @@ function RailMark({
   );
 }
 
-type RailKey = keyof typeof RAILS;
-
 /**
- * Which rail a path belongs to. Kora's routes are the only product ones.
+ * Which rail a path belongs to; platform when no product claims it.
  *
  * Matches the CONSOLE path (`/kora/...`), not apps/web's `/admin/apps/kora`.
  * The console does not serve web's paths — see `consolePath`.
+ *
+ * The `/<product-id>` shape is the convention `routes.ts` declares
+ * (`kora.overview` → `/kora`, `mark8ly.overview` → `/mark8ly`) and the one
+ * `resolveProductParam` already builds on. Read from `PRODUCT_IDS` rather than
+ * spelled out, so a new product's routes reach its rail without an edit here.
+ *
+ * Not routed through `routeForPath`, unlike `resolveProductParam`: that
+ * function is deciding what a page may RENDER and so must agree with the
+ * access gate exactly. This one decides which rail is drawn, which grants
+ * nothing — and a segment prefix keeps the rail steady on a product path no
+ * route id declares, where `routeForPath` would return undefined and drop the
+ * operator back to the platform rail on their way to a 404.
  */
-export function railFor(pathname: string): RailKey {
-  return pathname === "/kora" || pathname.startsWith("/kora/")
-    ? "kora"
-    : "platform";
+export function railFor(pathname: string): RailId {
+  const product = PRODUCT_IDS.find(
+    (id) => pathname === `/${id}` || pathname.startsWith(`/${id}/`),
+  );
+  return product ?? "platform";
 }
 
 
@@ -351,8 +430,8 @@ function RailSwitcher({
   current,
   onSelect,
 }: {
-  current: RailKey;
-  onSelect: (key: RailKey) => void;
+  current: RailId;
+  onSelect: (key: RailId) => void;
 }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -373,7 +452,7 @@ function RailSwitcher({
     };
   }, [open]);
 
-  const rail = RAILS[current];
+  const currentRail = railView(current);
 
   return (
     <div ref={containerRef} className="relative">
@@ -384,9 +463,9 @@ function RailSwitcher({
         aria-expanded={open}
         className="flex w-full items-center gap-2.5 rounded-md border border-sidebar-border bg-sidebar-accent/60 px-2.5 py-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-ring"
       >
-        <RailMark rail={rail} size="md" />
+        <RailMark rail={currentRail} size="md" />
         <span className="truncate text-[13px] font-semibold text-sidebar-foreground">
-          {rail.label}
+          {currentRail.label}
         </span>
         <ChevronsUpDown
           aria-hidden="true"
@@ -400,7 +479,7 @@ function RailSwitcher({
           aria-label="Switch context"
           className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-md border border-sidebar-border bg-sidebar shadow-lg"
         >
-          {(Object.keys(RAILS) as RailKey[]).map((key) => (
+          {RAIL_IDS.map((key) => (
             <button
               key={key}
               type="button"
@@ -416,8 +495,8 @@ function RailSwitcher({
                   : "text-sidebar-foreground/75 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
               )}
             >
-              <RailMark rail={RAILS[key]} size="sm" />
-              <span className="truncate">{RAILS[key].label}</span>
+              <RailMark rail={railView(key)} size="sm" />
+              <span className="truncate">{railLabel(key)}</span>
               {key === current ? (
                 <Check aria-hidden="true" className="ml-auto h-3.5 w-3.5 shrink-0" />
               ) : null}
@@ -441,11 +520,15 @@ export function ConsoleSidebar({
   enforceCapabilities?: boolean;
 }) {
   const pathname = usePathname();
-  // The switcher changes CONTEXT, not location. Every surface in both rails is
-  // still served by apps/web, so navigating on select would eject the operator
-  // from the console just to look at a rail. Instead the choice is local, and
-  // the route you are actually on always wins when it changes.
-  const [selected, setSelected] = useState<RailKey | null>(null);
+  // The switcher changes CONTEXT, not location: selecting a rail does not
+  // navigate. That was first written when every surface in every rail was
+  // still served by apps/web and selecting one would have ejected the
+  // operator from the console. Several rails now have console pages, but the
+  // behaviour stands for a second reason — a rail's first entry is not
+  // reliably somewhere an operator wants to land, and the platform rail's is
+  // the console root. Instead the choice is local, and the route you are
+  // actually on always wins when it changes.
+  const [selected, setSelected] = useState<RailId | null>(null);
   const fromPath = railFor(pathname);
 
   useEffect(() => {
@@ -453,17 +536,18 @@ export function ConsoleSidebar({
   }, [pathname]);
 
   const railKey = selected ?? fromPath;
-  const rail = RAILS[railKey];
+  const current = useMemo(() => railView(railKey), [railKey]);
   // #263: a surface the operator cannot reach is not offered. The refusal
   // itself is the layout's `capabilityForPath` gate — hiding alone would be
   // presentation, and #244 decided "hidden AND enforced".
   const nav = useMemo(
-    () => visibleNav(rail.nav, capabilities, enforceCapabilities),
-    [rail.nav, capabilities, enforceCapabilities],
+    () => visibleNav(current.nav, capabilities, enforceCapabilities),
+    [current.nav, capabilities, enforceCapabilities],
   );
 
-  // Group names are unique across both rails, so one stored set serves both;
-  // a rail whose nav is flat (Kora's) simply never contributes to it.
+  // Group names are unique across the rails, so one stored set serves all of
+  // them; a rail whose nav is flat (Kora's and Mark8ly's) never contributes to
+  // it at all.
   const { collapsed, toggle } = useCollapsedGroups(activeGroupName(nav, pathname));
 
   // `navItems` rather than a local flattener: `lib/search.ts` already walks the
@@ -487,13 +571,13 @@ export function ConsoleSidebar({
         // sidebar. See globals.css — it is theme-aware through the same
         // sidebar tokens everything else here uses.
         className="sidebar-scroll flex-1 overflow-y-auto px-3 pb-4"
-        aria-label={`${rail.label} navigation`}
+        aria-label={`${current.label} navigation`}
       >
         {/* A flat rail still gets its section label; a grouped one carries its
             own, so this only renders when the nav has no groups of its own. */}
         {nav.some(isNavGroup) ? null : (
           <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.09em] text-sidebar-foreground/50">
-            {rail.section}
+            {current.section}
           </p>
         )}
         <div className="space-y-0.5">

@@ -40,12 +40,13 @@ export interface EstateProduct {
    * stand in for both: a migrated product's count came from console-core, an
    * unmigrated one's came from apps/web's rail. Mark8ly is now a third:
    * `entries` is `mark8lyNav.length`, counted from console-core, while
-   * `migrated` stays false because the rail has not shipped — its one entry
-   * is `pending`, and `routes.ts` is explicit that a pending entry links
-   * NOWHERE, "not in-app (the page does not exist) and not to apps/web
-   * either". Rendering "· still in apps/web" off `migrated` therefore made a
-   * false claim about a count that did not come from apps/web and does not
-   * point there.
+   * `migrated` stays false because most of mark8ly's IA is still apps/web's —
+   * six of apps/web's eight rail entries have no console counterpart. (When
+   * this was written the reason was narrower still: the rail had not shipped
+   * and its one entry was `pending`. The rail has since shipped; the flag has
+   * not changed, for the reason on the Mark8ly entry below.) Rendering
+   * "· still in apps/web" off `migrated` therefore makes a false claim about
+   * a count that did not come from apps/web.
    *
    * OPTIONAL, and absence means `"apps/web"` — the meaning every existing
    * entry already had, so no other product changes. Declare it only when the
@@ -107,9 +108,13 @@ export interface EstateProduct {
    * Optional, and the absence is the mechanism, exactly as it is for
    * `endUserLookup` above: absence means the product declares none, so a
    * product is excluded because it has not declared itself in rather than
-   * because a list somewhere remembered to leave it out. The rail renders only
-   * what is declared here — a product's rail IS its declaration — so a later
-   * product joining costs the console one line rather than a new branch.
+   * because a list somewhere remembered to leave it out, so a later product
+   * joining costs the console one line rather than a new branch.
+   *
+   * It is no longer true that a rail renders ONLY from what is declared here:
+   * since tesserix-home#137 the generic `[product]` surfaces read `kpis` and
+   * `entities`, which are not in `ContractId`'s union. See the note on
+   * Mark8ly's `contracts` below for why that union was not widened here.
    *
    * Additive and optional on purpose. `console-core` compiles into three apps
    * (web, mobile, console); a required field here would be a compile error in
@@ -153,8 +158,8 @@ export const ESTATE: readonly EstateProduct[] = [
   {
     name: "Mark8ly",
     context: "mark8ly",
-    // 1, down from 8 — and the number now means something different, which is
-    // the change, not the digit.
+    // 4 — and the number means something different from the 8 that stood here
+    // before #405, which is the change worth reading, not the digit.
     //
     // WHAT #405 ESTABLISHED, AND STILL HOLDS. While `migrated` is false this
     // field meant "apps/web's rail", because that is where the IA still lived
@@ -193,28 +198,50 @@ export const ESTATE: readonly EstateProduct[] = [
     // for a fortnight with nobody noticing. A comment naming an issue number
     // is making a checkable claim; a number nothing checks is worse.
     //
-    // KNOWN COLLISION, recorded rather than papered over. `migrated` stays
-    // false — correctly: nothing renders `mark8lyNav` yet, the one route is
-    // `pending`, and the field means what it says. But that leaves EstateMap
-    // rendering "1 rail entry · still in apps/web", and this one entry is not
-    // in apps/web at all. The card is now understating mark8ly's eight web
-    // entries in order to state the console's one. Deriving from the rail was
-    // asked for by #405 and #406 both, and it is the right mechanism; the
-    // stale half is EstateMap's suffix, which assumes a product's rail lives
-    // in exactly one of two places. Fixing that is a separate change to
-    // apps/console — out of scope here, and named so the next reader finds a
-    // known wart rather than a fresh bug.
-    entries: 1,
+    // WHAT CHANGED THIRD (tesserix-home#137). The rail grew from 1 to 4: the
+    // console now serves `/mark8ly`, `/mark8ly/tenants` and `/mark8ly/users`
+    // from the generic `[product]` pages, and `apps/console`'s sidebar derives
+    // its rail set from the product registry, so `mark8lyNav` is rendered
+    // rather than merely declared. The literal below follows the rail, which
+    // is the mechanism working as intended.
+    //
+    // `migrated` STAYS FALSE, and the reason is not the old one. It is no
+    // longer true that "nothing renders `mark8lyNav`" — something does. What
+    // is still true is that mark8ly's IA has not moved: apps/web's rail
+    // carries Overview, Tenants, Onboarding, Subscriptions, Audit logs,
+    // Leads, Live chat and a Notifications group, and six of those eight have
+    // no entry on mark8ly's console rail at all. Flipping the flag would tell
+    // an operator the product moved when most of it did not.
+    //
+    // KNOWN COLLISION, recorded rather than papered over. Because `migrated`
+    // is false, EstateMap renders "4 rail entries · still in apps/web" — and
+    // these four are console-native, not apps/web's. The card understates
+    // mark8ly's eight web entries in order to state the console's four.
+    // Deriving from the rail was asked for by #405 and #406 both, and it is
+    // the right mechanism; the stale half is EstateMap's suffix, which
+    // assumes a product's rail lives in exactly one of two places. Fixing
+    // that is a separate change to apps/console — out of scope here, and
+    // named so the next reader finds a known wart rather than a fresh bug.
+    entries: 4,
     migrated: false,
     // Counted from `mark8lyNav`, not from apps/web's eight — see
     // `entriesFrom`'s own doc for why this had to become explicit rather than
     // being inferred from `migrated`. This is what stops the estate map
-    // rendering "1 rail entry · still in apps/web", which was false in both
-    // halves: the count is not apps/web's, and the entry it counts is
-    // `pending` and links nowhere.
+    // rendering "4 rail entries · still in apps/web" being read as a count of
+    // apps/web's rail, which it is not.
     entriesFrom: "console-core",
-    // The one contract endpoint the rail renders from. `inbox` and not also
-    // the actions endpoint: `POST /admin/inbox/{id}/actions/{actionId}` is
+    // NO LONGER THE WHOLE SET THE RAIL RENDERS FROM, and left as it is
+    // deliberately. Since #137 the rail also carries the generic `[product]`
+    // surfaces, which read §3.1 `kpis` and §3.4 `entities` — neither is in
+    // `ContractId`'s union today. Widening that union is a bigger change than
+    // this one: it is a shared vocabulary, and the same two endpoints would
+    // then need answering for Kora, whose ESTATE entry declares no contracts
+    // at all — `estate.test.ts` pins Mark8ly as the only product declaring
+    // any. Doing it here would settle that by accident. Named so the gap
+    // reads as deferred rather than overlooked.
+    //
+    // `inbox` and not also the actions endpoint: `POST
+    // /admin/inbox/{id}/actions/{actionId}` is
     // v2's way of invoking an action an inbox item already declares, not a
     // separate declarable id — the same reason the contract makes
     // `purge/preview` not a separate id from `tenant-purge`.
@@ -225,10 +252,11 @@ export const ESTATE: readonly EstateProduct[] = [
     // the only half this package can check — see `EstateProduct.contracts`.
     contracts: ["inbox"],
     // Describes apps/web's eight-entry rail, which is what `entries` counted
-    // until tesserix-home#406. It is still the honest summary of what the
-    // PRODUCT holds — the console's own rail ships one entry and is not live
-    // (see `entriesFrom` above) — so this is deliberately NOT narrowed to the
-    // single queue. Narrow it when the rail actually ships.
+    // until tesserix-home#406. Still NOT narrowed to the console's four, and
+    // the reason is the one `migrated` records above: six of apps/web's eight
+    // have no console counterpart, so this sentence remains the honest
+    // summary of what the PRODUCT holds. Narrow it when the console's rail
+    // covers the product rather than a corner of it.
     summary: "Tenants, onboarding, subscriptions and leads.",
   },
   {

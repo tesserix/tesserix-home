@@ -306,8 +306,10 @@ export const ROUTES = {
   // pending: it is #406's follow-up and renders mark8ly's own vocabulary, so
   // no generic surface can serve it.
   //
-  // None of them gains an entry in `mark8lyNav` here either way — the rail is
-  // a later change than the pages.
+  // All three are now on `mark8lyNav` too. The rail was a later change than
+  // the pages, deliberately: an id declared here is a capability gate, a rail
+  // entry is an advertised door, and the door must not open before the page
+  // exists.
   //
   // No `web` and no `mobile`: apps/web's mark8ly rail is eight
   // tenant/onboarding/subscription screens over its own tables, not a

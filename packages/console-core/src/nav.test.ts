@@ -8,6 +8,7 @@ import {
   type NavEntry,
   type NavGroup,
 } from "./nav";
+import { productEntities } from "./products";
 import { isPending, isRetired, webPath } from "./routes";
 
 // The walker now lives in nav.ts, because the console's command palette needs
@@ -81,13 +82,37 @@ describe("mark8lyNav", () => {
     }
   });
 
-  it("carries the CSM migration fast-path queue and nothing else", () => {
-    // ONE entry, not the design's three. Arbitrage appeals and app
-    // credentials are deferred BY DECISION (§5), so this names what is here
-    // rather than counting to it — re-adding either fails with the reason
-    // attached rather than with "expected 3 to be 1".
+  it("carries the generic product surfaces and the CSM queue, and nothing else", () => {
+    // Named and ordered rather than counted: arbitrage appeals and app
+    // credentials are deferred BY DECISION (§5), so re-adding either fails
+    // with the reason attached rather than with "expected 5 to be 4".
+    //
+    // The order is asserted too, because it is a decision — Overview, then
+    // one entry per §3.4 entity type in `PRODUCTS.mark8ly.entities` order,
+    // then the one still-pending entry last.
     const names = navItems(mark8lyNav).map((item) => item.name);
-    expect(names).toEqual(["Migration fast-path review"]);
+    expect(names).toEqual([
+      "Overview",
+      "Tenants",
+      "Users",
+      "Migration fast-path review",
+    ]);
+  });
+
+  it("has one entry per entity type mark8ly declares, and no more", () => {
+    // The rail's two entity surfaces are `/mark8ly/<type>` pages served by
+    // `app/(console)/[product]/[entity]/page.tsx`, which refuses a type the
+    // product does not declare. A rail entry for an undeclared type would
+    // therefore be a door onto that refusal, and an undeclared entity type
+    // silently dropped from `PRODUCTS` would leave one here pointing nowhere.
+    const routes = navItems(mark8lyNav).map((item) => item.route);
+    for (const type of productEntities("mark8ly")) {
+      expect(routes, `no rail entry for declared entity type "${type}"`).toContain(
+        `mark8ly.${type}`,
+      );
+    }
+    // Guards the guard: an empty declaration would satisfy the loop above.
+    expect(productEntities("mark8ly").length).toBeGreaterThan(0);
   });
 
   it("offers no retired surface", () => {
@@ -108,6 +133,16 @@ describe("mark8lyNav", () => {
     // points the rail and the palette at a 404. This is a deliberate hold, and
     // this test is what makes flipping it a decision rather than a reflex.
     expect(isPending("mark8ly.migrationFastPath")).toBe(true);
+  });
+
+  it("links the three generic surfaces rather than showing them as pending", () => {
+    // Their pages exist — `app/(console)/[product]/page.tsx` and
+    // `[product]/[entity]/page.tsx` serve all three. `pending` would render a
+    // built surface inert behind a SOON badge, the same failure the platform
+    // rail's audit-log assertion guards.
+    for (const id of ["mark8ly.overview", "mark8ly.tenants", "mark8ly.users"] as const) {
+      expect(isPending(id), `${id} should be linkable`).toBe(false);
+    }
   });
 });
 
