@@ -149,9 +149,14 @@ describe("the generic mark8ly surfaces are gated, not left on the entry ticket",
   } as const;
 
   it.each(paths)("resolves %s to its own route id", (path) => {
-    // Its OWN id, not merely "some id": `/mark8ly` is a segment-boundary
-    // prefix of the other two, so a missing `exact` on the root would let it
-    // claim its children and this is what catches that.
+    // Its OWN id, not merely "some id": each path must reach the surface that
+    // owns it, so a later id whose path collided with another's would fail
+    // here rather than silently borrowing its neighbour's capability.
+    //
+    // This is NOT the guard on `exact`. `routeForPath` is
+    // longest-console-path-wins, so the root cannot out-compete a declared
+    // child either way and these rows stay green with `exact` removed. The
+    // `/mark8ly/foods` control below is what actually bites.
     expect(routeForPath(path)).toBe(expected[path]);
   });
 
@@ -177,10 +182,12 @@ describe("the generic mark8ly surfaces are gated, not left on the entry ticket",
     for (const type of productEntities("mark8ly")) {
       expect(capabilityForPath(`/mark8ly/${type}`), `/mark8ly/${type}`).toBe("platform");
     }
-    // The control. `foods` is Kora's type, not mark8ly's, so nothing claims
-    // this path — it falls back to the entry ticket. Asserted so the
-    // assertions above are known to be measuring the declaration and not
-    // something that would pass for any path beginning `/mark8ly`.
+    // The control, and the only row here that pins `exact: true` on
+    // `mark8ly.overview`. `foods` is Kora's type, not mark8ly's, so nothing
+    // claims this path and it falls back to the entry ticket. Drop `exact` and
+    // the overview claims every undeclared `/mark8ly/*` descendant, and this
+    // line — alone in this file — goes red. It also keeps the assertions above
+    // honest: they measure the declaration, not merely the `/mark8ly` prefix.
     expect(capabilityForPath("/mark8ly/foods")).toBe("read");
   });
 });

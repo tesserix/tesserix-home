@@ -5,11 +5,17 @@
 // `import type` is erased at build, so this buys the shared type at zero
 // runtime cost. No cycle: platform-auth does not depend on console-core.
 import type { Capability } from "@tesserix/platform-auth";
-// Type-only as well, and for a second reason on top of the one above:
-// `products.ts` imports the rails from `nav.ts` as VALUES, and `nav.ts` refers
-// to `RouteId` from here. A value import in this direction would close that
-// into a runtime cycle. `import type` is erased at build, so the union is
-// borrowed at zero cost and the module graph stays a tree.
+// Type-only as well, for the same reason as the import above and no other:
+// console-core is a pure data package, and a value import here would put
+// `products.ts` — and, through it, `nav.ts` — in the runtime graph of every
+// consumer that only wanted a route path. `import type` is erased at build,
+// so the union is borrowed at zero cost.
+//
+// NOT because of a cycle. There is none, and none is one edit away:
+// `routes → products → nav` is a tree, and `nav.ts`'s only reference back here
+// is its own `import type { RouteId }`, which is erased too. If you need a
+// VALUE from this module in `nav.ts`, that is a safe change — nothing here is
+// warning you off it.
 import type { ProductId } from "./products";
 
 // Route identity lives here, not in either app. This is what prevents the
@@ -302,9 +308,19 @@ export const ROUTES = {
   "mark8ly.overview": {
     console: "/mark8ly",
     // `exact`, for the reason `kora.overview` carries it: `/mark8ly` is a
-    // strict prefix of every nested mark8ly path, so a prefix match would keep
-    // the root lit — and, more to the point here, would let the root's entry
-    // compete with its children in `routeForPath`.
+    // strict prefix of every nested mark8ly path, so without it the root stays
+    // lit while an operator is on a nested page.
+    //
+    // It does NOT stop the root out-competing its DECLARED children —
+    // `routeForPath` is longest-console-path-wins, so `/mark8ly/tenants`
+    // resolves to `mark8ly.tenants` either way. What `exact` decides here is
+    // the UNDECLARED descendants: without it, `/mark8ly/<anything>` would
+    // resolve to the overview and inherit its `platform` capability. That
+    // sounds safe and is not — it would silently gate a page nobody declared,
+    // which is the opposite of the fail-loud fallback these ids exist to
+    // avoid. The `/mark8ly/foods` control in products.test.ts is what pins
+    // that behaviour; the resolve tests there stay green with or without this
+    // flag, so do not read them as its guard.
     exact: true,
     pending: true,
     capability: "platform",

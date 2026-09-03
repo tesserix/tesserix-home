@@ -29,8 +29,10 @@
  *
  * Scope is products that DECLARE contract endpoints in their
  * `admin-conformance.json`. HomeChef, DevAI, Dwellm8 and HMS declare none, so
- * a rail for them would link to pages whose platform-api reads answer 400 —
- * the product is not a federation source at all. They belong here on the day
+ * a rail for them would link to pages whose platform-api reads answer 400 at
+ * the FIRST hop: platform-api refuses the `?source=` before calling anything
+ * (`ErrUnknownSource` → `BadRequest`), because the slug is not among the
+ * products this deployment is configured to federate to at all. They belong here on the day
  * they declare, not before. `estate.ts` lists them because the estate map's
  * job is to show the whole estate including what has not moved; this table's
  * job is the opposite.
@@ -72,8 +74,9 @@ interface ProductEntry {
    * product-defined, which is why the contract marks it `requiresSubtypes` and
    * why platform-api takes them as `FEDERATION_<SLUG>_ENTITIES` rather than
    * knowing any of them itself. So the list has to be carried per product —
-   * there is no universal vocabulary to fall back on, and a type not declared
-   * upstream is a 400 from `/admin/entities/{type}`.
+   * there is no universal vocabulary to fall back on, and an undeclared type
+   * is refused at the same FIRST hop the header's 400 describes —
+   * `ErrTypeNotServed` → `BadRequest`, before platform-api calls the product.
    *
    * Verified against `mark8ly/admin-conformance.json` and
    * `kora/admin-conformance.json`.
@@ -83,14 +86,21 @@ interface ProductEntry {
    * Whether the product declares the §3.1 `kpis` endpoint.
    *
    * Per-product and declared rather than assumed: a product may implement the
-   * contract without a business-metrics surface at all, and asking one that
-   * does not is a 404 on a page whose whole content is that read.
+   * contract without a business-metrics surface at all.
    *
-   * This is the DECLARATION, not the runtime answer. Kora declares `kpis` and
-   * its implementation currently answers 501 ("uninstrumented"), which is a
-   * state a renderer shows; it is not a reason to record the declaration as
-   * absent, because that would make the console stop asking and never notice
-   * when it is instrumented.
+   * THE 404 HERE IS A DIFFERENT HOP FROM THE 400 IN THIS MODULE'S HEADER, and
+   * the two are easy to conflate at eighty lines apart. The header's 400 is
+   * platform-api refusing an unknown `?source=` before calling anyone. The 404
+   * is UPSTREAM: the product is federated fine, but its own `/admin/kpis` is
+   * not mounted. platform-api does not pass that through — `service.go` folds
+   * an upstream 404 or 501 into `ErrNotInstrumented`, which the handler
+   * renders as 501 to the console.
+   *
+   * So this field records the DECLARATION, not the runtime answer. Kora
+   * declares `kpis` and answers 501 today ("kora does not report business KPIs
+   * yet"), which is a state a renderer shows; recording the declaration as
+   * absent would make the console stop asking and never notice when Kora
+   * instruments it.
    */
   readonly kpis: boolean;
 }
