@@ -8,6 +8,7 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
 
 import { verifySession } from "@tesserix/platform-auth";
 import { middleware } from "./middleware";
+import { CONSOLE_PATHNAME_HEADER } from "./lib/auth/console-pathname";
 
 /**
  * The `MACHINE_AUTH_PATHS` exemption in `middleware.ts` — a deliberate hole
@@ -112,5 +113,59 @@ describe("CSRF is still evaluated before the exemption is consulted", () => {
 
     // GET is never CSRF-mutating, so this reaches the exemption and passes.
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * The pathname handed to the console's capability gate (#262).
+ *
+ * `middleware.ts` is the only place in the console that holds an un-decoded
+ * path, so it is where percent-encoding has to be normalised away — see
+ * `lib/auth/console-pathname.ts`. This asserts the wiring: that the header the
+ * layout reads carries the NORMALISED path, not `nextUrl.pathname`. What that
+ * normalisation must and must not do is `console-pathname.test.ts`.
+ */
+describe("the forwarded pathname header is normalised", () => {
+  function forwardedPathname(res: Response): string | null {
+    // `NextResponse.next({ request: { headers } })` does not mutate the
+    // request object the test holds; it encodes the overrides onto the
+    // RESPONSE as `x-middleware-request-<name>`, which the Next server then
+    // replays onto the incoming request. That indirection is why this is read
+    // off the response rather than off `req`.
+    return res.headers.get(`x-middleware-request-${CONSOLE_PATHNAME_HEADER}`);
+  }
+
+  beforeEach(() => {
+    vi.mocked(verifySession).mockResolvedValue({
+      sub: "op-1",
+      email: "ops@tesserix.app",
+      roles: ["platform"],
+    } as never);
+  });
+
+  function authed(path: string) {
+    return req(`${BASE}${path}`, { headers: { authorization: "Bearer session-jwe" } });
+  }
+
+  it("forwards a plain path unchanged", async () => {
+    const res = await middleware(authed("/mark8ly/tenants"));
+
+    expect(forwardedPathname(res)).toBe("/mark8ly/tenants");
+  });
+
+  it("forwards the decoded path for an encoded one", async () => {
+    // The bypass: `nextUrl.pathname` keeps `%6D`, `capabilityForPath` matches
+    // route paths literally and so found nothing, and the request rendered on
+    // the entry capability while `[product]` decoded the same segment to
+    // `mark8ly`.
+    const res = await middleware(authed("/%6Dark8ly/%74enants"));
+
+    expect(forwardedPathname(res)).toBe("/mark8ly/tenants");
+  });
+
+  it("forwards a segment it cannot decode exactly as it arrived", async () => {
+    const res = await middleware(authed("/%6Dark8ly/tenants%2Fx"));
+
+    expect(forwardedPathname(res)).toBe("/mark8ly/tenants%2Fx");
   });
 });

@@ -9,8 +9,8 @@ import { ENTITIES_LIMIT } from "@/lib/platform-api";
  * wrong — an off-by-one that offers a next page which is empty — should have a
  * single definition and a single set of tests.
  *
- * It lived under `kora/` while Kora's two pages were its only callers. It
- * moved here unchanged when the generic entity index became a third: a shared
+ * It lived under `kora/` while Kora's three pages were its only callers. It
+ * moved here unchanged when the generic entity index became a fourth: a shared
  * util under one product's rail invites the next caller to copy it instead.
  */
 

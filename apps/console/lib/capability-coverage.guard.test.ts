@@ -131,6 +131,12 @@ describe("every console page is reachable by the access gate", () => {
   // a clean bill of health.
   it("finds pages to check at all", () => {
     expect(PAGES.length).toBeGreaterThan(20);
+    // The same vacuity, one level in. `urlsForPage` expands the two
+    // `[product]` pages over `PRODUCT_IDS`, so an empty registry contributes
+    // ZERO rows for them — the walk would still find every other page, the
+    // count above would still pass, and the generic pages would be checked by
+    // nothing at all.
+    expect(PRODUCT_IDS.length).toBeGreaterThan(0);
   });
 
   it.each(PAGES.flatMap((f) => urlsForPage(f).map((url) => [rel(f), url])))(

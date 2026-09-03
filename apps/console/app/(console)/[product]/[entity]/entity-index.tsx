@@ -21,7 +21,7 @@ import { SurfaceStateView } from "@/components/kit/states";
 // the browser bundle. tsc and vitest cannot see it; only `next build` fails.
 // `[product]/overview-view.tsx` states the same rule at its `kpis.ts` import.
 //
-// The two `import type`s below are not equally load-bearing, and it is worth
+// The three `import type`s below are not equally load-bearing, and it is worth
 // saying which is which so a later reader does not draw the wrong conclusion
 // from finding no chain:
 //
