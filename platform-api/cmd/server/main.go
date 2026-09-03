@@ -23,6 +23,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/billing"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/conversions"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
@@ -265,6 +266,20 @@ func run(log *slog.Logger) error {
 		// ErrNotConfigured rather than the route not existing at all.
 		koraaimetrics.Register(m, koraaimetrics.Config{
 			Fed:      fed,
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "conversions", func(m *http.ServeMux) {
+		conversions.Register(m, conversions.Config{
+			Fed: fed,
+			// SlugsImplementing, for the same reason the onboardingfunnel
+			// block gives: /admin/conversions is mark8ly's own route, not a
+			// §3 contract endpoint. A product that has not declared it is
+			// refused before it is called, rather than 404ing and reading as
+			// an outage.
+			Slugs:    cfg.Federation.SlugsImplementing("conversions"),
 			Verifier: verifier,
 			Log:      log,
 		})
