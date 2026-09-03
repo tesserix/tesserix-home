@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   INTERNAL_TOOLS,
@@ -38,22 +38,106 @@ describe("the tool list is data, not markup", () => {
     expect(new Set(seen).size).toBe(seen.length);
   });
 
-  it("keeps the fallback list in step with the seed migration", async () => {
-    // The literal and migration 0031's seed are two copies of one directory. A
-    // tool added to the database through CRUD will not be here — that is the
-    // point of the feature — but a tool added to THIS file and not to the seed
-    // is a fallback that disagrees with the live list for no reason.
-    const migration = await readFile(
-      new URL("../../../apps/web/db/migrations/0031_platform_tools.sql", import.meta.url),
-      "utf8",
-    );
-    for (const tool of INTERNAL_TOOLS) {
-      expect(migration, `${tool.name} is in the fallback but not in the seed`).toContain(
-        `'${tool.subdomain}'`,
-      );
-    }
+  it("holds exactly the directory the migrations describe", async () => {
+    // The literal and the migrations are two copies of one directory. This is
+    // the only thing that keeps them equal (#499).
+    //
+    // It replaces a one-directional check that read 0031 alone and asked
+    // whether each fallback subdomain appeared ANYWHERE in the file. That
+    // missed both ways drift actually happens:
+    //
+    //   - a tool added by migration and not here — the fallback then serves a
+    //     directory shorter than the live one during an outage, silently;
+    //   - a tool DELETED by migration and left here — 0042 removed
+    //     `secret-service`, and a `toContain` against 0031 still passes for it
+    //     forever, because 0031 does still mention it. That is exactly the
+    //     drift #486 introduced in the other copy and nobody noticed.
+    //
+    // So the expectation is computed the way the database computes it: every
+    // seeded row, minus every deleted one, in migration order.
+    const expected = await directoryFromMigrations();
+
+    // Compared as sorted `subdomain → name` lines rather than as Maps: the
+    // failure then names the tool that drifted instead of printing two maps.
+    const fromMigrations = Array.from(
+      expected,
+      ([subdomain, name]) => `${subdomain} → ${name}`,
+    ).sort();
+    const fromFallback = INTERNAL_TOOLS.map(
+      (t) => `${t.subdomain} → ${t.name}`,
+    ).sort();
+
+    expect(
+      fromFallback,
+      "the fallback and the migrations describe different directories",
+    ).toEqual(fromMigrations);
   });
 });
+
+/**
+ * The tools directory as the migrations leave it: `subdomain -> name`.
+ *
+ * Reads every migration rather than a named pair, so a future 0050 that adds
+ * or removes a tool is picked up without editing this test — the failure mode
+ * this guards against is precisely someone changing the directory and not
+ * thinking about the second copy.
+ */
+async function directoryFromMigrations(): Promise<Map<string, string>> {
+  const dir = new URL("../../../apps/web/db/migrations/", import.meta.url);
+  const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+
+  const directory = new Map<string, string>();
+  for (const file of files) {
+    const sql = await readFile(new URL(file, dir), "utf8");
+    if (!sql.includes("platform_tools")) continue;
+
+    for (const statement of insertsInto(sql, "platform_tools")) {
+      // ('Name', 'subdomain', 'purpose', … — name and subdomain are the two
+      // leading literals of each VALUES row and neither may contain a quote.
+      const rows = Array.from(
+        statement.matchAll(/\(\s*'([^']+)',\s*'([^']+)'/g),
+      );
+      for (const [, name, subdomain] of rows) {
+        directory.set(subdomain, name);
+      }
+    }
+
+    const deletions = Array.from(
+      sql.matchAll(
+        /DELETE\s+FROM\s+platform_tools\s+WHERE\s+subdomain\s*=\s*'([^']+)'/gi,
+      ),
+    );
+    for (const [, subdomain] of deletions) {
+      directory.delete(subdomain);
+    }
+  }
+
+  // A directory that parsed to nothing would make every assertion above vacuous
+  // — the classic way a regex-driven test goes quietly green after a schema
+  // rename.
+  expect(directory.size, "parsed no tools out of the migrations").toBeGreaterThan(0);
+  return directory;
+}
+
+/**
+ * The body of each `INSERT INTO <table> … VALUES …;` statement in a file.
+ *
+ * The statement ends at a semicolon that ENDS ITS LINE, not at the first
+ * semicolon. 0031 seeds the note "Reached outside the Istio gateway; its own
+ * login." — splitting on the first `;` truncates the statement mid-row and
+ * silently drops the six tools after it, which is a green test asserting
+ * almost nothing.
+ */
+function insertsInto(sql: string, table: string): string[] {
+  const bodies: string[] = [];
+  const opening = new RegExp(`INSERT\\s+INTO\\s+${table}\\s*\\(`, "gi");
+  for (const match of Array.from(sql.matchAll(opening))) {
+    const rest = sql.slice(match.index);
+    const end = /;[ \t]*(?:\r?\n|$)/.exec(rest);
+    bodies.push(end ? rest.slice(0, end.index) : rest);
+  }
+  return bodies;
+}
 
 describe("grouping", () => {
   it("assigns every tool to a declared group", () => {
