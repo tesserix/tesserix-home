@@ -82,7 +82,7 @@ describe("visibleNav", () => {
     { name: "Dashboard", route: "platform.dashboard", icon: "layout-dashboard" },
     {
       name: "Growth",
-      icon: "trending-up",
+      icon: "users",
       items: [
         { name: "CRM", route: "platform.crm", icon: "users" },
         { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
@@ -130,7 +130,9 @@ describe("visibleNav", () => {
     const all = platformNav.flatMap((e) =>
       isNavGroup(e) ? e.items.map((i) => i.route) : [e.route],
     );
-    const everyCapability = [...new Set(all.map((route) => routeCapability(route)))];
+    // Array.from, not spread: this package targets ES5, where iterating a Set
+    // needs downlevelIteration — the same trap tools.test.ts hit.
+    const everyCapability = Array.from(new Set(all.map((route) => routeCapability(route))));
 
     expect(visibleNav(platformNav, everyCapability, true)).toEqual([...platformNav]);
   });
