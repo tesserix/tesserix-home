@@ -707,10 +707,12 @@ async function renderWorkTab({
  * `tabHref`'s doc comment for why the Work tab must never pay for this.
  */
 async function renderHandoffTab(reauthReturnTo: string) {
-  let handoffRows: HandoffRow[] = [];
+  let handoffRows: readonly HandoffRow[] = [];
+  let handoffHasMore = false;
   let handoffRowsError: unknown = null;
   try {
-    handoffRows = await wonWithoutConversion(HANDOFF_LIMIT);
+    ({ rows: handoffRows, hasMore: handoffHasMore } =
+      await wonWithoutConversion(HANDOFF_LIMIT));
   } catch (caught) {
     handoffRowsError = caught;
   }
@@ -734,6 +736,7 @@ async function renderHandoffTab(reauthReturnTo: string) {
       items={handoffItems}
       state={handoffState}
       emptyMessage={HANDOFF_EMPTY_MESSAGE}
+      hasMore={handoffHasMore}
       products={products}
       reauthReturnTo={reauthReturnTo}
     />

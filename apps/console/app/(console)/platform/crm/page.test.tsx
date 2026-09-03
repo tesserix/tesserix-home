@@ -71,7 +71,7 @@ beforeEach(() => {
   driftingOpportunities.mockReset();
   driftingOpportunities.mockResolvedValue(queuePage([]));
   wonWithoutConversion.mockReset();
-  wonWithoutConversion.mockResolvedValue([]);
+  wonWithoutConversion.mockResolvedValue({ rows: [], hasMore: false });
   fetchConversionSignal.mockReset();
   fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "unknown" });
 });
@@ -639,7 +639,7 @@ const HANDOFF_ROW: HandoffRow = {
 
 describe("Handoff", () => {
   it("lists won opportunities with no conversion recorded", async () => {
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
 
@@ -649,7 +649,7 @@ describe("Handoff", () => {
   it("shows a suggested match as unconfirmed rather than linking it", async () => {
     // A wrongly auto-linked conversion corrupts the attribution this exists
     // to produce, and writes a ref into the wrong product's namespace.
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
     fetchConversionSignal.mockResolvedValue({
       product: "mark8ly",
       state: "complete",
@@ -671,7 +671,7 @@ describe("Handoff", () => {
     // THE rule: `unknown` and `none` must never read the same to an
     // operator. Rendering `unknown` as "not converted" is the false
     // negative this whole surface exists to prevent.
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
     fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "unknown" });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
@@ -681,7 +681,7 @@ describe("Handoff", () => {
   });
 
   it("does not offer a confirm button for a definite \"none\"", async () => {
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
     fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "none" });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
@@ -694,7 +694,7 @@ describe("Handoff", () => {
   // implementation that renders `none` as "Unknown — could not check" too.
   // Both halves have to hold.
   it('renders "Not converted" for a definite none — not the unknown copy', async () => {
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
     fetchConversionSignal.mockResolvedValue({ product: "mark8ly", state: "none" });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
@@ -711,10 +711,34 @@ describe("Handoff", () => {
   // whole migrated backlog. It renders, labelled "Unassigned" the same way
   // the work queue labels a product-less opportunity, and nothing is asked
   // of a product that was never assigned.
+  // #246: the queue is capped and used to stop at the cap saying nothing, so a
+  // backlog longer than the cap looked exactly like one that ended there. With
+  // a few hundred leads in a campaign that is the difference between "I have
+  // worked the handoff queue" and "I have worked the first page of it".
+  it("says so when there are more won deals than the page holds", async () => {
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: true });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.getByText(/more are waiting/i)).toBeInTheDocument();
+  });
+
+  // The boundary the flag exists to get right: a queue of exactly the cap has
+  // nothing past it, and claiming otherwise would mean the notice never goes
+  // away for an operator who works it to empty.
+  it("says nothing when the queue ends where the page does", async () => {
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
+
+    render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
+
+    expect(screen.queryByText(/more are waiting/i)).not.toBeInTheDocument();
+  });
+
   it("renders a migrated won opportunity with no product rather than throwing", async () => {
-    wonWithoutConversion.mockResolvedValue([
-      { ...HANDOFF_ROW, product: null, primaryEmail: "priya@bondibaker.example" },
-    ]);
+    wonWithoutConversion.mockResolvedValue({
+      rows: [{ ...HANDOFF_ROW, product: null, primaryEmail: "priya@bondibaker.example" }],
+      hasMore: false,
+    });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
 
@@ -737,7 +761,7 @@ describe("Handoff", () => {
   // failed must still say so, or the two have simply been collapsed the
   // other way round.
   it('renders "could not check" for a real failed check, not the not-checked copy', async () => {
-    wonWithoutConversion.mockResolvedValue([HANDOFF_ROW]);
+    wonWithoutConversion.mockResolvedValue({ rows: [HANDOFF_ROW], hasMore: false });
     fetchConversionSignal.mockRejectedValue(new Error("upstream is down"));
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
@@ -761,7 +785,7 @@ describe("Handoff", () => {
   });
 
   it("renders empty, not ready, when nothing is waiting for handoff", async () => {
-    wonWithoutConversion.mockResolvedValue([]);
+    wonWithoutConversion.mockResolvedValue({ rows: [], hasMore: false });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
 
@@ -787,7 +811,7 @@ describe("Handoff", () => {
   // Symmetric check: the Handoff tab has no business paying for the Work
   // tab's queries either.
   it("does not read the due/drifting queues when the Handoff tab is active", async () => {
-    wonWithoutConversion.mockResolvedValue([]);
+    wonWithoutConversion.mockResolvedValue({ rows: [], hasMore: false });
 
     render(await CrmPage({ searchParams: Promise.resolve({ tab: "handoff" }) }));
 

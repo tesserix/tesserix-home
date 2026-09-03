@@ -314,12 +314,28 @@ export function HandoffView({
   items,
   state,
   emptyMessage,
+  hasMore = false,
   products,
   reauthReturnTo,
 }: {
   items: readonly HandoffItem[];
   state: SurfaceState;
   emptyMessage: string;
+  /**
+   * There are won deals this page does not contain.
+   *
+   * The queue is capped (`HANDOFF_LIMIT`) and used to stop at the cap with
+   * nothing said, so a backlog longer than the cap looked exactly like a
+   * backlog that ended there — #246. An operator working a campaign of a few
+   * hundred leads would have worked the visible hundred and concluded they
+   * were done.
+   *
+   * Deliberately not a count. The cap is on the QUERY, so an exact depth
+   * would need a second scan of the same join on a shared instance, and the
+   * only decision it informs — keep going after this page — is the same at
+   * 101 as at 1,001.
+   */
+  hasMore?: boolean;
   products: readonly ProductOption[];
   /** Where to send the operator back to after re-authenticating — see
    *  `SurfaceStateView`'s own prop for why only the page knows this. The
@@ -332,10 +348,23 @@ export function HandoffView({
     return <SurfaceStateView state={state} emptyMessage={emptyMessage} reauthReturnTo={reauthReturnTo} />;
   }
   return (
-    <ul className="flex flex-col">
-      {items.map((item) => (
-        <HandoffRowItem key={item.opportunityId} item={item} products={products} />
-      ))}
-    </ul>
+    <>
+      <ul className="flex flex-col">
+        {items.map((item) => (
+          <HandoffRowItem key={item.opportunityId} item={item} products={products} />
+        ))}
+      </ul>
+      {hasMore ? (
+        // Below the list, not above it: it describes what follows the rows an
+        // operator is looking at. Not `destructive` — a long queue is a
+        // workload, not a fault.
+        <Callout className="mt-3">
+          <CalloutDescription>
+            Showing the {items.length} oldest. More are waiting — work these and
+            reload.
+          </CalloutDescription>
+        </Callout>
+      ) : null}
+    </>
   );
 }
