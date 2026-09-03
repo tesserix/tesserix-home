@@ -7,6 +7,7 @@ import Link from "next/link";
 import { Badge } from "@tesserix/web";
 import { SurfaceStateView } from "@/components/kit/states";
 import { SurfaceTabs } from "@/components/kit/surface-tabs";
+import { ObservationStrip } from "./observation-strip";
 import type { SurfaceState } from "@/components/kit/surface-state";
 import { policyFor, toStripeUnitAmount } from "@/lib/billing/source-policy";
 import { formatMoney } from "@/lib/money";
@@ -458,7 +459,7 @@ export type SurfaceTone = "success" | "warning" | "error" | "neutral";
  *  badge. `neutral` renders as an outline rather than a filled `bg-muted`:
  *  a gap is the ABSENCE of a run, and a hollow mark reads as "nothing here"
  *  more honestly than a solid one would. */
-const TONE_DOT_CLASS: Record<SurfaceTone, string> = {
+export const TONE_DOT_CLASS: Record<SurfaceTone, string> = {
   success: "bg-success",
   warning: "bg-warning",
   error: "bg-destructive",
@@ -665,7 +666,7 @@ function LatestRunSummary({
   );
 }
 
-function ObservationWindow({
+export function ObservationWindow({
   windowStatus,
   windowState,
   runs,
@@ -857,9 +858,11 @@ export function CatalogViews({
 
   return (
     <div className="flex flex-col gap-8">
+      {/* One line by default (see `observation-strip.tsx`): this section was
+          the first thing on the page and pushed the catalog and the authoring
+          panel below the fold for every operator who came to do either. */}
       <section className="flex flex-col gap-3" aria-label="Observation window">
-        <h2 className="text-sm font-medium">Observation window</h2>
-        <ObservationWindow
+        <ObservationStrip
           windowStatus={windowStatus}
           windowState={windowState}
           runs={runs}
