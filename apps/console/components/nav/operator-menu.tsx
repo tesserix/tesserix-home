@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronsUpDown } from "lucide-react";
+import { consolePath } from "@tesserix/console-core";
+import { RISK_CAPABILITIES, SURFACE_CAPABILITIES } from "@tesserix/platform-auth";
 
 /**
  * First letters of the first two whitespace-separated words of `name`,
@@ -50,6 +53,14 @@ export function OperatorMenu({
   showCapabilities,
 }: OperatorMenuProps) {
   const [open, setOpen] = useState(false);
+
+  // Counted from the vocabulary's own lists rather than a local split:
+  // `SURFACE_CAPABILITIES` and `RISK_CAPABILITIES` are exported for exactly
+  // this ("so a renderer can reason about surfaces without hard-coding the
+  // list"), and a second copy here would drift the day a capability is added.
+  const held = new Set(capabilities);
+  const surfaceCount = SURFACE_CAPABILITIES.filter((c) => held.has(c)).length;
+  const actionCount = RISK_CAPABILITIES.filter((c) => held.has(c)).length;
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -108,26 +119,36 @@ export function OperatorMenu({
           </div>
 
           <div className="border-b border-border px-2.5 py-2">
+            {/* A COUNT AND A LINK, not the list.
+                
+                This used to render all twelve capabilities as raw slugs, in
+                alphabetical order, with surfaces and verbs interleaved — a
+                machine vocabulary shown to a person, in a dropdown that is
+                otherwise identity and sign-out. It answered #267's "let an
+                operator see their own capabilities" literally and unhelpfully.
+
+                The count is what a menu can usefully say; /platform/profile
+                says the rest, grouped, and reads the LIVE store rather than
+                this cookie — which matters, because the cookie is exactly what
+                goes stale. Hence no lag caveat here any more: the caveat now
+                lives beside the answer it qualifies. */}
             {showCapabilities ? (
-              <ul className="space-y-0.5">
-                {capabilities.map((capability) => (
-                  <li
-                    key={capability}
-                    className="text-[13px] text-muted-foreground"
-                  >
-                    {capability}
-                  </li>
-                ))}
-              </ul>
+              <p className="text-[13px] text-muted-foreground">
+                {surfaceCount} {surfaceCount === 1 ? "surface" : "surfaces"} ·{" "}
+                {actionCount} {actionCount === 1 ? "action" : "actions"}
+              </p>
             ) : (
               <p className="text-[13px] text-muted-foreground">
                 Capabilities are not recorded on this session.
               </p>
             )}
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Reflects the session, which can lag Zitadel until the next
-              sign-in.
-            </p>
+            <Link
+              href={consolePath("platform.profile")}
+              className="mt-1 inline-block text-[13px] text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground"
+              onClick={() => setOpen(false)}
+            >
+              View your access
+            </Link>
           </div>
 
           <a

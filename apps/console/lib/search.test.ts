@@ -180,13 +180,20 @@ describe("routeEntries under capability enforcement", () => {
     expect(support.some((e) => e.id === "route:platform.tickets")).toBe(true);
   });
 
-  it("shows an operator holding only console entry nothing at all", () => {
-    // #261's point, made visible. `read` is now entry and nothing else, so a
-    // `read`-only session reaches the shell and no feature surface. Before, it
+  it("shows an operator holding only console entry the shell, and no surface", () => {
+    // #261's point, made visible. `read` is entry and nothing else, so a
+    // `read`-only session reaches the shell and no FEATURE surface. Before, it
     // saw every route, because 26 of 30 defaulted to exactly this capability.
+    //
+    // The shell is not nothing, and it stopped being nothing deliberately:
+    // `platform.profile` declares `read` because an operator who has just been
+    // refused a surface needs somewhere to read what they hold, and gating
+    // that on a surface would deny it to exactly the narrowly-granted people
+    // who need it. So the palette offers it to them — which is the point of
+    // the palette agreeing with the gate.
     const entryOnly = visibleTo(routeEntries(), ["read"], true);
 
-    expect(entryOnly).toEqual([]);
+    expect(entryOnly.map((e) => e.id)).toEqual(["route:platform.profile"]);
   });
 
   it("shows a CRM operator the CRM and not the ticket queue", () => {

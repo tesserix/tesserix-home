@@ -31,6 +31,7 @@ import {
   ROUTE_IDS,
   consolePath,
   isRouteActive,
+  isShellRoute,
   routeCapability,
   type RouteId,
 } from "./routes";
@@ -72,13 +73,8 @@ export function routeForPath(currentPath: string): RouteId | undefined {
  * fallback is exactly today's behaviour, so it cannot make anything less safe
  * than it already is. What it does is make declared surfaces safer.
  */
-/**
- * The console's landing page. `safeReturnPath` sends every fresh sign-in here.
- */
-const CONSOLE_HOME = "/";
-
 export function capabilityForPath(currentPath: string): Capability {
-  // THE SHELL IS NOT A SURFACE, and the landing page is the shell.
+  // THE SHELL IS NOT A SURFACE, and it is declared as such on the route.
   //
   // `platform.dashboard` declares `platform` and its console target is `/`, so
   // without this an operator holding `crm` and `support` but not `platform`
@@ -98,10 +94,15 @@ export function capabilityForPath(currentPath: string): Capability {
   // The rail entry for Dashboard still declares `platform` and is still hidden
   // from an operator without it. That is deliberate: they land on the shell,
   // and the rail offers them only what they can reach.
-  if (currentPath === CONSOLE_HOME || currentPath === "") return ENTRY_CAPABILITY;
+  if (currentPath === "") return ENTRY_CAPABILITY;
 
   const id = routeForPath(currentPath);
-  return id ? routeCapability(id) : ENTRY_CAPABILITY;
+  if (!id) return ENTRY_CAPABILITY;
+  // `shell` is read here rather than a path being special-cased, so the table
+  // says which paths are the shell and this function only obeys it. The first
+  // version of this hardcoded "/", which could not express a second shell
+  // route — and `platform.profile` is one.
+  return isShellRoute(id) ? ENTRY_CAPABILITY : routeCapability(id);
 }
 
 /**
