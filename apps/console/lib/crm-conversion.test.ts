@@ -1,9 +1,18 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchConversionSignal } from "./crm-conversion";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PlatformApiError } from "./platform-api-error";
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+// The collaborator, not `fetch`. This module's contract is "whatever
+// platform-api answers or fails with, produce a signal that never fabricates
+// `none`" — so the layer to fake is the one that produces those outcomes.
+// Faking `fetch` instead would also drag in token resolution and the envelope
+// unwrap, and would pin how `platformRequestWithMeta` is implemented rather
+// than what this module promises.
+const platformRequestWithMeta = vi.fn();
+vi.mock("./platform-api", () => ({
+  platformRequestWithMeta: (...args: unknown[]) => platformRequestWithMeta(...args),
+}));
+
+const { fetchConversionSignal } = await import("./crm-conversion");
 
 const VALID_COMPLETE = {
   state: "complete",
@@ -12,78 +21,59 @@ const VALID_COMPLETE = {
   observed_at: "2026-08-17T09:00:00.000Z",
 };
 
+/** platform-api answered 200; `data` is the product's body, forwarded. */
+function answers(data: unknown) {
+  platformRequestWithMeta.mockResolvedValue({ data, meta: undefined });
+}
+
+beforeEach(() => {
+  platformRequestWithMeta.mockReset();
+});
+
 describe("fetchConversionSignal", () => {
-  // THE assertion that matters. A false `none` under-reports the funnel and
-  // leaves a live merchant sitting in the handoff queue as though they had
-  // stalled. Ruling 27: apps/web answers 501 for a product it has no
-  // conversion-status adapter for yet, which is indistinguishable — by design
-  // — from "we have never heard of this product".
-  it("maps 501 to unknown, never none", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 501 }));
-    vi.stubGlobal("fetch", fetchMock);
+  // THE assertion that matters, and the reason this module exists. A false
+  // `none` under-reports the funnel and leaves a live merchant sitting in the
+  // handoff queue as though they had stalled.
+  //
+  // Ruling 28, restated for the platform-api road: every one of these is a
+  // thrown PlatformApiError, and every one means "we did not find out".
+  it.each([
+    ["501 — no product declares conversions", new PlatformApiError("not implemented", 501)],
+    ["501 — the product declares and declines", new PlatformApiError("not implemented", 501)],
+    ["404 — declared but not mounted", new PlatformApiError("not found", 404)],
+    ["503 — the product could not be reached", new PlatformApiError("unavailable", 503)],
+    ["400 — the product cannot be asked", new PlatformApiError("bad request", 400)],
+    ["502 — something upstream", new PlatformApiError("bad gateway", 502)],
+    ["platform-api itself unreachable", new PlatformApiError("request failed (ECONNREFUSED)")],
+    ["no origin configured", new PlatformApiError("the platform API origin is not configured")],
+    ["this session carries no token", new PlatformApiError("no token", undefined, {
+      noOperatorToken: true,
+    })],
+    ["a timed-out request", new DOMException("The operation was aborted.", "TimeoutError")],
+  ])("maps %s to unknown, never none", async (_name, failure) => {
+    platformRequestWithMeta.mockRejectedValue(failure);
 
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
+    const signal = await fetchConversionSignal("mark8ly", "a@b.com");
+
     expect(signal.state).toBe("unknown");
-  });
-
-  it("maps an unreachable product (apps/web itself unreachable) to unknown, not none", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
-  });
-
-  // Ruling 28: 404 can no longer carry "no conversion concept" — it is also
-  // what this exact route returns when apps/web's endpoint does not exist at
-  // all, which is true for every product today. A meaning chosen for "the
-  // product answered" cannot also be the framework's own answer for "there is
-  // no route here"; the two are indistinguishable on the wire. Only an
-  // explicit 200 can produce a definite state.
-  it("maps 404 to unknown — indistinguishable from the route not existing", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 404 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
+    // `unknown` carries no timestamp: there was never a trustworthy body to
+    // read one off, and a present observedAt would make it look measured.
+    expect(signal.observedAt).toBeUndefined();
   });
 
   // The definite path stays pinned: a product that wants to assert "not
   // converted" does so honestly, by answering 200 with `{ state: "none" }`.
-  it("maps a 200 body of { state: \"none\" } to none", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ state: "none", observed_at: "2026-08-17T09:00:00.000Z" }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("maps a body of { state: \"none\" } to none", async () => {
+    answers({ state: "none", observed_at: "2026-08-17T09:00:00.000Z" });
 
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
+    const signal = await fetchConversionSignal("mark8ly", "a@b.com");
     expect(signal.state).toBe("none");
   });
 
-  it("maps any other non-2xx (a real transport/upstream error) to unknown, not none", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(new Response(null, { status: 502 }));
-    vi.stubGlobal("fetch", fetchMock);
+  it("parses a valid body and carries ref only alongside the product", async () => {
+    answers(VALID_COMPLETE);
 
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
-  });
-
-  it("parses a valid 200 body and carries ref only alongside the product", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(VALID_COMPLETE), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("mark8ly", "a@b.com", "tx_session=abc");
+    const signal = await fetchConversionSignal("mark8ly", "a@b.com");
     expect(signal).toEqual({
       product: "mark8ly",
       state: "complete",
@@ -94,107 +84,70 @@ describe("fetchConversionSignal", () => {
     });
   });
 
-  it("maps a malformed 200 body (missing observed_at) to unknown, not none", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ state: "none" /* observed_at missing */ }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
-  });
-
-  it("maps a 200 body with an unrecognised state string to unknown, not none", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ state: "sort-of", observed_at: "2026-08-17T09:00:00.000Z" }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
-  });
-
-  // Distinct branch from "malformed body": here `response.json()` itself
-  // rejects (empty body, non-JSON text), never reaching `parseConversionBody`
-  // at all. Must land in the same `unknown` outcome as every other failure.
-  it("maps a 200 response whose body is not valid JSON to unknown", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response("not json at all", { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
-    expect(signal.state).toBe("unknown");
-  });
-
-  // Pins the snake_case → camelCase mapping WITH a value present — a
-  // mis-keyed `idle_hours`/`idleHours` would pass every other test silently,
-  // since the only prior assertion on this field was `idleHours: undefined`.
+  // Pins the snake_case → camelCase mapping WITH a value present — a mis-keyed
+  // `idle_hours`/`idleHours` would pass every other test silently, since the
+  // only other assertion on this field is `idleHours: undefined`.
   it("carries idle_hours through as idleHours when the product reports one", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          state: "in_flight",
-          idle_hours: 46,
-          observed_at: "2026-08-17T09:00:00.000Z",
-        }),
-        { status: 200 },
-      ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    answers({ state: "in_flight", idle_hours: 46, observed_at: "2026-08-17T09:00:00.000Z" });
 
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
+    const signal = await fetchConversionSignal("mark8ly", "a@b.com");
     expect(signal.state).toBe("in_flight");
     expect(signal.idleHours).toBe(46);
   });
 
-  // Ruling 29: Node's `fetch` has no default timeout — a request that never
-  // resolves is neither `unknown` nor an error, it is a stuck server render,
-  // and Task 10 fans this call out per lead in the handoff queue. The bound
-  // must be visible on every request, not just the ones that happen to time
-  // out in a given test run.
-  it("bounds every request with an AbortSignal so a hung apps/web cannot hang forever", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(VALID_COMPLETE), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  // A 200 that platform-api forwarded but this side cannot read is not `none`:
+  // the contract was violated, so there is no trustworthy answer to coerce a
+  // default out of. platform-api refuses most of these itself; this side does
+  // not rely on that, because "the proxy checks it" is not a guarantee this
+  // module can make about its own output.
+  it.each([
+    ["observed_at is missing", { state: "none" }],
+    ["the state is invented", { state: "sort-of", observed_at: "2026-08-17T09:00:00.000Z" }],
+    ["there is no state at all", { observed_at: "2026-08-17T09:00:00.000Z" }],
+    ["the body is not an object", ["complete"]],
+    ["the body is a string", "complete"],
+    ["the body is null", null],
+    ["ref is not a string", { state: "complete", ref: 7, observed_at: "2026-08-17T09:00:00.000Z" }],
+    ["idle_hours is not finite", {
+      state: "in_flight", idle_hours: Number.POSITIVE_INFINITY,
+      observed_at: "2026-08-17T09:00:00.000Z",
+    }],
+  ])("maps a body where %s to unknown, not none", async (_name, data) => {
+    answers(data);
 
-    await fetchConversionSignal("mark8ly", "a@b.com", "tx_session=abc");
-
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-  });
-
-  // The signal firing is a rejection like any other transport failure, and
-  // must land in the same `unknown` branch — not escape as an unhandled
-  // rejection, and not leave the caller waiting indefinitely.
-  it("maps a timed-out (aborted) request to unknown, not none", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockRejectedValue(new DOMException("The operation was aborted.", "TimeoutError"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const signal = await fetchConversionSignal("kora", "a@b.com", "tx_session=abc");
+    const signal = await fetchConversionSignal("mark8ly", "a@b.com");
     expect(signal.state).toBe("unknown");
   });
 
-  it("calls apps/web's per-product conversion-status route, not the product directly", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(VALID_COMPLETE), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("asks platform-api for the named product and email", async () => {
+    answers(VALID_COMPLETE);
 
-    await fetchConversionSignal("mark8ly", "a@b.com", "tx_session=abc");
+    await fetchConversionSignal("mark8ly", "a+tag@b.com");
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/api/admin/apps/mark8ly/conversion-status");
-    expect(url).toContain("email=a%40b.com");
-    expect(new Headers(init.headers).get("cookie")).toBe("tx_session=abc");
+    const [label, path] = platformRequestWithMeta.mock.calls[0] as [string, string];
+    expect(label).toBe("conversion-status");
+    // Encoded, not concatenated: a `+` in an address is a real character that
+    // a bare query string turns into a space, which would ask about a
+    // different person and answer confidently about them.
+    expect(path).toBe("/v1/conversions?source=mark8ly&email=a%2Btag%40b.com");
+  });
+
+  // Ruling 29: the request is now a proxy of a proxy of a proxy, and Task 10
+  // fans it out once per row in the handoff queue. The bound must be on every
+  // request, not just the ones that happen to time out in a given run.
+  it("bounds every request with an AbortSignal so a hung upstream cannot hang forever", async () => {
+    answers(VALID_COMPLETE);
+
+    await fetchConversionSignal("mark8ly", "a@b.com");
+
+    const [, , init] = platformRequestWithMeta.mock.calls[0] as [string, string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  // It no longer takes a cookie header: platformRequestWithMeta resolves the
+  // operator's own platform API token. Pinned because a caller passing a
+  // cookie would now be silently ignored rather than rejected.
+  it("takes no cookie header", () => {
+    expect(fetchConversionSignal.length).toBe(2);
   });
 });

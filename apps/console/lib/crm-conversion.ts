@@ -5,35 +5,23 @@
  * (`docs/superpowers/specs/2026-08-17-crm-design.md`): once an opportunity
  * reaches `stage = won`, the CRM does not read a product's tables to find out
  * whether the agreement actually turned into a live tenant/account/facility.
- * It asks, over the same per-product admin API road HMAC-signing already
- * uses for Kora and Fe3dr:
+ * It asks:
  *
- *   GET {product_admin_api}/internal/conversion-status?email=<email>
+ *   GET {platform_api}/v1/conversions?source=<product>&email=<email>
  *   200 { state: "none" | "in_flight" | "complete", ref?, label?,
  *         idle_hours?, observed_at }
- *   anything other than a valid 200 (404, 501, unreachable, timeout) → unknown
+ *   anything other than a valid 200 (404, 501, 503, unreachable, timeout)
+ *     → unknown
  *
- * RULING 27 (binding, #153): the console never calls a product's admin API
- * directly, and does not hold a product → base-URL registry. Every other
- * cross-product read in this codebase (`platform-api.ts`'s tickets, support
- * analytics, audit log) goes through `apps/web`, which holds the HMAC keys
- * Kora and Fe3dr require — moving those keys into the console would be a
- * secret-distribution change, not a refactor. So this client targets
- * `{WEB_ORIGIN}/api/admin/apps/{product}/conversion-status?email=…`,
- * following `platform-api.ts`'s existing shape.
+ * platform-api forwards the product's answer byte for byte and adds nothing to
+ * it, so the wire shape below is mark8ly's own — see
+ * platform-api/internal/modules/conversions, which argues why a Go struct
+ * there would be a second reader of this same contract.
  *
- * That collapses "no registry entry for this product" and "apps/web has no
- * adapter for this product yet" into ONE code path: apps/web answers 501 for
- * both, and 501 already maps to `unknown`. There is nothing here that can
- * drift out of sync with `ESTATE` because there is no second list to drift.
- *
- * NOTE: `apps/web`'s `/api/admin/apps/[product]/conversion-status` endpoint
- * does not exist yet — it is the next piece, not part of this task. This
- * client is exercised entirely against a mocked `fetch`. Every response it
- * has not yet been taught to expect (including "route not found") arrives as
- * a non-2xx status and is handled by the same 501/other-failure path as a
- * genuinely unimplemented product, which is the correct, honest behaviour
- * for a client stood up ahead of its server.
+ * WHO IS ASKED CHANGED IN #246; WHAT AN ANSWER MEANS DID NOT. This client
+ * targeted apps/web until then, under Ruling 27. See the note above
+ * `fetchConversionSignal` for why that ruling no longer holds and what
+ * replaced it.
  *
  * THE RULE THIS FILE EXISTS TO ENFORCE (RULING 28):
  *
@@ -61,6 +49,7 @@
  */
 
 import { PlatformApiError } from "./platform-api-error";
+import { platformRequestWithMeta } from "./platform-api";
 
 /**
  * `"unknown"` is a fourth state the wire contract does not have — it exists
@@ -185,9 +174,29 @@ export function parseConversionBody(json: unknown): ConversionResponseBody {
   };
 }
 
-// Same origin as every other cross-product read in `platform-api.ts` — the
-// console never talks to a product directly, only ever to apps/web.
-const WEB_ORIGIN = process.env.WEB_INTERNAL_ORIGIN ?? "http://localhost:3002";
+// RULING 27 IS SUPERSEDED, AND THIS IS THE ROUTE THAT SUPERSEDES IT (#246).
+//
+// The ruling sent every cross-product read through apps/web, "which holds the
+// HMAC keys Kora and Fe3dr require — moving those keys into the console would
+// be a secret-distribution change, not a refactor."
+//
+// Both halves of that stopped being true for this read:
+//
+//  - apps/web holds Kora's, Homechef's and Otto's credentials and NO mark8ly
+//    credential. The `company` deployment carries MARK8LY_PLATFORM_API_URL and
+//    nothing to sign with, so honouring the ruling here would have MEANT the
+//    secret distribution it exists to avoid — into a second workload.
+//  - apps/web is being retired to a marketing page. A tenth admin proxy route
+//    there is work with a known expiry.
+//
+// platform-api already federates to the product that answers this, with the
+// signed envelope mark8ly's platformadmin middleware requires
+// (FEDERATION_MARK8LY_*). So the console asks platform-api, which is where
+// every cross-product read is going anyway.
+//
+// What did NOT change is everything below: the strict parser, Ruling 28's
+// "only an explicit 200 is definite", and Ruling 29's timeout. Those are about
+// what an answer means, not about who is asked.
 
 /**
  * RULING 29. Node's `fetch` has no default request timeout — an apps/web
@@ -216,68 +225,56 @@ const CONVERSION_STATUS_TIMEOUT_MS = 8_000;
  * Ask apps/web whether `email` has converted for `product`.
  *
  * Never throws: every failure mode this contract defines — and every one it
- * does not, such as apps/web's own route not existing yet — resolves to a
- * `ConversionSignal` whose `state` is `"unknown"`, so a caller building the
- * handoff queue never has to special-case a rejected promise to stay safe.
- * The one exception is a caller-side bug (e.g. missing `cookieHeader`
- * argument), which is a TypeScript error, not a runtime one.
+ * does not, such as platform-api being unreachable or this session carrying no
+ * platform API token — resolves to a `ConversionSignal` whose `state` is
+ * `"unknown"`, so a caller building the handoff queue never has to
+ * special-case a rejected promise to stay safe.
+ *
+ * It takes no cookie header. It used to, because apps/web authenticated the
+ * console by session cookie; `platformRequestWithMeta` resolves the operator's
+ * own platform API token instead, so a caller has nothing to pass and cannot
+ * pass the wrong thing.
  */
 export async function fetchConversionSignal(
   product: string,
   email: string,
-  cookieHeader: string,
 ): Promise<ConversionSignal> {
   const unknown = (): ConversionSignal => ({ product, state: "unknown" });
 
-  let response: Response;
+  // `platformRequestWithMeta`, not a bare fetch: it resolves the operator's
+  // platform API token, sets the bearer header and unwraps the estate
+  // envelope. Every failure it can produce — an unset origin, no token, a
+  // transport error, a non-2xx, an envelope carrying `success: false` — is a
+  // thrown `PlatformApiError`, and every one of them means the same thing
+  // here: we did not find out.
+  let data: unknown;
   try {
-    response = await fetch(
-      `${WEB_ORIGIN}/api/admin/apps/${encodeURIComponent(product)}/conversion-status?email=${encodeURIComponent(email)}`,
+    ({ data } = await platformRequestWithMeta(
+      "conversion-status",
+      `/v1/conversions?source=${encodeURIComponent(product)}&email=${encodeURIComponent(email)}`,
       {
-        headers: { cookie: cookieHeader },
-        cache: "no-store",
-        // RULING 29: bounds the request so a hung apps/web cannot hang this
-        // promise forever. The resulting `AbortError`/`TimeoutError` is a
-        // rejection like any other transport failure, and lands in the same
-        // `catch` below — it must never escape as an unhandled rejection or
-        // leave the caller waiting indefinitely.
+        // RULING 29 still applies, and applies MORE now: the request is a
+        // proxy of a proxy of a proxy (console → platform-api → mark8ly), and
+        // Task 10 fans it out once per row in the handoff queue. A hung
+        // upstream anywhere on that chain must resolve to `unknown`, not stall
+        // a server render. `platformRequestWithMeta` spreads this init into
+        // its own fetch, so the abort lands in its catch and arrives here as
+        // a PlatformApiError like any other failure.
         signal: AbortSignal.timeout(CONVERSION_STATUS_TIMEOUT_MS),
       },
-    );
+    ));
   } catch {
-    // Unreachable apps/web, DNS failure, a timed-out AbortSignal — all
-    // transport failures, not answers. THE rule: this must never read as
-    // "not converted".
-    return unknown();
-  }
-
-  // RULING 28: 404 ("no conversion concept"), 501 ("not implemented yet"),
-  // and every other non-2xx all collapse to `unknown`. The contract's
-  // original design let 404 carry a definite `none`, but 404 is also what
-  // this exact route returns when it does not exist at all — which is true
-  // of every product today, since apps/web's endpoint has not been built
-  // yet. A meaning chosen for "the product answered" cannot also be the
-  // framework's own answer for "there is no route here"; the two are
-  // indistinguishable on the wire, so 404 can never be trusted to mean the
-  // first one. "No conversion concept" and "not implemented" are the same
-  // fact from the CRM's side anyway — nothing can be learned either way —
-  // so both belong in `unknown`. Only an explicit 200 produces a definite
-  // state; a product asserting "not converted" does so by answering
-  // `200 { state: "none" }`, which is the one honest way to say it.
-  if (!response.ok) {
-    return unknown();
-  }
-
-  let json: unknown;
-  try {
-    json = await response.json();
-  } catch {
+    // RULING 28, unchanged in substance: 404 ("no route"), 501 ("the product
+    // declares none"), 503 ("could not be read"), an unreachable platform-api,
+    // a timed-out AbortSignal — all collapse to `unknown`. A product asserting
+    // "not converted" does so the one honest way, by answering
+    // `200 { state: "none" }`, which reaches the `data` below.
     return unknown();
   }
 
   let body: ConversionResponseBody;
   try {
-    body = parseConversionBody(json);
+    body = parseConversionBody(data);
   } catch {
     // A malformed 200 is not `none`: the product's contract was violated, so
     // there is no trustworthy answer to coerce a default out of.

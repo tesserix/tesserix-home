@@ -23,9 +23,6 @@ vi.mock("@/lib/crm-conversion", () => ({
   fetchConversionSignal: (...args: unknown[]) => fetchConversionSignal(...args),
 }));
 
-vi.mock("next/headers", () => ({
-  cookies: async () => ({ toString: () => "tx_session=abc" }),
-}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
@@ -813,7 +810,7 @@ describe("buildHandoffItems", () => {
       return { product: "mark8ly", state: "none" } satisfies ConversionSignal;
     });
 
-    const items = await buildHandoffItems([rowA, rowB], "tx_session=abc");
+    const items = await buildHandoffItems([rowA, rowB]);
 
     expect(items).toHaveLength(2);
     expect(items[0].signal.state).toBe("unknown");
@@ -852,7 +849,7 @@ describe("buildHandoffItems", () => {
       return email === rowA.primaryEmail ? deferredA : deferredB;
     });
 
-    const itemsPromise = buildHandoffItems([rowA, rowB], "tx_session=abc");
+    const itemsPromise = buildHandoffItems([rowA, rowB]);
 
     // Neither deferred promise has been resolved yet, so a sequential
     // implementation cannot have issued row B's call at this point under
@@ -895,7 +892,7 @@ describe("buildHandoffItems", () => {
         }),
     );
 
-    const itemsPromise = buildHandoffItems(rows, "tx_session=abc");
+    const itemsPromise = buildHandoffItems(rows);
 
     await Promise.resolve();
     await Promise.resolve();
@@ -943,7 +940,7 @@ describe("buildHandoffItems", () => {
     );
 
     const started = Date.now();
-    const items = await buildHandoffItems([answered, hung], "tx_session=abc", {
+    const items = await buildHandoffItems([answered, hung], {
       deadlineMs: 20,
     });
     const elapsed = Date.now() - started;
@@ -958,7 +955,7 @@ describe("buildHandoffItems", () => {
 
   it("treats a row with no contact email as unknown without calling the product", async () => {
     const row: HandoffRow = { ...HANDOFF_ROW, primaryEmail: null };
-    const items = await buildHandoffItems([row], "tx_session=abc");
+    const items = await buildHandoffItems([row]);
     expect(items[0].signal).toEqual({ product: "mark8ly", state: "unknown" });
     expect(fetchConversionSignal).not.toHaveBeenCalled();
   });
@@ -966,8 +963,8 @@ describe("buildHandoffItems", () => {
   it("asks each row's own product, not a fixed one", async () => {
     fetchConversionSignal.mockResolvedValue({ product: "kora", state: "none" });
     const row: HandoffRow = { ...HANDOFF_ROW, product: "kora" };
-    await buildHandoffItems([row], "tx_session=abc");
-    expect(fetchConversionSignal).toHaveBeenCalledWith("kora", row.primaryEmail, "tx_session=abc");
+    await buildHandoffItems([row]);
+    expect(fetchConversionSignal).toHaveBeenCalledWith("kora", row.primaryEmail);
   });
 });
 
