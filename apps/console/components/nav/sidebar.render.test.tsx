@@ -1,11 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const pathname = vi.hoisted(() => ({ current: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.current }));
 
-import { ConsoleSidebar, railFor } from "./sidebar";
+import {
+  RAIL_IDS,
+  productLabel,
+  type RailId,
+} from "@tesserix/console-core";
+import { ConsoleSidebar, railFor, railPresentation } from "./sidebar";
 
 afterEach(() => {
   pathname.current = "/";
@@ -34,6 +39,40 @@ describe("railFor", () => {
     expect(railFor("/kora/foods")).toBe("kora");
     // A bare prefix must not match: /korax is not Kora's rail.
     expect(railFor("/korax")).toBe("platform");
+  });
+
+  it("switches to Mark8ly's rail inside its routes", () => {
+    // Read from `PRODUCT_IDS`, so this is not a second hardcoded product —
+    // but asserted anyway, because "derived" is a claim about the code and
+    // this is the observation.
+    expect(railFor("/mark8ly")).toBe("mark8ly");
+    expect(railFor("/mark8ly/tenants")).toBe("mark8ly");
+    expect(railFor("/mark8ly/migration-fast-path")).toBe("mark8ly");
+    expect(railFor("/mark8lyx")).toBe("platform");
+  });
+});
+
+describe("railPresentation", () => {
+  it("dresses a rail that has no entry in the presentation map", () => {
+    // The claim being pinned: adding a product to console-core's registry
+    // gives it a rail without editing `sidebar.tsx`'s presentation map. The
+    // map is deliberately PARTIAL, and this is the branch that makes that
+    // safe — a letter mark from the product's own label, filed under Product.
+    //
+    // A cast, because `RailId` is `ProductId | "platform"` and every id in it
+    // today happens to be in the map. The cast stands in for the product that
+    // is added tomorrow; nothing about the fallback depends on the id itself.
+    expect(railPresentation("fe3dr" as RailId, "Fe3dr")).toEqual({
+      mark: "F",
+      section: "Product",
+    });
+  });
+
+  it("still prefers a mapped rail's own artwork", () => {
+    // Guards the guard: a fallback that fired for everything would satisfy
+    // the test above while throwing away both logos.
+    expect(railPresentation("kora", "Kora").logo).toBe("/kora-mark.png");
+    expect(railPresentation("platform", "Platform").section).toBe("Operate");
   });
 });
 
@@ -227,6 +266,96 @@ describe("ConsoleSidebar", () => {
         screen.getByRole("link", { name: dark }),
       ).not.toHaveAttribute("aria-current");
     });
+  });
+
+  it("offers every rail the registry declares, in registry order", async () => {
+    // The switcher is built from `RAIL_IDS`, not from a list in sidebar.tsx.
+    // This is the "a product added to the registry appears as a rail" claim
+    // measured at the surface an operator uses: a new product shows up here
+    // with no edit to this component. Order asserted too — `RAIL_IDS` puts
+    // platform first deliberately (see products.ts).
+    const user = userEvent.setup();
+    render(<ConsoleSidebar />);
+    await user.click(screen.getByRole("button", { name: /platform/i }));
+
+    const items = within(
+      screen.getByRole("menu", { name: "Switch context" }),
+    ).getAllByRole("menuitem");
+    expect(items).toHaveLength(RAIL_IDS.length);
+    // Accessible name rather than textContent: a rail with no logo renders its
+    // letter mark as text, and that span is `aria-hidden` precisely so it is
+    // not read as part of the name.
+    RAIL_IDS.forEach((id, index) => {
+      expect(items[index]).toHaveAccessibleName(
+        id === "platform" ? "Platform" : productLabel(id),
+      );
+    });
+  });
+
+  it("renders Mark8ly's rail with its built pages linked and the queue pending", () => {
+    // The rail exists at all only because `PRODUCTS` lists mark8ly — nothing
+    // in this component names it. Three entries are real doors; the fourth is
+    // `mark8ly.migrationFastPath`, which is still `pending` (#406's follow-up)
+    // and must stay a SOON badge rather than a link now that it has siblings.
+    pathname.current = "/mark8ly";
+    render(<ConsoleSidebar />);
+
+    expect(screen.getByText("Mark8ly")).toBeInTheDocument();
+    // Flat rail, so it carries the section label rather than group headings.
+    expect(screen.getByText("Product")).toBeInTheDocument();
+
+    for (const [name, href] of [
+      ["Overview", "/mark8ly"],
+      ["Tenants", "/mark8ly/tenants"],
+      ["Users", "/mark8ly/users"],
+    ] as const) {
+      const link = screen.getByText(name).closest("a");
+      expect(link, `${name} should be a link`).not.toBeNull();
+      expect(link).toHaveAttribute("href", href);
+    }
+
+    const queue = screen.getByText("Migration fast-path review");
+    expect(queue.closest("a")).toBeNull();
+    expect(queue.closest("[aria-disabled='true']")).not.toBeNull();
+  });
+
+  it("lights only Overview on Mark8ly's root", () => {
+    // `mark8ly.overview` is `exact`, so `/mark8ly` must not also light the
+    // entity entries — and on a nested page the root must go dark. Both
+    // directions, because either one alone passes for a rail that lights
+    // nothing.
+    pathname.current = "/mark8ly";
+    const first = render(<ConsoleSidebar />);
+    expect(screen.getByRole("link", { name: "Overview" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Tenants" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    first.unmount();
+
+    pathname.current = "/mark8ly/tenants";
+    render(<ConsoleSidebar />);
+    expect(screen.getByRole("link", { name: "Tenants" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Overview" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("draws a letter mark for a rail with no logo asset", () => {
+    // `apps/console/public/` has no mark8ly artwork, so the rail falls back to
+    // `mark: "M"`. Asserted because the alternative failure is silent: a
+    // missing `logo` path renders a broken <img>, not an error.
+    pathname.current = "/mark8ly";
+    render(<ConsoleSidebar />);
+
+    const switcher = screen.getByRole("button", { name: /mark8ly/i });
+    expect(within(switcher).getByText("M")).toBeInTheDocument();
+    expect(switcher.querySelector("img")).toBeNull();
   });
 
   it("switches to Kora's rail inside Kora routes", () => {

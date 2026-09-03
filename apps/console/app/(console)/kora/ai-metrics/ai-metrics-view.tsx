@@ -40,7 +40,7 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // browser bundle.
 import type { EntityPagination, EntityRecord } from "@/lib/entities";
 import type { KoraAiMetrics, KoraAiUser } from "@/lib/kora-ai-metrics";
-import type { PagerLinks } from "../entity-page";
+import type { PagerLinks } from "@/components/kit/entity-page";
 // The ONE place `first_try_rate_pct` becomes copy — reused here rather than
 // re-derived, per the plan's explicit instruction. Both surfaces share the
 // exact same non-negotiable: absent must never render as 0%.

@@ -9,7 +9,10 @@ import {
 } from "@tesserix/platform-auth";
 
 import { isInternal, requiresCapability } from "@/lib/internal-access";
-import { CONSOLE_PATHNAME_HEADER } from "@/lib/auth/console-pathname";
+import {
+  CONSOLE_PATHNAME_HEADER,
+  consoleGatePathname,
+} from "@/lib/auth/console-pathname";
 import { publicOrigin } from "@/lib/public-origin";
 
 // Use the Node runtime so jose's symmetric-key crypto runs natively
@@ -221,7 +224,13 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   //
   // Request header, not response: it travels INTO the render and never
   // reaches the browser.
+  //
+  // Normalised, because `nextUrl.pathname` is NOT percent-decoded while the
+  // router decodes the params it captures — see `consoleGatePathname` for the
+  // whole argument. Only the value handed to the gate is normalised; every
+  // check above this line still reads the raw `pathname`, so the allowlists
+  // keep matching exactly what the router will.
   const forwarded = new Headers(request.headers);
-  forwarded.set(CONSOLE_PATHNAME_HEADER, pathname);
+  forwarded.set(CONSOLE_PATHNAME_HEADER, consoleGatePathname(pathname));
   return NextResponse.next({ request: { headers: forwarded } });
 }

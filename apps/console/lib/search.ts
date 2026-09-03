@@ -1,9 +1,9 @@
 import {
   consolePath,
   isPending,
-  koraNav,
   navItems,
-  platformNav,
+  RAIL_IDS,
+  railNav,
   ROUTE_IDS,
   type RouteId,
   toolUrl,
@@ -114,14 +114,21 @@ export function routeLabel(id: RouteId): string {
 /**
  * Every route id a rail still advertises.
  *
- * Both rails, not just `platformNav`: Kora's surfaces are pending and live in
- * `koraNav`, and they are precisely the ones that must keep their palette rows.
+ * EVERY rail, from `RAIL_IDS` — not a hand-listed pair. The sidebar derives
+ * its rail set the same way, and the two must agree: this set decides whether
+ * a PENDING route keeps its palette row, and the justification for keeping one
+ * is that a rail advertises it as coming. A rail the sidebar renders but this
+ * set omits would strand exactly that entry — visible as SOON on the rail,
+ * absent from the palette. `mark8lyNav` was that case until #137 wired it
+ * here: it was rendered by nothing, so listing it would have advertised a
+ * queue no rail showed.
+ *
  * Built from `navItems` — the walker console-core exports — rather than a
  * second flattener here, so the palette and nav.test.ts cannot disagree about
  * what the rails contain.
  */
 const RAILED_ROUTES: ReadonlySet<string> = new Set(
-  [...navItems(platformNav), ...navItems(koraNav)].map((item) => item.route),
+  RAIL_IDS.flatMap((id) => navItems(railNav(id))).map((item) => item.route),
 );
 
 /**

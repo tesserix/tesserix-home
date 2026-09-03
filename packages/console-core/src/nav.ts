@@ -59,7 +59,13 @@ export const koraNav: readonly NavEntry[] = [
 ];
 
 /**
- * Mark8ly's product rail. ONE entry, and that is the whole rail today.
+ * Mark8ly's product rail: an overview, one entry per §3.4 entity type the
+ * product declares, and the CSM migration fast-path review queue.
+ *
+ * WHY THIS WAS ONE ENTRY UNTIL NOW — and why the record below is still true
+ * of the surfaces it is about. Everything from here to the `inbox` note is
+ * about the queue and the two surfaces deferred alongside it; the three
+ * entries added since are a different set, described after it.
  *
  * The design (§2.3) names three: the CSM migration fast-path review queue,
  * arbitrage appeals, and app credentials. Only the first is built against
@@ -91,8 +97,46 @@ export const koraNav: readonly NavEntry[] = [
  * `migration_fast_path` kind, and IconKey is consumed as `Record<IconKey, …>`
  * in web, mobile and console, so adding a key is a compile error in three
  * apps for one rail entry.
+ *
+ * THE THREE ENTRIES ADDED SINCE ARE NOT §2.3's OTHER TWO. Overview, Tenants
+ * and Users are the generic `[product]` surfaces: `/mark8ly` reads §3.1
+ * `kpis`, and `/mark8ly/tenants` and `/mark8ly/users` read §3.4 `entities`,
+ * one page per type in `PRODUCTS.mark8ly.entities`. They are served by
+ * `app/(console)/[product]/page.tsx` and `[product]/[entity]/page.tsx` with no
+ * mark8ly page file of their own. So they are not arbitrage appeals or app
+ * credentials arriving early — those two are still deferred by §5, exactly as
+ * recorded above.
+ *
+ * They are listed here now rather than when their route ids were declared
+ * because a rail entry advertises a door: routes.ts declared the ids ahead of
+ * the pages on purpose (so the capability gate applied from the first day),
+ * and the pages landed afterwards. This is the change that opens the doors.
  */
 export const mark8lyNav: readonly NavEntry[] = [
+  // Overview first, and `layout-dashboard` to match `kora.overview`: it is the
+  // same kind of surface on the other product rail, so it looks the same.
+  { name: "Overview", route: "mark8ly.overview", icon: "layout-dashboard" },
+  // Then one entry per declared §3.4 entity type, in the order
+  // `PRODUCTS.mark8ly.entities` lists them, so the rail and the registry can
+  // be read side by side without reconciling two orders.
+  //
+  // `globe` is `platform.tenants`'s icon. Sharing it is deliberate: the two
+  // are different route ids for different surfaces (routes.ts says why they
+  // must stay separate), but they are the same KIND of thing to an operator
+  // scanning a rail, and the RAIL an entry sits on is what says whose tenants
+  // these are — the icon was never carrying that distinction. Same trade as
+  // `scroll-text` and `key-round` on the platform rail: no new IconKey, which
+  // would be a compile error in web, mobile and console until each maps it.
+  { name: "Tenants", route: "mark8ly.tenants", icon: "globe" },
+  // `users` for the same reason `kora.users` carries it.
+  { name: "Users", route: "mark8ly.users", icon: "users" },
+  // Last. It was first when it was the only entry; it moves to the end
+  // because it is the one entry still `pending`, and a rail whose first row
+  // is an unclickable SOON badge reads as a rail that does not work. No
+  // stronger claim than that — the platform rail does not order pending
+  // entries consistently either way (Break-glass sits mid-Governance with
+  // built entries below it).
+  //
   // The name renders mark8ly's vocabulary rather than translating it: the
   // queue is over the `migration_fast_path` inbox kind, and calling it
   // anything else on the rail would make the console and the product describe

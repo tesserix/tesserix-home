@@ -13,7 +13,7 @@ import {
   type SurfaceState,
 } from "@/components/kit/surface-state";
 import { fetchProductEntities } from "@/lib/platform-api";
-import { pagerLinks, readPage, type PagerLinks } from "../entity-page";
+import { pagerLinks, readPage, type PagerLinks } from "@/components/kit/entity-page";
 import type { EntityPage } from "@/lib/entities";
 import { FoodIndex } from "./food-index";
 

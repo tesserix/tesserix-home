@@ -45,11 +45,19 @@ describe("consolePath", () => {
     // "platform.profile" is excluded for the second reason as well: it is the
     // operator's own record in the CONSOLE, and the mobile app has no screen
     // for it. Writing a `mobile` path to satisfy this loop would claim one.
+    // "mark8ly.overview", "mark8ly.tenants" and "mark8ly.users" are excluded
+    // for that second reason too: they are console surfaces over mark8ly's
+    // federated `/admin/kpis` and `/admin/entities/{type}`, and expo-router
+    // has no screen for any of them. apps/web's mark8ly rail is eight screens
+    // over mark8ly's own tables, which is a different surface, not these.
     for (const id of ROUTE_IDS) {
       if (
         id === "platform.dashboard" ||
         id === "platform.tools" ||
         id === "mark8ly.migrationFastPath" ||
+        id === "mark8ly.overview" ||
+        id === "mark8ly.tenants" ||
+        id === "mark8ly.users" ||
         id === "platform.onboarding" ||
         id === "platform.onboardingSessions" ||
         id === "platform.profile"
@@ -159,10 +167,20 @@ describe("console-native surfaces record no apps/web path", () => {
     //   - platform.profile: the operator's own record. apps/web had no such
     //     page — capabilities did not exist as a vocabulary until #261, so
     //     there was nothing for it to show.
+    //   - mark8ly.overview, mark8ly.tenants, mark8ly.users: apps/web's mark8ly
+    //     rail is eight screens reading mark8ly's own tables directly. These
+    //     three read the federated admin contract (`/admin/kpis`,
+    //     `/admin/entities/{type}`) through platform-api, which postdates
+    //     apps/web. Recording one of the eight here would name a page that
+    //     shows different rows from a different source as this one's
+    //     predecessor — the same misstatement platform.tenants avoids.
     const missing = ROUTE_IDS.filter((id) => webPath(id) === undefined);
     expect(missing).toEqual([
       "kora.aiMetrics",
       "mark8ly.migrationFastPath",
+      "mark8ly.overview",
+      "mark8ly.tenants",
+      "mark8ly.users",
       "platform.tools",
       "platform.profile",
       "platform.auditLog",
@@ -409,6 +427,27 @@ describe("pending reflects what the console actually serves", () => {
     // surface as an inert SOON badge.
     expect(isPending("platform.outbox")).toBe(false);
     expect(consolePath("platform.outbox")).toBe("/platform/outbox");
+  });
+
+  it("has all three generic mark8ly surfaces built, and the fast path still pending", () => {
+    // `app/(console)/[product]/page.tsx` serves `/mark8ly` and
+    // `app/(console)/[product]/[entity]/page.tsx` serves the two entity
+    // indexes — none has a mark8ly page file of its own, which is the point of
+    // the generic route. `pending` is a claim about what the console SERVES,
+    // so with those pages in place the claim would simply be false.
+    //
+    // Not "the rail would badge them SOON": `mark8lyNav` holds only
+    // `mark8ly.migrationFastPath` today, so none of these three is rendered
+    // anywhere a badge could appear. The rail is a later change than the
+    // pages, and this row must stay true before and after it.
+    expect(isPending("mark8ly.overview")).toBe(false);
+    expect(isPending("mark8ly.tenants")).toBe(false);
+    expect(isPending("mark8ly.users")).toBe(false);
+    // The control, and the reason this is one test rather than three: the
+    // fast path has no page and no generic surface can serve it — it renders
+    // mark8ly's own migration vocabulary — so it must stay pending. A change
+    // that cleared `pending` across the whole mark8ly block would go red here.
+    expect(isPending("mark8ly.migrationFastPath")).toBe(true);
   });
 
   it("reports kora.audit as retired rather than pending", () => {

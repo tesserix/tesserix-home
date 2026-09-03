@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { routeForPath } from "@tesserix/console-core";
+import { PRODUCT_IDS, productEntities, routeForPath } from "@tesserix/console-core";
 
 /**
  * Guard: every console page is reachable by the access gate, and every server
@@ -90,6 +90,38 @@ function urlForPage(file: string): string {
   return "/" + segments.join("/");
 }
 
+/**
+ * The request paths a page file actually answers.
+ *
+ * One each, except for the two generic product pages.
+ * `app/(console)/[product]/` and `app/(console)/[product]/[entity]/` have no
+ * literal path of their own — `routeForPath("/[product]")` matches nothing,
+ * because `[product]` is a filesystem notation and the route table holds
+ * request paths. Their real paths are enumerable, because the param checks
+ * enumerate them: `resolveProductParam` refuses every segment outside
+ * `PRODUCT_IDS`, and `resolveEntitySurface` refuses every second segment
+ * outside `productEntities(product)`. So the expansion below is exactly the
+ * set these two pages can render, product by product.
+ *
+ * Expanding rather than excepting is what keeps the guard's promise for them:
+ * a product — or an entity type — added to `PRODUCTS` without its route ids
+ * fails this walk, instead of the page quietly rendering on the entry
+ * capability.
+ *
+ * Other dynamic segments need no expansion — `/platform/tickets/[id]` resolves
+ * through `routeForPath`'s prefix match to `platform.tickets`, which is the
+ * behaviour that file's own comment calls load-bearing for record pages.
+ */
+function urlsForPage(file: string): string[] {
+  const url = urlForPage(file);
+  if (!url.includes("[product]")) return [url];
+  return PRODUCT_IDS.flatMap((id) => {
+    const forProduct = url.replace("[product]", id);
+    if (!forProduct.includes("[entity]")) return [forProduct];
+    return productEntities(id).map((type) => forProduct.replace("[entity]", type));
+  });
+}
+
 const PAGES = walk(PAGES_ROOT, (f) => f === "page.tsx").sort();
 
 describe("every console page is reachable by the access gate", () => {
@@ -99,9 +131,15 @@ describe("every console page is reachable by the access gate", () => {
   // a clean bill of health.
   it("finds pages to check at all", () => {
     expect(PAGES.length).toBeGreaterThan(20);
+    // The same vacuity, one level in. `urlsForPage` expands the two
+    // `[product]` pages over `PRODUCT_IDS`, so an empty registry contributes
+    // ZERO rows for them — the walk would still find every other page, the
+    // count above would still pass, and the generic pages would be checked by
+    // nothing at all.
+    expect(PRODUCT_IDS.length).toBeGreaterThan(0);
   });
 
-  it.each(PAGES.map((f) => [rel(f), urlForPage(f)]))(
+  it.each(PAGES.flatMap((f) => urlsForPage(f).map((url) => [rel(f), url])))(
     "%s (%s) resolves to a route entry",
     (_file, url) => {
       // #262 resolves a REQUEST PATH through the route table to find the

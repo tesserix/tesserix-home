@@ -848,6 +848,34 @@ export async function fetchProductEntities(
   );
 }
 
+/**
+ * One product's §3.1 headline metrics.
+ *
+ * `source` is required by the API and there is deliberately no fan-out
+ * default: `service.go` refuses to merge two products' numbers because
+ * `orders_today` in one is a different number about a different business than
+ * `orders_today` in the other. The handler answers a missing `source` with a
+ * 400 rather than picking one.
+ *
+ * No page size and no filters — the endpoint takes only `source`, and
+ * `RejectUnknownParameters` answers 400 for anything else sent alongside it.
+ *
+ * The statuses this can reject with, and what each means, are documented on
+ * `kpisReadError` in `./kpis`, which is what a page should narrow the
+ * rejection with. The short version: 501 is "this product reports no headline
+ * metrics", 503 is "the product could not be reached", and the two must never
+ * be rendered as each other.
+ */
+export async function fetchProductKpis(
+  source: string,
+): Promise<import("./kpis").ProductKpis> {
+  const { parseProductKpis } = await import("./kpis");
+
+  const query = new URLSearchParams({ source });
+
+  return parseProductKpis(await platformRequest("kpis", `/v1/kpis?${query.toString()}`));
+}
+
 /** The bound this surface asks each product for. Sent rather than left to the
  *  API's default so the window is stated by the caller that renders it. */
 export const INBOX_LIMIT = 100;
