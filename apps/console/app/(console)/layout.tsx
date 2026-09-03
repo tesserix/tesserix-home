@@ -1,4 +1,9 @@
-import { getCurrentSession, toCapabilities } from "@tesserix/platform-auth";
+import { headers } from "next/headers";
+import { notFound } from "next/navigation";
+import { CapabilityError, getCurrentSession, toCapabilities } from "@tesserix/platform-auth";
+import { capabilityForPath } from "@tesserix/console-core";
+import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
+import { CONSOLE_PATHNAME_HEADER } from "@/lib/auth/console-pathname";
 import { ConsoleSidebar } from "@/components/nav/sidebar";
 import { ConsoleHeader } from "@/components/nav/console-header";
 import { requiresCapability } from "@/lib/internal-access";
@@ -20,6 +25,63 @@ export default async function ConsoleLayout({
   // rather than failing the whole console.
   const session = await getCurrentSession();
   const showCapabilities = requiresCapability();
+
+  // THE ACCESS GATE (#262, R2). Until this existed every operator who could
+  // log in could reach every page by typing its URL — `routes.ts` says of its
+  // own capability field that it is "a discoverability gate, not an access
+  // gate", and nothing else consulted it.
+  //
+  // It runs here, in the layout, rather than in middleware because middleware
+  // holds only the session cookie, whose roles are up to seven days old. This
+  // reads the live capability store — the same authority every gated write
+  // uses since #285 — so a revocation takes effect in about five minutes here
+  // too, instead of a week.
+  //
+  // NOT-FOUND, NEVER FORBIDDEN (R2.2). A permission error confirms the
+  // surface exists and leaks the shape of the estate to someone who should
+  // not know it. Pages already answer `notFound()` for records that do not
+  // exist, so a restricted surface is indistinguishable from one that was
+  // never built.
+  //
+  // API routes are deliberately NOT covered: per R2.3 they keep their own
+  // `assertCapability` checks, so routing is never the only thing between an
+  // operator and a verb.
+  // Gated on `showCapabilities` — i.e. `requiresCapability()` — which is the
+  // SAME switch the rail filter and the command palette already use. Two
+  // reasons, and the second is not a test convenience:
+  //
+  //  1. The legacy provider carries no capability claims at all, so enforcing
+  //     would refuse every surface to every operator. "Off means unchanged" is
+  //     the contract `visibleTo` and `visibleNav` both give, and a gate that
+  //     disagreed with the rail about whether enforcement is on would hide a
+  //     surface it still served, or serve one it hid.
+  //
+  //  2. `checkOperatorCapabilityLive` throws on a NULL session before it
+  //     checks the provider, and this layout deliberately tolerates a null
+  //     session — its comment above says a misconfiguration should render the
+  //     header without identity rather than fail the whole console. Without
+  //     this guard the gate turns that into a 404 for every page, which is
+  //     how it broke the e2e run: the auth bypass returns from middleware
+  //     before a session exists.
+  //
+  // In production `AUTH_PROVIDER=zitadel`, so this is true and the gate runs.
+  // A null session THERE is still refused, which is the fail-closed direction
+  // for an access control.
+  if (showCapabilities) {
+    const pathname = (await headers()).get(CONSOLE_PATHNAME_HEADER) ?? "";
+    const required = capabilityForPath(pathname);
+    try {
+      await checkOperatorCapabilityLive(session, required);
+    } catch (cause) {
+      if (cause instanceof CapabilityError) notFound();
+      throw cause;
+    }
+  }
+
+  // What the rail may offer (#263, R3) — the same `routeCapability` the gate
+  // above reads, so hiding and refusing cannot disagree. `visibleNav` fails
+  // closed on an absent claims list for the reason `visibleTo` does.
+  const capabilities = showCapabilities ? toCapabilities(session?.roles ?? []) : [];
   // Read alongside the directory rather than after it: both are independent
   // server reads and awaiting them in sequence adds one round trip to every
   // console page render.
@@ -31,13 +93,13 @@ export default async function ConsoleLayout({
   return (
     <div className="flex min-h-screen">
       <div className="hidden lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:flex">
-        <ConsoleSidebar />
+        <ConsoleSidebar capabilities={capabilities} enforceCapabilities={showCapabilities} />
       </div>
       <main id="main-content" className="flex-1 lg:pl-56">
         <ConsoleHeader
           name={session?.name ?? ""}
           email={session?.email ?? ""}
-          capabilities={showCapabilities ? toCapabilities(session?.roles ?? []) : []}
+          capabilities={capabilities}
           showCapabilities={showCapabilities}
           toolsBaseDomain={process.env.NEXT_PUBLIC_TOOLS_DOMAIN ?? "tesserix.app"}
           tools={directory.tools}
