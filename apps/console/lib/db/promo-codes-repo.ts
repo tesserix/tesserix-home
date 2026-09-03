@@ -11,17 +11,32 @@ import "server-only";
 // plain constants module with no `server-only` and no `pg` ancestry, so
 // importing it as a value costs this module nothing.
 import { CATALOG_SOURCES, type CatalogSource } from "@/lib/billing/source-policy";
+import { STRIPE_MODES, type StripeMode } from "@/lib/billing/stripe-read";
 import { tesserixQuery } from "./tesserix";
 
 /**
- * Reads and writes for `promo_codes` (0046) — the DEFINITION side of
- * tesserix-home#521.
+ * Reads and writes for `promo_codes` and `promo_code_stripe_coupons` (0046) —
+ * the DEFINITION side of tesserix-home#521.
  *
  * ITS OWN FILE, NOT `plan-catalog-repo.ts`. That module is the read side of a
  * mirrored, published, per-mode catalog with a parity check hanging off it;
- * this is a small CRUD over a table nothing joins. They share a `source` and
- * nothing else, and the precedent for "this is neither of the existing paths"
- * is `crm-templates.ts` splitting out of `crm-repo.ts` for the same reason.
+ * this is a small CRUD over two tables nothing else joins. They share a
+ * `source` and a `mode` vocabulary and nothing else, and the precedent for
+ * "this is neither of the existing paths" is `crm-templates.ts` splitting out
+ * of `crm-repo.ts` for the same reason.
+ *
+ * ══ TERMS ARE MODE-INDEPENDENT; THE MINTED COUPON IS NOT ══
+ *
+ * A definition carries the discount TERMS an operator authored — percent-off
+ * or amount-off, duration, months, currency. It does NOT carry a
+ * `stripe_coupon_id`, and #521's body asking for one is wrong: a `co_...` is
+ * account-scoped exactly as a `price_...` is, and 0032 already settled that a
+ * per-mode Stripe id must not sit on a mode-independent row. What was actually
+ * minted lives in `promo_code_stripe_coupons`, keyed `(promo_code_id, mode)`
+ * — the shape `plan_catalog_publications` uses for the same reason.
+ *
+ * A definition with terms and no coupon in any mode is NORMAL, not incomplete.
+ * See {@link recordStripeCoupon} and {@link readStripeCoupons}.
  *
  * ══ MARK8LY IS THE ONLY REDEEMER ══
  *
@@ -94,18 +109,63 @@ export function normalisePromoCode(raw: string): string {
   return raw.trim().toUpperCase();
 }
 
+/**
+ * Stripe's three coupon durations, passed through rather than reinterpreted.
+ *
+ * Spelled here as well as in 0046's
+ * `promo_codes_discount_duration_is_a_stripe_duration` for the reason
+ * `TemplateChannel` is: a caller passing `"monthly"` should be a TypeScript
+ * error at the call site, not a CHECK violation from Postgres at runtime.
+ */
+export type DiscountDuration = "once" | "repeating" | "forever";
+
+/**
+ * The discount TERMS an operator authored — `createCoupon`'s input, not its
+ * output, and true regardless of which Stripe account they are later minted
+ * into.
+ *
+ * A DISCRIMINATED UNION on `kind`, which is the type-level form of 0046's
+ * `promo_codes_discount_is_percent_off_xor_amount_off`. The alternative — one
+ * shape with both fields optional — would make "both set" and "neither set"
+ * expressible in TypeScript and rejected only by the database, which is the
+ * long way round to the same error.
+ *
+ * `currency` sits on the amount-off arm ONLY, so the biconditional
+ * `promo_codes_discount_currency_accompanies_amount_off` enforces is a thing
+ * the type system will not let a caller violate either.
+ *
+ * `durationInMonths` stays optional on both arms rather than being lifted onto
+ * a `repeating` variant: the iff is a fact about `duration`, not about the
+ * discount shape, and modelling it here would multiply the union by three for
+ * one rule the database already states.
+ */
+export type PromoCodeDiscount = {
+  duration: DiscountDuration;
+  /** Required iff `duration` is `"repeating"` —
+   *  `promo_codes_discount_months_iff_repeating`. */
+  durationInMonths: number | null;
+} & (
+  | { kind: "percent_off"; percentOff: number }
+  | { kind: "amount_off"; amountOffMinor: number; currency: string }
+);
+
 /** A promo code definition, as the console and the served contract see it. */
 export interface PromoCodeRow {
   id: string;
   source: PromoCodeSource;
-  /** Always the canonical form: upper-case, trimmed. */
+  /** Always the canonical form: upper-case, no whitespace. */
   code: string;
   /** Null means this code does not extend the trial — never 0, which 0046
    *  refuses. */
   trialExtensionDays: number | null;
-  /** A Stripe Coupon id (`co_...`), or null for a code with no discount.
-   *  Carries no mode; see 0046's header for why that is an open question. */
-  stripeCouponId: string | null;
+  /**
+   * The authored terms, or null for a trial-extension-only code.
+   *
+   * NOT a Stripe coupon id. Terms present with no coupon minted anywhere is the
+   * normal state between authoring and first publish — read what was minted
+   * with {@link readStripeCoupons}.
+   */
+  discount: PromoCodeDiscount | null;
   validFrom: string;
   /** Null means no expiry, not unknown. */
   validUntil: string | null;
@@ -122,7 +182,15 @@ interface PromoCodeDbRow {
   source: PromoCodeSource;
   code: string;
   trial_extension_days: number | null;
-  stripe_coupon_id: string | null;
+  /** `numeric` arrives from `pg` as a STRING — it does not fit a JS number in
+   *  general. Narrowed by {@link toNumericOrNull}. */
+  discount_percent_off: string | number | null;
+  /** `bigint`, likewise a string. See `plan-catalog-repo.ts`'s `toMinorUnits`
+   *  for the identical narrowing on the identical Stripe concept. */
+  discount_amount_off: string | number | null;
+  discount_currency: string | null;
+  discount_duration: DiscountDuration | null;
+  discount_duration_in_months: number | null;
   valid_from: unknown;
   valid_until: unknown;
   max_redemptions: number | null;
@@ -160,13 +228,66 @@ function toIntOrNull(value: number | string | null): number | null {
   return n;
 }
 
+/**
+ * `numeric` arrives from `pg` as a string, deliberately — it is arbitrary
+ * precision and does not fit a JS number in general. `percent_off` does fit:
+ * 0046 declares it `numeric(5,2)`, so every storable value is at most 100.00
+ * and exactly representable. Narrowed here rather than at each call site so
+ * that reasoning is written down once.
+ */
+function toNumericOrNull(value: string | number | null): number | null {
+  if (value === null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    throw new Error(`promo-codes-repo: expected a numeric, got ${String(value)}`);
+  }
+  return n;
+}
+
+/**
+ * Reassemble the discount terms from six flat columns into the discriminated
+ * union.
+ *
+ * `discount_duration` is the presence marker, matching
+ * `promo_codes_discount_terms_are_all_or_nothing` — the same column the
+ * database anchors the group on, so the two cannot disagree about whether a row
+ * has terms.
+ *
+ * THROWS rather than returning null on a row that has a duration and neither
+ * amount: that shape is refused by
+ * `promo_codes_discount_is_percent_off_xor_amount_off`, so meeting it means the
+ * constraint is gone or the SELECT stopped fetching a column. Silently
+ * returning null there would render a discount code as trial-only, which is a
+ * wrong answer presented as a normal one.
+ */
+function toDiscount(row: PromoCodeDbRow): PromoCodeDiscount | null {
+  if (row.discount_duration === null) return null;
+
+  const shared = {
+    duration: row.discount_duration,
+    durationInMonths: toIntOrNull(row.discount_duration_in_months),
+  };
+
+  const percentOff = toNumericOrNull(row.discount_percent_off);
+  if (percentOff !== null) return { ...shared, kind: "percent_off", percentOff };
+
+  const amountOffMinor = toIntOrNull(row.discount_amount_off);
+  if (amountOffMinor !== null && row.discount_currency !== null) {
+    return { ...shared, kind: "amount_off", amountOffMinor, currency: row.discount_currency };
+  }
+
+  throw new Error(
+    `promo-codes-repo: promo code ${row.id} has discount terms with neither a percent-off nor an amount-off and currency`,
+  );
+}
+
 function toPromoCodeRow(row: PromoCodeDbRow): PromoCodeRow {
   return {
     id: row.id,
     source: row.source,
     code: row.code,
     trialExtensionDays: toIntOrNull(row.trial_extension_days),
-    stripeCouponId: row.stripe_coupon_id,
+    discount: toDiscount(row),
     validFrom: toIsoRequired(row.valid_from),
     validUntil: toIsoNullable(row.valid_until),
     maxRedemptions: toIntOrNull(row.max_redemptions),
@@ -180,7 +301,9 @@ function toPromoCodeRow(row: PromoCodeDbRow): PromoCodeRow {
 /** Every column, in one place, so the statements below cannot drift into
  *  returning different shapes for the same type — `crm-templates.ts`'s
  *  `TEMPLATE_COLUMNS` rule. */
-const PROMO_CODE_COLUMNS = `id, source, code, trial_extension_days, stripe_coupon_id,
+const PROMO_CODE_COLUMNS = `id, source, code, trial_extension_days,
+                            discount_percent_off, discount_amount_off, discount_currency,
+                            discount_duration, discount_duration_in_months,
                             valid_from, valid_until, max_redemptions, is_active,
                             created_by, created_at, updated_at`;
 
@@ -189,13 +312,42 @@ export interface CreatePromoCodeInput {
   code: string;
   source?: PromoCodeSource;
   trialExtensionDays?: number | null;
-  stripeCouponId?: string | null;
+  /** The authored terms. Omit for a trial-extension-only code. */
+  discount?: PromoCodeDiscount | null;
   /** Defaults to `now()` in the database when omitted. */
   validFrom?: Date | string | null;
   validUntil?: Date | string | null;
   maxRedemptions?: number | null;
   isActive?: boolean;
   createdBy: string;
+}
+
+/** Flatten the union back into the six columns. The inverse of
+ *  {@link toDiscount}, and the only place that mapping is written in this
+ *  direction. */
+function discountColumns(discount: PromoCodeDiscount | null | undefined): {
+  percentOff: number | null;
+  amountOffMinor: number | null;
+  currency: string | null;
+  duration: DiscountDuration | null;
+  durationInMonths: number | null;
+} {
+  if (!discount) {
+    return {
+      percentOff: null,
+      amountOffMinor: null,
+      currency: null,
+      duration: null,
+      durationInMonths: null,
+    };
+  }
+  return {
+    percentOff: discount.kind === "percent_off" ? discount.percentOff : null,
+    amountOffMinor: discount.kind === "amount_off" ? discount.amountOffMinor : null,
+    currency: discount.kind === "amount_off" ? discount.currency : null,
+    duration: discount.duration,
+    durationInMonths: discount.durationInMonths,
+  };
 }
 
 /**
@@ -215,19 +367,27 @@ export interface CreatePromoCodeInput {
  * stays plain data access.
  */
 export async function createPromoCode(input: CreatePromoCodeInput): Promise<PromoCodeRow> {
+  const discount = discountColumns(input.discount);
   const rows = await tesserixQuery<PromoCodeDbRow>(
     `INSERT INTO promo_codes
-       (source, code, trial_extension_days, stripe_coupon_id,
+       (source, code, trial_extension_days,
+        discount_percent_off, discount_amount_off, discount_currency,
+        discount_duration, discount_duration_in_months,
         valid_from, valid_until, max_redemptions, is_active, created_by)
-     VALUES ($1, $2, $3, $4,
-             COALESCE($5::timestamptz, now()), $6::timestamptz,
-             $7, COALESCE($8::boolean, true), $9)
+     VALUES ($1, $2, $3,
+             $4::numeric, $5::bigint, $6, $7, $8,
+             COALESCE($9::timestamptz, now()), $10::timestamptz,
+             $11, COALESCE($12::boolean, true), $13)
      RETURNING ${PROMO_CODE_COLUMNS}`,
     [
       input.source ?? DEFAULT_PROMO_CODE_SOURCE,
       normalisePromoCode(input.code),
       input.trialExtensionDays ?? null,
-      input.stripeCouponId ?? null,
+      discount.percentOff,
+      discount.amountOffMinor,
+      discount.currency,
+      discount.duration,
+      discount.durationInMonths,
       input.validFrom ?? null,
       input.validUntil ?? null,
       input.maxRedemptions ?? null,
@@ -311,7 +471,7 @@ export async function listPromoCodes(
  *
  * `undefined` means "leave alone" and `null` means "clear it" — two distinct
  * intentions that a single optional-with-null shape would collapse. Collapsing
- * them is how a partial update from a form silently wipes the coupon id of
+ * them is how a partial update from a form silently wipes the redemption cap of
  * every code it touches.
  *
  * `code`, `source` and `createdBy` are ABSENT ON PURPOSE. Re-coding a
@@ -319,10 +479,24 @@ export async function listPromoCodes(
  * code: mark8ly's ledger references what was redeemed, and rewriting the
  * string under it makes every existing redemption describe a code that no
  * longer exists. Author a new definition and deactivate the old one.
+ *
+ * THE DISCOUNT TERMS ARE ABSENT TOO, and for a Stripe reason rather than a
+ * ledger one. A Stripe Coupon's `percent_off`, `amount_off`, `currency` and
+ * `duration` are IMMUTABLE after creation — the API will not change them. So
+ * once a definition has been minted into any mode, editing its terms here
+ * would leave the row describing a discount different from the one Stripe will
+ * actually apply, with nothing to reconcile them and no error anywhere. That
+ * divergence is invisible: both sides keep working, and the merchant simply
+ * gets a discount other than the one the console displays.
+ *
+ * A definition NOT yet minted anywhere could safely be re-termed, but making
+ * that legal would put the safety of an edit behind a state check in another
+ * table that every future caller has to remember to make. Authoring a
+ * replacement and deactivating the old one is correct in both states and
+ * requires no such check.
  */
 export interface UpdatePromoCodeInput {
   trialExtensionDays?: number | null;
-  stripeCouponId?: string | null;
   validFrom?: Date | string;
   validUntil?: Date | string | null;
   maxRedemptions?: number | null;
@@ -334,7 +508,6 @@ export interface UpdatePromoCodeInput {
  *  key from a request body becomes SQL. */
 const UPDATABLE_COLUMNS = {
   trialExtensionDays: "trial_extension_days",
-  stripeCouponId: "stripe_coupon_id",
   validFrom: "valid_from",
   validUntil: "valid_until",
   maxRedemptions: "max_redemptions",
@@ -408,4 +581,108 @@ export async function deactivatePromoCode(id: string): Promise<PromoCodeRow[]> {
     [id],
   );
   return rows.map(toPromoCodeRow);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// `promo_code_stripe_coupons` — what was actually minted, in which account.
+//
+// The per-mode half of 0046's split. Two functions, deliberately: #521's T2
+// (the Stripe writer) records, and T3/T4 read. Nothing here creates a coupon —
+// that is the writer's job, and this module knows nothing about Stripe beyond
+// the shape of an id.
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface PromoCodeStripeCoupon {
+  promoCodeId: string;
+  mode: StripeMode;
+  stripeCouponId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+interface PromoCodeStripeCouponDbRow {
+  promo_code_id: string;
+  mode: StripeMode;
+  stripe_coupon_id: string;
+  created_by: string;
+  created_at: unknown;
+}
+
+const COUPON_COLUMNS = `promo_code_id, mode, stripe_coupon_id, created_by, created_at`;
+
+function toStripeCoupon(row: PromoCodeStripeCouponDbRow): PromoCodeStripeCoupon {
+  return {
+    promoCodeId: row.promo_code_id,
+    mode: row.mode,
+    stripeCouponId: row.stripe_coupon_id,
+    createdBy: row.created_by,
+    createdAt: toIsoRequired(row.created_at),
+  };
+}
+
+export interface RecordStripeCouponInput {
+  promoCodeId: string;
+  mode: StripeMode;
+  /** A Stripe Coupon id (`co_...`), as returned by the create call. */
+  stripeCouponId: string;
+  createdBy: string;
+}
+
+/**
+ * Record that a coupon now exists in one Stripe account for one definition.
+ *
+ * A PLAIN INSERT, WITH NO `ON CONFLICT`. A second coupon for the same
+ * (definition, mode) is refused by the primary key, loudly, and that is the
+ * intended behaviour rather than an unhandled case: the first coupon is a real
+ * object in a real Stripe account, and quietly overwriting the id that points
+ * at it ORPHANS it — still live, still redeemable by anyone holding it, and no
+ * longer named by anything in this database. Minting a replacement is a
+ * deliberate act that has to archive the first, so it must not be reachable by
+ * calling this function twice.
+ *
+ * WHAT THIS FUNCTION CANNOT CHECK, per 0046's closing paragraph: it does not
+ * refuse a coupon against a definition carrying no discount terms. Postgres
+ * cannot express that cross-table CHECK and neither can one INSERT; the rule
+ * belongs to the writer that decided to mint. Said out loud so nobody reads the
+ * FK as more of a guarantee than it is.
+ */
+export async function recordStripeCoupon(
+  input: RecordStripeCouponInput,
+): Promise<PromoCodeStripeCoupon> {
+  const rows = await tesserixQuery<PromoCodeStripeCouponDbRow>(
+    `INSERT INTO promo_code_stripe_coupons
+       (promo_code_id, mode, stripe_coupon_id, created_by)
+     VALUES ($1, $2, $3, $4)
+     RETURNING ${COUPON_COLUMNS}`,
+    [input.promoCodeId, input.mode, input.stripeCouponId, input.createdBy],
+  );
+  return toStripeCoupon(rows[0]);
+}
+
+/**
+ * Every mode this definition has been minted into, in `STRIPE_MODES` order.
+ *
+ * RETURNS THE ROWS THAT EXIST, and does not pad the absent modes with nulls.
+ * An absent mode is a real and expected state — nothing in this estate has ever
+ * bootstrapped live — and a `{ test: "co_…", live: null }` shape would invite a
+ * caller to render "live: none" as a defect rather than as the norm. A caller
+ * that wants a per-mode map can build one over `STRIPE_MODES`, which is
+ * exported for exactly that.
+ *
+ * Ordered by `STRIPE_MODES` rather than alphabetically so a surface listing
+ * modes lists them the same way every other per-mode surface in the console
+ * does. `array_position` rather than an ORDER BY CASE, so the order is defined
+ * by the same array TypeScript iterates and cannot drift from it.
+ */
+export async function readStripeCoupons(
+  promoCodeId: string,
+): Promise<PromoCodeStripeCoupon[]> {
+  const rows = await tesserixQuery<PromoCodeStripeCouponDbRow>(
+    `SELECT ${COUPON_COLUMNS}
+       FROM promo_code_stripe_coupons
+      WHERE promo_code_id = $1
+      ORDER BY array_position($2::text[], mode)`,
+    [promoCodeId, [...STRIPE_MODES]],
+  );
+  return rows.map(toStripeCoupon);
 }

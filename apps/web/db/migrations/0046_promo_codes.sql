@@ -2,8 +2,52 @@
 --
 -- Promo code DEFINITIONS, owned by the console (tesserix-home#521). A merchant
 -- types a code during Mark8ly onboarding; it extends the 90-day trial by N
--- days, and/or applies a Stripe coupon. This table is the definition side
--- only. The REDEMPTION LEDGER is deliberately not here — see below.
+-- days, and/or applies a discount. This is the definition side only. The
+-- REDEMPTION LEDGER is deliberately not here — see below.
+--
+-- Two tables, and the division is the same one `plan_catalog_prices` /
+-- `plan_catalog_publications` already draw: what is true of the thing, and what
+-- is true of the thing IN ONE STRIPE ACCOUNT.
+--
+-- ══ WHY THE STRIPE COUPON ID IS NOT A COLUMN ON `promo_codes` ══
+--
+-- tesserix-home#521's body says to "store the returned coupon id on the
+-- definition". That is wrong, and it is wrong against a rule this schema
+-- already wrote down. Treat the schema rule as authoritative over the issue
+-- prose — this milestone has now found several false premises in its own issue
+-- text, and this is one more.
+--
+-- `0032_plan_catalog.sql` states it for the analogous object:
+--
+--     -- The join key to Stripe. `lookup_key` is what the catalog and Stripe
+--     -- genuinely share; a Stripe price id (`price_...`) differs per mode and
+--     -- per account, so keying on one would make this table unusable against
+--     -- test mode and unportable if the account is ever rebuilt.
+--
+-- A Stripe Coupon is the same kind of object as a Stripe Price in every way
+-- that matters here: it is minted per account, it carries an account-scoped id
+-- (`co_...`), and a `test` id is meaningless against the live account.
+--
+-- And the estate's PRACTICE already matches. The only place a Stripe id is
+-- stored in this schema at all is
+-- `plan_catalog_publish_operations.stripe_price_id` (0038), whose parent
+-- `plan_catalog_publish_attempts` carries `mode text NOT NULL CHECK (mode IN
+-- ('test', 'live'))`. Every Stripe id here is reachable from exactly one mode.
+-- There is no row anywhere in this database that holds a Stripe id without a
+-- mode attached, and a `stripe_coupon_id text` on `promo_codes` would have been
+-- the first.
+--
+-- `plan_catalog_publications` supplies the SHAPE. 0035's own words: "Publication
+-- is a fact about a (mode, revision) pair, not about a revision." Substitute:
+-- a minted coupon is a fact about a (mode, promo code) pair, not about a promo
+-- code. So it gets a child table keyed on that pair, exactly as publication did.
+--
+-- What the definition keeps is the discount TERMS — percent-off or amount-off,
+-- duration, months, currency. Those are what an operator authored, they are
+-- true regardless of which account they are later materialised into, and they
+-- are the input to `createCoupon` rather than its output. A definition carrying
+-- terms and materialised in NO mode yet is a legitimate, expected state; it is
+-- the entire point of the split.
 --
 -- ══ WHAT THIS TABLE IS NOT ══
 --
@@ -22,22 +66,6 @@
 -- hard limit while quietly over-issuing. That is written here, and not only in
 -- the issue, because the person who adds the second consumer will read this
 -- file and will not read the issue.
---
--- ══ AN OPEN QUESTION THIS FILE DOES NOT DECIDE: STRIPE MODE ══
---
--- `stripe_coupon_id` names a Stripe Coupon, and a Coupon exists in exactly one
--- mode — a `test` coupon id is meaningless against the live account, the same
--- way a `price_...` is (0032's argument for keying the catalog on `lookup_key`
--- rather than on a Stripe id). `plan_catalog_publications` answers this for the
--- catalog by making publication a per-mode fact; nothing equivalent exists here
--- yet, so a definition carries ONE coupon id and does not say which account it
--- came from.
---
--- That is stated rather than solved because it is a shape decision for the
--- writer and the served contract (#521's T2/T3), not for this table alone, and
--- inventing a per-mode coupon table here would prejudge it. Today the console
--- has written no coupons at all, so no row is wrong yet. Whoever builds the
--- writer must resolve it before a live publish, not after.
 --
 -- ══ CANONICAL FORM: UPPER-CASE AND TRIMMED ══
 --
@@ -81,10 +109,15 @@
 --
 -- Both effects stack, and either alone is valid (#521 decision 2) — the
 -- merchant types one code and never learns which mechanism fired. What is not
--- valid is NEITHER: a row with no trial extension and no coupon is a code that
--- silently does nothing, accepted at the boundary and rewarding the merchant
--- with no discount and no error. `promo_codes_has_at_least_one_effect` is the
--- only place that rule survives the next caller.
+-- valid is NEITHER: a row with no trial extension and no discount terms is a
+-- code that silently does nothing, accepted at the boundary and rewarding the
+-- merchant with no discount and no error.
+--
+-- The rule reads against the TERMS, not against a coupon id, and that is the
+-- direct consequence of the split above: "has a discount" is a property of what
+-- was authored, and must be answerable before any account has been touched.
+-- Reading it against a materialised coupon would make every freshly-authored
+-- discount code briefly indistinguishable from a do-nothing one.
 --
 -- ══ RE-RUNNABILITY ══
 --
@@ -99,7 +132,7 @@
 --
 -- Kargo deploys the console on merge; `db:migrate` does not ride along. Apply
 -- 0046 to production BEFORE the PR carrying it merges, or the deployed console
--- queries a table that does not exist.
+-- queries tables that do not exist.
 
 CREATE TABLE IF NOT EXISTS promo_codes (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -118,26 +151,69 @@ CREATE TABLE IF NOT EXISTS promo_codes (
     -- `code = upper(btrim(code))`.
     code text NOT NULL,
 
-    -- Effect 1: extend the trial. NULL means this code does not extend it —
-    -- distinct from 0, which would be an extension that extends nothing. The
-    -- same reasoning `plan_catalog_amounts_unit_amount_is_positive` applies to
-    -- a zero price: a value that reads as "set" while behaving as "unset" is
-    -- the expensive direction of the mistake.
+    -- ── Effect 1: extend the trial ──
+    --
+    -- NULL means this code does not extend it — distinct from 0, which would be
+    -- an extension that extends nothing. The same reasoning
+    -- `plan_catalog_amounts_unit_amount_is_positive` applies to a zero price: a
+    -- value that reads as "set" while behaving as "unset" is the expensive
+    -- direction of the mistake.
     trial_extension_days integer
                          CONSTRAINT promo_codes_trial_extension_is_positive
                          CHECK (trial_extension_days IS NULL OR trial_extension_days > 0),
 
-    -- Effect 2: a Stripe Coupon id (`co_...`), written by the console's Stripe
-    -- writer and stored here. NULL means this code carries no discount.
+    -- ── Effect 2: the discount TERMS ──
     --
-    -- The blank-string CHECK is not decoration: `''` is NOT NULL, so without it
-    -- an empty string satisfies `promo_codes_has_at_least_one_effect` below
-    -- while naming no coupon at all — which is precisely the do-nothing code
-    -- that constraint exists to refuse, re-admitted through the one spelling it
-    -- cannot see.
-    stripe_coupon_id text
-                     CONSTRAINT promo_codes_stripe_coupon_id_is_not_blank
-                     CHECK (stripe_coupon_id IS NULL OR btrim(stripe_coupon_id) <> ''),
+    -- Nullable AS A GROUP: a code may be trial-extension-only. `discount_duration`
+    -- is the group's presence marker — it is the one field Stripe requires of
+    -- every Coupon regardless of shape, so "terms exist" and "duration is set"
+    -- are the same fact rather than two that can disagree.
+    --
+    -- These are `createCoupon`'s INPUT, not its output. They are mode- and
+    -- account-independent, which is exactly why they belong here and the minted
+    -- `co_...` does not. Semantics are Stripe's and are passed through, not
+    -- reimplemented: percent-off vs amount-off, the three durations, months for
+    -- `repeating`, and a currency for amount-off.
+    --
+    -- Stripe's own redemption cap (`max_redemptions` on the Coupon) is
+    -- deliberately ABSENT from this group. This table's `max_redemptions` below
+    -- is the cap mark8ly enforces on the CODE, which is a different object from
+    -- the coupon and counts a different event; carrying both would be two
+    -- numbers that must agree and no way to make them.
+
+    -- Stripe's `percent_off` is a decimal with up to two places. `numeric(5,2)`
+    -- holds 100.00 exactly and nothing wider, so an out-of-range value is a
+    -- storage error before it is a CHECK violation.
+    discount_percent_off numeric(5, 2)
+                         CONSTRAINT promo_codes_discount_percent_off_is_in_range
+                         CHECK (discount_percent_off IS NULL
+                                OR (discount_percent_off > 0 AND discount_percent_off <= 100)),
+
+    -- Minor units, `bigint` for the reason `plan_catalog_amounts` gives: IDR
+    -- annual is 1_198_800_000 minor units, comfortably inside int4 today and
+    -- one devaluation away from not being.
+    discount_amount_off bigint
+                        CONSTRAINT promo_codes_discount_amount_off_is_positive
+                        CHECK (discount_amount_off IS NULL OR discount_amount_off > 0),
+
+    -- Lowercase, always — the identical Stripe fact
+    -- `plan_catalog_amounts_currency_is_lowercase_iso_4217` encodes, and the
+    -- same failure if it is not: `USD` and `usd` coexisting is a silent
+    -- double-count in every aggregate, and here a currency Stripe rejects at
+    -- coupon-creation time for a reason the payload will not make obvious.
+    discount_currency text
+                      CONSTRAINT promo_codes_discount_currency_is_lowercase_iso_4217
+                      CHECK (discount_currency IS NULL OR discount_currency ~ '^[a-z]{3}$'),
+
+    discount_duration text
+                      CONSTRAINT promo_codes_discount_duration_is_a_stripe_duration
+                      CHECK (discount_duration IS NULL
+                             OR discount_duration IN ('once', 'repeating', 'forever')),
+
+    discount_duration_in_months integer
+                                CONSTRAINT promo_codes_discount_months_is_positive
+                                CHECK (discount_duration_in_months IS NULL
+                                       OR discount_duration_in_months > 0),
 
     -- The validity window. `valid_until` NULL means "no expiry", not "unknown"
     -- — the same convention `crm_templates.product` uses for its null (0043),
@@ -190,8 +266,58 @@ CREATE TABLE IF NOT EXISTS promo_codes (
     -- The rule the header is about: a definition with no effect is a code that
     -- does nothing. Accepted at redemption, silently rewarding the merchant
     -- with neither a longer trial nor a discount and no error to explain it.
+    --
+    -- Reads against `discount_duration` — the terms' presence marker — and NOT
+    -- against a minted coupon id, which lives in the other table and is absent
+    -- for every discount code between authoring and first publish.
     CONSTRAINT promo_codes_has_at_least_one_effect
-    CHECK (trial_extension_days IS NOT NULL OR stripe_coupon_id IS NOT NULL),
+    CHECK (trial_extension_days IS NOT NULL OR discount_duration IS NOT NULL),
+
+    -- The terms are all-or-nothing, anchored on the presence marker. Without
+    -- this, a `discount_percent_off` with no `discount_duration` is a discount
+    -- that satisfies no effect rule, renders as a percentage on every surface,
+    -- and is silently un-materialisable because Stripe will not create a Coupon
+    -- without a duration.
+    CONSTRAINT promo_codes_discount_terms_are_all_or_nothing
+    CHECK (discount_duration IS NOT NULL
+           OR (discount_percent_off IS NULL
+               AND discount_amount_off IS NULL
+               AND discount_currency IS NULL
+               AND discount_duration_in_months IS NULL)),
+
+    -- EXACTLY ONE of percent-off / amount-off, when terms exist. Stripe refuses
+    -- both and refuses neither, so a row carrying both is a coupon that can
+    -- never be created — discovered at publish time, against the live account,
+    -- by whoever is publishing rather than by whoever authored it.
+    --
+    -- `<>` on two `IS NULL` booleans is the XOR; it is total here because both
+    -- operands are `IS NULL` tests and therefore never null themselves.
+    CONSTRAINT promo_codes_discount_is_percent_off_xor_amount_off
+    CHECK (discount_duration IS NULL
+           OR ((discount_percent_off IS NULL) <> (discount_amount_off IS NULL))),
+
+    -- Amount-off needs its currency; percent-off must not carry one. ONE
+    -- biconditional rather than two implications, because the two halves are
+    -- the same rule and splitting them would let a future edit satisfy one and
+    -- drop the other. A percent-off with a currency is not harmless: it reads
+    -- as a currency-scoped discount on every surface that renders it, and is
+    -- not one.
+    CONSTRAINT promo_codes_discount_currency_accompanies_amount_off
+    CHECK ((discount_amount_off IS NULL) = (discount_currency IS NULL)),
+
+    -- `duration_in_months` IF AND ONLY IF `repeating`. Stripe requires it for
+    -- `repeating` and rejects it for the other two.
+    --
+    -- `IS NOT DISTINCT FROM` and not `=`: with a plain `=`, a NULL
+    -- `discount_duration` makes the right-hand side NULL, the whole comparison
+    -- NULL, and the CHECK PASSES — so a months value on a code with no terms at
+    -- all would slip through, leaning on the all-or-nothing constraint above to
+    -- catch it. A constraint that is only correct because a different
+    -- constraint exists is one that stops being correct when that one is
+    -- relaxed. The null-safe form makes this rule total on its own.
+    CONSTRAINT promo_codes_discount_months_iff_repeating
+    CHECK ((discount_duration_in_months IS NOT NULL)
+           = (discount_duration IS NOT DISTINCT FROM 'repeating')),
 
     -- A window that ends before it begins can never be redeemed, and reads as a
     -- live code on every surface that renders one. `>` and not `>=`: a
@@ -213,11 +339,67 @@ CREATE TABLE IF NOT EXISTS promo_codes (
 -- the `DROP CONSTRAINT IF EXISTS` / `ADD CONSTRAINT` pair 0035 and 0044 need:
 -- `CREATE UNIQUE INDEX IF NOT EXISTS` is idempotent on its own.
 --
--- No further indexes. The two reads that exist are lookup-by-code, which this
--- index serves exactly, and the console's full list, which is a table of tens
--- of rows. A partial index on `is_active` would be the shape `crm_templates`
--- needed because archived copy becomes the majority there; promo codes are
--- authored in tens and an index chosen before a query exists is one nobody can
--- justify later.
+-- No further indexes on this table. The two reads that exist are
+-- lookup-by-code, which this index serves exactly, and the console's full list,
+-- which is a table of tens of rows. A partial index on `is_active` would be the
+-- shape `crm_templates` needed because archived copy becomes the majority
+-- there; promo codes are authored in tens and an index chosen before a query
+-- exists is one nobody can justify later.
 CREATE UNIQUE INDEX IF NOT EXISTS promo_codes_code_unique
     ON promo_codes (code);
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- What was actually minted, in which Stripe account.
+--
+-- The per-mode half of the split. One row per (definition, mode) — the same
+-- shape and the same argument as `plan_catalog_publications`, one object over.
+--
+-- A definition with terms and NO row here is the normal state between authoring
+-- and the first publish, and it is why the effect rule above reads against the
+-- terms. A definition with a row in `test` and none in `live` is the normal
+-- state of everything in this estate, which has never bootstrapped live.
+--
+-- WHAT THIS TABLE CANNOT ENFORCE, stated rather than implied: nothing here
+-- refuses a coupon row against a definition that carries no discount terms.
+-- Postgres cannot express a cross-table CHECK, so that rule is the WRITER's
+-- (`recordStripeCoupon`, and #521's T2 above it), not this schema's. Claiming
+-- otherwise would be claiming more than is enforced — the discipline 0035's
+-- "A CEILING, never a floor" paragraph sets for exactly this situation.
+-- ══════════════════════════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS promo_code_stripe_coupons (
+    -- CASCADE, and unlike `plan_catalog_publications`' RESTRICT. That table
+    -- guards an audit trail — who published what, when — which a draft cleanup
+    -- must not silently erase. This one holds no audit: it is a pointer into a
+    -- Stripe account, meaningless without the definition it points from, which
+    -- is 0038's reasoning for `operations -> attempt`. The question is close to
+    -- moot in practice, because a definition is deactivated and never deleted.
+    promo_code_id uuid NOT NULL REFERENCES promo_codes (id) ON DELETE CASCADE,
+
+    mode text NOT NULL
+         CONSTRAINT promo_code_stripe_coupons_mode_is_a_stripe_mode
+         CHECK (mode IN ('test', 'live')),
+
+    -- `co_...`. NOT NULL, unlike `plan_catalog_publish_operations.stripe_price_id`
+    -- which is nullable because that table writes ahead of the Stripe call. This
+    -- one is written only AFTER a coupon exists, so a row whose id is unknown is
+    -- a row with nothing to say.
+    --
+    -- The blank CHECK is not decoration: `''` is NOT NULL, so without it an
+    -- empty string records a materialisation that did not happen, in the one
+    -- spelling `NOT NULL` cannot see.
+    stripe_coupon_id text NOT NULL
+                     CONSTRAINT promo_code_stripe_coupons_coupon_id_is_not_blank
+                     CHECK (btrim(stripe_coupon_id) <> ''),
+
+    created_by text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+
+    -- ONE coupon per definition per mode, and the PK says so rather than a
+    -- surrogate plus a unique index. Unlike `plan_catalog_publications`, which
+    -- needs a surrogate because re-publishing a superseded revision is a second
+    -- row for the same pair, there is no supersession here: a Stripe Coupon's
+    -- discount is immutable after creation, so "change the discount" is a NEW
+    -- definition, not a second coupon against this one.
+    PRIMARY KEY (promo_code_id, mode)
+);

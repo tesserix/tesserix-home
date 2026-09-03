@@ -54,8 +54,16 @@ const {
   listPromoCodes,
   updatePromoCode,
   deactivatePromoCode,
+  recordStripeCoupon,
+  readStripeCoupons,
   DEFAULT_PROMO_CODE_SOURCE,
 } = await import("./promo-codes-repo");
+
+type Discount = import("./promo-codes-repo").PromoCodeDiscount;
+
+/** The shortest valid terms, for the many cases that need SOME discount and do
+ *  not care which. */
+const PERCENT_OFF: Discount = { kind: "percent_off", percentOff: 25, duration: "once", durationInMonths: null };
 
 const MIGRATION_PATH = path.resolve(
   __dirname,
@@ -80,7 +88,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await db.query("TRUNCATE promo_codes");
+  // CASCADE because `promo_code_stripe_coupons` has an FK onto this table; a
+  // bare TRUNCATE errors rather than leaving the child rows behind.
+  await db.query("TRUNCATE promo_codes CASCADE");
 });
 
 /** Raw insert, bypassing the repo, for the cases that are about the SCHEMA
@@ -134,7 +144,13 @@ describe("round trip", () => {
     const created = await createPromoCode({
       code: "  launch50  ",
       trialExtensionDays: 30,
-      stripeCouponId: "co_test_launch50",
+      discount: {
+        kind: "amount_off",
+        amountOffMinor: 1500,
+        currency: "usd",
+        duration: "repeating",
+        durationInMonths: 3,
+      },
       validFrom: new Date("2026-09-01T00:00:00Z"),
       validUntil: new Date("2026-12-31T00:00:00Z"),
       maxRedemptions: 100,
@@ -145,7 +161,13 @@ describe("round trip", () => {
       source: DEFAULT_PROMO_CODE_SOURCE,
       code: "LAUNCH50",
       trialExtensionDays: 30,
-      stripeCouponId: "co_test_launch50",
+      discount: {
+        kind: "amount_off",
+        amountOffMinor: 1500,
+        currency: "usd",
+        duration: "repeating",
+        durationInMonths: 3,
+      },
       validFrom: "2026-09-01T00:00:00.000Z",
       validUntil: "2026-12-31T00:00:00.000Z",
       maxRedemptions: 100,
@@ -170,7 +192,8 @@ describe("round trip", () => {
     // asserted so a later NOT NULL DEFAULT cannot quietly change the meaning.
     expect(created.validUntil).toBeNull();
     expect(created.maxRedemptions).toBeNull();
-    expect(created.stripeCouponId).toBeNull();
+    // Terms absent is a trial-extension-only code, not an incomplete one.
+    expect(created.discount).toBeNull();
     expect(created.isActive).toBe(true);
     expect(Date.parse(created.validFrom)).toBeGreaterThanOrEqual(before - 1000);
   });
@@ -201,7 +224,7 @@ describe("round trip", () => {
 describe("listPromoCodes", () => {
   beforeEach(async () => {
     await createPromoCode({ code: "LIVE_A", trialExtensionDays: 7, createdBy: ACTOR });
-    await createPromoCode({ code: "LIVE_B", stripeCouponId: "co_b", createdBy: ACTOR });
+    await createPromoCode({ code: "LIVE_B", discount: PERCENT_OFF, createdBy: ACTOR });
     await createPromoCode({
       code: "RETIRED",
       trialExtensionDays: 1,
@@ -232,7 +255,7 @@ describe("updatePromoCode", () => {
     const created = await createPromoCode({
       code: "AMEND",
       trialExtensionDays: 30,
-      stripeCouponId: "co_amend",
+      discount: PERCENT_OFF,
       maxRedemptions: 10,
       createdBy: ACTOR,
     });
@@ -243,7 +266,7 @@ describe("updatePromoCode", () => {
       id: created.id,
       code: "AMEND",
       trialExtensionDays: 30,
-      stripeCouponId: "co_amend",
+      discount: PERCENT_OFF,
       maxRedemptions: 25,
     });
     expect(Date.parse(updated!.updatedAt)).toBeGreaterThanOrEqual(Date.parse(created.updatedAt));
@@ -251,23 +274,45 @@ describe("updatePromoCode", () => {
 
   it("distinguishes 'leave alone' from 'clear it'", async () => {
     // The distinction the `undefined` vs `null` shape exists for. Collapsing
-    // them is how a partial update from a form silently wipes the coupon id of
-    // every code it touches — and the row would still be valid, because the
-    // trial extension keeps `promo_codes_has_at_least_one_effect` satisfied,
-    // so nothing would fail loudly.
+    // them is how a partial update from a form silently wipes the redemption
+    // cap of every code it touches — and the row stays VALID, so nothing fails
+    // loudly: an uncapped code is a perfectly legal one, it is just not the one
+    // the operator authored.
     const created = await createPromoCode({
       code: "CLEARABLE",
       trialExtensionDays: 30,
-      stripeCouponId: "co_clearable",
+      maxRedemptions: 100,
+      validUntil: new Date("2026-12-31T00:00:00Z"),
       createdBy: ACTOR,
     });
 
-    const untouched = await updatePromoCode(created.id, { maxRedemptions: 5 });
-    expect(untouched?.stripeCouponId).toBe("co_clearable");
+    const untouched = await updatePromoCode(created.id, { trialExtensionDays: 45 });
+    expect(untouched?.maxRedemptions).toBe(100);
+    expect(untouched?.validUntil).toBe("2026-12-31T00:00:00.000Z");
 
-    const cleared = await updatePromoCode(created.id, { stripeCouponId: null });
-    expect(cleared?.stripeCouponId).toBeNull();
-    expect(cleared?.trialExtensionDays).toBe(30);
+    const cleared = await updatePromoCode(created.id, { maxRedemptions: null });
+    expect(cleared?.maxRedemptions).toBeNull();
+    expect(cleared?.trialExtensionDays).toBe(45);
+  });
+
+  it("cannot change the discount terms — a minted Stripe coupon is immutable", async () => {
+    // Not an omission. A Stripe Coupon's percent_off / amount_off / duration
+    // cannot be changed after creation, so an edit here would leave the row
+    // describing a discount different from the one Stripe applies, with nothing
+    // to reconcile them. `UpdatePromoCodeInput` has no such field, and this
+    // asserts that a caller reaching for one is a TYPE error rather than a
+    // silent no-op — which is what a plain `updatePromoCode(id, { discount })`
+    // would be, since the dynamic SET skips keys it does not know.
+    const created = await createPromoCode({
+      code: "IMMUTABLE",
+      discount: PERCENT_OFF,
+      createdBy: ACTOR,
+    });
+
+    // @ts-expect-error `discount` is deliberately not an updatable field.
+    await updatePromoCode(created.id, { discount: null });
+
+    expect((await readPromoCodeByCode("IMMUTABLE"))!.discount).toEqual(PERCENT_OFF);
   });
 
   it("returns null for an unknown id and for an empty change set", async () => {
@@ -354,12 +399,6 @@ describe("constraints", () => {
     );
   });
 
-  it("rejects a blank stripe_coupon_id, which would satisfy the effect rule while naming no coupon", async () => {
-    await expect(
-      insertRaw({ source: "mark8ly", code: "BLANKCO", stripe_coupon_id: "", created_by: ACTOR }),
-    ).rejects.toThrow(/promo_codes_stripe_coupon_id_is_not_blank/);
-  });
-
   it("rejects a duplicate code", async () => {
     await createPromoCode({ code: "DUPE", trialExtensionDays: 5, createdBy: ACTOR });
     // Case-differing, because that is the duplicate the unique index could not
@@ -367,7 +406,7 @@ describe("constraints", () => {
     // the second insert collides rather than creating a second live code whose
     // winner depends on row order.
     await expect(
-      createPromoCode({ code: " dupe ", stripeCouponId: "co_dupe", createdBy: ACTOR }),
+      createPromoCode({ code: " dupe ", discount: PERCENT_OFF, createdBy: ACTOR }),
     ).rejects.toThrow(/promo_codes_code_unique/);
   });
 
@@ -421,6 +460,182 @@ describe("constraints", () => {
     ).rejects.toThrow(/promo_codes_validity_window_is_ordered/);
   });
 
+  it("rejects a definition with terms but neither a percent-off nor an amount-off", async () => {
+    // Stripe refuses a coupon with neither, so this row is one that can never
+    // be materialised — discovered at publish time, against a live account, by
+    // whoever is publishing rather than whoever authored it.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "NOAMOUNT",
+        discount_duration: "once",
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_is_percent_off_xor_amount_off/);
+  });
+
+  it("rejects a definition carrying BOTH a percent-off and an amount-off", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "BOTH",
+        discount_duration: "once",
+        discount_percent_off: 10,
+        discount_amount_off: 500,
+        discount_currency: "usd",
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_is_percent_off_xor_amount_off/);
+  });
+
+  it("rejects an amount-off with no currency, and a percent-off that carries one", async () => {
+    // ONE biconditional, so both halves are the same named failure. A
+    // percent-off with a currency is not harmless: it renders as a
+    // currency-scoped discount and is not one.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "NOCURRENCY",
+        discount_duration: "once",
+        discount_amount_off: 500,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_currency_accompanies_amount_off/);
+
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "PCTCURRENCY",
+        discount_duration: "once",
+        discount_percent_off: 10,
+        discount_currency: "usd",
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_currency_accompanies_amount_off/);
+  });
+
+  it("rejects an upper-case discount currency", async () => {
+    // The same Stripe fact `plan_catalog_amounts_currency_is_lowercase_iso_4217`
+    // encodes, one table over.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "LOUDCCY",
+        discount_duration: "once",
+        discount_amount_off: 500,
+        discount_currency: "USD",
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_currency_is_lowercase_iso_4217/);
+  });
+
+  it("rejects loose discount fields with no duration to anchor them", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "ORPHANTERMS",
+        trial_extension_days: 5,
+        discount_percent_off: 10,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_terms_are_all_or_nothing/);
+  });
+
+  it("rejects an unknown duration", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "WEEKLY",
+        discount_duration: "monthly",
+        discount_percent_off: 10,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_duration_is_a_stripe_duration/);
+  });
+
+  it("rejects a percent-off outside (0, 100]", async () => {
+    for (const percent of [0, 100.01]) {
+      await expect(
+        insertRaw({
+          source: "mark8ly",
+          code: "BADPCT",
+          discount_duration: "once",
+          discount_percent_off: percent,
+          created_by: ACTOR,
+        }),
+      ).rejects.toThrow(/promo_codes_discount_percent_off_is_in_range/);
+    }
+  });
+
+  it("rejects a non-positive amount-off", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "ZEROAMT",
+        discount_duration: "once",
+        discount_amount_off: 0,
+        discount_currency: "usd",
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_amount_off_is_positive/);
+  });
+
+  it("requires duration_in_months for repeating and refuses it for the others", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "REPEATNOMONTHS",
+        discount_duration: "repeating",
+        discount_percent_off: 10,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_months_iff_repeating/);
+
+    for (const duration of ["once", "forever"]) {
+      await expect(
+        insertRaw({
+          source: "mark8ly",
+          code: "MONTHSANYWAY",
+          discount_duration: duration,
+          discount_percent_off: 10,
+          discount_duration_in_months: 3,
+          created_by: ACTOR,
+        }),
+      ).rejects.toThrow(/promo_codes_discount_months_iff_repeating/);
+    }
+  });
+
+  it("refuses months on a code with NO terms at all — the rule is total on its own", async () => {
+    // This is what `IS NOT DISTINCT FROM` buys over a plain `=`. With `=`, a
+    // NULL `discount_duration` makes the comparison NULL and the CHECK PASSES,
+    // leaving this row to be caught only by `..._terms_are_all_or_nothing` —
+    // i.e. a constraint correct only because a different constraint exists.
+    // Asserted by NAME, so the mutation to `=` fails here rather than silently
+    // passing on the other rule's rejection.
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "MONTHSNOTERMS",
+        trial_extension_days: 5,
+        discount_duration_in_months: 3,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_months_iff_repeating/);
+  });
+
+  it("rejects a non-positive duration_in_months", async () => {
+    await expect(
+      insertRaw({
+        source: "mark8ly",
+        code: "ZEROMONTHS",
+        discount_duration: "repeating",
+        discount_percent_off: 10,
+        discount_duration_in_months: 0,
+        created_by: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_codes_discount_months_is_positive/);
+  });
+
   it("rejects an unknown source", async () => {
     await expect(
       insertRaw({
@@ -430,6 +645,114 @@ describe("constraints", () => {
         created_by: ACTOR,
       }),
     ).rejects.toThrow(/promo_codes_source_is_a_known_source/);
+  });
+});
+
+describe("promo_code_stripe_coupons", () => {
+  it("records one coupon per mode and reads them back in STRIPE_MODES order", async () => {
+    const created = await createPromoCode({
+      code: "MINTED",
+      discount: PERCENT_OFF,
+      createdBy: ACTOR,
+    });
+
+    // Inserted live-first, read back test-first, so the ordering assertion is
+    // about `array_position` rather than about insertion order.
+    await recordStripeCoupon({
+      promoCodeId: created.id,
+      mode: "live",
+      stripeCouponId: "co_live_minted",
+      createdBy: ACTOR,
+    });
+    await recordStripeCoupon({
+      promoCodeId: created.id,
+      mode: "test",
+      stripeCouponId: "co_test_minted",
+      createdBy: ACTOR,
+    });
+
+    expect(
+      (await readStripeCoupons(created.id)).map((c) => [c.mode, c.stripeCouponId]),
+    ).toEqual([
+      ["test", "co_test_minted"],
+      ["live", "co_live_minted"],
+    ]);
+  });
+
+  it("returns [] for a definition minted nowhere — the normal state, not a defect", async () => {
+    // The whole point of the split: terms authored, no account touched yet.
+    const created = await createPromoCode({
+      code: "UNMINTED",
+      discount: PERCENT_OFF,
+      createdBy: ACTOR,
+    });
+    expect(created.discount).toEqual(PERCENT_OFF);
+    expect(await readStripeCoupons(created.id)).toEqual([]);
+  });
+
+  it("refuses a second coupon in the same mode, rather than orphaning the first", async () => {
+    // An overwrite would leave the first coupon live in Stripe, still
+    // redeemable by anyone holding it, and no longer named by anything in this
+    // database.
+    const created = await createPromoCode({
+      code: "TWICE",
+      discount: PERCENT_OFF,
+      createdBy: ACTOR,
+    });
+    await recordStripeCoupon({
+      promoCodeId: created.id,
+      mode: "test",
+      stripeCouponId: "co_first",
+      createdBy: ACTOR,
+    });
+    await expect(
+      recordStripeCoupon({
+        promoCodeId: created.id,
+        mode: "test",
+        stripeCouponId: "co_second",
+        createdBy: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_code_stripe_coupons_pkey/);
+
+    expect((await readStripeCoupons(created.id))[0].stripeCouponId).toBe("co_first");
+  });
+
+  it("rejects an unknown mode and a blank coupon id", async () => {
+    const created = await createPromoCode({
+      code: "GUARDED",
+      discount: PERCENT_OFF,
+      createdBy: ACTOR,
+    });
+
+    await expect(
+      db.query(
+        `INSERT INTO promo_code_stripe_coupons (promo_code_id, mode, stripe_coupon_id, created_by)
+         VALUES ($1, 'sandbox', 'co_x', $2)`,
+        [created.id, ACTOR],
+      ),
+    ).rejects.toThrow(/promo_code_stripe_coupons_mode_is_a_stripe_mode/);
+
+    // `''` is NOT NULL, so without this CHECK it records a materialisation that
+    // did not happen, in the one spelling NOT NULL cannot see.
+    await expect(
+      recordStripeCoupon({
+        promoCodeId: created.id,
+        mode: "test",
+        stripeCouponId: "",
+        createdBy: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_code_stripe_coupons_coupon_id_is_not_blank/);
+  });
+
+  it("refuses a coupon against a definition that does not exist", async () => {
+    await expect(
+      recordStripeCoupon({
+        promoCodeId: "00000000-0000-0000-0000-000000000000",
+        mode: "test",
+        stripeCouponId: "co_ghost",
+        createdBy: ACTOR,
+      }),
+    ).rejects.toThrow(/promo_code_stripe_coupons_promo_code_id_fkey/);
   });
 });
 
@@ -457,10 +780,18 @@ describe("re-runnability", () => {
       expect(rows.map((r) => r.conname)).toEqual([
         "promo_codes_code_has_no_whitespace",
         "promo_codes_code_is_upper_case",
+        "promo_codes_discount_amount_off_is_positive",
+        "promo_codes_discount_currency_accompanies_amount_off",
+        "promo_codes_discount_currency_is_lowercase_iso_4217",
+        "promo_codes_discount_duration_is_a_stripe_duration",
+        "promo_codes_discount_is_percent_off_xor_amount_off",
+        "promo_codes_discount_months_iff_repeating",
+        "promo_codes_discount_months_is_positive",
+        "promo_codes_discount_percent_off_is_in_range",
+        "promo_codes_discount_terms_are_all_or_nothing",
         "promo_codes_has_at_least_one_effect",
         "promo_codes_max_redemptions_is_positive",
         "promo_codes_source_is_a_known_source",
-        "promo_codes_stripe_coupon_id_is_not_blank",
         "promo_codes_trial_extension_is_positive",
         "promo_codes_validity_window_is_ordered",
       ]);
