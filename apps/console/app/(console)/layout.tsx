@@ -46,13 +46,36 @@ export default async function ConsoleLayout({
   // API routes are deliberately NOT covered: per R2.3 they keep their own
   // `assertCapability` checks, so routing is never the only thing between an
   // operator and a verb.
-  const pathname = (await headers()).get(CONSOLE_PATHNAME_HEADER) ?? "";
-  const required = capabilityForPath(pathname);
-  try {
-    await checkOperatorCapabilityLive(session, required);
-  } catch (cause) {
-    if (cause instanceof CapabilityError) notFound();
-    throw cause;
+  // Gated on `showCapabilities` — i.e. `requiresCapability()` — which is the
+  // SAME switch the rail filter and the command palette already use. Two
+  // reasons, and the second is not a test convenience:
+  //
+  //  1. The legacy provider carries no capability claims at all, so enforcing
+  //     would refuse every surface to every operator. "Off means unchanged" is
+  //     the contract `visibleTo` and `visibleNav` both give, and a gate that
+  //     disagreed with the rail about whether enforcement is on would hide a
+  //     surface it still served, or serve one it hid.
+  //
+  //  2. `checkOperatorCapabilityLive` throws on a NULL session before it
+  //     checks the provider, and this layout deliberately tolerates a null
+  //     session — its comment above says a misconfiguration should render the
+  //     header without identity rather than fail the whole console. Without
+  //     this guard the gate turns that into a 404 for every page, which is
+  //     how it broke the e2e run: the auth bypass returns from middleware
+  //     before a session exists.
+  //
+  // In production `AUTH_PROVIDER=zitadel`, so this is true and the gate runs.
+  // A null session THERE is still refused, which is the fail-closed direction
+  // for an access control.
+  if (showCapabilities) {
+    const pathname = (await headers()).get(CONSOLE_PATHNAME_HEADER) ?? "";
+    const required = capabilityForPath(pathname);
+    try {
+      await checkOperatorCapabilityLive(session, required);
+    } catch (cause) {
+      if (cause instanceof CapabilityError) notFound();
+      throw cause;
+    }
   }
 
   // What the rail may offer (#263, R3) — the same `routeCapability` the gate

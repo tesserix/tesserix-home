@@ -36,7 +36,8 @@ vi.mock("@tesserix/platform-auth", async (importOriginal) => ({
   toCapabilities: (roles: string[]) => roles,
 }));
 
-vi.mock("@/lib/internal-access", () => ({ requiresCapability: () => true }));
+const requiresCapability = vi.fn(() => true);
+vi.mock("@/lib/internal-access", () => ({ requiresCapability: () => requiresCapability() }));
 vi.mock("@/lib/tools-directory", () => ({ readToolsDirectory: async () => ({ tools: [] }) }));
 vi.mock("@/lib/health", () => ({ readEstateHealth: async () => null }));
 vi.mock("@/components/nav/sidebar", () => ({ ConsoleSidebar: () => null }));
@@ -50,6 +51,7 @@ beforeEach(() => {
   headerBag.clear();
   getCurrentSession.mockResolvedValue({ sub: "op-1", email: "ops@tesserix.app", roles: ["crm"] });
   checkOperatorCapabilityLive.mockResolvedValue(undefined);
+  requiresCapability.mockReturnValue(true);
 });
 
 async function renderAt(pathname: string) {
@@ -103,4 +105,32 @@ describe("the console access gate", () => {
     await expect(renderAt(consolePath("platform.crm"))).resolves.toBeTruthy();
     expect(notFound).not.toHaveBeenCalled();
   });
+
+  // The legacy provider carries no capability claims, so enforcing would
+  // refuse every surface to every operator. "Off means unchanged" is the same
+  // contract `visibleNav` and the palette's `visibleTo` give — a gate that
+  // disagreed with the rail about whether enforcement is on would hide a
+  // surface it still served, or serve one it hid.
+  it("does not enforce when the provider carries no capabilities", async () => {
+    requiresCapability.mockReturnValue(false);
+
+    await expect(renderAt(consolePath("platform.secrets"))).resolves.toBeTruthy();
+    expect(checkOperatorCapabilityLive).not.toHaveBeenCalled();
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  // What actually broke the e2e run, and it is not only a test concern: the
+  // auth bypass returns from middleware before a session exists, and
+  // `checkOperatorCapabilityLive` throws on a null session BEFORE it checks
+  // the provider. Ungated, that turned every page in the console into a 404 —
+  // this layout's own comment says a null session should render the header
+  // without identity rather than fail the whole console.
+  it("renders with no session at all when enforcement is off", async () => {
+    requiresCapability.mockReturnValue(false);
+    getCurrentSession.mockResolvedValue(null);
+
+    await expect(renderAt("/")).resolves.toBeTruthy();
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
 });
