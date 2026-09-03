@@ -24,6 +24,11 @@ const notFound = vi.fn(() => {
 });
 vi.mock("next/navigation", () => ({ notFound: () => notFound() }));
 
+const recordDeniedAttempt = vi.fn();
+vi.mock("@/lib/db/denied-attempts", () => ({
+  recordDeniedAttempt: (...args: unknown[]) => recordDeniedAttempt(...args),
+}));
+
 const checkOperatorCapabilityLive = vi.fn();
 vi.mock("@/lib/auth/operator", () => ({
   checkOperatorCapabilityLive: (...args: unknown[]) => checkOperatorCapabilityLive(...args),
@@ -55,6 +60,7 @@ beforeEach(() => {
   headerBag.clear();
   getCurrentSession.mockResolvedValue({ sub: "op-1", email: "ops@tesserix.app", roles: ["crm"] });
   checkOperatorCapabilityLive.mockResolvedValue(undefined);
+  recordDeniedAttempt.mockResolvedValue(undefined);
   requiresCapability.mockReturnValue(true);
   enforcesRouteCapabilities.mockReturnValue(true);
 });
@@ -157,5 +163,35 @@ describe("the console access gate", () => {
     await renderAt("/");
 
     expect(checkOperatorCapabilityLive).toHaveBeenCalledWith(expect.anything(), "read");
+  });
+
+  // #265. A restriction nobody can observe being hit is a restriction nobody
+  // can tune — and until now a refused SURFACE left no trace at all.
+  it("records the refusal before answering not-found", async () => {
+    checkOperatorCapabilityLive.mockRejectedValue(new CapabilityError("platform"));
+
+    await expect(renderAt(consolePath("platform.secrets"))).rejects.toThrow("NEXT_NOT_FOUND");
+
+    expect(recordDeniedAttempt).toHaveBeenCalledWith({
+      actor: "op-1",
+      required: routeCapability("platform.secrets"),
+      target: consolePath("platform.secrets"),
+      kind: "surface",
+    });
+  });
+
+  // The order is load-bearing: notFound() throws to unwind the render, so
+  // anything after it never runs.
+  it("still answers not-found when the refusal cannot be recorded", async () => {
+    checkOperatorCapabilityLive.mockRejectedValue(new CapabilityError("platform"));
+    recordDeniedAttempt.mockRejectedValue(new Error("audit is down"));
+
+    // `recordDeniedAttempt` swallows its own failures, so in production this
+    // rejection cannot happen — which is exactly why it is worth pinning. The
+    // gate must not DEPEND on that promise: the one thing worse than an
+    // unrecorded denial is a denial that becomes a 500 because the log failed,
+    // and a 500 is a different answer from a 404 to whoever is probing.
+    await expect(renderAt(consolePath("platform.secrets"))).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(notFound).toHaveBeenCalled();
   });
 });

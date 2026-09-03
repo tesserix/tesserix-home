@@ -5,6 +5,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
+import { recordDeniedAttempt } from "@/lib/db/denied-attempts";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 import type { LifecycleVerb } from "@/lib/tenant-lifecycle";
@@ -87,8 +88,8 @@ export async function setTenantLifecycle(
   reasonCode: string,
   reason: string,
 ): Promise<LifecycleWriteResult> {
+  const session = await getCurrentSession();
   try {
-    const session = await getCurrentSession();
     // Checked here as well as by the API, which remains the authorisation
     // boundary: this stops the console sending a request it already knows will
     // be refused, and makes the failure read as "you do not have permission"
@@ -126,6 +127,15 @@ export async function setTenantLifecycle(
     };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
+      // #265, same gap as `withToolsWrite`: this seam checks outside any
+      // `auditedOperation`, so the refusal reached no log. Best-effort — it
+      // cannot fail the refusal it is recording.
+      await recordDeniedAttempt({
+        actor: session?.sub ?? session?.email ?? "unknown",
+        required: cause.required,
+        target: `${verb} ${tenantId}`,
+        kind: "verb",
+      });
       return { ok: false, message: NO_PERMISSION };
     }
     if (cause instanceof PlatformApiError) {

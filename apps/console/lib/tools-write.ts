@@ -5,6 +5,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
+import { recordDeniedAttempt } from "@/lib/db/denied-attempts";
 import { platformRequestWithMeta } from "@/lib/platform-api";
 import { PlatformApiError } from "@/lib/platform-api-error";
 
@@ -82,13 +83,23 @@ async function withToolsWrite(
   run: () => Promise<unknown>,
   mapConflict: (message: string | undefined) => { message: string; field?: string },
 ): Promise<ToolsWriteResult> {
+  const session = await getCurrentSession();
   try {
-    const session = await getCurrentSession();
     await checkOperatorCapabilityLive(session, "platform");
     await run();
     return { ok: true };
   } catch (cause) {
     if (cause instanceof CapabilityError) {
+      // #265. Unlike `withCrmWrite`, this seam checks OUTSIDE
+      // `auditedOperation` — it does not use one at all — so `auditRefusal`
+      // never sees the throw and the refusal left no trace anywhere. Recorded
+      // here instead, best-effort: it cannot fail the refusal.
+      await recordDeniedAttempt({
+        actor: session?.sub ?? session?.email ?? "unknown",
+        required: cause.required,
+        target: LABEL,
+        kind: "verb",
+      });
       return { ok: false, message: NO_PERMISSION };
     }
     if (cause instanceof PlatformApiError) {
