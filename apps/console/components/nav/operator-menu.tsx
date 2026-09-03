@@ -151,6 +151,19 @@ export function OperatorMenu({
             </Link>
           </div>
 
+          {/* A plain anchor, deliberately: `/auth/logout` is a route handler,
+              not a page. `<Link>` prefetches on viewport entry in production,
+              which would EXECUTE the handler and sign the operator out without
+              anyone clicking — the same reason `states.tsx` uses an anchor for
+              `/auth/login`.
+
+              The rule started firing when `app/(console)/[product]/page.tsx`
+              landed, and it is a false positive of the plugin's own making:
+              `getUrlFromAppDirectory` turns every `[segment]` into
+              `((?!.+?\..+?).*?)`, whose `.` matches `/`, so the one-segment
+              route `/[product]` matches `/auth/logout/` too. Nothing about
+              this anchor changed. */}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
           <a
             href="/auth/logout"
             className="block px-2.5 py-2 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

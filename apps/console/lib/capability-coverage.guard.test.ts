@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { routeForPath } from "@tesserix/console-core";
+import { PRODUCT_IDS, routeForPath } from "@tesserix/console-core";
 
 /**
  * Guard: every console page is reachable by the access gate, and every server
@@ -90,6 +90,30 @@ function urlForPage(file: string): string {
   return "/" + segments.join("/");
 }
 
+/**
+ * The request paths a page file actually answers.
+ *
+ * One each, except for the generic product page. `app/(console)/[product]/`
+ * has no literal path of its own — `routeForPath("/[product]")` matches
+ * nothing, because `[product]` is a filesystem notation and the route table
+ * holds request paths. Its real paths are one per registry product, and that
+ * set IS enumerable: `resolveProductParam` refuses every segment outside
+ * `PRODUCT_IDS`, so those are exactly the paths this page can render.
+ *
+ * Expanding it here rather than excepting it is what keeps the guard's promise
+ * for this page: a product added to `PRODUCTS` without its route ids fails
+ * this walk, instead of the page quietly rendering on the entry capability.
+ *
+ * Other dynamic segments need no expansion — `/platform/tickets/[id]` resolves
+ * through `routeForPath`'s prefix match to `platform.tickets`, which is the
+ * behaviour that file's own comment calls load-bearing for record pages.
+ */
+function urlsForPage(file: string): string[] {
+  const url = urlForPage(file);
+  if (!url.includes("[product]")) return [url];
+  return PRODUCT_IDS.map((id) => url.replace("[product]", id));
+}
+
 const PAGES = walk(PAGES_ROOT, (f) => f === "page.tsx").sort();
 
 describe("every console page is reachable by the access gate", () => {
@@ -101,7 +125,7 @@ describe("every console page is reachable by the access gate", () => {
     expect(PAGES.length).toBeGreaterThan(20);
   });
 
-  it.each(PAGES.map((f) => [rel(f), urlForPage(f)]))(
+  it.each(PAGES.flatMap((f) => urlsForPage(f).map((url) => [rel(f), url])))(
     "%s (%s) resolves to a route entry",
     (_file, url) => {
       // #262 resolves a REQUEST PATH through the route table to find the

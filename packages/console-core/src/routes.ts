@@ -295,10 +295,14 @@ export const ROUTES = {
   // `platform` matches every `kora.*` route, and for the same reason: these
   // are estate-operator reads of one product's records, not a narrower verb.
   //
-  // PENDING, and they must stay so until the pages land — `RouteEntry.pending`
-  // is explicit that a renderer must not link a pending entry, and neither
-  // does `mark8lyNav` gain entries for them here. Declaring an id is not the
-  // same act as advertising a door.
+  // PENDING UNTIL EACH PAGE LANDS, one at a time — `RouteEntry.pending` is
+  // explicit that a renderer must not link a pending entry. Declaring an id is
+  // not the same act as advertising a door.
+  //
+  // `mark8ly.overview` is no longer pending: `app/(console)/[product]/page.tsx`
+  // serves `/mark8ly`. `tenants` and `users` stay pending until their own page
+  // exists. Neither gains an entry in `mark8lyNav` here either way — the rail
+  // is a later change than the pages.
   //
   // No `web` and no `mobile`: apps/web's mark8ly rail is eight
   // tenant/onboarding/subscription screens over its own tables, not a
@@ -322,7 +326,6 @@ export const ROUTES = {
     // that behaviour; the resolve tests there stay green with or without this
     // flag, so do not read them as its guard.
     exact: true,
-    pending: true,
     capability: "platform",
     product: "mark8ly",
   },
