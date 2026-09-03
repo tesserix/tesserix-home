@@ -1,6 +1,7 @@
 export * from "./estate";
 export * from "./icons";
 export * from "./nav";
+export * from "./products";
 export * from "./routes";
 export * from "./route-access";
 export * from "./money";

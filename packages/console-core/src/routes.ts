@@ -5,6 +5,12 @@
 // `import type` is erased at build, so this buys the shared type at zero
 // runtime cost. No cycle: platform-auth does not depend on console-core.
 import type { Capability } from "@tesserix/platform-auth";
+// Type-only as well, and for a second reason on top of the one above:
+// `products.ts` imports the rails from `nav.ts` as VALUES, and `nav.ts` refers
+// to `RouteId` from here. A value import in this direction would close that
+// into a runtime cycle. `import type` is erased at build, so the union is
+// borrowed at zero cost and the module graph stays a tree.
+import type { ProductId } from "./products";
 
 // Route identity lives here, not in either app. This is what prevents the
 // mediation/messaging and audit-log/audit-logs drift between web and mobile.
@@ -128,6 +134,28 @@ interface RouteEntry {
    * `platform.dashboard` is exactly that.
    */
   shell?: true;
+  /**
+   * The product whose rail this surface belongs to.
+   *
+   * Optional, and the absence is meaningful in the same way `web`'s is: a
+   * `platform.*` route has NO product, because the platform rail is the estate
+   * rather than a source within it. It is not an unfilled field — there is no
+   * product to name, and typing this as required would force one to be
+   * invented for seventeen routes.
+   *
+   * The id-prefix convention (`kora.*`, `mark8ly.*`) already implied this and
+   * keeps working; the field is what makes the relationship checkable. A
+   * prefix is a naming habit — nothing stops a route id spelling a product
+   * that does not exist, and nothing can iterate "every route belonging to
+   * mark8ly" without parsing strings. Typed to `ProductId`, a route naming an
+   * unregistered product is a compile error, and the two directions of drift
+   * (a product with no routes, a route with no product) are both testable.
+   *
+   * This is identity, not presentation, which is why it lives on the route
+   * rather than in a lookup inside a renderer: a second mapping in one app is
+   * the exact drift this package exists to prevent.
+   */
+  product?: ProductId;
 }
 
 // `as const satisfies Record<string, RouteEntry>` keeps the literal keys (so
@@ -145,14 +173,14 @@ export const ROUTES = {
   // route below (`kora.aiMetrics`) is the one that takes `koraNav` from 3 to
   // 4; `estate.ts`'s Kora `entries` count is derived from `koraNav.length`,
   // so it tracks the rail automatically either way.
-  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, capability: "platform" },
+  "kora.overview": { web: "/admin/apps/kora", mobile: "/kora", exact: true, capability: "platform", product: "kora" },
   // NOT pending: the console serves this page — the full surface behind the
   // overview's three AI-resolution tiles (§B of the kora-overview part 2
   // plan). No `web` path: apps/web never served this, `/v1/kora/ai-metrics`
   // postdates it. `koraNav` gains a fourth entry for this route; `estate.ts`'s
   // Kora `entries` count is derived from `koraNav.length`, so it updates with
   // the rail rather than needing a second hand-maintained number.
-  "kora.aiMetrics": { mobile: "/kora/ai-metrics", capability: "platform" },
+  "kora.aiMetrics": { mobile: "/kora/ai-metrics", capability: "platform", product: "kora" },
   // NOT pending: the console serves this page. The FIRST product-rail surface
   // the console owns — every route it served before this was on the platform
   // rail.
@@ -160,7 +188,7 @@ export const ROUTES = {
   // No `console` path: `consolePath` falls back to `mobile`, and the two agree
   // at /kora/foods. `web` stays recorded because apps/web still serves its own
   // version until that app is retired.
-  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", capability: "platform" },
+  "kora.foods": { web: "/admin/apps/kora/foods", mobile: "/kora/foods", capability: "platform", product: "kora" },
   // RETIRED, not pending (#139). Kora's audit trail is one source in the
   // console's estate-wide `platform.auditLog`, and there is no Kora-scoped audit
   // page coming to the console — `pending` would promise one. `/admin/apps/kora/audit`
@@ -170,7 +198,7 @@ export const ROUTES = {
   //
   // `mobile` also stays: retirement is per-renderer, and expo-router still
   // serves that screen standalone.
-  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true, capability: "platform" },
+  "kora.audit": { web: "/admin/apps/kora/audit", mobile: "/kora/audit", retired: true, capability: "platform", product: "kora" },
   // RETIRED, not pending — the same call #139 made for `kora.audit`, for the
   // same reason and with more evidence behind it. §8.5: implementing
   // `/admin/inbox` does not earn a product rail entry, it makes the product a
@@ -185,7 +213,7 @@ export const ROUTES = {
   // `pending` would promise a Kora-scoped feedback page in the console. None is
   // coming; the estate Inbox (#356) is where these land. `web` and `mobile`
   // stay recorded for the same reasons they do on `kora.audit`.
-  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", retired: true, capability: "platform" },
+  "kora.feedback": { web: "/admin/apps/kora/feedback", mobile: "/kora/feedback", retired: true, capability: "platform", product: "kora" },
   // Left at the `read` default deliberately: the list is readable, and whether
   // the surface also carries user deletion (`hard-delete`) is undecided until
   // it is built — staff scoping is blocked on #134.
@@ -196,7 +224,7 @@ export const ROUTES = {
   // Left at the `read` default deliberately, as the previous comment said:
   // the list is readable, and whether this surface ever carries deletion
   // (`hard-delete`) is that same open decision.
-  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", capability: "platform" },
+  "kora.users": { web: "/admin/apps/kora/users", mobile: "/kora/users", capability: "platform", product: "kora" },
 
   // Mark8ly's product rail — one route, the CSM migration fast-path review
   // queue. `migrationFastPath` renders mark8ly's own vocabulary: it is the
@@ -242,6 +270,63 @@ export const ROUTES = {
     console: "/mark8ly/migration-fast-path",
     pending: true,
     capability: "platform",
+    product: "mark8ly",
+  },
+
+  // The three generic product surfaces for mark8ly: the rail's root and one
+  // page per §3.4 entity type mark8ly declares (`tenants`, `users` — see
+  // `PRODUCTS` in products.ts, verified against mark8ly/admin-conformance.json).
+  //
+  // DECLARED BEFORE THEY ARE BUILT, ON PURPOSE, AND THIS IS THE SECURITY
+  // POINT. `capabilityForPath` falls back to `ENTRY_CAPABILITY` — `read`, the
+  // ticket every operator who can reach the console holds — for any path no
+  // route id claims. So a `/mark8ly` page shipped without an id here would be
+  // readable by every signed-in operator, and the gate would report no error
+  // because the fallback is not a failure path. Declaring the ids first means
+  // the pages are gated on `platform` from the moment they exist rather than
+  // from the moment somebody remembers. Pinned in route-access.test.ts.
+  //
+  // `platform` matches every `kora.*` route, and for the same reason: these
+  // are estate-operator reads of one product's records, not a narrower verb.
+  //
+  // PENDING, and they must stay so until the pages land — `RouteEntry.pending`
+  // is explicit that a renderer must not link a pending entry, and neither
+  // does `mark8lyNav` gain entries for them here. Declaring an id is not the
+  // same act as advertising a door.
+  //
+  // No `web` and no `mobile`: apps/web's mark8ly rail is eight
+  // tenant/onboarding/subscription screens over its own tables, not a
+  // federated `/admin/entities/{type}` read, and expo-router has no screen for
+  // either. A path in those fields would claim a predecessor that never
+  // existed (see RouteEntry.web).
+  "mark8ly.overview": {
+    console: "/mark8ly",
+    // `exact`, for the reason `kora.overview` carries it: `/mark8ly` is a
+    // strict prefix of every nested mark8ly path, so a prefix match would keep
+    // the root lit — and, more to the point here, would let the root's entry
+    // compete with its children in `routeForPath`.
+    exact: true,
+    pending: true,
+    capability: "platform",
+    product: "mark8ly",
+  },
+  // `mark8ly.tenants` is the product's OWN tenant records, read through
+  // mark8ly's `/admin/entities/tenants`. Deliberately a different id from
+  // `platform.tenants`, which is the estate-wide directory on the platform
+  // rail across every source. Same word, two surfaces; collapsing them would
+  // give one id two meanings, the failure `platform.crmTemplates` vs
+  // `platform.leadTemplates` already records.
+  "mark8ly.tenants": {
+    console: "/mark8ly/tenants",
+    pending: true,
+    capability: "platform",
+    product: "mark8ly",
+  },
+  "mark8ly.users": {
+    console: "/mark8ly/users",
+    pending: true,
+    capability: "platform",
+    product: "mark8ly",
   },
 
   // Platform rail. The console owns their identity so the rail can be built
@@ -789,6 +874,18 @@ export function isPending(id: RouteId): boolean {
  */
 export function isRetired(id: RouteId): boolean {
   return getRoute(id).retired === true;
+}
+
+/**
+ * The product this route belongs to, or `undefined` for a platform route —
+ * see `RouteEntry.product`.
+ *
+ * `undefined` here means "the estate, not a product", not "unknown". A caller
+ * that needs the distinction has it: an unknown id throws in `getRoute`, as
+ * everywhere else in this file.
+ */
+export function routeProduct(id: RouteId): ProductId | undefined {
+  return getRoute(id).product;
 }
 
 /**
