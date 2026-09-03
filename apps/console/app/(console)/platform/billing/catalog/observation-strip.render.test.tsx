@@ -43,8 +43,11 @@ const noRuns: PairLatestRun[] = [
   { mode: "live", source: SINGLE_SOURCE, run: null },
 ];
 
-function renderStrip(windowStatus: ParityWindowStatus | null, over: { windowDays?: number } = {}) {
-  return render(
+/** Extracted from `renderStrip` so the mode-switch test can `rerender` the
+ *  same component with a different window — which is exactly what a `?mode=`
+ *  navigation does to this subtree. */
+function stripElement(windowStatus: ParityWindowStatus | null, windowDays = 7) {
+  return (
     <ObservationStrip
       windowStatus={windowStatus}
       windowState={resolveState({
@@ -55,9 +58,13 @@ function renderStrip(windowStatus: ParityWindowStatus | null, over: { windowDays
       })}
       runs={noRuns}
       runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
-      windowDays={over.windowDays ?? 7}
-    />,
+      windowDays={windowDays}
+    />
   );
+}
+
+function renderStrip(windowStatus: ParityWindowStatus | null, over: { windowDays?: number } = {}) {
+  return render(stripElement(windowStatus, over.windowDays ?? 7));
 }
 
 /** The disclosure's accessible name IS the collapsed summary — dot, verdict
@@ -159,6 +166,71 @@ describe("ObservationStrip", () => {
     // the button beside it, not the heading itself.
     expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
     expect(strip()).toHaveAccessibleName("Satisfied — 7/7 days clean, both pairs");
+  });
+
+  /**
+   * `ModeToggle` is a `next/link` to `?mode=` — a SOFT navigation to the same
+   * route, so `page.tsx` re-renders with new search params and React
+   * reconciles this component at the same position, keeping its `useState`.
+   * A `useState` initialiser seeds once and never again, so without a re-sync
+   * the strip an operator collapsed over a satisfied test window stays
+   * collapsed over a live window that is not satisfied — hiding the one state
+   * this component exists to put in front of them.
+   */
+  describe("when the window changes under it — a `?mode=` switch", () => {
+    it("re-expands when a satisfied window is replaced by a not-satisfied one", () => {
+      const { rerender } = renderStrip(SATISFIED);
+      expect(strip()).toHaveAttribute("aria-expanded", "false");
+
+      rerender(stripElement(WITH_A_DIRTY_DAY));
+
+      expect(screen.getByRole("button", { name: /Not satisfied/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+    });
+
+    it("re-collapses when a not-satisfied window is replaced by a satisfied one", () => {
+      const { rerender } = renderStrip(WITH_A_DIRTY_DAY);
+      expect(screen.getByRole("button", { name: /Not satisfied/ })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      );
+
+      rerender(stripElement(SATISFIED));
+
+      expect(strip()).toHaveAttribute("aria-expanded", "false");
+    });
+
+    it("does not fight a click: a collapsed not-satisfied window stays collapsed across a re-render", () => {
+      // The re-sync must key on the VERDICT changing, not run on every
+      // render — otherwise it reverses the operator mid-read.
+      const { rerender } = renderStrip(WITH_A_DIRTY_DAY);
+      fireEvent.click(screen.getByRole("button", { name: /Not satisfied/ }));
+      expect(screen.getByRole("button", { name: /Not satisfied/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+
+      // A different not-satisfied window (the other mode's, say) — same
+      // verdict, so the operator's own choice stands.
+      rerender(stripElement(WITH_A_GAP_DAY));
+
+      expect(screen.getByRole("button", { name: /Not satisfied/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    });
+
+    it("does not re-collapse a satisfied window an operator opened", () => {
+      const { rerender } = renderStrip(SATISFIED);
+      fireEvent.click(strip());
+      expect(strip()).toHaveAttribute("aria-expanded", "true");
+
+      rerender(stripElement(SATISFIED));
+
+      expect(strip()).toHaveAttribute("aria-expanded", "true");
+    });
   });
 
   it("shows the state view with no disclosure when the window read has not resolved", () => {

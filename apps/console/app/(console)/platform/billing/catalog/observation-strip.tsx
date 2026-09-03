@@ -5,7 +5,7 @@
 // carry this comment for, and the one PR #539 shipped without.
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   dayVerdict,
   ObservationWindow,
@@ -148,8 +148,33 @@ export function ObservationStrip({
   // state an operator must not have to click to see. Also expanded when there
   // is no summary at all, because the body is then a loading/error/empty state
   // view, which says nothing useful from behind a disclosure.
-  const [expanded, setExpanded] = useState(summary === null || !summary.satisfied);
+  const defaultExpanded = summary === null || !summary.satisfied;
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const bodyId = useId();
+
+  // Same re-sync as `SurfaceTabs`, for the same class of failure: local state
+  // seeded once from props that then move out from under it.
+  //
+  // `ModeToggle` is a `next/link` to `?mode=` — a SOFT navigation to the same
+  // route — so the page re-renders with a different mode's window and React
+  // reconciles this component at the same position, keeping the `useState`
+  // above. Without this, an operator on a satisfied `test` window who switches
+  // to a `live` window that is NOT satisfied gets the strip still collapsed:
+  // precisely the state the default exists to reveal, hidden by the default's
+  // own staleness.
+  //
+  // Keyed on the VERDICT, not on every render and not on the window object,
+  // so it re-asserts only when the answer actually flips. An operator who
+  // collapses a not-satisfied window keeps it collapsed while they read it,
+  // and one who opens a satisfied window is not shut again by an unrelated
+  // re-render.
+  const [syncedVerdict, setSyncedVerdict] = useState(summary?.satisfied ?? null);
+  const currentVerdict = summary?.satisfied ?? null;
+  useEffect(() => {
+    if (syncedVerdict === currentVerdict) return;
+    setSyncedVerdict(currentVerdict);
+    setExpanded(currentVerdict !== true);
+  }, [currentVerdict, syncedVerdict]);
 
   const body = (
     <ObservationWindow
