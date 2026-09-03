@@ -5,10 +5,9 @@ import {
   SURFACE_CAPABILITIES,
   getCurrentSession,
   toCapabilities,
-  type Capability,
 } from "@tesserix/platform-auth";
-import { Badge } from "@tesserix/web";
 import { ConsolePageHeader } from "@/components/kit/page-header";
+import { CapabilityGroup } from "./capability-groups";
 import { resolveLiveCapabilities } from "@/lib/auth/platform-token";
 import { requiresCapability } from "@/lib/internal-access";
 
@@ -52,53 +51,6 @@ import { requiresCapability } from "@/lib/internal-access";
  */
 export const dynamic = "force-dynamic";
 
-/** `crm` -> `CRM`, `rotate-credentials` -> `Rotate credentials`. The slug is
- *  still shown, because it is the string a grant is written with in Zitadel
- *  and an operator asking for one needs to quote it exactly. */
-function label(capability: Capability): string {
-  if (capability === "crm") return "CRM";
-  const spaced = capability.replace(/-/g, " ");
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-function CapabilityGroup({
-  title,
-  description,
-  all,
-  held,
-}: {
-  title: string;
-  description: string;
-  all: readonly Capability[];
-  held: ReadonlySet<string>;
-}) {
-  const present = all.filter((c) => held.has(c));
-  return (
-    <section className="border-t border-border pt-4">
-      <h2 className="text-sm font-medium">{title}</h2>
-      <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>
-      {present.length === 0 ? (
-        // Not an empty list: "you hold none of these" is a real answer and the
-        // one a narrowly-granted operator is most likely to be reading for.
-        <p className="mt-2 text-[13px] text-muted-foreground">None held.</p>
-      ) : (
-        <ul className="mt-2 flex flex-wrap gap-1.5">
-          {present.map((capability) => (
-            <li key={capability}>
-              <Badge variant="outline" className="font-normal">
-                <span>{label(capability)}</span>
-                <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">
-                  {capability}
-                </span>
-              </Badge>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 export default async function ProfilePage() {
   const session = await getCurrentSession();
   const snapshot = toCapabilities(session?.roles ?? []);
@@ -109,7 +61,7 @@ export default async function ProfilePage() {
   // revocation.
   const live = session ? await resolveLiveCapabilities(session) : null;
   const authoritative = live?.source === "store";
-  const held = new Set<string>(authoritative ? live.capabilities : snapshot);
+  const held = authoritative ? live.capabilities : snapshot;
 
   const enforcing = requiresCapability();
 
