@@ -241,8 +241,15 @@ export class CapabilityError extends Error {
  *
  * Use at the top of any route handler or server action that mutates state.
  * Throwing rather than returning a boolean is deliberate: a forgotten `if` on a
- * boolean check silently grants access, whereas a forgotten `assert` call is
- * caught by the route-coverage CI check.
+ * boolean check silently grants access, whereas a forgotten check of any kind
+ * is caught by `apps/console/lib/capability-coverage.guard.test.ts`, which
+ * walks every `"use server"` module and fails when one neither calls a gate
+ * nor delegates to a module that does.
+ *
+ * THAT CHECK NOW EXISTS. This comment previously claimed "the route-coverage
+ * CI check", and there was none — the guarantee was asserted and not provided,
+ * which is what #264 was filed to correct. It is named here rather than
+ * described, so the next reader can open it.
  */
 export function assertCapability(
   held: readonly string[] | undefined | null,
