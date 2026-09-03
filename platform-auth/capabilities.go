@@ -65,6 +65,15 @@ const (
 	// prices should not thereby hold the console's entire billing surface.
 	// See capabilities.ts, which is the authority this mirrors.
 	CapReadPlanCatalog Capability = "read-plan-catalog"
+
+	// CapReadPromoCatalog reads the PUBLISHED promo code catalog — the
+	// definitions a merchant's typed code is redeemed against. A machine
+	// capability on the same reasoning as CapReadPlanCatalog, and DELIBERATELY
+	// separate from it rather than folded in: the two catalogs are granted to
+	// different readers, and widening read-plan-catalog to cover promo codes
+	// would silently extend every grant already holding it. See
+	// capabilities.ts, which is the authority this mirrors.
+	CapReadPromoCatalog Capability = "read-promo-catalog"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -75,7 +84,7 @@ var Capabilities = []Capability{
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
-	CapReadPlanCatalog,
+	CapReadPlanCatalog, CapReadPromoCatalog,
 }
 
 // Surfaces say where a principal works.
@@ -94,7 +103,7 @@ var Verbs = []Capability{
 // machine holds neither concept, so forcing it into one would misstate what
 // it is rather than clarify it. Mirrors MACHINE_CAPABILITIES in
 // capabilities.ts.
-var Machines = []Capability{CapReadPlanCatalog}
+var Machines = []Capability{CapReadPlanCatalog, CapReadPromoCatalog}
 
 func known(c Capability) bool {
 	return slices.Contains(Capabilities, c)
