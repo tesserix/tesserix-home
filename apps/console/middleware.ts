@@ -96,9 +96,20 @@ function isPublicPath(pathname: string): boolean {
 // authenticated. `/api/v1/plan-catalog/..%2fadmin` still equals neither
 // literal, so that shape stays closed, and no future sub-resource is exempt
 // by default — the allowlist is exactly as narrow as before, just complete.
+// Every `/api/v1/*` route that does its OWN machine-token auth needs BOTH
+// literals here, and adding the route without adding them is silent: the
+// route's own `verifyMachineAuthHeader` never runs, and the caller gets this
+// middleware's `unauthorized()` 401 instead. That 401 is indistinguishable
+// from a bad token AND from a route that does not exist, so it reads as an
+// auth problem on the caller's side — #542 shipped `/api/v1/promo-catalog`
+// this way and it was found only by probing production with a real token.
+// `middleware.test.ts` now enumerates `app/api/v1/` and fails on any route
+// missing from this list, so the next one cannot be silent.
 const MACHINE_AUTH_PATHS: ReadonlyArray<string> = [
   "/api/v1/plan-catalog",
   "/api/v1/plan-catalog/",
+  "/api/v1/promo-catalog",
+  "/api/v1/promo-catalog/",
 ];
 
 function isMachineAuthPath(pathname: string): boolean {

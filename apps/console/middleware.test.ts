@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -167,5 +169,63 @@ describe("the forwarded pathname header is normalised", () => {
     const res = await middleware(authed("/%6Dark8ly/tenants%2Fx"));
 
     expect(forwardedPathname(res)).toBe("/mark8ly/tenants%2Fx");
+  });
+});
+
+/**
+ * The structural guard, added after `/api/v1/promo-catalog` shipped without
+ * its allowlist entries (#542).
+ *
+ * The `plan-catalog` suite above names that route in every assertion, so it
+ * stayed green while a second machine route was unreachable in production.
+ * Nothing else could catch it either: the route's own tests call the handler
+ * directly, and `next build` renders middleware and routes as separate
+ * things. The gap was visible only by probing the deployed console with a
+ * real token — and even then the symptom lies, because `unauthorized()`
+ * returns the SAME `{"error":"Unauthorized"}` 401 for a route missing from
+ * the allowlist as for a route that does not exist at all.
+ *
+ * So this enumerates the directory rather than naming routes: every
+ * `app/api/v1/<name>/route.ts` is a machine endpoint by construction — the
+ * `/api/v1` prefix is what mark8ly's service user calls — and each must
+ * bypass the session gate in both its bare and trailing-slash forms.
+ *
+ * A future `/api/v1` route that is genuinely session-authenticated would
+ * fail here. That is the right default: this list is a deliberate hole in
+ * the console's global auth gate, and an exception belongs in code as an
+ * explicit entry rather than opening by accident.
+ */
+describe("every /api/v1 route is allowlisted, in both forms", () => {
+  const V1_DIR = path.join(__dirname, "app", "api", "v1");
+  const routes = fs
+    .readdirSync(V1_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .filter((entry) => fs.existsSync(path.join(V1_DIR, entry.name, "route.ts")))
+    .map((entry) => entry.name);
+
+  beforeEach(() => {
+    vi.mocked(verifySession).mockResolvedValue(null);
+  });
+
+  it("finds the routes it is meant to be guarding", () => {
+    // Guards the guard: a rename of `app/api/v1` would make every assertion
+    // below vacuous, and an empty list passing silently is exactly the
+    // failure shape this block exists to close.
+    expect(routes.length).toBeGreaterThan(0);
+    expect(routes).toContain("plan-catalog");
+  });
+
+  it.each(routes)("lets an unauthenticated request through to /api/v1/%s", async (name) => {
+    const res = await middleware(req(`${BASE}/api/v1/${name}?mode=test`));
+
+    expect(verifySession).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+  });
+
+  it.each(routes)("lets it through for /api/v1/%s/ too", async (name) => {
+    const res = await middleware(req(`${BASE}/api/v1/${name}/?mode=test`));
+
+    expect(verifySession).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
   });
 });
