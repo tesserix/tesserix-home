@@ -74,6 +74,16 @@ function fail(message: string): never {
  * beside real numbers, which is the same "a dash reads as a zero" confusion
  * the 501 contract exists to prevent. Refusing is the honest answer — the read
  * failed to mean anything, and the operator is told so.
+ *
+ * THE BLAST RADIUS IS THE WHOLE READ, and that is a real cost, not a detail:
+ * one `null` metric fails `parseProductKpis`, so a product that is reachable
+ * and answering renders as `error` — an outage-shaped page for something that
+ * is not an outage. That is adjacent to the 501/503 confusion this module
+ * exists to prevent, and it is accepted rather than overlooked: the
+ * alternative, dropping the offending key, hides a contract deviation behind a
+ * page that looks complete, and a partial metric map has no way to say which
+ * number is missing. If a product ever legitimately sends `null`, the fix is
+ * per-key and belongs here, not in the caller.
  */
 function scalar(value: unknown, key: string): MetricValue {
   if (typeof value === "number") {
@@ -140,14 +150,31 @@ export const KPIS_UNAVAILABLE_TITLE = "No headline metrics yet";
 /**
  * Copy for the same 501.
  *
- * Says nothing failed and offers no retry, because neither would be true: the
- * product is answering, and it is answering that it has no numbers to give.
- * Deliberately makes no promise about when that changes — that is the
- * product's to decide, not this page's.
+ * TRUE OF BOTH CAUSES, deliberately, and that is why it does not simply say
+ * "this product reports no metrics". `ErrNoProducts` is reachable on this
+ * surface: `main.go` passes `cfg.Federation.Slugs()` — the `FEDERATION_PRODUCTS`
+ * list — as the module's `Slugs`, and `service.Read` returns `ErrNoProducts`
+ * from `len(s.slugs) == 0` BEFORE it looks at `source` at all. So a deployment
+ * that federates nothing answers 501 for every product, including one the
+ * console's own registry knows; the registry gate cannot close that branch,
+ * because the registry is console-side and the slug list is platform-api
+ * deployment config. Naming only the first cause would tell an operator to wait
+ * on a product when the fix is an env var.
+ *
+ * `inboxReadError`'s copy gets away with naming its single cause. This 501 has
+ * two, so the message names the observable fact both share and leaves the
+ * distinction to the two remedies it offers.
+ *
+ * Says nothing failed and offers no retry, because neither would be true under
+ * either cause: platform-api answered, and it answered that there are no
+ * numbers to show. Deliberately makes no promise about when that changes — the
+ * first cause is the product's to fix and the second the deployment's, and
+ * neither is this page's to predict.
  */
 export const KPIS_UNAVAILABLE_MESSAGE =
-  "This product does not report headline metrics to the console yet. Nothing is broken " +
-  "and there is nothing to retry — this surface fills in once the product reports them.";
+  "No headline metrics are reaching the console for this product yet. Nothing is broken " +
+  "and there is nothing to retry — either the product does not report them yet, or this " +
+  "deployment is not federating to it.";
 
 /**
  * Narrow this read's rejection, attaching this surface's own 501 copy.

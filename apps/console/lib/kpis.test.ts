@@ -46,10 +46,16 @@ describe("parseProductKpis", () => {
     expect(parsed).not.toBe(METRICS);
   });
 
-  it("refuses a body that still carries a `data` wrapper", () => {
-    // Not a shape today's platform-api can send — it is here so a future
-    // producer that double-wraps is a visible decode error rather than one
-    // metric named "data" whose value renders as nothing.
+  it("refuses a double-wrapped body via the scalar rule, not a `data` check", () => {
+    // Named for what actually bites. There is NO `data`-wrapper check in
+    // `kpis.ts`: this body is refused because the value under `data` is an
+    // object, which `scalar` rejects like any other non-scalar. The earlier
+    // name for this test claimed a mechanism that does not exist.
+    //
+    // No explicit `data` check was added, deliberately: `data` is a legal
+    // metric key. A product reporting a scalar named `data` is within §3.1,
+    // and a check keyed on the name would refuse a valid map to catch a
+    // shape the scalar rule already catches.
     expect(() => parseProductKpis({ data: METRICS })).toThrow(PlatformApiError);
   });
 
@@ -111,6 +117,17 @@ describe("kpisReadError", () => {
     expect(KPIS_UNAVAILABLE_TITLE).not.toMatch(/observability/i);
   });
 
+  it("is true of both 501 causes, not just the uninstrumented product", () => {
+    // `ErrNoProducts` reaches this surface as well: `service.Read` returns it
+    // from `len(s.slugs) == 0` before it looks at `source` at all, and
+    // `main.go` fills those slugs from `FEDERATION_PRODUCTS`. So a deployment
+    // federating nothing 501s for every product, including one the console's
+    // registry knows. Copy naming only the product's side would tell an
+    // operator to wait on a product when the fix is an env var.
+    expect(KPIS_UNAVAILABLE_MESSAGE).toMatch(/does not report them yet/);
+    expect(KPIS_UNAVAILABLE_MESSAGE).toMatch(/federating/);
+  });
+
   it("does not imply breakage or invite a retry", () => {
     expect(KPIS_UNAVAILABLE_MESSAGE).not.toMatch(/Try again/i);
     expect(KPIS_UNAVAILABLE_MESSAGE).not.toMatch(/failed|error|unavailable/i);
@@ -121,6 +138,14 @@ describe("kpisReadError", () => {
     // Rendering that as "no metrics" tells an operator a number does not exist
     // when it exists and is unreachable, which `writeReadError` calls the more
     // dangerous of the two mistakes.
+    //
+    // HALF A GUARD ON ITS OWN. The `error` outcome here is enforced by
+    // `resolveState`, which this surface does not own — this assertion would
+    // still pass if `kpisReadError` were deleted. The removal-sensitive half
+    // is "preserves a 503 as a distinct status" in `platform-api.test.ts`,
+    // which fails if the status stops reaching this function at all. The
+    // 501/503 split is covered by the PAIR; deleting either one leaves a gap
+    // the other does not fill.
     const unreachable = Object.assign(
       new Error("kpis: SERVICE_UNAVAILABLE — the product could not be reached"),
       { status: 503 },

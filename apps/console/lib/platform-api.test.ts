@@ -1412,6 +1412,12 @@ describe("fetchProductKpis", () => {
   it("preserves a 503 as a distinct status, not as the 501", async () => {
     // An outage must never reach the page as "no metrics" — see
     // `writeReadError`, which calls that the more dangerous mistake.
+    //
+    // The removal-sensitive half of that guard. Its pair, "leaves a 503 as an
+    // error — the dangerous direction" in `kpis.test.ts`, asserts the STATE an
+    // operator ends up in but is enforced by `resolveState`, so it survives
+    // `kpisReadError` being deleted. This one fails the moment the status
+    // stops reaching the caller. Neither covers the other; keep both.
     stubFetch(
       new Response(
         JSON.stringify({
