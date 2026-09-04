@@ -10,6 +10,7 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // Not `toSurfaceError` — see `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
 import { requiresCapability } from "@/lib/internal-access";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
 import { listTemplates, type TemplateRow } from "@/lib/db/crm-templates";
 import {
@@ -104,7 +105,7 @@ export default async function OrganisationDetailPage({
     );
   }
 
-  const { organisation, contacts, opportunities, activities } = detail;
+  const { organisation, contacts, opportunities, activities, hasMoreActivities } = detail;
   const products = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 
   // Live `dm` templates for the composer, read in its OWN try/catch rather
@@ -168,6 +169,22 @@ export default async function OrganisationDetailPage({
         },
         { label: "Location", value: organisation.location ?? "Not recorded" },
         {
+          label: "Country",
+          // "Not derived", not the rail's "Not recorded" used above: this
+          // column is computed from `location` by `countryFromLocation`, and
+          // nobody ever fills it in — which is why an absent value reads
+          // "Not derived" rather than the rail's usual "Not recorded":
+          // there was never a field for anyone to leave blank. It covers
+          // both ways the derivation comes back empty — no location to read,
+          // or a location the mapper has no entry for — and the Location row
+          // directly above says which of the two this row is. 208 of the 259
+          // production organisations are in one or the other
+          // (`crm-filters.ts`).
+          value: organisation.country
+            ? (COUNTRY_LABELS[organisation.country] ?? organisation.country)
+            : "Not derived",
+        },
+        {
           label: "Category",
           value: organisation.category.length > 0 ? organisation.category.join(", ") : "Not recorded",
         },
@@ -199,6 +216,7 @@ export default async function OrganisationDetailPage({
             <ActivityTab
               organisationId={organisation.id}
               activities={activities}
+              hasMoreActivities={hasMoreActivities}
               opportunities={opportunities}
               contacts={contacts}
               templates={templates}

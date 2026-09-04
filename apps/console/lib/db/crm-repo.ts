@@ -293,14 +293,16 @@ function filterClause(filter: QueueFilter, params: unknown[]): string {
 }
 
 /**
- * A page of a queue, plus the counts that make the page honest.
+ * A page of a keyset-paged list, plus the counts that make the page honest.
  *
  * Same shape as `OrganisationPage`, for the same reason: a bare capped array
- * cannot say how much it left behind. It is a separate interface because the
- * rows differ, not because the pager does.
+ * cannot say how much it left behind. Generic in the row because `queuePage`
+ * now serves lists whose rows differ — the two work queues read a `QueueRow`,
+ * the closed list reads a `ClosedRow` — while the pager itself is identical
+ * for all of them.
  */
-export interface QueuePage {
-  rows: QueueRow[];
+export interface Page<TRow> {
+  rows: TRow[];
   /** Every row matching this queue's predicate AND its filters, ignoring
    *  the page limit — the number the operator is being told. */
   total: number;
@@ -318,6 +320,11 @@ export interface QueuePage {
   previousCursor: string | null;
 }
 
+/** A page of either work queue. Named separately because every caller and
+ *  every mock in the console already speaks it, and because the platform-API
+ *  path (`crm-queue-wire.ts`) builds exactly this shape off the wire. */
+export type QueuePage = Page<QueueRow>;
+
 /** The columns every queue row is built from — one list, so `dueOpportunities`
  *  and `driftingOpportunities` cannot drift apart on what a QueueRow is. */
 const QUEUE_COLUMNS = `o.id, o.organisation_id, g.name AS organisation_name,
@@ -331,7 +338,10 @@ const QUEUE_COLUMNS = `o.id, o.organisation_id, g.name AS organisation_name,
  *  three copies of a COALESCE is three chances to change two of them. */
 const DRIFTING_SORT_KEY = "COALESCE(o.last_contacted_at, o.created_at)";
 
-interface QueuePageQuery {
+interface QueuePageQuery<TRaw extends { id: string }, TRow> {
+  /** This list's SELECT list. A module constant like `sortKey`, never caller
+   *  input — it is spliced into the statement, not bound. */
+  columns: string;
   /** SQL expression this queue orders by. A module constant, never caller
    *  input — it is spliced into the statement, not bound. */
   sortKey: string;
@@ -342,8 +352,10 @@ interface QueuePageQuery {
    *  `params` in the order the returned SQL numbers them. Called once per
    *  statement because the count and page queries bind separate lists. */
   buildWhere: (params: unknown[]) => string;
+  /** One raw pg row as this list's own row type. */
+  toRow: (row: TRaw) => TRow;
   /** The sort key's value on a returned row, for the next cursor. */
-  sortValue: (row: RawQueueRow) => unknown;
+  sortValue: (row: TRaw) => unknown;
   limit: number;
   cursor?: string;
 }
@@ -370,14 +382,16 @@ interface QueuePageQuery {
  * with `listOrganisations`. See `keyset-cursor.ts` for why the SQL stays
  * split even though the cursor itself does not.
  */
-async function queuePage({
+async function queuePage<TRaw extends { id: string }, TRow>({
+  columns,
   sortKey,
   label,
   buildWhere,
+  toRow,
   sortValue,
   limit,
   cursor,
-}: QueuePageQuery): Promise<QueuePage> {
+}: QueuePageQuery<TRaw, TRow>): Promise<Page<TRow>> {
   // Decoded (and validated) before either query runs, so a malformed cursor
   // fails fast without spending a round trip on a count it would never use.
   const decoded = cursor ? decodeKeysetCursor(cursor, label) : null;
@@ -426,8 +440,8 @@ async function queuePage({
         WHERE ${countWhere}`,
       countParams,
     ),
-    tesserixQuery<RawQueueRow>(
-      `SELECT ${QUEUE_COLUMNS}
+    tesserixQuery<TRaw>(
+      `SELECT ${columns}
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
       WHERE ${where}
@@ -451,7 +465,7 @@ async function queuePage({
   // from the one after it, so it exists whenever this page has rows.
   const hasNextPage = backwards ? Boolean(lastRow) : hasMore;
   return {
-    rows: pageRawRows.map(toQueueRow),
+    rows: pageRawRows.map(toRow),
     // count(*) comes back as a string from pg's bigint mapping.
     total: Number(countRows[0]?.count ?? 0),
     precedingCount,
@@ -474,7 +488,8 @@ export async function dueOpportunities(
   limit: number,
   cursor?: string,
 ): Promise<QueuePage> {
-  return queuePage({
+  return queuePage<RawQueueRow, QueueRow>({
+    columns: QUEUE_COLUMNS,
     sortKey: "o.next_action_at",
     label: "dueOpportunities",
     // The queue's own predicates stay first, filters spliced after, so the
@@ -482,6 +497,7 @@ export async function dueOpportunities(
     buildWhere: (params) =>
       `o.next_action_at <= now()
         AND o.stage NOT IN ('won', 'lost')${filterClause(filter, params)}`,
+    toRow: toQueueRow,
     // Non-null on every returned row: the predicate above requires it.
     sortValue: (row) => row.next_action_at,
     limit,
@@ -514,7 +530,8 @@ export async function driftingOpportunities(
   limit: number,
   cursor?: string,
 ): Promise<QueuePage> {
-  return queuePage({
+  return queuePage<RawQueueRow, QueueRow>({
+    columns: QUEUE_COLUMNS,
     sortKey: DRIFTING_SORT_KEY,
     label: "driftingOpportunities",
     // Filter parameters are pushed before staleDays so the filter clauses
@@ -527,7 +544,131 @@ export async function driftingOpportunities(
         AND ${DRIFTING_SORT_KEY}
               <= now() - make_interval(days => $${params.length}::int)${filterSql}`;
     },
+    toRow: toQueueRow,
     sortValue: (row) => row.quiet_since,
+    limit,
+    cursor,
+  });
+}
+
+/**
+ * The closed list: the deals the two work queues deliberately exclude.
+ *
+ * A read of its own rather than a value admitted to the queues' `stage`
+ * filter. The queues sort by urgency — `next_action_at`, `quiet_since` — and
+ * a deal that is already won or lost has no next action and no meaningful
+ * quietness, so admitting one orders it by a key that does not apply to it
+ * under a heading that reads "Due". The platform-API implementation of those
+ * queues (`lib/crm-queues.ts`) refuses a terminal stage with a 422 by design,
+ * so admitting one would also be a two-language change to a live wire
+ * contract; a new read is neither.
+ */
+export interface ClosedRow {
+  id: string;
+  organisationId: string;
+  organisationName: string;
+  product: string | null;
+  /** `won` or `lost` — the WHERE clause admits nothing else. Carried rather
+   *  than assumed by the caller, which renders the two differently. */
+  stage: CrmStage;
+  owner: string | null;
+  /** When the deal closed. Null only for a terminal row whose `closed_at`
+   *  was never written — see `CLOSED_SORT_KEY` for why that is possible and
+   *  what the list does about it. */
+  closedAt: string | null;
+  /** Why a deal was lost, as `advanceStage` recorded it. Null on every won
+   *  row: that same write sets `lost_reason` only for `lost` and clears it
+   *  on any other transition. */
+  lostReason: string | null;
+}
+
+export type ClosedPage = Page<ClosedRow>;
+
+interface RawClosedRow {
+  id: string;
+  organisation_id: string;
+  organisation_name: string;
+  product: string | null;
+  stage: CrmStage;
+  owner: string | null;
+  closed_at: unknown;
+  closed_sort: unknown;
+  lost_reason: string | null;
+}
+
+function toClosedRow(row: RawClosedRow): ClosedRow {
+  return {
+    id: row.id,
+    organisationId: row.organisation_id,
+    organisationName: row.organisation_name,
+    product: row.product,
+    stage: row.stage,
+    owner: row.owner,
+    closedAt: toIso(row.closed_at),
+    lostReason: row.lost_reason,
+  };
+}
+
+/**
+ * The closed list's sort key, and why it is not the bare column.
+ *
+ * `closed_at` is nullable in 0019 and no CHECK ties it to the stage. Every
+ * write that moves an opportunity into a terminal stage does set it in the
+ * same statement — `advanceStage` is the only such write in this module, the
+ * outreach composer goes through it, and both the dev seed and the leads
+ * migration backfill the column — so a NULL here is a row nothing in the
+ * codebase produces today. It is still not a case to leave to chance: the
+ * keyset cursor is built FROM the sort key, so one such row would make
+ * `toIsoRequired` throw and take the whole list down with it, rather than
+ * merely sorting oddly. `updated_at` is NOT NULL, and is the last time
+ * anything touched the row — the closest real evidence available, and never
+ * an invented date. `wonWithoutConversion` guards the same possibility with
+ * `NULLS LAST`.
+ *
+ * Named once because the ORDER BY, the cursor comparison and the selected
+ * `closed_sort` column all have to be the same expression.
+ */
+const CLOSED_SORT_KEY = "COALESCE(o.closed_at, o.updated_at)";
+
+/** What a `ClosedRow` is built from. `closed_sort` is selected as well as
+ *  `closed_at` because the cursor is minted from the sort key's value on the
+ *  row, and recomputing that COALESCE in TypeScript is two copies of one
+ *  expression. */
+const CLOSED_COLUMNS = `o.id, o.organisation_id, g.name AS organisation_name,
+            o.product, o.stage, o.owner, o.closed_at, o.lost_reason,
+            ${CLOSED_SORT_KEY} AS closed_sort`;
+
+/**
+ * Won and lost deals, oldest-closed-first, filtered and paged like a queue.
+ *
+ * Ascending because `queuePage` reads one direction: its cursor comparison,
+ * ORDER BY, preceding count and backward mirror are all written for an
+ * ascending list, and a newest-first list would be a second implementation of
+ * that mirroring rather than a flag. Forward paging therefore walks toward
+ * the most recently closed deal.
+ *
+ * Neither partial index in 0019 applies here — both are `WHERE … stage NOT IN
+ * ('won','lost')`, and this query wants exactly their complement, so it was
+ * never going to use them. At the low hundreds of rows this table holds, the
+ * scan costs nothing; the same reasoning `driftingOpportunities` records
+ * about its own unindexed sort.
+ */
+export async function closedOpportunities(
+  filter: QueueFilter,
+  limit: number,
+  cursor?: string,
+): Promise<ClosedPage> {
+  return queuePage<RawClosedRow, ClosedRow>({
+    columns: CLOSED_COLUMNS,
+    sortKey: CLOSED_SORT_KEY,
+    label: "closedOpportunities",
+    // The list's own predicate stays first, filters spliced after — the same
+    // shape the queues use. A `stage` filter here narrows won/lost to one of
+    // them rather than contradicting the predicate, which is what the same
+    // filter would do on either work queue.
+    buildWhere: (params) => `o.stage IN ('won', 'lost')${filterClause(filter, params)}`,
+    toRow: toClosedRow,
+    sortValue: (row) => row.closed_sort,
     limit,
     cursor,
   });
@@ -1111,6 +1252,16 @@ export interface OrganisationRow {
   name: string;
   websiteUrl: string | null;
   location: string | null;
+  /**
+   * ISO 3166-1 alpha-2 code derived from `location` by `countryFromLocation`,
+   * and `null` when there was nothing to derive: either no location at all,
+   * or a location the mapper has no entry for. Those are different absences
+   * and the surfaces must not render them the same way. No writer can attach
+   * a country to a NULL location, so a null `location` here always carries a
+   * null `country` — see `LocationCell` in `organisations-view.tsx` for the
+   * per-writer argument.
+   */
+  country: string | null;
   category: readonly string[];
   tags: readonly string[];
   convertedProduct: string | null;
@@ -1170,11 +1321,28 @@ export interface OrganisationDetail {
   contacts: readonly ContactRow[];
   opportunities: readonly OpportunityRow[];
   activities: readonly ActivityRow[];
+  /**
+   * There is activity older than `activities` that this read does not carry.
+   *
+   * Carried rather than left to the caller to infer from `activities.length
+   * === ACTIVITY_LIMIT`, which is wrong exactly at the boundary: a timeline of
+   * precisely the cap would claim there is more history when there is not.
+   *
+   * Discovered by asking for one row more than the cap and discarding it —
+   * one query, not a second COUNT, the same trade `HandoffPage.hasMore`
+   * makes (#246). The instance is a shared db-f1-micro, and the only decision
+   * this informs — is what I am reading the whole record — is the same at 201
+   * as at 2,001.
+   */
+  hasMoreActivities: boolean;
 }
 
 /** Most recent activities shown on a detail page — a full history is a job
- *  for export/search, not this view. */
-const ACTIVITY_LIMIT = 200;
+ *  for export/search, not this view.
+ *
+ *  Exported so the test can assert the probe-row arithmetic against the
+ *  constant itself rather than a copy of its value. */
+export const ACTIVITY_LIMIT = 200;
 
 /** `toIso`, but for a column that's `NOT NULL` in the schema — same
  *  fail-loud contract as `quiet_since` above: a null here means the query
@@ -1192,7 +1360,7 @@ function toIsoRequired(value: unknown): string {
  * contact, then the oldest, then by `id`.
  *
  * One helper rather than the ordering spelled out at each site because seven
- * queries use this ordering — three display subqueries and two filter
+ * queries use this ordering — four display subqueries and two filter
  * subqueries in `listOrganisations`, `wonWithoutConversion`'s primary-email
  * lookup, and `organisationDetail`'s full contact list (which orders the
  * whole list this way rather than picking one row) — and they must agree.
@@ -1228,7 +1396,7 @@ function primaryContactOrder(alias: string): string {
  * row held the primary slot.
  *
  * Applied to every subquery that picks ONE contact to stand for the
- * organisation — the two follower clauses, `hasEmail`, and the three display
+ * organisation — the two follower clauses, `hasEmail`, and the four display
  * columns in `listOrganisations` — and to none that read the organisation's
  * contacts as a record: `organisationDetail` still lists the erased contact,
  * because "who is primary for queue purposes" and "what does this
@@ -1259,6 +1427,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
     name: string;
     website_url: string | null;
     location: string | null;
+    country: string | null;
     category: string[];
     tags: string[];
     converted_product: string | null;
@@ -1266,7 +1435,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
     converted_at: unknown;
     created_at: unknown;
   }>(
-    `SELECT id, name, website_url, location, category, tags,
+    `SELECT id, name, website_url, location, country, category, tags,
             converted_product, converted_label, converted_at, created_at
        FROM crm_organisations
       WHERE id = $1`,
@@ -1328,12 +1497,23 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       body: string | null;
       occurred_at: unknown;
     }>(
+      // `id` last for the same reason the organisation keyset carries it:
+      // `occurred_at` is a plain `timestamptz DEFAULT now()` with no
+      // uniqueness guarantee, and rows can be written with an explicit value
+      // (`scripts/seed-dev.mjs` does), so two rows can share it exactly.
+      // Without a total order the LIMIT then breaks that tie arbitrarily —
+      // and the cut now decides which row is DROPPED, not just where it sits,
+      // so two loads of the same page could disagree about what the timeline
+      // contains. No write path in the app produces such a tie today; this
+      // costs nothing and removes the latent one.
       `SELECT id, opportunity_id, kind, actor, body, occurred_at
          FROM crm_activities
         WHERE organisation_id = $1
-        ORDER BY occurred_at DESC
+        ORDER BY occurred_at DESC, id DESC
         LIMIT $2`,
-      [organisationId, ACTIVITY_LIMIT],
+      // One more than the cap: the extra row is never returned, it only
+      // answers "is there history past this".
+      [organisationId, ACTIVITY_LIMIT + 1],
     ),
   ]);
 
@@ -1343,6 +1523,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       name: org.name,
       websiteUrl: org.website_url,
       location: org.location,
+      country: org.country,
       category: org.category,
       tags: org.tags,
       convertedProduct: org.converted_product,
@@ -1374,7 +1555,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       lostReason: row.lost_reason,
       createdAt: toIsoRequired(row.created_at),
     })),
-    activities: activityRows.map((row) => ({
+    activities: activityRows.slice(0, ACTIVITY_LIMIT).map((row) => ({
       id: row.id,
       opportunityId: row.opportunity_id,
       kind: row.kind,
@@ -1382,6 +1563,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       body: row.body,
       occurredAt: toIsoRequired(row.occurred_at),
     })),
+    hasMoreActivities: activityRows.length > ACTIVITY_LIMIT,
   };
 }
 
@@ -2623,10 +2805,30 @@ export interface OrganisationListRow {
   id: string;
   name: string;
   location: string | null;
+  /**
+   * ISO 3166-1 alpha-2 code derived from `location`, and the value the
+   * `country` filter matches on. `null` where nothing could be derived —
+   * no location, or a location the mapper had no entry for; 208 of the 259
+   * production organisations are in one of those two states
+   * (`crm-filters.ts`) — so the surface can show which rows it resolved
+   * rather than leaving the filter's misses indistinguishable from its hits.
+   */
+  country: string | null;
   contactName: string | null;
   contactEmail: string | null;
   /** Primary contact's Instagram handle, for handle-first rendering. */
   contactHandle: string | null;
+  /**
+   * Primary contact's follower count — the CRM's only quantitative
+   * qualification signal, and the number the `followers` filter bands on.
+   *
+   * `null` means no recorded count, which is not the claim a zero makes: the
+   * row belongs in the Unknown band, and the surface must render it blank
+   * rather than as `0` (see `UNKNOWN_LABEL` in `crm-filters.ts`). Resolved
+   * through the same `primaryContactOrder`/`notErased` pair as the filter, so
+   * the displayed number is always the one the band matched on.
+   */
+  followersCount: number | null;
   /** How many contacts this organisation has. */
   contactCount: number;
   websiteUrl: string | null;
@@ -2772,9 +2974,11 @@ interface RawOrganisationListRow {
   id: string;
   name: string;
   location: string | null;
+  country: string | null;
   contact_name: string | null;
   contact_email: string | null;
   contact_handle: string | null;
+  followers_count: number | null;
   contact_count: string | number;
   website_url: string | null;
   open_opportunities: string | number;
@@ -2787,9 +2991,16 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
     id: row.id,
     name: row.name,
     location: row.location,
+    country: row.country,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
     contactHandle: row.contact_handle,
+    // Straight through, unlike the counts below: `crm_contacts.followers_count`
+    // is an `integer` column (migration 0019), which pg maps to a JS number —
+    // only the bigint that `count(*)` returns needs converting. A `Number()`
+    // here would also turn a NULL into 0, which is the one value this column
+    // must never invent.
+    followersCount: row.followers_count,
     // count(*) comes back as a string from pg's bigint mapping.
     contactCount: Number(row.contact_count),
     websiteUrl: row.website_url,
@@ -2908,7 +3119,7 @@ export async function listOrganisations(
       countParams,
     ),
     tesserixQuery<RawOrganisationListRow>(
-      `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
+      `SELECT g.id, g.name, g.location, g.country, g.website_url, g.created_at,
               (SELECT c.name FROM crm_contacts c
                 WHERE c.organisation_id = g.id
                   AND ${notErased("c")}
@@ -2924,9 +3135,18 @@ export async function listOrganisations(
                   AND ${notErased("c")}
                 ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_handle,
+              -- The same primary contact the followers filter bands on:
+              -- primaryContactFollowerClause resolves it with this exact
+              -- ordering and this exact erasure predicate, so a row can never
+              -- display a number that contradicts the band it came back under.
+              (SELECT c.followers_count FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                  AND ${notErased("c")}
+                ORDER BY ${primaryContactOrder("c")}
+                LIMIT 1) AS followers_count,
               -- Counts every contact, erased ones included: the count says how
               -- many contacts the organisation's file holds, not which of them
-              -- the three columns above resolved to. See notErased().
+              -- the four columns above resolved to. See notErased().
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
               (SELECT count(*) FROM crm_opportunities o

@@ -21,6 +21,9 @@ const ORGANISATION: OrganisationRow = {
   name: "Bondi Baker",
   websiteUrl: "https://bondibaker.example",
   location: "Sydney, Australia",
+  // What `countryFromLocation` derives from the location above; the form does
+  // not edit it (the write path re-derives it from the new location).
+  country: "AU",
   category: ["bakery", "cafe"],
   tags: ["instagram", "warm"],
   convertedProduct: null,

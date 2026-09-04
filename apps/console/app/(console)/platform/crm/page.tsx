@@ -12,16 +12,9 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // verbatim `.message` would render a Postgres error to an operator. See
 // `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
-import {
-  wonWithoutConversion,
-  type QueuePage,
-  type QueueRow,
-  type QueueFilter,
-  type HandoffRow,
-} from "@/lib/db/crm-repo";
+import { type QueuePage, type QueueRow, type QueueFilter } from "@/lib/db/crm-repo";
 import { fetchDriftingQueue, fetchDueQueue } from "@/lib/crm-queues";
-import { fetchConversionSignal, type ConversionSignal } from "@/lib/crm-conversion";
-import { CRM_STAGES, DRIFT_DAYS, isCrmStage, type CrmStage } from "@/lib/crm";
+import { CRM_STAGES, DRIFT_DAYS, isCrmStage, isOpenStage, type CrmStage } from "@/lib/crm";
 import {
   FOLLOWER_BANDS,
   UNASSIGNED_PRODUCT,
@@ -32,10 +25,20 @@ import {
 } from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { DUE_CURSOR_PARAM, DRIFT_CURSOR_PARAM } from "./cursor-params";
+import { productLabel } from "./product-label";
 import { CrmQueueView } from "./queue-view";
-import { HandoffView, type HandoffItem } from "./handoff-view";
-
-export type { HandoffItem };
+import { renderHandoffTab } from "./handoff-tab";
+import { renderClosedTab } from "./closed-tab";
+import {
+  buildQueueNextHref,
+  buildQueuePreviousHref,
+  currentPath,
+  readCursor,
+  readTab,
+  tabHref,
+  type CrmTab,
+  type QueueSearchParams,
+} from "./url";
 
 /**
  * The CRM follow-up queue — everything a sales rep should look at today.
@@ -45,50 +48,20 @@ export type { HandoffItem };
  * and the org has gone quiet) reads very differently from one an operator
  * deliberately booked a next action for, and merging them into one list would
  * erase that distinction.
+ *
+ * The two other tabs are reads of what this one deliberately excludes, and
+ * each lives in its own module: `handoff-tab.tsx` (won, not yet linked to a
+ * conversion) and `closed-tab.tsx` (won or lost, the terminal stages both
+ * queues filter out).
  */
 
 const DUE_LIMIT = 100;
 const DRIFTING_LIMIT = 100;
-const HANDOFF_LIMIT = 100;
-/** Bounds simultaneous outbound `fetchConversionSignal` calls. A handoff
- *  queue at `HANDOFF_LIMIT` is up to 100 requests fanned out at once (Task
- *  9's review, carried forward) — correct for "one hung product must not
- *  stall the others", but 100 *simultaneous* connections through the one
- *  apps/web proxy every product's conversion-status check goes through is
- *  its own kind of thundering herd.
- *
- *  Ruling 32: a concurrency cap ALONE does not bound total latency — it
- *  multiplies it. At 10 workers and up to `HANDOFF_LIMIT` (100) rows, a
- *  queue where every call times out runs ~10 sequential waves of ~10
- *  requests each: 100 / 10 × 8s (`fetchConversionSignal`'s own timeout) =
- *  80s worst case — TEN TIMES the 8s a single unbounded fan-out would have
- *  taken, and past most hosting request budgets outright. The cap bounds
- *  concurrent CONNECTIONS; `HANDOFF_FETCH_DEADLINE_MS` below is what
- *  actually bounds render TIME. */
-const HANDOFF_FETCH_CONCURRENCY = 10;
-
-/**
- * Total wall-clock budget for the whole handoff fan-out, independent of how
- * many rows there are or how the concurrency cap paces them (Ruling 32).
- * Once this elapses, every row still in flight is rendered as `unknown` and
- * the page proceeds with whatever answered in time — never a fabricated
- * `none`. That costs nothing in correctness: `unknown` is already the
- * honest state for "we could not get a trustworthy answer in time"
- * (`crm-conversion.ts`'s own contract for a timeout or an unreachable
- * product), and it already renders distinctly from `none`
- * (`handoff-view.tsx`). The underlying `fetchConversionSignal` calls are
- * not cancelled when the deadline passes — they keep running until they
- * resolve or hit their own 8s timeout — this just stops the RENDER from
- * waiting on them.
- */
-const HANDOFF_FETCH_DEADLINE_MS = 10_000;
 
 /** The `empty` copy for each group, exported so tests assert on the string
  *  the page ships rather than a second copy of it that could drift. */
 export const DUE_EMPTY_MESSAGE = "Nothing due. Nothing needs action right now.";
 export const DRIFTING_EMPTY_MESSAGE = "Nothing drifting. Every open lead is either scheduled or fresh.";
-export const HANDOFF_EMPTY_MESSAGE =
-  "Nothing to hand off. Every won deal is already linked to a conversion.";
 
 const STAGE_LABELS: Record<CrmStage, string> = {
   new: "New",
@@ -109,14 +82,6 @@ const STAGE_TONES: Record<CrmStage, QueueStatusTone> = {
 /** Status badge for a row: the stage, not the severity. */
 export function stageStatus(stage: CrmStage): QueueStatus {
   return { label: STAGE_LABELS[stage], tone: STAGE_TONES[stage] };
-}
-
-/** The estate's product name for a row's raw context, falling back to the
- *  raw value (or "Unassigned") for a row with no product set yet — `product`
- *  is only required from `qualified` onward. */
-function productLabel(product: string | null): string {
-  if (!product) return "Unassigned";
-  return ESTATE.find((entry) => entry.context === product)?.name ?? product;
 }
 
 function subtitleOf(row: QueueRow): string | undefined {
@@ -152,12 +117,17 @@ export function toQueueItem(row: QueueRow): QueueItem {
   };
 }
 
-/** Stages an operator can actually filter to. Both `dueOpportunities` and
- *  `driftingOpportunities` exclude `won`/`lost` unconditionally (terminal
- *  deals are not work) — offering them in the select would let an operator
- *  pick a filter that always renders two empty groups, with nothing telling
- *  them the choice was refused rather than simply unmatched. */
-const OPEN_CRM_STAGES = CRM_STAGES.filter((stage) => stage !== "won" && stage !== "lost");
+/** Stages an operator can actually filter to on the Work tab. Both
+ *  `dueOpportunities` and `driftingOpportunities` exclude `won`/`lost`
+ *  unconditionally (terminal deals are not work) — offering them in the
+ *  select would let an operator pick a filter that always renders two empty
+ *  groups, with nothing telling them the choice was refused rather than
+ *  simply unmatched. Those deals have a tab of their own instead. */
+const OPEN_CRM_STAGES = CRM_STAGES.filter(isOpenStage);
+
+/** And the complement, for the Closed tab: exactly the stages
+ *  `closedOpportunities` can return. */
+const CLOSED_CRM_STAGES = CRM_STAGES.filter((stage) => !isOpenStage(stage));
 
 /**
  * The queue's filters.
@@ -223,20 +193,57 @@ export const QUEUE_FILTERS: FilterDescriptor[] = [
   },
 ];
 
-export type QueueSearchParams = Record<string, string | string[] | undefined>;
+/** The Closed tab's filters: the same axes, because the same
+ *  `filterClause` applies them to the same join, with the stage select
+ *  offering the two stages that list CAN return instead of the three it
+ *  cannot. Derived from `QUEUE_FILTERS` rather than restated, so a new axis
+ *  is added once. */
+export const CLOSED_FILTERS: FilterDescriptor[] = QUEUE_FILTERS.map((descriptor) =>
+  descriptor.key === "stage"
+    ? {
+        ...descriptor,
+        options: CLOSED_CRM_STAGES.map((stage) => ({
+          value: stage,
+          label: STAGE_LABELS[stage],
+        })),
+      }
+    : descriptor,
+);
+
+/**
+ * Which stages a tab's read can actually return.
+ *
+ * The Work tab's two queries exclude `won`/`lost` in SQL and the Closed
+ * tab's includes only those, so a stage outside a tab's own set is not a
+ * narrower filter — it is a contradiction. Forwarded, `?stage=won` on the
+ * Work tab produced `stage NOT IN ('won','lost') AND o.stage = 'won'`: zero
+ * rows, no error, rendered as "filtered, matched nothing". Dropping it
+ * instead is what `readQueueFilters` documents for every other out-of-range
+ * value.
+ *
+ * The Handoff tab renders no filter bar and passes no filters to its read,
+ * so which set it takes is unobservable there; it shares the Work tab's
+ * rather than inventing a third.
+ */
+function admitsStage(tab: CrmTab, stage: CrmStage): boolean {
+  return tab === "closed" ? !isOpenStage(stage) : isOpenStage(stage);
+}
 
 /**
  * Read the filters out of the URL.
  *
  * A query string is untrusted input: `stage` is only honoured when it is a
- * real `CrmStage` (an unrecognised value — e.g. `?stage=banana` — is treated
- * the same as no filter at all, not forwarded to SQL and not reported as an
- * error: a bad value in a bookmarked or hand-edited URL should read as
- * "unfiltered", not break the page), `product` only when the estate declares
- * it, and a repeated param (arrives as an array) is dropped rather than
- * guessed at.
+ * real `CrmStage` the active tab can return (an unrecognised value — e.g.
+ * `?stage=banana` — or one this tab's query excludes is treated the same as
+ * no filter at all, not forwarded to SQL and not reported as an error: a bad
+ * value in a bookmarked or hand-edited URL should read as "unfiltered", not
+ * break the page), `product` only when the estate declares it, and a repeated
+ * param (arrives as an array) is dropped rather than guessed at.
  */
-export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
+export function readQueueFilters(
+  searchParams: QueueSearchParams,
+  tab: CrmTab = "work",
+): QueueFilter {
   const filters: QueueFilter = {};
 
   const rawProduct = searchParams.product;
@@ -250,7 +257,12 @@ export function readQueueFilters(searchParams: QueueSearchParams): QueueFilter {
   }
 
   const rawStage = searchParams.stage;
-  if (typeof rawStage === "string" && rawStage !== "" && isCrmStage(rawStage)) {
+  if (
+    typeof rawStage === "string" &&
+    rawStage !== "" &&
+    isCrmStage(rawStage) &&
+    admitsStage(tab, rawStage)
+  ) {
     filters.stage = rawStage;
   }
 
@@ -317,212 +329,6 @@ export function queueGroupState(input: QueueGroupStateInput): SurfaceState {
   });
 }
 
-/**
- * One row's signal, never throwing: a missing contact email skips the
- * network call entirely (nothing to ask, honestly `unknown`, not a wasted
- * request and not `none`), and a `fetchConversionSignal` rejection — its own
- * contract says this shouldn't happen, this is belt-and-braces against a
- * caller-side bug — is caught here rather than left to reject the worker
- * that's awaiting it.
- */
-async function fetchRowSignal(row: HandoffRow): Promise<ConversionSignal> {
-  // A migrated deal has no product (0020/0021 grandfather those rows), so
-  // there is no product admin API to address the question to — the same
-  // "nothing to ask" case as a missing email, and the same honest
-  // `unknown`. Skipping the call is also what keeps the URL well-formed:
-  // asking `/api/admin/apps/null/conversion-status` would be a fabricated
-  // question whose 404 answer means nothing.
-  if (!row.product || !row.primaryEmail) {
-    return { product: row.product, state: "unknown" };
-  }
-  try {
-    return await fetchConversionSignal(row.product, row.primaryEmail);
-  } catch {
-    return { product: row.product, state: "unknown" };
-  }
-}
-
-/**
- * The handoff tab's fan-out: one `fetchConversionSignal` call per row,
- * bounded two ways at once (Ruling 32) — `HANDOFF_FETCH_CONCURRENCY` caps
- * how many are ever in flight together, and `HANDOFF_FETCH_DEADLINE_MS`
- * caps how long the render waits for the whole batch, so the cap alone can
- * never turn into the N-waves latency the module doc comment above works
- * through.
- *
- * A worker pool, not a batch-of-N-then-wait chunking scheme: batching would
- * let one slow request in a batch hold up every other slot in that same
- * batch even though `concurrency - 1` other workers sit idle; a pool
- * immediately hands a finished worker the next row, so throughput is
- * bounded by `concurrency`, not by the slowest row in an arbitrary chunk.
- * Each worker writes straight into `results` as it finishes, so whichever
- * side of the `Promise.race` below wins, every row that DID finish in time
- * is still there to read — only rows a worker never reached before the
- * deadline are missing, and those fall through to `unknown` in the final
- * map. The still-running calls behind them are not cancelled; nothing here
- * waits on them past the deadline either way.
- *
- * `deadlineMs` is a parameter (not only the module constant) so a test can
- * exercise the deadline path without a real ~10s wait.
- */
-export async function buildHandoffItems(
-  rows: readonly HandoffRow[],
-  options: { deadlineMs?: number } = {},
-): Promise<HandoffItem[]> {
-  const deadlineMs = options.deadlineMs ?? HANDOFF_FETCH_DEADLINE_MS;
-  const results: (ConversionSignal | undefined)[] = new Array(rows.length);
-
-  let cursor = 0;
-  async function worker(): Promise<void> {
-    while (cursor < rows.length) {
-      const index = cursor++;
-      results[index] = await fetchRowSignal(rows[index]);
-    }
-  }
-  const workerCount = Math.min(HANDOFF_FETCH_CONCURRENCY, rows.length);
-  const poolSettled = Promise.all(Array.from({ length: workerCount }, () => worker()));
-
-  await Promise.race([poolSettled, new Promise<void>((resolve) => setTimeout(resolve, deadlineMs))]);
-
-  return rows.map((row, index) => ({
-    opportunityId: row.opportunityId,
-    organisationId: row.organisationId,
-    organisationName: row.organisationName,
-    product: row.product,
-    closedAt: row.closedAt,
-    // A row no worker reached before the deadline elapsed has no entry yet
-    // — `unknown`, the same honest answer as a timed-out or unreachable
-    // product, never a fabricated `none`.
-    signal: results[index] ?? { product: row.product, state: "unknown" },
-  }));
-}
-
-export type CrmTab = "work" | "handoff";
-
-/** Which tab `?tab=` selects — anything else (including nothing) is "work",
- *  the surface's default. Same "unrecognised input reads as unfiltered"
- *  contract `readQueueFilters` applies to `stage`/`product`. */
-export function readTab(searchParams: QueueSearchParams): CrmTab {
-  return searchParams.tab === "handoff" ? "handoff" : "work";
-}
-
-/** A queue's cursor as the repo wants it: the raw string, or `undefined` for
- *  "start at the beginning". A repeated param arrives as an array and is
- *  dropped, the same way `readQueueFilters` drops a repeated filter. An
- *  otherwise malformed value is NOT screened here — the repo validates and
- *  rejects it, and `renderWorkTab` surfaces that rejection as the queue's
- *  own error state (see its `Promise.allSettled` comment). */
-function readCursor(searchParams: QueueSearchParams, key: string): string | undefined {
-  const raw = searchParams[key];
-  return typeof raw === "string" && raw !== "" ? raw : undefined;
-}
-
-/**
- * One queue's page link: every param already on the URL, with only that
- * queue's own cursor replaced.
- *
- * Copied rather than enumerated, for the reason `buildCursorHref`
- * (`organisations/page.tsx`) records — this page carries five filter params
- * plus `tab` plus the OTHER queue's cursor, and a builder naming the ones it
- * knows about drops whichever it forgot the moment an operator pages. The
- * other queue's cursor is part of that: paging Due must leave Drifting on
- * the page the operator left it on, backwards as well as forwards.
- *
- * One builder serves both controls because a cursor carries the direction it
- * points in (see `lib/db/keyset-cursor.ts`), so a link never needs a second
- * param that could go missing.
- */
-function buildQueueCursorHref(
-  searchParams: QueueSearchParams,
-  cursorParam: string,
-  cursor: string | null,
-): string | null {
-  if (!cursor) return null;
-
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (key === cursorParam) continue;
-    if (typeof value === "string") {
-      params.set(key, value);
-    } else if (Array.isArray(value)) {
-      for (const entry of value) params.append(key, entry);
-    }
-  }
-  params.set(cursorParam, cursor);
-
-  return `/platform/crm?${params.toString()}`;
-}
-
-/** One queue's next-page link, or null when it is on its last page. */
-export function buildQueueNextHref(
-  searchParams: QueueSearchParams,
-  cursorParam: string,
-  nextCursor: string | null,
-): string | null {
-  return buildQueueCursorHref(searchParams, cursorParam, nextCursor);
-}
-
-/** One queue's previous-page link, or null when it is on its first page. */
-export function buildQueuePreviousHref(
-  searchParams: QueueSearchParams,
-  cursorParam: string,
-  previousCursor: string | null,
-): string | null {
-  return buildQueueCursorHref(searchParams, cursorParam, previousCursor);
-}
-
-/**
- * A tab's `href`, preserving every other search param (the Work tab's own
- * product/stage/owner filters survive a round trip through Handoff and
- * back) and setting/clearing only `tab`.
- *
- * Real navigation, not a client-side tab switch: this page's two tabs do
- * not cost the same to render. Handoff's is up to `HANDOFF_LIMIT` outbound
- * calls to apps/web; Work's is two cheap SQL reads. A `SurfaceTabs`-style
- * "render both panels once, switch instantly" (as `tickets/page.tsx` does
- * for its Queue/Analytics split) would mean loading `/platform/crm` on Work
- * always pays for the Handoff fan-out too, whether or not anyone ever
- * clicks that tab — every one of those calls a guaranteed `unknown` today,
- * and a genuine 8s stall on the WORK queue the day apps/web is slow to
- * answer rather than fast to 404. Only the active tab's data is ever read.
- */
-/**
- * The operator's exact URL as a relative path — every param the browser had,
- * not only the ones this page recognises as filters or a tab — so signing in
- * again returns them exactly where they were, five filters and a page cursor
- * included. `middleware.ts`'s `unauthorized` builds the same shape
- * (`${pathname}${search}`) for the identical reason.
- *
- * Copies every entry rather than naming the params this page knows about,
- * for the same reason `buildQueueCursorHref` does: a builder that names them
- * drops whichever one it forgot the moment this page grows another filter.
- */
-function currentPath(searchParams: QueueSearchParams): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (typeof value === "string") {
-      params.set(key, value);
-    } else if (Array.isArray(value)) {
-      for (const entry of value) params.append(key, entry);
-    }
-  }
-  const qs = params.toString();
-  return qs ? `/platform/crm?${qs}` : "/platform/crm";
-}
-
-function tabHref(searchParams: QueueSearchParams, tab: CrmTab): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(searchParams)) {
-    if (key === "tab" || typeof value !== "string" || value === "") continue;
-    params.set(key, value);
-  }
-  if (tab === "handoff") {
-    params.set("tab", "handoff");
-  }
-  const qs = params.toString();
-  return qs ? `/platform/crm?${qs}` : "/platform/crm";
-}
-
 function CrmTabNav({
   searchParams,
   active,
@@ -533,6 +339,7 @@ function CrmTabNav({
   const tabs: { id: CrmTab; label: string }[] = [
     { id: "work", label: "Work" },
     { id: "handoff", label: "Handoff" },
+    { id: "closed", label: "Closed" },
   ];
   return (
     // Plain page links, not ARIA tabs: `role="tab"` with no `role="tablist"`
@@ -550,7 +357,9 @@ function CrmTabNav({
           // dynamic route: prefetching Handoff would fire its fan-out the
           // moment this link scrolls into view on the Work tab, which is
           // exactly the load this whole fix exists to avoid paying for
-          // unless the operator actually clicks it.
+          // unless the operator actually clicks it. Only Handoff: the other
+          // two tabs each cost one or two queue reads, not a fan-out of up
+          // to a hundred outbound calls.
           prefetch={tab.id === "handoff" ? false : undefined}
           className={
             active === tab.id
@@ -565,19 +374,6 @@ function CrmTabNav({
   );
 }
 
-/**
- * The Work tab's content: due/drifting queues, filtered per the URL.
- *
- * A plain async function `CrmPage` calls and awaits — not a nested async
- * Server Component rendered as unawaited JSX (`<WorkTab/>`). Next.js's real
- * RSC renderer can await a nested async component fine, but this repo's
- * tests render `CrmPage`'s output through plain `@testing-library/react`
- * (`render(await CrmPage(...))`), which has no RSC runtime to resolve a
- * pending child — it would silently render an empty tree. Every data-fetching
- * page in this app (`tickets/page.tsx`, `crm/[organisation]/page.tsx`, this
- * page before this change) awaits its data as a plain function call and
- * returns already-resolved JSX for exactly this reason.
- */
 /** The page a rejected read stands in for: no rows, and counts that claim
  *  nothing. The group renders its error state, so these are never displayed
  *  — they exist so the caller has one shape to read rather than a union. */
@@ -599,6 +395,20 @@ function settledPage(result: PromiseSettledResult<QueuePage>): {
     : { page: NO_PAGE, error: result.reason };
 }
 
+/**
+ * The Work tab's content: due/drifting queues, filtered per the URL.
+ *
+ * A plain async function `CrmPage` calls and awaits — not a nested async
+ * Server Component rendered as unawaited JSX (`<WorkTab/>`). Next.js's real
+ * RSC renderer can await a nested async component fine, but this repo's
+ * tests render `CrmPage`'s output through plain `@testing-library/react`
+ * (`render(await CrmPage(...))`), which has no RSC runtime to resolve a
+ * pending child — it would silently render an empty tree. Every data-fetching
+ * page in this app (`tickets/page.tsx`, `crm/[organisation]/page.tsx`, this
+ * page before this change) awaits its data as a plain function call and
+ * returns already-resolved JSX for exactly this reason. The other two tabs'
+ * renderers are the same shape, for the same reason.
+ */
 async function renderWorkTab({
   searchParams,
   filters,
@@ -698,60 +508,18 @@ async function renderWorkTab({
   );
 }
 
-/**
- * The Handoff tab's content: won opportunities awaiting a conversion link.
- * Same "plain awaited function, not a nested async component" shape as
- * `renderWorkTab` above, for the same testability reason — and only ever
- * CALLED (so only ever reads `wonWithoutConversion`/fans out
- * `fetchConversionSignal`) while this tab is the active one; see
- * `tabHref`'s doc comment for why the Work tab must never pay for this.
- */
-async function renderHandoffTab(reauthReturnTo: string) {
-  let handoffRows: readonly HandoffRow[] = [];
-  let handoffHasMore = false;
-  let handoffRowsError: unknown = null;
-  try {
-    ({ rows: handoffRows, hasMore: handoffHasMore } =
-      await wonWithoutConversion(HANDOFF_LIMIT));
-  } catch (caught) {
-    handoffRowsError = caught;
-  }
-
-  // Only fanned out once the row read itself succeeded — a failed
-  // `wonWithoutConversion` has no rows to fan a signal fetch out over, and
-  // fanning out zero rows is a no-op either way.
-  const handoffItems = handoffRowsError ? [] : await buildHandoffItems(handoffRows);
-
-  const handoffState = resolveState({
-    isLoading: false,
-    error: dbReadError(handoffRowsError, "the handoff queue"),
-    rows: handoffItems,
-    filtered: false,
-  });
-
-  const products = ESTATE.map((product) => ({ context: product.context, name: product.name }));
-
-  return (
-    <HandoffView
-      items={handoffItems}
-      state={handoffState}
-      emptyMessage={HANDOFF_EMPTY_MESSAGE}
-      hasMore={handoffHasMore}
-      products={products}
-      reauthReturnTo={reauthReturnTo}
-    />
-  );
-}
-
 export default async function CrmPage({
   searchParams,
 }: {
   searchParams: Promise<QueueSearchParams>;
 }) {
   const resolvedSearchParams = await searchParams;
-  const filters = readQueueFilters(resolvedSearchParams);
-  const filtered = Object.keys(filters).length > 0;
   const activeTab = readTab(resolvedSearchParams);
+  // Read against the active tab: which stages are admissible differs between
+  // the Work and Closed tabs, and a stage neither can return is dropped
+  // rather than forwarded (see `admitsStage`).
+  const filters = readQueueFilters(resolvedSearchParams, activeTab);
+  const filtered = Object.keys(filters).length > 0;
   // Computed once, ahead of the tab split: the query string it carries
   // (including `tab` itself) already answers "which tab, with which
   // filters" for both branches below, so signing in again lands the
@@ -762,10 +530,26 @@ export default async function CrmPage({
   // Awaited here, as a plain function call, and embedded as already-resolved
   // JSX below, not rendered as a nested `<Tab/>` async component: see
   // `renderWorkTab`'s doc comment for why.
-  const content =
-    activeTab === "handoff"
-      ? await renderHandoffTab(reauthReturnTo)
-      : await renderWorkTab({ searchParams: resolvedSearchParams, filters, filtered, reauthReturnTo });
+  let content;
+  if (activeTab === "handoff") {
+    content = await renderHandoffTab(reauthReturnTo);
+  } else if (activeTab === "closed") {
+    content = await renderClosedTab({
+      searchParams: resolvedSearchParams,
+      descriptors: CLOSED_FILTERS,
+      values: toFilterValues(filters),
+      filters,
+      filtered,
+      reauthReturnTo,
+    });
+  } else {
+    content = await renderWorkTab({
+      searchParams: resolvedSearchParams,
+      filters,
+      filtered,
+      reauthReturnTo,
+    });
+  }
 
   return (
     <div className="flex flex-col gap-6">

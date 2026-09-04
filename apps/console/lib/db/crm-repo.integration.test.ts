@@ -44,6 +44,7 @@ vi.mock("./tesserix", () => ({
 const {
   dueOpportunities,
   driftingOpportunities,
+  closedOpportunities,
   isSuppressed,
   addSuppression,
   listOrganisations,
@@ -775,8 +776,12 @@ describe("listOrganisations", () => {
 
   beforeAll(async () => {
     const a = await db.query<{ id: string }>(
-      `INSERT INTO crm_organisations (name, location) VALUES ($1, $2) RETURNING id`,
-      ["Glebe Flowers", "Sydney"],
+      // Seeded with the country the mapper derives from "Sydney", so the
+      // country assertions below read a row whose location and country agree
+      // the way the application's own writes leave them
+      // (`countryFromLocation` in `crm-writes.ts` and the CSV import).
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Glebe Flowers", "Sydney", "AU"],
     );
     searchOrgA = a.rows[0].id;
     await db.query(
@@ -817,6 +822,23 @@ describe("listOrganisations", () => {
     const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
     expect(page.rows[0].contactHandle).toBe("glebeflowers");
     expect(page.rows[0].contactCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns the derived country alongside the raw location", async () => {
+    // The column the country filter bands on, which no surface could read
+    // back before this: without it an operator filtering to a country cannot
+    // tell which rows the mapper actually resolved.
+    const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
+    expect(page.rows[0].location).toBe("Sydney");
+    expect(page.rows[0].country).toBe("AU");
+  });
+
+  it("returns a null country for an organisation with nothing to derive one from", async () => {
+    // "Unrelated Cafe" has no location at all. Null, not "" and not a guess
+    // — the same absence the Unknown country option matches, and 208 of 259
+    // production rows are in it.
+    const page = await listOrganisations({ search: "Unrelated Cafe" }, 50);
+    expect(page.rows[0].country).toBeNull();
   });
 
   it("returns an empty array, not null, when an organisation has no products", async () => {
@@ -1222,6 +1244,39 @@ describe("listOrganisations", () => {
       expect(page.rows.map((r) => r.id)).toEqual([bigCreatorOrgId]);
     });
 
+    it("displays the follower count of the very contact the band filtered on", async () => {
+      // The agreement between the filter and the column is the invariant, and
+      // this is what makes it load-bearing rather than incidental: every row
+      // the band returns must display a number inside that band. A displayed
+      // count resolved from a different contact than
+      // `primaryContactFollowerClause` matched would show up here as a row
+      // under 10k in the over10k result.
+      const page = await listOrganisations({ followers: "over10k", search: "Filter Test" }, 100);
+      expect(page.rows).not.toHaveLength(0);
+      for (const row of page.rows) {
+        expect(row.followersCount).not.toBeNull();
+        expect(row.followersCount).toBeGreaterThanOrEqual(10_000);
+      }
+      expect(page.rows.map((r) => r.followersCount)).toEqual([15000]);
+    });
+
+    it("shows no follower count for the rows the unknown sentinel returns", async () => {
+      // The other half of the same invariant: Unknown means "no count to
+      // show", so every row it returns must display a blank cell — including
+      // the one whose SECONDARY contact has 15k, which the column must not
+      // reach for any more than the band does.
+      const page = await listOrganisations(
+        { followers: UNKNOWN_FOLLOWERS, search: "Filter Test" },
+        100,
+      );
+      expect(page.rows).not.toHaveLength(0);
+      for (const row of page.rows) {
+        expect(row.followersCount).toBeNull();
+      }
+      const byId = new Map(page.rows.map((r) => [r.id, r]));
+      expect(byId.get(nonPrimaryFollowersOrgId)?.followersCount).toBeNull();
+    });
+
     it("excludes unknown follower counts from every band", async () => {
       // A contact with no follower count must not silently land in the
       // lowest band and be read as a qualified-out lead.
@@ -1465,6 +1520,34 @@ describe("organisationDetail orders contacts is_primary, then created_at, then i
       "Oldest, id 2",
       "Middle",
     ]);
+  });
+});
+
+describe("organisationDetail returns the derived country", () => {
+  it("returns the stored country for an organisation the mapper resolved", async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Detail Country Org", "Chennai", "IN"],
+    );
+
+    const detail = await organisationDetail(org.rows[0].id);
+
+    expect(detail?.organisation.location).toBe("Chennai");
+    expect(detail?.organisation.country).toBe("IN");
+  });
+
+  it("returns a null country when the location derived none", async () => {
+    // The detail page has to say "Not derived" for these, so it needs the
+    // null to reach it rather than the column simply going unselected.
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location) VALUES ($1, $2) RETURNING id`,
+      ["Detail Unmapped Org", "Somewhere Unmapped"],
+    );
+
+    const detail = await organisationDetail(org.rows[0].id);
+
+    expect(detail?.organisation.location).toBe("Somewhere Unmapped");
+    expect(detail?.organisation.country).toBeNull();
   });
 });
 
@@ -2033,8 +2116,13 @@ describe("an erased contact is not the primary contact", () => {
     const byId = new Map(rows.map((r) => [r.id, r]));
     expect(byId.get(erasedPrimaryOrgId)?.contactName).toBe("Live Colleague");
     expect(byId.get(erasedPrimaryOrgId)?.contactEmail).toBe("live@example.com");
+    expect(byId.get(erasedPrimaryOrgId)?.followersCount).toBe(500);
     expect(byId.get(erasedOnlyOrgId)?.contactName).toBeNull();
     expect(byId.get(erasedOnlyOrgId)?.contactEmail).toBeNull();
+    // The erased contact's 15000 is not this organisation's follower count:
+    // the row has no primary contact left, so the cell is blank and the row
+    // sits in the Unknown band the filter test above puts it in.
+    expect(byId.get(erasedOnlyOrgId)?.followersCount).toBeNull();
     // Still counted: the count says how many contacts the file holds, not
     // which of them the columns resolved to.
     expect(byId.get(erasedOnlyOrgId)?.contactCount).toBe(1);
@@ -2056,5 +2144,166 @@ describe("an erased contact is not the primary contact", () => {
     // there, not hidden, or the file loses a row its activity trail refers to.
     const detail = await organisationDetail(erasedPrimaryOrgId);
     expect(detail?.contacts.map((c) => c.name)).toEqual(["[erased]", "Live Colleague"]);
+  });
+});
+
+/**
+ * The closed list against a real database.
+ *
+ * Shape assertions cannot catch the two things that matter here. First,
+ * `COALESCE(o.closed_at, o.updated_at)` and a bare `o.closed_at` produce the
+ * same SQL substrings under any "contains" test but different result SETS:
+ * the bare column sorts a never-closed-dated row to the end under NULLS LAST
+ * and, worse, mints a cursor from a NULL. Second, "terminal only" is a claim
+ * about rows, not about text — an open opportunity on the same organisation
+ * is the only thing that proves the predicate runs.
+ *
+ * Scoped by `owner` rather than asserted globally: this file seeds terminal
+ * rows in several other describes, and `closedOpportunities` reads the whole
+ * table.
+ */
+describe("closedOpportunities against a real database", () => {
+  const OWNER = "Closed List Fixture";
+  const WON_ID = "c105ed00-1111-1111-1111-111111111111";
+  const LOST_ID = "c105ed00-2222-2222-2222-222222222222";
+  const UNDATED_ID = "c105ed00-3333-3333-3333-333333333333";
+  const OPEN_ID = "c105ed00-4444-4444-4444-444444444444";
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Closed List Fixture Co"],
+    );
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, owner, closed_at, lost_reason, updated_at)
+       VALUES
+         -- Won 5 days ago.
+         ($1, $5, 'won', 'mark8ly', $9, $6::timestamptz, NULL, $6::timestamptz),
+         -- Lost 20 days ago: the oldest close date in this fixture, so it
+         -- sorts first, and the only row carrying a reason.
+         ($2, $5, 'lost', 'mark8ly', $9, $7::timestamptz, 'Went with a competitor', $7::timestamptz),
+         -- Terminal with no close date. Nothing in the console writes such a
+         -- row today (see CLOSED_SORT_KEY), and the list must still page it
+         -- rather than throw on its cursor — ordered by updated_at, which
+         -- puts it last here.
+         ($3, $5, 'won', 'mark8ly', $9, NULL, NULL, $8::timestamptz),
+         -- Open, same organisation and owner: the row that proves the
+         -- terminal predicate runs at all.
+         ($4, $5, 'contacted', NULL, $9, NULL, NULL, $6::timestamptz)`,
+      [
+        WON_ID,
+        LOST_ID,
+        UNDATED_ID,
+        OPEN_ID,
+        org.rows[0].id,
+        daysAgo(5),
+        daysAgo(20),
+        daysAgo(1),
+        OWNER,
+      ],
+    );
+  });
+
+  it("returns only terminal deals, oldest-closed-first", async () => {
+    const { rows } = await closedOpportunities({ owner: OWNER }, 50);
+    expect(rows.map((r) => r.id)).toEqual([LOST_ID, WON_ID, UNDATED_ID]);
+  });
+
+  it("carries the close date and the lost reason", async () => {
+    const { rows } = await closedOpportunities({ owner: OWNER }, 50);
+    const lost = rows.find((r) => r.id === LOST_ID);
+    const won = rows.find((r) => r.id === WON_ID);
+    expect(lost?.stage).toBe("lost");
+    expect(lost?.lostReason).toBe("Went with a competitor");
+    expect(lost?.closedAt).not.toBeNull();
+    expect(won?.lostReason).toBeNull();
+    expect(won?.organisationName).toBe("Closed List Fixture Co");
+  });
+
+  it("lists a terminal row with no close date, and pages past it", async () => {
+    const all = await closedOpportunities({ owner: OWNER }, 50);
+    expect(all.rows.find((r) => r.id === UNDATED_ID)?.closedAt).toBeNull();
+
+    // A limit of 2 makes the null-dated row the first row of page two, so
+    // its cursor is minted from the COALESCE rather than from the NULL.
+    const first = await closedOpportunities({ owner: OWNER }, 2);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await closedOpportunities({ owner: OWNER }, 2, first.nextCursor!);
+    expect(second.rows.map((r) => r.id)).toEqual([UNDATED_ID]);
+    expect(second.precedingCount).toBe(2);
+  });
+
+  it("narrows to one terminal stage when the filter asks for one", async () => {
+    const { rows, total } = await closedOpportunities({ owner: OWNER, stage: "lost" }, 50);
+    expect(rows.map((r) => r.id)).toEqual([LOST_ID]);
+    expect(total).toBe(1);
+  });
+});
+
+/**
+ * The follower count a browse row DISPLAYS comes from the same contact the
+ * follower filter bands on (#44).
+ *
+ * `listOrganisations`' display subquery and `primaryContactFollowerClause`
+ * each pick "the primary contact" independently, and they agree only because
+ * both order by `primaryContactOrder()`. Nothing else in this file pins that
+ * ordering for the DISPLAY subquery: the erasure fixture above proves the
+ * erasure predicate (its live secondary is the organisation's only remaining
+ * contact once the erased row is excluded, so any ordering returns it), and
+ * the created_at-tie fixture proves the `id` tiebreak for a row with no
+ * flagged primary. Strip the `ORDER BY` from the display subquery and both
+ * still pass.
+ *
+ * So: two LIVE contacts, neither erased, with different non-null counts and
+ * only `is_primary DESC` separating them. The secondary is inserted FIRST
+ * and is the older row with the lower `id`, so it wins every clause except
+ * the flag — and it is also what an unordered `LIMIT 1` tends to return from
+ * a sequential scan. Displaying 15000 here would mean the row shows a number
+ * from a contact the filter would never have banded it on.
+ *
+ * Declared last, after the erasure describe, for the reason given there:
+ * earlier describes assert exact result sets from the seeds they own.
+ */
+describe("the displayed follower count comes from the flagged primary contact", () => {
+  const secondaryContactId = "dddddddd-0000-0000-0000-000000000001";
+  const primaryContactId = "dddddddd-0000-0000-0000-000000000002";
+  let orgIdForDisplay: string;
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Display Order Fixture Co"],
+    );
+    orgIdForDisplay = org.rows[0].id;
+
+    await db.query(
+      `INSERT INTO crm_contacts (id, organisation_id, name, is_primary, followers_count, created_at)
+       VALUES ($1, $3, 'Display Secondary', false, 15000, $5::timestamptz),
+              ($2, $3, $4, true, 200, $6::timestamptz)`,
+      [
+        secondaryContactId,
+        primaryContactId,
+        orgIdForDisplay,
+        "Display Primary",
+        daysAgo(30),
+        daysAgo(1),
+      ],
+    );
+  });
+
+  it("displays the primary contact's count, not the secondary's larger one", async () => {
+    const rows = (await listOrganisations({ search: "Display Order Fixture" }, 50)).rows;
+    expect(rows.map((r) => r.id)).toEqual([orgIdForDisplay]);
+    expect(rows[0].contactName).toBe("Display Primary");
+    expect(rows[0].followersCount).toBe(200);
+  });
+
+  it("bands the row on the same contact it displays", async () => {
+    const scope = { search: "Display Order Fixture" } as const;
+    const under1k = (await listOrganisations({ ...scope, followers: "under1k" }, 50)).rows;
+    const over10k = (await listOrganisations({ ...scope, followers: "over10k" }, 50)).rows;
+    expect(under1k.map((r) => r.id)).toEqual([orgIdForDisplay]);
+    expect(over10k.map((r) => r.id)).toEqual([]);
   });
 });

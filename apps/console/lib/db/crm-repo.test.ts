@@ -15,10 +15,12 @@ vi.mock("./tesserix", () => ({
 import {
   dueOpportunities,
   driftingOpportunities,
+  closedOpportunities,
   advanceStage,
   setNextAction,
   logActivity,
   organisationDetail,
+  ACTIVITY_LIMIT,
   MissingProductError,
   isSuppressed,
   addSuppression,
@@ -623,6 +625,117 @@ describe("the queue's filters — bound parameters, not string interpolation", (
   });
 });
 
+describe("the closed list", () => {
+  /** A terminal row as pg hands it back, including the COALESCE the query
+   *  sorts and pages by. */
+  const closedRawRow = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    organisation_id: "g1",
+    organisation_name: "Bondi Baker",
+    product: "mark8ly",
+    stage: "won",
+    owner: "Asha",
+    closed_at: new Date("2026-08-01T09:00:00Z"),
+    closed_sort: new Date("2026-08-01T09:00:00Z"),
+    lost_reason: null,
+    ...overrides,
+  });
+
+  it("asks only for terminal deals, the exact complement of the two work queues", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("o.stage IN ('won', 'lost')");
+    // The work queues' predicate must not have come along with the reuse:
+    // `NOT IN` here would be a list that can never return a row.
+    expect(sql).not.toContain("stage NOT IN");
+  });
+
+  it("orders by when the deal closed, falling back to the last write on a row with no close date", async () => {
+    // `closed_at` is nullable in 0019 with no CHECK tying it to the stage,
+    // and the keyset cursor is built from the sort key — a NULL there does
+    // not merely sort oddly, it throws instead of paging.
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("ORDER BY COALESCE(o.closed_at, o.updated_at) ASC, o.id ASC");
+  });
+
+  it("selects the close date and the lost reason — what a closed deal is read for", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("o.closed_at");
+    expect(sql).toContain("o.lost_reason");
+  });
+
+  it("keeps its own stage predicate first, filters spliced after", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({ product: "mark8ly", country: "IN" }, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql.indexOf("o.stage IN")).toBeLessThan(sql.indexOf("o.product ="));
+    expect(sql.indexOf("o.stage IN")).toBeLessThan(sql.indexOf("g.country ="));
+    expect(params).toEqual(["mark8ly", "IN", 51]);
+  });
+
+  it("admits a terminal stage as a filter, which the work queues cannot", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({ stage: "lost" }, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql).toContain("o.stage = $1");
+    expect(params).toEqual(["lost", 51]);
+  });
+
+  it("maps the close date and the lost reason onto the row", async () => {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "2", preceding: "0" }]
+        : [
+            closedRawRow("11111111-1111-1111-1111-111111111111"),
+            closedRawRow("22222222-2222-2222-2222-222222222222", {
+              stage: "lost",
+              lost_reason: "Went with a competitor",
+              closed_at: null,
+              closed_sort: new Date("2026-08-02T09:00:00Z"),
+            }),
+          ],
+    );
+    const page = await closedOpportunities({}, 50);
+    expect(page.rows[0]).toEqual({
+      id: "11111111-1111-1111-1111-111111111111",
+      organisationId: "g1",
+      organisationName: "Bondi Baker",
+      product: "mark8ly",
+      stage: "won",
+      owner: "Asha",
+      closedAt: "2026-08-01T09:00:00.000Z",
+      lostReason: null,
+    });
+    expect(page.rows[1].closedAt).toBeNull();
+    expect(page.rows[1].lostReason).toBe("Went with a competitor");
+    expect(page.total).toBe(2);
+  });
+
+  it("pages a row whose close date was never written, rather than throwing on its cursor", async () => {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "9", preceding: "0" }]
+        : [
+            closedRawRow("11111111-1111-1111-1111-111111111111", {
+              closed_at: null,
+              closed_sort: new Date("2026-08-01T09:00:00Z"),
+            }),
+            closedRawRow("22222222-2222-2222-2222-222222222222"),
+          ],
+    );
+    const page = await closedOpportunities({}, 1);
+    expect(page.rows.map((r) => r.id)).toEqual(["11111111-1111-1111-1111-111111111111"]);
+    expect(page.nextCursor).not.toBeNull();
+  });
+});
+
 describe("advanceStage", () => {
   // Load-bearing: this is the ONLY record of when a stage was entered, and
   // therefore the only thing that makes funnel measurement possible later.
@@ -966,6 +1079,45 @@ describe("logActivity", () => {
 });
 
 describe("organisationDetail", () => {
+  /**
+   * Drive `organisationDetail` with `count` activity rows and nothing else.
+   *
+   * The four reads are issued in a fixed order (organisation, contacts,
+   * opportunities, activities), so `query.mock.calls[3]` is the activity
+   * query and the mocks can be queued positionally.
+   */
+  async function detailWithActivities(count: number) {
+    query
+      .mockResolvedValueOnce([
+        {
+          id: "g1",
+          name: "Bondi Baker",
+          website_url: null,
+          location: null,
+          country: null,
+          category: [],
+          tags: [],
+          converted_product: null,
+          converted_label: null,
+          converted_at: null,
+          created_at: new Date("2026-01-01T00:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(
+        Array.from({ length: count }, (_unused, i) => ({
+          id: `a${i}`,
+          opportunity_id: null,
+          kind: "note",
+          actor: "ava",
+          body: null,
+          occurred_at: new Date("2026-08-01T09:00:00Z"),
+        })),
+      );
+    return organisationDetail("g1");
+  }
+
   it("returns null for an organisation that does not exist, without reading the rest", async () => {
     query.mockResolvedValueOnce([]);
     const detail = await organisationDetail("missing");
@@ -1037,6 +1189,48 @@ describe("organisationDetail", () => {
     // Timestamps normalised to ISO strings, same contract as the queue rows.
     expect(detail?.organisation.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(detail?.activities[0].occurredAt).toBe("2026-08-01T09:00:00.000Z");
+  });
+
+  // The activity cap used to be silent: a timeline longer than it ended at
+  // row 200 with nothing on screen to say so, and an operator who scrolled to
+  // the bottom had no way to tell that from the actual bottom. Same probe-row
+  // shape as `wonWithoutConversion` (#246), for the same reason: one query,
+  // no second COUNT.
+  it("asks for one activity past the cap, and reports the overflow without returning it", async () => {
+    const detail = await detailWithActivities(ACTIVITY_LIMIT + 1);
+
+    const [, params] = query.mock.calls[3];
+    expect(params, "the probe row is what makes hasMoreActivities knowable").toEqual([
+      "g1",
+      ACTIVITY_LIMIT + 1,
+    ]);
+    expect(detail?.activities).toHaveLength(ACTIVITY_LIMIT);
+    expect(detail?.hasMoreActivities).toBe(true);
+  });
+
+  // The boundary: a timeline of exactly the cap has nothing past it.
+  // Inferring from `activities.length === cap` would claim otherwise here,
+  // which is the whole reason the probe row is fetched.
+  it("reports no overflow when the timeline ends exactly at the cap", async () => {
+    const detail = await detailWithActivities(ACTIVITY_LIMIT);
+
+    expect(detail?.activities).toHaveLength(ACTIVITY_LIMIT);
+    expect(detail?.hasMoreActivities).toBe(false);
+  });
+
+  // `crm_activities.occurred_at` carries no uniqueness guarantee — it is a
+  // plain `timestamptz DEFAULT now()`, and rows can be written with an
+  // explicit value (`scripts/seed-dev.mjs` is the one writer that does, the
+  // same writer the production comment on this query names) — so without a
+  // total order two rows sharing it are cut arbitrarily by the LIMIT. Now
+  // that the cut decides which row is DROPPED and not merely where it sits,
+  // an arbitrary tiebreak means two loads of the same page can disagree
+  // about what the timeline contains.
+  it("breaks an occurred_at tie by id, so the cap cuts the same row every time", async () => {
+    await detailWithActivities(1);
+
+    const [sql] = query.mock.calls[3];
+    expect(sql).toContain("ORDER BY occurred_at DESC, id DESC");
   });
 
   it("scopes contacts, opportunities and activities to the organisation", async () => {

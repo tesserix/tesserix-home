@@ -18,6 +18,8 @@ import {
 } from "@/components/kit/filter-bar";
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
+import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
 
 /**
@@ -63,6 +65,99 @@ function ProductsCell({ products }: { products: readonly string[] }) {
       <span className="text-muted-foreground"> +{hidden.length} more</span>
       <span className="sr-only">: {hidden.join(", ")}</span>
     </span>
+  );
+}
+
+/**
+ * Compact follower count for the table cell — `1.2k`, `15k`, `1.2M` — so the
+ * column stays as narrow as the numeric cells elsewhere in the console while
+ * still ranking rows at a glance.
+ *
+ * Re-authored rather than imported: `formatFollowers` in
+ * `apps/web/app/admin/apps/mark8ly/leads/page.tsx` is the same four lines over
+ * the same kind of number, but it belongs to another app over a different
+ * table and reaching across that boundary would couple two surfaces that only
+ * happen to agree. (`lib/ai-usage.ts`'s `tokenFormatter` is not it: it is
+ * named for tokens and capitalises the K.)
+ *
+ * The decimal is dropped from five figures up because at that size the tenth
+ * of a thousand is noise the operator cannot act on, and the exact number is
+ * a hover away in `title` regardless.
+ */
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/**
+ * The primary contact's follower count — the CRM's only quantitative
+ * qualification signal, and until now visible on no surface at all even
+ * though the filter bands on it.
+ *
+ * An absent count renders as the same muted em-dash the other empty cells in
+ * this file use, never as `0`: the rows behind it have no recorded value,
+ * which is not the claim a measured zero makes, and they are exactly the rows
+ * the Unknown follower band holds (see `UNKNOWN_LABEL` in `crm-filters.ts`).
+ *
+ * The exact number stays reachable in `title`, as in the prior art. That is a
+ * hover-only affordance, which is acceptable here and not in `ProductsCell`:
+ * the abbreviation loses precision an operator may want, not content — the
+ * cell's accessible text already carries the magnitude the column exists to
+ * convey.
+ */
+function FollowersCell({ count }: { count: number | null }) {
+  if (count === null) return <span className="text-muted-foreground">—</span>;
+
+  return <span title={`${count.toLocaleString()} followers`}>{formatFollowers(count)}</span>;
+}
+
+/**
+ * The recorded location, with the country derived from it on a muted second
+ * line — `Chennai` over `India`.
+ *
+ * Inside the Location cell rather than in a column of its own: `country` is
+ * only ever a reading of `location`, so the two belong in one cell, and
+ * `ProductsCell` above sets out what another column costs this table.
+ *
+ * A location the mapper had no entry for renders `Unknown` — the word the
+ * country filter's sentinel option uses (`UNKNOWN_LABEL`, `crm-filters.ts`)
+ * — not a blank line. A blank would leave the filter's misses looking
+ * exactly like its hits, which is the whole reason this line exists.
+ *
+ * The word is shared with that sentinel; the SET of rows is not. The
+ * sentinel matches `country IS NULL` (`crm-repo.ts`), which is the wider
+ * fact: filtering to Unknown also returns the rows described below, whose
+ * cell is a bare em-dash because there was no location to consult a mapper
+ * about. 208 of the 259 production organisations have no derived country at
+ * all (`crm-filters.ts`), split across those two renderings — and at least
+ * 159 of the 259 have no location at all (see `leadsWithHandle` below), so
+ * most rows never reach this line: the em-dash is what they are read on.
+ * That is the distinction the two renderings exist to keep, so neither may
+ * be collapsed into the other.
+ *
+ * With no location there is nothing to derive from, so the cell is the same
+ * muted em-dash the other empty cells in this file use — never `Unknown`,
+ * which would claim the mapper was consulted and failed. That branch is
+ * safe because no writer can attach a country to a NULL location: the three
+ * application writes all derive it with `countryFromLocation` (create and
+ * update in `crm-writes.ts`, CSV import in `crm-repo.ts`); the one-shot
+ * backfill updates only rows its own mapping pass resolved, which requires a
+ * location; and `seed-dev.mjs` — the one writer that sets both columns
+ * independently and applies no mapper — picks its location from a list with
+ * no null in it. So the two absences stay apart: "no location on file" and
+ * "a location that mapped to nothing" are different facts about the row.
+ */
+function LocationCell({ location, country }: { location: string | null; country: string | null }) {
+  if (location === null) return <span className="text-muted-foreground">—</span>;
+
+  return (
+    <div className="flex flex-col">
+      <span>{location}</span>
+      <span className="text-muted-foreground">
+        {country === null ? UNKNOWN_LABEL : (COUNTRY_LABELS[country] ?? country)}
+      </span>
+    </div>
   );
 }
 
@@ -184,6 +279,7 @@ export function OrganisationsView({
                 <TableHead>Location</TableHead>
                 <TableHead>Primary contact</TableHead>
                 <TableHead>Open</TableHead>
+                <TableHead className="text-right">Followers</TableHead>
                 <TableHead>Products</TableHead>
               </TableRow>
             </TableHeader>
@@ -193,7 +289,9 @@ export function OrganisationsView({
                   <TableCell>
                     <NameCell row={row} />
                   </TableCell>
-                  <TableCell>{row.location ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell>
+                    <LocationCell location={row.location} country={row.country} />
+                  </TableCell>
                   <TableCell>
                     {row.contactName || row.contactEmail ? (
                       <div className="flex flex-col">
@@ -207,6 +305,23 @@ export function OrganisationsView({
                     )}
                   </TableCell>
                   <TableCell>{row.openOpportunities}</TableCell>
+                  {/* `tabular-nums` fixes the digit width so the abbreviated
+                   *  counts stay comparable down the column, and `text-right`
+                   *  puts their last digits on a common edge. The pairing
+                   *  isn't a firm console-wide convention: several of the
+                   *  console's numeric tables use it (e.g.
+                   *  `platform/ai-usage/events-table.tsx`), but it's not
+                   *  universal — `Open`, right beside it in this same row,
+                   *  uses neither class, and other tables
+                   *  (`platform/inbox/inbox-queue.tsx`,
+                   *  `kora/ai-metrics/ai-metrics-view.tsx`) use
+                   *  `tabular-nums` alone. No `text-xs`: `Open` renders
+                   *  beside it at the default size, and two adjacent numeric
+                   *  columns at different sizes read as two kinds of number
+                   *  rather than two counts. */}
+                  <TableCell className="text-right tabular-nums">
+                    <FollowersCell count={row.followersCount} />
+                  </TableCell>
                   <TableCell>
                     <ProductsCell products={row.products} />
                   </TableCell>

@@ -26,6 +26,7 @@ const ORG_ROW: OrganisationListRow = {
   id: "org-1",
   name: "Glebe Flowers",
   location: "Sydney",
+  country: "AU",
   contactName: "Priya Raman",
   contactEmail: "priya@glebeflowers.example",
   contactHandle: "glebeflowers",
@@ -35,6 +36,10 @@ const ORG_ROW: OrganisationListRow = {
   // (all written before Task 7) assume when they check for `row.name`.
   websiteUrl: "https://glebeflowers.example",
   openOpportunities: 1,
+  // A measured count, so the row renders a number rather than the blank cell
+  // an unrecorded count gets — this file's tests are about the page, and a
+  // null here would only exercise `FollowersCell`'s empty state.
+  followersCount: 4200,
   products: [],
   createdAt: "2026-08-01T00:00:00.000Z",
 };
