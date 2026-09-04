@@ -105,10 +105,29 @@ const SHARED = {
    * poison stub was called zero times.
    *
    * `lib/platform-api.test.ts` carries the mitigation that does work — see the
-   * `installFetchStub` comment there. `restoreMocks` is deliberately NOT set:
-   * three tests depend on mock return values surviving across tests — #550.
+   * `installFetchStub` comment there.
    */
   unstubGlobals: true,
+  /**
+   * Restores every mock's original implementation after each test, so a
+   * `vi.fn()`'s return value cannot silently carry from one test into the
+   * next.
+   *
+   * This is what makes each test state its own preconditions instead of
+   * inheriting the first test's. Before #550, three tests set a mock's
+   * resolved value once — two of them by leaving it to an earlier test in the
+   * file — and `vi.clearAllMocks()` clears recorded calls but keeps
+   * implementations, so nothing caught it. That fragility is invisible until
+   * something reorders the file: `.only`, a moved test, or turning this
+   * setting on. And it does not read as a test problem when it bites — the
+   * wiped mock returns `undefined`, so the failure lands as a `TypeError`
+   * inside production code (`authoring-panel.tsx` doing `.then` on nothing).
+   *
+   * Like `unstubGlobals`, this is defence against a bug class and NOT a fix
+   * for the cross-test leak #544 and #394 describe — a continuation resuming
+   * inside a later test is unaffected by what happens between tests.
+   */
+  restoreMocks: true,
 };
 
 export default defineConfig({
