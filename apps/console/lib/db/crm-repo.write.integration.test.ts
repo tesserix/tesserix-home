@@ -413,6 +413,7 @@ describe("commitImport dedups within one batch, against the real crm_contacts_em
         { name: "Dup Co Again", email: "  DUP@Example.com  " },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
 
     expect(result.created).toBe(1);
@@ -449,6 +450,7 @@ describe("commitImport rejects an unsafe website_url without aborting the batch"
         { name: "Hostile Co", email: "hostile@example.com", websiteUrl: "javascript:alert(1)" },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
 
     // Not aborted: both rows created, not just the one with a safe URL.
@@ -480,6 +482,7 @@ describe("commitImport rejects an unsafe website_url without aborting the batch"
         { name: "Blank Co", email: "blank@example.com" },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
 
     expect(result.created).toBe(2);
@@ -498,6 +501,7 @@ describe("commitImport derives country from location", () => {
     const result = await commitImport(
       [{ name: "Chennai Chai Co", email: "chennai@example.com", location: "Chennai" }],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
     expect(result.created).toBe(1);
 
@@ -514,6 +518,7 @@ describe("commitImport derives country from location", () => {
     const result = await commitImport(
       [{ name: "Nowhere Co", email: "nowhere@example.com", location: "Somewhere Else" }],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
     expect(result.created).toBe(1);
 
@@ -701,6 +706,7 @@ describe("commitImport writes the scrape columns", () => {
         },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
     expect(result.created).toBe(1);
 
@@ -726,7 +732,7 @@ describe("commitImport writes the scrape columns", () => {
   });
 
   it("leaves the bag empty and the counts null when the CSV has no such columns", async () => {
-    await commitImport([{ name: "Plain Co", email: "plain@example.com" }], "ava@tesserix.app");
+    await commitImport([{ name: "Plain Co", email: "plain@example.com" }], "ava@tesserix.app", "legitimate_interests");
     const rows = await db.query<{ metadata: Record<string, unknown>; followers_count: number | null }>(
       `SELECT c.metadata, c.followers_count
          FROM crm_contacts c
@@ -744,6 +750,7 @@ describe("commitImport writes the scrape columns", () => {
         { name: "Good Count Co", email: "good@example.com", followersCount: "50" },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
 
     // Not aborted: one bad cell must not cost the other rows in the batch.
@@ -776,6 +783,7 @@ describe("commitImport writes the scrape columns", () => {
         { name: "Array Bag Co", email: "arraybag@example.com", metadata: "[1,2]" },
       ],
       "ava@tesserix.app",
+      "legitimate_interests",
     );
 
     expect(result.created).toBe(2);

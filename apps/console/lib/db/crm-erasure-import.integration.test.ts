@@ -137,7 +137,7 @@ describe("an erased contact survives the next import", () => {
     // them (the contact no longer carries the email to match on).
     expect(await organisationCount()).toBe(1);
 
-    const result = await commitImport([{ name: "Ava Reid", email: "ava@example.com" }], "op@example.com");
+    const result = await commitImport([{ name: "Ava Reid", email: "ava@example.com" }], "op@example.com", "legitimate_interests");
 
     expect(result.skippedErased).toBe(1);
     // The claim that matters. A counter alone would pass in a world where
@@ -156,7 +156,7 @@ describe("an erased contact survives the next import", () => {
 
     // The next scrape captured the handle and no email at all — the reason
     // the two identifiers are hashed separately rather than as a pair.
-    const result = await commitImport([{ name: "Sam", instagramHandle: "@BondiBaker" }], "op@example.com");
+    const result = await commitImport([{ name: "Sam", instagramHandle: "@BondiBaker" }], "op@example.com", "legitimate_interests");
 
     expect(result.skippedErased).toBe(1);
     expect(result.created).toBe(0);
@@ -171,7 +171,7 @@ describe("an erased contact survives the next import", () => {
     const { contactId } = await seedContact("Paper Press", { email: " Foo@Example.COM " });
     await eraseContact(contactId);
 
-    const result = await commitImport([{ email: "foo@example.com" }], "op@example.com");
+    const result = await commitImport([{ email: "foo@example.com" }], "op@example.com", "legitimate_interests");
 
     expect(result.skippedErased).toBe(1);
     expect(result.created).toBe(0);
@@ -187,6 +187,7 @@ describe("an erased contact survives the next import", () => {
     const result = await commitImport(
       [{ name: "Noor at Glebe Flowers", email: "noor@example.com" }],
       "op@example.com",
+      "legitimate_interests",
     );
 
     expect(result.skippedErased).toBe(0);
@@ -209,6 +210,7 @@ describe("an erased contact survives the next import", () => {
     const result = await commitImport(
       [{ email: "ava@example.com" }, { email: "noor@example.com" }],
       "op@example.com",
+      "legitimate_interests",
     );
 
     expect(result.skippedErased).toBe(1);
@@ -226,7 +228,7 @@ describe("an erased contact survives the next import", () => {
       ["ava@example.com", "also asked not to be contacted", "op@example.com"],
     );
 
-    const result = await commitImport([{ email: "ava@example.com" }], "op@example.com");
+    const result = await commitImport([{ email: "ava@example.com" }], "op@example.com", "legitimate_interests");
 
     expect(result.skippedErased).toBe(1);
     expect(result.skippedSuppressed).toBe(0);
@@ -244,7 +246,7 @@ describe("an erased contact survives the next import", () => {
     ];
 
     const preview = await previewImport(file);
-    const committed = await commitImport(file, "op@example.com");
+    const committed = await commitImport(file, "op@example.com", "legitimate_interests");
 
     expect(preview.skippedErased).toBe(1);
     expect(committed.skippedErased).toBe(preview.skippedErased);
@@ -330,7 +332,7 @@ describe("without CRM_ERASURE_HASH_KEY", () => {
     // an outage for no benefit.
     vi.stubEnv(ERASURE_HASH_KEY_ENV, "");
 
-    const result = await commitImport([{ email: "noor@example.com" }], "op@example.com");
+    const result = await commitImport([{ email: "noor@example.com" }], "op@example.com", "legitimate_interests");
 
     expect(result.created).toBe(1);
     expect(result.skippedErased).toBe(0);
@@ -345,7 +347,7 @@ describe("without CRM_ERASURE_HASH_KEY", () => {
     await expect(previewImport([{ email: "ava@example.com" }])).rejects.toThrow(
       ErasureCheckUnavailableError,
     );
-    await expect(commitImport([{ email: "ava@example.com" }], "op@example.com")).rejects.toThrow(
+    await expect(commitImport([{ email: "ava@example.com" }], "op@example.com", "legitimate_interests")).rejects.toThrow(
       ErasureCheckUnavailableError,
     );
 

@@ -8,6 +8,7 @@ import {
   type FollowerFilter,
 } from "./crm-filters";
 import { isSafeWebsiteUrl } from "./crm-url";
+import { CONTACT_SOURCE, isSelectableLawfulBasis, type LawfulBasis } from "../crm-provenance";
 import { normalizeContactEmail, normalizeInstagramHandle } from "./crm-identity";
 import {
   ERASURE_HASH_KEY_ENV,
@@ -1125,6 +1126,20 @@ export interface ContactRow {
   phone: string | null;
   instagramHandle: string | null;
   isPrimary: boolean;
+  /**
+   * Provenance (#248) — what we hold, when we got it, and why we may.
+   *
+   * Read here rather than left to a database query because the detail page
+   * is where a subject-access request is answered: before this, migration
+   * 0019's three columns were written by one migration script and selected
+   * by nothing, so the only way to answer "why do you have my details" was
+   * psql. Nullable on all three: rows created between the cutover and #248
+   * genuinely have none, and rendering a guess would be worse than
+   * rendering "Not recorded".
+   */
+  source: string | null;
+  sourcedAt: string | null;
+  lawfulBasis: string | null;
 }
 
 export interface OpportunityRow {
@@ -1268,6 +1283,9 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       phone: string | null;
       instagram_handle: string | null;
       is_primary: boolean;
+      source: string | null;
+      sourced_at: unknown;
+      lawful_basis: string | null;
     }>(
       // Erased contacts stay in this list, deliberately — see notErased().
       // This orders the WHOLE contact list rather than picking one contact to
@@ -1275,7 +1293,8 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       // file: a contact who exercised erasure is redacted there ('[erased]',
       // no identifiers), not hidden, or the record would silently lose a row
       // the activity trail still refers to.
-      `SELECT id, name, email, phone, instagram_handle, is_primary
+      `SELECT id, name, email, phone, instagram_handle, is_primary,
+              source, sourced_at, lawful_basis
          FROM crm_contacts
         WHERE organisation_id = $1
         ORDER BY ${primaryContactOrder("")}`,
@@ -1338,6 +1357,9 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       phone: row.phone,
       instagramHandle: row.instagram_handle,
       isPrimary: row.is_primary,
+      source: row.source,
+      sourcedAt: toIso(row.sourced_at),
+      lawfulBasis: row.lawful_basis,
     })),
     opportunities: opportunityRows.map((row) => ({
       id: row.id,
@@ -2014,6 +2036,16 @@ function metadataCell(raw: string | undefined): CellOutcome<Record<string, unkno
  * written, same as at preview: this does not merge into or update the
  * existing row.
  *
+ * `lawfulBasis` is declared ONCE FOR THE BATCH (#248), not per row, and has
+ * no default. A CSV of scraped profiles has one answer to "why may we hold
+ * these people" for the whole file — the operator who chose the file is the
+ * only one who knows it, and a per-row column would ask them to repeat a
+ * single decision N times and let rows disagree. It is rejected here as well
+ * as at the action, on the same reasoning `insertContact` states.
+ * `source` is `'import'` for every contact created here (matching the
+ * `crm_opportunities.source` this function already writes) and `sourced_at`
+ * is the commit's own `now()`.
+ *
  * `product` is never set: an imported lead was never matched to a product
  * (migration 0019's comment on `crm_opportunities.product`), and every
  * created opportunity lands at stage `new`, the one stage the
@@ -2030,9 +2062,13 @@ function metadataCell(raw: string | undefined): CellOutcome<Record<string, unkno
 export async function commitImport(
   rows: readonly ImportRow[],
   actor: string,
+  lawfulBasis: LawfulBasis,
   filename?: string,
   totalRows: number = rows.length,
 ): Promise<ImportResult> {
+  if (!isSelectableLawfulBasis(lawfulBasis)) {
+    throw new Error(`commitImport: ${String(lawfulBasis)} is not a selectable lawful basis`);
+  }
   return tesserixTx(async (query) => {
     let created = 0;
     let matchedExisting = 0;
@@ -2152,10 +2188,15 @@ export async function commitImport(
       droppedMetadataCells += metadata.dropped;
 
       await query(
+        // #248: `source`/`sourced_at`/`lawful_basis` land on the same INSERT
+        // as the personal columns, not on a follow-up UPDATE — a row that
+        // exists for even one statement without the justification for
+        // holding it is the state this issue is about.
         `INSERT INTO crm_contacts
            (organisation_id, name, email, phone, instagram_handle, is_primary,
-            biography, followers_count, posts_count, metadata)
-         VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9::jsonb)`,
+            biography, followers_count, posts_count, metadata,
+            source, sourced_at, lawful_basis)
+         VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9::jsonb, $10, now(), $11)`,
         [
           organisationId,
           row.name?.trim() || null,
@@ -2166,6 +2207,8 @@ export async function commitImport(
           followersCount.value,
           postsCount.value,
           JSON.stringify(metadata.value),
+          CONTACT_SOURCE.import,
+          lawfulBasis,
         ],
       );
 

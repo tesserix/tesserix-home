@@ -117,7 +117,7 @@ describe("createOrganisation / createOpportunity", () => {
   it("creates organisation, contact and opportunity in one transaction", async () => {
     const { organisationId } = await createOrganisation({
       name: "Newtown Roasters",
-      contact: { name: "Ada Vale", email: "ada@newtown.example" },
+      contact: { name: "Ada Vale", email: "ada@newtown.example", lawfulBasis: "legitimate_interests" },
       opportunity: { product: "mark8ly", owner: "priya" },
     });
     const contacts = await db.query(
@@ -209,9 +209,9 @@ describe("createOrganisation / createOpportunity", () => {
   });
 
   it("rolls back the organisation when its contact violates the email unique index", async () => {
-    await createOrganisation({ name: "First", contact: { email: "clash@example.com" } });
+    await createOrganisation({ name: "First", contact: { email: "clash@example.com", lawfulBasis: "legitimate_interests" } });
     await expect(
-      createOrganisation({ name: "Second", contact: { email: "CLASH@example.com" } }),
+      createOrganisation({ name: "Second", contact: { email: "CLASH@example.com", lawfulBasis: "legitimate_interests" } }),
     ).rejects.toThrow();
     const orgs = await db.query(`SELECT id FROM crm_organisations WHERE name = $1`, ["Second"]);
     // crm_contacts_email_lower_uq is case-insensitive; a partial write here
@@ -258,7 +258,7 @@ describe("manual create honours the do-not-contact list", () => {
     await expect(
       createOrganisation({
         name: "Suppressed Lead",
-        contact: { email: "GONE@example.com" },
+        contact: { email: "GONE@example.com", lawfulBasis: "legitimate_interests" },
       }),
     ).rejects.toBeInstanceOf(SuppressedContactError);
 
@@ -277,7 +277,7 @@ describe("manual create honours the do-not-contact list", () => {
     const { organisationId } = await createOrganisation({ name: "Existing Co" });
 
     await expect(
-      createContact({ organisationId, instagramHandle: "quiet_shop" }),
+      createContact({ organisationId, instagramHandle: "quiet_shop", source: "manual", lawfulBasis: "legitimate_interests" }),
     ).rejects.toBeInstanceOf(SuppressedContactError);
 
     const contacts = await db.query(`SELECT id FROM crm_contacts WHERE organisation_id = $1`, [
@@ -288,7 +288,7 @@ describe("manual create honours the do-not-contact list", () => {
 
   it("still creates a contact whose keys are not on the list", async () => {
     const { organisationId } = await createOrganisation({ name: "Welcome Co" });
-    const { contactId } = await createContact({ organisationId, email: "fine@example.com" });
+    const { contactId } = await createContact({ organisationId, email: "fine@example.com", source: "manual", lawfulBasis: "legitimate_interests" });
     expect(contactId).toBeTruthy();
   });
 });
@@ -494,8 +494,7 @@ describe("createContact writes and the contact unique indexes", () => {
       organisationId,
       name: "  Ada Vale  ",
       email: "  Ada@Contents.Example  ",
-      phone: "  0400 000 000  ",
-    });
+      phone: "  0400 000 000  ", source: "manual", lawfulBasis: "legitimate_interests" });
 
     const row = await contactRow(contactId);
     expect(row.name).toBe("Ada Vale");
@@ -515,8 +514,7 @@ describe("createContact writes and the contact unique indexes", () => {
     const { contactId } = await createContact({
       organisationId,
       name: "Bondi Baker",
-      instagramHandle: "  @BondiBaker  ",
-    });
+      instagramHandle: "  @BondiBaker  ", source: "manual", lawfulBasis: "legitimate_interests" });
 
     expect((await contactRow(contactId)).instagram_handle).toBe("bondibaker");
   });
@@ -526,8 +524,7 @@ describe("createContact writes and the contact unique indexes", () => {
     const { contactId } = await createContact({
       organisationId,
       name: "Solo",
-      phone: "   ",
-    });
+      phone: "   ", source: "manual", lawfulBasis: "legitimate_interests" });
 
     const row = await contactRow(contactId);
     expect(row.phone).toBeNull();
@@ -541,13 +538,12 @@ describe("createContact writes and the contact unique indexes", () => {
     // organisation row and the detail view lead with.
     const { organisationId } = await createOrganisation({
       name: "Two Contacts Co",
-      contact: { name: "First", email: "first@example.com" },
+      contact: { name: "First", email: "first@example.com", lawfulBasis: "legitimate_interests" },
     });
     const { contactId } = await createContact({
       organisationId,
       name: "Second",
-      email: "second@example.com",
-    });
+      email: "second@example.com", source: "manual", lawfulBasis: "legitimate_interests" });
 
     expect((await contactRow(contactId)).is_primary).toBe(false);
   });
@@ -558,21 +554,19 @@ describe("createContact writes and the contact unique indexes", () => {
       organisationId,
       name: "Lead",
       email: "lead@example.com",
-      isPrimary: true,
-    });
+      isPrimary: true, source: "manual", lawfulBasis: "legitimate_interests" });
 
     expect((await contactRow(contactId)).is_primary).toBe(true);
   });
 
   it("refuses a duplicate email and names that key, without naming the holder", async () => {
     const first = await createOrganisation({ name: "Email Holder" });
-    await createContact({ organisationId: first.organisationId, email: "taken@example.com" });
+    await createContact({ organisationId: first.organisationId, email: "taken@example.com", source: "manual", lawfulBasis: "legitimate_interests" });
     const second = await createOrganisation({ name: "Email Latecomer" });
 
     const cause = await createContact({
       organisationId: second.organisationId,
-      email: "TAKEN@example.com",
-    }).then(
+      email: "TAKEN@example.com", source: "manual", lawfulBasis: "legitimate_interests" }).then(
       () => {
         throw new Error("expected createContact to reject");
       },
@@ -594,13 +588,12 @@ describe("createContact writes and the contact unique indexes", () => {
 
   it("refuses a duplicate Instagram handle and names that key", async () => {
     const first = await createOrganisation({ name: "Handle Holder" });
-    await createContact({ organisationId: first.organisationId, instagramHandle: "takenshop" });
+    await createContact({ organisationId: first.organisationId, instagramHandle: "takenshop", source: "manual", lawfulBasis: "legitimate_interests" });
     const second = await createOrganisation({ name: "Handle Latecomer" });
 
     const cause = await createContact({
       organisationId: second.organisationId,
-      instagramHandle: "TakenShop",
-    }).then(
+      instagramHandle: "TakenShop", source: "manual", lawfulBasis: "legitimate_interests" }).then(
       () => {
         throw new Error("expected createContact to reject");
       },
@@ -628,8 +621,7 @@ describe("createContact and the scrape fields", () => {
       biography: "Roaster and owner",
       followersCount: 1200,
       postsCount: 340,
-      metadata: { profile_pic_url: "https://cdn.example/ravi.jpg", is_verified: true },
-    });
+      metadata: { profile_pic_url: "https://cdn.example/ravi.jpg", is_verified: true }, source: "manual", lawfulBasis: "legitimate_interests" });
 
     const rows = await db.query<{
       biography: string | null;
@@ -653,7 +645,7 @@ describe("createContact and the scrape fields", () => {
 
   it("defaults the bag to an empty object when the caller supplies none", async () => {
     const { organisationId } = await createOrganisation({ name: "Bagless Co" });
-    const { contactId } = await createContact({ organisationId, name: "No Bag" });
+    const { contactId } = await createContact({ organisationId, name: "No Bag", source: "manual", lawfulBasis: "legitimate_interests" });
     const rows = await db.query<{ metadata: Record<string, unknown>; biography: string | null }>(
       `SELECT metadata, biography FROM crm_contacts WHERE id = $1`,
       [contactId],
@@ -667,17 +659,17 @@ describe("createContact and the scrape fields", () => {
   it("refuses a count that the integer column cannot hold, rather than letting the INSERT raise", async () => {
     const { organisationId } = await createOrganisation({ name: "Overflow Co" });
     await expect(
-      createContact({ organisationId, name: "Too Many", followersCount: 2_147_483_648 }),
+      createContact({ organisationId, name: "Too Many", followersCount: 2_147_483_648, source: "manual", lawfulBasis: "legitimate_interests" }),
     ).rejects.toThrow(/followersCount/);
   });
 
   it("refuses a fractional or negative count", async () => {
     const { organisationId } = await createOrganisation({ name: "Fraction Co" });
     await expect(
-      createContact({ organisationId, name: "Half", postsCount: 12.5 }),
+      createContact({ organisationId, name: "Half", postsCount: 12.5, source: "manual", lawfulBasis: "legitimate_interests" }),
     ).rejects.toThrow(/postsCount/);
     await expect(
-      createContact({ organisationId, name: "Negative", followersCount: -1 }),
+      createContact({ organisationId, name: "Negative", followersCount: -1, source: "manual", lawfulBasis: "legitimate_interests" }),
     ).rejects.toThrow(/followersCount/);
   });
 });

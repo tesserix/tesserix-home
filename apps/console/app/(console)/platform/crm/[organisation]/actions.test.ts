@@ -640,7 +640,11 @@ describe("addActivity and the do-not-contact list", () => {
       ),
     );
 
-    const result = await addContactAction({ organisationId: ORG_ID, email: "gone@example.com" });
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      email: "gone@example.com",
+      lawfulBasis: "legitimate_interests",
+    });
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/do-not-contact list/i);
@@ -662,7 +666,11 @@ describe("addContactAction and the contact unique indexes", () => {
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("email"));
 
-    const result = await addContactAction({ organisationId: ORG_ID, email: "taken@example.com" });
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      email: "taken@example.com",
+      lawfulBasis: "legitimate_interests",
+    });
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.message).toMatch(/already/i);
@@ -678,7 +686,11 @@ describe("addContactAction and the contact unique indexes", () => {
     vi.mocked(tesserixQuery).mockResolvedValue([]);
     vi.mocked(createContact).mockRejectedValue(new DuplicateContactError("instagramHandle"));
 
-    const result = await addContactAction({ organisationId: ORG_ID, instagramHandle: "takenshop" });
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      instagramHandle: "takenshop",
+      lawfulBasis: "legitimate_interests",
+    });
 
     expect(result.ok === false && result.message).toMatch(/instagram handle/i);
   });
@@ -693,6 +705,7 @@ describe("addContactAction", () => {
       organisationId: ORG_ID,
       name: "Ava",
       email: "ava@example.com",
+      lawfulBasis: "legitimate_interests",
     });
 
     expect(result).toEqual({ ok: true });
@@ -702,6 +715,9 @@ describe("addContactAction", () => {
       email: "ava@example.com",
       phone: undefined,
       instagramHandle: undefined,
+      // #248: the path, not the batch — see `CONTACT_SOURCE`.
+      source: "manual",
+      lawfulBasis: "legitimate_interests",
     });
     expect(lastAuditInsert()).toEqual({
       action: "crm.contact.create",
@@ -720,6 +736,7 @@ describe("addContactAction", () => {
       name: "  Ava  ",
       phone: "  0400 000 000  ",
       instagramHandle: "  @bondibaker  ",
+      lawfulBasis: "  legitimate_interests  ",
     });
 
     expect(createContact).toHaveBeenCalledWith({
@@ -728,7 +745,50 @@ describe("addContactAction", () => {
       email: undefined,
       phone: "0400 000 000",
       instagramHandle: "@bondibaker",
+      source: "manual",
+      lawfulBasis: "legitimate_interests",
     });
+  });
+
+  // #248. A manually typed contact has a different basis from a scraped
+  // profile, so the action refuses rather than defaulting — a silent default
+  // is exactly the failure this issue reports. These are the tests that fail
+  // when the boundary check is removed.
+  it("refuses a hand-typed contact with no lawful basis, and never calls createContact", async () => {
+    signIn(["crm"]);
+    const result = await addContactAction({ organisationId: ORG_ID, name: "Ava" });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/lawful basis/i);
+    expect(createContact).not.toHaveBeenCalled();
+  });
+
+  it("refuses free text as a lawful basis", async () => {
+    signIn(["crm"]);
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      name: "Ava",
+      lawfulBasis: "seemed fine",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/not a lawful basis/i);
+    expect(createContact).not.toHaveBeenCalled();
+  });
+
+  it("refuses the pre-migration marker as a choice for a new contact", async () => {
+    // Valid to HOLD — every contact in production carries it — and never
+    // valid to CHOOSE. Offering it would let an operator record "we do not
+    // know" going forward.
+    signIn(["crm"]);
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      name: "Ava",
+      lawfulBasis: "not_recorded_pre_migration",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(createContact).not.toHaveBeenCalled();
   });
 
   it("refuses a contact with no identifying field, before touching the session", async () => {
@@ -744,7 +804,11 @@ describe("addContactAction", () => {
 
   it("refuses without console entry", async () => {
     signIn(undefined);
-    const result = await addContactAction({ organisationId: ORG_ID, name: "Ava" });
+    const result = await addContactAction({
+      organisationId: ORG_ID,
+      name: "Ava",
+      lawfulBasis: "legitimate_interests",
+    });
     expect(result).toEqual({
       ok: false,
       message: "You don't have permission to edit the CRM.",

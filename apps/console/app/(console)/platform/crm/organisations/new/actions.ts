@@ -7,6 +7,11 @@ import { createOrganisation, DuplicateContactError } from "@/lib/db/crm-writes";
 // file may only export async functions, which is why this module imports the
 // sentinel rather than owning it.
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
+import {
+  LAWFUL_BASIS_REQUIRED_MESSAGE,
+  isSelectableLawfulBasis,
+  unknownLawfulBasisMessage,
+} from "@/lib/crm-provenance";
 import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
 import { SuppressedContactError } from "@/lib/db/crm-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
@@ -121,6 +126,22 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
   }
 
   const hasContact = Boolean(contactName || contactEmail || contactInstagramHandle);
+
+  // #248. Required WHEN a contact is being created, and never defaulted: a
+  // contact typed in by an operator has a different basis from a scraped
+  // profile, and silently choosing one for them is precisely how these
+  // columns became decorative. Checked before `withCrmWrite` like every
+  // other validation here — an invalid form is not an audited event.
+  const contactLawfulBasis = optionalField(formData, "contactLawfulBasis");
+  if (hasContact) {
+    if (!contactLawfulBasis) {
+      return { ok: false, message: LAWFUL_BASIS_REQUIRED_MESSAGE };
+    }
+    if (!isSelectableLawfulBasis(contactLawfulBasis)) {
+      return { ok: false, message: unknownLawfulBasisMessage(contactLawfulBasis) };
+    }
+  }
+
   const hasOpportunity = Boolean(product || owner);
 
   const result = await withCrmWrite(
@@ -134,9 +155,15 @@ export async function createOrganisationAction(formData: FormData): Promise<CrmA
         name,
         location,
         websiteUrl,
-        contact: hasContact
-          ? { name: contactName, email: contactEmail, instagramHandle: contactInstagramHandle }
-          : undefined,
+        contact:
+          hasContact && isSelectableLawfulBasis(contactLawfulBasis)
+            ? {
+                name: contactName,
+                email: contactEmail,
+                instagramHandle: contactInstagramHandle,
+                lawfulBasis: contactLawfulBasis,
+              }
+            : undefined,
         opportunity: hasOpportunity ? { product, owner } : undefined,
       }),
     (outcome) => ({

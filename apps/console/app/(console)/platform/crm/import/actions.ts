@@ -13,6 +13,14 @@ import {
 import { withCrmWrite } from "@/lib/crm-write";
 import { AuditWriteError } from "@/lib/db/audit-repo";
 import { MAX_IMPORT_ROWS, boundFilename, validateTotalRows, type ImportRow } from "@/lib/crm";
+// A `"use server"` module may export only async functions, so the vocabulary
+// and its predicate are imported rather than owned here — same shape as
+// `NO_PRODUCT_VALUE` on the manual-create action.
+import {
+  LAWFUL_BASIS_REQUIRED_MESSAGE,
+  isSelectableLawfulBasis,
+  unknownLawfulBasisMessage,
+} from "@/lib/crm-provenance";
 import { committedDisplayCounts } from "./counts";
 
 /**
@@ -120,6 +128,13 @@ export type CommitImportResult =
 
 export async function commitImportAction(
   rows: ImportRow[],
+  /** The lawful basis the whole batch is held under (#248). Second and
+   *  required, ahead of the optional reporting parameters, because there is
+   *  no correct value to fall back on: `crm_contacts.lawful_basis` is what a
+   *  subject-access request is answered from, and a default would record a
+   *  claim nobody made. Validated below, before any session or database
+   *  work — the same boundary `product` is checked against `ESTATE` at. */
+  lawfulBasis: string,
   filename?: string,
   /** The size of the ORIGINAL file, including rows the client-side parser
    *  (`parseImportCsv`) already dropped as malformed before `rows` ever got
@@ -131,6 +146,16 @@ export async function commitImportAction(
 ): Promise<CommitImportResult> {
   if (rows.length > MAX_IMPORT_ROWS) {
     return { ok: false, message: tooManyRowsMessage(rows.length) };
+  }
+  // Rejected, never coerced. `not_recorded_pre_migration` fails here like any
+  // other unknown string: it is storable, because 259 migrated rows carry it,
+  // but choosing it for a new batch would be recording "we do not know" as a
+  // decision — see `LEGACY_LAWFUL_BASIS`.
+  if (!lawfulBasis) {
+    return { ok: false, message: LAWFUL_BASIS_REQUIRED_MESSAGE };
+  }
+  if (!isSelectableLawfulBasis(lawfulBasis)) {
+    return { ok: false, message: unknownLawfulBasisMessage(lawfulBasis) };
   }
   // Important 2 (review round 2), Ruling 26 (review round 3): totalRows is
   // a server-action parameter — reachable directly over the network, no
@@ -153,9 +178,15 @@ export async function commitImportAction(
   // `totalRows` already carries.
   const parseMalformed = totalRows - rows.length;
   const result = await withCrmWrite(
-    bounded ?? "import",
+    // The basis goes in `target`, not in `summary`: `AuditSummary` is
+    // `Record<string, number>` and rejects anything that is not a count. It
+    // belongs on the audit row at all because "which basis was this batch
+    // declared under, and by whom" is a question about the DECISION — the
+    // contact rows record what was written, the audit log records who chose
+    // it and when.
+    `${bounded ?? "import"} (${lawfulBasis})`,
     { capability: "crm" },
-    (actor) => commitImport(rows, actor.email, bounded, totalRows),
+    (actor) => commitImport(rows, actor.email, lawfulBasis, bounded, totalRows),
     (outcome: ImportResult) => {
       // Minor (review round 2): routed through the SAME `committedDisplayCounts`
       // the UI's committed card uses (`import-view.tsx`, `counts.ts`) — this

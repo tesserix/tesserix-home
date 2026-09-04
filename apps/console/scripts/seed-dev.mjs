@@ -200,11 +200,17 @@ async function main() {
           `handle_${i + 1}`,
           hasFollowers ? 200 + i * 37 : null,
           hasFollowers ? 10 + (i % 60) : null,
-          i % 3 === 0 ? "instagram_scrape" : "inbound_form",
+          // The vocabulary #248 closed: `CONTACT_SOURCE` in
+          // `lib/crm-provenance.ts` for anything a live path writes, plus the
+          // pre-migration values still on real rows.
+          i % 3 === 0 ? "instagram_outreach" : "import",
           daysAgo(40 + (i % 30)),
-          // #248: lawful basis was not recorded after the migration. Seeding a
-          // mix means the surface that reports it has both cases to show.
-          i % 5 === 0 ? null : "legitimate_interest",
+          // #248 records a lawful basis on every write path now, but rows
+          // created BEFORE it still carry the legacy marker or nothing at
+          // all. Seeding all three means the surface that reports provenance
+          // has every case to render, including the "Not recorded" one that
+          // is the whole finding.
+          i % 5 === 0 ? null : i % 7 === 0 ? "not_recorded_pre_migration" : "legitimate_interests",
           JSON.stringify(i % 3 === 0 ? { scraped: { biography: `Bio ${i}` } } : {}),
         ],
       );
@@ -218,7 +224,7 @@ async function main() {
              (organisation_id, name, email, is_primary, source, lawful_basis)
            VALUES ($1,$2,$3,false,$4,$5)`,
           [org.id, `Second Contact ${i + 1}`, `second${i + 1}@example-${i}.test`,
-           "inbound_form", "consent"],
+           "manual", "consent"],
         );
         contacts += 1;
       }
