@@ -307,15 +307,18 @@ export function OrganisationsView({
                   <TableCell>{row.openOpportunities}</TableCell>
                   {/* `tabular-nums` fixes the digit width so the abbreviated
                    *  counts stay comparable down the column, and `text-right`
-                   *  puts their last digits on a common edge. The pairing is
-                   *  not universal here — several tables use `tabular-nums`
-                   *  alone (`platform/inbox/inbox-queue.tsx`,
-                   *  `kora/ai-metrics/ai-metrics-view.tsx`) — but it is what
-                   *  the console's other right-aligned numeric table,
-                   *  `platform/ai-usage/events-table.tsx`, uses. No `text-xs`:
-                   *  `Open` renders beside it at the default size, and two
-                   *  adjacent numeric columns at different sizes read as two
-                   *  kinds of number rather than two counts. */}
+                   *  puts their last digits on a common edge. The pairing
+                   *  isn't a firm console-wide convention: several of the
+                   *  console's numeric tables use it (e.g.
+                   *  `platform/ai-usage/events-table.tsx`), but it's not
+                   *  universal — `Open`, right beside it in this same row,
+                   *  uses neither class, and other tables
+                   *  (`platform/inbox/inbox-queue.tsx`,
+                   *  `kora/ai-metrics/ai-metrics-view.tsx`) use
+                   *  `tabular-nums` alone. No `text-xs`: `Open` renders
+                   *  beside it at the default size, and two adjacent numeric
+                   *  columns at different sizes read as two kinds of number
+                   *  rather than two counts. */}
                   <TableCell className="text-right tabular-nums">
                     <FollowersCell count={row.followersCount} />
                   </TableCell>
