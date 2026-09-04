@@ -5,9 +5,14 @@ import {
   setTenantLifecycle,
   type LifecycleWriteResult,
 } from "@/lib/tenant-lifecycle-write";
+import {
+  grantTenantPricingOverride,
+  type PricingOverrideWriteResult,
+  type TenantPricingOverrideInput,
+} from "@/lib/tenant-pricing-override-write";
 
 /**
- * The tenant directory's one write, as a server action.
+ * Suspending and unsuspending a tenant, as a server action.
  *
  * A shell, exactly like `platform/tools/actions.ts`: the seam owns the
  * session, the capability check, the request and the error mapping, and this
@@ -36,4 +41,29 @@ export async function setTenantLifecycleAction(
   reason: string,
 ): Promise<LifecycleWriteResult> {
   return setTenantLifecycle(tenantId, verb, reasonCode, reason);
+}
+
+/**
+ * Minting one tenant's pricing override, as a server action (#331, T2).
+ *
+ * A second shell beside {@link setTenantLifecycleAction}, owning nothing for
+ * the same reason: `lib/tenant-pricing-override-write` opens with
+ * `import "server-only"`, and the dialog that calls it is a client component.
+ * The seam owns the session, both capability checks, the validation, the mint
+ * and the error mapping.
+ *
+ * The revalidatePath argument above applies unchanged — the tenant directory
+ * is a per-request `cache: "no-store"` read, so there is no server cache entry
+ * to evict, and the caller runs `router.refresh()` instead.
+ *
+ * Nothing here audits the GRANT. `grantTenantPricingOverride` audits the
+ * console's own act — it minted a Stripe object — and the grant's audit row is
+ * mark8ly's, written inside the transaction that applies the coupon (#660,
+ * T3). Until T3 exists, nothing applies it: a successful return means a coupon
+ * was minted and recorded, not that the tenant is being charged less.
+ */
+export async function grantTenantPricingOverrideAction(
+  input: TenantPricingOverrideInput,
+): Promise<PricingOverrideWriteResult> {
+  return grantTenantPricingOverride(input);
 }
