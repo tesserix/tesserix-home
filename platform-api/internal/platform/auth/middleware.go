@@ -100,6 +100,69 @@ func RequireCapability(required Capability, log *slog.Logger, next http.Handler)
 	})
 }
 
+// RequireAnyCapability refuses a request whose principal holds NONE of
+// `alternatives`.
+//
+// Deliberately narrow. It exists for one shape — a route reachable by two
+// different KINDS of principal that hold different capabilities for the same
+// reason — and #152's tickets routes are that shape: an operator reaches them
+// through the `support` surface, a product's machine through `product-support`,
+// and neither implies the other (see capabilities.ts).
+//
+// It is NOT a general "any of these will do", and stacking RequireCapability
+// remains the way to say AND. Every additional alternative widens a route, so
+// a list longer than the two kinds of caller a route actually has is a smell
+// rather than a feature.
+//
+// An EMPTY list refuses everyone. That is the whole reason this is written as
+// an explicit loop with a false default rather than the shorter form that
+// falls through to the handler when it finds nothing: "no alternative admits
+// you" must not mean "everyone is admitted", and a nil slice from a wiring
+// mistake is exactly how that happens.
+func RequireAnyCapability(alternatives []Capability, log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := FromContext(r.Context())
+		if !ok {
+			log.ErrorContext(r.Context(), "capability check with no principal — route is not authenticated",
+				slog.String("path", r.URL.Path),
+				slog.String("required_any", joinCapabilities(alternatives)),
+			)
+			forbidden(w, r)
+			return
+		}
+
+		for _, required := range alternatives {
+			if principal.Has(required) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		log.InfoContext(r.Context(), "capability denied",
+			slog.String("subject", principal.Subject),
+			slog.String("required_any", joinCapabilities(alternatives)),
+			slog.String("path", r.URL.Path),
+		)
+		forbidden(w, r)
+	})
+}
+
+// joinCapabilities renders the alternatives for a log line.
+//
+// The empty list renders as "none" rather than an empty string, because a log
+// saying `required_any=` reads as a formatting bug while `required_any=none`
+// reads as the wiring bug it actually is.
+func joinCapabilities(caps []Capability) string {
+	if len(caps) == 0 {
+		return "none"
+	}
+	parts := make([]string, len(caps))
+	for i, c := range caps {
+		parts[i] = string(c)
+	}
+	return strings.Join(parts, ",")
+}
+
 // bearerToken pulls the token out of the Authorization header.
 //
 // Case-insensitive on the scheme, because RFC 7235 says the scheme is

@@ -277,3 +277,67 @@ func TestFromContextIsAbsentWithoutAuthentication(t *testing.T) {
 		t.Error("a bare context must not yield a principal")
 	}
 }
+
+// ---- RequireAnyCapability (#152) -----------------------------------------
+//
+// The tickets routes are reachable two ways once a product can call them: an
+// OPERATOR through the console's `support` surface, and a product's MACHINE
+// through `product-support`. Neither implies the other and neither should —
+// see capabilities.ts — so the route needs "either of these", which
+// RequireCapability cannot express.
+
+func claimsWithRoles(roles ...string) *Claims {
+	c := validClaims()
+	c.Roles = roles
+	return c
+}
+
+func TestRequireAnyCapabilityAdmitsAHolderOfEitherAlternative(t *testing.T) {
+	for _, role := range []string{"support", "product-support"} {
+		h := Authenticate(verifierFor(claimsWithRoles("read", role)), discard(),
+			RequireAnyCapability([]Capability{CapSupport, CapProductSupport}, discard(), okHandler()))
+
+		if rec := request(t, h, "Bearer "+jwtShaped); rec.Code != http.StatusOK {
+			t.Errorf("a principal holding %q should reach the handler, got %d", role, rec.Code)
+		}
+	}
+}
+
+func TestRequireAnyCapabilityRefusesAPrincipalHoldingNeither(t *testing.T) {
+	// Holds a real capability, just not one of the alternatives. The failure
+	// this guards is an "any of" that degenerates into "any authenticated
+	// caller" — which is the shape that turns a gate into decoration.
+	h := Authenticate(verifierFor(claimsWithRoles("read", "crm")), discard(),
+		RequireAnyCapability([]Capability{CapSupport, CapProductSupport}, discard(), okHandler()))
+
+	rec := request(t, h, "Bearer "+jwtShaped)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("want 403 for a principal holding neither alternative, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "reached") {
+		t.Error("the handler must not run")
+	}
+}
+
+func TestRequireAnyCapabilityWithNoAlternativesRefuses(t *testing.T) {
+	// A wiring bug — an empty list means "no capability admits you", and the
+	// tempting implementation (range finds nothing, fall through to allow)
+	// admits EVERYONE. Fail closed, matching hasCapability's stance.
+	h := Authenticate(verifierFor(claimsWithRoles("read", "support")), discard(),
+		RequireAnyCapability(nil, discard(), okHandler()))
+
+	if rec := request(t, h, "Bearer "+jwtShaped); rec.Code != http.StatusForbidden {
+		t.Errorf("want 403 when no alternative is named, got %d", rec.Code)
+	}
+}
+
+func TestRequireAnyCapabilityRefusesWhenTheRouteIsNotAuthenticated(t *testing.T) {
+	// Same reasoning as RequireCapability's equivalent: reached without
+	// Authenticate in front is a wiring bug, refused rather than panicked.
+	rec := request(t, RequireAnyCapability([]Capability{CapSupport}, discard(), okHandler()), "")
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("want 403 with no principal in context, got %d", rec.Code)
+	}
+}
