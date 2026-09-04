@@ -312,12 +312,19 @@ export function buildPreviousHref(
  * The URL's params with any `?cursor=` removed, for the sorted pager to build
  * `?page=` links from.
  *
- * The repo already ignores a cursor under a sort, so this changes no query.
- * It changes the link: `pageHref` copies every param it does not own, so a
- * cursor left over from the unsorted view would ride along to page 2 and out
- * to whoever the link is shared with — where clearing the sort would page them
- * from a position they never chose. `page` needs no such handling; `pageHref`
- * owns it and replaces it.
+ * This changes no query, because this page never sends a cursor under a sort:
+ * `ListOrganisationsOptions` is a union whose sorted branch types `cursor` as
+ * `undefined`, so the pair does not compile. Not because the repo would
+ * discard one — `listOrganisations` decodes `options.cursor` and pushes its
+ * keyset predicate whenever it is present, sort or no sort, so a call
+ * carrying both would filter by `(created_at, id)` while ordering and
+ * offsetting by something else. The union is what makes that unreachable.
+ *
+ * What this does change is the link: `pageHref` copies every param it does
+ * not own, so a cursor left over from the unsorted view would ride along to
+ * page 2 and out to whoever the link is shared with — where clearing the sort
+ * would page them from a position they never chose. `page` needs no such
+ * handling; `pageHref` owns it and replaces it.
  */
 function withoutCursor(searchParams: OrganisationsSearchParams): OrganisationsSearchParams {
   const { cursor: _cursor, ...rest } = searchParams;

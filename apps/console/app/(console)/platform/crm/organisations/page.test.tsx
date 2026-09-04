@@ -613,8 +613,8 @@ describe("OrganisationsPage", () => {
     it("leaves no cursor on a sorted page link", async () => {
       // A cursor left over from the unsorted view names a position in
       // `(created_at, id)` order, which is not the order this page is in. The
-      // repo already ignores it; carrying it in the link would put it back on
-      // the URL for whoever shares that link and clears the sort.
+      // options union keeps it out of the query; carrying it in the link would
+      // put it back on the URL for whoever shares that link and clears the sort.
       listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259 }));
       render(
         await Page({

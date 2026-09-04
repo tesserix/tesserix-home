@@ -23,8 +23,10 @@ import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
 import type { OrganisationListRow, OrganisationSort } from "@/lib/db/crm-repo";
 
 /**
- * Every filter mutation on this surface also drops `?cursor=`: it paginates
- * by cursor, not by the `page` param `mergeFiltersIntoQuery` already clears.
+ * Every filter mutation on this surface also drops `?cursor=`. This surface
+ * paginates by cursor when unsorted and by `?page=` when sorted;
+ * `mergeFiltersIntoQuery` already clears `page`, so the cursor is the half
+ * left to name here. Both are positions a narrowed filter invalidates.
  * A module constant so the hook's memoised `push` keeps a stable identity.
  */
 const CURSOR_PARAMS = ["cursor"] as const;
