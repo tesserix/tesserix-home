@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 const fetchProductEntities = vi.fn();
+const fetchPlatformSources = vi.fn();
 
 vi.mock("@/lib/platform-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform-api")>()),
   fetchProductEntities: (...args: unknown[]) => fetchProductEntities(...args),
+  fetchPlatformSources: () => fetchPlatformSources(),
 }));
 
 class NotFoundError extends Error {}
@@ -27,6 +29,10 @@ vi.mock("next/navigation", () => ({
 import { PlatformApiError } from "@/lib/platform-api";
 import type { EntityPage, EntityRecord } from "@/lib/entities";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE } from "@/components/kit/surface-state";
+import {
+  typeNotFederatedMessage,
+  typeNotFederatedTitle,
+} from "../federation-scope";
 import ProductEntityIndexPage, {
   entityTypeLabel,
   entityState,
@@ -66,6 +72,18 @@ function record(over: Partial<EntityRecord> = {}): EntityRecord {
 function page(data: readonly EntityRecord[], total = data.length): EntityPage {
   return { data, pagination: { page: 1, limit: 50, total } };
 }
+
+/** A deployment serving both of mark8ly's declared types, as
+ *  `/v1/platform/sources` reports it. The default, so every pre-existing row
+ *  runs against an estate that federates what it asks for. */
+const MARK8LY_SERVED = {
+  endpoints: { onboarding: ["mark8ly"] },
+  entities: { tenants: ["mark8ly"], users: ["kora", "mark8ly"], foods: ["kora"] },
+} as const;
+
+beforeEach(() => {
+  fetchPlatformSources.mockResolvedValue(MARK8LY_SERVED);
+});
 
 describe("readEntitySearch", () => {
   it("omits an absent or blank q rather than sending it", () => {
@@ -232,6 +250,54 @@ describe("the states this surface renders", () => {
     expect(screen.getByText("Something Went Wrong")).toBeInTheDocument();
     expect(screen.getByText("entities: upstream down")).toBeInTheDocument();
     expect(screen.queryByText(unavailableTitle("Mark8ly", "tenants"))).toBeNull();
+  });
+
+  it("renders an unfederated product calmly, and makes no read at all", async () => {
+    // The state #546 is about, at this surface: kora is federated here and
+    // mark8ly is not, so `/v1/entities?source=mark8ly` would be refused with
+    // `ErrUnknownSource` → 400 and rendered as a failure. The declaration map
+    // is the same one platform-api gates on, so the console can skip the
+    // request rather than interpret its refusal.
+    fetchProductEntities.mockClear();
+    fetchPlatformSources.mockResolvedValue({ endpoints: {}, entities: { users: ["kora"] } });
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(fetchProductEntities).not.toHaveBeenCalled();
+    expect(screen.getByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeInTheDocument();
+    expect(screen.getByText(typeNotFederatedMessage("Mark8ly", "tenants"))).toBeInTheDocument();
+    expect(screen.queryByText("Something Went Wrong")).toBeNull();
+    expect(document.body.textContent).not.toContain("observability-park");
+  });
+
+  it("covers a federated product that did not declare THIS type", async () => {
+    // `ErrTypeNotServed` rather than `ErrUnknownSource` — mark8ly is federated
+    // and serves `users`, but not `tenants`. Both are 400s and both are the
+    // same calm state, which is why the copy is true of either.
+    fetchProductEntities.mockClear();
+    fetchPlatformSources.mockResolvedValue({
+      endpoints: { onboarding: ["mark8ly"] },
+      entities: { users: ["mark8ly"] },
+    });
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(fetchProductEntities).not.toHaveBeenCalled();
+    expect(screen.getByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeInTheDocument();
+  });
+
+  it("reads anyway when the declarations could not be read", async () => {
+    // A failed sources read is the absence of a fact, not the fact that
+    // nothing is declared. Blocking the index on it would replace a working
+    // page with a callout whenever a secondary read blinked.
+    fetchPlatformSources.mockRejectedValue(new PlatformApiError("sources: down", 503));
+    fetchProductEntities.mockResolvedValue(page([record({ label: "Acme Retail" })]));
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(fetchProductEntities).toHaveBeenCalledWith("mark8ly", "tenants", undefined, 1);
+    expect(screen.getByText("Acme Retail")).toBeInTheDocument();
+    expect(screen.queryByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeNull();
   });
 
   it("names the product and type in the empty message", async () => {
