@@ -9,7 +9,16 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // verbatim `.message` would render a Postgres error to an operator. See
 // `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
-import { listOrganisations, type OrganisationFilter, type OrganisationListRow } from "@/lib/db/crm-repo";
+import {
+  listOrganisations,
+  type ListOrganisationsOptions,
+  type OrganisationFilter,
+  type OrganisationListRow,
+  type OrganisationSort,
+  type OrganisationSortKey,
+  type SortDirection,
+} from "@/lib/db/crm-repo";
+import { pagerLinks, readPage } from "@/components/kit/entity-page";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import {
   FOLLOWER_BANDS,
@@ -166,6 +175,79 @@ export function readOrganisationFilters(searchParams: OrganisationsSearchParams)
   return filters;
 }
 
+/**
+ * The direction each sortable column takes when the URL names no `?dir=`.
+ *
+ * Per column rather than one shared default because the columns are read
+ * differently: a name reads A–Z, while a follower count and a creation date
+ * are asked for biggest-first and newest-first. A single default would be
+ * wrong for one of them.
+ *
+ * The KEYS are this page's copy of the repo's allow-list, and `satisfies`
+ * keeps the copy honest: `Record<OrganisationSortKey, …>` fails to compile if
+ * `ORGANISATION_SORTS` gains a column this record has not given a default, or
+ * if this record names one the repo does not have. It is a type-only link, so
+ * nothing here imports the repo's SQL at runtime — deliberately, since the
+ * value it maps each key to is an ORDER BY expression and only the repo has
+ * any business splicing that into a statement.
+ */
+const SORT_DIRECTION_DEFAULTS = {
+  name: "asc",
+  followers: "desc",
+  created: "desc",
+} satisfies Record<OrganisationSortKey, SortDirection>;
+
+/**
+ * The largest `?page=` this surface honours.
+ *
+ * `readPage` already turns nonsense into page 1, but it accepts any positive
+ * integer, and `?page=999999999999999999999999` parses to 1e24 — which the
+ * repo multiplies by the page size and passes as a query parameter, where
+ * `String(1e26)` is the exponent form `"1e+26"` rather than an integer
+ * literal. A page far past the end can only ever render empty, so refusing to
+ * ask for one costs an operator nothing they could have wanted. 10,000 pages
+ * is a million rows, against 259 today.
+ */
+const MAX_PAGE = 10_000;
+
+/**
+ * Read the ordering out of the URL.
+ *
+ * Same contract as `readOrganisationFilters` above and as `readQueueFilters`
+ * (`crm/page.tsx`): a `?sort=` this surface does not offer reads as UNSORTED
+ * — the default `created_at DESC` list — and is never forwarded. That is a
+ * deliberate degradation of a hand-edited URL, not a swallowed error: the repo
+ * throws `UnknownSortKeyError` on a key it cannot serve, which is the right
+ * answer for a link-builder with a bug and the wrong one for an operator who
+ * mistyped a query string, so this page is expected to be the first line and
+ * the throw the backstop. A key that got past here would be a bug in this
+ * function, and the repo would still refuse it rather than reorder silently.
+ *
+ * `Object.hasOwn`, never `in`: `in` walks the prototype chain, so
+ * `?sort=__proto__` (or `constructor`, `toString`) would read as a recognised
+ * column — the same defect `?country=__proto__` had, except that the value a
+ * sort key resolves to is spliced into an `ORDER BY`.
+ *
+ * An unrecognised `?dir=` keeps the sort and falls back to the column's
+ * default: the key is valid and only the direction is junk, so dropping the
+ * sort as well would answer a typo by reordering the whole table.
+ */
+export function readOrganisationSort(searchParams: OrganisationsSearchParams): OrganisationSort | null {
+  const rawSort = searchParams.sort;
+  if (typeof rawSort !== "string" || !Object.hasOwn(SORT_DIRECTION_DEFAULTS, rawSort)) {
+    return null;
+  }
+  const key = rawSort as OrganisationSortKey;
+
+  const rawDirection = searchParams.dir;
+  const direction: SortDirection =
+    rawDirection === "asc" || rawDirection === "desc"
+      ? rawDirection
+      : SORT_DIRECTION_DEFAULTS[key];
+
+  return { key, direction };
+}
+
 /** The applied filters as the bar's display values — same shape as
  *  `toFilterValues` in `crm/page.tsx`. */
 export function toOrganisationFilterValues(filters: OrganisationFilter): FilterValues {
@@ -226,6 +308,22 @@ export function buildPreviousHref(
   return buildCursorHref(searchParams, previousCursor);
 }
 
+/**
+ * The URL's params with any `?cursor=` removed, for the sorted pager to build
+ * `?page=` links from.
+ *
+ * The repo already ignores a cursor under a sort, so this changes no query.
+ * It changes the link: `pageHref` copies every param it does not own, so a
+ * cursor left over from the unsorted view would ride along to page 2 and out
+ * to whoever the link is shared with — where clearing the sort would page them
+ * from a position they never chose. `page` needs no such handling; `pageHref`
+ * owns it and replaces it.
+ */
+function withoutCursor(searchParams: OrganisationsSearchParams): OrganisationsSearchParams {
+  const { cursor: _cursor, ...rest } = searchParams;
+  return rest;
+}
+
 export interface OrganisationsStateInput {
   error: unknown;
   rows: readonly OrganisationListRow[];
@@ -262,8 +360,21 @@ export default async function OrganisationsPage({
     Boolean(filters.followers) ||
     Boolean(filters.hasEmail);
 
+  const sort = readOrganisationSort(resolvedSearchParams);
+  // Clamped rather than trusted — see MAX_PAGE. Read only under a sort: the
+  // unsorted list has no offset to apply a `?page=` to, and honouring one
+  // there would look like paging while changing nothing.
+  const pageNumber = sort ? Math.min(readPage(resolvedSearchParams), MAX_PAGE) : 1;
+
   const rawCursor = resolvedSearchParams.cursor;
   const cursor = typeof rawCursor === "string" && rawCursor !== "" ? rawCursor : undefined;
+
+  // A sort DROPS the cursor rather than carrying it: a keyset position names a
+  // place in `(created_at, id)` order, which is not the order a sorted page is
+  // in, so applying it would skip rows the URL asked to see.
+  // `ListOrganisationsOptions` is a union so this is the only shape that
+  // compiles — the two positions cannot both be asked for.
+  const options: ListOrganisationsOptions = sort ? { sort, page: pageNumber } : { cursor };
 
   let rows: readonly OrganisationListRow[] = [];
   let total = 0;
@@ -272,12 +383,32 @@ export default async function OrganisationsPage({
   let previousHref: string | null = null;
   let error: unknown = null;
   try {
-    const page = await listOrganisations(filters, PAGE_SIZE, { cursor });
+    const page = await listOrganisations(filters, PAGE_SIZE, options);
     rows = page.rows;
     total = page.total;
+    // From the repo either way: under a sort it is the offset capped at
+    // `total`, so a `?page=` past the end still states a range inside the
+    // result set. `pagerLinks` computes its own, uncapped, and only its two
+    // links are taken below.
     precedingCount = page.precedingCount;
-    nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
-    previousHref = buildPreviousHref(resolvedSearchParams, page.previousCursor);
+    if (sort) {
+      const links = pagerLinks(
+        BASE_PATH,
+        withoutCursor(resolvedSearchParams),
+        pageNumber,
+        page.rows.length,
+        page.total,
+        // This surface's own page size, not `ENTITIES_LIMIT`: at the default,
+        // page 3 of 259 rows counts 100 ahead instead of 200 and offers a
+        // Next to an empty page.
+        PAGE_SIZE,
+      );
+      nextHref = links.nextHref;
+      previousHref = links.previousHref;
+    } else {
+      nextHref = buildNextHref(resolvedSearchParams, page.nextCursor);
+      previousHref = buildPreviousHref(resolvedSearchParams, page.previousCursor);
+    }
   } catch (caught) {
     error = caught;
   }
@@ -302,6 +433,7 @@ export default async function OrganisationsPage({
         precedingCount={precedingCount}
         nextHref={nextHref}
         previousHref={previousHref}
+        sort={sort}
       />
     </div>
   );

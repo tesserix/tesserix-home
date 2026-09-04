@@ -199,12 +199,29 @@ claim({
 claim({
   file: "apps/console/components/kit/entity-page.ts",
   says: "the generic entity index became a fourth",
-  // The same population widened to the whole console rail: the three above plus
-  // `[product]/[entity]/page.tsx`.
+  // The sentence names ONE importer — `[product]/[entity]/page.tsx`, the
+  // caller whose arrival moved this module out from under `kora/`. Asserted as
+  // that file's presence rather than as a count of four: the count was the
+  // check until the CRM organisations list became a fifth, at which point it
+  // reddened a sentence about history that was still true. The claim below
+  // counts.
+  check: () =>
+    importersOf("components/kit/entity-page", "apps/console/app/(console)").includes(
+      "apps/console/app/(console)/[product]/[entity]/page.tsx",
+    ),
+});
+
+claim({
+  file: "apps/console/components/kit/entity-page.ts",
+  says: "the four §3.4 index surfaces that were this function's only callers",
+  // Four §3.4 surfaces (Kora's three plus `[product]/[entity]`) plus the CRM
+  // organisations list, which is the caller the sentence says is NOT one of
+  // them — five `page.tsx` importers in all. A sixth would have to say which
+  // side of that sentence it falls on.
   check: () =>
     importersOf("components/kit/entity-page", "apps/console/app/(console)").filter(
       (file) => file.endsWith("/page.tsx"),
-    ).length === 4,
+    ).length === 5,
 });
 
 claim({

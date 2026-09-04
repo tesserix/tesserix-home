@@ -84,3 +84,29 @@ describe("pagerLinks", () => {
     expect(links.previousHref).toBeNull();
   });
 });
+
+// The limit is a parameter because a second page size now exists: the CRM
+// organisations list pages 100 rows (`PAGE_SIZE` in
+// `platform/crm/organisations/page.tsx`) while every Kora surface pages
+// `ENTITIES_LIMIT`. Left at the default, page 3 of 259 rows at 100 per page
+// counts 100 rows ahead instead of 200 and offers a Next to an empty page —
+// the exact off-by-one this function exists to prevent, just at the other end.
+describe("pagerLinks with an explicit page size", () => {
+  it("counts the rows ahead of a later page at that size, not at ENTITIES_LIMIT", () => {
+    expect(pagerLinks("/platform/crm/organisations", {}, 3, 59, 259, 100).precedingCount).toBe(200);
+  });
+
+  it("offers no next link on the last page at that size", () => {
+    expect(pagerLinks("/platform/crm/organisations", {}, 3, 59, 259, 100).nextHref).toBeNull();
+  });
+
+  it("still offers one when a row remains", () => {
+    expect(pagerLinks("/platform/crm/organisations", {}, 2, 100, 259, 100).nextHref).toBe(
+      "/platform/crm/organisations?page=3",
+    );
+  });
+
+  it("defaults to ENTITIES_LIMIT when no size is given", () => {
+    expect(pagerLinks("/kora/foods", {}, 3, 50, 6421).precedingCount).toBe(100);
+  });
+});

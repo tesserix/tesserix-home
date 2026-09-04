@@ -20,7 +20,7 @@ import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
-import type { OrganisationListRow } from "@/lib/db/crm-repo";
+import type { OrganisationListRow, OrganisationSort } from "@/lib/db/crm-repo";
 
 /**
  * Every filter mutation on this surface also drops `?cursor=`: it paginates
@@ -235,6 +235,15 @@ export interface OrganisationsViewProps {
    *  and a surface that simply forgot the prop would look identical to one
    *  that is genuinely on page one. */
   previousHref: string | null;
+  /** The ordering the server actually applied — `null` for the default
+   *  `created_at DESC` list — not what the URL happens to say, same reasoning
+   *  as `values` above. Required rather than optional for the reason
+   *  `previousHref` is: `null` is a real answer here, and a caller that simply
+   *  forgot the prop would be indistinguishable from an unsorted surface.
+   *
+   *  Nothing renders it yet. The sortable column headers that display and
+   *  change it are Task 3 (#252 section J); this carries the state to them. */
+  sort: OrganisationSort | null;
 }
 
 export function OrganisationsView({

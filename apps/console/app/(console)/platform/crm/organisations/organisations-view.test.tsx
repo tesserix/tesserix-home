@@ -41,6 +41,7 @@ function renderView() {
       precedingCount={0}
       nextHref={null}
       previousHref={null}
+      sort={null}
     />,
   );
 }
@@ -116,6 +117,7 @@ function renderRow(overrides: Partial<OrganisationListRow>) {
       precedingCount={0}
       nextHref={null}
       previousHref={null}
+      sort={null}
     />,
   );
   // The body row; index 0 is the header row.
