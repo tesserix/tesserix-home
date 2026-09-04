@@ -67,6 +67,50 @@ function ProductsCell({ products }: { products: readonly string[] }) {
 }
 
 /**
+ * Compact follower count for the table cell — `1.2k`, `15k`, `1.2M` — so the
+ * column stays as narrow as the numeric cells elsewhere in the console while
+ * still ranking rows at a glance.
+ *
+ * Re-authored rather than imported: `formatFollowers` in
+ * `apps/web/app/admin/apps/mark8ly/leads/page.tsx` is the same four lines over
+ * the same kind of number, but it belongs to another app over a different
+ * table and reaching across that boundary would couple two surfaces that only
+ * happen to agree. (`lib/ai-usage.ts`'s `tokenFormatter` is not it: it is
+ * named for tokens and capitalises the K.)
+ *
+ * The decimal is dropped from five figures up because at that size the tenth
+ * of a thousand is noise the operator cannot act on, and the exact number is
+ * a hover away in `title` regardless.
+ */
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+/**
+ * The primary contact's follower count — the CRM's only quantitative
+ * qualification signal, and until now visible on no surface at all even
+ * though the filter bands on it.
+ *
+ * An absent count renders as the same muted em-dash the other empty cells in
+ * this file use, never as `0`: the rows behind it have no recorded value,
+ * which is not the claim a measured zero makes, and they are exactly the rows
+ * the Unknown follower band holds (see `UNKNOWN_LABEL` in `crm-filters.ts`).
+ *
+ * The exact number stays reachable in `title`, as in the prior art. That is a
+ * hover-only affordance, which is acceptable here and not in `ProductsCell`:
+ * the abbreviation loses precision an operator may want, not content — the
+ * cell's accessible text already carries the magnitude the column exists to
+ * convey.
+ */
+function FollowersCell({ count }: { count: number | null }) {
+  if (count === null) return <span className="text-muted-foreground">—</span>;
+
+  return <span title={`${count.toLocaleString()} followers`}>{formatFollowers(count)}</span>;
+}
+
+/**
  * A row is a solo creator when it has exactly one contact and no website. For
  * those, the organisation name is derived from the Instagram profile and the
  * handle is the real identity, so the handle leads. Anything else is a
@@ -184,6 +228,7 @@ export function OrganisationsView({
                 <TableHead>Location</TableHead>
                 <TableHead>Primary contact</TableHead>
                 <TableHead>Open</TableHead>
+                <TableHead className="text-right">Followers</TableHead>
                 <TableHead>Products</TableHead>
               </TableRow>
             </TableHeader>
@@ -207,6 +252,13 @@ export function OrganisationsView({
                     )}
                   </TableCell>
                   <TableCell>{row.openOpportunities}</TableCell>
+                  {/* Right-aligned `tabular-nums`, the idiom every other
+                   *  numeric cell in the console uses (`queue-list.tsx`,
+                   *  `ai-usage/events-table.tsx`), so digits line up down the
+                   *  column and counts stay comparable at a glance. */}
+                  <TableCell className="text-right text-xs tabular-nums">
+                    <FollowersCell count={row.followersCount} />
+                  </TableCell>
                   <TableCell>
                     <ProductsCell products={row.products} />
                   </TableCell>

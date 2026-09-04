@@ -1192,7 +1192,7 @@ function toIsoRequired(value: unknown): string {
  * contact, then the oldest, then by `id`.
  *
  * One helper rather than the ordering spelled out at each site because seven
- * queries use this ordering — three display subqueries and two filter
+ * queries use this ordering — four display subqueries and two filter
  * subqueries in `listOrganisations`, `wonWithoutConversion`'s primary-email
  * lookup, and `organisationDetail`'s full contact list (which orders the
  * whole list this way rather than picking one row) — and they must agree.
@@ -1228,7 +1228,7 @@ function primaryContactOrder(alias: string): string {
  * row held the primary slot.
  *
  * Applied to every subquery that picks ONE contact to stand for the
- * organisation — the two follower clauses, `hasEmail`, and the three display
+ * organisation — the two follower clauses, `hasEmail`, and the four display
  * columns in `listOrganisations` — and to none that read the organisation's
  * contacts as a record: `organisationDetail` still lists the erased contact,
  * because "who is primary for queue purposes" and "what does this
@@ -2627,6 +2627,17 @@ export interface OrganisationListRow {
   contactEmail: string | null;
   /** Primary contact's Instagram handle, for handle-first rendering. */
   contactHandle: string | null;
+  /**
+   * Primary contact's follower count — the CRM's only quantitative
+   * qualification signal, and the number the `followers` filter bands on.
+   *
+   * `null` means no recorded count, which is not the claim a zero makes: the
+   * row belongs in the Unknown band, and the surface must render it blank
+   * rather than as `0` (see `UNKNOWN_LABEL` in `crm-filters.ts`). Resolved
+   * through the same `primaryContactOrder`/`notErased` pair as the filter, so
+   * the displayed number is always the one the band matched on.
+   */
+  followersCount: number | null;
   /** How many contacts this organisation has. */
   contactCount: number;
   websiteUrl: string | null;
@@ -2775,6 +2786,7 @@ interface RawOrganisationListRow {
   contact_name: string | null;
   contact_email: string | null;
   contact_handle: string | null;
+  followers_count: number | null;
   contact_count: string | number;
   website_url: string | null;
   open_opportunities: string | number;
@@ -2790,6 +2802,12 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
     contactName: row.contact_name,
     contactEmail: row.contact_email,
     contactHandle: row.contact_handle,
+    // Straight through, unlike the counts below: `crm_contacts.followers_count`
+    // is an `integer` column (migration 0019), which pg maps to a JS number —
+    // only the bigint that `count(*)` returns needs converting. A `Number()`
+    // here would also turn a NULL into 0, which is the one value this column
+    // must never invent.
+    followersCount: row.followers_count,
     // count(*) comes back as a string from pg's bigint mapping.
     contactCount: Number(row.contact_count),
     websiteUrl: row.website_url,
@@ -2924,9 +2942,18 @@ export async function listOrganisations(
                   AND ${notErased("c")}
                 ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_handle,
+              -- The same primary contact the followers filter bands on:
+              -- primaryContactFollowerClause resolves it with this exact
+              -- ordering and this exact erasure predicate, so a row can never
+              -- display a number that contradicts the band it came back under.
+              (SELECT c.followers_count FROM crm_contacts c
+                WHERE c.organisation_id = g.id
+                  AND ${notErased("c")}
+                ORDER BY ${primaryContactOrder("c")}
+                LIMIT 1) AS followers_count,
               -- Counts every contact, erased ones included: the count says how
               -- many contacts the organisation's file holds, not which of them
-              -- the three columns above resolved to. See notErased().
+              -- the four columns above resolved to. See notErased().
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
               (SELECT count(*) FROM crm_opportunities o

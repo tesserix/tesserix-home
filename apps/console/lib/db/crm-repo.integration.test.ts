@@ -1222,6 +1222,39 @@ describe("listOrganisations", () => {
       expect(page.rows.map((r) => r.id)).toEqual([bigCreatorOrgId]);
     });
 
+    it("displays the follower count of the very contact the band filtered on", async () => {
+      // The agreement between the filter and the column is the invariant, and
+      // this is what makes it load-bearing rather than incidental: every row
+      // the band returns must display a number inside that band. A displayed
+      // count resolved from a different contact than
+      // `primaryContactFollowerClause` matched would show up here as a row
+      // under 10k in the over10k result.
+      const page = await listOrganisations({ followers: "over10k", search: "Filter Test" }, 100);
+      expect(page.rows).not.toHaveLength(0);
+      for (const row of page.rows) {
+        expect(row.followersCount).not.toBeNull();
+        expect(row.followersCount).toBeGreaterThanOrEqual(10_000);
+      }
+      expect(page.rows.map((r) => r.followersCount)).toEqual([15000]);
+    });
+
+    it("shows no follower count for the rows the unknown sentinel returns", async () => {
+      // The other half of the same invariant: Unknown means "no count to
+      // show", so every row it returns must display a blank cell — including
+      // the one whose SECONDARY contact has 15k, which the column must not
+      // reach for any more than the band does.
+      const page = await listOrganisations(
+        { followers: UNKNOWN_FOLLOWERS, search: "Filter Test" },
+        100,
+      );
+      expect(page.rows).not.toHaveLength(0);
+      for (const row of page.rows) {
+        expect(row.followersCount).toBeNull();
+      }
+      const byId = new Map(page.rows.map((r) => [r.id, r]));
+      expect(byId.get(nonPrimaryFollowersOrgId)?.followersCount).toBeNull();
+    });
+
     it("excludes unknown follower counts from every band", async () => {
       // A contact with no follower count must not silently land in the
       // lowest band and be read as a qualified-out lead.
@@ -2033,8 +2066,13 @@ describe("an erased contact is not the primary contact", () => {
     const byId = new Map(rows.map((r) => [r.id, r]));
     expect(byId.get(erasedPrimaryOrgId)?.contactName).toBe("Live Colleague");
     expect(byId.get(erasedPrimaryOrgId)?.contactEmail).toBe("live@example.com");
+    expect(byId.get(erasedPrimaryOrgId)?.followersCount).toBe(500);
     expect(byId.get(erasedOnlyOrgId)?.contactName).toBeNull();
     expect(byId.get(erasedOnlyOrgId)?.contactEmail).toBeNull();
+    // The erased contact's 15000 is not this organisation's follower count:
+    // the row has no primary contact left, so the cell is blank and the row
+    // sits in the Unknown band the filter test above puts it in.
+    expect(byId.get(erasedOnlyOrgId)?.followersCount).toBeNull();
     // Still counted: the count says how many contacts the file holds, not
     // which of them the columns resolved to.
     expect(byId.get(erasedOnlyOrgId)?.contactCount).toBe(1);

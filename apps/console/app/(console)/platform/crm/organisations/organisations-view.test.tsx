@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { FilterDescriptor } from "@/components/kit/filter-bar";
+import type { OrganisationListRow } from "@/lib/db/crm-repo";
 import { OrganisationsView } from "./organisations-view";
 
 const replace = vi.fn();
@@ -82,11 +83,11 @@ describe("OrganisationsView filter changes", () => {
 });
 
 /**
- * Builds one ready row carrying `products`; every other field is the least
- * interesting value that still renders, so the Products cell is the only
- * thing under test.
+ * Renders one ready row, then hands back its cells. Every field the caller
+ * does not override is the least interesting value that still renders, so
+ * whichever cell the caller reads is the only thing under test.
  */
-function renderRowWithProducts(products: readonly string[]) {
+function renderRow(overrides: Partial<OrganisationListRow>) {
   render(
     <OrganisationsView
       rows={[
@@ -100,8 +101,10 @@ function renderRowWithProducts(products: readonly string[]) {
           contactCount: 1,
           websiteUrl: null,
           openOpportunities: 0,
-          products,
+          followersCount: null,
+          products: [],
           createdAt: "2026-01-01T00:00:00.000Z",
+          ...overrides,
         },
       ]}
       state={{ kind: "ready" }}
@@ -114,9 +117,20 @@ function renderRowWithProducts(products: readonly string[]) {
       previousHref={null}
     />,
   );
-  // The body row (index 0 is the header row); Products is the last column.
-  const cells = within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+  // The body row; index 0 is the header row.
+  return within(screen.getAllByRole("row")[1]).getAllByRole("cell");
+}
+
+function renderRowWithProducts(products: readonly string[]) {
+  const cells = renderRow({ products });
+  // Products is the last column.
   return cells[cells.length - 1];
+}
+
+function renderRowWithFollowers(followersCount: number | null) {
+  const cells = renderRow({ followersCount });
+  // Followers sits between Open and Products, so it is the second-to-last.
+  return cells[cells.length - 2];
 }
 
 describe("OrganisationsView products cell", () => {
@@ -158,5 +172,56 @@ describe("OrganisationsView products cell", () => {
     for (const product of all) {
       expect(cell.textContent).toContain(product);
     }
+  });
+});
+
+/**
+ * The follower count is the CRM's only quantitative qualification signal, and
+ * the column has to keep faith with the filter that reads the same number:
+ * an absent count is `—`, never `0`, because the rows behind it have no
+ * recorded value — see `UNKNOWN_LABEL` in `crm-filters.ts`, and the Unknown
+ * band those rows fall into.
+ */
+describe("OrganisationsView followers cell", () => {
+  it("renders an em-dash for an organisation with no follower count", () => {
+    const cell = renderRowWithFollowers(null);
+
+    // Not "0": a measured zero and an unmeasured contact are different
+    // claims, and only one of them is true here.
+    expect(cell.textContent).toBe("—");
+    expect(cell.textContent).not.toContain("0");
+    expect(cell.querySelector("[title]")).toBeNull();
+  });
+
+  it("renders a measured zero as a number, not as the empty state", () => {
+    const cell = renderRowWithFollowers(0);
+
+    expect(cell.textContent).toBe("0");
+    expect(cell.textContent).not.toContain("—");
+  });
+
+  it("renders a small count in full", () => {
+    const cell = renderRowWithFollowers(950);
+
+    expect(cell.textContent).toBe("950");
+  });
+
+  it("abbreviates thousands to one decimal place", () => {
+    const cell = renderRowWithFollowers(1240);
+
+    expect(cell.textContent).toBe("1.2k");
+  });
+
+  it("drops the decimal once the count is five figures, and keeps the exact number reachable", () => {
+    const cell = renderRowWithFollowers(15000);
+
+    expect(cell.textContent).toBe("15k");
+    expect(cell.querySelector("[title]")?.getAttribute("title")).toBe(
+      `${(15000).toLocaleString()} followers`,
+    );
+  });
+
+  it("abbreviates millions", () => {
+    expect(renderRowWithFollowers(1_240_000).textContent).toBe("1.2M");
   });
 });
