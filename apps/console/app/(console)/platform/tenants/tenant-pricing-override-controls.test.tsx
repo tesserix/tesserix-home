@@ -185,19 +185,32 @@ describe("the label and the reason are both mandatory", () => {
 });
 
 describe("where a refusal's message is shown", () => {
+  const repeating: OverrideForm = { ...COMPLETE, duration: "repeating", months: "3" };
+
   it("puts each field the seam names on that field's own input", () => {
-    expect(overrideFieldPlacement("label")).toBe("label");
-    expect(overrideFieldPlacement("reason")).toBe("reason");
-    expect(overrideFieldPlacement("discount")).toBe("discount");
-    expect(overrideFieldPlacement("duration")).toBe("duration");
-    expect(overrideFieldPlacement("durationInMonths")).toBe("durationInMonths");
+    expect(overrideFieldPlacement("label", COMPLETE)).toBe("label");
+    expect(overrideFieldPlacement("reason", COMPLETE)).toBe("reason");
+    expect(overrideFieldPlacement("discount", COMPLETE)).toBe("discount");
+    expect(overrideFieldPlacement("duration", COMPLETE)).toBe("duration");
+    expect(overrideFieldPlacement("durationInMonths", repeating)).toBe("durationInMonths");
   });
 
-  it("falls back to the form for a field this dialog does not render", () => {
+  it("falls back to the form for a field name this dialog has no input for", () => {
     // A message that lands nowhere is indistinguishable, on screen, from a
     // request that succeeded.
-    expect(overrideFieldPlacement(undefined)).toBe("form");
-    expect(overrideFieldPlacement("somethingTheSeamGrewLater")).toBe("form");
+    expect(overrideFieldPlacement(undefined, COMPLETE)).toBe("form");
+    expect(overrideFieldPlacement("somethingTheSeamGrewLater", COMPLETE)).toBe("form");
+  });
+
+  it("falls back to the form for a KNOWN field whose input is not on screen", () => {
+    // The months input exists only while `repeating` is chosen, and the seam
+    // has a refusal for a month count on a discount that does not repeat — a
+    // name the unknown-name fallback above would happily accept and then hang
+    // on an input the operator cannot see.
+    expect(overrideFieldPlacement("durationInMonths", { ...COMPLETE, duration: "once" })).toBe(
+      "form",
+    );
+    expect(overrideFieldPlacement("durationInMonths", { ...COMPLETE, duration: "" })).toBe("form");
   });
 });
 
@@ -313,6 +326,14 @@ describe("a mint the seam accepted", () => {
 
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent(overrideMintedMessage("Acme Stores", "co_abc123", "live"));
+    // THE TONE IS PART OF THE MESSAGE. This outcome is not a success in the
+    // sense an operator means by the word, and the callout's colour is what
+    // carries that to someone who skims the sentence. Asserted as the classes
+    // `variant="warning"` produces because `@tesserix/web`'s barrel does not
+    // export `calloutVariants` — so this breaks if the variant is dropped, and
+    // also if the design system restyles it, which is the honest cost of the
+    // only handle available.
+    expect(notice).toHaveClass("border-accent", "bg-accent", "text-accent-foreground");
     // The directory is the products' answer, so it is re-read rather than
     // patched locally.
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -377,6 +398,13 @@ describe("when the mint is refused", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Something this build has never seen.",
     );
+    // At form level, asserted by where it is NOT — the same reason its sibling
+    // above checks these two: "the message appears somewhere" is satisfied
+    // just as happily by pinning every refusal to one input.
+    expect(screen.getByLabelText("Name on the tenant's invoice")).not.toHaveAttribute(
+      "aria-invalid",
+    );
+    expect(screen.getByLabelText("Why (internal)")).not.toHaveAttribute("aria-invalid");
   });
 
   it("never claims nothing happened when the call itself failed", async () => {

@@ -138,6 +138,31 @@ Send operator, tenant, coupon id, duration and reason. **Do not write a
 console-side audit row for the attach** — mark8ly writes it in the same
 transaction. Map a failure to "minted, not applied".
 
+**T3 also finishes T2, and these two steps are the ones nothing else forces.**
+T2 built `tenant-pricing-override-controls.tsx` and deliberately left it
+unmounted, because a mounted control mints a real Stripe coupon that nothing
+attaches — the option this plan rejects above — and because `0047` is applied
+by hand. Nothing fails if T3 forgets them: the tests pass, the export is
+consumed by its test file, and the directory carries only a comment. So they
+are steps here:
+
+1. **Mount `TenantPricingOverrideAction` in `tenant-directory.tsx`**, beside
+   `TenantLifecycleAction`, and delete the pointer comment there. #331 closes
+   with no reachable UI otherwise.
+2. **Rewrite `overrideMintedMessage`.** Its third sentence — "Attaching it to
+   their subscription is a separate step this console cannot do yet" — is true
+   only until the attach lands, and its second says the tenant is still being
+   charged list price. Both become false claims the moment T3 works. The tests
+   in `tenant-pricing-override-controls.test.tsx` pin TODAY's wording, so they
+   go red on the rewrite rather than before it: they are what makes the change
+   deliberate, not what reminds you to make it. This list is that reminder.
+
+Also consider moving the source check into the seam. The control disables its
+button for a tenant no catalog source owns, and says in its own comment that
+this is the affordance and not the rule — `grantTenantPricingOverride` would
+mint for any tenant id. #660 will refuse a non-mark8ly tenant anyway, so
+without the check the console mints first and learns second.
+
 Blocked on #660 shipping the endpoint and the contract amendment landing. T1
 and T2 are not.
 

@@ -278,6 +278,15 @@ export function TenantDirectory({
                     them. */}
                 <TableCell>
                   <TenantLifecycleAction tenant={tenant} reasonCodes={reasonCodes} />
+                  {/* NOT THE ONLY ROW CONTROL THAT EXISTS.
+                      `tenant-pricing-override-controls.tsx` is built and
+                      tested and deliberately NOT rendered here: it mints a
+                      real Stripe coupon that nothing attaches until #660 is
+                      called (#331, T3), and this console deploys on merge.
+                      Mounting it is T3's step — see that file's header and
+                      `.planning/quick/260904-po1-tenant-pricing-override/PLAN.md`.
+                      Until then, an override is not reachable from any
+                      surface, which is the state the plan asked for. */}
                 </TableCell>
               </TableRow>
             ))}

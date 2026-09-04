@@ -144,9 +144,14 @@ export function overrideMintedMessage(
  * Exported so a test asserts the shipped sentence rather than a second copy.
  */
 export function overrideUnavailableNotice(product: string): string {
+  // EVERY source, not `CATALOG_SOURCES[0]`. {@link mintsFor} admits all of
+  // them, so naming only the first would leave a second product's tenants with
+  // a working button and a notice that says they are somebody else's — the
+  // exact drift `source-policy.ts` argues against, one layer up.
+  const mints = CATALOG_SOURCES.map(sourceLabel).join(" and ");
   return (
-    `Pricing overrides are minted in ${sourceLabel(CATALOG_SOURCES[0])}'s billing account, ` +
-    `and this tenant belongs to ${sourceLabel(product)}. Change its price from that product's own admin.`
+    `Pricing overrides are minted only for ${mints} tenants, and this one belongs to ` +
+    `${sourceLabel(product)}. Change its price from that product's own admin.`
   );
 }
 
@@ -296,8 +301,8 @@ export function overrideSubmittable(form: OverrideForm): boolean {
   );
 }
 
-/** The inputs this dialog renders an error against, by the `field` name the
- *  seam uses for each. */
+/** The `field` names this dialog has an input for. Whether that input is on
+ *  screen is a separate question — see {@link overrideFieldPlacement}. */
 const OVERRIDE_FIELDS = [
   "label",
   "reason",
@@ -320,10 +325,27 @@ export type OverrideField = (typeof OVERRIDE_FIELDS)[number];
  * silently. That is the case worth testing: a message that lands nowhere is
  * indistinguishable, on screen, from a request that succeeded.
  */
-export function overrideFieldPlacement(field: string | undefined): OverrideField | "form" {
-  return (OVERRIDE_FIELDS as readonly string[]).includes(field ?? "")
-    ? (field as OverrideField)
-    : "form";
+export function overrideFieldPlacement(
+  field: string | undefined,
+  form: OverrideForm,
+): OverrideField | "form" {
+  if (!(OVERRIDE_FIELDS as readonly string[]).includes(field ?? "")) return "form";
+  const named = field as OverrideField;
+
+  // TAKES THE FORM because "a field this dialog renders" is not a property of
+  // the field name alone: the months input exists only while `repeating` is
+  // chosen. The seam has a refusal for exactly that combination — a month
+  // count on a discount that does not repeat — and `field` names an input the
+  // operator cannot see, so it goes to form level with the rest.
+  //
+  // Unreachable from this control today, because {@link overrideDiscount}
+  // discards months for every other duration and so never sends the pair that
+  // refusal describes. It is handled anyway: the name is a KNOWN one, so the
+  // unknown-name fallback above would not have caught it, and this control is
+  // not the only thing that could ever call the seam.
+  if (named === "durationInMonths" && form.duration !== "repeating") return "form";
+
+  return named;
 }
 
 /**
@@ -406,7 +428,7 @@ export function TenantPricingOverrideAction({
     reset();
   };
 
-  const placement = error ? overrideFieldPlacement(error.field) : null;
+  const placement = error ? overrideFieldPlacement(error.field, form) : null;
   const errorFor = (name: OverrideField) =>
     placement === name && error ? error.message : undefined;
   const formError = placement === "form" && error ? error.message : null;
