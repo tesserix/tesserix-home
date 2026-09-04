@@ -305,25 +305,42 @@ function validate(input: TenantPricingOverrideInput): void {
  * — where the coupon may already exist in Stripe and the response was lost —
  * replays the key and gets the same coupon back rather than minting a second.
  *
- * THE KEY COVERS EVERY FIELD OF THE REQUEST — the terms and the label — which
- * is the rule that makes it safe, and where this differs from the promo path.
- * Stripe refuses a repeated key whose parameters differ, so a key that ignored
- * any field sent alongside it would turn a corrected retry into an error this
- * module cannot tell from a lost response.
+ * THE KEY COVERS EVERY FIELD SENT TO STRIPE — the terms and the label — and
+ * nothing else. That is the rule, and both halves of it are load-bearing.
  *
- * `promo-actions.ts` keys on (definition, mode) because a definition's terms
- * are fixed once authored, so the definition id already stands for them. Here
- * every parameter arrives with the request, so every parameter is in the key: a
- * tenant moved from 10% to 20%, or a corrected label, inside Stripe's 24-hour
- * idempotency window would otherwise either replay the first coupon or fail
- * with Stripe's "same key, different parameters" error. Neither is a thing to
- * explain to an operator.
+ * The first half is what makes a retry safe. Stripe refuses a repeated key
+ * whose parameters differ, so a key that omitted a field it sends alongside
+ * would turn a corrected retry — a tenant moved from 10% to 20%, or a fixed
+ * typo in the label, inside Stripe's 24-hour window — into a
+ * "same key, different parameters" error this module cannot tell from a lost
+ * response. It would be reported as {@link MINT_INCOMPLETE}.
+ *
+ * The second half is why `reason` is NOT in the key, and it is deliberate
+ * rather than an omission. The reason never reaches Stripe: it goes to mark8ly,
+ * which audits it (0047's header). Adding it would give an operator who
+ * reworded their justification a NEW key for a byte-identical Stripe request,
+ * and so a SECOND live coupon for a tenant who should have exactly one. Read
+ * the rule as "every field of the input" and that is the change you would make;
+ * `keeps the reason OUT of the key` is the test that stops you.
+ *
+ * `promo-actions.ts` keys on (definition, mode) rather than on terms because a
+ * definition's terms are fixed once authored, so the definition id already
+ * stands for them. That contrast is intact — here the terms arrive with the
+ * request and nothing else stands for them, which is why they are spelled out.
  *
  * Spelled field by field rather than serialised: `JSON.stringify` would put key
  * order into the key, so a caller building the object differently would mint a
  * second coupon for terms that are identical.
  */
-const MINT_KEY_VERSION = "v1";
+/**
+ * Bumped when the key's SHAPE changes, so a key minted under an older shape can
+ * never collide with a newer one inside Stripe's 24-hour window. `v2` because
+ * the label joined the key after `v1` was written. Nothing had shipped under
+ * `v1`, so this bump buys nothing today — it is done anyway, because "did
+ * anything ship yet" is a judgement the next person to change the shape should
+ * not have to re-make correctly.
+ */
+const MINT_KEY_VERSION = "v2";
 
 function mintKey(input: TenantPricingOverrideInput): string {
   const { discount } = input;

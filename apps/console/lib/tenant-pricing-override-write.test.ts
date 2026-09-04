@@ -222,9 +222,12 @@ describe("granting a tenant a pricing override", () => {
     expect(keys[0]).toBe(mintKeyOf(GRANT));
   });
 
-  it("replays one key for the same grant, so a lost response cannot mint twice", async () => {
+  it("keeps the reason OUT of the key, so a reworded justification is not a second coupon", async () => {
     mintable();
     await grantTenantPricingOverride(GRANT);
+    // Same Stripe request, different reason. The reason goes to mark8ly, never
+    // to Stripe, so it must not move the key — a new key here would mint a
+    // second live coupon for a tenant who should have exactly one.
     await grantTenantPricingOverride({ ...GRANT, reason: "Different wording entirely." });
 
     const keys = vi
@@ -422,5 +425,5 @@ function auditRows(): (string | null)[][] {
 function mintKeyOf(input: TenantPricingOverrideInput): string {
   const d = input.discount;
   const terms = d.kind === "percent_off" ? `percent_off:${d.percentOff}` : "unused";
-  return `tenant-override:v1:${input.tenantId}:${input.mode}:${terms}:${d.duration}::${input.label}`;
+  return `tenant-override:v2:${input.tenantId}:${input.mode}:${terms}:${d.duration}::${input.label}`;
 }
