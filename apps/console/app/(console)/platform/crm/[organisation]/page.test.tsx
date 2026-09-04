@@ -45,6 +45,7 @@ const DETAIL = {
   contacts: [],
   opportunities: [],
   activities: [],
+  hasMoreActivities: false,
 } as unknown as OrganisationDetail;
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
@@ -68,6 +69,7 @@ const DETAIL_WITH_CONTACT = {
   ],
   opportunities: [],
   activities: [],
+  hasMoreActivities: false,
 } as unknown as OrganisationDetail;
 
 async function renderOrganisationPage(

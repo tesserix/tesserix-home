@@ -19,6 +19,7 @@ import {
   setNextAction,
   logActivity,
   organisationDetail,
+  ACTIVITY_LIMIT,
   MissingProductError,
   isSuppressed,
   addSuppression,
@@ -966,6 +967,45 @@ describe("logActivity", () => {
 });
 
 describe("organisationDetail", () => {
+  /**
+   * Drive `organisationDetail` with `count` activity rows and nothing else.
+   *
+   * The four reads are issued in a fixed order (organisation, contacts,
+   * opportunities, activities), so `query.mock.calls[3]` is the activity
+   * query and the mocks can be queued positionally.
+   */
+  async function detailWithActivities(count: number) {
+    query
+      .mockResolvedValueOnce([
+        {
+          id: "g1",
+          name: "Bondi Baker",
+          website_url: null,
+          location: null,
+          country: null,
+          category: [],
+          tags: [],
+          converted_product: null,
+          converted_label: null,
+          converted_at: null,
+          created_at: new Date("2026-01-01T00:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(
+        Array.from({ length: count }, (_unused, i) => ({
+          id: `a${i}`,
+          opportunity_id: null,
+          kind: "note",
+          actor: "ava",
+          body: null,
+          occurred_at: new Date("2026-08-01T09:00:00Z"),
+        })),
+      );
+    return organisationDetail("g1");
+  }
+
   it("returns null for an organisation that does not exist, without reading the rest", async () => {
     query.mockResolvedValueOnce([]);
     const detail = await organisationDetail("missing");
@@ -1037,6 +1077,46 @@ describe("organisationDetail", () => {
     // Timestamps normalised to ISO strings, same contract as the queue rows.
     expect(detail?.organisation.createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(detail?.activities[0].occurredAt).toBe("2026-08-01T09:00:00.000Z");
+  });
+
+  // The activity cap used to be silent: a timeline longer than it ended at
+  // row 200 with nothing on screen to say so, and an operator who scrolled to
+  // the bottom had no way to tell that from the actual bottom. Same probe-row
+  // shape as `wonWithoutConversion` (#246), for the same reason: one query,
+  // no second COUNT.
+  it("asks for one activity past the cap, and reports the overflow without returning it", async () => {
+    const detail = await detailWithActivities(ACTIVITY_LIMIT + 1);
+
+    const [, params] = query.mock.calls[3];
+    expect(params, "the probe row is what makes hasMoreActivities knowable").toEqual([
+      "g1",
+      ACTIVITY_LIMIT + 1,
+    ]);
+    expect(detail?.activities).toHaveLength(ACTIVITY_LIMIT);
+    expect(detail?.hasMoreActivities).toBe(true);
+  });
+
+  // The boundary: a timeline of exactly the cap has nothing past it.
+  // Inferring from `activities.length === cap` would claim otherwise here,
+  // which is the whole reason the probe row is fetched.
+  it("reports no overflow when the timeline ends exactly at the cap", async () => {
+    const detail = await detailWithActivities(ACTIVITY_LIMIT);
+
+    expect(detail?.activities).toHaveLength(ACTIVITY_LIMIT);
+    expect(detail?.hasMoreActivities).toBe(false);
+  });
+
+  // `crm_activities.occurred_at` carries no uniqueness guarantee — it is a
+  // plain `timestamptz DEFAULT now()`, and the seed and backfill paths write
+  // explicit values — so without a total order two rows sharing it are cut
+  // arbitrarily by the LIMIT. Now that the cut decides which row is DROPPED
+  // and not merely where it sits, an arbitrary tiebreak means two loads of
+  // the same page can disagree about what the timeline contains.
+  it("breaks an occurred_at tie by id, so the cap cuts the same row every time", async () => {
+    await detailWithActivities(1);
+
+    const [sql] = query.mock.calls[3];
+    expect(sql).toContain("ORDER BY occurred_at DESC, id DESC");
   });
 
   it("scopes contacts, opportunities and activities to the organisation", async () => {

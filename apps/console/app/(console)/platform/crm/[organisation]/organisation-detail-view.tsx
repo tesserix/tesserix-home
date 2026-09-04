@@ -601,12 +601,18 @@ function OpportunityCard({
 export function ActivityTab({
   organisationId,
   activities,
+  hasMoreActivities,
   opportunities,
   contacts,
   templates,
 }: {
   organisationId: string;
   activities: readonly ActivityRow[];
+  /** True when the read hit its cap and older activity exists that
+   *  `activities` does not contain — see `OrganisationDetail`. Without it the
+   *  bottom of a capped timeline is indistinguishable from the bottom of the
+   *  record. */
+  hasMoreActivities: boolean;
   /** Passed only so the composer can offer a follow-up against a real deal
    *  once contact is logged (#245) — the timeline itself does not use them. */
   opportunities: readonly OpportunityRow[];
@@ -632,18 +638,33 @@ export function ActivityTab({
       {activities.length === 0 ? (
         <p className="text-sm text-muted-foreground">No activity recorded yet.</p>
       ) : (
-        <ul className="flex flex-col gap-3">
-          {activities.map((activity) => (
-            <li key={activity.id} className="border-t border-border pt-3 text-sm">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{activity.actor}</span>
-                <span>{activity.kind.replace("_", " ")}</span>
-                <span>{new Date(activity.occurredAt).toLocaleString()}</span>
-              </div>
-              {activity.body ? <p className="mt-1">{activity.body}</p> : null}
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="flex flex-col gap-3">
+            {activities.map((activity) => (
+              <li key={activity.id} className="border-t border-border pt-3 text-sm">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{activity.actor}</span>
+                  <span>{activity.kind.replace("_", " ")}</span>
+                  <span>{new Date(activity.occurredAt).toLocaleString()}</span>
+                </div>
+                {activity.body ? <p className="mt-1">{activity.body}</p> : null}
+              </li>
+            ))}
+          </ul>
+          {hasMoreActivities ? (
+            // Below the list and inside this branch, worded after
+            // `handoff-view.tsx`: it describes what follows the rows the
+            // operator has just read, and an empty timeline is not a
+            // truncated one — the empty-state line would contradict it.
+            // Not `destructive`: a long history is a record, not a fault.
+            <Callout className="mt-1">
+              <CalloutDescription>
+                Showing the {activities.length} most recent. Older activity is not
+                shown on this page.
+              </CalloutDescription>
+            </Callout>
+          ) : null}
+        </>
       )}
     </div>
   );

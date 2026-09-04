@@ -1180,11 +1180,28 @@ export interface OrganisationDetail {
   contacts: readonly ContactRow[];
   opportunities: readonly OpportunityRow[];
   activities: readonly ActivityRow[];
+  /**
+   * There is activity older than `activities` that this read does not carry.
+   *
+   * Carried rather than left to the caller to infer from `activities.length
+   * === ACTIVITY_LIMIT`, which is wrong exactly at the boundary: a timeline of
+   * precisely the cap would claim there is more history when there is not.
+   *
+   * Discovered by asking for one row more than the cap and discarding it —
+   * one query, not a second COUNT, the same trade `HandoffPage.hasMore`
+   * makes (#246). The instance is a shared db-f1-micro, and the only decision
+   * this informs — is what I am reading the whole record — is the same at 201
+   * as at 2,001.
+   */
+  hasMoreActivities: boolean;
 }
 
 /** Most recent activities shown on a detail page — a full history is a job
- *  for export/search, not this view. */
-const ACTIVITY_LIMIT = 200;
+ *  for export/search, not this view.
+ *
+ *  Exported so the test can assert the probe-row arithmetic against the
+ *  constant itself rather than a copy of its value. */
+export const ACTIVITY_LIMIT = 200;
 
 /** `toIso`, but for a column that's `NOT NULL` in the schema — same
  *  fail-loud contract as `quiet_since` above: a null here means the query
@@ -1339,12 +1356,23 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       body: string | null;
       occurred_at: unknown;
     }>(
+      // `id` last for the same reason the organisation keyset carries it:
+      // `occurred_at` is a plain `timestamptz DEFAULT now()` with no
+      // uniqueness guarantee, and rows can be written with an explicit value
+      // (`scripts/seed-dev.mjs` does), so two rows can share it exactly.
+      // Without a total order the LIMIT then breaks that tie arbitrarily —
+      // and the cut now decides which row is DROPPED, not just where it sits,
+      // so two loads of the same page could disagree about what the timeline
+      // contains. No write path in the app produces such a tie today; this
+      // costs nothing and removes the latent one.
       `SELECT id, opportunity_id, kind, actor, body, occurred_at
          FROM crm_activities
         WHERE organisation_id = $1
-        ORDER BY occurred_at DESC
+        ORDER BY occurred_at DESC, id DESC
         LIMIT $2`,
-      [organisationId, ACTIVITY_LIMIT],
+      // One more than the cap: the extra row is never returned, it only
+      // answers "is there history past this".
+      [organisationId, ACTIVITY_LIMIT + 1],
     ),
   ]);
 
@@ -1386,7 +1414,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       lostReason: row.lost_reason,
       createdAt: toIsoRequired(row.created_at),
     })),
-    activities: activityRows.map((row) => ({
+    activities: activityRows.slice(0, ACTIVITY_LIMIT).map((row) => ({
       id: row.id,
       opportunityId: row.opportunity_id,
       kind: row.kind,
@@ -1394,6 +1422,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       body: row.body,
       occurredAt: toIsoRequired(row.occurred_at),
     })),
+    hasMoreActivities: activityRows.length > ACTIVITY_LIMIT,
   };
 }
 

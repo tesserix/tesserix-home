@@ -105,7 +105,7 @@ export default async function OrganisationDetailPage({
     );
   }
 
-  const { organisation, contacts, opportunities, activities } = detail;
+  const { organisation, contacts, opportunities, activities, hasMoreActivities } = detail;
   const products = ESTATE.map((product) => ({ context: product.context, name: product.name }));
 
   // Live `dm` templates for the composer, read in its OWN try/catch rather
@@ -216,6 +216,7 @@ export default async function OrganisationDetailPage({
             <ActivityTab
               organisationId={organisation.id}
               activities={activities}
+              hasMoreActivities={hasMoreActivities}
               opportunities={opportunities}
               contacts={contacts}
               templates={templates}
