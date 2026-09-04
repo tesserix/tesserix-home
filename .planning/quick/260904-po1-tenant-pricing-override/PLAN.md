@@ -48,32 +48,47 @@ order:
 **Do not start T3 until #660's request/response shape is agreed.** T1 and T2
 do not depend on it.
 
-## The failure surface, which is the real design work
+## The failure surface — REVISED after settling #660's contract
 
-Three steps, two gaps:
+The plan first written here had the console audit before asking mark8ly to
+attach, giving three steps and two gaps. **Settling the contract removed one of
+them, and reversed who owns the audit row.**
+
+`lib/tenant-lifecycle-write.ts` states the estate's position on federated
+writes, on the console's first one:
+
+> *"the audit row for this change is written by the PRODUCT, inside its own
+> transaction, bound to the state change it describes … Adding a console-side
+> audit row here would put a second, less trustworthy account of the same event
+> in a different database — and the two would disagree the first time a write
+> half-succeeded."*
+
+So mark8ly writes it, in the attach transaction, from an operator + reason the
+console passes through — exactly as lifecycle already passes `reasonCode` and
+`reason`. That is stronger than #331's original framing, not weaker: the record
+and the effect cannot disagree.
+
+What is left:
 
 ```
-createCoupon (Stripe)  ->  record + audit (console DB)  ->  attach (mark8ly #660)
-                       ^                               ^
-                     gap A                           gap B
+createCoupon (Stripe)  ->  record the co_... (console)  ->  attach + audit (mark8ly #660)
+                       ^
+                     one gap
 ```
 
-**Gap A is already solved and must be copied, not re-derived.** `#521`'s
-`promo-actions.ts` hit exactly this: a failure between `createCoupon` and
-`recordStripeCoupon` leaves a live coupon in a Stripe account the database does
-not name. Its answer is `MINT_INCOMPLETE_MESSAGE`, which *never claims nothing
-happened* — it says where to look. Read that file before writing this one.
+**The remaining gap is #521's, already solved.** A failure between
+`createCoupon` and recording it leaves a live coupon in a Stripe account this
+database does not name. `promo-actions.ts` answers it with
+`MINT_INCOMPLETE_MESSAGE`, which never claims nothing happened — it says where
+to look. Read that file before writing this one; do not re-derive it.
 
-**Gap B is new.** The audit record is written before the attach, deliberately
-(`#331`: "so a failure to apply still leaves the decision recorded"). That means
-a failed attach produces a recorded decision that is not in force. The operator
-message must say so plainly — "recorded, not applied" — and must not read as
-either success or as nothing-happened.
+The failure the console reports for a failed attach is **"minted, not applied"**
+— recoverable, and honestly distinct from both success and nothing-happened.
+There is no longer a "recorded but not in force" state to describe.
 
-`auditedOperation` (`lib/db/audit-repo.ts:441`) already gives the ordering
-guarantees: `AuditUnavailableError` before the operation, refusal written on
-throw, `AuditSummaryError` if `describe` is buggy, and the result discarded
-either way. Use it; do not hand-roll the ordering.
+`auditedOperation` (`lib/db/audit-repo.ts:441`) still applies to the console's
+own mint record, for its ordering guarantees. It does not apply to the attach,
+which this service does not audit.
 
 ## Tasks
 
@@ -112,10 +127,19 @@ A dialog on the directory row, modelled on `tenant-lifecycle-controls.tsx`.
   properties worth defending are testable without driving a dialog — the reason
   lifecycle's file gives for the same split.
 
-### T3 — attach, via #660 — **DO NOT START BEFORE ITS CONTRACT IS AGREED**
+### T3 — attach, via #660 — contract now SETTLED, see the issue
 
-Call mark8ly's attach endpoint with the tenant and the `co_...`, after the audit
-record lands. Map its failure to the "recorded, not applied" message from Gap B.
+Call through `platformRequestWithMeta`, the way `tenant-lifecycle-write.ts`
+does — the console does not call mark8ly directly. The contract endpoint id is
+proposed as `billing/tenant-discount` (a v3→v4 amendment; the vocabulary is
+closed and `declaration.ts` throws on an unknown key).
+
+Send operator, tenant, coupon id, duration and reason. **Do not write a
+console-side audit row for the attach** — mark8ly writes it in the same
+transaction. Map a failure to "minted, not applied".
+
+Blocked on #660 shipping the endpoint and the contract amendment landing. T1
+and T2 are not.
 
 ### T4 — removal
 
