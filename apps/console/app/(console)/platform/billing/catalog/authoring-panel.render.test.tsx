@@ -182,8 +182,16 @@ describe("AuthoringPanel — publish control gating", () => {
 });
 
 describe("AuthoringPanel — a failed catalog read does not silently disable the magnitude warning", () => {
+  // Both tests below mount with `canPublish` on, so the panel's plan effect
+  // calls `planPublishAction` and awaits its promise. The return value is
+  // established here rather than being inherited from whichever earlier test
+  // happened to set it — otherwise these two only pass in file order, and a
+  // wiped mock surfaces as `Cannot read properties of undefined (reading
+  // 'then')` inside `authoring-panel.tsx` rather than as a test problem
+  // (#550). The plan itself is incidental to what these tests assert.
   beforeEach(() => {
     vi.clearAllMocks();
+    planPublishAction.mockResolvedValue({ ok: true, plan: READY_PLAN });
   });
 
   it("says the comparison baseline is unavailable, rather than silently treating every amount as unchanged", () => {

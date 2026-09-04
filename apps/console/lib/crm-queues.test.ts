@@ -20,15 +20,22 @@ vi.mock("@/lib/db/crm-repo", () => {
     }
   }
   return {
-    dueOpportunities: vi.fn().mockResolvedValue({
-      rows: [], total: 1, precedingCount: 0, nextCursor: null, previousCursor: null,
-    }),
-    driftingOpportunities: vi.fn().mockResolvedValue({
-      rows: [], total: 2, precedingCount: 0, nextCursor: null, previousCursor: null,
-    }),
-    setNextAction: vi.fn().mockResolvedValue(undefined),
+    dueOpportunities: vi.fn(),
+    driftingOpportunities: vi.fn(),
+    setNextAction: vi.fn(),
     MissingProductError,
   };
+});
+
+/**
+ * The two queue reads are given DIFFERENT totals so a test asserting on one
+ * queue's `total` cannot pass against the other queue's page.
+ */
+const duePage = () => ({
+  rows: [], total: 1, precedingCount: 0, nextCursor: null, previousCursor: null,
+});
+const driftingPage = () => ({
+  rows: [], total: 2, precedingCount: 0, nextCursor: null, previousCursor: null,
 });
 
 const withMeta = vi.fn();
@@ -38,9 +45,19 @@ vi.mock("@/lib/platform-api", () => ({
 }));
 
 describe("crm-queues dual path", () => {
-  beforeEach(() => {
+  // The repo mocks' return values are established here rather than in the
+  // `vi.mock` factory above: a factory runs once per file, so a return value
+  // set there is state the FIRST test leaves behind for the rest to inherit,
+  // and `vi.clearAllMocks()` does not put it back. Setting them per test
+  // makes each test self-contained, and keeps the file working under
+  // `restoreMocks` — which wipes implementations between tests (#550).
+  beforeEach(async () => {
     vi.clearAllMocks();
     delete process.env.PLATFORM_API_ORIGIN;
+    const repo = await import("@/lib/db/crm-repo");
+    vi.mocked(repo.dueOpportunities).mockResolvedValue(duePage());
+    vi.mocked(repo.driftingOpportunities).mockResolvedValue(driftingPage());
+    vi.mocked(repo.setNextAction).mockResolvedValue(undefined);
   });
 
   it("reads Postgres when PLATFORM_API_ORIGIN is unset", async () => {
