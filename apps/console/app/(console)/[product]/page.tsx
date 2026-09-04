@@ -8,7 +8,14 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // `kora/page.tsx`'s identical comment.
 import { resolveState, type SurfaceState } from "@/components/kit/surface-state";
 import { kpisReadError, type ProductKpis } from "@/lib/kpis";
-import { fetchProductKpis } from "@/lib/platform-api";
+import { fetchPlatformSources, fetchProductKpis } from "@/lib/platform-api";
+import { declarationsMention } from "@/lib/platform-sources";
+import {
+  BAD_REQUEST,
+  notFederatedMessage,
+  notFederatedState,
+  notFederatedTitle,
+} from "./federation-scope";
 import { resolveProductParam } from "./product-param";
 import { ProductOverview } from "./overview-view";
 
@@ -61,6 +68,31 @@ import { ProductOverview } from "./overview-view";
  * A 503 stays an `error`, which is the direction that matters: it means the
  * product could not be reached, and rendering that as "no metrics" would tell
  * an operator a number does not exist when it exists and cannot be read.
+ *
+ * # Nor is a 400 from an unfederated product (#546)
+ *
+ * `/v1/kpis` is scoped to `FEDERATION_PRODUCTS`. An empty list answers 501 —
+ * `service.Read` returns `ErrNoProducts` from `len(s.slugs) == 0` BEFORE it
+ * looks at `source` — but a NON-empty list that omits this slug answers 400
+ * (`ErrUnknownSource`), which `resolveState` renders as a failure. That is the
+ * likelier deployment: one product federated, another not.
+ *
+ * # Why the declarations cannot decide this on their own
+ *
+ * `/platform/onboarding` reads `/v1/platform/sources` first and treats its
+ * answer as the whole truth about which products it may ask. This page cannot:
+ * `sources` is the inversion of `FEDERATION_<SLUG>_ENDPOINTS` and `_ENTITIES`,
+ * both OPTIONAL in `registry.go`, while `/v1/kpis` is scoped to
+ * `FEDERATION_PRODUCTS` itself. So a federated product that declares no
+ * endpoints and no entity types is absent from `sources` while its KPIs read
+ * perfectly well, and a gate that concluded on its own would render "not
+ * federated" over real numbers. The sibling `[entity]` page has no such gap —
+ * its gate reads the very map platform-api gates on, so it concludes without
+ * corroboration.
+ *
+ * The declarations are therefore read IN PARALLEL with the KPIs and used only
+ * to interpret a 400 that already happened. Two signals, not one: the API
+ * refused this slug, and the deployment declares nothing for it.
  */
 
 /**
@@ -73,10 +105,45 @@ import { ProductOverview } from "./overview-view";
  *
  * `filtered` is always `false`: this surface has no filter to be narrowed by.
  */
-export function overviewState(caught: unknown, kpis: ProductKpis | null): SurfaceState {
+export interface FederationCheck {
+  /**
+   * Whether ANY of this deployment's declarations mention the product's slug.
+   *
+   * `false` is not by itself a claim that the product is unfederated —
+   * `declarationsMention` is a lower bound, for the reason its own comment
+   * gives — which is why the branch below also requires a refusal.
+   */
+  readonly declared: boolean;
+  /** The product's display name, for the callout copy. */
+  readonly label: string;
+}
+
+/**
+ * @param federation the deployment's declarations, or `null` when they could
+ * not be read. `null` means nothing is concluded from them: a failed sources
+ * read is the absence of a fact, not the fact that nothing is declared, and
+ * `fetchPlatformSources`'s own comment says a caller must not confuse the two.
+ */
+export function overviewState(
+  caught: unknown,
+  kpis: ProductKpis | null,
+  federation: FederationCheck | null = null,
+): SurfaceState {
+  const error = kpisReadError(caught);
+  // The conjunction, and both halves are load-bearing. A 400 alone could be
+  // some other refusal, and an absent declaration alone is compatible with a
+  // product whose KPIs read fine. Together they are only one thing: this
+  // deployment has no route to this product. Every other status is left
+  // exactly as it was — a 503 in particular must stay an `error`.
+  if (error !== null && error.status === BAD_REQUEST && federation !== null && !federation.declared) {
+    return notFederatedState(
+      notFederatedTitle(federation.label),
+      notFederatedMessage(federation.label),
+    );
+  }
   return resolveState({
     isLoading: false,
-    error: kpisReadError(caught),
+    error,
     rows: kpis ? Object.keys(kpis) : [],
     filtered: false,
   });
@@ -96,17 +163,35 @@ export default async function ProductOverviewPage({
   // `productSource(id)`, not the route param and not `estate.ts`'s `context`:
   // the registry's `source` is the literal federation slug on the wire, and
   // `ProductEntry.source` records why it is declared rather than derived.
-  //
-  // ONE read, not `kora/page.tsx`'s four — there is no sibling read here to
-  // protect from this one. `allSettled` all the same, for the value/rejection
-  // pair it hands back: the alternative is a reassigned `let` per branch, and
-  // this file has an immutability rule to keep.
-  const [settled] = await Promise.allSettled([fetchProductKpis(productSource(id))]);
-  const kpis = settled.status === "fulfilled" ? settled.value : null;
-  const caught = settled.status === "rejected" ? settled.reason : null;
-  const state = overviewState(caught, kpis);
-
+  const source = productSource(id);
   const label = productLabel(id);
+
+  // TWO reads, issued together. The declarations are not a precondition of the
+  // KPI read here — see the note above on why this surface interprets rather
+  // than gates — so serialising them would add a round trip to every load for
+  // a fact only one branch consumes.
+  //
+  // `allSettled` for the value/rejection pair it hands back, and because the
+  // two must not take each other down: a KPI read that failed is exactly when
+  // the declarations are worth having, and a declarations read that failed
+  // must leave the KPI answer intact.
+  const [kpisSettled, sourcesSettled] = await Promise.allSettled([
+    fetchProductKpis(source),
+    fetchPlatformSources(),
+  ]);
+  const kpis = kpisSettled.status === "fulfilled" ? kpisSettled.value : null;
+  const caught = kpisSettled.status === "rejected" ? kpisSettled.reason : null;
+  // A rejected sources read becomes `null`, never `declared: false`. The read
+  // failing says nothing about what the deployment declares, and treating it
+  // as "declares nothing" would put a confident "not federated" callout over a
+  // read that may have failed for an unrelated reason.
+  const state = overviewState(
+    caught,
+    kpis,
+    sourcesSettled.status === "fulfilled"
+      ? { declared: declarationsMention(sourcesSettled.value, source), label }
+      : null,
+  );
 
   return (
     <div className="flex flex-col gap-6">

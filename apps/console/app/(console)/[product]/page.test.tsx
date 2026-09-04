@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 const fetchProductKpis = vi.fn();
+const fetchPlatformSources = vi.fn();
 
 vi.mock("@/lib/platform-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/platform-api")>()),
   fetchProductKpis: (...args: unknown[]) => fetchProductKpis(...args),
+  fetchPlatformSources: () => fetchPlatformSources(),
 }));
 
 class NotFoundError extends Error {}
@@ -19,7 +21,26 @@ vi.mock("next/navigation", () => ({ notFound: () => notFound() }));
 import { PlatformApiError } from "@/lib/platform-api";
 import { KPIS_UNAVAILABLE_MESSAGE, KPIS_UNAVAILABLE_TITLE } from "@/lib/kpis";
 import { INSTRUMENTATION_UNAVAILABLE_MESSAGE } from "@/components/kit/surface-state";
+import {
+  notFederatedMessage,
+  notFederatedTitle,
+} from "./federation-scope";
 import ProductOverviewPage, { overviewState } from "./page";
+
+/** A deployment federating both products, as `/v1/platform/sources` reports
+ *  it. The default, so every pre-existing row runs against an estate that
+ *  declares the product it is asking about. */
+const BOTH_FEDERATED = {
+  endpoints: { onboarding: ["mark8ly"] },
+  entities: { tenants: ["mark8ly"], users: ["kora", "mark8ly"] },
+} as const;
+
+/** The same deployment with mark8ly removed — the shape #546 is about. */
+const KORA_ONLY = { endpoints: {}, entities: { users: ["kora"] } } as const;
+
+beforeEach(() => {
+  fetchPlatformSources.mockResolvedValue(BOTH_FEDERATED);
+});
 
 /**
  * The page is a server component; its default export is an async function that
@@ -53,6 +74,64 @@ describe("overviewState", () => {
     // metrics" would tell an operator a number does not exist when it exists
     // and cannot be read.
     expect(overviewState(new PlatformApiError("upstream down", 503), null).kind).toBe("error");
+  });
+
+  it("maps a 400 for a product nothing declares to the not-federated state", () => {
+    const state = overviewState(new PlatformApiError("kpis: unknown source", 400), null, {
+      declared: false,
+      label: "Mark8ly",
+    });
+    expect(state).toEqual({
+      kind: "instrumentation-unavailable",
+      title: notFederatedTitle("Mark8ly"),
+      message: notFederatedMessage("Mark8ly"),
+    });
+  });
+
+  // The first half of the conjunction. A product the deployment DOES declare
+  // has some other reason for its 400, and calling that "not federated" would
+  // send an operator to change an env var that is already right.
+  it("leaves a 400 an error when the declarations mention the product", () => {
+    expect(
+      overviewState(new PlatformApiError("kpis: unknown source", 400), null, {
+        declared: true,
+        label: "Mark8ly",
+      }).kind,
+    ).toBe("error");
+  });
+
+  // The second half. `null` is a sources read that FAILED, which is the
+  // absence of a fact rather than the fact that nothing is declared.
+  it("leaves a 400 an error when the declarations could not be read", () => {
+    expect(
+      overviewState(new PlatformApiError("kpis: unknown source", 400), null, null).kind,
+    ).toBe("error");
+  });
+
+  // Only a 400 means "refused this slug". A 503 from an undeclared product is
+  // still an outage, and must not be smoothed into "not switched on".
+  it("leaves a 503 an error even for a product nothing declares", () => {
+    expect(
+      overviewState(new PlatformApiError("upstream down", 503), null, {
+        declared: false,
+        label: "Mark8ly",
+      }).kind,
+    ).toBe("error");
+  });
+
+  // 501 keeps its own copy: `ErrNoProducts` and `ErrNotInstrumented` are
+  // different facts from `ErrUnknownSource` and have their own message.
+  it("leaves a 501 on the KPI copy even for a product nothing declares", () => {
+    expect(
+      overviewState(new PlatformApiError("nope", 501), null, {
+        declared: false,
+        label: "Mark8ly",
+      }),
+    ).toEqual({
+      kind: "instrumentation-unavailable",
+      title: KPIS_UNAVAILABLE_TITLE,
+      message: KPIS_UNAVAILABLE_MESSAGE,
+    });
   });
 });
 
@@ -115,6 +194,46 @@ describe("/[product]", () => {
     // reached, and "no headline metrics yet" would be a lie about a number
     // that exists.
     expect(screen.queryByText(KPIS_UNAVAILABLE_TITLE)).toBeNull();
+  });
+
+  it("renders a 400 from an unfederated product calmly, not as a failure", async () => {
+    // The state #546 is about: kora is federated here and mark8ly is not, so
+    // `/v1/kpis?source=mark8ly` is refused with `ErrUnknownSource` → 400.
+    // Before this branch that rendered the generic failure page.
+    fetchPlatformSources.mockResolvedValue(KORA_ONLY);
+    rejectWith(400, "kpis: unknown source: mark8ly");
+
+    await renderProduct("mark8ly");
+
+    expect(screen.getByText(notFederatedTitle("Mark8ly"))).toBeInTheDocument();
+    expect(screen.getByText(notFederatedMessage("Mark8ly"))).toBeInTheDocument();
+    expect(screen.queryByText("Something Went Wrong")).toBeNull();
+    // Not the observability park either — this is a federation config value.
+    expect(document.body.textContent).not.toContain("observability-park");
+  });
+
+  it("still shows the failure when the declarations could not be read", async () => {
+    // Without the sources answer the console knows nothing about federation,
+    // and a confident "not federated" callout over an unexplained 400 would be
+    // a guess. The honest answer is the failure the API actually returned.
+    fetchPlatformSources.mockRejectedValue(new PlatformApiError("sources: down", 503));
+    rejectWith(400, "kpis: unknown source: mark8ly");
+
+    await renderProduct("mark8ly");
+
+    expect(screen.getByText("Something Went Wrong")).toBeInTheDocument();
+    expect(screen.queryByText(notFederatedTitle("Mark8ly"))).toBeNull();
+  });
+
+  it("renders the metrics when the declarations read fails but the KPIs arrive", async () => {
+    // The sources read is a secondary one. Its failure must not take down a
+    // KPI read that succeeded.
+    fetchPlatformSources.mockRejectedValue(new PlatformApiError("sources: down", 503));
+    fetchProductKpis.mockResolvedValue({ orders_today: 42 });
+
+    await renderProduct("mark8ly");
+
+    expect(screen.getByText("42")).toBeInTheDocument();
   });
 
   it("answers not-found for a segment that is not a product, before any read", async () => {

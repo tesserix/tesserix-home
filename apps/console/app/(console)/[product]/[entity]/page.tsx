@@ -14,7 +14,13 @@ import {
   type SurfaceError,
   type SurfaceState,
 } from "@/components/kit/surface-state";
-import { fetchProductEntities } from "@/lib/platform-api";
+import { fetchPlatformSources, fetchProductEntities } from "@/lib/platform-api";
+import { slugsServing, type PlatformSources } from "@/lib/platform-sources";
+import {
+  notFederatedState,
+  typeNotFederatedMessage,
+  typeNotFederatedTitle,
+} from "../federation-scope";
 import type { EntityPage } from "@/lib/entities";
 // The shared §3.4 pager: an off-by-one that offers an empty next page should
 // have ONE definition and one set of tests, and that module's header says so.
@@ -72,6 +78,50 @@ import { EntityIndex } from "./entity-index";
  * generalises: a 501 means the console's platform API is not configured to
  * read this product's records. Nothing is broken and there is nothing to
  * retry, so it renders as unavailable rather than as a failure.
+ *
+ * # Neither is an unfederated product, which is a 400 (#546)
+ *
+ * platform-api's entities module answers 501 (`ErrNotInstrumented`) only when
+ * `len(s.types) == 0`, and that map has a key per FEDERATED PRODUCT, not per
+ * product that declared a type: `main.go` writes `types[slug] =
+ * product.Entities` for every slug `Registry.Slugs()` returns, and the value
+ * may be empty — the `Get` beside it is a lookup in the same map `Slugs()`
+ * enumerates, so it never skips one. So the 501 means "this deployment
+ * federates nothing at all", and a deployment federating one product with
+ * `FEDERATION_<SLUG>_ENTITIES` unset still has `len(types) == 1`: it answers
+ * 400 `ErrTypeNotServed`, never 501.
+ *
+ * Every other refusal is a 400 too: `ErrUnknownSource` for a slug this
+ * deployment does not federate, `ErrTypeNotServed` for one it federates that
+ * did not declare this type. `resolveState` renders a 400 as a failure, so the
+ * likelier deployment read as an outage — and the 501 path does NOT already
+ * cover these. Deleting the gate below as redundant would put that page back.
+ *
+ * # This surface's gate is EXACT, where `[product]/page.tsx`'s is not
+ *
+ * `GET /v1/platform/sources` inverts `FEDERATION_<SLUG>_ENTITIES`, and
+ * `main.go` builds this route's `Types` map and that route's `Entities` map in
+ * two adjacent blocks from the same `product.Entities`. So "is this slug listed
+ * for this type" is the very condition `service.Read` gates on, not a proxy for
+ * it: a slug absent there is refused, and a slug present there gets past both
+ * 400 branches.
+ *
+ * The overview page has no such congruent map — `/v1/kpis` is scoped to
+ * `FEDERATION_PRODUCTS`, which `sources` does not expose — so its gate is a
+ * lower bound and it needs a 400 alongside it before it will conclude
+ * anything. This one needs no corroboration. The two surfaces differ because
+ * the API does, not by accident.
+ *
+ * # But the read still goes out, in PARALLEL
+ *
+ * An exact gate could have skipped the request. It does not, because
+ * `platformRequest` sets `cache: "no-store"`: awaiting the declarations first
+ * would put a real extra round trip on every load of the common, FEDERATED
+ * path to save one refused request on the rare unfederated one. So both reads
+ * are issued together and the refusal is discarded unread. That is a departure
+ * from `/platform/onboarding`, which serialises — it must, because it has no
+ * source to ask about until the picker's list arrives, and this page's source
+ * comes from the registry.
  */
 
 /** Browse and search, both — the contract's shape since tesserix/kora#480.
@@ -198,26 +248,56 @@ export default async function ProductEntityIndexPage({
   const pageNumber = readPage(resolved);
 
   const label = productLabel(surface.product);
+  // `productSource(...)`, not the route param: the registry's `source` is the
+  // literal federation slug on the wire, and `ProductEntry.source` records why
+  // it is declared rather than derived.
+  const source = productSource(surface.product);
   const basePath = `/${surface.product}/${surface.type}`;
 
-  // Caught rather than allowed to reject: a 501 and a genuine failure are both
-  // states this page renders, and an uncaught rejection would show the route
-  // error boundary instead.
-  let result: EntityPage = EMPTY_PAGE;
-  let error: unknown = null;
-  try {
-    // `productSource(...)`, not the route param: the registry's `source` is
-    // the literal federation slug on the wire, and `ProductEntry.source`
-    // records why it is declared rather than derived.
-    result = await fetchProductEntities(
-      productSource(surface.product),
-      surface.type,
-      search,
-      pageNumber,
-    );
-  } catch (caught: unknown) {
-    error = caught;
-  }
+  // ISSUED TOGETHER, not one after the other. `platformRequest` sets
+  // `cache: "no-store"`, so awaiting the declarations first would add a real
+  // round trip to every load of the COMMON, federated path in order to save a
+  // refused request on the rare one. Parallel costs the opposite way round:
+  // one upstream 400 in the case that was going to be refused anyway.
+  //
+  // `allSettled` because neither may take the other down — a rejected
+  // declarations read must leave a good index standing, and a rejected entity
+  // read is exactly when the declarations are worth having.
+  const [sourcesSettled, entitiesSettled] = await Promise.allSettled([
+    fetchPlatformSources(),
+    // `source`, `surface.type`: both come from the registry, never from the
+    // raw params.
+    fetchProductEntities(source, surface.type, search, pageNumber),
+  ]);
+
+  // `null` — the declarations went unread — is deliberately NOT `false`. Only
+  // a positive "this deployment declares no such thing" can explain a refusal;
+  // the absence of an answer must not become a confident one.
+  const sources: PlatformSources | null =
+    sourcesSettled.status === "fulfilled" ? sourcesSettled.value : null;
+  const federated =
+    sources === null ? null : slugsServing(sources, surface.type).includes(source);
+
+  // The entity read's own answer, kept whole: `null` means it did not succeed.
+  const fetched: EntityPage | null =
+    entitiesSettled.status === "fulfilled" ? entitiesSettled.value : null;
+
+  // REAL ROWS ALWAYS WIN over the gate's verdict. `slugsServing` reads the map
+  // platform-api gates on, so a successful read from a slug it says is
+  // undeclared should not be reachable — but if the two ever disagree, the
+  // dangerous direction is hiding records that exist behind "not switched on",
+  // the same mistake as rendering a 503 as "no metrics". So the calm state
+  // needs BOTH an undeclared slug and a read that did not come back.
+  const notFederated = federated === false && fetched === null;
+
+  const result: EntityPage = fetched ?? EMPTY_PAGE;
+  // Every rejection, unfiltered. The refusal that `notFederated` explains is
+  // discarded by not being READ: that branch renders the calm state below
+  // without calling `entityState`, so this value never reaches the page.
+  // Suppressing it here as well was tried and removed — no test could tell the
+  // difference, which is the definition of a clause that is not doing work.
+  const error: unknown =
+    entitiesSettled.status === "rejected" ? entitiesSettled.reason : null;
 
   // From the product's own total, not `rows.length === limit` — see pagerLinks.
   const pager: PagerLinks = pagerLinks(
@@ -244,13 +324,20 @@ export default async function ProductEntityIndexPage({
         recordHeading={typeLabel}
         page={result}
         pager={pager}
-        state={entityState({
-          error,
-          rows: result.data,
-          filtered: search !== undefined,
-          label,
-          type: surface.type,
-        })}
+        state={
+          notFederated
+            ? notFederatedState(
+                typeNotFederatedTitle(label, surface.type),
+                typeNotFederatedMessage(label, surface.type),
+              )
+            : entityState({
+                error,
+                rows: result.data,
+                filtered: search !== undefined,
+                label,
+                type: surface.type,
+              })
+        }
         emptyMessage={emptyMessage(label, surface.type)}
         scopeNote={SCOPE_NOTE}
         // `pageHref` rebuilds the canonical URL for the page being viewed:

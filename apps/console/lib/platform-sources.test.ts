@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { PlatformApiError } from "./platform-api-error";
-import { parsePlatformSources, slugsDeclaring } from "./platform-sources";
+import {
+  declarationsMention,
+  parsePlatformSources,
+  slugsDeclaring,
+  slugsServing,
+} from "./platform-sources";
 
 /** The body platform-api's `sources` module actually returns on this
  *  deployment, from its own package doc. */
@@ -59,5 +64,38 @@ describe("slugsDeclaring", () => {
     // Absent and present-but-empty mean the same thing to a caller: nothing to
     // ask. The API omits the key entirely when nobody declares.
     expect(slugsDeclaring(parsePlatformSources(BODY), "inbox")).toEqual([]);
+  });
+});
+
+describe("slugsServing", () => {
+  it("reads the entities map, not the endpoints one", () => {
+    // The two maps are keyed by different vocabularies and a helper reading
+    // the wrong one would answer "nobody serves tenants" on a deployment that
+    // does. `onboarding` is an ENDPOINT here, so it must serve nothing.
+    const sources = parsePlatformSources(BODY);
+    expect(slugsServing(sources, "tenants")).toEqual(["mark8ly"]);
+    expect(slugsServing(sources, "users")).toEqual(["kora"]);
+    expect(slugsServing(sources, "onboarding")).toEqual([]);
+  });
+
+  it("treats a type nobody serves as no products, not as an error", () => {
+    expect(slugsServing(parsePlatformSources(BODY), "invoices")).toEqual([]);
+  });
+});
+
+describe("declarationsMention", () => {
+  it("is true for a slug named in either map", () => {
+    // `mark8ly` appears in both; `kora` in `entities` only. A helper that
+    // searched one map would answer `false` for a federated product.
+    const sources = parsePlatformSources(BODY);
+    expect(declarationsMention(sources, "mark8ly")).toBe(true);
+    expect(declarationsMention(sources, "kora")).toBe(true);
+  });
+
+  it("is false for a slug nothing declares, and for an empty estate", () => {
+    expect(declarationsMention(parsePlatformSources(BODY), "homechef")).toBe(false);
+    expect(
+      declarationsMention(parsePlatformSources({ endpoints: {}, entities: {} }), "mark8ly"),
+    ).toBe(false);
   });
 });

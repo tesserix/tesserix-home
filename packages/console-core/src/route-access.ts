@@ -72,6 +72,25 @@ export function routeForPath(currentPath: string): RouteId | undefined {
  * someone declared it — an outage generator discovered in production — and the
  * fallback is exactly today's behaviour, so it cannot make anything less safe
  * than it already is. What it does is make declared surfaces safer.
+ *
+ * # `currentPath` must already be percent-decoded (#543, #547)
+ *
+ * Route paths are matched LITERALLY, so this answers about the string it is
+ * given and nothing else. A caller holding an un-decoded path must normalise
+ * first, or the gate and the router resolve the same request from two
+ * different strings: `/%6Dark8ly` matches no route here and falls back to the
+ * entry capability, while Next's `[product]` segment matches it and hands the
+ * page the decoded `"mark8ly"`. That was a live bypass in the console.
+ *
+ * The normalisation is deliberately NOT done here. This package is pure route
+ * data that the web and mobile apps consume as well, and the sibling
+ * `routeForPath` is also called with paths built from already-decoded router
+ * params (`resolveProductParam`, `resolveEntitySurface`) — decoding those a
+ * second time would be the same class of bug in the other direction. So the
+ * step belongs to whoever holds the raw URL. In the console that is the
+ * middleware, via `apps/console/lib/auth/console-pathname.ts`
+ * (`consoleGatePathname`): read it before adding a caller that starts from a
+ * URL rather than from a matched route param.
  */
 export function capabilityForPath(currentPath: string): Capability {
   // THE SHELL IS NOT A SURFACE, and it is declared as such on the route.

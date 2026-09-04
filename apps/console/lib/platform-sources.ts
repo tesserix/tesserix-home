@@ -96,3 +96,51 @@ export function slugsDeclaring(
 ): readonly string[] {
   return sources.endpoints[endpoint] ?? [];
 }
+
+/**
+ * The slugs serving one §3.4 entity type, in the order the API sorted them.
+ *
+ * The entity twin of {@link slugsDeclaring}, reading the other map. Same
+ * absent-means-none rule: platform-api's `invert` only creates a key when some
+ * product declared that name, so a type nobody serves is absent rather than
+ * present-and-empty, and both mean "no product to ask".
+ *
+ * This is the SAME data platform-api's entities module gates on. `main.go`
+ * builds `entities.Config.Types` and `sources.Config.Entities` in two adjacent
+ * blocks from the same `product.Entities`, so a slug listed here for a type is
+ * exactly a slug whose `Read` will get past both `ErrUnknownSource` (the slug
+ * is not a key at all) and `ErrTypeNotServed` (the key exists, the type is not
+ * in it). That congruence is what lets a caller EXPLAIN the 400 rather than
+ * guess at it — `[product]/[entity]/page.tsx`, the caller, still issues the
+ * read and discards the refusal, for the latency reason stated there.
+ */
+export function slugsServing(
+  sources: PlatformSources,
+  entityType: string,
+): readonly string[] {
+  return sources.entities[entityType] ?? [];
+}
+
+/**
+ * Whether ANY declaration in this deployment mentions this slug.
+ *
+ * Weaker than the two lookups above on purpose, and the weakness is the point:
+ * it is a lower bound on federation membership, not a test of it.
+ * `FEDERATION_<SLUG>_ENDPOINTS` and `_ENTITIES` are both optional
+ * (`registry.go`), and `sources` is built by inverting exactly those two, so a
+ * product listed in `FEDERATION_PRODUCTS` that declares neither appears in
+ * neither map here while platform-api still accepts it as a `source` on routes
+ * scoped to the full list — `/v1/kpis` is one.
+ *
+ * So `true` proves the deployment federates the slug; `false` proves nothing
+ * on its own and must be combined with a read that actually refused it. See
+ * `overviewState` in `app/(console)/[product]/page.tsx`, the one caller.
+ */
+export function declarationsMention(sources: PlatformSources, slug: string): boolean {
+  for (const map of [sources.endpoints, sources.entities]) {
+    for (const slugs of Object.values(map)) {
+      if (slugs.includes(slug)) return true;
+    }
+  }
+  return false;
+}
