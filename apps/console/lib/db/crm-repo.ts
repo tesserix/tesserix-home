@@ -1112,10 +1112,13 @@ export interface OrganisationRow {
   websiteUrl: string | null;
   location: string | null;
   /**
-   * ISO 3166-1 alpha-2 code derived from `location` by `countryFromLocation`
-   * on every path that writes either column, and `null` when that mapper has
-   * no entry for the location — which is not the same absence as a missing
-   * location, and the surfaces must not render them the same way.
+   * ISO 3166-1 alpha-2 code derived from `location` by `countryFromLocation`,
+   * and `null` when there was nothing to derive: either no location at all,
+   * or a location the mapper has no entry for. Those are different absences
+   * and the surfaces must not render them the same way. No writer can attach
+   * a country to a NULL location, so a null `location` here always carries a
+   * null `country` — see `LocationCell` in `organisations-view.tsx` for the
+   * per-writer argument.
    */
   country: string | null;
   category: readonly string[];
@@ -2634,10 +2637,11 @@ export interface OrganisationListRow {
   location: string | null;
   /**
    * ISO 3166-1 alpha-2 code derived from `location`, and the value the
-   * `country` filter matches on. `null` where the mapper had no entry —
-   * 208 of 259 production rows — so the surface can show which rows it
-   * resolved rather than leaving the filter's misses indistinguishable
-   * from its hits.
+   * `country` filter matches on. `null` where nothing could be derived —
+   * no location, or a location the mapper had no entry for; 208 of the 259
+   * production organisations are in one of those two states
+   * (`crm-filters.ts`) — so the surface can show which rows it resolved
+   * rather than leaving the filter's misses indistinguishable from its hits.
    */
   country: string | null;
   contactName: string | null;

@@ -172,10 +172,14 @@ export default async function OrganisationDetailPage({
           label: "Country",
           // "Not derived", not the rail's "Not recorded" used above: this
           // column is computed from `location` by `countryFromLocation`, and
-          // nobody ever fills it in. An absent value therefore says the
-          // mapper has no entry for the recorded location — 208 of 259
-          // production rows — which is a different fact from a field left
-          // blank, and the operator has to be able to tell them apart.
+          // nobody ever fills it in — which is why an absent value reads
+          // "Not derived" rather than the rail's usual "Not recorded":
+          // there was never a field for anyone to leave blank. It covers
+          // both ways the derivation comes back empty — no location to read,
+          // or a location the mapper has no entry for — and the Location row
+          // directly above says which of the two this row is. 208 of the 259
+          // production organisations are in one or the other
+          // (`crm-filters.ts`).
           value: organisation.country
             ? (COUNTRY_LABELS[organisation.country] ?? organisation.country)
             : "Not derived",

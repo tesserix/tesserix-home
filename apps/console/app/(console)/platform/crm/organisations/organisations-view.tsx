@@ -117,20 +117,28 @@ function FollowersCell({ count }: { count: number | null }) {
  * line — `Chennai` over `India`.
  *
  * Inside the Location cell rather than in a column of its own: `country` is
- * only ever a reading of `location` (`countryFromLocation`, applied by all
- * three paths that write either column), so the two belong in one cell, and
+ * only ever a reading of `location`, so the two belong in one cell, and
  * `ProductsCell` above sets out what another column costs this table.
  *
  * A location the mapper had no entry for renders `Unknown` — the word the
  * country filter's sentinel option uses (`UNKNOWN_LABEL`, `crm-filters.ts`)
- * — not a blank line. 208 of 259 production rows are in that state, and a
- * blank would leave the filter's misses looking exactly like its hits, which
- * is the whole reason this line exists.
+ * — not a blank line. A blank would leave the filter's misses looking
+ * exactly like its hits, which is the whole reason this line exists. 208 of
+ * the 259 production organisations have no derived country at all
+ * (`crm-filters.ts`), split across this state and the one below, so this
+ * line is what most rows are read on.
  *
  * With no location there is nothing to derive from, so the cell is the same
- * muted em-dash the other empty cells in this file use. That keeps the two
- * absences apart: "no location on file" and "a location that mapped to
- * nothing" are different facts about the row.
+ * muted em-dash the other empty cells in this file use — never `Unknown`,
+ * which would claim the mapper was consulted and failed. That branch is
+ * safe because no writer can attach a country to a NULL location: the three
+ * application writes all derive it with `countryFromLocation` (create and
+ * update in `crm-writes.ts`, CSV import in `crm-repo.ts`); the one-shot
+ * backfill updates only rows its own mapping pass resolved, which requires a
+ * location; and `seed-dev.mjs` — the one writer that sets both columns
+ * independently and applies no mapper — picks its location from a list with
+ * no null in it. So the two absences stay apart: "no location on file" and
+ * "a location that mapped to nothing" are different facts about the row.
  */
 function LocationCell({ location, country }: { location: string | null; country: string | null }) {
   if (location === null) return <span className="text-muted-foreground">—</span>;

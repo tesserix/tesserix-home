@@ -236,9 +236,9 @@ describe("OrganisationsView followers cell", () => {
 /**
  * `country` is derived from `location` by `countryFromLocation` and stored,
  * so until it is rendered nobody can tell which rows the mapper resolved —
- * 208 of 259 production rows resolved to nothing. The cell has to keep two
- * different absences apart: no location recorded at all, and a location the
- * mapper has no entry for.
+ * 208 of the 259 production rows have no derived country. The cell has to
+ * keep the two absences behind that figure apart: no location recorded at
+ * all, and a location the mapper has no entry for.
  */
 describe("OrganisationsView location cell", () => {
   it("renders the derived country beneath the recorded location", () => {

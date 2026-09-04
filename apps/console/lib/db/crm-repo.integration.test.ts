@@ -777,7 +777,8 @@ describe("listOrganisations", () => {
     const a = await db.query<{ id: string }>(
       // Seeded with the country the mapper derives from "Sydney", so the
       // country assertions below read a row whose location and country agree
-      // the way every write path leaves them (`countryFromLocation`).
+      // the way the application's own writes leave them
+      // (`countryFromLocation` in `crm-writes.ts` and the CSV import).
       `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
       ["Glebe Flowers", "Sydney", "AU"],
     );
