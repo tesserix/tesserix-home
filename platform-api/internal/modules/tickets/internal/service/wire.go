@@ -198,3 +198,9 @@ func toSummary(s domain.Summary) Summary {
 		UrgentOpen:       s.UrgentOpen,
 	}
 }
+
+// CreatePayload is the answer to a filing: the ticket as stored, including the
+// id and ticket_number the caller needs to show the merchant.
+type CreatePayload struct {
+	Ticket Ticket `json:"ticket"`
+}

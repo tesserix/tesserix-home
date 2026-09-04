@@ -68,6 +68,7 @@ operator path is unaffected. What a product machine may do once granted:
 
 | Route | Operator | Machine holding `product-support` |
 |---|---|---|
+| `POST /v1/tickets` | **refused** — no product of their own to file into | files for the product in its scope, never one it names |
 | `GET /v1/tickets`, `/{id}` | whole estate | its own product, **and only the tenant it names** |
 | `GET /v1/tickets/summary` | whole estate | **refused** — no tenant dimension, and no product asks for it |
 | `POST /v1/tickets/{id}/replies` | needs `support` + `respond` | allowed for the tenant it names; must say which merchant it relays; may not carry a status transition |
