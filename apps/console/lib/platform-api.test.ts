@@ -1445,9 +1445,18 @@ describe("fetchOnboardingSessions", () => {
     // The empty-versus-unreadable rule, at the console's end of the wire.
     //
     // Asserted on the message rather than `toThrow(PlatformApiError)`, for the
-    // reason recorded on "the platform API switch" above: this file's
-    // `afterEach` calls `vi.resetModules()`, so the class a freshly-resolved
-    // module throws is a different identity from the one imported at the top.
+    // reason recorded on "the platform API switch" above.
+    //
+    // This file has TWO file-scope `afterEach` hooks, and only the second one
+    // calls `vi.resetModules()`. That is the one that matters here: a
+    // freshly-resolved module throws a `PlatformApiError` whose class identity
+    // is not the one imported at the top of this file, so an identity check
+    // would fail for a reason that has nothing to do with what is asserted.
+    //
+    // Named as the second rather than as "this file's `afterEach`", which is
+    // what stood here: a reader who takes that singular literally finds the
+    // hook at the top of the file, which does NOT reset modules, and reasons
+    // about the wrong teardown. Pinned in `lib/claims.guard.test.ts`.
     respond(envelope(null, { total: 0, limit: 50 }));
     await expect(fetchOnboardingSessions("mark8ly")).rejects.toThrow(
       /an unreadable list is not an empty one/,
