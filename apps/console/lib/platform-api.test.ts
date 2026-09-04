@@ -37,6 +37,22 @@ const VALID = {
   generated_at: "2026-08-14T07:00:00.000Z",
 };
 
+/**
+ * This restores `globalThis` between tests, but it does NOT isolate them — see
+ * #544. Nothing here aborts an in-flight `platformCall`, so a test the runner
+ * abandons on timeout leaves a continuation running. When that continuation
+ * resumes it calls whatever `globalThis.fetch` is by then — the *next* test's
+ * stub — and either pushes a stray URL into that test's `seen[]` or drains the
+ * single `Response` a `mockResolvedValue` stub hands to every caller.
+ *
+ * So one timeout here reports as two failures, the second naming an innocent
+ * test with an unrelated-looking cause. Reproduced at the configured timeout by
+ * running this file under CPU saturation: the `await import("./platform-api")`
+ * in "the platform API switch" is the slow step, and its neighbour then failed
+ * on a URL the timed-out test had queued. Closing it needs a cancellation path
+ * through `platformCall` that a test can drive; raising `testTimeout` only
+ * makes the trigger rarer.
+ */
 afterEach(() => {
   vi.unstubAllGlobals();
 });

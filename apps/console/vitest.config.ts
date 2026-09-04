@@ -66,6 +66,51 @@ const SHARED = {
   // import the design system are importable from a plain node-env test.
   server: { deps: { inline: ["@tesserix/web"] } },
   exclude: ["node_modules", ".next", "tests"],
+  /**
+   * Vitest's default is 5000ms, which this suite has outgrown — #544.
+   *
+   * The number is measured. On an unloaded machine a full green run puts p50 at
+   * 0.4ms and p99 at 497ms, but 41 of the 4133 tests exceed 500ms and the
+   * slowest — `app/auth/callback/route.test.ts`'s token-store case — takes
+   * 2011ms. The default therefore leaves the slowest test 2.5x headroom, while
+   * the suite's own wall time has been observed swinging 46s to 132s (2.9x) on
+   * one machine. 2011ms x 2.9 is 5832ms: the default sits below the spread this
+   * suite already exhibits, which is why the timeouts read as random and the
+   * victim file differs every run.
+   *
+   * 15000ms is 7.5x the slowest unloaded test — headroom for a slowdown about
+   * 2.5x worse than the worst swing on record. It is not a load-proof number
+   * and no finite one is: running three of the reported victim files against 14
+   * busy loops on a 14-core machine stretched `lib/redirect-origin.guard.test.ts`'s
+   * filesystem scan from 587ms to 9818ms on one attempt and 34344ms on the
+   * next. That experiment is what established these timeouts are load-induced;
+   * it is not what fixes the number.
+   *
+   * This costs a green run nothing — a timeout budget is only ever spent by a
+   * test that fails. It does mean a genuinely hung test takes 15s to say so.
+   */
+  testTimeout: 15_000,
+  /**
+   * Restores `globalThis` after every test, so a file that stubs a global and
+   * forgets to restore it cannot leak into the next one.
+   *
+   * This is defence against a bug class. It is NOT the fix for the knock-on
+   * failures #544 describes, and it does not prevent them. Those come from a
+   * test in `lib/platform-api.test.ts` being cut off *while awaiting something
+   * before its fetch* — a `vi.resetModules()`-forced `await import()`, which is
+   * the slow step under load. The abandoned continuation resumes later and
+   * calls whatever `globalThis.fetch` is by then, which is the NEXT test's
+   * stub: it pushes its URL into that test's `seen[]` array, or drains the
+   * single `Response` instance a `mockResolvedValue` stub hands every caller.
+   * Either way the second failure names an innocent test.
+   *
+   * Restoring globals between tests cannot help, because the leaked
+   * continuation runs after the next test has installed its own stub —
+   * confirmed with a minimal reproduction carrying this exact hook, which
+   * cascaded anyway. The real fix is a cancellation path through
+   * `platformCall`, which no test can currently reach; #544 carries it.
+   */
+  unstubGlobals: true,
 };
 
 export default defineConfig({
