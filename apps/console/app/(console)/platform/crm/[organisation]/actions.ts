@@ -16,6 +16,12 @@ import {
 } from "@/lib/db/crm-repo";
 import { listTemplates, templateContext } from "@/lib/db/crm-templates";
 import {
+  CONTACT_SOURCE,
+  LAWFUL_BASIS_REQUIRED_MESSAGE,
+  isSelectableLawfulBasis,
+  unknownLawfulBasisMessage,
+} from "@/lib/crm-provenance";
+import {
   recordTemplatedDm,
   ContactUnavailableError,
   TemplateRenderRefusedError,
@@ -359,6 +365,12 @@ export interface AddContactInput {
   email?: string;
   phone?: string;
   instagramHandle?: string;
+  /** #248. Required and unvalued by default — a contact typed in here is not
+   *  a scraped profile, and the operator is the only one who knows which of
+   *  the three it is. Typed `string` rather than `LawfulBasis` because this
+   *  is a server-action parameter: it arrives over the network from a client
+   *  that may be lying, and the narrowing happens below. */
+  lawfulBasis?: string;
 }
 
 /**
@@ -382,6 +394,17 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
     return { ok: false, message: "Enter at least a name, email, phone, or Instagram handle." };
   }
 
+  const lawfulBasis = input.lawfulBasis?.trim();
+  if (!lawfulBasis) {
+    return { ok: false, message: LAWFUL_BASIS_REQUIRED_MESSAGE };
+  }
+  // `not_recorded_pre_migration` is refused here like any other unknown
+  // string — see `LEGACY_LAWFUL_BASIS`. It stays valid to HOLD, so the 259
+  // migrated rows read correctly, and is never valid to CHOOSE.
+  if (!isSelectableLawfulBasis(lawfulBasis)) {
+    return { ok: false, message: unknownLawfulBasisMessage(lawfulBasis) };
+  }
+
   const result = await withCrmWrite(
     input.organisationId,
     { capability: "crm" },
@@ -392,6 +415,8 @@ export async function addContactAction(input: AddContactInput): Promise<CrmActio
         email,
         phone,
         instagramHandle,
+        source: CONTACT_SOURCE.manual,
+        lawfulBasis,
       }),
     () => ({ action: "crm.contact.create", summary: { contacts: 1 } }),
     // `createContact` refuses a suppressed contact, and one whose email or
@@ -1204,6 +1229,14 @@ export async function updateContactAction(
   const email = optionalField(formData, "email");
   const phone = optionalField(formData, "phone");
   const instagramHandle = optionalField(formData, "instagramHandle");
+  // #248. Absent means "leave the recorded basis alone" — that is what makes
+  // a migrated contact editable at all, since its `not_recorded_pre_migration`
+  // is storable but not selectable and could never be resubmitted. A PRESENT
+  // value is a correction and must be one of the three.
+  const lawfulBasis = optionalField(formData, "lawfulBasis");
+  if (lawfulBasis !== undefined && !isSelectableLawfulBasis(lawfulBasis)) {
+    return { ok: false, message: unknownLawfulBasisMessage(lawfulBasis) };
+  }
 
   // The same floor `addContactAction` applies, and for the same reason: a
   // contact with every identifying field cleared is unfindable and
@@ -1220,7 +1253,15 @@ export async function updateContactAction(
     `${name ?? email ?? contactId} (${contactId})`,
     { capability: "crm" },
     (actor) =>
-      updateContact({ contactId, actor: actor.email, name, email, phone, instagramHandle }),
+      updateContact({
+        contactId,
+        actor: actor.email,
+        name,
+        email,
+        phone,
+        instagramHandle,
+        lawfulBasis: isSelectableLawfulBasis(lawfulBasis) ? lawfulBasis : undefined,
+      }),
     (outcome) => ({
       action: "crm.contact.update",
       summary: summariseContactChanges(outcome.changed),
@@ -1269,6 +1310,7 @@ const CONTACT_SUMMARY_KEYS: Readonly<Record<ChangedContactField["field"], string
   email: "email",
   phone: "phone",
   instagramHandle: "instagram",
+  lawfulBasis: "lawful_basis",
 };
 
 function summariseContactChanges(

@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Button, Callout, CalloutDescription, Input } from "@tesserix/web";
+import { Button, Callout, CalloutDescription, Input, Label } from "@tesserix/web";
+import { LawfulBasisSelect, LawfulBasisHint } from "@/components/kit/lawful-basis-select";
 import { parseImportCsv, type ImportRow } from "@/lib/crm";
 import type { ImportPreview, ImportResult } from "@/lib/db/crm-repo";
 import { previewImportAction, commitImportAction } from "./actions";
@@ -174,6 +175,11 @@ export function ImportView() {
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [committed, setCommitted] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // #248: declared ONCE for the batch, not per row. A CSV of scraped profiles
+  // has one answer to "why may we hold these people" for the whole file, and
+  // a per-row column would ask the operator to repeat one decision N times
+  // and let rows disagree. Starts empty on purpose — see `LawfulBasisSelect`.
+  const [lawfulBasis, setLawfulBasis] = useState<string>("");
   const [pending, startTransition] = useTransition();
 
   const handleFile = (file: File) => {
@@ -218,14 +224,19 @@ export function ImportView() {
   };
 
   const runCommit = () => {
-    if (!rows) return;
+    if (!rows || !lawfulBasis) return;
     setError(null);
     startTransition(async () => {
       // The full file size — including whatever parseImportCsv already
       // dropped as malformed — so crm_imports.row_count reflects the whole
       // file the operator picked, not just the rows that survived parsing.
       const totalRows = rows.length + parseMalformed;
-      const result = await commitImportAction(rows, filename ?? undefined, totalRows);
+      const result = await commitImportAction(
+        rows,
+        lawfulBasis,
+        filename ?? undefined,
+        totalRows,
+      );
       if (!result.ok) {
         setError(result.message);
         return;
@@ -234,6 +245,9 @@ export function ImportView() {
       setPreview(null);
       setRows(null);
       setFilename(null);
+      // Cleared with the rest of the batch. Carrying the last file's basis
+      // into the next one is the silent default this issue exists to remove.
+      setLawfulBasis("");
     });
   };
 
@@ -278,10 +292,37 @@ export function ImportView() {
             title={`Preview — ${filename ?? "file"} (nothing written yet)`}
             matchedRows={preview.matchedRows}
           />
-          <div>
-            <Button type="button" size="sm" disabled={pending} onClick={runCommit}>
-              {pending ? "Importing…" : "Commit import"}
-            </Button>
+          <div className="flex flex-col gap-2 rounded-md border border-border p-4">
+            <Label htmlFor="crm-import-lawful-basis">
+              Lawful basis for this batch
+            </Label>
+            <div className="max-w-sm">
+              <LawfulBasisSelect
+                id="crm-import-lawful-basis"
+                value={lawfulBasis || undefined}
+                onValueChange={setLawfulBasis}
+                disabled={pending}
+              />
+            </div>
+            <LawfulBasisHint value={lawfulBasis || undefined} />
+            <p className="text-xs text-muted-foreground">
+              Recorded against every contact this import creates, alongside how
+              and when they were sourced.
+            </p>
+            <div>
+              {/* Gated on the basis as well as on `pending`: the action
+                  refuses a missing one anyway, and this is what stops the
+                  operator finding that out after choosing a file, previewing
+                  it and pressing commit. */}
+              <Button
+                type="button"
+                size="sm"
+                disabled={pending || !lawfulBasis}
+                onClick={runCommit}
+              >
+                {pending ? "Importing…" : "Commit import"}
+              </Button>
+            </div>
           </div>
         </div>
       ) : null}

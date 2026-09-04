@@ -20,6 +20,7 @@ import { ConsolePageHeader } from "@/components/kit/page-header";
 // and imported by all three surfaces that compare against it — see that
 // module for why a per-file copy of the literal is the failure mode.
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
+import { LawfulBasisSelect, LawfulBasisHint } from "@/components/kit/lawful-basis-select";
 import { createOrganisationAction } from "./actions";
 
 const PRODUCTS = ESTATE.map((product) => ({ context: product.context, name: product.name }));
@@ -42,6 +43,10 @@ export default function NewOrganisationPage() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // #248. Held in state only so the hint below can follow it; the value the
+  // action reads comes from the hidden native <select> Radix mirrors, keyed
+  // by `name`, exactly like the product field.
+  const [contactLawfulBasis, setContactLawfulBasis] = useState<string>("");
 
   const submit = (formData: FormData) => {
     if (!name.trim()) {
@@ -124,6 +129,22 @@ export default function NewOrganisationPage() {
               disabled={pending}
               placeholder="@bondibaker"
             />
+          </div>
+          {/* Required as soon as any contact field is filled in, and refused
+              server-side if it is not — see `createOrganisationAction`. Not
+              preselected: a contact typed in here is not a scraped profile,
+              and choosing on the operator's behalf is the failure #248
+              reports. */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="contactLawfulBasis">Lawful basis</Label>
+            <LawfulBasisSelect
+              id="contactLawfulBasis"
+              name="contactLawfulBasis"
+              value={contactLawfulBasis || undefined}
+              onValueChange={setContactLawfulBasis}
+              disabled={pending}
+            />
+            <LawfulBasisHint value={contactLawfulBasis || undefined} />
           </div>
         </fieldset>
 

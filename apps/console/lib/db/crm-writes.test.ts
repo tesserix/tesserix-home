@@ -199,7 +199,12 @@ function uniqueViolation(constraint: string, code = "23505"): Error {
 }
 
 describe("createContact and the contact unique indexes", () => {
-  const INPUT = { organisationId: "g1", email: "ada@example.com" };
+  const INPUT = {
+    organisationId: "g1",
+    email: "ada@example.com",
+    source: "manual",
+    lawfulBasis: "legitimate_interests",
+  } as const;
 
   beforeEach(() => {
     query.mockReset();
@@ -278,7 +283,7 @@ describe("createContact and the contact unique indexes", () => {
     query.mockResolvedValueOnce([{ id: "org-1" }]);
     query.mockRejectedValueOnce(uniqueViolation("crm_contacts_email_lower_uq"));
     await expect(
-      createOrganisation({ name: "Dup Co", contact: { email: "ada@example.com" } }),
+      createOrganisation({ name: "Dup Co", contact: { email: "ada@example.com", lawfulBasis: "legitimate_interests" } }),
     ).rejects.toBeInstanceOf(DuplicateContactError);
   });
 });
@@ -299,7 +304,7 @@ describe("createContact and the instagram handle it hands to the INSERT", () => 
     query.mockReset();
     query.mockResolvedValueOnce([]);
     query.mockResolvedValueOnce([{ id: "c1" }]);
-    await createContact({ organisationId: "g1", instagramHandle });
+    await createContact({ organisationId: "g1", instagramHandle, source: "manual", lawfulBasis: "legitimate_interests" });
     const [sql, params] = query.mock.calls[1];
     expect(sql).toMatch(/INSERT INTO crm_contacts/);
     return params as unknown[];
@@ -313,7 +318,7 @@ describe("createContact and the instagram handle it hands to the INSERT", () => 
     query.mockReset();
     query.mockResolvedValueOnce([]);
     query.mockResolvedValueOnce([{ id: "c1" }]);
-    await createContact({ organisationId: "g1", instagramHandle: " @@BondiBaker " });
+    await createContact({ organisationId: "g1", instagramHandle: " @@BondiBaker ", source: "manual", lawfulBasis: "legitimate_interests" });
     const checkParams = query.mock.calls[0][1] as unknown[];
     const insertedHandle = (query.mock.calls[1][1] as unknown[])[4];
     // Whatever form the check keyed on is the form that gets stored.

@@ -69,6 +69,7 @@ describe("createOrganisationAction", () => {
     form.set("name", "Bondi Baker");
     form.set("location", "  Bondi Beach  ");
     form.set("contactName", "  Ava  ");
+    form.set("contactLawfulBasis", "legitimate_interests");
     form.set("product", "mark8ly");
 
     await createOrganisationAction(form);
@@ -80,7 +81,12 @@ describe("createOrganisationAction", () => {
       name: "Bondi Baker",
       location: "Bondi Beach",
       websiteUrl: undefined,
-      contact: { name: "Ava", email: undefined, instagramHandle: undefined },
+      contact: {
+        name: "Ava",
+        email: undefined,
+        instagramHandle: undefined,
+        lawfulBasis: "legitimate_interests",
+      },
       opportunity: { product: "mark8ly", owner: undefined },
     });
   });
@@ -157,6 +163,58 @@ describe("createOrganisationAction", () => {
   // only to the product `<Select>`. `optionalField` must stay generic, or an
   // organisation genuinely named "__none__" would be rejected as blank and a
   // `location` of "__none__" would be silently dropped.
+  // #248. Required only WHEN a contact is being created — a bare organisation
+  // holds nobody's personal data — and never defaulted when it is. These are
+  // the tests that fail if the boundary check is removed.
+  it("refuses a first contact with no lawful basis, and never calls createOrganisation", async () => {
+    const form = new FormData();
+    form.set("name", "Bondi Baker");
+    form.set("contactName", "Ava");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/lawful basis/i);
+    expect(withCrmWrite).not.toHaveBeenCalled();
+  });
+
+  it("refuses a lawful basis outside the closed set", async () => {
+    const form = new FormData();
+    form.set("name", "Bondi Baker");
+    form.set("contactEmail", "ava@example.com");
+    form.set("contactLawfulBasis", "because we can");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/not a lawful basis/i);
+    expect(withCrmWrite).not.toHaveBeenCalled();
+  });
+
+  it("refuses the pre-migration marker as a choice for a new contact", async () => {
+    const form = new FormData();
+    form.set("name", "Bondi Baker");
+    form.set("contactEmail", "ava@example.com");
+    form.set("contactLawfulBasis", "not_recorded_pre_migration");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result.ok).toBe(false);
+    expect(withCrmWrite).not.toHaveBeenCalled();
+  });
+
+  it("asks for no basis when the form creates no contact", async () => {
+    // A bare organisation is a business, not a person — there is nothing to
+    // hold a lawful basis for, and demanding one would be theatre.
+    vi.mocked(withCrmWrite).mockResolvedValue({ ok: true, value: { organisationId: "org-1" } });
+    const form = new FormData();
+    form.set("name", "Bare Co");
+
+    const result = await createOrganisationAction(form);
+
+    expect(result).toEqual({ ok: true });
+  });
+
   it("does not treat the product sentinel as blank for other fields", async () => {
     vi.mocked(withCrmWrite).mockResolvedValue({ ok: true, value: { organisationId: "org-1" } });
     const form = new FormData();
@@ -202,6 +260,7 @@ describe("createOrganisationAction", () => {
     const form = new FormData();
     form.set("name", "Latecomer Co");
     form.set("contactEmail", "taken@example.com");
+    form.set("contactLawfulBasis", "legitimate_interests");
 
     const result = await createOrganisationAction(form);
 
@@ -218,6 +277,7 @@ describe("createOrganisationAction", () => {
     const form = new FormData();
     form.set("name", "Latecomer Co");
     form.set("contactInstagramHandle", "takenshop");
+    form.set("contactLawfulBasis", "legitimate_interests");
 
     const result = await createOrganisationAction(form);
 

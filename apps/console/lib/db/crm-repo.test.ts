@@ -1420,7 +1420,7 @@ describe("import", () => {
       // Guards the guard: checking only at preview means a stale preview
       // commits someone who was suppressed in between.
       query.mockImplementation(routeQuery({ suppressed: [{ id: "s1" }] }));
-      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app");
+      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app", "legitimate_interests");
       expect(query.mock.calls.some(([sql]) => /FROM crm_suppressions/.test(sql))).toBe(true);
       expect(result.skippedSuppressed).toBe(1);
       expect(result.created).toBe(0);
@@ -1434,7 +1434,7 @@ describe("import", () => {
       query.mockImplementation(
         routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
       );
-      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app");
+      const result = await commitImport([{ email: "ava@example.com" }], "ava@tesserix.app", "legitimate_interests");
       expect(result.matchedExisting).toBe(1);
       expect(result.created).toBe(0);
       expect(query.mock.calls.some(([sql]) => /INSERT INTO crm_organisations/.test(sql))).toBe(
@@ -1447,6 +1447,7 @@ describe("import", () => {
       const result = await commitImport(
         [{ name: "Bondi Baker", email: "ava@example.com", instagramHandle: "@bondibaker" }],
         "ava@tesserix.app",
+        "legitimate_interests",
       );
       expect(result.created).toBe(1);
 
@@ -1469,7 +1470,7 @@ describe("import", () => {
 
     it("counts a row with nothing to identify it as malformed and writes nothing for it", async () => {
       query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
-      const result = await commitImport([{ phone: "0400000000" }], "ava@tesserix.app");
+      const result = await commitImport([{ phone: "0400000000" }], "ava@tesserix.app", "legitimate_interests");
       expect(result.malformed).toBe(1);
       expect(result.created).toBe(0);
       expect(query.mock.calls.some(([sql]) => /INSERT INTO crm_organisations/.test(sql))).toBe(
@@ -1482,6 +1483,7 @@ describe("import", () => {
       await commitImport(
         [{ email: "ava@example.com" }, { phone: "0400000000" }],
         "ava@tesserix.app",
+        "legitimate_interests",
         "leads.csv",
       );
       const importInsert = query.mock.calls.find(([sql]) => /INSERT INTO crm_imports/.test(sql));
@@ -1522,6 +1524,7 @@ describe("import", () => {
       const result = await commitImport(
         [{ email: "dup@example.com" }, { email: "dup@example.com" }],
         "ava@tesserix.app",
+        "legitimate_interests",
       );
 
       expect(result.created).toBe(1);
@@ -1557,6 +1560,7 @@ describe("import", () => {
         commitImport(
           [{ email: "first@example.com" }, { email: "second@example.com" }],
           "ava@tesserix.app",
+          "legitimate_interests",
         ),
       ).rejects.toThrow("connection terminated");
     });
@@ -1570,6 +1574,7 @@ describe("import", () => {
       await commitImport(
         [{ email: "ava@example.com" }],
         "ava@tesserix.app",
+        "legitimate_interests",
         "leads.csv",
         5, // e.g. 4 rows the client-side parser already dropped as malformed
       );
@@ -1585,7 +1590,7 @@ describe("import", () => {
         routeQuery({ suppressed: [], matched: [{ organisation_id: "org1" }] }),
       );
       const row = { email: "ava@example.com", name: "Bondi Baker" };
-      const result = await commitImport([row], "ava@tesserix.app");
+      const result = await commitImport([row], "ava@tesserix.app", "legitimate_interests");
       expect(result.matchedRows).toEqual([row]);
     });
 
@@ -1601,7 +1606,7 @@ describe("import", () => {
 
       query.mockReset();
       query.mockImplementation(routeQuery({ suppressed: [], matched: [] }));
-      const committed = await commitImport(rows, "ava@tesserix.app");
+      const committed = await commitImport(rows, "ava@tesserix.app", "legitimate_interests");
 
       expect(committed.created).toBe(preview.toCreate);
       expect(committed.matchedExisting).toBe(preview.matchedExisting);

@@ -41,6 +41,18 @@ function committedResult(overrides: Partial<ImportResult> = {}): ImportResult {
   };
 }
 
+/** Opens the batch lawful-basis Select and picks the option with that label.
+ *  `pointerEventsCheck: 0` is the usual Radix accommodation — it marks the
+ *  rest of the document inert while its listbox is open. */
+async function chooseLawfulBasis(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+): Promise<void> {
+  await user.click(screen.getByRole("combobox", { name: /lawful basis/i }));
+  await waitFor(() => expect(screen.getByRole("listbox")).toBeInTheDocument());
+  await user.click(screen.getByRole("option", { name: label }));
+}
+
 /** Uploads a CSV, previews it, and commits — the only path that ever puts
  *  `ImportView` into its committed state. */
 async function commitAnImport(user: ReturnType<typeof userEvent.setup>, result: ImportResult) {
@@ -57,10 +69,72 @@ async function commitAnImport(user: ReturnType<typeof userEvent.setup>, result: 
   await user.click(screen.getByRole("button", { name: "Preview" }));
 
   await waitFor(() => expect(screen.getByRole("button", { name: "Commit import" })).toBeInTheDocument());
+  // #248: commit is gated on a lawful basis for the batch, so this flow has
+  // to choose one — which is the point. Before this the button was reachable
+  // with nothing declared.
+  await chooseLawfulBasis(user, "Legitimate interests");
   await user.click(screen.getByRole("button", { name: "Commit import" }));
 
   await waitFor(() => expect(screen.getByText("Import committed")).toBeInTheDocument());
 }
+
+/**
+ * #248 — the batch declares its lawful basis before it can be committed.
+ *
+ * Per batch and not per row, per the issue: a CSV of scraped profiles has one
+ * answer to "why may we hold these people", and a column would ask the
+ * operator to repeat one decision N times and let rows disagree.
+ */
+describe("ImportView lawful basis", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function previewAFile(user: ReturnType<typeof userEvent.setup>) {
+    vi.mocked(previewImportAction).mockResolvedValue({ ok: true, preview: PREVIEW });
+    render(<ImportView />);
+    const file = new File([CSV], "leads.csv", { type: "text/csv" });
+    const input = document.getElementById("crm-import-file") as HTMLInputElement;
+    await user.upload(input, file);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Commit import" })).toBeInTheDocument(),
+    );
+  }
+
+  it("cannot commit until a basis is chosen, and never calls the action", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await previewAFile(user);
+
+    expect(screen.getByRole("button", { name: "Commit import" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Commit import" }));
+    expect(commitImportAction).not.toHaveBeenCalled();
+  });
+
+  it("passes the chosen basis to the action", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    vi.mocked(commitImportAction).mockResolvedValue({ ok: true, result: committedResult() });
+    await previewAFile(user);
+
+    await chooseLawfulBasis(user, "Legitimate interests");
+    await user.click(screen.getByRole("button", { name: "Commit import" }));
+
+    await waitFor(() => expect(commitImportAction).toHaveBeenCalled());
+    const [, basis] = vi.mocked(commitImportAction).mock.calls[0];
+    expect(basis).toBe("legitimate_interests");
+  });
+
+  it("offers no option that records 'we do not know' going forward", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    await previewAFile(user);
+
+    await user.click(screen.getByRole("combobox", { name: /lawful basis/i }));
+    await waitFor(() => expect(screen.getByRole("listbox")).toBeInTheDocument());
+    const options = screen.getAllByRole("option").map((option) => option.textContent ?? "");
+    expect(options).toEqual(["Legitimate interests", "Consent", "Contract"]);
+  });
+});
 
 describe("ImportView committed result", () => {
   beforeEach(() => {
@@ -68,7 +142,7 @@ describe("ImportView committed result", () => {
   });
 
   it("links to the organisations this import created", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult());
 
     // Without this the import flow is a dead end: it reports "47 created"
@@ -82,7 +156,7 @@ describe("ImportView committed result", () => {
   });
 
   it("says organisation, singular, when the import created exactly one", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ created: 1 }));
 
     const link = screen.getByRole("link", { name: /view/i });
@@ -95,7 +169,7 @@ describe("ImportView committed result", () => {
   // so an operator who is not told cannot put the address back by hand — the
   // count is the only thing that makes a re-import a choice they can make.
   it("reports website urls the import dropped", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ droppedWebsiteUrls: 2 }));
 
     expect(screen.getByText("Website dropped")).toBeInTheDocument();
@@ -104,7 +178,7 @@ describe("ImportView committed result", () => {
   });
 
   it("offers no dropped-url explanation when every website url was fine", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ droppedWebsiteUrls: 0 }));
 
     expect(screen.getByText("Website dropped")).toBeInTheDocument();
@@ -115,7 +189,7 @@ describe("ImportView committed result", () => {
   // NULL, and the row is still created. Same remedy as a dropped website
   // url — correct the sheet and import again — so it needs the same telling.
   it("reports count cells the import dropped", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ droppedCountCells: 3 }));
 
     expect(screen.getByText("Counts dropped")).toBeInTheDocument();
@@ -123,7 +197,7 @@ describe("ImportView committed result", () => {
   });
 
   it("offers no dropped-count explanation when every count cell was a whole number", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ droppedCountCells: 0 }));
 
     expect(screen.getByText("Counts dropped")).toBeInTheDocument();
@@ -131,7 +205,7 @@ describe("ImportView committed result", () => {
   });
 
   it("reports metadata cells the import dropped", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ droppedMetadataCells: 1 }));
 
     expect(screen.getByText("Metadata dropped")).toBeInTheDocument();
@@ -139,7 +213,7 @@ describe("ImportView committed result", () => {
   });
 
   it("reports rows refused because the person asked to be forgotten (#226)", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ skippedErased: 2 }));
 
     // Its own cell beside Suppressed, and its own note — the two counts have
@@ -152,7 +226,7 @@ describe("ImportView committed result", () => {
   });
 
   it("shows the erased count as zero rather than hiding it when nothing was refused", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ skippedErased: 0 }));
 
     // A checked fact, not an unknown: the register is consulted on every
@@ -162,7 +236,7 @@ describe("ImportView committed result", () => {
   });
 
   it("offers no link when the import created nothing", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
     await commitAnImport(user, committedResult({ created: 0, matchedExisting: 5, skippedSuppressed: 0 }));
 
     expect(screen.queryByRole("link", { name: /view/i })).toBeNull();

@@ -48,6 +48,9 @@ const CONTACT: ContactRow = {
   phone: null,
   instagramHandle: "@ada",
   isPrimary: true,
+  source: "manual",
+  sourcedAt: "2026-05-01T00:00:00.000Z",
+  lawfulBasis: "legitimate_interests",
 };
 
 beforeEach(() => {

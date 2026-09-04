@@ -1,4 +1,10 @@
 import { countryFromLocation } from "@tesserix/crm-country";
+import {
+  CONTACT_SOURCE,
+  isSelectableLawfulBasis,
+  type ContactSource,
+  type LawfulBasis,
+} from "../crm-provenance";
 import { tesserixQuery, tesserixTx, type TxQuery } from "./tesserix";
 import { isSafeWebsiteUrl } from "./crm-url";
 import { isSuppressed, normalizeInstagramHandle, SuppressedContactError } from "./crm-repo";
@@ -127,8 +133,16 @@ export interface CreateOrganisationInput {
   name: string;
   location?: string;
   websiteUrl?: string;
-  /** Optional first contact, created in the same transaction. */
-  contact?: { name?: string; email?: string; instagramHandle?: string };
+  /** Optional first contact, created in the same transaction. `lawfulBasis`
+   *  is required WHEN a contact is supplied and has no default (#248): a
+   *  contact typed by hand is not a scraped profile, and picking one for the
+   *  operator is what made these columns decorative in the first place. */
+  contact?: {
+    name?: string;
+    email?: string;
+    instagramHandle?: string;
+    lawfulBasis: LawfulBasis;
+  };
   /** Optional first opportunity. Omit to create a bare organisation. */
   opportunity?: { product?: string; owner?: string };
 }
@@ -140,6 +154,23 @@ export interface CreateContactInput {
   phone?: string;
   instagramHandle?: string;
   isPrimary?: boolean;
+  /**
+   * Provenance (#248). Both are REQUIRED and neither is defaulted here.
+   *
+   * `source` is the write path (`crm-provenance.ts`'s `CONTACT_SOURCE`), not
+   * the batch — `crm_organisations.import_id` already records that.
+   * `lawfulBasis` is the reason we may hold this person's details at all,
+   * and is re-checked below rather than trusted from the caller: an exported
+   * writer is reachable by any future caller, and a guarantee that depends
+   * on callers remembering is not a guarantee — the same argument that puts
+   * `isSafeWebsiteUrl` and `isSuppressed` at this layer.
+   *
+   * `sourced_at` takes `now()` at the INSERT and is not an input: it is when
+   * we obtained the row, which is a fact about this write, not a claim a
+   * caller gets to make.
+   */
+  source: ContactSource;
+  lawfulBasis: LawfulBasis;
   /**
    * The scrape fields (#235): the three typed columns 0019 shipped and the
    * raw bag 0027 added. All optional — `createOrganisation`'s inline contact
@@ -223,6 +254,10 @@ export async function createOrganisation(
         email: input.contact.email,
         instagramHandle: input.contact.instagramHandle,
         isPrimary: true,
+        // Hand-typed, whatever the organisation around it came from — an
+        // organisation created by hand has no CSV batch behind it.
+        source: CONTACT_SOURCE.manual,
+        lawfulBasis: input.contact.lawfulBasis,
       });
     }
 
@@ -313,12 +348,22 @@ async function insertContact(
   query: TxQuery,
   input: CreateContactInput,
 ): Promise<string> {
+  // #248. Checked HERE and not only in the actions above, for the reason the
+  // module comment gives about `isSafeWebsiteUrl` and `isSuppressed`: this is
+  // an exported writer, and `lawful_basis` is a plain `text` column with no
+  // CHECK, so nothing but this line stops a future caller writing free text —
+  // or `not_recorded_pre_migration`, which is storable but never choosable —
+  // into the field a subject-access request is answered from.
+  if (!isSelectableLawfulBasis(input.lawfulBasis)) {
+    throw new Error(`insertContact: ${String(input.lawfulBasis)} is not a selectable lawful basis`);
+  }
   try {
     const rows = await query<{ id: string }>(
       `INSERT INTO crm_contacts
          (organisation_id, name, email, phone, instagram_handle, is_primary,
-          biography, followers_count, posts_count, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+          biography, followers_count, posts_count, metadata,
+          source, sourced_at, lawful_basis)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, now(), $12)
        RETURNING id`,
       [
         input.organisationId,
@@ -340,6 +385,8 @@ async function insertContact(
         // column is NOT NULL, and one spelling of "nothing retained" is the
         // whole reason it is.
         JSON.stringify(input.metadata ?? {}),
+        input.source,
+        input.lawfulBasis,
       ],
     );
     return rows[0].id;
@@ -620,7 +667,7 @@ async function writeEditActivity(
 /** The contact fields an operator may correct. `is_primary` is deliberately
  *  not among them — it is not this contact's property alone, so it moves
  *  through `setPrimaryContact` where the siblings can be demoted with it. */
-export type ContactField = "name" | "email" | "phone" | "instagramHandle";
+export type ContactField = "name" | "email" | "phone" | "instagramHandle" | "lawfulBasis";
 
 export interface ChangedContactField {
   field: ContactField;
@@ -637,6 +684,23 @@ export interface UpdateContactInput {
   email?: string | null;
   phone?: string | null;
   instagramHandle?: string | null;
+  /**
+   * A corrected lawful basis (#248), or `undefined` to leave the recorded
+   * one exactly as it stands.
+   *
+   * "Leave it alone" is a distinct third state from the null-vs-value the
+   * four identifying fields use, and it is what makes the 259 migrated rows
+   * editable at all: they hold `not_recorded_pre_migration`, which is
+   * storable but not selectable, so an edit form that had to resubmit the
+   * current value could never save. Omitting the field touches the column
+   * not at all.
+   *
+   * `source` and `sourced_at` are NOT correctable through here on purpose.
+   * They record how and when the row was obtained — facts about a past
+   * event, not an operator's assessment — and a rewritable acquisition
+   * record evidences nothing.
+   */
+  lawfulBasis?: LawfulBasis;
 }
 
 interface NormalisedContact {
@@ -644,6 +708,10 @@ interface NormalisedContact {
   email: string | null;
   phone: string | null;
   instagramHandle: string | null;
+  /** `undefined` means "unchanged" — see `UpdateContactInput.lawfulBasis`.
+   *  Never null: a basis can be corrected but not cleared, because a contact
+   *  held under no basis is the defect #248 reports. */
+  lawfulBasis: LawfulBasis | undefined;
 }
 
 /**
@@ -682,7 +750,19 @@ function normaliseContactInput(input: UpdateContactInput): NormalisedContact {
     instagramHandle: input.instagramHandle
       ? normalizeInstagramHandle(input.instagramHandle) || null
       : null,
+    // Same reasoning as `insertContact`'s check, at the other writer of this
+    // column: an exported function must not depend on its callers having
+    // validated. `undefined` passes through as "unchanged".
+    lawfulBasis: assertCorrectableLawfulBasis(input.lawfulBasis),
   };
+}
+
+function assertCorrectableLawfulBasis(value: LawfulBasis | undefined): LawfulBasis | undefined {
+  if (value === undefined) return undefined;
+  if (!isSelectableLawfulBasis(value)) {
+    throw new Error(`updateContact: ${String(value)} is not a selectable lawful basis`);
+  }
+  return value;
 }
 
 async function selectContactForUpdate(
@@ -695,8 +775,9 @@ async function selectContactForUpdate(
     email: string | null;
     phone: string | null;
     instagram_handle: string | null;
+    lawful_basis: string | null;
   }>(
-    `SELECT organisation_id, name, email, phone, instagram_handle
+    `SELECT organisation_id, name, email, phone, instagram_handle, lawful_basis
        FROM crm_contacts
       WHERE id = $1
         FOR UPDATE`,
@@ -712,6 +793,10 @@ async function selectContactForUpdate(
     email: row.email,
     phone: row.phone,
     instagramHandle: row.instagram_handle,
+    // Widened, not validated: whatever the row holds is what the diff has to
+    // compare against, `not_recorded_pre_migration` included. Only the
+    // incoming value is gated.
+    lawfulBasis: (row.lawful_basis ?? undefined) as LawfulBasis | undefined,
   };
 }
 
@@ -720,9 +805,20 @@ function diffContact(
   next: NormalisedContact,
 ): ChangedContactField[] {
   const fields: readonly ContactField[] = ["name", "email", "phone", "instagramHandle"];
-  return fields
+  const changed: ChangedContactField[] = fields
     .filter((field) => current[field] !== next[field])
-    .map((field) => ({ field, from: current[field], to: next[field] }));
+    .map((field) => ({ field, from: current[field] as string | null, to: next[field] as string | null }));
+  // Guarded on `undefined` rather than folded into the loop above: for the
+  // four identifying fields an absent input MEANS null (clear it), and for
+  // the basis it means "leave it", so the same comparison cannot serve both.
+  if (next.lawfulBasis !== undefined && next.lawfulBasis !== current.lawfulBasis) {
+    changed.push({
+      field: "lawfulBasis",
+      from: current.lawfulBasis ?? null,
+      to: next.lawfulBasis,
+    });
+  }
+  return changed;
 }
 
 async function writeContact(
@@ -737,14 +833,20 @@ async function writeContact(
   // generic failure.
   try {
     await query(
+      // COALESCE, so an omitted basis leaves the recorded one — including
+      // the legacy marker on the 259 migrated rows — exactly where it is.
+      // `sourced_at` is untouched here for the same reason `source` is: it
+      // is when the row was obtained, and a correction is not an
+      // acquisition.
       `UPDATE crm_contacts
           SET name = $2,
               email = $3,
               phone = $4,
               instagram_handle = $5,
+              lawful_basis = COALESCE($6, lawful_basis),
               updated_at = now()
         WHERE id = $1`,
-      [contactId, next.name, next.email, next.phone, next.instagramHandle],
+      [contactId, next.name, next.email, next.phone, next.instagramHandle, next.lawfulBasis ?? null],
     );
   } catch (cause) {
     const key = duplicateContactKey(cause);

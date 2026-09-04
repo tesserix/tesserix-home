@@ -30,6 +30,15 @@ import type {
 } from "@/lib/db/crm-repo";
 import type { TemplateRow } from "@/lib/db/crm-templates";
 import { NO_PRODUCT_VALUE } from "@/lib/db/crm-filters";
+import {
+  contactSourceLabel,
+  lawfulBasisLabel,
+} from "@/lib/crm-provenance";
+import {
+  KEEP_RECORDED_BASIS,
+  LawfulBasisHint,
+  LawfulBasisSelect,
+} from "@/components/kit/lawful-basis-select";
 import { ActivityComposer } from "./activity-composer";
 import { TemplateComposer } from "./template-composer";
 import { ErrorNote } from "./error-note";
@@ -760,6 +769,8 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [instagramHandle, setInstagramHandle] = useState("");
+  // #248: no default. See `LawfulBasisSelect`.
+  const [lawfulBasis, setLawfulBasis] = useState<string>("");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -777,6 +788,7 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
         instagramHandle: instagramHandle.trim() || undefined,
+        lawfulBasis,
       });
       if (!result.ok) {
         setError(result.message);
@@ -786,6 +798,8 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
       setEmail("");
       setPhone("");
       setInstagramHandle("");
+      // Cleared with the rest: the next contact is a separate decision.
+      setLawfulBasis("");
       router.refresh();
     });
   };
@@ -840,7 +854,22 @@ function AddContactForm({ organisationId }: { organisationId: string }) {
           onChange={(event) => setInstagramHandle(event.target.value)}
         />
       </div>
-      <Button type="submit" size="sm" disabled={pending || !hasField}>
+      <div className="min-w-48">
+        <Label htmlFor="new-contact-lawful-basis">Lawful basis</Label>
+        <div className="mt-1">
+          <LawfulBasisSelect
+            id="new-contact-lawful-basis"
+            value={lawfulBasis || undefined}
+            onValueChange={setLawfulBasis}
+            disabled={pending}
+          />
+        </div>
+        <LawfulBasisHint value={lawfulBasis || undefined} />
+      </div>
+      {/* Gated on the basis as well as on there being a field to save. The
+          action refuses a missing one regardless; this is what keeps the
+          refusal from being how the operator learns it was required. */}
+      <Button type="submit" size="sm" disabled={pending || !hasField || !lawfulBasis}>
         {pending ? "Adding…" : "Add contact"}
       </Button>
       <ErrorNote message={error} />
@@ -900,13 +929,51 @@ function ContactRowItem({
           onDone={() => setEditing(false)}
         />
       ) : (
-        <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
-          {contact.email ? <span>{contact.email}</span> : null}
-          {contact.phone ? <span>{contact.phone}</span> : null}
-          {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
-        </div>
+        <>
+          <div className="mt-1 flex flex-wrap gap-3 text-muted-foreground">
+            {contact.email ? <span>{contact.email}</span> : null}
+            {contact.phone ? <span>{contact.phone}</span> : null}
+            {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
+          </div>
+          <ContactProvenance contact={contact} />
+        </>
       )}
     </li>
+  );
+}
+
+/**
+ * What we hold about this person, when we got it, and why we may (#248).
+ *
+ * On the detail page and not behind the edit form, because this is the
+ * surface an operator answering a subject-access request is already on:
+ * migration 0019 wrote these three columns as "the justification for holding
+ * the data at all" and nothing selected them, so until now the only way to
+ * answer "why do you have my details" was psql.
+ *
+ * ALWAYS RENDERED, including when all three are null — which is exactly the
+ * state #248 found for every contact created since the cutover. A block that
+ * disappeared when there was nothing to show would hide the one case worth
+ * seeing; "Not recorded" is a finding, not an empty state.
+ */
+function ContactProvenance({ contact }: { contact: ContactRow }) {
+  return (
+    <dl className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <div className="flex gap-1">
+        <dt>Lawful basis:</dt>
+        <dd className="font-medium">{lawfulBasisLabel(contact.lawfulBasis)}</dd>
+      </div>
+      <div className="flex gap-1">
+        <dt>Source:</dt>
+        <dd className="font-medium">{contactSourceLabel(contact.source)}</dd>
+      </div>
+      <div className="flex gap-1">
+        <dt>Sourced:</dt>
+        <dd className="font-medium">
+          {contact.sourcedAt ? contact.sourcedAt.slice(0, 10) : "Not recorded"}
+        </dd>
+      </div>
+    </dl>
   );
 }
 
@@ -969,6 +1036,12 @@ function EditContactForm({
   const [email, setEmail] = useState(contact.email ?? "");
   const [phone, setPhone] = useState(contact.phone ?? "");
   const [instagramHandle, setInstagramHandle] = useState(contact.instagramHandle ?? "");
+  // #248. Starts on the sentinel, NOT on the contact's recorded basis: the
+  // 259 migrated contacts hold `not_recorded_pre_migration`, which is
+  // storable but never selectable, so there is no option that could seed and
+  // round-trip it. "Keep as recorded" is the seed, and the field is omitted
+  // from the submission entirely unless the operator picks something else.
+  const [lawfulBasis, setLawfulBasis] = useState<string>(KEEP_RECORDED_BASIS);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -984,6 +1057,13 @@ function EditContactForm({
     formData.set("email", email);
     formData.set("phone", phone);
     formData.set("instagramHandle", instagramHandle);
+    // Set only when it is a real correction. An absent field means "leave the
+    // recorded basis alone" all the way down to `updateContact`'s COALESCE —
+    // which is what keeps `sourced_at` and `source` honest too: a typo fix is
+    // not a re-acquisition.
+    if (lawfulBasis !== KEEP_RECORDED_BASIS) {
+      formData.set("lawfulBasis", lawfulBasis);
+    }
     startTransition(async () => {
       const result = await updateContactAction(organisationId, contact.id, formData);
       if (!result.ok) {
@@ -1049,6 +1129,19 @@ function EditContactForm({
           placeholder="@bondibaker"
           onChange={(event) => setInstagramHandle(event.target.value)}
         />
+      </div>
+      <div className="min-w-56">
+        <Label htmlFor={`edit-contact-basis-${contact.id}`}>Lawful basis</Label>
+        <div className="mt-1">
+          <LawfulBasisSelect
+            id={`edit-contact-basis-${contact.id}`}
+            value={lawfulBasis}
+            onValueChange={setLawfulBasis}
+            disabled={pending}
+            keepRecordedLabel={`Keep as recorded — ${lawfulBasisLabel(contact.lawfulBasis)}`}
+          />
+        </div>
+        <LawfulBasisHint value={lawfulBasis} />
       </div>
       <Button type="submit" size="sm" disabled={pending || !hasField}>
         {pending ? "Saving…" : "Save contact"}

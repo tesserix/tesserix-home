@@ -134,6 +134,45 @@ describe("previewImportAction", () => {
 
   // An unbounded file holds the pool's one connection for 2×N round trips —
   // refused before the session or the database is touched at all.
+  // #248. The batch's lawful basis is validated at THIS boundary, the same
+  // place `product` is checked against `ESTATE`, and before the session or
+  // the database is touched — an invalid form is not an audited event.
+  //
+  // These three are the tests that fail when the check is removed. Without
+  // them the enum is free text with extra steps: `commitImport` would happily
+  // store "we felt like it" in the column a subject-access request is
+  // answered from.
+  it("refuses a batch with no declared lawful basis, and writes nothing", async () => {
+    signIn(["crm"]);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "");
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/lawful basis/i);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
+  it("refuses free text as a lawful basis, and writes nothing", async () => {
+    signIn(["crm"]);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "we felt like it");
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/not a lawful basis/i);
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
+  it("refuses the pre-migration marker, which existing rows may hold but no new batch may claim", async () => {
+    signIn(["crm"]);
+    const result = await commitImportAction(
+      [{ email: "ava@example.com" }],
+      "not_recorded_pre_migration",
+    );
+
+    expect(result.ok).toBe(false);
+    expect(commitImport).not.toHaveBeenCalled();
+  });
+
   it("refuses a file over MAX_IMPORT_ROWS, before touching the session or the database", async () => {
     const result = await previewImportAction(manyRows(MAX_IMPORT_ROWS + 1));
 
@@ -158,13 +197,14 @@ describe("commitImportAction", () => {
     signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv");
+    const result = await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", "leads.csv");
 
     expect(result).toEqual({ ok: true, result: COMMIT_RESULT });
     // 1 row, no explicit totalRows: defaults to rows.length.
     expect(commitImport).toHaveBeenCalledWith(
       [{ email: "ava@example.com" }],
       "ava@tesserix.app",
+      "legitimate_interests",
       "leads.csv",
       1,
     );
@@ -178,7 +218,7 @@ describe("commitImportAction", () => {
   it("refuses without console entry, and never calls commitImport", async () => {
     signIn(undefined);
 
-    const result = await commitImportAction([{ email: "ava@example.com" }]);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests");
 
     expect(result).toEqual({
       ok: false,
@@ -192,7 +232,7 @@ describe("commitImportAction", () => {
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
     vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
 
-    const result = await commitImportAction([{ email: "ava@example.com" }]);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests");
 
     // `auditedOperation` runs the operation FIRST, so by the time the audit
     // write fails the rows are already in the database. "Not saved" was a
@@ -206,7 +246,7 @@ describe("commitImportAction", () => {
   });
 
   it("refuses a file over MAX_IMPORT_ROWS, before touching the session or the database", async () => {
-    const result = await commitImportAction(manyRows(MAX_IMPORT_ROWS + 1));
+    const result = await commitImportAction(manyRows(MAX_IMPORT_ROWS + 1), "legitimate_interests");
 
     expect(result.ok).toBe(false);
     expect(getCurrentSession).not.toHaveBeenCalled();
@@ -221,13 +261,16 @@ describe("commitImportAction", () => {
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
     const long = "  " + "a".repeat(400) + ".csv  ";
 
-    await commitImportAction([{ email: "ava@example.com" }], long);
+    await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", long);
 
-    const [, , boundedFilename] = vi.mocked(commitImport).mock.calls[0];
+    const [, , , boundedFilename] = vi.mocked(commitImport).mock.calls[0];
     expect(boundedFilename).toHaveLength(255);
     expect(boundedFilename).not.toMatch(/^\s|\s$/);
     const audit = lastAuditInsert();
-    expect(audit.target).toBe(boundedFilename);
+    // #248: the basis rides the audit target alongside the filename —
+    // `AuditSummary` is counts-only, and "under which basis was this batch
+    // declared" is a fact about the decision, not a count.
+    expect(audit.target).toBe(`${boundedFilename} (legitimate_interests)`);
   });
 
   // Important 3 / Minor: the caller (import-view.tsx) knows the FULL file
@@ -238,11 +281,12 @@ describe("commitImportAction", () => {
     signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 5);
+    await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", "leads.csv", 5);
 
     expect(commitImport).toHaveBeenCalledWith(
       [{ email: "ava@example.com" }],
       "ava@tesserix.app",
+      "legitimate_interests",
       "leads.csv",
       5,
     );
@@ -261,7 +305,7 @@ describe("commitImportAction", () => {
     signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 1e10);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", "leads.csv", 1e10);
 
     expect(result.ok).toBe(false);
     expect(commitImport).not.toHaveBeenCalled();
@@ -271,6 +315,7 @@ describe("commitImportAction", () => {
   it("rejects a totalRows over MAX_TOTAL_ROWS, before touching the session", async () => {
     const result = await commitImportAction(
       [{ email: "ava@example.com" }],
+      "legitimate_interests",
       "leads.csv",
       MAX_TOTAL_ROWS + 1,
     );
@@ -284,7 +329,7 @@ describe("commitImportAction", () => {
     signIn(["crm"]);
     vi.mocked(commitImport).mockResolvedValue(COMMIT_RESULT);
 
-    const result = await commitImportAction([{ email: "ava@example.com" }], "leads.csv", -3.7);
+    const result = await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", "leads.csv", -3.7);
 
     expect(result.ok).toBe(false);
     expect(commitImport).not.toHaveBeenCalled();
@@ -296,6 +341,7 @@ describe("commitImportAction", () => {
 
     const result = await commitImportAction(
       [{ email: "ava@example.com" }, { email: "second@example.com" }],
+      "legitimate_interests",
       "leads.csv",
       1,
     );
@@ -314,7 +360,7 @@ describe("commitImportAction", () => {
 
     // 1 row committed, totalRows 4: 3 rows were dropped client-side before
     // commitImport ever saw them.
-    await commitImportAction([{ email: "ava@example.com" }], "leads.csv", 4);
+    await commitImportAction([{ email: "ava@example.com" }], "legitimate_interests", "leads.csv", 4);
 
     const audit = lastAuditInsert();
     expect(audit.summary).toEqual({ created: 1, matched: 0, skipped: 0, erased: 0, malformed: 3 });
