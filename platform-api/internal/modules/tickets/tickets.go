@@ -45,6 +45,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets/internal/handler"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/tickets/internal/service"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/auth"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/productscope"
 )
 
 // Config is what the module needs from the composition root.
@@ -60,6 +61,13 @@ type Config struct {
 	// what stops "authentication disabled" from outliving its purpose.
 	Verifier *auth.Verifier
 	Log      *slog.Logger
+	// Scope maps an attested subject to the product it speaks for (#152).
+	//
+	// A nil registry resolves nobody, which REFUSES every machine caller
+	// rather than admitting one unscoped — so a deployment that forgets to
+	// wire this loses the product path entirely and keeps the operator path
+	// working, which is the safe direction to fail.
+	Scope *productscope.Registry
 }
 
 // Register mounts the module's routes.
@@ -68,5 +76,5 @@ type Config struct {
 // the verifier. Calling this directly would bypass that check, which is why
 // the module's own tests go through RegisterModule too.
 func Register(mux *http.ServeMux, cfg Config) {
-	handler.New(service.New(cfg.Pool), cfg.Log).Routes(mux, cfg.Verifier)
+	handler.New(service.New(cfg.Pool), cfg.Log, cfg.Scope).Routes(mux, cfg.Verifier)
 }

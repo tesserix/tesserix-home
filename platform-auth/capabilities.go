@@ -74,6 +74,21 @@ const (
 	// would silently extend every grant already holding it. See
 	// capabilities.ts, which is the authority this mirrors.
 	CapReadPromoCatalog Capability = "read-promo-catalog"
+
+	// CapProductSupport reaches a product's OWN support tickets — file, read
+	// and reply (#152). Held by a Zitadel service user, never an operator.
+	//
+	// NOT CapSupport. That is an operator SURFACE and capabilities are
+	// estate-wide, so granting it to a product's machine would open every
+	// other product's ticket queue, with CapRespond beside it opening replies
+	// and status changes. See capabilities.ts, which is the authority this
+	// mirrors and carries the full reasoning.
+	//
+	// WHICH product a holder may reach is not encoded in the capability. It
+	// comes from the subject->product registry: this answers WHETHER, the
+	// registry answers WHICH. It is NOT derived from Principal.Kind — verify.go
+	// forbids authorising on that.
+	CapProductSupport Capability = "product-support"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -84,7 +99,7 @@ var Capabilities = []Capability{
 	CapCRM, CapSupport, CapBilling, CapPlatform,
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
-	CapReadPlanCatalog, CapReadPromoCatalog,
+	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport,
 }
 
 // Surfaces say where a principal works.
@@ -103,7 +118,7 @@ var Verbs = []Capability{
 // machine holds neither concept, so forcing it into one would misstate what
 // it is rather than clarify it. Mirrors MACHINE_CAPABILITIES in
 // capabilities.ts.
-var Machines = []Capability{CapReadPlanCatalog, CapReadPromoCatalog}
+var Machines = []Capability{CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport}
 
 func known(c Capability) bool {
 	return slices.Contains(Capabilities, c)

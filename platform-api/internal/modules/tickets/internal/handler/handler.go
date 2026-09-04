@@ -21,6 +21,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/httpx"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/idempotency"
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/paging"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/productscope"
 )
 
 // Paging bounds.
@@ -48,14 +49,61 @@ const (
 	opStatus = "tickets.status"
 )
 
+// Refusals raised before the service is reached.
+//
+// errUnscopedMachine is a 403 rather than a 500 even though it is caused by
+// configuration: the caller genuinely may not do this, and telling it "server
+// error" would send an operator looking at the database instead of at
+// PRODUCT_SCOPE_*. The log line, which names the subject, is where the cause
+// goes.
+var (
+	errNoPrincipal     = errors.New("no principal on the request")
+	errUnscopedMachine = errors.New("this caller is not configured for any product")
+)
+
 // Handler serves the module's routes.
 type Handler struct {
 	svc *service.Service
 	log *slog.Logger
+	// scope maps an attested subject to the product it speaks for. Never nil
+	// in a wired deployment; a nil registry resolves nobody, which refuses
+	// every machine rather than admitting one unscoped.
+	scope *productscope.Registry
 }
 
-func New(svc *service.Service, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, log: log}
+func New(svc *service.Service, log *slog.Logger, scope *productscope.Registry) *Handler {
+	return &Handler{svc: svc, log: log, scope: scope}
+}
+
+// scopeFor resolves what the caller may reach.
+//
+// Registry FIRST, capability second. A subject named in the registry is a
+// product's machine and is confined to that product whatever else it holds —
+// so a machine that also acquired an operator capability does not thereby
+// escape its scope.
+//
+// A caller holding product-support and resolving to NO product is REFUSED, not
+// admitted unscoped. That is the one dangerous default in this design: Scope's
+// zero value means "the estate", so falling through to it here would turn a
+// missing config line into estate-wide access for a product's machine.
+func (h *Handler) scopeFor(r *http.Request) (service.Scope, error) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		return service.Scope{}, errNoPrincipal
+	}
+	if slug, scoped := h.scope.ProductFor(principal.Subject); scoped {
+		return service.Scope{ProductID: slug}, nil
+	}
+	if principal.Has(auth.CapProductSupport) {
+		h.log.ErrorContext(r.Context(),
+			"a product-support caller resolves to no product — PRODUCT_SCOPE_* is missing an entry for this subject",
+			slog.String("subject", principal.Subject),
+			slog.String("path", r.URL.Path),
+		)
+		return service.Scope{}, errUnscopedMachine
+	}
+	// An operator. Unscoped, exactly as before #152.
+	return service.Scope{}, nil
 }
 
 // Routes registers the module's paths onto the router.
@@ -82,9 +130,51 @@ func New(svc *service.Service, log *slog.Logger) *Handler {
 // opposite arrangement on the console side, where 11 of 14 mutating actions
 // inherited the weakest gate by saying nothing.
 func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
+	// A read is reachable two ways: an OPERATOR through the console's support
+	// surface, and a PRODUCT'S MACHINE through product-support. Neither
+	// implies the other (capabilities.ts), so this is "either", not "both".
+	// WHICH tickets each then sees is not decided here — see scopeFor.
 	read := func(handler http.HandlerFunc) http.Handler {
-		return auth.Authenticate(verifier, h.log, auth.RequireCapability(auth.CapSupport, h.log, handler))
+		return auth.Authenticate(verifier, h.log,
+			auth.RequireAnyCapability(
+				[]auth.Capability{auth.CapSupport, auth.CapProductSupport}, h.log, handler))
 	}
+
+	// The summary stays OPERATOR-ONLY.
+	//
+	// It is a standing count with no tenant dimension, and a product caller is
+	// confined to one tenant — so there is no honest answer to give one. No
+	// product asks for it either: mark8ly's client lists, reads, replies and
+	// files, and never fetches a summary.
+	summaryOnly := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log,
+			auth.RequireCapability(auth.CapSupport, h.log, handler))
+	}
+
+	// Writes stay OPERATOR-ONLY, replies included.
+	//
+	// A product machine deliberately does NOT reach the reply route yet, even
+	// though `product-support` is meant to carry that write, and the reason is
+	// authorship rather than authorisation.
+	//
+	// service.Reply records every reply as domain.AuthorOperator signed
+	// "Tesserix Support" (see Actor.displayName). That is correct while the
+	// only caller is the console — a merchant is talking to the platform and
+	// the platform is what the reply should say — and displayName's own
+	// comment records the assumption it rests on: "a merchant's own replies do
+	// not come through here". Admitting a machine BREAKS that assumption,
+	// because a product's machine relays a MERCHANT. apps/web's route writes
+	// author_type "merchant" with the merchant's own name and id
+	// (app/api/internal/platform-tickets/[id]/replies/route.ts).
+	//
+	// So opening this route without first giving a reply an author would file
+	// every merchant's words under the support team's name, on a thread that
+	// merchant reads. Refusing is the safe half of the change; the author
+	// contract is its own piece of work, and #152 step 2 cannot repoint
+	// mark8ly's replies until it lands., unchanged by #152. mark8ly
+	// cannot re-status a ticket through apps/web today and does not gain the
+	// ability by moving; a merchant-side reopen is decided by the server on
+	// reply, never asserted by the caller.
 	write := func(handler http.HandlerFunc) http.Handler {
 		return auth.Authenticate(verifier, h.log,
 			auth.RequireCapability(auth.CapSupport, h.log,
@@ -96,7 +186,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	// surface access rather than replacing it — respond without support means
 	// "may reply where they may work", not "may reply anywhere".
 	mux.Handle("GET /v1/tickets", read(h.list))
-	mux.Handle("GET /v1/tickets/summary", read(h.summary))
+	mux.Handle("GET /v1/tickets/summary", summaryOnly(h.summary))
 	mux.Handle("GET /v1/tickets/{id}", read(h.detail))
 	mux.Handle("POST /v1/tickets/{id}/replies", write(h.reply))
 	mux.Handle("PATCH /v1/tickets/{id}", write(h.setStatus))
@@ -154,7 +244,21 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, page, err := h.svc.List(r.Context(), filter, limit, query.Get("cursor"))
+	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	// The tenant a product caller is acting for. An operator names none and
+	// stays estate-wide; a machine that names none is refused rather than
+	// handed every tenant inside its product.
+	scope, err = scope.ForTenant(query.Get("tenant"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	payload, page, err := h.svc.List(r.Context(), scope, filter, limit, query.Get("cursor"))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -179,7 +283,13 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := h.svc.Summary(r.Context())
+	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	payload, err := h.svc.Summary(r.Context(), scope)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -190,7 +300,18 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
-	payload, err := h.svc.Detail(r.Context(), r.PathValue("id"))
+	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	scope, err = scope.ForTenant(r.URL.Query().Get("tenant"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	payload, err := h.svc.Detail(r.Context(), scope, r.PathValue("id"))
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -223,8 +344,29 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
 	input := service.ReplyInput{Content: request.Content}
 	if raw := firstNonEmpty(request.NewStatus, request.NewStatusSnake); raw != "" {
+		// A SCOPED caller may not carry a transition on its reply.
+		//
+		// Without this the reply path would be a way around the operator-only
+		// PATCH gate: a machine cannot re-status a ticket directly, so it must
+		// not be able to do it by attaching the same transition to a message.
+		//
+		// It costs mark8ly nothing — its client sends no status today, and the
+		// merchant-side reopen it relies on is decided by the SERVER on reply,
+		// not asserted by the caller.
+		if !scope.Unscoped() {
+			h.fail(w, r, httpx.Validation(
+				"a product caller may not set a ticket's status",
+				map[string]any{"newStatus": "only an operator may transition a ticket"}))
+			return
+		}
 		status, err := domain.ParseStatus(raw)
 		if err != nil {
 			// Rejected here rather than left to the service, because the
@@ -243,7 +385,7 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	written, err := h.svc.Reply(r.Context(), actorOf(principal), r.PathValue("id"), input, key)
+	written, err := h.svc.Reply(r.Context(), scope, actorOf(principal), r.PathValue("id"), input, key)
 	if err != nil {
 		h.fail(w, r, err)
 		return

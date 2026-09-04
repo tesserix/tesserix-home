@@ -73,7 +73,11 @@ func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
 // ---- reads --------------------------------------------------------------
 
 // List reads one page of the queue.
-func (s *Service) List(ctx context.Context, filter repository.Filter, limit int, cursor string) (ListPayload, repository.Page, error) {
+func (s *Service) List(ctx context.Context, scope Scope, filter repository.Filter, limit int, cursor string) (ListPayload, repository.Page, error) {
+	filter, err := scope.Apply(filter)
+	if err != nil {
+		return ListPayload{}, repository.Page{}, err
+	}
 	page, err := repository.List(ctx, s.pool, filter, limit, cursor)
 	if err != nil {
 		return ListPayload{}, repository.Page{}, err
@@ -82,8 +86,8 @@ func (s *Service) List(ctx context.Context, filter repository.Filter, limit int,
 }
 
 // Summary reads the standing count of the queue.
-func (s *Service) Summary(ctx context.Context) (SummaryPayload, error) {
-	summary, err := repository.Summary(ctx, s.pool)
+func (s *Service) Summary(ctx context.Context, scope Scope) (SummaryPayload, error) {
+	summary, err := repository.Summary(ctx, s.pool, scope.ProductID)
 	if err != nil {
 		return SummaryPayload{}, err
 	}
@@ -97,7 +101,7 @@ func (s *Service) Summary(ctx context.Context) (SummaryPayload, error) {
 // ticket read did not see. Without it, a reply landing between the two queries
 // produces a response whose thread contains a message the ticket's updated_at
 // does not account for, which reads as a stale ticket rather than a race.
-func (s *Service) Detail(ctx context.Context, id string) (DetailPayload, error) {
+func (s *Service) Detail(ctx context.Context, scope Scope, id string) (DetailPayload, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return DetailPayload{}, fmt.Errorf("beginning a read: %w", err)
@@ -110,6 +114,15 @@ func (s *Service) Detail(ctx context.Context, id string) (DetailPayload, error) 
 	ticket, err := repository.Get(ctx, tx, id)
 	if err != nil {
 		return DetailPayload{}, err
+	}
+	if !scope.Admits(ticket.ProductID, ticket.TenantID) {
+		// ErrNotFound, NOT a refusal. A 403 would confirm that this id names a
+		// real ticket, letting a product enumerate the estate's ids one
+		// request at a time. A caller outside its scope is told the same thing
+		// as a caller naming an id that never existed.
+		//
+		// The thread is deliberately not read before this check.
+		return DetailPayload{}, repository.ErrNotFound
 	}
 	replies, err := repository.Replies(ctx, tx, id)
 	if err != nil {
@@ -142,7 +155,7 @@ type ReplyInput struct {
 }
 
 // Reply appends a message and, optionally, transitions the ticket.
-func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input ReplyInput, key *idempotency.Key) (write.Result, error) {
+func (s *Service) Reply(ctx context.Context, scope Scope, actor Actor, ticketID string, input ReplyInput, key *idempotency.Key) (write.Result, error) {
 	content := strings.TrimSpace(input.Content)
 	if content == "" {
 		// Trimmed first: a reply of spaces is an empty reply, and storing one
@@ -157,6 +170,12 @@ func (s *Service) Reply(ctx context.Context, actor Actor, ticketID string, input
 		ticket, err := repository.Get(ctx, tx, ticketID)
 		if err != nil {
 			return nil, audit.Entry{}, 0, err
+		}
+		if !scope.Admits(ticket.ProductID, ticket.TenantID) {
+			// Same non-disclosure as Detail, and checked INSIDE the
+			// transaction that will write, so the ticket whose ownership was
+			// verified is the ticket the reply lands on.
+			return nil, audit.Entry{}, 0, repository.ErrNotFound
 		}
 
 		// Signed by the platform, attributed by subject.

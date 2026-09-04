@@ -162,6 +162,40 @@ export const CAPABILITIES = [
    * 403, which is the correct answer and not a bug in the route.
    */
   "read-promo-catalog",
+
+  /**
+   * Reach a product's OWN support tickets — file, read, and reply to them
+   * (tesserix-home#152). Held by a Zitadel service user, never an operator.
+   *
+   * NOT `support`. That is an operator SURFACE, and §7 records that
+   * capabilities are estate-wide rather than per-product: granting `support`
+   * to a product's machine would open every other product's ticket queue, and
+   * `respond` beside it would open replying to and re-statusing them. mark8ly
+   * needs its own merchants' tickets and nothing else, and there was no
+   * capability that said so — which is why this one exists rather than
+   * reusing the operator pair.
+   *
+   * WHICH product a holder may reach is deliberately NOT encoded here. A
+   * capability string cannot carry a product — §7 again — and inventing
+   * `product-support:mark8ly` would put a per-product dimension into a
+   * vocabulary that is a fixed contract with Zitadel's role list, where
+   * `toCapabilities` drops anything it does not already know. Scope comes
+   * from the subject->product registry instead: this capability answers
+   * WHETHER, the registry answers WHICH, and a holder absent from the
+   * registry is refused rather than defaulted.
+   *
+   * It is emphatically not derived from `Principal.Kind`, which
+   * `platform-auth/verify.go` forbids authorising on — classification and
+   * access are kept apart so that changing one cannot silently change the
+   * other (#450, #433).
+   *
+   * DEPLOY PRECONDITION, same shape as `read-plan-catalog`: this string is a
+   * contract with Zitadel. The role must exist on the Platform Console
+   * project AND be granted to the service user before the gated routes ship,
+   * or verification succeeds and authorization answers 403 to every caller —
+   * which is the correct answer, and not a bug in the route.
+   */
+  "product-support",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -215,6 +249,7 @@ export const RISK_CAPABILITIES = [
 export const MACHINE_CAPABILITIES = [
   "read-plan-catalog",
   "read-promo-catalog",
+  "product-support",
 ] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {
