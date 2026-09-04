@@ -2181,12 +2181,12 @@ describe("closedOpportunities against a real database", () => {
          -- Won 5 days ago.
          ($1, $5, 'won', 'mark8ly', $9, $6::timestamptz, NULL, $6::timestamptz),
          -- Lost 20 days ago: the oldest close date in this fixture, so it
-         -- sorts first, and the only row carrying a reason.
+         -- sorts last, and the only row carrying a reason.
          ($2, $5, 'lost', 'mark8ly', $9, $7::timestamptz, 'Went with a competitor', $7::timestamptz),
          -- Terminal with no close date. Nothing in the console writes such a
          -- row today (see CLOSED_SORT_KEY), and the list must still page it
          -- rather than throw on its cursor — ordered by updated_at, which
-         -- puts it last here.
+         -- puts it first here.
          ($3, $5, 'won', 'mark8ly', $9, NULL, NULL, $8::timestamptz),
          -- Open, same organisation and owner: the row that proves the
          -- terminal predicate runs at all.
@@ -2205,9 +2205,12 @@ describe("closedOpportunities against a real database", () => {
     );
   });
 
-  it("returns only terminal deals, oldest-closed-first", async () => {
+  it("returns only terminal deals, newest-closed-first", async () => {
+    // #565: the tab is retrospective, so the deal closed most recently is
+    // the one an operator opens it to see. The open row proves the terminal
+    // predicate runs at all.
     const { rows } = await closedOpportunities({ owner: OWNER }, 50);
-    expect(rows.map((r) => r.id)).toEqual([LOST_ID, WON_ID, UNDATED_ID]);
+    expect(rows.map((r) => r.id)).toEqual([UNDATED_ID, WON_ID, LOST_ID]);
   });
 
   it("carries the close date and the lost reason", async () => {
@@ -2225,13 +2228,55 @@ describe("closedOpportunities against a real database", () => {
     const all = await closedOpportunities({ owner: OWNER }, 50);
     expect(all.rows.find((r) => r.id === UNDATED_ID)?.closedAt).toBeNull();
 
-    // A limit of 2 makes the null-dated row the first row of page two, so
-    // its cursor is minted from the COALESCE rather than from the NULL.
-    const first = await closedOpportunities({ owner: OWNER }, 2);
+    // A limit of 1 makes the null-dated row the whole of page one — it is
+    // the most recently touched of the three — so the cursor carried to page
+    // two is minted from the COALESCE rather than from the NULL.
+    const first = await closedOpportunities({ owner: OWNER }, 1);
+    expect(first.rows.map((r) => r.id)).toEqual([UNDATED_ID]);
     expect(first.nextCursor).not.toBeNull();
-    const second = await closedOpportunities({ owner: OWNER }, 2, first.nextCursor!);
-    expect(second.rows.map((r) => r.id)).toEqual([UNDATED_ID]);
-    expect(second.precedingCount).toBe(2);
+    const second = await closedOpportunities({ owner: OWNER }, 1, first.nextCursor!);
+    expect(second.rows.map((r) => r.id)).toEqual([WON_ID]);
+    expect(second.precedingCount).toBe(1);
+  });
+
+  it("pages backward down a descending list to the page it came from", async () => {
+    // The subtle case: `queuePage` composes two directions — the list's own
+    // (descending here) and the cursor's. They cancel, so the backward fetch
+    // runs ascending and its rows are re-reversed. A page that came back in
+    // the wrong order, or a `precedingCount` off by the length of the page
+    // itself, is invisible until someone presses Previous.
+    const page1 = await closedOpportunities({ owner: OWNER }, 1);
+    const page2 = await closedOpportunities({ owner: OWNER }, 1, page1.nextCursor!);
+    const page3 = await closedOpportunities({ owner: OWNER }, 1, page2.nextCursor!);
+    expect(page3.rows.map((r) => r.id)).toEqual([LOST_ID]);
+    expect(page3.precedingCount).toBe(2);
+    expect(page3.nextCursor).toBeNull();
+
+    const back2 = await closedOpportunities({ owner: OWNER }, 1, page3.previousCursor!);
+    expect(back2.rows.map((r) => r.id)).toEqual([WON_ID]);
+    expect(back2.precedingCount).toBe(1);
+
+    const back1 = await closedOpportunities({ owner: OWNER }, 1, back2.previousCursor!);
+    expect(back1.rows.map((r) => r.id)).toEqual([UNDATED_ID]);
+    expect(back1.precedingCount).toBe(0);
+    expect(back1.previousCursor).toBeNull();
+  });
+
+  it("returns a multi-row backward page in display order, newest first", async () => {
+    // One row a page cannot tell a reversed page from a correct one. Two
+    // can: `trimBackwardPage` re-reverses what SQL returned nearest-anchor
+    // first, and skipping that renders the page upside down while every
+    // count and cursor stays right.
+    const page1 = await closedOpportunities({ owner: OWNER }, 2);
+    expect(page1.rows.map((r) => r.id)).toEqual([UNDATED_ID, WON_ID]);
+    const page2 = await closedOpportunities({ owner: OWNER }, 2, page1.nextCursor!);
+    expect(page2.rows.map((r) => r.id)).toEqual([LOST_ID]);
+    expect(page2.precedingCount).toBe(2);
+
+    const back = await closedOpportunities({ owner: OWNER }, 2, page2.previousCursor!);
+    expect(back.rows.map((r) => r.id)).toEqual([UNDATED_ID, WON_ID]);
+    expect(back.precedingCount).toBe(0);
+    expect(back.total).toBe(3);
   });
 
   it("narrows to one terminal stage when the filter asks for one", async () => {
