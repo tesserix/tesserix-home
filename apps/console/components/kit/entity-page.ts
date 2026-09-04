@@ -12,6 +12,10 @@ import { ENTITIES_LIMIT } from "@/lib/platform-api";
  * It lived under `kora/` while Kora's three pages were its only callers. It
  * moved here unchanged when the generic entity index became a fourth: a shared
  * util under one product's rail invites the next caller to copy it instead.
+ *
+ * The CRM organisations list is a fifth caller and NOT a §3.4 surface: it pages
+ * the console's own store rather than the platform API, and at its own page
+ * size — which is why `limit` below is a parameter rather than the constant.
  */
 
 export type IndexSearchParams = Record<string, string | string[] | undefined>;
@@ -81,6 +85,16 @@ export interface PagerLinks {
  * It is computed from `total` rather than from `rows.length === limit`, which
  * is the classic off-by-one: a result set that is an exact multiple of the
  * page size would offer one empty page past the end.
+ *
+ * `limit` defaults to `ENTITIES_LIMIT` because the four §3.4 index surfaces
+ * that were this function's only callers all page the platform API at that
+ * bound. It became a parameter for the CRM organisations list, which pages its
+ * own store 100 rows at a time: with the constant assumed, its page 3 of 259
+ * counts 100 rows ahead instead of 200 and offers a Next to an empty page.
+ * (`onboarding/sessions/pager.ts` forked over the same mismatch, but for a
+ * second reason a parameter here does not solve: its view is a client
+ * component that imports the module for its types, so nothing in it may reach
+ * `lib/platform-api` at all.)
  */
 export function pagerLinks(
   basePath: string,
@@ -88,8 +102,9 @@ export function pagerLinks(
   page: number,
   rowsOnPage: number,
   total: number,
+  limit: number = ENTITIES_LIMIT,
 ): PagerLinks {
-  const precedingCount = (page - 1) * ENTITIES_LIMIT;
+  const precedingCount = (page - 1) * limit;
   const hasNext = precedingCount + rowsOnPage < total;
   return {
     precedingCount,

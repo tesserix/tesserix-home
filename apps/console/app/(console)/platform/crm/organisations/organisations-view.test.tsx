@@ -1,18 +1,23 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { FilterDescriptor } from "@/components/kit/filter-bar";
-import type { OrganisationListRow } from "@/lib/db/crm-repo";
+import type { OrganisationListRow, OrganisationSort } from "@/lib/db/crm-repo";
 import { OrganisationsView } from "./organisations-view";
 
 const replace = vi.fn();
 
+// A cursor already on the URL, as if the operator paged deep into the list
+// before touching a filter: changing a filter must drop the stale cursor, or
+// the new query resumes from a position that belonged to the old one. Mutable
+// so a test can put a different query on the URL — the sort links are built
+// from it, so what it holds is under test rather than mere scenery.
+const DEFAULT_QUERY = "cursor=abc123&q=priya";
+const url = vi.hoisted(() => ({ query: "" }));
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: vi.fn() }),
   usePathname: () => "/platform/crm/organisations",
-  // A cursor already on the URL, as if the operator paged deep into the list
-  // before touching a filter: changing a filter must drop the stale cursor,
-  // or the new query resumes from a position that belonged to the old one.
-  useSearchParams: () => new URLSearchParams("cursor=abc123&q=priya"),
+  useSearchParams: () => new URLSearchParams(url.query),
 }));
 
 const DESCRIPTORS: FilterDescriptor[] = [
@@ -27,9 +32,10 @@ const DESCRIPTORS: FilterDescriptor[] = [
 
 beforeEach(() => {
   replace.mockReset();
+  url.query = DEFAULT_QUERY;
 });
 
-function renderView() {
+function renderView(sort: OrganisationSort | null = null) {
   render(
     <OrganisationsView
       rows={[]}
@@ -41,6 +47,7 @@ function renderView() {
       precedingCount={0}
       nextHref={null}
       previousHref={null}
+      sort={sort}
     />,
   );
 }
@@ -116,6 +123,7 @@ function renderRow(overrides: Partial<OrganisationListRow>) {
       precedingCount={0}
       nextHref={null}
       previousHref={null}
+      sort={null}
     />,
   );
   // The body row; index 0 is the header row.
@@ -124,14 +132,14 @@ function renderRow(overrides: Partial<OrganisationListRow>) {
 
 function renderRowWithProducts(products: readonly string[]) {
   const cells = renderRow({ products });
-  // Products is the last column.
-  return cells[cells.length - 1];
+  // Products sits between Followers and Added.
+  return cells[cells.length - 2];
 }
 
 function renderRowWithFollowers(followersCount: number | null) {
   const cells = renderRow({ followersCount });
-  // Followers sits between Open and Products, so it is the second-to-last.
-  return cells[cells.length - 2];
+  // Followers sits between Open and Products, so it is the third-to-last.
+  return cells[cells.length - 3];
 }
 
 function renderRowWithLocation(location: string | null, country: string | null) {
@@ -278,5 +286,141 @@ describe("OrganisationsView location cell", () => {
     // was recorded and merely failed to map.
     expect(cell.textContent).toBe("—");
     expect(cell.textContent).not.toContain("Unknown");
+  });
+});
+
+/** The query of a sort link, so a test can read its params. */
+function sortQuery(header: string): URLSearchParams {
+  const link = within(screen.getByRole("columnheader", { name: header })).getByRole("link");
+  const href = link.getAttribute("href") ?? "";
+  const [path, query] = href.split("?");
+  expect(path).toBe("/platform/crm/organisations");
+  return new URLSearchParams(query);
+}
+
+/**
+ * The columns this surface can order by, against the columns it cannot.
+ *
+ * The sortable three are the repo's whole allow-list (`OrganisationSortKey`).
+ * The other three are subqueries or derived text with no ORDER BY behind them,
+ * so a header that offered to sort them would promise something the server
+ * refuses.
+ */
+const SORTABLE_HEADERS = ["Name", "Followers", "Added"];
+const UNSORTABLE_HEADERS = ["Location", "Primary contact", "Open", "Products"];
+
+describe("OrganisationsView sortable headers", () => {
+  it("offers a sort control on exactly the three columns the repo can order by", () => {
+    renderView();
+
+    for (const header of SORTABLE_HEADERS) {
+      const cell = screen.getByRole("columnheader", { name: header });
+      expect(within(cell).getByRole("link")).toBeTruthy();
+    }
+    for (const header of UNSORTABLE_HEADERS) {
+      const cell = screen.getByRole("columnheader", { name: header });
+      expect(within(cell).queryByRole("link")).toBeNull();
+      // No `aria-sort` at all, not "none": "none" would announce a column as
+      // sortable when nothing here can sort it.
+      expect(cell.getAttribute("aria-sort")).toBeNull();
+    }
+  });
+
+  it("names only the column on a first click, leaving the direction to the surface's default", () => {
+    renderView();
+
+    const params = sortQuery("Followers");
+    expect(params.get("sort")).toBe("followers");
+    // `?dir=` without `?sort=` names no column and `?dir=` with a column the
+    // operator has not yet sorted by would override the per-column default
+    // (`SORT_DIRECTION_DEFAULTS`) with `nextSort`'s ascending — a follower
+    // count is asked for biggest-first.
+    expect(params.has("dir")).toBe(false);
+  });
+
+  it("carries the filters already on the URL and drops the position the old order named", () => {
+    url.query = "cursor=abc123&q=priya&page=3";
+    renderView();
+
+    const params = sortQuery("Name");
+    expect(params.get("sort")).toBe("name");
+    expect(params.get("q")).toBe("priya");
+    // Both positions belong to the previous ordering: a keyset cursor points
+    // into `(created_at, id)` order and an offset counts rows in whatever
+    // order produced it.
+    expect(params.has("cursor")).toBe(false);
+    expect(params.has("page")).toBe(false);
+  });
+
+  it("toggles the direction on the column already sorted", () => {
+    renderView({ key: "followers", direction: "desc" });
+
+    const params = sortQuery("Followers");
+    expect(params.get("sort")).toBe("followers");
+    expect(params.get("dir")).toBe("asc");
+  });
+
+  it("toggles back the other way", () => {
+    renderView({ key: "name", direction: "asc" });
+
+    expect(sortQuery("Name").get("dir")).toBe("desc");
+  });
+
+  it("still names only the column on a header that is not the sorted one", () => {
+    renderView({ key: "name", direction: "desc" });
+
+    const params = sortQuery("Followers");
+    expect(params.get("sort")).toBe("followers");
+    expect(params.has("dir")).toBe(false);
+  });
+
+  it("drops the direction the previous column was sorted by, rather than lending it to the next", () => {
+    // The test above renders an active sort but leaves `dir` off the URL, so
+    // its `expect(has("dir")).toBe(false)` passes whether or not the href
+    // builder clears one. Here the URL carries the `dir` a toggle on Name
+    // would have put there, which is the state every click after the first
+    // toggle starts from — so this is the case where clearing it is the
+    // behaviour rather than a no-op. Inherited, `?sort=followers&dir=asc`
+    // reads follower counts smallest-first, unknowns leading.
+    url.query = "q=priya&sort=name&dir=asc";
+    renderView({ key: "name", direction: "asc" });
+
+    const params = sortQuery("Followers");
+    expect(params.get("sort")).toBe("followers");
+    expect(params.has("dir")).toBe(false);
+    expect(params.get("q")).toBe("priya");
+  });
+
+  it("announces the direction on the sorted column and on no other", () => {
+    renderView({ key: "followers", direction: "desc" });
+
+    expect(screen.getByRole("columnheader", { name: "Followers" }).getAttribute("aria-sort")).toBe(
+      "descending",
+    );
+    for (const header of ["Name", "Added"]) {
+      expect(screen.getByRole("columnheader", { name: header }).getAttribute("aria-sort")).toBe(
+        "none",
+      );
+    }
+  });
+
+  it("announces an ascending sort as ascending", () => {
+    renderView({ key: "name", direction: "asc" });
+
+    expect(screen.getByRole("columnheader", { name: "Name" }).getAttribute("aria-sort")).toBe(
+      "ascending",
+    );
+  });
+
+  it("marks every sortable column as sortable when nothing is sorted", () => {
+    renderView();
+
+    for (const header of SORTABLE_HEADERS) {
+      // "none" rather than a missing attribute: it is what tells assistive
+      // tech the column can be sorted at all.
+      expect(screen.getByRole("columnheader", { name: header }).getAttribute("aria-sort")).toBe(
+        "none",
+      );
+    }
   });
 });

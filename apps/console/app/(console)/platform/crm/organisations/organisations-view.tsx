@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Button,
   Table,
@@ -11,6 +12,11 @@ import {
   TableRow,
 } from "@tesserix/web";
 import {
+  SortIndicator,
+  nextSort,
+  type SortSpec,
+} from "@/components/kit/console-data-table";
+import {
   FilterBar,
   useUrlFilters,
   type FilterDescriptor,
@@ -20,14 +26,107 @@ import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
-import type { OrganisationListRow } from "@/lib/db/crm-repo";
+import type {
+  OrganisationListRow,
+  OrganisationSort,
+  OrganisationSortKey,
+} from "@/lib/db/crm-repo";
 
 /**
- * Every filter mutation on this surface also drops `?cursor=`: it paginates
- * by cursor, not by the `page` param `mergeFiltersIntoQuery` already clears.
+ * Every filter mutation on this surface also drops `?cursor=`. This surface
+ * paginates by cursor when unsorted and by `?page=` when sorted;
+ * `mergeFiltersIntoQuery` already clears `page`, so the cursor is the half
+ * left to name here. Both are positions a narrowed filter invalidates.
  * A module constant so the hook's memoised `push` keeps a stable identity.
  */
 const CURSOR_PARAMS = ["cursor"] as const;
+
+/**
+ * The params a change of ordering invalidates.
+ *
+ * Both name a position in the ordering that produced them: `cursor` is a
+ * keyset position in `(created_at, id)` order, `page` an offset counted in
+ * whatever order the previous link was built under. Carried across a sort
+ * change, either would skip rows the new URL asked to see — and would be
+ * shared onward that way, since these links are the shareable artefact.
+ */
+const POSITION_PARAMS = ["cursor", "page"] as const;
+
+/**
+ * Where a click on a sortable header goes.
+ *
+ * Every param already on the URL is copied and only the ordering replaced —
+ * never an enumeration of the params this surface knows about, for the reason
+ * `buildCursorHref` in `page.tsx` gives: a builder that named them drops
+ * whichever filter it forgot.
+ *
+ * On the ACTIVE column the direction is `nextSort`'s, so the flip is written
+ * once, in `console-data-table.tsx`. On any other column the link names the
+ * column and NO direction, leaving it to `SORT_DIRECTION_DEFAULTS`
+ * (`page.tsx`), which reads a name A–Z but a follower count and a creation
+ * date biggest- and newest-first; `nextSort` would send every first click
+ * ascending. `sort` is therefore always set when `dir` is, and a bare `dir`
+ * — which names no column and which `readOrganisationSort` ignores — is
+ * unreachable from here.
+ */
+function buildSortHref(
+  pathname: string,
+  search: string,
+  active: SortSpec | undefined,
+  key: OrganisationSortKey,
+): string {
+  const params = new URLSearchParams(search);
+  params.set("sort", key);
+  if (active?.key === key) {
+    params.set("dir", nextSort(active, key).dir);
+  } else {
+    params.delete("dir");
+  }
+  for (const param of POSITION_PARAMS) params.delete(param);
+
+  return `${pathname}?${params.toString()}`;
+}
+
+/**
+ * The header's `aria-sort`, following `ConsoleDataTable`: the active column
+ * announces its direction and every other sortable column announces "none",
+ * which is what tells assistive tech the column can be sorted at all. Only
+ * sortable headers call this — an unsortable one carries no attribute, or it
+ * would offer an ordering the repo refuses.
+ */
+function ariaSort(active: SortSpec | undefined, key: OrganisationSortKey): "ascending" | "descending" | "none" {
+  if (active?.key !== key) return "none";
+  return active.dir === "asc" ? "ascending" : "descending";
+}
+
+interface SortableHeadProps {
+  label: string;
+  columnKey: OrganisationSortKey;
+  active: SortSpec | undefined;
+  href: string;
+  className?: string;
+}
+
+/**
+ * A column header that reorders the list.
+ *
+ * A link rather than a button that pushes the URL: an ordering is a location,
+ * the same argument `ResultPager` makes for its own controls
+ * (`result-pager.tsx`) — it has to be back-button-navigable and shareable, and
+ * a link is that without a click handler. The filter bar's `router.replace`
+ * is the deliberate exception on this surface, because a debounced search box
+ * would otherwise leave a history entry per keystroke.
+ */
+function SortableHead({ label, columnKey, active, href, className }: SortableHeadProps) {
+  return (
+    <TableHead aria-sort={ariaSort(active, columnKey)} className={className}>
+      <Link href={href} className="inline-flex items-center gap-1 hover:text-foreground">
+        {label}
+        <SortIndicator sort={active} columnKey={columnKey} />
+      </Link>
+    </TableHead>
+  );
+}
 
 /**
  * How many products a row names before the rest collapse into "+N more".
@@ -226,15 +325,28 @@ export interface OrganisationsViewProps {
    *  — 0 on the first page. The range below is rendered from this, so the
    *  displayed position always describes the rows actually fetched. */
   precedingCount: number;
-  /** Where `?cursor=` for the next page points, with every other active
-   *  param carried over by `page.tsx`'s `buildNextHref`; `null` on the last
-   *  page. */
+  /** Where the next page points, with every other active param carried over;
+   *  `null` on the last page. Which param moves depends on how this surface
+   *  is paging: unsorted it is `?cursor=`, from `page.tsx`'s `buildNextHref`;
+   *  under a sort it is `?page=`, from `pagerLinks`. Opaque here either way —
+   *  this component renders the href it is given and does not build one. */
   nextHref: string | null;
-  /** The same for the previous page, built by `buildPreviousHref`; `null` on
-   *  the first page. Required, not optional: `null` is the first-page answer,
-   *  and a surface that simply forgot the prop would look identical to one
-   *  that is genuinely on page one. */
+  /** The same for the previous page — `buildPreviousHref` unsorted,
+   *  `pagerLinks` under a sort; `null` on the first page. Required, not
+   *  optional: `null` is the first-page answer, and a surface that simply
+   *  forgot the prop would look identical to one that is genuinely on page
+   *  one. */
   previousHref: string | null;
+  /** The ordering the server actually applied — `null` for the default
+   *  `created_at DESC` list — not what the URL happens to say, same reasoning
+   *  as `values` above. Required rather than optional for the reason
+   *  `previousHref` is: `null` is a real answer here, and a caller that simply
+   *  forgot the prop would be indistinguishable from an unsorted surface.
+   *
+   *  Read by the sortable headers below: it sets their `aria-sort` and their
+   *  indicator, and decides which one's link toggles direction rather than
+   *  naming a new column. */
+  sort: OrganisationSort | null;
 }
 
 export function OrganisationsView({
@@ -247,8 +359,18 @@ export function OrganisationsView({
   precedingCount,
   nextHref,
   previousHref,
+  sort,
 }: OrganisationsViewProps) {
   const { set, clear } = useUrlFilters(descriptors, CURSOR_PARAMS);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // The pager's hrefs are built server-side because their cursors come out of
+  // the repo's result; a sort link needs nothing but the current URL, which
+  // this component already reads for the filter bar.
+  const search = searchParams.toString();
+  const active: SortSpec | undefined = sort ? { key: sort.key, dir: sort.direction } : undefined;
+  const sortHref = (key: OrganisationSortKey) => buildSortHref(pathname, search, active, key);
 
   return (
     <div className="flex flex-col gap-6">
@@ -275,12 +397,31 @@ export function OrganisationsView({
           <Table aria-label="Organisations">
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
+                {/* Sortable on exactly the three columns `OrganisationSortKey`
+                 *  declares. Open is a `count(*)` subquery and Products an
+                 *  `array_agg` over the same table (`crm-repo.ts`), neither of
+                 *  which the allow-list names; Location and Primary contact it
+                 *  does not name either. A header offering to sort any of them
+                 *  would promise an ordering the repo refuses
+                 *  (`UnknownSortKeyError`). */}
+                <SortableHead label="Name" columnKey="name" active={active} href={sortHref("name")} />
                 <TableHead>Location</TableHead>
                 <TableHead>Primary contact</TableHead>
                 <TableHead>Open</TableHead>
-                <TableHead className="text-right">Followers</TableHead>
+                <SortableHead
+                  label="Followers"
+                  columnKey="followers"
+                  active={active}
+                  href={sortHref("followers")}
+                  className="text-right"
+                />
                 <TableHead>Products</TableHead>
+                <SortableHead
+                  label="Added"
+                  columnKey="created"
+                  active={active}
+                  href={sortHref("created")}
+                />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -324,6 +465,16 @@ export function OrganisationsView({
                   </TableCell>
                   <TableCell>
                     <ProductsCell products={row.products} />
+                  </TableCell>
+                  {/* `created_at` is the list's default ordering, and until
+                   *  now the one column an operator could sort by without
+                   *  being able to read it. Date only, through the same
+                   *  `toLocaleDateString` three other CRM views already use
+                   *  (`suppressions-view.tsx`, `templates-view.tsx`,
+                   *  `closed-view.tsx`) — the hour a lead was imported is not
+                   *  something anyone scans a 259-row list for. */}
+                  <TableCell className="whitespace-nowrap">
+                    {new Date(row.createdAt).toLocaleDateString()}
                   </TableCell>
                 </TableRow>
               ))}

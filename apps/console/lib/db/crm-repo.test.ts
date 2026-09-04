@@ -33,6 +33,9 @@ import {
   linkConversion,
   AlreadyLinkedError,
   SuppressedContactError,
+  listOrganisations,
+  ORGANISATION_SORTS,
+  UnknownSortKeyError,
 } from "./crm-repo";
 import { UNASSIGNED_PRODUCT, UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "./crm-filters";
 import { encodeKeysetCursor } from "./keyset-cursor";
@@ -2166,5 +2169,94 @@ describe("linkConversion", () => {
         actor: "ava@tesserix.app",
       }),
     ).rejects.toThrow(AlreadyLinkedError);
+  });
+});
+
+/**
+ * The organisations list is the first surface in this file whose ORDER BY is
+ * chosen by the caller rather than by a module literal. An ORDER BY
+ * expression cannot be a bound parameter, so whatever ends up there is
+ * spliced into the statement — which makes the allow-list a security
+ * boundary, and these tests its proof.
+ */
+describe("listOrganisations sorting", () => {
+  /** The page query — the only one of the two statements carrying a bound
+   *  LIMIT. Selected by shape rather than by position because the count and
+   *  page reads are issued concurrently. */
+  const listPageCall = (): [string, unknown[]] => {
+    const call = query.mock.calls.find(([sql]) => String(sql).includes("LIMIT $"));
+    if (!call) throw new Error("crm-repo.test: no organisations page query was issued");
+    return call as [string, unknown[]];
+  };
+
+  beforeEach(() => {
+    // Both the count and the page read return no rows: these tests assert on
+    // the SQL that was issued, and the default write-test row would fail
+    // `toOrganisationListRow`'s created_at conversion.
+    query.mockResolvedValue([]);
+  });
+
+  it.each(["__proto__", "constructor", "toString"])(
+    "refuses the inherited property %s as a sort key, and issues no query",
+    async (hostile) => {
+      await expect(
+        listOrganisations({}, 10, {
+          sort: { key: hostile as never, direction: "desc" },
+        }),
+      ).rejects.toThrow(UnknownSortKeyError);
+      expect(query).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses an unrecognised sort key rather than falling back to the default order", async () => {
+    await expect(
+      listOrganisations({}, 10, { sort: { key: "followers_count" as never, direction: "desc" } }),
+    ).rejects.toThrow(UnknownSortKeyError);
+  });
+
+  it("splices the allow-list's expression, never the caller's key", async () => {
+    await listOrganisations({}, 10, { sort: { key: "followers", direction: "desc" } });
+    const [sql] = listPageCall();
+    expect(sql).toContain(`ORDER BY ${ORGANISATION_SORTS.followers} DESC NULLS LAST, g.id DESC`);
+    // The key names a record entry; only its value is SQL.
+    expect(sql).not.toContain("followers DESC");
+  });
+
+  it("keeps unknown follower counts last when sorting ascending too", async () => {
+    await listOrganisations({}, 10, { sort: { key: "followers", direction: "asc" } });
+    const [sql] = listPageCall();
+    expect(sql).toContain(`ORDER BY ${ORGANISATION_SORTS.followers} ASC NULLS LAST, g.id DESC`);
+  });
+
+  it("binds the offset rather than splicing the page number", async () => {
+    await listOrganisations({}, 25, { sort: { key: "name", direction: "asc" }, page: 3 });
+    const [sql, params] = listPageCall();
+    expect(sql).toMatch(/LIMIT \$\d+ OFFSET \$\d+/);
+    expect(params).toContain(50);
+  });
+
+  it("rejects a page number that is not a positive integer", async () => {
+    await expect(
+      listOrganisations({}, 25, { sort: { key: "name", direction: "asc" }, page: 0 }),
+    ).rejects.toThrow(/page/i);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("leaves the unsorted read on its keyset order, with no OFFSET", async () => {
+    await listOrganisations({}, 10);
+    const [sql] = listPageCall();
+    expect(sql).toContain("ORDER BY g.created_at DESC, g.id DESC");
+    expect(sql).not.toContain("OFFSET");
+  });
+
+  it("resolves the primary contact once, in a lateral both the display columns and the sort read", async () => {
+    await listOrganisations({}, 10, { sort: { key: "followers", direction: "desc" } });
+    const [sql] = listPageCall();
+    expect(sql).toContain("LEFT JOIN LATERAL");
+    expect(sql).toContain("is_primary DESC");
+    expect(sql).toContain("erased_at IS NULL");
+    // One resolution, not five: the four display columns and the ORDER BY
+    // all read `pc`.
+    expect(sql).not.toContain("SELECT c.followers_count FROM crm_contacts c");
   });
 });

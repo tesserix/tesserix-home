@@ -87,7 +87,7 @@ describe("OrganisationsPage", () => {
     // reason the queue filters in SQL.
     listOrganisations.mockResolvedValue(orgPage([]));
     render(await Page({ searchParams: Promise.resolve({ q: "priya" }) }));
-    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number), undefined);
+    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number), { cursor: undefined });
   });
 
   it("shows the filtered-empty state when a search matches nothing", async () => {
@@ -128,7 +128,7 @@ describe("OrganisationsPage", () => {
     expect(listOrganisations).toHaveBeenCalledWith(
       { importId: "8f14e45f-ceea-467e-b7ea-05a3778a1234" },
       expect.any(Number),
-      undefined,
+      { cursor: undefined },
     );
   });
 
@@ -181,7 +181,7 @@ describe("OrganisationsPage", () => {
     it("passes the cursor through to the repo", async () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), "abc");
+      expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), { cursor: "abc" });
     });
 
     it("offers a previous control only when there is a page behind this one", async () => {
@@ -266,7 +266,7 @@ describe("OrganisationsPage", () => {
       expect(listOrganisations).toHaveBeenCalledWith(
         { search: "priya", product: "mark8ly", country: "IN", followers: "over10k", hasEmail: true },
         expect.any(Number),
-        undefined,
+        { cursor: undefined },
       );
     });
 
@@ -275,7 +275,7 @@ describe("OrganisationsPage", () => {
       // value means no filter, never a value the repo has to defend against.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ followers: "banana" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("passes the unknown country and follower sentinels through to the repo", async () => {
@@ -295,7 +295,7 @@ describe("OrganisationsPage", () => {
       expect(listOrganisations).toHaveBeenCalledWith(
         { country: UNKNOWN_COUNTRY, followers: UNKNOWN_FOLLOWERS },
         expect.any(Number),
-        undefined,
+        { cursor: undefined },
       );
     });
 
@@ -355,7 +355,7 @@ describe("OrganisationsPage", () => {
       // value the repo should ever have to defend against.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ product: "not-a-real-product" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("drops an unrecognised country rather than passing it to SQL", async () => {
@@ -363,7 +363,7 @@ describe("OrganisationsPage", () => {
       // read as unfiltered, not reach the repo's exact-match clause.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ country: "ZZ" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("drops an Object.prototype member name as a country rather than passing it to SQL", async () => {
@@ -374,7 +374,7 @@ describe("OrganisationsPage", () => {
         listOrganisations.mockClear();
         listOrganisations.mockResolvedValue(orgPage([]));
         render(await Page({ searchParams: Promise.resolve({ country: key }) }));
-        expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+        expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
       }
     });
 
@@ -384,11 +384,11 @@ describe("OrganisationsPage", () => {
       // filter on.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ email: "true" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
 
       listOrganisations.mockClear();
       render(await Page({ searchParams: Promise.resolve({ email: "0" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
   });
 
@@ -452,6 +452,204 @@ describe("OrganisationsPage", () => {
       render(await Page({ searchParams: Promise.resolve({}) }));
       expect(screen.getByRole("link", { name: /Newtown Roasters/ })).toBeInTheDocument();
       expect(screen.queryByText("@newtownroasters")).toBeNull();
+    });
+  });
+  // Task 2 (#252 section J). The organisations list is the only CRM surface
+  // whose ordering an operator chooses, so `?sort=`/`?dir=` are new untrusted
+  // input on a query string that already carries six filters and a cursor.
+  describe("sorting", () => {
+    it("passes a recognised sort through to the repo, paging by offset", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ sort: "followers", dir: "asc" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), {
+        sort: { key: "followers", direction: "asc" },
+        page: 1,
+      });
+    });
+
+    it("reads an unrecognised sort key as unsorted rather than letting it reach the repo", async () => {
+      // Deliberate degradation, not a swallowed error: the repo throws
+      // `UnknownSortKeyError` on a key it does not know, and a 500 is the
+      // wrong answer to a hand-edited URL. Same contract every filter on this
+      // surface follows — an unrecognised value means no filter at all.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ sort: "contacts", dir: "desc" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
+    });
+
+    it("reads an Object.prototype member name as unsorted", async () => {
+      // The same defect `?country=__proto__` had: `raw in RECORD` walks the
+      // prototype chain, so `__proto__`, `constructor` and `toString` all read
+      // as recognised keys — and here the value they would resolve to is
+      // spliced into an ORDER BY.
+      for (const key of ["__proto__", "constructor", "toString"]) {
+        listOrganisations.mockClear();
+        listOrganisations.mockResolvedValue(orgPage([]));
+        render(await Page({ searchParams: Promise.resolve({ sort: key }) }));
+        expect(listOrganisations, key).toHaveBeenCalledWith({}, expect.any(Number), {
+          cursor: undefined,
+        });
+      }
+    });
+
+    it("gives each column the direction an operator means when ?dir= is absent", async () => {
+      // Name reads A–Z; a follower count and a creation date read biggest and
+      // newest first. One shared default would be wrong for one of them.
+      const expected = { name: "asc", followers: "desc", created: "desc" } as const;
+      for (const [key, direction] of Object.entries(expected)) {
+        listOrganisations.mockClear();
+        listOrganisations.mockResolvedValue(orgPage([]));
+        render(await Page({ searchParams: Promise.resolve({ sort: key }) }));
+        expect(listOrganisations, key).toHaveBeenCalledWith({}, expect.any(Number), {
+          sort: { key, direction },
+          page: 1,
+        });
+      }
+    });
+
+    it("falls back to that default when ?dir= is not a direction, keeping the sort", async () => {
+      // The key is recognised; only the direction is junk. Dropping the sort
+      // as well would answer a typo by silently reordering the whole table.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ sort: "name", dir: "sideways" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), {
+        sort: { key: "name", direction: "asc" },
+        page: 1,
+      });
+    });
+
+    it("drops the cursor when a sort is active rather than sending both", async () => {
+      // A keyset position is meaningless under a different ORDER BY, and
+      // `ListOrganisationsOptions` is a union precisely so the two cannot be
+      // asked for at once.
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(
+        await Page({ searchParams: Promise.resolve({ sort: "name", cursor: "abc" }) }),
+      );
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), {
+        sort: { key: "name", direction: "asc" },
+        page: 1,
+      });
+    });
+
+    it("reads ?page= under a sort", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ sort: "name", page: "3" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), {
+        sort: { key: "name", direction: "asc" },
+        page: 3,
+      });
+    });
+
+    it("ignores ?page= with no sort, where the cursor is the position", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(await Page({ searchParams: Promise.resolve({ page: "3", cursor: "abc" }) }));
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: "abc" });
+    });
+
+    it("reads a nonsense ?page= as the first page rather than throwing", async () => {
+      // `listOrganisations` throws a RangeError on a page below 1. That is the
+      // backstop; this surface must not reach it from a hand-edited URL.
+      for (const raw of ["0", "-2", "abc", ""]) {
+        listOrganisations.mockClear();
+        listOrganisations.mockResolvedValue(orgPage([]));
+        render(await Page({ searchParams: Promise.resolve({ sort: "name", page: raw }) }));
+        expect(listOrganisations, `page=${raw}`).toHaveBeenCalledWith(
+          {},
+          expect.any(Number),
+          { sort: { key: "name", direction: "asc" }, page: 1 },
+        );
+      }
+    });
+
+    it("clamps an absurd ?page= instead of handing the offset it implies to SQL", async () => {
+      listOrganisations.mockResolvedValue(orgPage([]));
+      render(
+        await Page({
+          searchParams: Promise.resolve({ sort: "name", page: "999999999999999999999999" }),
+        }),
+      );
+      const [, , options] = listOrganisations.mock.calls[0];
+      expect(options.page).toBeLessThanOrEqual(10_000);
+      expect(Number.isSafeInteger(options.page)).toBe(true);
+    });
+
+    it("pages a sorted view by ?page=, carrying the sort and the filters", async () => {
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259 }));
+      render(
+        await Page({
+          searchParams: Promise.resolve({ sort: "followers", dir: "desc", q: "priya" }),
+        }),
+      );
+      const next = screen.getByRole("link", { name: /next/i });
+      const params = new URLSearchParams((next.getAttribute("href") ?? "").split("?")[1]);
+      expect(params.get("page")).toBe("2");
+      expect(params.get("sort")).toBe("followers");
+      expect(params.get("dir")).toBe("desc");
+      expect(params.get("q")).toBe("priya");
+    });
+
+    it("leaves no cursor on a sorted page link", async () => {
+      // A cursor left over from the unsorted view names a position in
+      // `(created_at, id)` order, which is not the order this page is in. The
+      // options union keeps it out of the query; carrying it in the link would
+      // put it back on the URL for whoever shares that link and clears the sort.
+      listOrganisations.mockResolvedValue(orgPage(orgRows(100), { total: 259 }));
+      render(
+        await Page({
+          searchParams: Promise.resolve({ sort: "name", cursor: "abc" }),
+        }),
+      );
+      const next = screen.getByRole("link", { name: /next/i });
+      const params = new URLSearchParams((next.getAttribute("href") ?? "").split("?")[1]);
+      expect(params.get("cursor")).toBeNull();
+    });
+
+    it("offers no next control on the last sorted page", async () => {
+      // 259 rows at 100 a page: page 3 holds the last 59 and there is nothing
+      // after it. Computed against this surface's own page size — against
+      // `ENTITIES_LIMIT` it reads 100 rows ahead instead of 200 and offers a
+      // Next to an empty page.
+      listOrganisations.mockResolvedValue(
+        orgPage(orgRows(59), { total: 259, precedingCount: 200 }),
+      );
+      render(await Page({ searchParams: Promise.resolve({ sort: "name", page: "3" }) }));
+      expect(screen.queryByRole("link", { name: /next/i })).toBeNull();
+      expect(screen.getByText(/201–259 of 259/i)).toBeInTheDocument();
+    });
+
+    it("offers a previous control back to page one from page two", async () => {
+      listOrganisations.mockResolvedValue(
+        orgPage(orgRows(100), { total: 259, precedingCount: 100 }),
+      );
+      render(await Page({ searchParams: Promise.resolve({ sort: "name", page: "2" }) }));
+      const previous = screen.getByRole("link", { name: /previous page of organisations/i });
+      const href = previous.getAttribute("href") ?? "";
+      // Page 1 carries no `page` param — one canonical URL for the first page.
+      expect(new URLSearchParams(href.split("?")[1]).get("page")).toBeNull();
+      expect(new URLSearchParams(href.split("?")[1]).get("sort")).toBe("name");
+    });
+
+    // Read off the rendered header rather than off a props spy: `aria-sort`
+    // is what the page's sort actually becomes, so an ordering computed
+    // correctly and then dropped on the way to the markup fails here.
+    it("marks the sorted column on the view it renders", async () => {
+      listOrganisations.mockResolvedValue(orgPage([ORG_ROW]));
+      render(await Page({ searchParams: Promise.resolve({ sort: "followers", dir: "asc" }) }));
+      expect(
+        screen.getByRole("columnheader", { name: "Followers" }).getAttribute("aria-sort"),
+      ).toBe("ascending");
+    });
+
+    it("marks no column when nothing is sorted", async () => {
+      listOrganisations.mockResolvedValue(orgPage([ORG_ROW]));
+      render(await Page({ searchParams: Promise.resolve({}) }));
+      for (const header of ["Name", "Followers", "Added"]) {
+        // "none", not absent: the columns are still sortable, just unsorted.
+        expect(screen.getByRole("columnheader", { name: header }).getAttribute("aria-sort")).toBe(
+          "none",
+        );
+      }
     });
   });
 });
