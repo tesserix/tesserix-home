@@ -267,3 +267,48 @@ func TestAMachineListingWithoutATenantIsRefused(t *testing.T) {
 		t.Errorf("a machine listed with no tenant and got %d — this reads every tenant in the product", rec.Code)
 	}
 }
+
+// Filing is machine-only. An operator holding the whole support surface and
+// its verb still has no queue of their own to file into.
+func TestAnOperatorIsRefusedTheCreateRoute(t *testing.T) {
+	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
+		Subject:   operatorSubj,
+		ClientID:  testConsole,
+		Audience:  []string{testProject},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"read", "support", "respond"},
+	}}, testProject)
+
+	mux := http.NewServeMux()
+	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/tickets", strings.NewReader(`{"subject":"x"}`))
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("an operator got %d filing a ticket, want 403", rec.Code)
+	}
+}
+
+// A machine reaches the route, and is refused for naming no tenant — the same
+// rule the reads follow.
+func TestAMachineReachesTheCreateRouteAndNeedsATenant(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/tickets",
+		strings.NewReader(`{"subject":"Payouts","description":"delayed"}`))
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	func() {
+		defer func() { _ = recover() }()
+		machineMux(t).ServeHTTP(rec, req)
+	}()
+
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Fatalf("the capability gate refused a machine with %d — filing is its route", rec.Code)
+	}
+	if rec.Code < 400 {
+		t.Errorf("a filing naming no tenant was accepted (%d)", rec.Code)
+	}
+}

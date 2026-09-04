@@ -45,6 +45,7 @@ const (
 // The dotted operation names, shared by the audit trail and the idempotency
 // records so one key cannot replay another endpoint's stored response.
 const (
+	opCreate = "tickets.create"
 	opReply  = "tickets.reply"
 	opStatus = "tickets.status"
 )
@@ -161,6 +162,19 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 		))
 	}
 
+	// Filing is MACHINE-ONLY, and that is a faithful copy rather than a
+	// restriction invented here: apps/web's internal create route is the
+	// product channel, and no console surface files a ticket. An operator has
+	// no queue of their own to file into either — the product and tenant come
+	// from the scope, and an operator has neither.
+	//
+	// Additive if that changes: an operator create would need a product in the
+	// request, which is a different contract, not a wider gate on this one.
+	machineOnly := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log,
+			auth.RequireCapability(auth.CapProductSupport, h.log, handler))
+	}
+
 	// The summary stays OPERATOR-ONLY.
 	//
 	// It is a standing count with no tenant dimension, and a product caller is
@@ -207,6 +221,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	// surface access rather than replacing it — respond without support means
 	// "may reply where they may work", not "may reply anywhere".
 	mux.Handle("GET /v1/tickets", read(h.list))
+	mux.Handle("POST /v1/tickets", machineOnly(h.create))
 	mux.Handle("GET /v1/tickets/summary", summaryOnly(h.summary))
 	mux.Handle("GET /v1/tickets/{id}", read(h.detail))
 	mux.Handle("POST /v1/tickets/{id}/replies", reply(h.reply))
@@ -676,4 +691,63 @@ func byPrincipal(machine, operator http.Handler) http.Handler {
 		}
 		operator.ServeHTTP(w, r)
 	})
+}
+
+// createRequest is a product filing a ticket for one of its merchants.
+//
+// There is deliberately no product field. The product comes from the scope the
+// registry resolved, so a caller cannot file into another product's queue —
+// which is the whole reason the registry exists.
+type createRequest struct {
+	TenantID          string `json:"tenant_id"`
+	Subject           string `json:"subject"`
+	Description       string `json:"description"`
+	Priority          string `json:"priority"`
+	SubmittedByName   string `json:"submitted_by_name"`
+	SubmittedByEmail  string `json:"submitted_by_email"`
+	SubmittedByUserID string `json:"submitted_by_user_id"`
+}
+
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	principal, body, ok := h.beginWrite(w, r)
+	if !ok {
+		return
+	}
+
+	var request createRequest
+	if err := decode(body, &request); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	scope, err = scope.ForTenant(request.TenantID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	key, err := h.readKey(r, principal, opCreate, body)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+
+	written, err := h.svc.Create(r.Context(), scope, actorOf(principal), service.CreateInput{
+		Subject:           request.Subject,
+		Description:       request.Description,
+		Priority:          request.Priority,
+		SubmittedByName:   request.SubmittedByName,
+		SubmittedByEmail:  request.SubmittedByEmail,
+		SubmittedByUserID: request.SubmittedByUserID,
+	}, key)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, written.Status, written.Body, h.log)
 }

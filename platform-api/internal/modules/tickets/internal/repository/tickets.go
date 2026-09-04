@@ -513,3 +513,73 @@ func nullIfEmpty(value string) any {
 	}
 	return value
 }
+
+// NewTicket is a ticket being filed.
+//
+// ProductID is NOT taken from the caller's request — it comes from the scope
+// the registry resolved. A product filing against another product's queue is
+// the leak #152 exists to close, and a field the caller could set would be
+// exactly that.
+type NewTicket struct {
+	ProductID         string
+	TenantID          string
+	Subject           string
+	Description       string
+	Priority          domain.Priority
+	SubmittedByName   string
+	SubmittedByEmail  string
+	SubmittedByUserID string
+}
+
+// Insert files a ticket and returns it as stored.
+//
+// # The ticket number
+//
+// Allocated from `platform_tickets_seq` (migration 0002) and rendered by
+// domain.TicketNumber, which carries the per-product prefix table. The
+// sequence is shared across products deliberately: it is what apps/web uses,
+// so numbers stay unique estate-wide and a merchant quoting "M8-0042" names
+// one ticket.
+//
+// nextval is NOT transactional — a rolled-back insert still consumes the
+// number, leaving a gap. That is true of apps/web today and is the right
+// trade: the alternative is a lock that serialises every filing to make a
+// counter look tidy.
+//
+// # Takes a Querier
+//
+// So it runs on the caller's transaction, which it always does: the ticket and
+// its audit row must land together or not at all.
+func Insert(ctx context.Context, db Querier, t NewTicket) (domain.Ticket, error) {
+	var n int64
+	if err := db.QueryRow(ctx, `SELECT nextval('platform_tickets_seq')`).Scan(&n); err != nil {
+		return domain.Ticket{}, fmt.Errorf("allocating a ticket number: %w", err)
+	}
+
+	priority := t.Priority
+	if priority == "" {
+		// The column's own default, stated here because the insert names the
+		// column and so bypasses it.
+		priority = domain.PriorityMedium
+	}
+
+	row := db.QueryRow(ctx,
+		`INSERT INTO platform_tickets
+		   (product_id, tenant_id, ticket_number, subject, description,
+		    priority, submitted_by_name, submitted_by_email, submitted_by_user_id)
+		 VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, $9)
+		 RETURNING `+columns,
+		t.ProductID, t.TenantID, domain.TicketNumber(t.ProductID, n),
+		t.Subject, t.Description, string(priority),
+		t.SubmittedByName, t.SubmittedByEmail,
+		// submitted_by_user_id is TEXT (migration 0003) so a foreign
+		// identifier — mark8ly sends Firebase UIDs — stores without a uuid
+		// cast. NULL rather than a blank string when absent.
+		nullIfEmpty(t.SubmittedByUserID))
+
+	created, err := scanTicket(row)
+	if err != nil {
+		return domain.Ticket{}, fmt.Errorf("filing a ticket: %w", err)
+	}
+	return created, nil
+}

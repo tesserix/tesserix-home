@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -689,5 +690,73 @@ func TestTheSummaryIsConfinedToOneProductWhenAsked(t *testing.T) {
 	}
 	if want := (domain.Summary{Open: 3, UrgentOpen: 2}); estate != want {
 		t.Errorf("estate summary = %+v, want %+v — the empty product must still mean the whole queue", estate, want)
+	}
+}
+
+// #152. A filed ticket takes its product from the CALLER'S SCOPE, and its
+// number from the shared sequence with that product's prefix.
+//
+// The prefix is what a merchant quotes back in an email, so this asserts the
+// stored form rather than just that a row appeared.
+func TestAFiledTicketCarriesItsProductsPrefixAndTheSuppliedFields(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+
+	created, err := repository.Insert(ctx, pool, repository.NewTicket{
+		ProductID:         "mark8ly",
+		TenantID:          "3f2a1c94-0000-4000-8000-0000000000aa",
+		Subject:           "Payouts are delayed",
+		Description:       "Three payouts pending since Tuesday.",
+		Priority:          domain.PriorityUrgent,
+		SubmittedByName:   "Priya R",
+		SubmittedByEmail:  "priya@example.com",
+		SubmittedByUserID: "firebase-uid-123",
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if !strings.HasPrefix(created.TicketNumber, "M8-") {
+		t.Errorf("ticket_number = %q, want the M8- prefix mark8ly's live tickets carry", created.TicketNumber)
+	}
+	if created.ProductID != "mark8ly" {
+		t.Errorf("product_id = %q, want mark8ly", created.ProductID)
+	}
+	if created.Priority != domain.PriorityUrgent {
+		t.Errorf("priority = %q, want urgent", created.Priority)
+	}
+	if created.Status != domain.StatusOpen {
+		t.Errorf("status = %q, want the column default of open", created.Status)
+	}
+	if created.Subject != "Payouts are delayed" {
+		t.Errorf("subject = %q", created.Subject)
+	}
+
+	// It is readable back by the id it returned, which is what the caller
+	// hands the merchant.
+	if _, err := repository.Get(ctx, pool, created.ID); err != nil {
+		t.Errorf("the filed ticket could not be read back: %v", err)
+	}
+}
+
+// An unspecified priority becomes the column's default rather than empty. The
+// insert names the priority column, so it bypasses the DB default and the
+// value has to be supplied.
+func TestAFiledTicketWithoutAPriorityIsMedium(t *testing.T) {
+	pool := testdb.New(t)
+
+	created, err := repository.Insert(context.Background(), pool, repository.NewTicket{
+		ProductID:        "mark8ly",
+		TenantID:         "3f2a1c94-0000-4000-8000-0000000000aa",
+		Subject:          "A question",
+		Description:      "How do payouts work?",
+		SubmittedByName:  "Priya R",
+		SubmittedByEmail: "priya@example.com",
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if created.Priority != domain.PriorityMedium {
+		t.Errorf("priority = %q, want medium", created.Priority)
 	}
 }
