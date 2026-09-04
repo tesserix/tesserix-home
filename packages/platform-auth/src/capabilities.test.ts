@@ -126,6 +126,19 @@ describe("the capability set is a contract with Zitadel", () => {
       // project and is granted to a service user, `/api/v1/promo-catalog`
       // answers 403 to every caller.
       "read-promo-catalog",
+      // #152. The third MACHINE capability, and the first that is not a
+      // catalog read: it lets a product reach its OWN support tickets, which
+      // is what mark8ly does today through apps/web's shared-secret
+      // `/api/internal/platform-tickets`.
+      //
+      // Deliberately NOT `support`. That is an operator SURFACE and, per §7,
+      // capabilities are estate-wide — granting it to a product's machine
+      // would open every other product's ticket queue, and `respond` beside
+      // it would open replying to them. Which product a holder may reach is
+      // NOT decided here; see the subject->product registry, because a
+      // capability string cannot carry a product and this one does not
+      // pretend to.
+      "product-support",
     ]);
   });
 
@@ -255,5 +268,51 @@ describe("read-promo-catalog capability", () => {
     expect(SURFACE_CAPABILITIES).not.toContain("read-promo-catalog");
     expect(RISK_CAPABILITIES).not.toContain("read-promo-catalog");
     expect(MACHINE_CAPABILITIES).toContain("read-promo-catalog");
+  });
+});
+
+describe("product-support capability", () => {
+  it("maps the product support role to its capability", () => {
+    expect(toCapabilities(["product-support"])).toContain("product-support");
+  });
+
+  it("does not grant the operator support surface", () => {
+    // The whole reason this capability exists. `support` is estate-wide: a
+    // product machine holding it could read every other product's queue.
+    expect(hasCapability(["product-support"], "support")).toBe(false);
+    expect(toCapabilities(["product-support"])).not.toContain("support");
+  });
+
+  it("is not granted BY the operator support surface either", () => {
+    // The reverse direction matters too: an operator holding `support` reaches
+    // the queue as an operator, not as some product's machine. If `support`
+    // ever implied this, an operator would silently acquire whatever scoping
+    // rule the registry applies to machines.
+    expect(hasCapability(["support"], "product-support")).toBe(false);
+  });
+
+  it("does not imply respond", () => {
+    // Filing and reading a product's own tickets is not the same grant as
+    // transitioning their status. #261's surface/verb split, held for machines.
+    expect(hasCapability(["product-support"], "respond")).toBe(false);
+  });
+
+  it("is not implied by the other machine capabilities, in either direction", () => {
+    // A price reader has no business in a ticket queue, and a support caller
+    // has none enumerating the estate's promo codes.
+    expect(hasCapability(["read-plan-catalog"], "product-support")).toBe(false);
+    expect(hasCapability(["read-promo-catalog"], "product-support")).toBe(false);
+    expect(hasCapability(["product-support"], "read-plan-catalog")).toBe(false);
+    expect(hasCapability(["product-support"], "read-promo-catalog")).toBe(false);
+  });
+
+  it("does not let the console-entry capability imply it", () => {
+    expect(toCapabilities(["read"])).not.toContain("product-support");
+  });
+
+  it("is classified as a machine capability, neither surface nor risk verb", () => {
+    expect(SURFACE_CAPABILITIES).not.toContain("product-support");
+    expect(RISK_CAPABILITIES).not.toContain("product-support");
+    expect(MACHINE_CAPABILITIES).toContain("product-support");
   });
 });

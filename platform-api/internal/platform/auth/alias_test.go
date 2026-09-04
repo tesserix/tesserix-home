@@ -39,6 +39,12 @@ func TestAliasesAreTheSameValuesNotCopies(t *testing.T) {
 		{"CapHardDelete", auth.CapHardDelete, authcore.CapHardDelete},
 		{"CapPublishCatalog", auth.CapPublishCatalog, authcore.CapPublishCatalog},
 		{"CapReadPlanCatalog", auth.CapReadPlanCatalog, authcore.CapReadPlanCatalog},
+		// CapReadPromoCatalog was added to platform-auth (#521) without ever
+		// reaching this layer — the capability count check above passes on
+		// Capabilities alone, so a missing CONSTANT alias went unnoticed. Pinned
+		// here now so the next one cannot.
+		{"CapReadPromoCatalog", auth.CapReadPromoCatalog, authcore.CapReadPromoCatalog},
+		{"CapProductSupport", auth.CapProductSupport, authcore.CapProductSupport},
 	}
 	for _, p := range pairs {
 		if p.alias != p.src {

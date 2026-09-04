@@ -41,6 +41,8 @@ const (
 	CapHardDelete        = authcore.CapHardDelete
 	CapPublishCatalog    = authcore.CapPublishCatalog
 	CapReadPlanCatalog   = authcore.CapReadPlanCatalog
+	CapReadPromoCatalog  = authcore.CapReadPromoCatalog
+	CapProductSupport    = authcore.CapProductSupport
 
 	KindOperator = authcore.KindOperator
 	KindService  = authcore.KindService
