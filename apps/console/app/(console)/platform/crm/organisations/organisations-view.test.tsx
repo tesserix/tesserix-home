@@ -374,6 +374,23 @@ describe("OrganisationsView sortable headers", () => {
     expect(params.has("dir")).toBe(false);
   });
 
+  it("drops the direction the previous column was sorted by, rather than lending it to the next", () => {
+    // The test above renders an active sort but leaves `dir` off the URL, so
+    // its `expect(has("dir")).toBe(false)` passes whether or not the href
+    // builder clears one. Here the URL carries the `dir` a toggle on Name
+    // would have put there, which is the state every click after the first
+    // toggle starts from — so this is the case where clearing it is the
+    // behaviour rather than a no-op. Inherited, `?sort=followers&dir=asc`
+    // reads follower counts smallest-first, unknowns leading.
+    url.query = "q=priya&sort=name&dir=asc";
+    renderView({ key: "name", direction: "asc" });
+
+    const params = sortQuery("Followers");
+    expect(params.get("sort")).toBe("followers");
+    expect(params.has("dir")).toBe(false);
+    expect(params.get("q")).toBe("priya");
+  });
+
   it("announces the direction on the sorted column and on no other", () => {
     renderView({ key: "followers", direction: "desc" });
 
