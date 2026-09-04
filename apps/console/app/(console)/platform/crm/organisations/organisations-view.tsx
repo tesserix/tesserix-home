@@ -325,14 +325,17 @@ export interface OrganisationsViewProps {
    *  — 0 on the first page. The range below is rendered from this, so the
    *  displayed position always describes the rows actually fetched. */
   precedingCount: number;
-  /** Where `?cursor=` for the next page points, with every other active
-   *  param carried over by `page.tsx`'s `buildNextHref`; `null` on the last
-   *  page. */
+  /** Where the next page points, with every other active param carried over;
+   *  `null` on the last page. Which param moves depends on how this surface
+   *  is paging: unsorted it is `?cursor=`, from `page.tsx`'s `buildNextHref`;
+   *  under a sort it is `?page=`, from `pagerLinks`. Opaque here either way —
+   *  this component renders the href it is given and does not build one. */
   nextHref: string | null;
-  /** The same for the previous page, built by `buildPreviousHref`; `null` on
-   *  the first page. Required, not optional: `null` is the first-page answer,
-   *  and a surface that simply forgot the prop would look identical to one
-   *  that is genuinely on page one. */
+  /** The same for the previous page — `buildPreviousHref` unsorted,
+   *  `pagerLinks` under a sort; `null` on the first page. Required, not
+   *  optional: `null` is the first-page answer, and a surface that simply
+   *  forgot the prop would look identical to one that is genuinely on page
+   *  one. */
   previousHref: string | null;
   /** The ordering the server actually applied — `null` for the default
    *  `created_at DESC` list — not what the URL happens to say, same reasoning

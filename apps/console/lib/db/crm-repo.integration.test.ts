@@ -2245,15 +2245,15 @@ describe("closedOpportunities against a real database", () => {
  * The follower count a browse row DISPLAYS comes from the same contact the
  * follower filter bands on (#44).
  *
- * `listOrganisations`' display subquery and `primaryContactFollowerClause`
- * each pick "the primary contact" independently, and they agree only because
- * both order by `primaryContactOrder()`. Nothing else in this file pins that
- * ordering for the DISPLAY subquery: the erasure fixture above proves the
- * erasure predicate (its live secondary is the organisation's only remaining
- * contact once the erased row is excluded, so any ordering returns it), and
- * the created_at-tie fixture proves the `id` tiebreak for a row with no
- * flagged primary. Strip the `ORDER BY` from the display subquery and both
- * still pass.
+ * `listOrganisations`' primary-contact lateral and
+ * `primaryContactFollowerClause` each pick "the primary contact"
+ * independently, and they agree only because both order by
+ * `primaryContactOrder()`. Nothing else in this file pins that ordering for
+ * the DISPLAY side: the erasure fixture above proves the erasure predicate
+ * (its live secondary is the organisation's only remaining contact once the
+ * erased row is excluded, so any ordering returns it), and the created_at-tie
+ * fixture proves the `id` tiebreak for a row with no flagged primary. Strip
+ * the `ORDER BY` from the lateral and both still pass.
  *
  * So: two LIVE contacts, neither erased, with different non-null counts and
  * only `is_primary DESC` separating them. The secondary is inserted FIRST

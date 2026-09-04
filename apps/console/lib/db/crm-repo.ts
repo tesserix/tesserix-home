@@ -1395,13 +1395,16 @@ function primaryContactOrder(alias: string): string {
  * follower count and email were invisible to the filters while the erased
  * row held the primary slot.
  *
- * Applied to every subquery that picks ONE contact to stand for the
- * organisation — the two follower clauses, `hasEmail`, and the four display
- * columns in `listOrganisations` — and to none that read the organisation's
- * contacts as a record: `organisationDetail` still lists the erased contact,
- * because "who is primary for queue purposes" and "what does this
- * organisation's file contain" are different questions and only the first is
- * about erasure. `contact_count` likewise still counts it.
+ * Applied wherever ONE contact is picked to stand for the organisation: the
+ * two follower clauses, `hasEmail`, and `listOrganisations`' primary-contact
+ * lateral, which resolves the four display columns together. (The one place
+ * that picks a single contact without it is `wonWithoutConversion`'s lateral,
+ * for the reason its own comment gives — it selects on `email IS NOT NULL`,
+ * which erasure already excludes.) It is applied to nothing that reads the
+ * organisation's contacts as a record: `organisationDetail` still lists the
+ * erased contact, because "who is primary for queue purposes" and "what does
+ * this organisation's file contain" are different questions and only the
+ * first is about erasure. `contact_count` likewise still counts it.
  *
  * An organisation whose ONLY contact is erased therefore has no primary
  * contact at all, and falls into the Unknown follower band — which already
@@ -3034,9 +3037,15 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
  */
 export const ORGANISATION_SORTS = {
   name: "g.name",
-  /** Resolved once in the page query's lateral, so the count a row sorts by
-   *  is the count it displays and the count the follower filter banded it
-   *  on — see `notErased` and `primaryContactOrder`. */
+  /** The page query's lateral, so the count a row sorts by is by construction
+   *  the count it displays — one expression feeds both.
+   *
+   *  It also matches the count the follower filter banded the row on, but for
+   *  a different reason: `primaryContactFollowerClause` is a separate `EXISTS`
+   *  in the shared `WHERE` and never reads `pc`. The two agree because both
+   *  resolve the primary contact with `notErased` and `primaryContactOrder` —
+   *  keep those in step, or a row can sort and display a number the band it
+   *  came back under contradicts. */
   followers: "pc.followers_count",
   created: "g.created_at",
 } as const;
