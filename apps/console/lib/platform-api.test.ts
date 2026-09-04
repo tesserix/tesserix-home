@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PlatformApiError,
   fetchDashboard,
@@ -38,23 +39,114 @@ const VALID = {
 };
 
 /**
- * This restores `globalThis` between tests, but it does NOT isolate them — see
- * #544. Nothing here aborts an in-flight `platformCall`, so a test the runner
- * abandons on timeout leaves a continuation running. When that continuation
- * resumes it calls whatever `globalThis.fetch` is by then — the *next* test's
- * stub — and either pushes a stray URL into that test's `seen[]` or drains the
- * single `Response` a `mockResolvedValue` stub hands to every caller.
+ * Every `fetch` stub in this file goes through here, and the reason is #544 /
+ * #394.
  *
- * So one timeout here reports as two failures, the second naming an innocent
- * test with an unrelated-looking cause. Reproduced at the configured timeout by
- * running this file under CPU saturation: the `await import("./platform-api")`
- * in "the platform API switch" is the slow step, and its neighbour then failed
- * on a URL the timed-out test had queued. Closing it needs a cancellation path
- * through `platformCall` that a test can drive; raising `testTimeout` only
- * makes the trigger rarer.
+ * `vi.unstubAllGlobals()` below restores `globalThis`, but it does not isolate
+ * tests. Nothing in this file can abort an in-flight `platformCall`, so a test
+ * the runner abandons on timeout leaves a live continuation. When that
+ * continuation resumes it reads `globalThis.fetch` — which by then is the
+ * *next* test's stub — and pushes a stray URL into that test's `seen[]`, or
+ * drains the single `Response` a `mockResolvedValue` stub hands to every
+ * caller. The neighbour then fails on evidence that belongs to its predecessor.
+ *
+ * That is #394 verbatim: "composes the queue from two resources when it is set"
+ * times out, and "does not narrow the summary when the listing is filtered"
+ * then fails because `seen.find(u => u.includes("/v1/tickets?"))` returned the
+ * unfiltered `/v1/tickets?limit=200` the timed-out test had queued.
+ *
+ * Two things are done about it here, and neither is a cure:
+ *
+ * 1. **Attribution of the caller.** Each test runs in its own
+ *    `AsyncLocalStorage` scope, and an abandoned continuation keeps the scope it
+ *    was created in even when it resumes inside a later test. So the stub can
+ *    tell a stale caller from a legitimate one — which nothing else can, because
+ *    the stale call reaches the *current* stub and is otherwise identical to a
+ *    real one. A stale call is recorded and NOT forwarded, so it cannot corrupt
+ *    the running test, and it is handed a promise that never settles: it belongs
+ *    to a test that no longer exists, and rejecting it would only produce an
+ *    unhandled rejection attributed to nobody.
+ * 2. **An in-flight count.** A test that ends with requests still outstanding
+ *    fails saying so, so the run names the culprit rather than only its victim.
+ *
+ * This DIAGNOSES; it does not prevent the class. A leaked continuation that
+ * resumes before the next test installs its stub still reaches the real
+ * `fetch`, and a test can still be abandoned mid-flight. Prevention needs a
+ * cancellation path — an `AbortSignal` threaded through `platformCall` that a
+ * test can fire in teardown. #544 carries that.
+ *
+ * A poisoned `fetch` installed in `afterEach` was tried first and does NOT
+ * work: the leaked call lands after the next test has installed its own stub,
+ * so the poison is already gone. Measured — it was called zero times against a
+ * reproduction of the real ordering.
  */
+type TestScope = {
+  name: string;
+  inFlight: number;
+  leaks: { from: string; url: string }[];
+};
+
+const testScope = new AsyncLocalStorage<TestScope>();
+let scope: TestScope | null = null;
+
+beforeEach((ctx) => {
+  scope = { name: ctx.task.name, inFlight: 0, leaks: [] };
+  // `enterWith`, not `run`: a hook cannot wrap the test body in a callback, but
+  // it can set the store on the async context the body inherits. Verified — the
+  // stub reads the calling test's scope, and a leaked call reads its own.
+  testScope.enterWith(scope);
+});
+
+/**
+ * Installs `impl` as `globalThis.fetch` behind the guard above. Returns `impl`
+ * unchanged, so a caller holding the `vi.fn()` still asserts on its own
+ * `mock.calls`.
+ */
+function installFetchStub<T extends (...args: never[]) => unknown>(impl: T): T {
+  const owner = scope;
+  vi.stubGlobal("fetch", (...args: never[]) => {
+    const caller = testScope.getStore();
+    if (caller !== owner) {
+      // The stale caller's own scope names it, which is the whole point: a
+      // leaked call is otherwise indistinguishable from a legitimate one.
+      owner?.leaks.push({ from: caller?.name ?? "(no test scope)", url: String(args[0]) });
+      return new Promise(() => {});
+    }
+    if (owner) {
+      owner.inFlight += 1;
+    }
+    return Promise.resolve(impl(...args)).finally(() => {
+      if (owner) {
+        owner.inFlight -= 1;
+      }
+    });
+  });
+  return impl;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  const finished = scope;
+  scope = null;
+  if (!finished) {
+    return;
+  }
+  if (finished.leaks.length > 0) {
+    const culprits = [...new Set(finished.leaks.map((l) => l.from))];
+    throw new Error(
+      `#544: ${finished.leaks.length} request(s) left behind by ${culprits.map((c) => `"${c}"`).join(", ")} ` +
+        `reached "${finished.name}"'s fetch stub. They were withheld, so this test's ` +
+        `assertions are uncorrupted — the fault is in the named test(s), not this one. ` +
+        `URLs: ${finished.leaks.map((l) => l.url).join(", ")}`,
+    );
+  }
+  if (finished.inFlight > 0) {
+    throw new Error(
+      `#544: "${finished.name}" ended with ${finished.inFlight} request(s) still in flight. ` +
+        `They will resume inside a later test and corrupt it. If this test also timed out, ` +
+        `that is the cause and this is the culprit.`,
+    );
+  }
 });
 
 describe("parseDashboard", () => {
@@ -81,7 +173,7 @@ describe("fetchDashboard", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(VALID), { status: 200 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     await fetchDashboard("tx_session=abc123");
 
@@ -90,8 +182,7 @@ describe("fetchDashboard", () => {
   });
 
   it("preserves a 501 so the surface can report instrumentation-unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(new Response("", { status: 501 })),
     );
 
@@ -99,8 +190,7 @@ describe("fetchDashboard", () => {
   });
 
   it("preserves a 500 as a plain error, distinct from 501", async () => {
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(new Response("", { status: 500 })),
     );
 
@@ -108,7 +198,7 @@ describe("fetchDashboard", () => {
   });
 
   it("surfaces a transport failure as a PlatformApiError with no status", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+    installFetchStub(vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
 
     const err = await fetchDashboard("c=1").catch((e) => e);
     expect(err).toBeInstanceOf(PlatformApiError);
@@ -116,7 +206,7 @@ describe("fetchDashboard", () => {
   });
 
   it("formats a non-Error rejection without an undefined message, keeping the cause", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue("ECONNRESET"));
+    installFetchStub(vi.fn().mockRejectedValue("ECONNRESET"));
 
     const err = await fetchDashboard("c=1").catch((e) => e);
     expect(err).toBeInstanceOf(PlatformApiError);
@@ -128,8 +218,7 @@ describe("fetchDashboard", () => {
   it("surfaces a 200 carrying a non-JSON body as a PlatformApiError", async () => {
     // A proxy or ingress error page arrives as HTML with a 200; the typed
     // boundary must hold rather than leaking a raw SyntaxError.
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response("<html>502 Bad Gateway</html>", {
           status: 200,
@@ -153,7 +242,7 @@ describe("postTicketReply", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ reply: {} }), { status: 201 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     await postTicketReply(TICKET_ID, { content: "On it." }, "tx_session=abc");
 
@@ -166,8 +255,7 @@ describe("postTicketReply", () => {
   });
 
   it("throws a PlatformApiError carrying the status on failure", async () => {
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: "forbidden" }), { status: 403 }),
       ),
@@ -183,7 +271,7 @@ describe("patchTicketStatus", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ ticket: {} }), { status: 200 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     await patchTicketStatus(TICKET_ID, "resolved", "tx_session=abc");
 
@@ -205,7 +293,7 @@ describe("fetchTickets", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(EMPTY_PAGE), { status: 200 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
     return fetchMock;
   }
 
@@ -290,7 +378,7 @@ describe("fetchSupportAnalytics", () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify(VALID_ANALYTICS), { status: 200 }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     const stats = await fetchSupportAnalytics("tx_session=abc");
 
@@ -302,8 +390,7 @@ describe("fetchSupportAnalytics", () => {
   });
 
   it("preserves a 501 so the analytics tab can report instrumentation-unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(new Response("", { status: 501 })),
     );
 
@@ -339,7 +426,7 @@ describe("fetchTicketDetail", () => {
         { status: 200 },
       ),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     const detail = await fetchTicketDetail(TICKET_ID, "tx_session=abc");
     expect(detail.ticket.ticketNumber).toBe("M8-1042");
@@ -347,8 +434,7 @@ describe("fetchTicketDetail", () => {
   });
 
   it("carries a 404 status so the page can render not-found", async () => {
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ error: "not_found" }), { status: 404 }),
       ),
@@ -490,7 +576,7 @@ describe("the platform API switch", () => {
     // swap would break the surface on deploy.
     vi.stubEnv("PLATFORM_API_ORIGIN", "");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       return new Response(
         JSON.stringify({ summary: { open: 1, inProgress: 0, resolvedThisWeek: 0, urgentOpen: 0 }, rows: [] }),
@@ -512,7 +598,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       const body = String(url).includes("/summary")
         ? envelope({ summary: MODULE_SUMMARY })
@@ -545,7 +631,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       const body = String(url).includes("/summary")
         ? envelope({ summary: MODULE_SUMMARY })
@@ -571,7 +657,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     let headers: Record<string, string> = {};
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    installFetchStub(async (url: string, init: RequestInit) => {
       headers = { ...(init.headers as Record<string, string>) };
       return new Response(JSON.stringify(envelope({ ticket: MODULE_TICKET, replies: [] })), {
         status: 200,
@@ -590,7 +676,7 @@ describe("the platform API switch", () => {
     // an operator can act on. This is the state of every session today.
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken(null);
-    vi.stubGlobal("fetch", async () => {
+    installFetchStub(async () => {
       throw new Error("no request should have been made");
     });
 
@@ -610,7 +696,7 @@ describe("the platform API switch", () => {
     // the equivalence #271 asks for, asserted from the console's side.
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
-    vi.stubGlobal("fetch", async () =>
+    installFetchStub(async () =>
       new Response(
         JSON.stringify(
           envelope({
@@ -647,7 +733,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     const keys: string[] = [];
-    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+    installFetchStub(async (_url: string, init: RequestInit) => {
       const headers = init.headers as Record<string, string>;
       keys.push(headers["idempotency-key"]);
       return new Response(JSON.stringify(envelope({ reply: {}, ticket: MODULE_TICKET })), {
@@ -671,7 +757,7 @@ describe("the platform API switch", () => {
     // requires" are different things and the console renders them differently.
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
-    vi.stubGlobal("fetch", async () =>
+    installFetchStub(async () =>
       new Response(
         JSON.stringify({
           success: false,
@@ -689,7 +775,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       return new Response(JSON.stringify(envelope({ entries: [], failures: [] })), {
         status: 200,
@@ -707,7 +793,7 @@ describe("the platform API switch", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       return new Response(JSON.stringify(envelope({ entries: [], failures: [] })), {
         status: 200,
@@ -738,7 +824,7 @@ describe("the platform API switch", () => {
 
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
-    vi.stubGlobal("fetch", capture);
+    installFetchStub(capture);
     const mod = await import("./platform-api");
     await mod.fetchEstateAuditLog("cookie=1", "mark8ly");
 
@@ -753,7 +839,7 @@ describe("the platform API switch", () => {
     // must keep hitting the endpoint this surface has always used.
     vi.stubEnv("PLATFORM_API_ORIGIN", "");
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       return new Response(JSON.stringify({ entries: [], failures: [] }), { status: 200 });
     });
@@ -769,7 +855,7 @@ describe("the platform API switch", () => {
     // an unknown source with a 400, and that refusal has to reach the caller.
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
-    vi.stubGlobal("fetch", async () =>
+    installFetchStub(async () =>
       new Response(
         JSON.stringify({
           success: false,
@@ -819,7 +905,7 @@ const AI_TOTALS = {
 describe("the AI usage reads", () => {
   function stubOnce(payload: unknown): string[] {
     const seen: string[] = [];
-    vi.stubGlobal("fetch", async (url: string) => {
+    installFetchStub(async (url: string) => {
       seen.push(String(url));
       return new Response(JSON.stringify(envelope(payload)), { status: 200 });
     });
@@ -904,7 +990,7 @@ describe("the AI usage reads", () => {
     // operator who hand-edited the URL is told what was wrong with it.
     vi.stubEnv("PLATFORM_API_ORIGIN", PLATFORM_ORIGIN);
     withToken("access-token-1");
-    vi.stubGlobal("fetch", async () =>
+    installFetchStub(async () =>
       new Response(
         JSON.stringify({
           success: false,
@@ -954,7 +1040,7 @@ describe("platformRequestWithMeta", () => {
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     const { platformRequestWithMeta } = await import("./platform-api");
     const result = await platformRequestWithMeta("crm due", "/v1/crm/queues/due?limit=100");
@@ -966,8 +1052,7 @@ describe("platformRequestWithMeta", () => {
   it("returns an undefined meta when the envelope carries none", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ success: true, data: { opportunities: [] } }), {
           status: 200,
@@ -994,8 +1079,7 @@ describe("the no-operator-token signal", () => {
   it("does NOT mark an ordinary API failure", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({ success: false, error: { code: "FORBIDDEN", message: "nope" } }),
@@ -1054,8 +1138,7 @@ describe("fetchKoraAiMetricsPage", () => {
   it("reads pagination from the envelope's meta, not from data", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify(envelope(KORA_DATA, paginationInMeta({ total: 2, limit: 50 }))), {
           status: 200,
@@ -1072,8 +1155,7 @@ describe("fetchKoraAiMetricsPage", () => {
   it("reflects the requested page in the parsed pagination, since meta carries no page field", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(JSON.stringify(envelope(KORA_DATA, paginationInMeta({ total: 90, limit: 50 }))), {
           status: 200,
@@ -1099,8 +1181,7 @@ describe("fetchProductEntities", () => {
   it("reads pagination from data.pagination, not from meta", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify(
@@ -1147,7 +1228,7 @@ describe("fetchOnboardingFunnel", () => {
         headers: { "content-type": "application/json" },
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     const funnel = await fetchOnboardingFunnel("mark8ly");
 
@@ -1163,8 +1244,7 @@ describe("fetchOnboardingFunnel", () => {
   it("keeps the 501 status, so a parked federation never reads as an empty funnel", async () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -1202,7 +1282,7 @@ describe("fetchPlatformSources", () => {
         headers: { "content-type": "application/json" },
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
 
     const sources = await fetchPlatformSources();
 
@@ -1215,8 +1295,7 @@ describe("fetchPlatformSources", () => {
     // absence of a fact, the other is a fact.
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal(
-      "fetch",
+    installFetchStub(
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({ success: false, error: { code: "unavailable", message: "down" } }),
@@ -1259,7 +1338,7 @@ describe("fetchOnboardingSessions", () => {
     );
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
     return fetchMock;
   }
 
@@ -1375,7 +1454,7 @@ describe("fetchProductKpis", () => {
     vi.stubEnv("PLATFORM_API_ORIGIN", "http://platform-api.test");
     withToken("access-token-1");
     const fetchMock = vi.fn().mockResolvedValue(response);
-    vi.stubGlobal("fetch", fetchMock);
+    installFetchStub(fetchMock);
     return fetchMock;
   }
 

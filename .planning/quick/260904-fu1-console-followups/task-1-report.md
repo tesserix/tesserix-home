@@ -72,9 +72,11 @@ real 233.39   82 passed / 3 failed — all three "Test timed out in 5000ms"
 ```
 
 Note which tests in `platform-api.test.ts` are slow enough to time out: both are
-in `describe("the platform API switch")`, which does `vi.resetModules()` in its
-`afterEach` and then `await import("./platform-api")`. That re-transform is the
-macrotask that stalls under contention — not the fetch.
+in `describe("the platform API switch")`, and both do `await import("./platform-api")`.
+The `vi.resetModules()` that makes each such import a full re-resolve is in the
+**file-scope** `afterEach` (column 0, declared just above that describe) — not the
+describe's own hook, as an earlier draft of this report said. That re-transform is
+the macrotask that stalls under contention; the fetch is not.
 
 ### H3 — "the `Body has already been read` cascade is an artefact of the 25ms timeout"
 
@@ -209,10 +211,10 @@ change** — no assertion touched, no hook added or removed.
 - **No fix for the cascade itself.** Closing it properly needs an `AbortSignal`
   threaded through `platformCall` so a test can cancel its own in-flight request,
   or per-test module isolation. Both are substantial changes to production code
-  and to ~40 stub sites in a 1450-line test file, out of proportion to this task.
+  and to 41 stub sites in a 1450-line test file, out of proportion to this task.
   Raising the timeout makes the trigger rarer; it does not remove it. Recorded on
   #544.
-- **No change to the 24 `mockResolvedValue(new Response(...))` sites.** They are
+- **No change to the 23 `mockResolvedValue(new Response(...))` sites.** They are
   the victim-side precondition for the `Body has already been read` variant only,
   which does not occur at a realistic timeout.
 - `restoreMocks` — see H6.
@@ -238,3 +240,201 @@ timed out at 25ms is not fully explained. It is plausibly first-touch transform
 work, but I did not instrument it, and I am not asserting it. It does not affect
 the conclusions: the 25ms regime is not one this suite runs in, and the realistic
 regime (H5) was reproduced directly.
+
+---
+
+# T1 addendum — the test-only fix, and #394
+
+Three corrections to the sections above have been applied in place: the
+`mockResolvedValue(new Response(...))` count is **23**, not 24 (25
+`mockResolvedValue` total); the stub-site count is exactly **41** (28 single-line
++ 13 multi-line), not "~40"; and the `vi.resetModules()` hook is **file-scope**,
+not `describe("the platform API switch")`'s own. That last one is the same
+reading error that produced the false claim in #544 itself, so it is recorded
+rather than quietly fixed.
+
+## Q1 — does the poisoned stub work? No. Measured.
+
+Built the probe before building the fix. A file-scope `afterEach` installed a
+`fetch` that counted its own invocations and threw, against a reproduction of the
+real ordering (A abandoned before its fetch, B installs its own stub, A's
+continuation resumes inside B):
+
+```
+=== PROBE LOG ===
+B-stub saw A-url | caller-ctx=A | current=B
+B-stub saw B-url | caller-ctx=B | current=B
+B seen=["A-url","B-url"] poisonCalls=0
+=== END ===
+```
+
+**`poisonCalls=0`.** The leaked call went straight to B's stub. The poison had
+already been overwritten by the time the continuation resumed. It catches only
+leaks that resume inside the `afterEach` → next-stub window, and the real case is
+not one of those.
+
+Also visible in that log: `seen=["A-url","B-url"]` — the stale URL is at **index
+0**, which is precisely why the victim's `seen.find(u => u.includes("/v1/tickets?"))`
+returns it.
+
+## Q2 — can anything test-side distinguish a stale caller? Yes.
+
+Same probe, second candidate: an `AsyncLocalStorage` scope entered per test via
+`als.enterWith()` in `beforeEach`. Result, from the same log:
+
+```
+B-stub saw A-url | caller-ctx=A | current=B     <- stale call, correctly attributed to A
+B-stub saw B-url | caller-ctx=B | current=B     <- legitimate call
+```
+
+An abandoned continuation keeps the async context it was created in, even when it
+resumes inside a later test. So the stub *can* tell the two apart — which nothing
+else can, because the stale call reaches the **current** stub and is otherwise
+byte-identical to a real one. A generation counter on the stub cannot work, and
+was not built, for exactly that reason.
+
+### Why every stub site had to change
+
+Checked whether the guard could be installed once, with no call-site churn, by
+defining `globalThis.fetch` as an accessor:
+
+```
+=== DESC ===
+before: get,set,enumerable,configurable
+after : value,writable,enumerable,configurable
+setter survived: false
+=== END ===
+```
+
+`vi.stubGlobal` replaces the descriptor with a data property, so an accessor does
+not survive. There is no zero-churn interception point; all 41 sites were
+redirected through one helper by mechanical regex (13 multi-line, 28 single-line,
+0 remaining).
+
+## What was built
+
+`lib/platform-api.test.ts`, test-only, no production code touched, no assertion
+weakened:
+
+- A per-test `AsyncLocalStorage` scope (`beforeEach`, `enterWith`).
+- `installFetchStub(impl)`, which every one of the 41 sites now calls. It returns
+  `impl` unchanged so callers holding the `vi.fn()` still assert on their own
+  `mock.calls`. A call whose async context is not the stub's owner is **recorded
+  and not forwarded**, and is handed a promise that never settles — it belongs to
+  a test that no longer exists, and rejecting it would only produce an unhandled
+  rejection attributed to nobody.
+- An **in-flight counter**, as the review asked for.
+- A file-scope `afterEach` that fails the test on either signal, naming the
+  culprit test **by name** via the leaked call's own scope.
+
+## Q3 — does it fire on the reproduction?
+
+**The caller-attribution: yes, deterministically.** `--testTimeout=500`, no
+artificial load, reproduces the #394 pair every time:
+
+```
+$ pnpm vitest run lib/platform-api.test.ts --testTimeout=500
+→ Test timed out in 500ms.
+→ #544: 2 request(s) left behind by "composes the queue from two resources when it is set"
+        reached "does not narrow the summary when the listing is filtered"'s fetch stub.
+```
+
+That is #394's exact pair, and the culprit is named in the same run.
+
+Before → after on the same file at `--testTimeout=25`:
+
+| | before | after |
+|---|---|---|
+| `Body has already been read` | 2 | **0** |
+| misleading wrong-URL `AssertionError`s | present | **0** |
+| explicit culprit-naming `#544:` failures | 0 | 8 |
+
+**The in-flight counter: no. It fires zero times.**
+
+```
+$ pnpm vitest run lib/platform-api.test.ts --testTimeout=25 | grep -c "still in flight"
+0
+```
+
+This is the honest answer to the review's question. The counter cannot fire on
+the #394 case because the culprit is abandoned at `await import("./platform-api")`
+— **before** it issues its request. There is nothing in flight to count. It was
+kept because it catches the other shape (a test abandoned mid-flight), but it is
+not what names the culprit here, and the comment in the file says so.
+
+## Cost
+
+Three runs each, default timeout, `tests` phase only:
+
+```
+AFTER  1.12s  1.14s  1.49s
+BEFORE 1.07s  1.19s  1.04s
+```
+
+Within noise. The `AsyncLocalStorage` overhead is confined to this file's worker.
+
+## What this does and does not do
+
+**Does:** stops a leaked call corrupting the running test's evidence, and names
+the culprit test by name in the same run. That is #394's complaint —
+"an innocent test blamed" — answered at the diagnosis level.
+
+**Does not:** prevent the class. A continuation resuming before the next test
+installs its stub still reaches the real `fetch`; a test can still be abandoned
+mid-flight. Prevention needs an `AbortSignal` threaded through `platformCall`
+that a test can fire in teardown — a production-code change, deliberately not
+made here. #544 and #394 both stay open for it.
+
+The file comment and both issue comments state this limitation explicitly. It
+must not read as closing the cascade.
+
+## #394
+
+Confirmed as the same defect, past shape-matching, and posted there
+([comment](https://github.com/tesserix/tesserix-home/issues/394#issuecomment-5533884096)):
+
+- Same two tests, same order; `478/530` vs `493/545` — both **+15**, one
+  consistent file growth.
+- The received `/v1/tickets?limit=200` is generated by the immediately-preceding
+  timed-out test's `fetchTickets("cookie=1")` (no filters; `ticketsQuery` adds
+  nothing, `platform-api.ts:428` sets `limit=200`) — the only `PLATFORM_ORIGIN`
+  test in the file producing that URL.
+- The victim uses `seen.find(...)`, first-match, so the stale listing at index 0
+  wins — which is exactly how a well-formed URL ends up "missing its query
+  string".
+
+Verdict: **explained, mitigated at the diagnosis level, not fixed.** Stays open
+until cancellation lands.
+
+## `restoreMocks` — filed as #550
+
+Reframed as the review asked. It is not a reason the setting is wrong; it is
+latent order-dependence. `lib/crm-queues.test.ts:22-31` sets `mockResolvedValue`
+once inside the `vi.mock` factory and its `beforeEach` calls only
+`vi.clearAllMocks()` (`:41-42`), which keeps implementations — so `restoreMocks`
+wipes them and every test after the first reads `undefined`:
+
+```
+lib/crm-queues.test.ts:75:17          TypeError: Cannot read properties of undefined (reading 'total')
+authoring-panel.tsx:349:39            TypeError: Cannot read properties of undefined (reading 'then')  (x2)
+```
+
+Filed as #550 with the suggested fix (move the return values into `beforeEach`,
+then the setting can be turned on).
+
+## `testTimeout` comment softened
+
+The derivation now says plainly that 15000ms is a **judgement informed by the
+spread, not arithmetic from it** — a whole-suite wall-time ratio is not a per-test
+stretch factor, and the per-test stretch actually measured (587ms → 9818ms, and
+34344ms on the next attempt) is worse than any ratio would suggest and is not
+survivable by any finite timeout.
+
+## Verification
+
+```
+$ pnpm vitest run   (apps/console)
+real 58.74   4133 passed / 0 failed
+$ npx tsc --noEmit   # clean
+$ pnpm vitest run lib/platform-api.test.ts     66 passed
+```
