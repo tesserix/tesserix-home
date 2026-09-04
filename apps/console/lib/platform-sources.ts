@@ -110,8 +110,9 @@ export function slugsDeclaring(
  * blocks from the same `product.Entities`, so a slug listed here for a type is
  * exactly a slug whose `Read` will get past both `ErrUnknownSource` (the slug
  * is not a key at all) and `ErrTypeNotServed` (the key exists, the type is not
- * in it). That congruence is what lets a caller avoid the 400 rather than
- * guess at it.
+ * in it). That congruence is what lets a caller EXPLAIN the 400 rather than
+ * guess at it — `[product]/[entity]/page.tsx`, the caller, still issues the
+ * read and discards the refusal, for the latency reason stated there.
  */
 export function slugsServing(
   sources: PlatformSources,

@@ -77,17 +77,18 @@ import { ProductOverview } from "./overview-view";
  * (`ErrUnknownSource`), which `resolveState` renders as a failure. That is the
  * likelier deployment: one product federated, another not.
  *
- * # Why this page reads the declarations AFTER the KPI read, not before it
+ * # Why the declarations cannot decide this on their own
  *
- * `/platform/onboarding` checks `/v1/platform/sources` first and never fires a
- * request it knows will 400. This page cannot: `sources` is the inversion of
- * `FEDERATION_<SLUG>_ENDPOINTS` and `_ENTITIES`, both OPTIONAL in
- * `registry.go`, while `/v1/kpis` is scoped to `FEDERATION_PRODUCTS` itself.
- * So a federated product that declares no endpoints and no entity types is
- * absent from `sources` while its KPIs read perfectly well, and a
- * check-before-read would render "not federated" over real numbers. The sibling
- * `[entity]` page has no such gap and does check first — its gate reads the
- * very map platform-api gates on.
+ * `/platform/onboarding` reads `/v1/platform/sources` first and treats its
+ * answer as the whole truth about which products it may ask. This page cannot:
+ * `sources` is the inversion of `FEDERATION_<SLUG>_ENDPOINTS` and `_ENTITIES`,
+ * both OPTIONAL in `registry.go`, while `/v1/kpis` is scoped to
+ * `FEDERATION_PRODUCTS` itself. So a federated product that declares no
+ * endpoints and no entity types is absent from `sources` while its KPIs read
+ * perfectly well, and a gate that concluded on its own would render "not
+ * federated" over real numbers. The sibling `[entity]` page has no such gap —
+ * its gate reads the very map platform-api gates on, so it concludes without
+ * corroboration.
  *
  * The declarations are therefore read IN PARALLEL with the KPIs and used only
  * to interpret a 400 that already happened. Two signals, not one: the API

@@ -12,10 +12,13 @@ import type { SurfaceState } from "@/components/kit/surface-state";
  *   - `kpis`: `service.Read` answers `ErrNoProducts` (→ 501) when
  *     `FEDERATION_PRODUCTS` is empty, but `ErrUnknownSource` (→ 400) when the
  *     list is non-empty and does not contain the requested slug.
- *   - `entities`: `service.Read` answers `ErrNotInstrumented` (→ 501) when no
- *     product declares any type, `ErrUnknownSource` (→ 400) when the slug is
- *     not a federated product, and `ErrTypeNotServed` (→ 400) when it is but
- *     did not declare this type.
+ *   - `entities`: `service.Read` answers `ErrNotInstrumented` (→ 501) when
+ *     `len(s.types) == 0` — which, because `main.go` writes a key per
+ *     FEDERATED SLUG rather than per declaring one, means this deployment
+ *     federates nothing at all. Otherwise `ErrUnknownSource` (→ 400) when the
+ *     slug is not a federated product, and `ErrTypeNotServed` (→ 400) when it
+ *     is one but declared no such type — including when its
+ *     `FEDERATION_<SLUG>_ENTITIES` is unset entirely.
  *
  * `resolveState` maps 501 to `instrumentation-unavailable` and everything else
  * to `error`, so only the "nothing is federated at all" edge read calmly. The

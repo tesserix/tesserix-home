@@ -252,21 +252,23 @@ describe("the states this surface renders", () => {
     expect(screen.queryByText(unavailableTitle("Mark8ly", "tenants"))).toBeNull();
   });
 
-  it("renders an unfederated product calmly, and makes no read at all", async () => {
+  it("renders an unfederated product calmly, discarding the 400 it was sent", async () => {
     // The state #546 is about, at this surface: kora is federated here and
-    // mark8ly is not, so `/v1/entities?source=mark8ly` would be refused with
-    // `ErrUnknownSource` → 400 and rendered as a failure. The declaration map
-    // is the same one platform-api gates on, so the console can skip the
-    // request rather than interpret its refusal.
-    fetchProductEntities.mockClear();
+    // mark8ly is not, so `/v1/entities?source=mark8ly` is refused with
+    // `ErrUnknownSource` → 400, which used to render as a failure. The two
+    // reads go out together, so the refusal arrives and is DISCARDED rather
+    // than avoided — the declarations say why, and they cost no extra hop.
     fetchPlatformSources.mockResolvedValue({ endpoints: {}, entities: { users: ["kora"] } });
+    fetchProductEntities.mockRejectedValue(
+      new PlatformApiError("entities: unknown source: mark8ly", 400),
+    );
 
     await renderIndex("mark8ly", "tenants");
 
-    expect(fetchProductEntities).not.toHaveBeenCalled();
     expect(screen.getByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeInTheDocument();
     expect(screen.getByText(typeNotFederatedMessage("Mark8ly", "tenants"))).toBeInTheDocument();
     expect(screen.queryByText("Something Went Wrong")).toBeNull();
+    expect(document.body.textContent).not.toContain("entities: unknown source");
     expect(document.body.textContent).not.toContain("observability-park");
   });
 
@@ -274,16 +276,45 @@ describe("the states this surface renders", () => {
     // `ErrTypeNotServed` rather than `ErrUnknownSource` — mark8ly is federated
     // and serves `users`, but not `tenants`. Both are 400s and both are the
     // same calm state, which is why the copy is true of either.
-    fetchProductEntities.mockClear();
     fetchPlatformSources.mockResolvedValue({
       endpoints: { onboarding: ["mark8ly"] },
       entities: { users: ["mark8ly"] },
     });
+    fetchProductEntities.mockRejectedValue(
+      new PlatformApiError('entities: mark8ly does not serve "tenants"', 400),
+    );
 
     await renderIndex("mark8ly", "tenants");
 
-    expect(fetchProductEntities).not.toHaveBeenCalled();
     expect(screen.getByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeInTheDocument();
+  });
+
+  it("shows real rows even when the declarations say the slug is undeclared", async () => {
+    // The two reads gate on the same configuration, so this should not be
+    // reachable. If they ever disagree, hiding records that exist behind "not
+    // switched on" is the dangerous direction — the same mistake as rendering
+    // a 503 as "no metrics" — so the rows win.
+    fetchPlatformSources.mockResolvedValue({ endpoints: {}, entities: { users: ["kora"] } });
+    fetchProductEntities.mockResolvedValue(page([record({ label: "Acme Retail" })]));
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(screen.getByText("Acme Retail")).toBeInTheDocument();
+    expect(screen.queryByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeNull();
+  });
+
+  it("keeps a 400 an error on a slug the deployment DOES declare", async () => {
+    // The discard is not "swallow every 400". A product that is federated and
+    // serves this type refusing the read is a real failure — a search the
+    // product rejected, say — and must still be reported.
+    fetchProductEntities.mockRejectedValue(
+      new PlatformApiError("the product refused this read: invalid_input", 400),
+    );
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(screen.getByText("Something Went Wrong")).toBeInTheDocument();
+    expect(screen.getByText("the product refused this read: invalid_input")).toBeInTheDocument();
   });
 
   it("reads anyway when the declarations could not be read", async () => {

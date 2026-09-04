@@ -69,6 +69,20 @@ const CONSOLE_ROOT = path.resolve(__dirname, "..");
 const SOURCE_ROOTS: readonly string[] = ["app", "lib", "components"];
 
 /**
+ * Server source that is not under any of those roots.
+ *
+ * `middleware.ts` sits at the console root and runs on every request — it is
+ * where the access gate lives, so it is the single most load-bearing server
+ * module in the app and the walk above never opened it.
+ *
+ * A LIST of files rather than a fourth root: `dev/`, `test/` and `scripts/`
+ * are also outside the roots and none of them serves a request, so widening
+ * the walk to the console root would pull in three directories to earn one
+ * file. Naming the file costs one line and drags in nothing.
+ */
+const SOURCE_FILES: readonly string[] = ["middleware.ts"];
+
+/**
  * The directive, wherever it sits.
  *
  * Matched on its own line rather than by reading the first N lines: several of
@@ -92,12 +106,17 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const serverModulesUnder = (root: string) =>
-  walk(path.join(CONSOLE_ROOT, root)).filter(
-    (file) => !USE_CLIENT.test(readFileSync(file, "utf-8")),
-  );
+const isServerModule = (file: string) => !USE_CLIENT.test(readFileSync(file, "utf-8"));
 
-const SERVER_MODULES = SOURCE_ROOTS.flatMap(serverModulesUnder);
+const serverModulesUnder = (root: string) =>
+  walk(path.join(CONSOLE_ROOT, root)).filter(isServerModule);
+
+const SERVER_MODULES = [
+  ...SOURCE_ROOTS.flatMap(serverModulesUnder),
+  // `readFileSync` throws here if a named file is renamed away, which is the
+  // right failure: this list going stale must be loud, not silent.
+  ...SOURCE_FILES.map((file) => path.join(CONSOLE_ROOT, file)).filter(isServerModule),
+];
 
 describe("server modules do not import @tesserix/web", () => {
   it("walks app/, lib/ and components/", () => {
@@ -107,12 +126,24 @@ describe("server modules do not import @tesserix/web", () => {
     // that: `app/**.tsx` only, with `lib/` unguarded. Widening is welcome;
     // narrowing has to be a deliberate edit here.
     expect(SOURCE_ROOTS).toEqual(["app", "lib", "components"]);
+    // Same reason, for the file the roots cannot reach.
+    expect(SOURCE_FILES).toEqual(["middleware.ts"]);
   });
 
   // Vacuity, per root: a walk that found nothing would pass and read as
   // coverage.
   it.each(SOURCE_ROOTS)("finds server modules to check under %s/", (root) => {
     expect(serverModulesUnder(root).length).toBeGreaterThan(0);
+  });
+
+  // Vacuity in AGGREGATE, and it catches something the per-root rows cannot.
+  // If `walk` stopped recursing, the three roots would still yield 1, 40 and 3
+  // top-level files — every per-root row stays green while the guard drops
+  // from 161 modules to 44. Counted, not estimated: the numbers above are
+  // today's tree, and 100 is the floor between them with room for the tree to
+  // shrink.
+  it("checks the whole tree, not just its top level", () => {
+    expect(SERVER_MODULES.length).toBeGreaterThan(100);
   });
 
   it.each(SERVER_MODULES.map((f) => path.relative(CONSOLE_ROOT, f)))(

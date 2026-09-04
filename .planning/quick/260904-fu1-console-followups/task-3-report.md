@@ -128,3 +128,100 @@ unchanged and the Go half of #546 stands:
 
 Kora's bespoke pages (`app/(console)/kora/*`) have the same gap and were left
 alone, per scope.
+
+---
+
+# Review round 2 — the four items
+
+## 1. The false mechanism (merge condition) — corrected in both places
+
+The prose was wrong; the parenthetical was right. Re-derived from source, not
+from the description:
+
+- `main.go:218-223` — `for _, slug := range cfg.Federation.Slugs() { if product,
+  ok := cfg.Federation.Get(slug); ok { types[slug] = product.Entities } }`.
+- `registry.go:141-148` — `Slugs()` ranges `r.byslug`'s keys; `registry.go:93-96`
+  — `Get` looks up the same `byslug`. So the `ok` guard never skips a slug, and
+  a key is written for **every federated product** whatever its `Entities`.
+- `registry.go:205-211` — `Entities` and `Endpoints` are both `splitList(...)`
+  of an optional env var.
+
+Therefore `len(s.types) == 0` ⟺ **this deployment federates nothing at all**. A
+deployment federating mark8ly with `FEDERATION_MARK8LY_ENTITIES` unset has
+`len(types) == 1`, `known == true`, and answers **400 `ErrTypeNotServed`** — not
+501. Both comments now say that, and the entity page's adds the sentence the
+failure scenario asked for: *"the 501 path does NOT already cover these.
+Deleting the gate below as redundant would put that page back."*
+
+## 2. Parallelised — and it held up, with one correction and one dead clause found
+
+`fetchPlatformSources` goes through `request()`, which sets `cache: "no-store"`
+(`lib/platform-api.ts:468`), so the serial version was a real added hop on the
+common path. Both reads now go out in one `Promise.allSettled`.
+
+Two things the implementation showed that the plan for it did not:
+
+- **The gate must not override real rows.** With the read now issued anyway, a
+  successful 200 from a slug the declarations call undeclared became a reachable
+  combination in code. Rendering "not switched on" over rows that exist is the
+  dangerous direction — the same mistake as rendering a 503 as "no metrics" — so
+  the calm state requires `federated === false` **and** the read not coming back.
+  New test: `shows real rows even when the declarations say the slug is
+  undeclared`.
+- **Suppressing the explained refusal was dead code.** I first wrote `error =
+  notFederated || ... ? null : reason`. Mutation P4 removed the `notFederated ||`
+  and **nothing went red** — because the calm branch renders without calling
+  `entityState`, so that value is never read. A clause no test can distinguish is
+  not doing work, so it was removed rather than kept with a comment implying
+  behaviour that is not there.
+
+Stale prose from the serial design was corrected in four places rather than left
+to rot: the entity page's *"the request is not made at all"* heading, the
+overview page's *"AFTER the KPI read, not before it"* heading and its
+`[entity]` cross-reference, and `slugsServing`'s *"lets a caller avoid the 400"*.
+The distinction between the two surfaces is now stated as what it actually is —
+exact gate vs lower bound needing corroboration — not as read ordering.
+
+## 3. Aggregate vacuity added
+
+Counted, twice, with a script: `app` 75, `lib` 79, `components` 7 = **161**
+recursive server modules; top-level-only would be 1 + 40 + 3 = **44** — matching
+the reviewer's figures exactly. Added
+`expect(SERVER_MODULES.length).toBeGreaterThan(100)` with those numbers in the
+comment.
+
+## 4. `middleware.ts` added — cleanly, without dragging in `dev/`, `test/`, `scripts/`
+
+A `SOURCE_FILES` list beside `SOURCE_ROOTS` rather than a fourth root: the walk
+is untouched, and `dev/`, `test/` and `scripts/` stay out. The equality
+assertion covers it too, so dropping it is a deliberate edit. `middleware.ts`
+has no `"use client"` and does not import `@tesserix/web`, so it enters as a
+checked server module and passes.
+
+## Round-2 removal proofs
+
+| # | what was removed | result |
+|---|---|---|
+| P1 | `walk()` made non-recursive | **only** `checks the whole tree, not just its top level` went red; all three per-root rows stayed green and the file fell from 167 rows to 49 — the exact blind spot the reviewer described |
+| P2 | `middleware.ts` from `SOURCE_FILES` | `walks app/, lib/ and components/` red; row count 167 → 166 |
+| P3 | the `fetched === null` half of `notFederated` | `shows real rows even when the declarations say the slug is undeclared` red |
+| P4 | the `notFederated \|\|` error suppression | **nothing red** — clause proven dead, and removed |
+| P5 | the `federated === false` half of `notFederated` | three rows red, incl. `keeps a 400 an error on a slug the deployment DOES declare` |
+
+## Round-2 commands
+
+```
+$ pnpm typecheck            # tsc --noEmit, clean
+$ pnpm lint                 # eslint --max-warnings 0, clean
+
+$ pnpm vitest run "app/(console)/[product]" lib/platform-sources.test.ts lib/server-component-web-import.guard.test.ts
+Test Files  9 passed (9)
+Tests  273 passed (273)
+
+$ pnpm vitest run
+Test Files  234 passed (234)
+Tests  4281 passed (4281)     # 4277 + 2 entity rows + 2 guard rows
+```
+
+19 new tests across T3 and the two guard additions. #546 still must not be
+closed — the Go half is unchanged.
