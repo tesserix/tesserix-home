@@ -140,6 +140,17 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 				[]auth.Capability{auth.CapSupport, auth.CapProductSupport}, h.log, handler))
 	}
 
+	// The summary stays OPERATOR-ONLY.
+	//
+	// It is a standing count with no tenant dimension, and a product caller is
+	// confined to one tenant — so there is no honest answer to give one. No
+	// product asks for it either: mark8ly's client lists, reads, replies and
+	// files, and never fetches a summary.
+	summaryOnly := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log,
+			auth.RequireCapability(auth.CapSupport, h.log, handler))
+	}
+
 	// Writes stay OPERATOR-ONLY, replies included.
 	//
 	// A product machine deliberately does NOT reach the reply route yet, even
@@ -175,7 +186,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	// surface access rather than replacing it — respond without support means
 	// "may reply where they may work", not "may reply anywhere".
 	mux.Handle("GET /v1/tickets", read(h.list))
-	mux.Handle("GET /v1/tickets/summary", read(h.summary))
+	mux.Handle("GET /v1/tickets/summary", summaryOnly(h.summary))
 	mux.Handle("GET /v1/tickets/{id}", read(h.detail))
 	mux.Handle("POST /v1/tickets/{id}/replies", write(h.reply))
 	mux.Handle("PATCH /v1/tickets/{id}", write(h.setStatus))
@@ -238,6 +249,14 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	// The tenant a product caller is acting for. An operator names none and
+	// stays estate-wide; a machine that names none is refused rather than
+	// handed every tenant inside its product.
+	scope, err = scope.ForTenant(query.Get("tenant"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
 
 	payload, page, err := h.svc.List(r.Context(), scope, filter, limit, query.Get("cursor"))
 	if err != nil {
@@ -282,6 +301,11 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 	scope, err := h.scopeFor(r)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	scope, err = scope.ForTenant(r.URL.Query().Get("tenant"))
 	if err != nil {
 		h.fail(w, r, err)
 		return

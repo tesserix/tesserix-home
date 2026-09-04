@@ -214,3 +214,59 @@ func TestAMachineIsAdmittedToTheReadRoutes(t *testing.T) {
 		t.Errorf("a product-support machine was refused a READ with %d", rec.Code)
 	}
 }
+
+// A machine that names no tenant must not receive its product's whole estate.
+//
+// apps/web requires ?tenant_id= on every internal ticket route and says why:
+// "without that check, any tenant holding the shared bearer could read any
+// other tenant's tickets". Product scoping alone reproduces that hole one
+// level down — mark8ly reading every mark8ly merchant's queue.
+func TestAMachineListingWithoutATenantIsRefused(t *testing.T) {
+	mux := machineMux(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	// The refusal happens in the handler, before any pool is touched. A
+	// request that got past it would panic on the nil service, which is not
+	// what is being asserted.
+	func() {
+		defer func() { _ = recover() }()
+		mux.ServeHTTP(rec, req)
+	}()
+
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Fatalf("the capability gate refused the read with %d — the tenant rule is what should refuse here", rec.Code)
+	}
+	if rec.Code < 400 {
+		t.Errorf("a machine listed with no tenant and got %d — this reads every tenant in the product", rec.Code)
+	}
+}
+
+// The summary is operator-only: it has no tenant dimension and a product
+// caller is confined to one tenant, so there is no honest answer for it.
+func TestAMachineIsRefusedTheSummary(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets/summary", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	machineMux(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a machine got %d on the summary, want 403", rec.Code)
+	}
+}
+
+func machineMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
+		Subject:   machineSubj,
+		ClientID:  "some-machine-client",
+		Audience:  []string{testProject},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"product-support"},
+	}}, testProject)
+
+	mux := http.NewServeMux()
+	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
+	return mux
+}

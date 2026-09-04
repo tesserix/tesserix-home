@@ -115,7 +115,7 @@ func (s *Service) Detail(ctx context.Context, scope Scope, id string) (DetailPay
 	if err != nil {
 		return DetailPayload{}, err
 	}
-	if !scope.Admits(ticket.ProductID) {
+	if !scope.Admits(ticket.ProductID, ticket.TenantID) {
 		// ErrNotFound, NOT a refusal. A 403 would confirm that this id names a
 		// real ticket, letting a product enumerate the estate's ids one
 		// request at a time. A caller outside its scope is told the same thing
@@ -171,7 +171,7 @@ func (s *Service) Reply(ctx context.Context, scope Scope, actor Actor, ticketID 
 		if err != nil {
 			return nil, audit.Entry{}, 0, err
 		}
-		if !scope.Admits(ticket.ProductID) {
+		if !scope.Admits(ticket.ProductID, ticket.TenantID) {
 			// Same non-disclosure as Detail, and checked INSIDE the
 			// transaction that will write, so the ticket whose ownership was
 			// verified is the ticket the reply lands on.
