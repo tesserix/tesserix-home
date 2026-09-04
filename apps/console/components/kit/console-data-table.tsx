@@ -99,14 +99,23 @@ export interface ConsoleDataTableProps<T> {
 /** Accessible name for the grid, so a screen-reader user knows what they landed in. */
 const DEFAULT_TABLE_LABEL = "Results";
 
-function nextSort(current: SortSpec | undefined, key: string): SortSpec {
+/**
+ * The sort a click on `key` should move to: the same column flips direction,
+ * a new column starts ascending.
+ *
+ * Exported so a surface that hand-rolls its own table — `OrganisationsView`,
+ * which keeps `ResultPager`'s link controls and so cannot adopt this
+ * component — writes the toggle once rather than restating it.
+ */
+export function nextSort(current: SortSpec | undefined, key: string): SortSpec {
   if (current?.key === key) {
     return { key, dir: current.dir === "asc" ? "desc" : "asc" };
   }
   return { key, dir: "asc" };
 }
 
-function SortIndicator({ sort, columnKey }: { sort?: SortSpec; columnKey: string }) {
+/** Exported alongside `nextSort`, and for the same reason. */
+export function SortIndicator({ sort, columnKey }: { sort?: SortSpec; columnKey: string }) {
   if (sort?.key !== columnKey) {
     return <ChevronsUpDown className="h-3.5 w-3.5 opacity-40" aria-hidden="true" />;
   }

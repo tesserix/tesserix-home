@@ -16,31 +16,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-/**
- * The props the page hands the view, recorded on the way through.
- *
- * The wrapper renders the real component, so every other test in this file
- * still asserts against the real markup — this only adds a way to check a
- * prop the view does not render yet. `sort` is one: Task 3 builds the header
- * controls that display it, and until then a page that computed the sort
- * correctly and passed `null` would look identical to one that got it right.
- */
-const viewProps = vi.fn();
-vi.mock("./organisations-view", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./organisations-view")>();
-  return {
-    OrganisationsView: (props: React.ComponentProps<typeof actual.OrganisationsView>) => {
-      viewProps(props);
-      return <actual.OrganisationsView {...props} />;
-    },
-  };
-});
-
 import Page, { ORGANISATION_FILTERS } from "./page";
 
 beforeEach(() => {
   listOrganisations.mockReset();
-  viewProps.mockReset();
 });
 
 const ORG_ROW: OrganisationListRow = {
@@ -651,18 +630,26 @@ describe("OrganisationsPage", () => {
       expect(new URLSearchParams(href.split("?")[1]).get("sort")).toBe("name");
     });
 
-    it("hands the active sort to the view", async () => {
+    // Read off the rendered header rather than off a props spy: `aria-sort`
+    // is what the page's sort actually becomes, so an ordering computed
+    // correctly and then dropped on the way to the markup fails here.
+    it("marks the sorted column on the view it renders", async () => {
       listOrganisations.mockResolvedValue(orgPage([ORG_ROW]));
       render(await Page({ searchParams: Promise.resolve({ sort: "followers", dir: "asc" }) }));
-      expect(viewProps).toHaveBeenCalledWith(
-        expect.objectContaining({ sort: { key: "followers", direction: "asc" } }),
-      );
+      expect(
+        screen.getByRole("columnheader", { name: "Followers" }).getAttribute("aria-sort"),
+      ).toBe("ascending");
     });
 
-    it("hands the view null when nothing is sorted", async () => {
+    it("marks no column when nothing is sorted", async () => {
       listOrganisations.mockResolvedValue(orgPage([ORG_ROW]));
       render(await Page({ searchParams: Promise.resolve({}) }));
-      expect(viewProps).toHaveBeenCalledWith(expect.objectContaining({ sort: null }));
+      for (const header of ["Name", "Followers", "Added"]) {
+        // "none", not absent: the columns are still sortable, just unsorted.
+        expect(screen.getByRole("columnheader", { name: header }).getAttribute("aria-sort")).toBe(
+          "none",
+        );
+      }
     });
   });
 });
