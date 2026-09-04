@@ -181,11 +181,19 @@ Consolidated feature backlog from architecture conversations. Items tagged with 
 
 **Affected sources of truth that must be reconciled:**
 
-- `mark8ly/services/marketplace-api/internal/billing/pricing/catalog.go` — current canonical catalog (Go map → Stripe)
-- `mark8ly/packages/ui/src/subscription/pricing-data.ts` — what the onboarding marketing site renders
-- `tesserix-home/lib/products/configs.ts` `pricingByPlan` — tesserix-home's fallback for trial-tenant MRR estimation (already mirrors above)
+- `mark8ly/services/marketplace-api/internal/billing/pricing/catalog_data.go` — **no longer canonical, and no longer hand-written.** The console is canonical; this is the fail-open fallback a running service serves from when the console is unconfigured or unreachable, and it is GENERATED from the console by `cmd/gencatalog -source=console` (mark8ly#648, proven byte-identical against production). Was `catalog.go`, which now holds only types, key derivation and lookup helpers.
+- `mark8ly/packages/ui/src/subscription/pricing-data.ts` — what the onboarding marketing site renders. Generated from the tables above by `cmd/genpricing`, so it derives from the console transitively. Ships inside the app images; it is never published, so a price change is live only after a rebuild and redeploy.
+- `tesserix-home/apps/web/lib/products/configs.ts` `pricingByPlan` — tesserix-home's fallback for trial-tenant MRR estimation. **Still hand-maintained**, and the last of the three that is. Verified against the live console 2026-09-04: AUD monthly 29 / 75 / 179 matches exactly. Correct today, unguarded tomorrow.
 
-After P1 ships, all three should be derivable from a single registry.
+**Status 2026-09-04:** two of the three now derive from the console by generation, and
+a difference between the console and the fallback is reported on a Prometheus metric
+with alerts (#328 gap 3). `configs.ts` is the remaining hand-maintained copy; nothing
+relates it to the catalog, so it drifts silently if a price changes.
+
+The convergence P1 anticipated has happened for the pricing pipeline. What it did not
+cover is the **Pro+App add-on**: $199/mo plus a one-time $2,000 setup, with a live
+purchase flow, no Stripe Price object, and absent from the console catalog entirely —
+see mark8ly#650. It is outside every guard listed here.
 
 | # | Phase | Pattern | Risk | Effort |
 |---|---|---|---|---|
