@@ -140,6 +140,27 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 				[]auth.Capability{auth.CapSupport, auth.CapProductSupport}, h.log, handler))
 	}
 
+	// A reply is the one write a product may make, and the two principals earn
+	// it differently: an operator by holding the surface AND the verb, a
+	// machine by holding product-support alone.
+	//
+	// The machine is NOT made to hold `respond`. That verb means "may answer
+	// merchants anywhere" — granting an estate-wide verb to obtain a
+	// product-scoped write is the over-grant #152 exists to avoid.
+	//
+	// This route was deliberately closed to machines until a reply could carry
+	// an author. It can be opened now because service.authorFor exists: a
+	// machine's reply is recorded as the MERCHANT it names, not as the support
+	// team. Opening it before that would have filed a merchant's words under
+	// the platform's name on the thread that merchant reads.
+	reply := func(handler http.HandlerFunc) http.Handler {
+		return auth.Authenticate(verifier, h.log, byPrincipal(
+			auth.RequireCapability(auth.CapProductSupport, h.log, handler),
+			auth.RequireCapability(auth.CapSupport, h.log,
+				auth.RequireCapability(auth.CapRespond, h.log, handler)),
+		))
+	}
+
 	// The summary stays OPERATOR-ONLY.
 	//
 	// It is a standing count with no tenant dimension, and a product caller is
@@ -151,7 +172,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 			auth.RequireCapability(auth.CapSupport, h.log, handler))
 	}
 
-	// Writes stay OPERATOR-ONLY, replies included.
+	// Remaining writes stay OPERATOR-ONLY.
 	//
 	// A product machine deliberately does NOT reach the reply route yet, even
 	// though `product-support` is meant to carry that write, and the reason is
@@ -188,7 +209,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	mux.Handle("GET /v1/tickets", read(h.list))
 	mux.Handle("GET /v1/tickets/summary", summaryOnly(h.summary))
 	mux.Handle("GET /v1/tickets/{id}", read(h.detail))
-	mux.Handle("POST /v1/tickets/{id}/replies", write(h.reply))
+	mux.Handle("POST /v1/tickets/{id}/replies", reply(h.reply))
 	mux.Handle("PATCH /v1/tickets/{id}", write(h.setStatus))
 }
 
@@ -321,6 +342,16 @@ func (h *Handler) detail(w http.ResponseWriter, r *http.Request) {
 
 type replyRequest struct {
 	Content string `json:"content"`
+	// TenantID is the tenant a product caller is acting for. Required of a
+	// machine, meaningless for an operator — the same shape apps/web's route
+	// takes, and the reason its cross-tenant guard exists.
+	TenantID string `json:"tenant_id"`
+	// The merchant a product is relaying. snake_case, this API's spelling —
+	// mark8ly's client is being rewritten against this contract anyway, so
+	// there is no existing caller whose spelling has to be honoured.
+	AuthorName   string `json:"author_name"`
+	AuthorEmail  string `json:"author_email"`
+	AuthorUserID string `json:"author_user_id"`
 	// NewStatus is the console's spelling, carried through unchanged.
 	//
 	// It is the one camelCase field in this API, and deliberately: it is an
@@ -349,8 +380,23 @@ func (h *Handler) reply(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
+	scope, err = scope.ForTenant(request.TenantID)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
 
 	input := service.ReplyInput{Content: request.Content}
+	// Only a scoped caller relays a merchant. An operator sending author
+	// fields is refused by authorFor rather than ignored here, so forging a
+	// merchant's message is an error the caller sees, not a silent no-op.
+	if !scope.Unscoped() || request.AuthorName != "" || request.AuthorEmail != "" || request.AuthorUserID != "" {
+		input.Author = &service.Author{
+			Name:   request.AuthorName,
+			Email:  request.AuthorEmail,
+			UserID: request.AuthorUserID,
+		}
+	}
 	if raw := firstNonEmpty(request.NewStatus, request.NewStatusSnake); raw != "" {
 		// A SCOPED caller may not carry a transition on its reply.
 		//
@@ -609,4 +655,25 @@ func refusalMessage(err error) string {
 		return message[len(prefix):]
 	}
 	return message
+}
+
+// byPrincipal sends a request to the machine gate when the caller holds
+// product-support, and to the operator gate otherwise.
+//
+// A branch rather than a widened capability list, because the two paths are
+// genuinely different policies — one capability versus a surface AND a verb —
+// and RequireAnyCapability over all three would admit an operator holding
+// `support` without `respond`, quietly loosening the write gate #261 put there.
+//
+// An unauthenticated request takes the OPERATOR branch, which then refuses it
+// for having no principal. The machine branch must never be the fallback: it
+// is the one with the weaker check.
+func byPrincipal(machine, operator http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := auth.FromContext(r.Context()); ok && p.Has(auth.CapProductSupport) {
+			machine.ServeHTTP(w, r)
+			return
+		}
+		operator.ServeHTTP(w, r)
+	})
 }

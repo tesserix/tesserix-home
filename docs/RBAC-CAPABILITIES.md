@@ -70,23 +70,25 @@ operator path is unaffected. What a product machine may do once granted:
 |---|---|---|
 | `GET /v1/tickets`, `/{id}` | whole estate | its own product, **and only the tenant it names** |
 | `GET /v1/tickets/summary` | whole estate | **refused** — no tenant dimension, and no product asks for it |
-| `POST /v1/tickets/{id}/replies` | needs `support` + `respond` | **refused for now** — a reply cannot yet carry a merchant's authorship |
+| `POST /v1/tickets/{id}/replies` | needs `support` + `respond` | allowed for the tenant it names; must say which merchant it relays; may not carry a status transition |
 | `PATCH /v1/tickets/{id}` | needs `support` + `respond` | **refused** |
 
 **Two scopes, two sources.** The PRODUCT is enforced from configuration and the
-caller cannot influence it. The TENANT is asserted by the caller in `?tenant=`,
-and is REQUIRED of a machine — the same trust model apps/web has today, where
-mark8ly authenticates its own merchant and forwards which tenant that merchant
-belongs to. What a machine may not do is decline to say: apps/web requires
-`?tenant_id=` on every internal ticket route because "without that check, any
-tenant holding the shared bearer could read any other tenant's tickets", and
-product scoping alone reproduces that hole one level down.
+caller cannot influence it. The TENANT is asserted by the caller in `?tenant=`
+or `tenant_id`, and is REQUIRED of a machine — the same trust model apps/web
+has today, where mark8ly authenticates its own merchant and forwards which
+tenant that merchant belongs to. What a machine may not do is decline to say:
+apps/web requires `?tenant_id=` on every internal ticket route because
+"without that check, any tenant holding the shared bearer could read any other
+tenant's tickets", and product scoping alone reproduces that hole one level
+down.
 
-**Replies are operator-only until authorship exists.** `service.Reply` records
-every reply as the platform, signed "Tesserix Support". That is right for the
-console and wrong for a product relaying a merchant, whose replies apps/web
-writes as `author_type: "merchant"`. Admitting a machine before a reply can
-name its author would file a merchant's words under the support team's name.
+**A reply says who it is from.** A machine's reply is recorded as the MERCHANT
+it names (`author_name`, optional `author_email` and `author_user_id`), never as
+the platform; an operator's stays "Tesserix Support" and may not supply an
+author. A merchant's reply to a `resolved` ticket reopens it — decided by the
+server from the ticket's state, never asserted by the caller — and a merchant
+may not reply to a `closed` one. All three match apps/web.
 
 ### Minting a machine token to test either endpoint
 

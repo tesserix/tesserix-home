@@ -53,9 +53,17 @@ type Actor struct {
 // renders it directly, so an empty one produces a message that appears to be
 // from nobody.
 //
-// A merchant's own replies do not come through here — they arrive by a
-// different path with a different author type — so this cannot affect how a
-// merchant's own name is rendered.
+// A merchant's own replies do not come through here. That USED to be true
+// because the console was the only caller; it is now true because authorFor
+// routes them elsewhere — a machine relaying a merchant gets that merchant's
+// name and never this label.
+//
+// The distinction matters to anyone changing the gates: this label is only
+// safe while the reply route cannot reach it with a merchant's message behind
+// it. #152 opened that route to a product's machine, and authorFor is what
+// keeps the statement above true rather than merely historical. Widening who
+// may reply without going through authorFor would file a merchant's words
+// under the support team's name.
 // The receiver is unnamed because the label deliberately does not depend on
 // the actor. It stays a method on Actor so the call site still reads as "what
 // this actor is shown as".
@@ -152,6 +160,10 @@ type ReplyInput struct {
 	// transaction across two HTTP requests to put that right, and the console
 	// already relies on this being one call.
 	NewStatus *domain.Status
+	// Author is the merchant a product's machine is relaying. Nil for an
+	// operator's own reply. authorFor turns this into the stored attribution
+	// and refuses the combinations that must not happen.
+	Author *Author
 }
 
 // Reply appends a message and, optionally, transitions the ticket.
@@ -178,38 +190,55 @@ func (s *Service) Reply(ctx context.Context, scope Scope, actor Actor, ticketID 
 			return nil, audit.Entry{}, 0, repository.ErrNotFound
 		}
 
-		// Signed by the platform, attributed by subject.
+		// Who the reply is from, and what it does to the ticket — both settled
+		// BEFORE anything is written, so a refusal costs no insert and does
+		// not depend on the rollback to be correct.
 		//
-		// AuthorName is the fixed label and AuthorEmail is deliberately
-		// empty: a merchant reads this row, and neither a staff member's name
-		// nor their personal email address is theirs to see. The repository
-		// wraps the email in nullIfEmpty (repository/tickets.go), so the
-		// column goes NULL rather than holding a blank string.
+		// Attribution is no longer unconditional. An OPERATOR's reply is
+		// signed with the platform's fixed label and no email, because a
+		// merchant reads this row and neither a staff member's name nor their
+		// personal address is theirs to see; the subject is still kept in
+		// AuthorUserID, so who replied is recorded without being shown. A
+		// MACHINE's reply is the MERCHANT it names. authorFor holds both
+		// rules, and refuses the combinations that must not happen — an
+		// operator posting as a merchant, or a machine declining to say.
 		//
-		// AuthorUserID keeps the subject, and that is what makes the two
-		// above safe to drop: WHO replied is still recorded on the row, in
-		// the identifier the audit trail uses, just not in front of the
-		// merchant. Internal attribution was not lost here — do not "restore"
-		// the email on the belief that it was.
+		// The repository wraps an empty email in nullIfEmpty
+		// (repository/tickets.go), so the column goes NULL rather than
+		// holding a blank string.
+		author, err := authorFor(scope, actor, input.Author)
+		if err != nil {
+			return nil, audit.Entry{}, 0, err
+		}
+
+		// What the reply does to the ticket, and what the trail calls it.
+		// Decided from the ticket's own state — see replyEffect, which is
+		// where the merchant reopen and the closed-ticket refusal live, and
+		// where they are tested without a database.
+		newStatus, action, err := replyEffect(author, ticket.Status, input.NewStatus)
+		if err != nil {
+			return nil, audit.Entry{}, 0, err
+		}
+
 		reply, err := repository.InsertReply(ctx, tx, domain.Reply{
 			TicketID:     ticketID,
-			AuthorType:   domain.AuthorOperator,
-			AuthorName:   actor.displayName(),
-			AuthorEmail:  "",
-			AuthorUserID: actor.Subject,
+			AuthorType:   author.Type,
+			AuthorName:   author.Name,
+			AuthorEmail:  author.Email,
+			AuthorUserID: author.UserID,
 			Content:      content,
 		})
 		if err != nil {
 			return nil, audit.Entry{}, 0, err
 		}
 
-		action := "tickets.reply"
 		summary := map[string]int{"replies": 1, "status_changes": 0}
-		if input.NewStatus != nil {
-			if err := ticket.Transition(*input.NewStatus); err != nil {
+
+		if newStatus != nil {
+			if err := ticket.Transition(*newStatus); err != nil {
 				return nil, audit.Entry{}, 0, fmt.Errorf("%w: %s", ErrRefused, err)
 			}
-			if ticket, err = repository.SetStatus(ctx, tx, ticketID, *input.NewStatus); err != nil {
+			if ticket, err = repository.SetStatus(ctx, tx, ticketID, *newStatus); err != nil {
 				return nil, audit.Entry{}, 0, err
 			}
 			summary["status_changes"] = 1
