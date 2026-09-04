@@ -43,6 +43,35 @@ implied by `read-plan-catalog`: reading published prices and enumerating every
 promo code in the estate are different grants, and folding them together would
 silently widen the grant `mark8ly-catalog-reader` already holds.
 
+`product-support` (tesserix-home#152) is the third machine capability, and the
+first that is not a catalog read: it lets a product reach **its own** support
+tickets — file, list, read and reply. It is deliberately NOT `support`, which
+is an operator surface and estate-wide: granting that to a product's machine
+would open every other product's queue, and `respond` beside it would open
+replying to and re-statusing them.
+
+**WHICH product a holder may reach is not in the capability.** Capabilities are
+estate-wide (§7), so the product comes from a subject->product registry in
+deployment configuration — `PRODUCT_SCOPE_PRODUCTS` plus
+`PRODUCT_SCOPE_<SLUG>_SUBJECTS`, read by
+`platform-api/internal/platform/productscope`. The capability answers WHETHER,
+the registry answers WHICH, and a holder absent from the registry is **refused**
+rather than defaulted to the estate.
+
+It is emphatically not derived from `Principal.Kind`, which
+`platform-auth/verify.go` forbids authorising on.
+
+**NOT YET CREATED OR GRANTED IN ZITADEL.** Until the role exists on the Platform
+Console project and is granted to a service user, the tickets routes answer 403
+to any machine caller — which is the correct answer, not a bug in the route. The
+operator path is unaffected. What a product machine may do once granted:
+
+| Route | Operator | Machine holding `product-support` |
+|---|---|---|
+| `GET /v1/tickets`, `/summary`, `/{id}` | whole estate | its own product only |
+| `POST /v1/tickets/{id}/replies` | needs `support` + `respond` | allowed, own product only, and may not carry a status transition |
+| `PATCH /v1/tickets/{id}` | needs `support` + `respond` | **refused** |
+
 ### Minting a machine token to test either endpoint
 
 The scope matters more than it looks, and getting it wrong costs an hour. Three

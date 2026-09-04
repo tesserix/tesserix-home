@@ -658,3 +658,36 @@ func TestPagingBackwardThroughAFilteredQueue(t *testing.T) {
 		t.Errorf("total = %d, want the filtered total when paging backward", back.Total)
 	}
 }
+
+// #152. The summary is the one read whose scoping lives in SQL rather than in
+// Scope, so it is the one that a pure test cannot reach.
+//
+// Both directions matter. A scoped summary that failed to filter would report
+// the estate's open count to a caller that cannot read a single one of those
+// tickets; an unscoped one that started filtering would silently empty the
+// console's queue header.
+func TestTheSummaryIsConfinedToOneProductWhenAsked(t *testing.T) {
+	pool := testdb.New(t)
+	seed(t, pool, []spec{
+		{subject: "m-open-urgent", product: "mark8ly", status: domain.StatusOpen, priority: domain.PriorityUrgent, updatedAt: at(3)},
+		{subject: "k-open-urgent", product: "kora", status: domain.StatusOpen, priority: domain.PriorityUrgent, updatedAt: at(2)},
+		{subject: "k-open-low", product: "kora", status: domain.StatusOpen, priority: domain.PriorityLow, updatedAt: at(1)},
+	})
+	ctx := context.Background()
+
+	scoped, err := repository.Summary(ctx, pool, "mark8ly")
+	if err != nil {
+		t.Fatalf("scoped Summary: %v", err)
+	}
+	if want := (domain.Summary{Open: 1, UrgentOpen: 1}); scoped != want {
+		t.Errorf("scoped summary = %+v, want %+v — a product must not be counted another's tickets", scoped, want)
+	}
+
+	estate, err := repository.Summary(ctx, pool, "")
+	if err != nil {
+		t.Fatalf("estate Summary: %v", err)
+	}
+	if want := (domain.Summary{Open: 3, UrgentOpen: 2}); estate != want {
+		t.Errorf("estate summary = %+v, want %+v — the empty product must still mean the whole queue", estate, want)
+	}
+}
