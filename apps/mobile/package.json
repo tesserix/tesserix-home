@@ -6,7 +6,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node ../../scripts/require-workspace-dist.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@expo-google-fonts/inter-tight": "^0.4.2",
