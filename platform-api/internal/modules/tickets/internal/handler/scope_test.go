@@ -145,44 +145,6 @@ func TestScopeForRefusesARequestThatWasNeverAuthenticated(t *testing.T) {
 	}
 }
 
-// A machine must NOT reach the reply route yet.
-//
-// Not an authorisation gap — `product-support` is intended to carry this write
-// — but an AUTHORSHIP one: service.Reply records every reply as
-// domain.AuthorOperator signed "Tesserix Support", which is right for the
-// console and wrong for a product relaying a merchant. Admitting a machine
-// before a reply has an author would file a merchant's words under the support
-// team's name, on the thread that merchant reads.
-//
-// Pinned as a test rather than left to the route table because the fix is to
-// OPEN this route, and whoever opens it must change this test deliberately and
-// meet the author contract on the way past.
-func TestAMachineIsRefusedTheReplyRouteUntilARepliesHaveAnAuthor(t *testing.T) {
-	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
-		Subject:   machineSubj,
-		ClientID:  "some-machine-client",
-		Audience:  []string{testProject},
-		Issuer:    "https://auth.tesserix.app",
-		ExpiresAt: time.Now().Add(30 * time.Minute),
-		Roles:     []string{"product-support"},
-	}}, testProject)
-
-	mux := http.NewServeMux()
-	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
-
-	req := httptest.NewRequest(http.MethodPost,
-		"/v1/tickets/3f2a1c94-0000-4000-8000-000000000001/replies",
-		strings.NewReader(`{"content":"hello"}`))
-	req.Header.Set("Authorization", "Bearer "+tokenShaped)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("a product-support machine got %d on the reply route, want 403 — "+
-			"opening this route requires giving a reply an author first", rec.Code)
-	}
-}
-
 // The reads it IS allowed reach the handler, so the refusal above is about the
 // reply route specifically and not about machines being locked out generally.
 func TestAMachineIsAdmittedToTheReadRoutes(t *testing.T) {
@@ -215,45 +177,36 @@ func TestAMachineIsAdmittedToTheReadRoutes(t *testing.T) {
 	}
 }
 
-// A machine that names no tenant must not receive its product's whole estate.
+// The reply route is OPEN to a machine now, and the guard moved rather than
+// disappeared: it used to be the capability gate, and it is now the author.
 //
-// apps/web requires ?tenant_id= on every internal ticket route and says why:
-// "without that check, any tenant holding the shared bearer could read any
-// other tenant's tickets". Product scoping alone reproduces that hole one
-// level down — mark8ly reading every mark8ly merchant's queue.
-func TestAMachineListingWithoutATenantIsRefused(t *testing.T) {
-	mux := machineMux(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenShaped)
-	rec := httptest.NewRecorder()
-	// The refusal happens in the handler, before any pool is touched. A
-	// request that got past it would panic on the nil service, which is not
-	// what is being asserted.
-	func() {
-		defer func() { _ = recover() }()
-		mux.ServeHTTP(rec, req)
-	}()
+// This replaced a test that refused machines outright, which existed so that
+// reopening the route could not happen by accident. It did its job — it failed
+// when this change reopened it.
+//
+// What is asserted HERE is only what a request can reach without a pool: the
+// capability gate admits a machine, and the tenant requirement refuses one
+// that names no tenant. The AUTHOR contract is decided inside service.Reply,
+// so it is proved by the eight pure tests on authorFor in the service package
+// rather than restated here against a nil service, where a recovered panic
+// would read as a passing refusal.
+func TestAMachineReachesTheReplyRouteAndIsRefusedWithoutATenant(t *testing.T) {
+	rec := post(t, machineMux(t), `{"content":"hello"}`)
 
 	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
-		t.Fatalf("the capability gate refused the read with %d — the tenant rule is what should refuse here", rec.Code)
+		t.Fatalf("the capability gate refused a machine with %d — the route should be open to it now", rec.Code)
 	}
 	if rec.Code < 400 {
-		t.Errorf("a machine listed with no tenant and got %d — this reads every tenant in the product", rec.Code)
+		t.Errorf("a reply naming no tenant was accepted (%d)", rec.Code)
 	}
 }
 
-// The summary is operator-only: it has no tenant dimension and a product
-// caller is confined to one tenant, so there is no honest answer for it.
-func TestAMachineIsRefusedTheSummary(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/tickets/summary", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenShaped)
-	rec := httptest.NewRecorder()
-	machineMux(t).ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("a machine got %d on the summary, want 403", rec.Code)
-	}
-}
+// tenantA/tenantB are the service package's fixtures; repeated here because
+// the two packages do not share test helpers.
+const (
+	tenantA    = "3f2a1c94-0000-4000-8000-0000000000aa"
+	ticketPath = "/v1/tickets/3f2a1c94-0000-4000-8000-000000000001/replies"
+)
 
 func machineMux(t *testing.T) *http.ServeMux {
 	t.Helper()
@@ -269,4 +222,48 @@ func machineMux(t *testing.T) *http.ServeMux {
 	mux := http.NewServeMux()
 	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
 	return mux
+}
+
+func post(t *testing.T, mux *http.ServeMux, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, ticketPath, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	// A refusal is reached before any pool is touched; anything that got past
+	// validation would panic on the nil service, which is not what is asserted.
+	func() {
+		defer func() { _ = recover() }()
+		mux.ServeHTTP(rec, req)
+	}()
+	return rec
+}
+
+// The summary is operator-only: a product caller is confined to one tenant and
+// the summary has no tenant dimension, so there is no honest answer for it.
+func TestAMachineIsRefusedTheSummary(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets/summary", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	machineMux(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a machine got %d on the summary, want 403", rec.Code)
+	}
+}
+
+// A machine that names no tenant must not receive its product's whole estate.
+// apps/web requires ?tenant_id= on every internal ticket route for exactly
+// this reason.
+func TestAMachineListingWithoutATenantIsRefused(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	func() {
+		defer func() { _ = recover() }()
+		machineMux(t).ServeHTTP(rec, req)
+	}()
+
+	if rec.Code < 400 {
+		t.Errorf("a machine listed with no tenant and got %d — this reads every tenant in the product", rec.Code)
+	}
 }
