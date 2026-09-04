@@ -125,7 +125,7 @@ func run(log *slog.Logger) error {
 	// module's own tests register the same way, so no path to being served
 	// skips the guard.
 	httpx.RegisterModule(mux, verifier, "tickets", func(m *http.ServeMux) {
-		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
+		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope})
 	})
 	httpx.RegisterModule(mux, verifier, "crm", func(m *http.ServeMux) {
 		crm.Register(m, crm.Config{Pool: pool.Pool, Verifier: verifier, Log: log})

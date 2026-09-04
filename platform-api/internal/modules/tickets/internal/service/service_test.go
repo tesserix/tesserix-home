@@ -41,7 +41,7 @@ func TestAStoredReplyCarriesTheLabelNoEmailAndTheSubject(t *testing.T) {
 	const subject = "386888878927118733"
 	ticketID := seedTicket(t, pool)
 
-	if _, err := svc.Reply(ctx, Actor{Subject: subject}, ticketID,
+	if _, err := svc.Reply(ctx, Scope{}, Actor{Subject: subject}, ticketID,
 		ReplyInput{Content: "Looking into this now."}, nil); err != nil {
 		t.Fatalf("Reply: %v", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/federation"
+	"github.com/tesserix/tesserix-home/platform-api/internal/platform/productscope"
 )
 
 // Config is the whole of the service's configuration. Loaded once at startup
@@ -21,6 +22,11 @@ type Config struct {
 	ClusterRead     ClusterRead
 	ShutdownTimeout time.Duration
 	Federation      *federation.Registry
+	// ProductScope maps an attested subject to the product it speaks for
+	// (#152). Absent configuration yields an empty registry that scopes
+	// nobody, which is every deployment until a product is given a machine
+	// identity against this API.
+	ProductScope *productscope.Registry
 }
 
 // Auth is the Zitadel wiring (ADR-003 D8).
@@ -199,6 +205,12 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.Federation = reg
+
+	scope, err := productscope.LoadRegistry(os.Getenv)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ProductScope = scope
 
 	return cfg, nil
 }

@@ -537,7 +537,7 @@ func TestTheSummaryIsOfTheWholeQueue(t *testing.T) {
 	pool := testdb.New(t)
 	seed(t, pool, queue())
 
-	got, err := repository.Summary(context.Background(), pool)
+	got, err := repository.Summary(context.Background(), pool, "")
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
 	}
@@ -568,7 +568,7 @@ func TestResolvedThisWeekIsAWindowAndNotACount(t *testing.T) {
 		t.Fatalf("ageing: %v", err)
 	}
 
-	got, err := repository.Summary(ctx, pool)
+	got, err := repository.Summary(ctx, pool, "")
 	if err != nil {
 		t.Fatalf("Summary: %v", err)
 	}

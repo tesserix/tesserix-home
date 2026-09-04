@@ -429,7 +429,12 @@ func Replies(ctx context.Context, db Querier, ticketID string) ([]domain.Reply, 
 // One query with FILTER clauses rather than four counts. On a shared
 // db-f1-micro the difference between one sequential scan and four is the whole
 // cost of this endpoint.
-func Summary(ctx context.Context, db Querier) (domain.Summary, error) {
+// product confines the counts to one product. EMPTY MEANS THE ESTATE — an
+// operator's summary, which is what this counted before #152 and must keep
+// counting. A scoped caller passes its own product and is counted only its own
+// rows; without this the summary would report the estate's open count to a
+// caller that cannot read a single one of those tickets.
+func Summary(ctx context.Context, db Querier, product string) (domain.Summary, error) {
 	var s domain.Summary
 	err := db.QueryRow(ctx,
 		`SELECT
@@ -437,7 +442,9 @@ func Summary(ctx context.Context, db Querier) (domain.Summary, error) {
 		   count(*) FILTER (WHERE status = 'in_progress'),
 		   count(*) FILTER (WHERE status = 'resolved' AND resolved_at >= now() - interval '7 days'),
 		   count(*) FILTER (WHERE status IN ('open','in_progress') AND priority = 'urgent')
-		 FROM platform_tickets`,
+		 FROM platform_tickets
+		 WHERE ($1::text = '' OR product_id = $1::text)`,
+		product,
 	).Scan(&s.Open, &s.InProgress, &s.ResolvedThisWeek, &s.UrgentOpen)
 	if err != nil {
 		return domain.Summary{}, fmt.Errorf("reading the ticket summary: %w", err)
