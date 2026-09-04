@@ -2240,3 +2240,70 @@ describe("closedOpportunities against a real database", () => {
     expect(total).toBe(1);
   });
 });
+
+/**
+ * The follower count a browse row DISPLAYS comes from the same contact the
+ * follower filter bands on (#44).
+ *
+ * `listOrganisations`' display subquery and `primaryContactFollowerClause`
+ * each pick "the primary contact" independently, and they agree only because
+ * both order by `primaryContactOrder()`. Nothing else in this file pins that
+ * ordering for the DISPLAY subquery: the erasure fixture above proves the
+ * erasure predicate (its live secondary is the organisation's only remaining
+ * contact once the erased row is excluded, so any ordering returns it), and
+ * the created_at-tie fixture proves the `id` tiebreak for a row with no
+ * flagged primary. Strip the `ORDER BY` from the display subquery and both
+ * still pass.
+ *
+ * So: two LIVE contacts, neither erased, with different non-null counts and
+ * only `is_primary DESC` separating them. The secondary is inserted FIRST
+ * and is the older row with the lower `id`, so it wins every clause except
+ * the flag — and it is also what an unordered `LIMIT 1` tends to return from
+ * a sequential scan. Displaying 15000 here would mean the row shows a number
+ * from a contact the filter would never have banded it on.
+ *
+ * Declared last, after the erasure describe, for the reason given there:
+ * earlier describes assert exact result sets from the seeds they own.
+ */
+describe("the displayed follower count comes from the flagged primary contact", () => {
+  const secondaryContactId = "dddddddd-0000-0000-0000-000000000001";
+  const primaryContactId = "dddddddd-0000-0000-0000-000000000002";
+  let orgIdForDisplay: string;
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Display Order Fixture Co"],
+    );
+    orgIdForDisplay = org.rows[0].id;
+
+    await db.query(
+      `INSERT INTO crm_contacts (id, organisation_id, name, is_primary, followers_count, created_at)
+       VALUES ($1, $3, 'Display Secondary', false, 15000, $5::timestamptz),
+              ($2, $3, $4, true, 200, $6::timestamptz)`,
+      [
+        secondaryContactId,
+        primaryContactId,
+        orgIdForDisplay,
+        "Display Primary",
+        daysAgo(30),
+        daysAgo(1),
+      ],
+    );
+  });
+
+  it("displays the primary contact's count, not the secondary's larger one", async () => {
+    const rows = (await listOrganisations({ search: "Display Order Fixture" }, 50)).rows;
+    expect(rows.map((r) => r.id)).toEqual([orgIdForDisplay]);
+    expect(rows[0].contactName).toBe("Display Primary");
+    expect(rows[0].followersCount).toBe(200);
+  });
+
+  it("bands the row on the same contact it displays", async () => {
+    const scope = { search: "Display Order Fixture" } as const;
+    const under1k = (await listOrganisations({ ...scope, followers: "under1k" }, 50)).rows;
+    const over10k = (await listOrganisations({ ...scope, followers: "over10k" }, 50)).rows;
+    expect(under1k.map((r) => r.id)).toEqual([orgIdForDisplay]);
+    expect(over10k.map((r) => r.id)).toEqual([]);
+  });
+});

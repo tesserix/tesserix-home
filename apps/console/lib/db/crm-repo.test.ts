@@ -1219,11 +1219,13 @@ describe("organisationDetail", () => {
   });
 
   // `crm_activities.occurred_at` carries no uniqueness guarantee — it is a
-  // plain `timestamptz DEFAULT now()`, and the seed and backfill paths write
-  // explicit values — so without a total order two rows sharing it are cut
-  // arbitrarily by the LIMIT. Now that the cut decides which row is DROPPED
-  // and not merely where it sits, an arbitrary tiebreak means two loads of
-  // the same page can disagree about what the timeline contains.
+  // plain `timestamptz DEFAULT now()`, and rows can be written with an
+  // explicit value (`scripts/seed-dev.mjs` is the one writer that does, the
+  // same writer the production comment on this query names) — so without a
+  // total order two rows sharing it are cut arbitrarily by the LIMIT. Now
+  // that the cut decides which row is DROPPED and not merely where it sits,
+  // an arbitrary tiebreak means two loads of the same page can disagree
+  // about what the timeline contains.
   it("breaks an occurred_at tie by id, so the cap cuts the same row every time", async () => {
     await detailWithActivities(1);
 

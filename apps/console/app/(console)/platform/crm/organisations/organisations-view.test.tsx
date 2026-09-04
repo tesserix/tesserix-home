@@ -253,8 +253,10 @@ describe("OrganisationsView location cell", () => {
     const cell = renderRowWithLocation("Ranchi", null);
 
     // The whole point of the column: this row is visibly one the mapper
-    // failed on, and it reads as the same Unknown the country filter's
-    // sentinel option offers.
+    // failed on, and it says so in the same word the country filter's
+    // sentinel option offers. Only the word is shared — that sentinel
+    // matches `country IS NULL`, which also returns rows with no location
+    // at all, and those render a bare em-dash rather than this.
     expect(cell.textContent).toContain("Ranchi");
     expect(cell.textContent).toContain("Unknown");
   });

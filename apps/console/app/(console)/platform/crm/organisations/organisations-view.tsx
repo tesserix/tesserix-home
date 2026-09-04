@@ -123,10 +123,18 @@ function FollowersCell({ count }: { count: number | null }) {
  * A location the mapper had no entry for renders `Unknown` — the word the
  * country filter's sentinel option uses (`UNKNOWN_LABEL`, `crm-filters.ts`)
  * — not a blank line. A blank would leave the filter's misses looking
- * exactly like its hits, which is the whole reason this line exists. 208 of
- * the 259 production organisations have no derived country at all
- * (`crm-filters.ts`), split across this state and the one below, so this
- * line is what most rows are read on.
+ * exactly like its hits, which is the whole reason this line exists.
+ *
+ * The word is shared with that sentinel; the SET of rows is not. The
+ * sentinel matches `country IS NULL` (`crm-repo.ts`), which is the wider
+ * fact: filtering to Unknown also returns the rows described below, whose
+ * cell is a bare em-dash because there was no location to consult a mapper
+ * about. 208 of the 259 production organisations have no derived country at
+ * all (`crm-filters.ts`), split across those two renderings — and at least
+ * 159 of the 259 have no location at all (see `leadsWithHandle` below), so
+ * most rows never reach this line: the em-dash is what they are read on.
+ * That is the distinction the two renderings exist to keep, so neither may
+ * be collapsed into the other.
  *
  * With no location there is nothing to derive from, so the cell is the same
  * muted em-dash the other empty cells in this file use — never `Unknown`,
@@ -297,11 +305,18 @@ export function OrganisationsView({
                     )}
                   </TableCell>
                   <TableCell>{row.openOpportunities}</TableCell>
-                  {/* Right-aligned `tabular-nums`, the idiom every other
-                   *  numeric cell in the console uses (`queue-list.tsx`,
-                   *  `ai-usage/events-table.tsx`), so digits line up down the
-                   *  column and counts stay comparable at a glance. */}
-                  <TableCell className="text-right text-xs tabular-nums">
+                  {/* `tabular-nums` fixes the digit width so the abbreviated
+                   *  counts stay comparable down the column, and `text-right`
+                   *  puts their last digits on a common edge. The pairing is
+                   *  not universal here — several tables use `tabular-nums`
+                   *  alone (`platform/inbox/inbox-queue.tsx`,
+                   *  `kora/ai-metrics/ai-metrics-view.tsx`) — but it is what
+                   *  the console's other right-aligned numeric table,
+                   *  `platform/ai-usage/events-table.tsx`, uses. No `text-xs`:
+                   *  `Open` renders beside it at the default size, and two
+                   *  adjacent numeric columns at different sizes read as two
+                   *  kinds of number rather than two counts. */}
+                  <TableCell className="text-right tabular-nums">
                     <FollowersCell count={row.followersCount} />
                   </TableCell>
                   <TableCell>
