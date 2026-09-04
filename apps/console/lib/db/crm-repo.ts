@@ -1111,6 +1111,13 @@ export interface OrganisationRow {
   name: string;
   websiteUrl: string | null;
   location: string | null;
+  /**
+   * ISO 3166-1 alpha-2 code derived from `location` by `countryFromLocation`
+   * on every path that writes either column, and `null` when that mapper has
+   * no entry for the location — which is not the same absence as a missing
+   * location, and the surfaces must not render them the same way.
+   */
+  country: string | null;
   category: readonly string[];
   tags: readonly string[];
   convertedProduct: string | null;
@@ -1259,6 +1266,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
     name: string;
     website_url: string | null;
     location: string | null;
+    country: string | null;
     category: string[];
     tags: string[];
     converted_product: string | null;
@@ -1266,7 +1274,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
     converted_at: unknown;
     created_at: unknown;
   }>(
-    `SELECT id, name, website_url, location, category, tags,
+    `SELECT id, name, website_url, location, country, category, tags,
             converted_product, converted_label, converted_at, created_at
        FROM crm_organisations
       WHERE id = $1`,
@@ -1343,6 +1351,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       name: org.name,
       websiteUrl: org.website_url,
       location: org.location,
+      country: org.country,
       category: org.category,
       tags: org.tags,
       convertedProduct: org.converted_product,
@@ -2623,6 +2632,14 @@ export interface OrganisationListRow {
   id: string;
   name: string;
   location: string | null;
+  /**
+   * ISO 3166-1 alpha-2 code derived from `location`, and the value the
+   * `country` filter matches on. `null` where the mapper had no entry —
+   * 208 of 259 production rows — so the surface can show which rows it
+   * resolved rather than leaving the filter's misses indistinguishable
+   * from its hits.
+   */
+  country: string | null;
   contactName: string | null;
   contactEmail: string | null;
   /** Primary contact's Instagram handle, for handle-first rendering. */
@@ -2783,6 +2800,7 @@ interface RawOrganisationListRow {
   id: string;
   name: string;
   location: string | null;
+  country: string | null;
   contact_name: string | null;
   contact_email: string | null;
   contact_handle: string | null;
@@ -2799,6 +2817,7 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
     id: row.id,
     name: row.name,
     location: row.location,
+    country: row.country,
     contactName: row.contact_name,
     contactEmail: row.contact_email,
     contactHandle: row.contact_handle,
@@ -2926,7 +2945,7 @@ export async function listOrganisations(
       countParams,
     ),
     tesserixQuery<RawOrganisationListRow>(
-      `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
+      `SELECT g.id, g.name, g.location, g.country, g.website_url, g.created_at,
               (SELECT c.name FROM crm_contacts c
                 WHERE c.organisation_id = g.id
                   AND ${notErased("c")}

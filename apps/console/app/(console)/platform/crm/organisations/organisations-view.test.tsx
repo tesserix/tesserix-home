@@ -95,6 +95,7 @@ function renderRow(overrides: Partial<OrganisationListRow>) {
           id: "org-1",
           name: "Acme",
           location: null,
+          country: null,
           contactName: null,
           contactEmail: null,
           contactHandle: null,
@@ -131,6 +132,12 @@ function renderRowWithFollowers(followersCount: number | null) {
   const cells = renderRow({ followersCount });
   // Followers sits between Open and Products, so it is the second-to-last.
   return cells[cells.length - 2];
+}
+
+function renderRowWithLocation(location: string | null, country: string | null) {
+  const cells = renderRow({ location, country });
+  // Location is the second column, after Name.
+  return cells[1];
 }
 
 describe("OrganisationsView products cell", () => {
@@ -223,5 +230,51 @@ describe("OrganisationsView followers cell", () => {
 
   it("abbreviates millions", () => {
     expect(renderRowWithFollowers(1_240_000).textContent).toBe("1.2M");
+  });
+});
+
+/**
+ * `country` is derived from `location` by `countryFromLocation` and stored,
+ * so until it is rendered nobody can tell which rows the mapper resolved —
+ * 208 of 259 production rows resolved to nothing. The cell has to keep two
+ * different absences apart: no location recorded at all, and a location the
+ * mapper has no entry for.
+ */
+describe("OrganisationsView location cell", () => {
+  it("renders the derived country beneath the recorded location", () => {
+    const cell = renderRowWithLocation("Chennai", "IN");
+
+    // The label, not the stored code: `COUNTRY_LABELS` is the one mapper.
+    expect(cell.textContent).toContain("Chennai");
+    expect(cell.textContent).toContain("India");
+  });
+
+  it("says Unknown when a recorded location derived no country", () => {
+    const cell = renderRowWithLocation("Ranchi", null);
+
+    // The whole point of the column: this row is visibly one the mapper
+    // failed on, and it reads as the same Unknown the country filter's
+    // sentinel option offers.
+    expect(cell.textContent).toContain("Ranchi");
+    expect(cell.textContent).toContain("Unknown");
+  });
+
+  it("falls back to the stored code when the mapper has no label for it", () => {
+    // `COUNTRY_LABELS` covers only the codes the table can produce today; a
+    // code added to the table before its label must still render as itself
+    // rather than vanish.
+    const cell = renderRowWithLocation("Auckland", "NZ");
+
+    expect(cell.textContent).toContain("NZ");
+  });
+
+  it("keeps a missing location distinct from a missing country", () => {
+    const cell = renderRowWithLocation(null, null);
+
+    // No location is nothing to derive from, so it is the plain em-dash the
+    // other empty cells use — not "Unknown", which would claim a location
+    // was recorded and merely failed to map.
+    expect(cell.textContent).toBe("—");
+    expect(cell.textContent).not.toContain("Unknown");
   });
 });

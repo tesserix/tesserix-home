@@ -18,6 +18,8 @@ import {
 } from "@/components/kit/filter-bar";
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
+import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
 import type { OrganisationListRow } from "@/lib/db/crm-repo";
 
 /**
@@ -108,6 +110,39 @@ function FollowersCell({ count }: { count: number | null }) {
   if (count === null) return <span className="text-muted-foreground">—</span>;
 
   return <span title={`${count.toLocaleString()} followers`}>{formatFollowers(count)}</span>;
+}
+
+/**
+ * The recorded location, with the country derived from it on a muted second
+ * line — `Chennai` over `India`.
+ *
+ * Inside the Location cell rather than in a column of its own: `country` is
+ * only ever a reading of `location` (`countryFromLocation`, applied by all
+ * three paths that write either column), so the two belong in one cell, and
+ * `ProductsCell` above sets out what another column costs this table.
+ *
+ * A location the mapper had no entry for renders `Unknown` — the word the
+ * country filter's sentinel option uses (`UNKNOWN_LABEL`, `crm-filters.ts`)
+ * — not a blank line. 208 of 259 production rows are in that state, and a
+ * blank would leave the filter's misses looking exactly like its hits, which
+ * is the whole reason this line exists.
+ *
+ * With no location there is nothing to derive from, so the cell is the same
+ * muted em-dash the other empty cells in this file use. That keeps the two
+ * absences apart: "no location on file" and "a location that mapped to
+ * nothing" are different facts about the row.
+ */
+function LocationCell({ location, country }: { location: string | null; country: string | null }) {
+  if (location === null) return <span className="text-muted-foreground">—</span>;
+
+  return (
+    <div className="flex flex-col">
+      <span>{location}</span>
+      <span className="text-muted-foreground">
+        {country === null ? UNKNOWN_LABEL : (COUNTRY_LABELS[country] ?? country)}
+      </span>
+    </div>
+  );
 }
 
 /**
@@ -238,7 +273,9 @@ export function OrganisationsView({
                   <TableCell>
                     <NameCell row={row} />
                   </TableCell>
-                  <TableCell>{row.location ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell>
+                    <LocationCell location={row.location} country={row.country} />
+                  </TableCell>
                   <TableCell>
                     {row.contactName || row.contactEmail ? (
                       <div className="flex flex-col">

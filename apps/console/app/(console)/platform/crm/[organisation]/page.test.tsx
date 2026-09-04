@@ -55,6 +55,7 @@ const DETAIL_WITH_CONTACT = {
     name: "Glebe Flowers",
     websiteUrl: null,
     location: null,
+    country: null,
     category: [],
     tags: [],
     convertedAt: null,
@@ -69,8 +70,14 @@ const DETAIL_WITH_CONTACT = {
   activities: [],
 } as unknown as OrganisationDetail;
 
-async function renderOrganisationPage(roles: readonly string[] | undefined) {
-  organisationDetail.mockResolvedValue(DETAIL_WITH_CONTACT);
+async function renderOrganisationPage(
+  roles: readonly string[] | undefined,
+  organisation: Record<string, unknown> = {},
+) {
+  organisationDetail.mockResolvedValue({
+    ...DETAIL_WITH_CONTACT,
+    organisation: { ...DETAIL_WITH_CONTACT.organisation, ...organisation },
+  });
   getCurrentSession.mockResolvedValue({
     sub: "op-1",
     email: "op@tesserix.app",
@@ -166,5 +173,38 @@ describe("hard-delete controls on the organisation detail page", () => {
     await user.clear(input);
     await user.type(input, "not the org name");
     expect(confirmButton).toBeDisabled();
+  });
+});
+
+/**
+ * `country` is computed from `location`, never collected, so the rail has to
+ * say whether the mapper resolved it. The wording is the point: an absent
+ * value here is "Not derived", not the rail's usual "Not recorded", because
+ * nobody ever fills this field in.
+ */
+describe("the derived country on the organisation summary rail", () => {
+  function railValue(label: string): string {
+    return screen.getByText(label).parentElement?.textContent ?? "";
+  }
+
+  it("shows the country label for an organisation the mapper resolved", async () => {
+    await renderOrganisationPage(["read"], { location: "Chennai", country: "IN" });
+
+    expect(railValue("Country")).toContain("India");
+  });
+
+  it("says Not derived — not Not recorded — when the location mapped to nothing", async () => {
+    await renderOrganisationPage(["read"], { location: "Somewhere Unmapped", country: null });
+
+    // The location IS recorded; it is the derivation that produced nothing,
+    // and the two absences must not read the same.
+    expect(railValue("Location")).toContain("Somewhere Unmapped");
+    expect(railValue("Country")).toContain("Not derived");
+  });
+
+  it("falls back to the stored code when there is no label for it", async () => {
+    await renderOrganisationPage(["read"], { location: "Auckland", country: "NZ" });
+
+    expect(railValue("Country")).toContain("NZ");
   });
 });

@@ -775,8 +775,11 @@ describe("listOrganisations", () => {
 
   beforeAll(async () => {
     const a = await db.query<{ id: string }>(
-      `INSERT INTO crm_organisations (name, location) VALUES ($1, $2) RETURNING id`,
-      ["Glebe Flowers", "Sydney"],
+      // Seeded with the country the mapper derives from "Sydney", so the
+      // country assertions below read a row whose location and country agree
+      // the way every write path leaves them (`countryFromLocation`).
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Glebe Flowers", "Sydney", "AU"],
     );
     searchOrgA = a.rows[0].id;
     await db.query(
@@ -817,6 +820,23 @@ describe("listOrganisations", () => {
     const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
     expect(page.rows[0].contactHandle).toBe("glebeflowers");
     expect(page.rows[0].contactCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns the derived country alongside the raw location", async () => {
+    // The column the country filter bands on, which no surface could read
+    // back before this: without it an operator filtering to a country cannot
+    // tell which rows the mapper actually resolved.
+    const page = await listOrganisations({ search: "Glebe Flowers" }, 50);
+    expect(page.rows[0].location).toBe("Sydney");
+    expect(page.rows[0].country).toBe("AU");
+  });
+
+  it("returns a null country for an organisation with nothing to derive one from", async () => {
+    // "Unrelated Cafe" has no location at all. Null, not "" and not a guess
+    // — the same absence the Unknown country option matches, and 208 of 259
+    // production rows are in it.
+    const page = await listOrganisations({ search: "Unrelated Cafe" }, 50);
+    expect(page.rows[0].country).toBeNull();
   });
 
   it("returns an empty array, not null, when an organisation has no products", async () => {
@@ -1498,6 +1518,34 @@ describe("organisationDetail orders contacts is_primary, then created_at, then i
       "Oldest, id 2",
       "Middle",
     ]);
+  });
+});
+
+describe("organisationDetail returns the derived country", () => {
+  it("returns the stored country for an organisation the mapper resolved", async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location, country) VALUES ($1, $2, $3) RETURNING id`,
+      ["Detail Country Org", "Chennai", "IN"],
+    );
+
+    const detail = await organisationDetail(org.rows[0].id);
+
+    expect(detail?.organisation.location).toBe("Chennai");
+    expect(detail?.organisation.country).toBe("IN");
+  });
+
+  it("returns a null country when the location derived none", async () => {
+    // The detail page has to say "Not derived" for these, so it needs the
+    // null to reach it rather than the column simply going unselected.
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, location) VALUES ($1, $2) RETURNING id`,
+      ["Detail Unmapped Org", "Somewhere Unmapped"],
+    );
+
+    const detail = await organisationDetail(org.rows[0].id);
+
+    expect(detail?.organisation.location).toBe("Somewhere Unmapped");
+    expect(detail?.organisation.country).toBeNull();
   });
 });
 

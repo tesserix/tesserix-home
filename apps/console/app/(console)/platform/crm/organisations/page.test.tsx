@@ -26,6 +26,7 @@ const ORG_ROW: OrganisationListRow = {
   id: "org-1",
   name: "Glebe Flowers",
   location: "Sydney",
+  country: "AU",
   contactName: "Priya Raman",
   contactEmail: "priya@glebeflowers.example",
   contactHandle: "glebeflowers",

@@ -10,6 +10,7 @@ import { resolveState, type SurfaceState } from "@/components/kit/surface-state"
 // Not `toSurfaceError` — see `@/lib/db-read-error`.
 import { dbReadError } from "@/lib/db-read-error";
 import { requiresCapability } from "@/lib/internal-access";
+import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { organisationDetail, type OrganisationDetail } from "@/lib/db/crm-repo";
 import { listTemplates, type TemplateRow } from "@/lib/db/crm-templates";
 import {
@@ -167,6 +168,18 @@ export default async function OrganisationDetailPage({
           ),
         },
         { label: "Location", value: organisation.location ?? "Not recorded" },
+        {
+          label: "Country",
+          // "Not derived", not the rail's "Not recorded" used above: this
+          // column is computed from `location` by `countryFromLocation`, and
+          // nobody ever fills it in. An absent value therefore says the
+          // mapper has no entry for the recorded location — 208 of 259
+          // production rows — which is a different fact from a field left
+          // blank, and the operator has to be able to tell them apart.
+          value: organisation.country
+            ? (COUNTRY_LABELS[organisation.country] ?? organisation.country)
+            : "Not derived",
+        },
         {
           label: "Category",
           value: organisation.category.length > 0 ? organisation.category.join(", ") : "Not recorded",
