@@ -225,3 +225,62 @@ Tests  4281 passed (4281)     # 4277 + 2 entity rows + 2 guard rows
 
 19 new tests across T3 and the two guard additions. #546 still must not be
 closed — the Go half is unchanged.
+
+---
+
+# Review round 3 — the surviving mutation
+
+The reviewer's finding was right, and the gap was real rather than an artefact
+of the types: `federated` is `null` whenever the declarations read rejects, and
+`fetched` is `null` whenever the entity read rejects, so **both `null` at once**
+is simply an estate-wide outage — the platform API down, or the console unable
+to authenticate to it. Nothing in the page's types excludes it, and it is the
+one combination where a `null`-treated-as-`false` slip would print "nothing is
+wrong" over a failed read.
+
+Before parallelising, that quadrant was covered incidentally: with a serial
+gate, an unread `sources` meant the entity read still happened and the
+`not.toHaveBeenCalled` assertion was doing double duty. Parallelising removed
+the read gate, and the coverage went with it — leaving the rule pinned only in
+the read-SUCCEEDS case.
+
+## The row added
+
+`reports the failure when BOTH reads fail, rather than calling it not federated`
+— `fetchPlatformSources` rejects 503, `fetchProductEntities` rejects 503;
+asserts the error state and the read's own message, and asserts the calm title
+is absent.
+
+## The proof, with the reviewer's exact mutation
+
+```
+$ # P6: const notFederated = federated === false && fetched === null;
+$ #  ->  const notFederated = federated !== true  && fetched === null;
+$ pnpm vitest run "app/(console)/[product]/[entity]/page.test.tsx"
+   × the states this surface renders > reports the failure when BOTH reads fail,
+     rather than calling it not federated
+      Tests  1 failed | 26 passed (27)
+
+$ # restored
+      Tests  27 passed (27)
+```
+
+It reds, and it reds **only** that row — which is the correct signature: every
+other assertion was already indifferent to the `null`/`false` distinction, which
+is exactly why the mutation had survived.
+
+## Round-3 commands
+
+```
+$ pnpm typecheck            # tsc --noEmit, clean
+$ pnpm lint                 # eslint --max-warnings 0, clean
+
+$ pnpm vitest run "app/(console)/[product]/page.test.tsx" "app/(console)/[product]/[entity]/page.test.tsx"
+✓ app/(console)/[product]/page.test.tsx (17 tests)
+✓ app/(console)/[product]/[entity]/page.test.tsx (27 tests)
+Test Files  2 passed (2)
+Tests  44 passed (44)
+```
+
+20 new tests across T3 and the two guard additions. No behaviour change in this
+round — one test only. #546 still must not be closed.

@@ -303,6 +303,23 @@ describe("the states this surface renders", () => {
     expect(screen.queryByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeNull();
   });
 
+  it("reports the failure when BOTH reads fail, rather than calling it not federated", async () => {
+    // The `null` is not `false` rule, on the branch that has nothing else to
+    // pin it. Before the two reads were parallelised, "we never asked" was
+    // asserted by `fetchProductEntities` not being called; now both reads go
+    // out, so an estate-wide outage lands here with no declarations to read
+    // AND no records. Treating an unread `sources` as "not federated" would
+    // print "nothing is wrong" over a platform API that is down.
+    fetchPlatformSources.mockRejectedValue(new PlatformApiError("sources: down", 503));
+    fetchProductEntities.mockRejectedValue(new PlatformApiError("entities: down", 503));
+
+    await renderIndex("mark8ly", "tenants");
+
+    expect(screen.getByText("Something Went Wrong")).toBeInTheDocument();
+    expect(screen.getByText("entities: down")).toBeInTheDocument();
+    expect(screen.queryByText(typeNotFederatedTitle("Mark8ly", "tenants"))).toBeNull();
+  });
+
   it("keeps a 400 an error on a slug the deployment DOES declare", async () => {
     // The discard is not "swallow every 400". A product that is federated and
     // serves this type refusing the read is a real failure — a search the
