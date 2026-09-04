@@ -69,13 +69,18 @@ import { ProductOverview } from "./overview-view";
  * product could not be reached, and rendering that as "no metrics" would tell
  * an operator a number does not exist when it exists and cannot be read.
  *
- * # Nor is a 400 from an unfederated product (#546)
+ * # Nor is an unfederated product, which the API now says with a 501 (#546)
  *
- * `/v1/kpis` is scoped to `FEDERATION_PRODUCTS`. An empty list answers 501 —
- * `service.Read` returns `ErrNoProducts` from `len(s.slugs) == 0` BEFORE it
- * looks at `source` — but a NON-empty list that omits this slug answers 400
- * (`ErrUnknownSource`), which `resolveState` renders as a failure. That is the
- * likelier deployment: one product federated, another not.
+ * `/v1/kpis` is scoped to `FEDERATION_PRODUCTS`, and every way of falling
+ * outside that scope is now a 501 with its own message: `ErrNoProducts` when
+ * the list is empty, `ErrUnknownSource` when it is non-empty and omits this
+ * slug — the likelier deployment, one product federated and another not. So
+ * the calm state arrives through `resolveState` without this page concluding
+ * anything.
+ *
+ * It used to be a 400, which `resolveState` renders as a failure, and the gate
+ * below is what covered that. Kept because a console can be serving against a
+ * platform-api that predates the change; it is a fallback, not the fix.
  *
  * # Why the declarations cannot decide this on their own
  *

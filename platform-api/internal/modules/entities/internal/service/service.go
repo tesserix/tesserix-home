@@ -28,6 +28,12 @@ const idSeparator = ":"
 var ErrNotInstrumented = errors.New("entities: no products are configured")
 
 // ErrUnknownSource names a product this deployment cannot call.
+//
+// Two situations, one sentinel, and not by choice: s.types has a key per
+// FEDERATED product, and this service has no notion of the products that
+// EXIST. "mark8ly, which this deployment does not federate" and "kroa, which
+// is not a product at all" are both simply absent from the map. The handler
+// records what that costs and why the alternative is worse.
 var ErrUnknownSource = errors.New("entities: unknown source")
 
 // ErrTypeNotServed is a product that exists but does not serve this type.

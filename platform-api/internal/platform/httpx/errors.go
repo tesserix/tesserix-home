@@ -76,16 +76,17 @@ func (e Error) Error() string { return e.Message }
 // Error codes. The estate's spelling, so a client that already handles
 // NOT_FOUND from another service handles it here.
 const (
-	CodeUnauthorized   = "UNAUTHORIZED"
-	CodeForbidden      = "FORBIDDEN"
-	CodeBadRequest     = "BAD_REQUEST"
-	CodeNotFound       = "NOT_FOUND"
-	CodeConflict       = "CONFLICT"
-	CodeValidation     = "VALIDATION_FAILED"
-	CodeInternal       = "INTERNAL_SERVER_ERROR"
-	CodeUnavailable    = "SERVICE_UNAVAILABLE"
-	CodeNotImplemented = "NOT_IMPLEMENTED"
-	CodeDatabaseError  = "DATABASE_ERROR"
+	CodeUnauthorized    = "UNAUTHORIZED"
+	CodeForbidden       = "FORBIDDEN"
+	CodeBadRequest      = "BAD_REQUEST"
+	CodeNotFound        = "NOT_FOUND"
+	CodeConflict        = "CONFLICT"
+	CodeValidation      = "VALIDATION_FAILED"
+	CodeInternal        = "INTERNAL_SERVER_ERROR"
+	CodeUnavailable     = "SERVICE_UNAVAILABLE"
+	CodeNotImplemented  = "NOT_IMPLEMENTED"
+	CodeDatabaseError   = "DATABASE_ERROR"
+	CodeExternalService = "EXTERNAL_SERVICE_ERROR"
 )
 
 func Unauthorized(message string) Error {
@@ -148,6 +149,28 @@ func NotImplemented(message string) Error {
 // can only draw that distinction if the API draws it first.
 func Unavailable(message string) Error {
 	return Error{Code: CodeUnavailable, Message: message, StatusCode: http.StatusServiceUnavailable}
+}
+
+// ExternalService means a dependency ANSWERED, and its answer was unusable.
+//
+// The third point of the triangle Unavailable and NotImplemented already form,
+// and go-shared spells it the same way for the same reason — its
+// ErrCodeExternalService comment draws exactly this line: Unavailable is "not
+// reached or not configured", this one is "reached, and it answered with an
+// error". Both are 503, because from the caller's side the request cannot be
+// served either way; only the code and the message say which happened.
+//
+// It exists here because a product deviating from the contract was being
+// reported as an outage: a §3.1 metrics map arriving as `{}` reached the
+// console as "the product could not be reached", which sends an operator to
+// check a network path that is fine and away from the product that is wrong
+// (#546).
+func ExternalService(message string) Error {
+	return Error{
+		Code:       CodeExternalService,
+		Message:    message,
+		StatusCode: http.StatusServiceUnavailable,
+	}
 }
 
 // From narrows any error to the envelope.

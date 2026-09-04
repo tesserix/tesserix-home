@@ -150,10 +150,15 @@ func TestEntitiesRequiresASource(t *testing.T) {
 
 // An undeclared type is refused here rather than becoming the product's 404,
 // which would read as an outage.
+//
+// 501 rather than 400 (#546): the request was well formed and the console
+// built it from its own rail — the type is simply not among this deployment's
+// FEDERATION_<SLUG>_ENTITIES, which is a configuration state, not a mistake by
+// the caller.
 func TestEntitiesRefusesAnUndeclaredType(t *testing.T) {
 	got := serve(t).get("/v1/entities/tenants?source=" + productSlug)
-	if got.status != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400: %s", got.status, got.raw)
+	if got.status != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501: %s", got.status, got.raw)
 	}
 	// And says WHICH mistake it was, so whoever hit it checks the right thing.
 	if !strings.Contains(got.raw, "tenants") {
@@ -161,11 +166,63 @@ func TestEntitiesRefusesAnUndeclaredType(t *testing.T) {
 	}
 }
 
-func TestEntitiesRejectsUnknownSourceAndParameters(t *testing.T) {
-	a := serve(t)
-	if got := a.get("/v1/entities/foods?source=nosuch"); got.status != http.StatusBadRequest {
-		t.Errorf("unknown source: status = %d, want 400", got.status)
+// THE regression this issue is about (#546). A product this deployment does
+// not federate must not read as a hard failure: it is not switched on here,
+// and the console renders 501 calmly and 400 as an outage.
+//
+// Asserted as 501 EXACTLY, not as "not 400": the two causes were collapsed
+// before, and a test that only rules the old status out would pass under any
+// replacement, including one the console still renders as breakage.
+func TestEntitiesReportsAnUnfederatedProductAsNotImplemented(t *testing.T) {
+	got := serve(t).get("/v1/entities/foods?source=mark8ly")
+	if got.status != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501: %s", got.status, got.raw)
 	}
+	if !strings.Contains(got.raw, "mark8ly") {
+		t.Errorf("message does not name the slug asked for: %s", got.raw)
+	}
+}
+
+// The three refusals are one status and three MESSAGES. Collapsing the
+// messages is what sends whoever hit it to check the wrong thing, so each is
+// pinned separately here — the status alone cannot tell them apart, which is
+// exactly why the text has to.
+func TestEntitiesKeepsItsRefusalsDistinct(t *testing.T) {
+	federated := serve(t)
+	unknownSource := federated.get("/v1/entities/foods?source=kroa")
+	typeNotServed := federated.get("/v1/entities/tenants?source=" + productSlug)
+	nothingFederated := serveTypes(t, nil).get("/v1/entities/foods?source=" + productSlug)
+
+	for _, tc := range []struct {
+		name string
+		got  response
+		want string
+	}{
+		{"unknown source", unknownSource, "unknown source"},
+		{"type not served", typeNotServed, "does not serve"},
+		{"nothing federated", nothingFederated, "no products are configured"},
+	} {
+		if tc.got.status != http.StatusNotImplemented {
+			t.Errorf("%s: status = %d, want 501: %s", tc.name, tc.got.status, tc.got.raw)
+		}
+		if !strings.Contains(tc.got.raw, tc.want) {
+			t.Errorf("%s: message %s does not contain %q", tc.name, tc.got.raw, tc.want)
+		}
+	}
+	// And they really are three different sentences, not one status wearing
+	// three names.
+	if unknownSource.raw == typeNotServed.raw || unknownSource.raw == nothingFederated.raw ||
+		typeNotServed.raw == nothingFederated.raw {
+		t.Errorf("two refusals carry the same message:\n%s\n%s\n%s",
+			unknownSource.raw, typeNotServed.raw, nothingFederated.raw)
+	}
+}
+
+// A MALFORMED request is still a 400. That is the meaning 400 keeps, and it is
+// what stops the change above from turning the route into one that never
+// refuses a caller.
+func TestEntitiesRejectsMalformedRequests(t *testing.T) {
+	a := serve(t)
 	if got := a.get("/v1/entities/foods?source=" + productSlug + "&sort=name"); got.status != http.StatusBadRequest {
 		t.Errorf("unknown param: status = %d, want 400", got.status)
 	}

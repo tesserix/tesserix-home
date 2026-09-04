@@ -6,8 +6,16 @@ import type { SurfaceState } from "@/components/kit/surface-state";
  *
  * # The defect this exists to close (#546)
  *
- * platform-api scopes its federated reads to the products this DEPLOYMENT
- * declares, and refuses a product outside that scope with 400:
+ * THE WIRE HAS SINCE BEEN FIXED — platform-api now answers 501 for every one
+ * of the refusals below, so `resolveState` reaches
+ * `instrumentation-unavailable` on its own and each surface's own 501 copy
+ * renders. What follows describes the behaviour this gate was written against
+ * and still covers: the console and platform-api are separate images, so a
+ * console can be serving against an API that predates that change, and the
+ * gate is what keeps THAT deployment calm. It is a fallback now, not the fix.
+ *
+ * platform-api scoped its federated reads to the products this DEPLOYMENT
+ * declares, and refused a product outside that scope with 400:
  *
  *   - `kpis`: `service.Read` answers `ErrNoProducts` (→ 501) when
  *     `FEDERATION_PRODUCTS` is empty, but `ErrUnknownSource` (→ 400) when the
@@ -25,14 +33,19 @@ import type { SurfaceState } from "@/components/kit/surface-state";
  * likelier production state — one product federated, the other not — rendered
  * an outage-shaped page for a deployment working exactly as configured.
  *
- * # Why this is a console fix and not (yet) a Go one
+ * # Why this started as a console fix, and what the Go change added
  *
  * `GET /v1/platform/sources` already tells the console which products declare
- * what, from the same configuration the refusals are computed from. That is
- * enough for the console to stop RENDERING the refusal as breakage. It is not
- * enough to make the wire honest: `ErrUnknownSource` is still a 400, and a
- * product answering `{}` still reaches the console as a 503. Both stay on #546
- * for a platform-api change.
+ * what, from the same configuration the refusals are computed from. That was
+ * enough for the console to stop RENDERING the refusal as breakage, but not
+ * enough to make the wire honest — and it left the console CONCLUDING from two
+ * signals rather than reading one it could trust.
+ *
+ * platform-api now sends that signal: `ErrUnknownSource` and
+ * `ErrTypeNotServed` are 501, each keeping its own message, and a product
+ * answering `{}` is a 503 under `EXTERNAL_SERVICE_ERROR` rather than the
+ * "could not be reached" default. A malformed request is still a 400, which is
+ * the meaning that status can actually enforce.
  *
  * # No new `SurfaceState` kind
  *
