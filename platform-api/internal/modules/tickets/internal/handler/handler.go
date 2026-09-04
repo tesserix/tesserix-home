@@ -634,6 +634,21 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		// replaying would silently discard the second request.
 		envelope = httpx.Conflict("this " + idempotency.Header + " was already used for a different request")
 
+	case errors.Is(err, errUnscopedMachine), errors.Is(err, errNoPrincipal):
+		// 403, not the 500 these produced before.
+		//
+		// The comment on errUnscopedMachine already claimed this status and
+		// nothing implemented it, so every scoped-machine refusal answered
+		// "request failed" — which sends an operator to the database and the
+		// logs rather than to the PRODUCT_SCOPE_* variable that actually
+		// caused it, and pages someone for what is a configuration answer
+		// rather than a fault.
+		//
+		// Found by probing production, not by a test: the handler tests
+		// asserted only that the request was REFUSED (`code < 400` fails),
+		// and a 500 satisfies that. They now assert the status.
+		envelope = httpx.Forbidden("this caller is not configured for any product")
+
 	case errors.Is(err, service.ErrRefused):
 		// 422: understood, and declined. Distinct from 400 — the request was
 		// well-formed — and the message is the domain's own, which names what

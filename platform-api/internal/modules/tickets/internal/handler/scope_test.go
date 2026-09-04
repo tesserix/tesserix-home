@@ -193,11 +193,14 @@ func TestAMachineIsAdmittedToTheReadRoutes(t *testing.T) {
 func TestAMachineReachesTheReplyRouteAndIsRefusedWithoutATenant(t *testing.T) {
 	rec := post(t, machineMux(t), `{"content":"hello"}`)
 
-	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
-		t.Fatalf("the capability gate refused a machine with %d — the route should be open to it now", rec.Code)
-	}
-	if rec.Code < 400 {
-		t.Errorf("a reply naming no tenant was accepted (%d)", rec.Code)
+	// The EXACT status. This machine IS mapped, so the refusal comes from the
+	// tenant rule (service.ErrRefused -> 422), not from the scope.
+	//
+	// These assertions used to accept anything >= 400, which is how a 500 went
+	// unnoticed on the neighbouring UNMAPPED path — see
+	// TestAnUnmappedMachineIsRefusedWithA403AndNotA500.
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a reply naming no tenant got %d, want 422", rec.Code)
 	}
 }
 
@@ -263,8 +266,9 @@ func TestAMachineListingWithoutATenantIsRefused(t *testing.T) {
 		machineMux(t).ServeHTTP(rec, req)
 	}()
 
-	if rec.Code < 400 {
-		t.Errorf("a machine listed with no tenant and got %d — this reads every tenant in the product", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a machine listing with no tenant got %d, want 422 — and it must never be a 2xx, "+
+			"which would read every tenant in the product", rec.Code)
 	}
 }
 
@@ -305,10 +309,63 @@ func TestAMachineReachesTheCreateRouteAndNeedsATenant(t *testing.T) {
 		machineMux(t).ServeHTTP(rec, req)
 	}()
 
-	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
-		t.Fatalf("the capability gate refused a machine with %d — filing is its route", rec.Code)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("a filing naming no tenant got %d, want 422", rec.Code)
 	}
-	if rec.Code < 400 {
-		t.Errorf("a filing naming no tenant was accepted (%d)", rec.Code)
+}
+
+// The refusal that answered 500 in production.
+//
+// A machine holding product-support whose subject is in NO registry entry —
+// the state of every deployment until PRODUCT_SCOPE_* is set. scopeFor
+// correctly refuses it, and TestAProductSupportCallerWithNoRegistryEntryIsRefused
+// has always covered that. What nothing covered was the STATUS: that test calls
+// scopeFor directly, so the error never reached fail(), whose default case
+// turned it into "request failed".
+//
+// Caught by probing production during the #152 rollout, not by the suite. The
+// lesson is in the assertion: a refusal and a fault are different answers, and
+// a test that accepts any code >= 400 cannot tell them apart.
+func TestAnUnmappedMachineIsRefusedWithA403AndNotA500(t *testing.T) {
+	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
+		Subject:   machineSubj,
+		ClientID:  "some-machine-client",
+		Audience:  []string{testProject},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"product-support"},
+	}}, testProject)
+
+	mux := http.NewServeMux()
+	// An EMPTY registry: the machine resolves to no product.
+	(&Handler{log: discardLog(), scope: productscope.NewRegistry(nil)}).Routes(mux, verifier)
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"list", http.MethodGet, "/v1/tickets?tenant=" + tenantA, ""},
+		{"detail", http.MethodGet, "/v1/tickets/3f2a1c94-0000-4000-8000-000000000001?tenant=" + tenantA, ""},
+		{"reply", http.MethodPost, ticketPath, `{"content":"hi","tenant_id":"` + tenantA + `"}`},
+		{"create", http.MethodPost, "/v1/tickets", `{"tenant_id":"` + tenantA + `","subject":"s","description":"d"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+tokenShaped)
+			rec := httptest.NewRecorder()
+			func() {
+				defer func() { _ = recover() }()
+				mux.ServeHTTP(rec, req)
+			}()
+
+			if rec.Code == http.StatusInternalServerError {
+				t.Fatalf("%s answered 500 — a configuration refusal must not present as a fault", tc.name)
+			}
+			if rec.Code != http.StatusForbidden {
+				t.Errorf("%s got %d, want 403", tc.name, rec.Code)
+			}
+		})
 	}
 }
