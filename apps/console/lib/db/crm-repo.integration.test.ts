@@ -950,7 +950,7 @@ describe("listOrganisations", () => {
       const second = await listOrganisations(
         { search: "Pagination Org" },
         2,
-        first.nextCursor ?? undefined,
+        { cursor: first.nextCursor ?? undefined },
       );
       const ids = [...first.rows, ...second.rows].map((r) => r.id);
       expect(new Set(ids).size).toBe(ids.length);
@@ -995,7 +995,7 @@ describe("listOrganisations", () => {
       const second = await listOrganisations(
         { search: "Pagination Org" },
         2,
-        first.nextCursor ?? undefined,
+        { cursor: first.nextCursor ?? undefined },
       );
       expect(second.rows.map((r) => r.id)).toContain(midId);
     });
@@ -1029,7 +1029,7 @@ describe("listOrganisations", () => {
       const second = await listOrganisations(
         { search: "Tiebreak Org" },
         1,
-        first.nextCursor ?? undefined,
+        { cursor: first.nextCursor ?? undefined },
       );
       expect(second.rows).toHaveLength(1);
 
@@ -1044,7 +1044,7 @@ describe("listOrganisations", () => {
 
     it("rejects a malformed cursor instead of coercing it into a query", async () => {
       await expect(
-        listOrganisations({ search: "Pagination Org" }, 2, "not-a-real-cursor"),
+        listOrganisations({ search: "Pagination Org" }, 2, { cursor: "not-a-real-cursor" }),
       ).rejects.toThrow();
     });
   });
@@ -1469,7 +1469,7 @@ describe("listOrganisations", () => {
       const second = await listOrganisations(
         { search: "Pagination Org" },
         2,
-        first.nextCursor ?? undefined,
+        { cursor: first.nextCursor ?? undefined },
       );
       expect(second.precedingCount).toBe(first.rows.length);
       expect(second.total).toBe(first.total);
@@ -1928,11 +1928,11 @@ describe("paging backwards through listOrganisations", () => {
     const order = await displayed();
     const first = await listOrganisations({ search: "Backward Org" }, 2);
     const second = await listOrganisations(
-      { search: "Backward Org" }, 2, first.nextCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: first.nextCursor ?? undefined });
     const third = await listOrganisations(
-      { search: "Backward Org" }, 2, second.nextCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: second.nextCursor ?? undefined });
     const back = await listOrganisations(
-      { search: "Backward Org" }, 2, third.previousCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: third.previousCursor ?? undefined });
 
     expect(back.rows.map((r) => r.id)).toEqual(order.slice(2, 4));
     expect(back.precedingCount).toBe(2);
@@ -1942,13 +1942,13 @@ describe("paging backwards through listOrganisations", () => {
   it("round trips: forward to page three, back to page one, same rows in the same order", async () => {
     const first = await listOrganisations({ search: "Backward Org" }, 2);
     const second = await listOrganisations(
-      { search: "Backward Org" }, 2, first.nextCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: first.nextCursor ?? undefined });
     const third = await listOrganisations(
-      { search: "Backward Org" }, 2, second.nextCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: second.nextCursor ?? undefined });
     const backToTwo = await listOrganisations(
-      { search: "Backward Org" }, 2, third.previousCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: third.previousCursor ?? undefined });
     const backToOne = await listOrganisations(
-      { search: "Backward Org" }, 2, backToTwo.previousCursor ?? undefined);
+      { search: "Backward Org" }, 2, { cursor: backToTwo.previousCursor ?? undefined });
 
     expect(backToOne.rows.map((r) => r.id)).toEqual(first.rows.map((r) => r.id));
     expect(backToOne.precedingCount).toBe(0);
@@ -1962,9 +1962,9 @@ describe("paging backwards through listOrganisations", () => {
     const order = await displayed();
     const first = await listOrganisations({ search: "Backward Org" }, 3);
     const second = await listOrganisations(
-      { search: "Backward Org" }, 3, first.nextCursor ?? undefined);
+      { search: "Backward Org" }, 3, { cursor: first.nextCursor ?? undefined });
     const back = await listOrganisations(
-      { search: "Backward Org" }, 3, second.previousCursor ?? undefined);
+      { search: "Backward Org" }, 3, { cursor: second.previousCursor ?? undefined });
     expect(first.rows.map((r) => r.id)).toEqual(order.slice(0, 3));
     expect(second.rows.map((r) => r.id)).toEqual(order.slice(3, 6));
     expect(back.rows.map((r) => r.id)).toEqual(order.slice(0, 3));
@@ -2305,5 +2305,166 @@ describe("the displayed follower count comes from the flagged primary contact", 
     const over10k = (await listOrganisations({ ...scope, followers: "over10k" }, 50)).rows;
     expect(under1k.map((r) => r.id)).toEqual([orgIdForDisplay]);
     expect(over10k.map((r) => r.id)).toEqual([]);
+  });
+});
+
+/**
+ * Sorting the browse list (#566 follow-up).
+ *
+ * Its own fixture, declared last, for the reason the describe above gives:
+ * earlier describes assert exact result sets from the seeds they own, and a
+ * sort test needs several organisations whose follower counts are chosen to
+ * order in a known way — including a NULL, which is the case the ordering
+ * gets wrong by default.
+ *
+ * `Loud Secondary` is the fixture that pins the lateral. Its non-primary
+ * contact is older, has the lower id, and carries 99000 followers; its
+ * flagged primary carries 10. If the ORDER BY read a contact resolved
+ * without `is_primary DESC`, that organisation would lead a descending sort
+ * instead of trailing it — the sort would be banding on a contact the row
+ * does not display.
+ */
+describe("listOrganisations sorted by a column the caller names", () => {
+  const SCOPE = { search: "Sort Fixture" } as const;
+  const ids: Record<string, string> = {};
+
+  // `created_at` is explicit, not defaulted: two inserts can share the
+  // default clock, and the unsorted read's tiebreak is `id DESC` over random
+  // uuids — so "newest first" would otherwise be undetermined between them.
+  const seedOrg = async (name: string, followers: number | null, ageInDays: number) => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, created_at) VALUES ($1, $2::timestamptz) RETURNING id`,
+      [`Sort Fixture ${name}`, daysAgo(ageInDays)],
+    );
+    const id = org.rows[0].id;
+    ids[name] = id;
+    if (followers !== undefined) {
+      await db.query(
+        `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count)
+         VALUES ($1, $2, true, $3)`,
+        [id, `${name} Primary`, followers],
+      );
+    }
+    return id;
+  };
+
+  beforeAll(async () => {
+    await seedOrg("Alpha", 5000, 5);
+    await seedOrg("Bravo", 0, 4);
+    await seedOrg("Charlie", 50000, 3);
+    // No follower count at all: the row must sort last, and must still read
+    // back as null rather than as a zero.
+    await seedOrg("Delta", null, 2);
+
+    const loud = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name, created_at) VALUES ($1, $2::timestamptz) RETURNING id`,
+      ["Sort Fixture Loud Secondary", daysAgo(1)],
+    );
+    ids["Loud"] = loud.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count, created_at)
+       VALUES ($1, 'Loud Secondary', false, 99000, $2::timestamptz),
+              ($1, 'Quiet Primary', true, 10, $3::timestamptz)`,
+      [ids["Loud"], daysAgo(30), daysAgo(1)],
+    );
+  });
+
+  const sortedNames = async (
+    direction: "asc" | "desc",
+    key: "followers" | "name" = "followers",
+  ) =>
+    (await listOrganisations(SCOPE, 50, { sort: { key, direction } })).rows.map((r) => r.name);
+
+  it("puts the largest follower count first and the unknown one last", async () => {
+    expect(await sortedNames("desc")).toEqual([
+      "Sort Fixture Charlie",
+      "Sort Fixture Alpha",
+      "Sort Fixture Loud Secondary",
+      "Sort Fixture Bravo",
+      "Sort Fixture Delta",
+    ]);
+  });
+
+  it("keeps the unknown last ascending too — unknown is not the smallest", async () => {
+    expect(await sortedNames("asc")).toEqual([
+      "Sort Fixture Bravo",
+      "Sort Fixture Loud Secondary",
+      "Sort Fixture Alpha",
+      "Sort Fixture Charlie",
+      "Sort Fixture Delta",
+    ]);
+  });
+
+  it("still reads an absent follower count as null, never as zero", async () => {
+    const rows = (await listOrganisations(SCOPE, 50, {
+      sort: { key: "followers", direction: "desc" },
+    })).rows;
+    const delta = rows.find((r) => r.id === ids["Delta"]);
+    const bravo = rows.find((r) => r.id === ids["Bravo"]);
+    expect(delta?.followersCount).toBeNull();
+    expect(bravo?.followersCount).toBe(0);
+  });
+
+  it("sorts by the primary contact's count, the same one it displays", async () => {
+    const rows = (await listOrganisations(SCOPE, 50, {
+      sort: { key: "followers", direction: "desc" },
+    })).rows;
+    const loud = rows.find((r) => r.id === ids["Loud"]);
+    expect(loud?.followersCount).toBe(10);
+    expect(loud?.contactName).toBe("Quiet Primary");
+    // 99000 would top the list; 10 places it third of the four known counts.
+    expect(rows[0].id).toBe(ids["Charlie"]);
+    expect(rows[2].id).toBe(ids["Loud"]);
+  });
+
+  it("orders by name when the name key is the one asked for", async () => {
+    expect(await sortedNames("asc", "name")).toEqual([
+      "Sort Fixture Alpha",
+      "Sort Fixture Bravo",
+      "Sort Fixture Charlie",
+      "Sort Fixture Delta",
+      "Sort Fixture Loud Secondary",
+    ]);
+  });
+
+  it("pages a sorted view by offset, reporting the rows it skipped", async () => {
+    const first = await listOrganisations(SCOPE, 2, {
+      sort: { key: "followers", direction: "desc" },
+    });
+    const second = await listOrganisations(SCOPE, 2, {
+      sort: { key: "followers", direction: "desc" },
+      page: 2,
+    });
+    expect(first.total).toBe(5);
+    expect(first.precedingCount).toBe(0);
+    expect(first.rows.map((r) => r.name)).toEqual([
+      "Sort Fixture Charlie",
+      "Sort Fixture Alpha",
+    ]);
+    expect(second.precedingCount).toBe(2);
+    expect(second.rows.map((r) => r.name)).toEqual([
+      "Sort Fixture Loud Secondary",
+      "Sort Fixture Bravo",
+    ]);
+    // Offset paging drives ResultPager off total and precedingCount; a
+    // cursor would name a position in created_at order, which this page is
+    // not in.
+    expect(second.nextCursor).toBeNull();
+    expect(second.previousCursor).toBeNull();
+  });
+
+  it("refuses a sort key that is not in the allow-list", async () => {
+    await expect(
+      listOrganisations(SCOPE, 50, { sort: { key: "__proto__" as never, direction: "desc" } }),
+    ).rejects.toThrow(/unrecognised sort key/);
+  });
+
+  it("leaves the unsorted read on its cursor, newest first", async () => {
+    const page = await listOrganisations(SCOPE, 2);
+    expect(page.nextCursor).not.toBeNull();
+    expect(page.rows.map((r) => r.name)).toEqual([
+      "Sort Fixture Loud Secondary",
+      "Sort Fixture Delta",
+    ]);
   });
 });

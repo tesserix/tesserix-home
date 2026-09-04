@@ -2846,16 +2846,20 @@ export interface OrganisationPage {
   /**
    * How many matching rows sort ahead of this page — 0 on the first page.
    *
-   * Counted in SQL, not inferred from a page number on the URL: pagination
-   * here is keyset, so a cursor carries no position, and a `?page=` param an
-   * operator could edit would let the surface state a range it hasn't got.
+   * On the default (cursor) read this is counted in SQL, because a cursor
+   * carries no position and a `?page=` param an operator could edit would let
+   * the surface state a range it hasn't got. On a SORTED read the offset IS
+   * the position the caller asked for, so it is that offset, capped at
+   * `total`.
    */
   precedingCount: number;
-  /** Opaque cursor for the next page; null when this is the last page. */
+  /** Opaque cursor for the next page; null when this is the last page, and
+   *  always null under a sort — see `listOrganisations`. */
   nextCursor: string | null;
-  /** Opaque cursor for the previous page; null on the first page. Non-null
-   *  exactly when `precedingCount > 0`, so the Previous control and the
-   *  displayed range are answering out of the same count. */
+  /** Opaque cursor for the previous page; null on the first page and always
+   *  null under a sort. Under the cursor regime it is non-null exactly when
+   *  `precedingCount > 0`, so the Previous control and the displayed range
+   *  are answering out of the same count. */
   previousCursor: string | null;
 }
 
@@ -3013,6 +3017,87 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
 }
 
 /**
+ * The columns the organisations list can be ordered by: a closed record from
+ * the key a caller may name to the SQL expression that key means.
+ *
+ * This is a security boundary, not a convenience. An `ORDER BY` expression
+ * cannot be a bound parameter, so whatever it is gets spliced into the
+ * statement text — and every other sort key in this file (`DRIFTING_SORT_KEY`,
+ * `QueuePageQuery.sortKey`) is a module literal for exactly that reason.
+ * `listOrganisations` is the first read here whose ordering a caller chooses,
+ * so the KEY is validated against this record and only the record's VALUE
+ * reaches the SQL. The caller's string never does.
+ *
+ * Look the key up with `Object.hasOwn`, never `in`: `in` walks the prototype
+ * chain, so `__proto__`, `constructor` and `toString` all read as recognised
+ * keys. The organisations page hit precisely that with `?country=__proto__`.
+ */
+export const ORGANISATION_SORTS = {
+  name: "g.name",
+  /** Resolved once in the page query's lateral, so the count a row sorts by
+   *  is the count it displays and the count the follower filter banded it
+   *  on — see `notErased` and `primaryContactOrder`. */
+  followers: "pc.followers_count",
+  created: "g.created_at",
+} as const;
+
+export type OrganisationSortKey = keyof typeof ORGANISATION_SORTS;
+
+export type SortDirection = "asc" | "desc";
+
+export interface OrganisationSort {
+  key: OrganisationSortKey;
+  direction: SortDirection;
+}
+
+/**
+ * Thrown when a sort key is not in `ORGANISATION_SORTS`.
+ *
+ * Thrown rather than quietly ignored: a caller asking for an ordering this
+ * repo cannot give it has a bug (or is probing), and a silent fall back to
+ * `created_at DESC` would show a page that contradicts the sort the URL
+ * claims. The surface reading the URL is expected to validate against the
+ * exported record first, so this is the boundary's second line, not its
+ * first.
+ */
+export class UnknownSortKeyError extends Error {
+  constructor(key: string) {
+    super(`listOrganisations: unrecognised sort key ${JSON.stringify(key)}`);
+    this.name = "UnknownSortKeyError";
+  }
+}
+
+/**
+ * How one page of `listOrganisations` is located.
+ *
+ * A union, not a bag of optional fields, because the two regimes are
+ * mutually exclusive: the unsorted list pages by keyset cursor, a sorted one
+ * by `?page=` offset. Letting a caller pass both would leave the function
+ * choosing silently between two positions the URL asked for.
+ *
+ * Offset for sorted views is a deliberate trade, not an oversight — see the
+ * pagination paragraph on `listOrganisations`.
+ */
+export type ListOrganisationsOptions =
+  | { sort?: undefined; cursor?: string; page?: undefined }
+  | { sort: OrganisationSort; page?: number; cursor?: undefined };
+
+/** The `ORDER BY` fragment for `sort`, with the caller's key validated away.
+ *  `NULLS LAST` on both directions: 51 of 259 contacts have no
+ *  `followers_count`, and "unknown" is not "smallest" — it belongs at the end
+ *  whichever way the operator reads the column. `g.id` last for the same
+ *  reason the keyset carries it: `name` and `created_at` are not unique, and
+ *  an unbroken tie makes a page boundary non-deterministic. */
+function organisationSortOrder(sort: OrganisationSort): string {
+  if (!Object.hasOwn(ORGANISATION_SORTS, sort.key)) {
+    throw new UnknownSortKeyError(sort.key);
+  }
+  const expression = ORGANISATION_SORTS[sort.key];
+  const direction = sort.direction === "asc" ? "ASC" : "DESC";
+  return `${expression} ${direction} NULLS LAST, g.id DESC`;
+}
+
+/**
  * Browse and search. The reason this exists (#213): `commitImport` creates
  * every opportunity at stage 'new' with a null `next_action_at` and null
  * `last_contacted_at`, so a freshly imported lead is on neither queue for
@@ -3023,21 +3108,41 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
  * because an imported lead is almost never looked up by business name —
  * the operator has the handle or the address the CSV carried.
  *
- * The contact columns are correlated subqueries rather than a LEFT JOIN:
- * joining contacts fans a multi-contact organisation into one row per
- * contact, and de-duplicating afterwards (DISTINCT ON, or a GROUP BY over
- * every selected column) costs more than reading the primary contact
- * directly. Which contact that is comes from `primaryContactOrder` — the
- * same ordering the filter subqueries and the detail page use, so all three
- * agree on a tie.
+ * The contact columns come from a `LEFT JOIN LATERAL` that picks ONE
+ * contact, not from a plain join: joining contacts fans a multi-contact
+ * organisation into one row per contact, and de-duplicating afterwards
+ * (DISTINCT ON, or a GROUP BY over every selected column) costs more. Which
+ * contact it picks comes from `primaryContactOrder` and `notErased` — the
+ * same ordering and the same erasure predicate the filter subqueries and the
+ * detail page use, so all of them agree on a tie. `LEFT`, so an organisation
+ * with no live contact keeps its row with null contact columns.
  *
- * Pagination is keyset, not OFFSET: `OFFSET N` makes Postgres walk and
- * discard N rows every page, and a row inserted while the operator pages
+ * One lateral rather than four correlated subqueries because the follower
+ * count is now also an ORDER BY input: five copies of that scan is five
+ * chances for one of them to resolve a different contact, and #563 mutation-
+ * proved that the displayed count and the banded count must be the same
+ * contact's.
+ *
+ * Pagination is keyset by default, not OFFSET: `OFFSET N` makes Postgres walk
+ * and discard N rows every page, and a row inserted while the operator pages
  * shifts every subsequent page by one, silently skipping whatever crossed
  * the boundary — on this surface, a lead never contacted. Keyset on
- * `(created_at, id)` reads straight off the existing `ORDER BY` and is
+ * `(created_at, id)` reads straight off the default `ORDER BY` and is
  * stable under concurrent inserts; `id` is the tiebreaker because
  * `created_at` is not unique (the migration wrote 259 rows in one batch).
+ *
+ * A SORTED view pages by offset instead, and gives that protection up. The
+ * cursor is `{timestamp, id}` validated with `Date.parse`, and a follower
+ * count is neither: generalising it is feasible, but the NULLs are not — a
+ * row-value comparison `(k, id) < ($1, $2)` cannot express NULLS LAST,
+ * because a NULL first element makes the whole comparison NULL and the row
+ * disappears from every page. `COALESCE(followers_count, 0)` would sort 51
+ * unknowns among the genuine zeros, which is the exact distinction
+ * `toOrganisationListRow` and the browse table keep. Under offset it is one
+ * clause and no sentinel. The trade costs little here — 259 rows, three
+ * pages, and organisations arrive in batch imports rather than continuously
+ * — and the default view keeps its cursor, so the protection is retained
+ * where the argument above was made.
  *
  * `nextCursor` is derived by fetching `limit + 1` rows and dropping the
  * extra, not by comparing `total` to rows-seen-so-far — this function is
@@ -3053,12 +3158,24 @@ function toOrganisationListRow(row: RawOrganisationListRow): OrganisationListRow
 export async function listOrganisations(
   filter: OrganisationFilter,
   limit: number,
-  cursor?: string,
+  options: ListOrganisationsOptions = {},
 ): Promise<OrganisationPage> {
+  const sort = options.sort;
+  // Validated (and the offset computed) before either query runs, for the
+  // same reason the cursor is: a request this function cannot serve must not
+  // cost a round trip, and a rejected sort key must never reach a statement.
+  const sortOrder = sort ? organisationSortOrder(sort) : null;
+  const pageNumber = sort ? (options.page ?? 1) : 1;
+  if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+    throw new RangeError(`listOrganisations: page must be a positive integer, got ${pageNumber}`);
+  }
+  const offset = (pageNumber - 1) * limit;
   // Decoded (and validated) before either query runs, so a malformed cursor
   // fails fast without spending a round trip on the count query it would
   // never get to use.
-  const decodedCursor = cursor ? decodeKeysetCursor(cursor, "listOrganisations") : null;
+  const decodedCursor = options.cursor
+    ? decodeKeysetCursor(options.cursor, "listOrganisations")
+    : null;
   // Backwards is the mirror of every part of the forward read: the anchor is
   // the page's FIRST row rather than its last, the comparison and the ORDER
   // BY both flip, and the rows are re-reversed on the way out.
@@ -3099,15 +3216,21 @@ export async function listOrganisations(
       `(g.created_at, g.id) ${backwards ? ">" : "<"} (${createdAtParam}, ${idParam})`,
     );
   }
-  // limit + 1: see the doc comment above for why this, not a total
-  // comparison, is what decides nextCursor.
-  params.push(limit + 1);
-  const limitParam = `$${params.length}`;
+  // limit + 1 under keyset: see the doc comment above for why an extra row,
+  // not a total comparison, is what decides nextCursor. A sorted page knows
+  // where it is from `total` and its offset, so it asks for exactly `limit`.
+  params.push(sortOrder ? limit : limit + 1);
+  let limitClause = `LIMIT $${params.length}`;
+  if (sortOrder) {
+    params.push(offset);
+    limitClause += ` OFFSET $${params.length}`;
+  }
   const where = clauses.length > 0 ? `WHERE ${clauses.join("\n        AND ")}` : "";
   // Flipped with the comparison. Without this the LIMIT would keep the rows
   // furthest from the anchor — the newest rows in the whole list, not the
   // page immediately before this cursor.
   const order = backwards ? "ASC" : "DESC";
+  const orderBy = sortOrder ?? `g.created_at ${order}, g.id ${order}`;
 
   // Independent reads over two disjoint parameter lists (built above, never
   // touched again) — safe to run concurrently rather than paying two
@@ -3120,33 +3243,13 @@ export async function listOrganisations(
     ),
     tesserixQuery<RawOrganisationListRow>(
       `SELECT g.id, g.name, g.location, g.country, g.website_url, g.created_at,
-              (SELECT c.name FROM crm_contacts c
-                WHERE c.organisation_id = g.id
-                  AND ${notErased("c")}
-                ORDER BY ${primaryContactOrder("c")}
-                LIMIT 1) AS contact_name,
-              (SELECT c.email FROM crm_contacts c
-                WHERE c.organisation_id = g.id
-                  AND ${notErased("c")}
-                ORDER BY ${primaryContactOrder("c")}
-                LIMIT 1) AS contact_email,
-              (SELECT c.instagram_handle FROM crm_contacts c
-                WHERE c.organisation_id = g.id
-                  AND ${notErased("c")}
-                ORDER BY ${primaryContactOrder("c")}
-                LIMIT 1) AS contact_handle,
-              -- The same primary contact the followers filter bands on:
-              -- primaryContactFollowerClause resolves it with this exact
-              -- ordering and this exact erasure predicate, so a row can never
-              -- display a number that contradicts the band it came back under.
-              (SELECT c.followers_count FROM crm_contacts c
-                WHERE c.organisation_id = g.id
-                  AND ${notErased("c")}
-                ORDER BY ${primaryContactOrder("c")}
-                LIMIT 1) AS followers_count,
+              pc.name AS contact_name,
+              pc.email AS contact_email,
+              pc.instagram_handle AS contact_handle,
+              pc.followers_count AS followers_count,
               -- Counts every contact, erased ones included: the count says how
               -- many contacts the organisation's file holds, not which of them
-              -- the four columns above resolved to. See notErased().
+              -- the lateral resolved to. See notErased().
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
               (SELECT count(*) FROM crm_opportunities o
@@ -3156,34 +3259,58 @@ export async function listOrganisations(
                 WHERE o.organisation_id = g.id
                   AND o.product IS NOT NULL) AS products
          FROM crm_organisations g
+         -- The organisation's primary contact, resolved once. The same
+         -- contact primaryContactFollowerClause bands on: this ordering and
+         -- this erasure predicate are the two things that make the two agree,
+         -- so a row can never display — or sort by — a number that
+         -- contradicts the band it came back under.
+         LEFT JOIN LATERAL (
+           SELECT c.name, c.email, c.instagram_handle, c.followers_count
+             FROM crm_contacts c
+            WHERE c.organisation_id = g.id
+              AND ${notErased("c")}
+            ORDER BY ${primaryContactOrder("c")}
+            LIMIT 1
+         ) pc ON TRUE
          ${where}
-        ORDER BY g.created_at ${order}, g.id ${order}
-        LIMIT ${limitParam}`,
+        ORDER BY ${orderBy}
+        ${limitClause}`,
       params,
     ),
   ]);
   const total = Number(countRows[0]?.count ?? 0);
 
-  const { rows: pageRawRows, hasMore } = backwards
-    ? trimBackwardPage(rawRows, limit)
-    : trimForwardPage(rawRows, limit);
+  // A sorted page asked for exactly `limit` rows, so there is no extra row
+  // to trim and no cursor to derive from the ones there are.
+  const { rows: pageRawRows, hasMore } = sortOrder
+    ? { rows: rawRows, hasMore: false }
+    : backwards
+      ? trimBackwardPage(rawRows, limit)
+      : trimForwardPage(rawRows, limit);
   const rows = pageRawRows.map(toOrganisationListRow);
 
   const counted = Number(countRows[0]?.preceding ?? 0);
   // Backward, the count covers this page too (see `precedingSelect`).
-  const precedingCount = backwards ? Math.max(0, counted - pageRawRows.length) : counted;
+  const keysetPreceding = backwards ? Math.max(0, counted - pageRawRows.length) : counted;
+  // Sorted, position IS the offset — the rows ahead of this page are the ones
+  // the OFFSET skipped. Capped at `total` so a `?page=` past the end reports a
+  // range inside the result set rather than beyond it.
+  const precedingCount = sortOrder ? Math.min(offset, total) : keysetPreceding;
 
   const firstRow = pageRawRows[0];
   const lastRow = pageRawRows[pageRawRows.length - 1];
   // Backward, a next page needs no proof: this page was reached from the one
   // after it.
   const hasNextPage = backwards ? Boolean(lastRow) : hasMore;
+  // Both null under a sort: a cursor names a position in `(created_at, id)`
+  // order, which is not the order this page is in. The sorted surface pages
+  // by `?page=` off `total` and `precedingCount` instead.
   const nextCursor =
-    hasNextPage && lastRow
+    !sortOrder && hasNextPage && lastRow
       ? encodeKeysetCursor(toIsoRequired(lastRow.created_at), lastRow.id, "after")
       : null;
   const previousCursor =
-    precedingCount > 0 && firstRow
+    !sortOrder && precedingCount > 0 && firstRow
       ? encodeKeysetCursor(toIsoRequired(firstRow.created_at), firstRow.id, "before")
       : null;
 

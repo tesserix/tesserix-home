@@ -272,7 +272,7 @@ export default async function OrganisationsPage({
   let previousHref: string | null = null;
   let error: unknown = null;
   try {
-    const page = await listOrganisations(filters, PAGE_SIZE, cursor);
+    const page = await listOrganisations(filters, PAGE_SIZE, { cursor });
     rows = page.rows;
     total = page.total;
     precedingCount = page.precedingCount;

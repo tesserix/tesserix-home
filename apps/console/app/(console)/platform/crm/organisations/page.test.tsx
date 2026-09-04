@@ -87,7 +87,7 @@ describe("OrganisationsPage", () => {
     // reason the queue filters in SQL.
     listOrganisations.mockResolvedValue(orgPage([]));
     render(await Page({ searchParams: Promise.resolve({ q: "priya" }) }));
-    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number), undefined);
+    expect(listOrganisations).toHaveBeenCalledWith({ search: "priya" }, expect.any(Number), { cursor: undefined });
   });
 
   it("shows the filtered-empty state when a search matches nothing", async () => {
@@ -128,7 +128,7 @@ describe("OrganisationsPage", () => {
     expect(listOrganisations).toHaveBeenCalledWith(
       { importId: "8f14e45f-ceea-467e-b7ea-05a3778a1234" },
       expect.any(Number),
-      undefined,
+      { cursor: undefined },
     );
   });
 
@@ -181,7 +181,7 @@ describe("OrganisationsPage", () => {
     it("passes the cursor through to the repo", async () => {
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ cursor: "abc" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), "abc");
+      expect(listOrganisations).toHaveBeenCalledWith(expect.anything(), expect.any(Number), { cursor: "abc" });
     });
 
     it("offers a previous control only when there is a page behind this one", async () => {
@@ -266,7 +266,7 @@ describe("OrganisationsPage", () => {
       expect(listOrganisations).toHaveBeenCalledWith(
         { search: "priya", product: "mark8ly", country: "IN", followers: "over10k", hasEmail: true },
         expect.any(Number),
-        undefined,
+        { cursor: undefined },
       );
     });
 
@@ -275,7 +275,7 @@ describe("OrganisationsPage", () => {
       // value means no filter, never a value the repo has to defend against.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ followers: "banana" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("passes the unknown country and follower sentinels through to the repo", async () => {
@@ -295,7 +295,7 @@ describe("OrganisationsPage", () => {
       expect(listOrganisations).toHaveBeenCalledWith(
         { country: UNKNOWN_COUNTRY, followers: UNKNOWN_FOLLOWERS },
         expect.any(Number),
-        undefined,
+        { cursor: undefined },
       );
     });
 
@@ -355,7 +355,7 @@ describe("OrganisationsPage", () => {
       // value the repo should ever have to defend against.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ product: "not-a-real-product" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("drops an unrecognised country rather than passing it to SQL", async () => {
@@ -363,7 +363,7 @@ describe("OrganisationsPage", () => {
       // read as unfiltered, not reach the repo's exact-match clause.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ country: "ZZ" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
 
     it("drops an Object.prototype member name as a country rather than passing it to SQL", async () => {
@@ -374,7 +374,7 @@ describe("OrganisationsPage", () => {
         listOrganisations.mockClear();
         listOrganisations.mockResolvedValue(orgPage([]));
         render(await Page({ searchParams: Promise.resolve({ country: key }) }));
-        expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+        expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
       }
     });
 
@@ -384,11 +384,11 @@ describe("OrganisationsPage", () => {
       // filter on.
       listOrganisations.mockResolvedValue(orgPage([]));
       render(await Page({ searchParams: Promise.resolve({ email: "true" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
 
       listOrganisations.mockClear();
       render(await Page({ searchParams: Promise.resolve({ email: "0" }) }));
-      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), undefined);
+      expect(listOrganisations).toHaveBeenCalledWith({}, expect.any(Number), { cursor: undefined });
     });
   });
 
