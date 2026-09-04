@@ -353,6 +353,14 @@ describe("when the mint is refused", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "This tenant already has a coupon minted in live mode (co_old).",
     );
+    // AT FORM LEVEL, asserted by where it is NOT. "The message appears
+    // somewhere" is satisfied just as happily by pinning every refusal to one
+    // input, which would put "this tenant already has a coupon" under the
+    // invoice-name box and tell the operator to fix a field that is fine.
+    expect(screen.getByLabelText("Name on the tenant's invoice")).not.toHaveAttribute(
+      "aria-invalid",
+    );
+    expect(screen.getByLabelText("Why (internal)")).not.toHaveAttribute("aria-invalid");
     expect(refresh).not.toHaveBeenCalled();
   });
 
