@@ -3183,8 +3183,15 @@ function organisationSortOrder(sort: OrganisationSort): string {
  *
  * A cursor also carries the direction it points in, so the same `?cursor=`
  * param serves Previous and Next and a shared link cannot lose which one it
- * was. This function stays the descending implementation it always was;
- * `queuePage` stays the ascending one. See `keyset-cursor.ts`.
+ * was. This function and `queuePage` stay separate implementations, but not
+ * because of direction: `queuePage` takes a required `direction` and
+ * `closedOpportunities` runs it descending. They differ in what they read and
+ * how they page — this one selects from `crm_organisations`, joins a lateral
+ * for the primary contact, builds its filters with
+ * `organisationFilterClauses`, and carries a second OFFSET regime for sorted
+ * views; `queuePage` selects from `crm_opportunities` joined to their
+ * organisations, filters with `filterClause`, and pages only by cursor. See
+ * `keyset-cursor.ts`.
  */
 export async function listOrganisations(
   filter: OrganisationFilter,

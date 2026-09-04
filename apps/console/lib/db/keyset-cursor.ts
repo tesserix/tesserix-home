@@ -90,9 +90,12 @@ export function isMalformedCursorError(caught: unknown): boolean {
  * surface lie about its order.
  *
  * The SQL is deliberately NOT shared, and the split is by TABLE and paging
- * regime rather than by direction: `listOrganisations` pages `crm_organisations`
- * under a caller-chosen sort key, while `queuePage` pages `crm_opportunities`
- * under a sort key each list fixes for itself. `queuePage` does take a
+ * regime rather than by direction: `listOrganisations` pages
+ * `crm_organisations`, and the branch of it that uses a cursor at all is the
+ * one whose sort is fixed at `created_at DESC` — a caller-chosen sort switches
+ * that surface to OFFSET and mints no cursor. `queuePage` pages
+ * `crm_opportunities` joined to their organisations, always by cursor, under a
+ * sort key each list fixes for itself. `queuePage` does take a
  * direction — `closedOpportunities` reads descending and both work queues
  * ascending — but it is a REQUIRED argument, so every call site states its
  * own order where a reader is already looking. That is the answer to the

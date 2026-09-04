@@ -674,7 +674,6 @@ describe("the closed list", () => {
     // the larger ones. Both operators are the mirror of the ascending
     // queues', and getting only one of them right pages correctly while
     // reporting the wrong range.
-    query.mockReset();
     query.mockResolvedValue([]);
     await closedOpportunities({}, 50, forwardCursor());
     expect(queuePageCall()[0]).toContain("(COALESCE(o.closed_at, o.updated_at), o.id) < (");
@@ -689,7 +688,6 @@ describe("the closed list", () => {
     // ASCENDING. The anchor is the first row of the page being left, which
     // stays on that page, so it is excluded from both the page predicate and
     // the preceding count.
-    query.mockReset();
     query.mockResolvedValue([]);
     await closedOpportunities({}, 50, backwardCursor());
     const [sql] = queuePageCall();
