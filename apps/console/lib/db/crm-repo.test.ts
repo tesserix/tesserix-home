@@ -15,6 +15,7 @@ vi.mock("./tesserix", () => ({
 import {
   dueOpportunities,
   driftingOpportunities,
+  closedOpportunities,
   advanceStage,
   setNextAction,
   logActivity,
@@ -621,6 +622,117 @@ describe("the queue's filters — bound parameters, not string interpolation", (
     expect(sql).toContain("c.followers_count <= $3");
     expect(sql).toContain("make_interval(days => $4::int)");
     expect(params).toEqual(["IN", 0, 999, 14, 51]);
+  });
+});
+
+describe("the closed list", () => {
+  /** A terminal row as pg hands it back, including the COALESCE the query
+   *  sorts and pages by. */
+  const closedRawRow = (id: string, overrides: Record<string, unknown> = {}) => ({
+    id,
+    organisation_id: "g1",
+    organisation_name: "Bondi Baker",
+    product: "mark8ly",
+    stage: "won",
+    owner: "Asha",
+    closed_at: new Date("2026-08-01T09:00:00Z"),
+    closed_sort: new Date("2026-08-01T09:00:00Z"),
+    lost_reason: null,
+    ...overrides,
+  });
+
+  it("asks only for terminal deals, the exact complement of the two work queues", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("o.stage IN ('won', 'lost')");
+    // The work queues' predicate must not have come along with the reuse:
+    // `NOT IN` here would be a list that can never return a row.
+    expect(sql).not.toContain("stage NOT IN");
+  });
+
+  it("orders by when the deal closed, falling back to the last write on a row with no close date", async () => {
+    // `closed_at` is nullable in 0019 with no CHECK tying it to the stage,
+    // and the keyset cursor is built from the sort key — a NULL there does
+    // not merely sort oddly, it throws instead of paging.
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("ORDER BY COALESCE(o.closed_at, o.updated_at) ASC, o.id ASC");
+  });
+
+  it("selects the close date and the lost reason — what a closed deal is read for", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50);
+    const [sql] = queuePageCall();
+    expect(sql).toContain("o.closed_at");
+    expect(sql).toContain("o.lost_reason");
+  });
+
+  it("keeps its own stage predicate first, filters spliced after", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({ product: "mark8ly", country: "IN" }, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql.indexOf("o.stage IN")).toBeLessThan(sql.indexOf("o.product ="));
+    expect(sql.indexOf("o.stage IN")).toBeLessThan(sql.indexOf("g.country ="));
+    expect(params).toEqual(["mark8ly", "IN", 51]);
+  });
+
+  it("admits a terminal stage as a filter, which the work queues cannot", async () => {
+    query.mockResolvedValue([]);
+    await closedOpportunities({ stage: "lost" }, 50);
+    const [sql, params] = queuePageCall();
+    expect(sql).toContain("o.stage = $1");
+    expect(params).toEqual(["lost", 51]);
+  });
+
+  it("maps the close date and the lost reason onto the row", async () => {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "2", preceding: "0" }]
+        : [
+            closedRawRow("11111111-1111-1111-1111-111111111111"),
+            closedRawRow("22222222-2222-2222-2222-222222222222", {
+              stage: "lost",
+              lost_reason: "Went with a competitor",
+              closed_at: null,
+              closed_sort: new Date("2026-08-02T09:00:00Z"),
+            }),
+          ],
+    );
+    const page = await closedOpportunities({}, 50);
+    expect(page.rows[0]).toEqual({
+      id: "11111111-1111-1111-1111-111111111111",
+      organisationId: "g1",
+      organisationName: "Bondi Baker",
+      product: "mark8ly",
+      stage: "won",
+      owner: "Asha",
+      closedAt: "2026-08-01T09:00:00.000Z",
+      lostReason: null,
+    });
+    expect(page.rows[1].closedAt).toBeNull();
+    expect(page.rows[1].lostReason).toBe("Went with a competitor");
+    expect(page.total).toBe(2);
+  });
+
+  it("pages a row whose close date was never written, rather than throwing on its cursor", async () => {
+    query.mockReset();
+    query.mockImplementation(async (sql: string) =>
+      String(sql).includes("count(*) AS count")
+        ? [{ count: "9", preceding: "0" }]
+        : [
+            closedRawRow("11111111-1111-1111-1111-111111111111", {
+              closed_at: null,
+              closed_sort: new Date("2026-08-01T09:00:00Z"),
+            }),
+            closedRawRow("22222222-2222-2222-2222-222222222222"),
+          ],
+    );
+    const page = await closedOpportunities({}, 1);
+    expect(page.rows.map((r) => r.id)).toEqual(["11111111-1111-1111-1111-111111111111"]);
+    expect(page.nextCursor).not.toBeNull();
   });
 });
 

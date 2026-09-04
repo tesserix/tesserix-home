@@ -44,6 +44,7 @@ vi.mock("./tesserix", () => ({
 const {
   dueOpportunities,
   driftingOpportunities,
+  closedOpportunities,
   isSuppressed,
   addSuppression,
   listOrganisations,
@@ -2143,5 +2144,99 @@ describe("an erased contact is not the primary contact", () => {
     // there, not hidden, or the file loses a row its activity trail refers to.
     const detail = await organisationDetail(erasedPrimaryOrgId);
     expect(detail?.contacts.map((c) => c.name)).toEqual(["[erased]", "Live Colleague"]);
+  });
+});
+
+/**
+ * The closed list against a real database.
+ *
+ * Shape assertions cannot catch the two things that matter here. First,
+ * `COALESCE(o.closed_at, o.updated_at)` and a bare `o.closed_at` produce the
+ * same SQL substrings under any "contains" test but different result SETS:
+ * the bare column sorts a never-closed-dated row to the end under NULLS LAST
+ * and, worse, mints a cursor from a NULL. Second, "terminal only" is a claim
+ * about rows, not about text — an open opportunity on the same organisation
+ * is the only thing that proves the predicate runs.
+ *
+ * Scoped by `owner` rather than asserted globally: this file seeds terminal
+ * rows in several other describes, and `closedOpportunities` reads the whole
+ * table.
+ */
+describe("closedOpportunities against a real database", () => {
+  const OWNER = "Closed List Fixture";
+  const WON_ID = "c105ed00-1111-1111-1111-111111111111";
+  const LOST_ID = "c105ed00-2222-2222-2222-222222222222";
+  const UNDATED_ID = "c105ed00-3333-3333-3333-333333333333";
+  const OPEN_ID = "c105ed00-4444-4444-4444-444444444444";
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Closed List Fixture Co"],
+    );
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, owner, closed_at, lost_reason, updated_at)
+       VALUES
+         -- Won 5 days ago.
+         ($1, $5, 'won', 'mark8ly', $9, $6::timestamptz, NULL, $6::timestamptz),
+         -- Lost 20 days ago: the oldest close date in this fixture, so it
+         -- sorts first, and the only row carrying a reason.
+         ($2, $5, 'lost', 'mark8ly', $9, $7::timestamptz, 'Went with a competitor', $7::timestamptz),
+         -- Terminal with no close date. Nothing in the console writes such a
+         -- row today (see CLOSED_SORT_KEY), and the list must still page it
+         -- rather than throw on its cursor — ordered by updated_at, which
+         -- puts it last here.
+         ($3, $5, 'won', 'mark8ly', $9, NULL, NULL, $8::timestamptz),
+         -- Open, same organisation and owner: the row that proves the
+         -- terminal predicate runs at all.
+         ($4, $5, 'contacted', NULL, $9, NULL, NULL, $6::timestamptz)`,
+      [
+        WON_ID,
+        LOST_ID,
+        UNDATED_ID,
+        OPEN_ID,
+        org.rows[0].id,
+        daysAgo(5),
+        daysAgo(20),
+        daysAgo(1),
+        OWNER,
+      ],
+    );
+  });
+
+  it("returns only terminal deals, oldest-closed-first", async () => {
+    const { rows } = await closedOpportunities({ owner: OWNER }, 50);
+    expect(rows.map((r) => r.id)).toEqual([LOST_ID, WON_ID, UNDATED_ID]);
+  });
+
+  it("carries the close date and the lost reason", async () => {
+    const { rows } = await closedOpportunities({ owner: OWNER }, 50);
+    const lost = rows.find((r) => r.id === LOST_ID);
+    const won = rows.find((r) => r.id === WON_ID);
+    expect(lost?.stage).toBe("lost");
+    expect(lost?.lostReason).toBe("Went with a competitor");
+    expect(lost?.closedAt).not.toBeNull();
+    expect(won?.lostReason).toBeNull();
+    expect(won?.organisationName).toBe("Closed List Fixture Co");
+  });
+
+  it("lists a terminal row with no close date, and pages past it", async () => {
+    const all = await closedOpportunities({ owner: OWNER }, 50);
+    expect(all.rows.find((r) => r.id === UNDATED_ID)?.closedAt).toBeNull();
+
+    // A limit of 2 makes the null-dated row the first row of page two, so
+    // its cursor is minted from the COALESCE rather than from the NULL.
+    const first = await closedOpportunities({ owner: OWNER }, 2);
+    expect(first.nextCursor).not.toBeNull();
+    const second = await closedOpportunities({ owner: OWNER }, 2, first.nextCursor!);
+    expect(second.rows.map((r) => r.id)).toEqual([UNDATED_ID]);
+    expect(second.precedingCount).toBe(2);
+  });
+
+  it("narrows to one terminal stage when the filter asks for one", async () => {
+    const { rows, total } = await closedOpportunities({ owner: OWNER, stage: "lost" }, 50);
+    expect(rows.map((r) => r.id)).toEqual([LOST_ID]);
+    expect(total).toBe(1);
   });
 });

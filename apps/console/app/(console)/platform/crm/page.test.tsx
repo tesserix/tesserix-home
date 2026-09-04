@@ -1,17 +1,19 @@
 import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { QueuePage, QueueRow, HandoffRow } from "@/lib/db/crm-repo";
+import type { ClosedPage, ClosedRow, QueuePage, QueueRow, HandoffRow } from "@/lib/db/crm-repo";
 import type { ConversionSignal } from "@/lib/crm-conversion";
 import { UNASSIGNED_PRODUCT, UNKNOWN_COUNTRY, UNKNOWN_FOLLOWERS } from "@/lib/db/crm-filters";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 
 const dueOpportunities = vi.fn();
 const driftingOpportunities = vi.fn();
+const closedOpportunities = vi.fn();
 const wonWithoutConversion = vi.fn();
 const fetchConversionSignal = vi.fn();
 
 vi.mock("@/lib/db/crm-repo", () => ({
   wonWithoutConversion: (...args: unknown[]) => wonWithoutConversion(...args),
+  closedOpportunities: (...args: unknown[]) => closedOpportunities(...args),
 }));
 
 vi.mock("@/lib/crm-queues", () => ({
@@ -33,13 +35,14 @@ vi.mock("next/navigation", () => ({
 import CrmPage, {
   DUE_EMPTY_MESSAGE,
   DRIFTING_EMPTY_MESSAGE,
-  HANDOFF_EMPTY_MESSAGE,
+  CLOSED_FILTERS,
   QUEUE_FILTERS,
   readQueueFilters,
   toFilterValues,
   toQueueItem,
-  buildHandoffItems,
 } from "./page";
+import { HANDOFF_EMPTY_MESSAGE, buildHandoffItems } from "./handoff-tab";
+import { CLOSED_EMPTY_MESSAGE } from "./closed-tab";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -65,11 +68,26 @@ function queuePage(rows: QueueRow[], overrides: Partial<QueuePage> = {}): QueueP
   };
 }
 
+/** A `ClosedPage` around `rows`, with the same single-page defaults (and for
+ *  the same reason) as `queuePage` above. */
+function closedPage(rows: ClosedRow[], overrides: Partial<ClosedPage> = {}): ClosedPage {
+  return {
+    rows,
+    total: rows.length,
+    precedingCount: 0,
+    nextCursor: null,
+    previousCursor: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   dueOpportunities.mockReset();
   dueOpportunities.mockResolvedValue(queuePage([]));
   driftingOpportunities.mockReset();
   driftingOpportunities.mockResolvedValue(queuePage([]));
+  closedOpportunities.mockReset();
+  closedOpportunities.mockResolvedValue(closedPage([]));
   wonWithoutConversion.mockReset();
   wonWithoutConversion.mockResolvedValue({ rows: [], hasMore: false });
   fetchConversionSignal.mockReset();
@@ -1012,5 +1030,131 @@ describe("toQueueItem", () => {
 
   it("uses nextActionAt as dueAt", () => {
     expect(toQueueItem(DUE_ROW).dueAt).toBe(DUE_ROW.nextActionAt);
+  });
+});
+
+const WON_ROW: ClosedRow = {
+  id: "opp-won",
+  organisationId: "org-won",
+  organisationName: "Bondi Store",
+  product: "mark8ly",
+  stage: "won",
+  owner: "Asha",
+  closedAt: "2026-08-01T09:00:00.000Z",
+  lostReason: null,
+};
+
+const LOST_ROW: ClosedRow = {
+  id: "opp-lost",
+  organisationId: "org-lost",
+  organisationName: "Manly Grocer",
+  product: "kora",
+  stage: "lost",
+  owner: "Ravi",
+  closedAt: "2026-07-02T09:00:00.000Z",
+  lostReason: "Went with a competitor",
+};
+
+describe("the Closed tab", () => {
+  it("is offered as a third tab, keeping the filters the operator already set", async () => {
+    await renderCrmPage({ product: "mark8ly" });
+
+    const closed = screen.getByRole("link", { name: "Closed" });
+    expect(hrefOf(closed).get("tab")).toBe("closed");
+    expect(hrefOf(closed).get("product")).toBe("mark8ly");
+  });
+
+  it("lists won and lost deals with their close date and, for a loss, its reason", async () => {
+    closedOpportunities.mockResolvedValue(closedPage([WON_ROW, LOST_ROW]));
+
+    await renderCrmPage({ tab: "closed" });
+
+    expect(screen.getByText("Bondi Store")).toBeInTheDocument();
+    expect(screen.getByText("Manly Grocer")).toBeInTheDocument();
+    expect(screen.getByText("Went with a competitor")).toBeInTheDocument();
+    // `lost` has had no surface of its own at all until now: the Handoff tab
+    // is `stage = 'won'`, and both work queues exclude terminal deals.
+    expect(screen.getByText("Lost")).toBeInTheDocument();
+    expect(screen.getByText("Won")).toBeInTheDocument();
+  });
+
+  it("offers won and lost in its stage select — the exact stages it can return", async () => {
+    const stage = CLOSED_FILTERS.find((d) => d.key === "stage");
+    expect(stage?.options?.map((o) => o.value)).toEqual(["won", "lost"]);
+  });
+
+  it("renders empty, not ready, when nothing has closed", async () => {
+    closedOpportunities.mockResolvedValue(closedPage([]));
+
+    await renderCrmPage({ tab: "closed" });
+
+    expect(screen.getByText(CLOSED_EMPTY_MESSAGE)).toBeInTheDocument();
+  });
+
+  it("surfaces a failed read as this list's own failure, never as a broken page", async () => {
+    closedOpportunities.mockRejectedValue(new Error("relation does not exist"));
+
+    await renderCrmPage({ tab: "closed" });
+
+    expect(screen.getByText(/could not load the closed list/i)).toBeInTheDocument();
+    expect(screen.queryByText(/relation does not exist/i)).toBeNull();
+  });
+
+  it("pages with a cursor of its own, leaving the two queue cursors alone", async () => {
+    closedOpportunities.mockResolvedValue(
+      closedPage([WON_ROW], { total: 9, nextCursor: "closed-2" }),
+    );
+
+    await renderCrmPage({ tab: "closed", dueCursor: "due-1" });
+
+    const next = screen.getByRole("link", { name: /^Next page of/ });
+    expect(hrefOf(next).get("closedCursor")).toBe("closed-2");
+    expect(hrefOf(next).get("dueCursor")).toBe("due-1");
+  });
+
+  // The same "only the active tab's data is ever read" guarantee the Work
+  // and Handoff tabs already hold each other to.
+  it("reads neither work queue nor the handoff fan-out while it is the active tab", async () => {
+    await renderCrmPage({ tab: "closed" });
+
+    expect(dueOpportunities).not.toHaveBeenCalled();
+    expect(driftingOpportunities).not.toHaveBeenCalled();
+    expect(wonWithoutConversion).not.toHaveBeenCalled();
+  });
+
+  it("is not read while the Work tab is active", async () => {
+    await renderCrmPage();
+
+    expect(closedOpportunities).not.toHaveBeenCalled();
+  });
+});
+
+describe("readQueueFilters narrows the stage to the tab's own admissible set", () => {
+  // The bug: `?stage=won` on the Work tab was forwarded to SQL, producing
+  // `stage NOT IN ('won','lost') AND o.stage = 'won'` — a contradiction that
+  // returns zero rows with no error, rendering as "filtered, matched
+  // nothing". The documented contract for an out-of-range value is that it
+  // reads as UNFILTERED.
+  it("drops a terminal stage on the work tab", () => {
+    expect(readQueueFilters({ stage: "won" })).toEqual({});
+    expect(readQueueFilters({ stage: "lost" }, "work")).toEqual({});
+  });
+
+  it("keeps the rest of the filters when it drops the stage", () => {
+    expect(readQueueFilters({ stage: "won", owner: "Asha" })).toEqual({ owner: "Asha" });
+  });
+
+  it("reads a terminal stage on the closed tab, where it is the admissible set", () => {
+    expect(readQueueFilters({ stage: "lost" }, "closed")).toEqual({ stage: "lost" });
+  });
+
+  it("drops an open stage on the closed tab, which can never return one", () => {
+    expect(readQueueFilters({ stage: "qualified" }, "closed")).toEqual({});
+  });
+
+  it("forwards nothing but an admissible stage to the read", async () => {
+    await renderCrmPage({ stage: "won" });
+
+    expect(dueOpportunities).toHaveBeenCalledWith({}, expect.any(Number), undefined);
   });
 });
