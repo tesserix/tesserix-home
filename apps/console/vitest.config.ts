@@ -106,8 +106,7 @@ const SHARED = {
    *
    * `lib/platform-api.test.ts` carries the mitigation that does work — see the
    * `installFetchStub` comment there. `restoreMocks` is deliberately NOT set:
-   * three tests depend on mock return values surviving across tests, tracked
-   * separately.
+   * three tests depend on mock return values surviving across tests — #550.
    */
   unstubGlobals: true,
 };

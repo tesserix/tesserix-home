@@ -245,13 +245,25 @@ regime (H5) was reproduced directly.
 
 # T1 addendum — the test-only fix, and #394
 
-Three corrections to the sections above have been applied in place: the
-`mockResolvedValue(new Response(...))` count is **23**, not 24 (25
-`mockResolvedValue` total); the stub-site count is exactly **41** (28 single-line
-+ 13 multi-line), not "~40"; and the `vi.resetModules()` hook is **file-scope**,
-not `describe("the platform API switch")`'s own. That last one is the same
-reading error that produced the false claim in #544 itself, so it is recorded
-rather than quietly fixed.
+Corrections applied to the sections above: the stub-site count is exactly **41**
+(28 single-line + 13 multi-line), not "~40"; and the `vi.resetModules()` hook is
+**file-scope**, not `describe("the platform API switch")`'s own — the same reading
+error that produced the false claim in #544 itself.
+
+**The `mockResolvedValue` count needed correcting twice, and my first correction
+carried an invented reason.** I first wrote 24, then "corrected" it to 23 and
+explained the delta as "2 `mockRejectedValue`-adjacent shapes that do not
+construct a `Response`". That explanation was invented — I did not look at the
+two non-matches. They are:
+
+- `lib/platform-api.test.ts:50` — prose in a doc comment, not code;
+- `lib/platform-api.test.ts:1456` — `vi.fn().mockResolvedValue(response)` inside
+  `function stubFetch(response: Response)`.
+
+The second is not an exception to the hazard; it is its worst instance, sharing
+one `Response` across every caller of a helper several tests use. **Hazard count
+is 24** — 23 inline plus that helper. Syntactic count 23. The original 24 was
+right by accident and for the wrong reason.
 
 ## Q1 — does the poisoned stub work? No. Measured.
 
@@ -329,17 +341,40 @@ weakened:
 
 ## Q3 — does it fire on the reproduction?
 
-**The caller-attribution: yes, deterministically.** `--testTimeout=500`, no
-artificial load, reproduces the #394 pair every time:
+**The caller-attribution: yes — but NOT at 500ms, and my earlier claim here was
+wrong.** I wrote that `--testTimeout=500` reproduces the #394 pair
+deterministically with no load. It does not. That was a single observation on a
+machine that was loaded at the time, written up as deterministic; it went into
+two public issue comments before a reviewer failed to replicate it in five runs
+(warm cache, cold `node_modules/.vite`, and `--no-file-parallelism`). Re-run five
+times here since: 66/66 every time.
+
+This is the same defect I flagged and avoided elsewhere in this report —
+a stochastic observation framed as a deterministic one — and it is the exact
+failure that kept #394 unexplained across three sightings. Both issue comments
+have been edited to retract it.
+
+What actually replicates, measured 3 runs at each timeout:
+
+| `--testTimeout` | attributed leak failures per run |
+|---|---|
+| 25ms | 12, 6, 6 |
+| 50ms | **6, 6, 6** |
+| 100ms | **3, 3, 3** |
+| 200ms | 0, 0, 0 |
+| 300ms | 0, 0, 0 |
+
+Reliable at **25–100ms**. At 50ms the #394 pair reports:
 
 ```
-$ pnpm vitest run lib/platform-api.test.ts --testTimeout=500
-→ Test timed out in 500ms.
-→ #544: 2 request(s) left behind by "composes the queue from two resources when it is set"
-        reached "does not narrow the summary when the listing is filtered"'s fetch stub.
+#544: 2 request(s) left behind by "composes the queue from two resources when it is set"
+      reached "does not narrow the summary when the listing is filtered"'s fetch stub.
 ```
 
-That is #394's exact pair, and the culprit is named in the same run.
+Those are artificially small timeouts — smaller than the tests' own duration — so
+they demonstrate the mechanism, not field conditions. The only field-condition
+sighting is under 14-way saturation at the real timeout, and that is stochastic:
+one such run reproduced it, another passed 85/85.
 
 Before → after on the same file at `--testTimeout=25`:
 
@@ -360,7 +395,12 @@ This is the honest answer to the review's question. The counter cannot fire on
 the #394 case because the culprit is abandoned at `await import("./platform-api")`
 — **before** it issues its request. There is nothing in flight to count. It was
 kept because it catches the other shape (a test abandoned mid-flight), but it is
-not what names the culprit here, and the comment in the file says so.
+not what names the culprit here.
+
+An earlier draft of this report said "the comment in the file says so". **It did
+not** — the comment presented the counter as co-equal with the attribution
+mechanism, with no caveat. Same misattributed-reason class. The comment now
+carries the caveat explicitly.
 
 ## Cost
 
@@ -371,7 +411,11 @@ AFTER  1.12s  1.14s  1.49s
 BEFORE 1.07s  1.19s  1.04s
 ```
 
-Within noise. The `AsyncLocalStorage` overhead is confined to this file's worker.
+Three samples on a noisy metric supports **no large regression** — not "within
+noise", which is what an earlier draft of this report claimed. A reviewer saw no
+regression at suite scale (46.9s) but could not measure before/after cleanly.
+And "confined to this file's worker" understates it: `AsyncLocalStorage` on Node
+22 is still `async_hooks`-backed, and vitest reuses workers across files.
 
 ## What this does and does not do
 
@@ -437,4 +481,39 @@ $ pnpm vitest run   (apps/console)
 real 58.74   4133 passed / 0 failed
 $ npx tsc --noEmit   # clean
 $ pnpm vitest run lib/platform-api.test.ts     66 passed
+```
+
+
+## Late corrections (second review pass)
+
+- **Determinism retracted** — see above. Both issue comments edited, not
+  silently: [#394](https://github.com/tesserix/tesserix-home/issues/394#issuecomment-5533884096),
+  [#544](https://github.com/tesserix/tesserix-home/issues/544#issuecomment-5533887325).
+- **Hazard count is 24, not 23**, and the reason I gave for the first correction
+  was invented. Fixed here and on #544.
+- **In-flight counter comment** now states it fires zero times on the known case
+  and is not co-equal with the attribution mechanism.
+- **`owner === null` guarded.** Unreachable today (all 41 sites sit inside `it()`
+  bodies or helpers called from them), but it was the one path that would
+  withhold every call while recording nothing against a null scope — a bare
+  timeout with no message at all. Now throws a directive error.
+- **Cross-references:** `vitest.config.ts` names #550; #550's `clearAllMocks`
+  reference corrected from `:41-42` to `beforeEach (:41)` / `clearAllMocks (:42)`.
+
+### Recorded, not changed: a real behaviour change at the call boundary
+
+The stub returns `Promise.resolve(impl(...args)).finally(...)`. So
+`globalThis.fetch` now returns a promise that is **not** the mock's own object
+and settles **one microtask later** than before. Nothing in this file depends on
+either property and all 66 tests pass, but it is a genuine change at the call
+boundary that nobody flagged when the change landed. Now noted in the helper's
+comment as well as here.
+
+### Verification after these corrections
+
+```
+$ pnpm vitest run   (apps/console)        4133 passed / 0 failed
+$ npx tsc --noEmit                        clean
+$ pnpm vitest run lib/platform-api.test.ts   66 passed
+$ ... --testTimeout=50   (x2)             6 attributed leak failures each — guard still fires
 ```

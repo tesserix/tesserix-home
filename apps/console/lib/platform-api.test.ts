@@ -67,7 +67,12 @@ const VALID = {
  *    to a test that no longer exists, and rejecting it would only produce an
  *    unhandled rejection attributed to nobody.
  * 2. **An in-flight count.** A test that ends with requests still outstanding
- *    fails saying so, so the run names the culprit rather than only its victim.
+ *    fails saying so. This is NOT what names the culprit in the known case and
+ *    must not be read as co-equal with (1): measured against the #394 ordering
+ *    it fires **zero** times, because that culprit is abandoned at
+ *    `await import("./platform-api")` — *before* it issues its request — so
+ *    there is nothing in flight to count. It encodes a different invariant (no
+ *    test may end mid-request) and catches the abandoned-mid-flight shape only.
  *
  * This DIAGNOSES; it does not prevent the class. A leaked continuation that
  * resumes before the next test installs its stub still reaches the real
@@ -104,21 +109,31 @@ beforeEach((ctx) => {
  */
 function installFetchStub<T extends (...args: never[]) => unknown>(impl: T): T {
   const owner = scope;
+  if (!owner) {
+    // Unreachable today — all 41 call sites are inside `it()` bodies or helpers
+    // called from them, so `beforeEach` has always run. Guarded anyway because
+    // it is the one path that would fail silently: with no scope to record a
+    // leak against, every call would be withheld and the test would hang to a
+    // bare timeout carrying no explanation at all.
+    throw new Error(
+      "installFetchStub called outside a test scope — move the call inside `it()`.",
+    );
+  }
   vi.stubGlobal("fetch", (...args: never[]) => {
     const caller = testScope.getStore();
     if (caller !== owner) {
       // The stale caller's own scope names it, which is the whole point: a
       // leaked call is otherwise indistinguishable from a legitimate one.
-      owner?.leaks.push({ from: caller?.name ?? "(no test scope)", url: String(args[0]) });
+      owner.leaks.push({ from: caller?.name ?? "(no test scope)", url: String(args[0]) });
       return new Promise(() => {});
     }
-    if (owner) {
-      owner.inFlight += 1;
-    }
+    owner.inFlight += 1;
+    // Note: this wraps the stub's own promise, so `globalThis.fetch` returns a
+    // promise that is not the mock's own and settles one microtask later.
+    // Nothing in this file depends on either, but it is a real change at the
+    // call boundary.
     return Promise.resolve(impl(...args)).finally(() => {
-      if (owner) {
-        owner.inFlight -= 1;
-      }
+      owner.inFlight -= 1;
     });
   });
   return impl;
