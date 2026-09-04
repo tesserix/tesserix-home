@@ -72,6 +72,17 @@ type contactSpec struct {
 	// createdAt breaks the tie when neither contact is flagged primary. Zero
 	// means "now", which is only safe when the org has one contact.
 	createdAt time.Time
+	// erased seeds `erased_at`, the column erasure sets when a contact asks to
+	// be forgotten. The row survives — that is the point of erasing in place —
+	// so this is a live contact row that primary-contact selection must skip.
+	//
+	// A seeded erased contact may still carry a `followers` count, which the
+	// live erasure path would have nulled. That is deliberate: it is what makes
+	// a test able to tell "the queue reads erased_at" apart from "erasure
+	// happens to null the number too". Only the first survives a change to
+	// either path, and #301 was filed on the belief that the second was not
+	// even true.
+	erased bool
 }
 
 type orgSpec struct {
@@ -98,10 +109,14 @@ func (w *world) org(spec orgSpec) string {
 		if createdAt.IsZero() {
 			createdAt = w.base
 		}
+		var erasedAt *time.Time
+		if c.erased {
+			erasedAt = &createdAt
+		}
 		if _, err := w.pool.Exec(w.ctx,
-			`INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count, created_at)
-			 VALUES ($1::uuid, $2, $3, $4, $5)`,
-			id, spec.name+"-contact", c.primary, c.followers, createdAt,
+			`INSERT INTO crm_contacts (organisation_id, name, is_primary, followers_count, created_at, erased_at)
+			 VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
+			id, spec.name+"-contact", c.primary, c.followers, createdAt, erasedAt,
 		); err != nil {
 			w.t.Fatalf("seeding contact %d of %q: %v", i, spec.name, err)
 		}
