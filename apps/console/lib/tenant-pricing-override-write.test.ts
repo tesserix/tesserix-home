@@ -67,7 +67,8 @@ const GRANT: TenantPricingOverrideInput = {
   tenantId: TENANT,
   mode: "live",
   discount: TEN_PERCENT,
-  reason: "Negotiated at renewal by the founder.",
+  label: "Negotiated rate",
+  reason: "Churn risk escalated by the founder at renewal.",
 };
 
 function signedIn() {
@@ -126,10 +127,13 @@ describe("granting a tenant a pricing override", () => {
 
     await grantTenantPricingOverride(GRANT);
 
+    // The reason and the label are deliberately different sentences here: the
+    // label IS sent to Stripe, so a shared word would make this assertion pass
+    // or fail for the wrong reason.
     const [, spec] = vi.mocked(stripeCatalogWriter.createCoupon).mock.calls[0];
-    expect(JSON.stringify(spec)).not.toContain("Negotiated");
+    expect(JSON.stringify(spec)).not.toContain("Churn risk");
     const [recorded] = vi.mocked(recordTenantOverrideCoupon).mock.calls[0];
-    expect(JSON.stringify(recorded)).not.toContain("Negotiated");
+    expect(JSON.stringify(recorded)).not.toContain("Churn risk");
   });
 
   it("does not forward a redemption cap to Stripe", async () => {
@@ -139,6 +143,66 @@ describe("granting a tenant a pricing override", () => {
 
     const [, spec] = vi.mocked(stripeCatalogWriter.createCoupon).mock.calls[0];
     expect(spec).not.toHaveProperty("maxRedemptions");
+  });
+
+  it("names the coupon with the operator's label and never with the tenant id", async () => {
+    mintable();
+
+    await grantTenantPricingOverride(GRANT);
+
+    const [, spec] = vi.mocked(stripeCatalogWriter.createCoupon).mock.calls[0];
+    expect(spec.name).toBe("Negotiated rate");
+    // `Coupon.name` is customer-visible. A namespaced internal id there is both
+    // meaningless to the tenant reading their invoice and long enough to risk
+    // Stripe refusing the create — which this module could not tell from a lost
+    // response, so every grant would report "a coupon may already exist".
+    expect(spec.name).not.toContain(TENANT);
+    expect(spec.name).not.toContain("mark8ly:");
+  });
+
+  it("trims the label rather than sending an operator's stray whitespace to an invoice", async () => {
+    mintable();
+
+    await grantTenantPricingOverride({ ...GRANT, label: "  Negotiated rate \n" });
+
+    const [, spec] = vi.mocked(stripeCatalogWriter.createCoupon).mock.calls[0];
+    expect(spec.name).toBe("Negotiated rate");
+  });
+
+  it("demands a label before anything is minted", async () => {
+    mintable();
+
+    const result = await grantTenantPricingOverride({ ...GRANT, label: "   " });
+
+    expect(result).toEqual({
+      ok: false,
+      message: expect.stringMatching(/invoice/i),
+      field: "label",
+    });
+    expect(stripeCatalogWriter.createCoupon).not.toHaveBeenCalled();
+  });
+
+  it("refuses an over-long label HERE, so it is a field error and not a mint of unknown outcome", async () => {
+    mintable();
+
+    const result = await grantTenantPricingOverride({ ...GRANT, label: "x".repeat(61) });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.field).toBe("label");
+    // The point of refusing before the call: a name Stripe rejects comes back
+    // as an exception this module cannot distinguish from a lost response, and
+    // would be reported as "a coupon may already exist there".
+    expect(result.message).not.toMatch(/may already exist/i);
+    expect(stripeCatalogWriter.createCoupon).not.toHaveBeenCalled();
+  });
+
+  it("accepts a label at the limit", async () => {
+    mintable();
+
+    const result = await grantTenantPricingOverride({ ...GRANT, label: "x".repeat(60) });
+
+    expect(result.ok).toBe(true);
   });
 
   it("keys the mint on the terms, so a re-grant at a different rate is a different key", async () => {
@@ -192,7 +256,27 @@ describe("granting a tenant a pricing override", () => {
     expect(stripeCatalogWriter.createCoupon).not.toHaveBeenCalled();
   });
 
-  it("refuses without both capabilities, and never calls Stripe", async () => {
+  it("refuses when `billing` alone is refused", async () => {
+    vi.mocked(getCurrentSession).mockResolvedValue({
+      sub: "op-3",
+      roles: ["publish-catalog"],
+    } as never);
+    vi.mocked(readLiveTenantOverrideCoupon).mockResolvedValue(null);
+    // ONLY `billing`. The two checks are independent gates and each has to be
+    // load-bearing on its own — a suite that refuses both at once passes just
+    // as happily with one of them deleted.
+    vi.mocked(checkOperatorCapabilityLive).mockImplementation(async (_session, required) => {
+      if (required === "billing") throw new CapabilityError("billing");
+    });
+
+    const result = await grantTenantPricingOverride(GRANT);
+
+    expect(result).toEqual({ ok: false, message: expect.stringMatching(/permission/i) });
+    expect(stripeCatalogWriter.createCoupon).not.toHaveBeenCalled();
+    expect(recordTenantOverrideCoupon).not.toHaveBeenCalled();
+  });
+
+  it("refuses when `publish-catalog` alone is refused, and never calls Stripe", async () => {
     vi.mocked(getCurrentSession).mockResolvedValue({ sub: "op-2", roles: ["billing"] } as never);
     vi.mocked(checkOperatorCapabilityLive).mockImplementation(async (_session, required) => {
       if (required === "publish-catalog") throw new CapabilityError("publish-catalog");
@@ -338,5 +422,5 @@ function auditRows(): (string | null)[][] {
 function mintKeyOf(input: TenantPricingOverrideInput): string {
   const d = input.discount;
   const terms = d.kind === "percent_off" ? `percent_off:${d.percentOff}` : "unused";
-  return `tenant-override:v1:${input.tenantId}:${input.mode}:${terms}:${d.duration}:`;
+  return `tenant-override:v1:${input.tenantId}:${input.mode}:${terms}:${d.duration}::${input.label}`;
 }

@@ -35,8 +35,10 @@
 --
 -- What is left is exactly one fact, and it is one only this console knows: this
 -- console created Stripe Coupon `co_…` in this account, for this tenant, on
--- this date. That is the same fact `promo_code_stripe_coupons` holds, and this
--- table is deliberately the same shape.
+-- this date. That is the same KIND of fact `promo_code_stripe_coupons` holds —
+-- a per-mode pointer into a Stripe account — and the per-mode rule 0046 argues
+-- for is honoured here for the same reason. The KEY is not the same, and
+-- deliberately so; see WHY THIS IS NOT KEYED (tenant_id, mode) OUTRIGHT below.
 --
 -- ══ NO DISCOUNT TERMS COLUMNS EITHER ══
 --
@@ -70,7 +72,8 @@
 -- uniqueness rule under live data.
 --
 -- So: a surrogate key, `removed_at` as the retirement marker, and the
--- at-most-one rule as a PARTIAL unique index over the live rows. This is
+-- at-most-one rule as a PARTIAL unique index over the live rows.
+--
 -- That is `plan_catalog_publications` (0035) exactly, down to the parts: a
 -- surrogate `id`, a `superseded_at`/`superseded_by` pair with a biconditional
 -- keeping them coherent, and `plan_catalog_publications_one_live_per_mode` as a

@@ -101,8 +101,17 @@ export interface TenantPricingOverrideInput {
   readonly mode: StripeMode;
   /** The terms. See THE DISCOUNT TYPE in this module's header. */
   readonly discount: PromoCodeDiscount;
+  /**
+   * The discount's CUSTOMER-VISIBLE name, mandatory.
+   *
+   * Not the reason, and not derived from the tenant id — see
+   * {@link MAX_LABEL_LENGTH} and `couponName`. A short human phrase: it is what
+   * the tenant reads beside the discount on their invoice.
+   */
+  readonly label: string;
   /** Free text, mandatory. Passed to mark8ly by T3, which audits it. Not
-   *  stored here — 0047's header. */
+   *  stored here — 0047's header. Never sent to Stripe: an operator's private
+   *  justification is not something to print on the tenant's invoice. */
   readonly reason: string;
 }
 
@@ -188,7 +197,60 @@ const DURATIONS: readonly PromoCodeDiscount["duration"][] = ["once", "repeating"
  * field, and an operator who mis-set a duration should be told which control to
  * fix rather than read a sentence about `durationInMonths`.
  */
+/**
+ * The ceiling this console puts on a customer-visible coupon name.
+ *
+ * OURS, not Stripe's. Stripe does cap `Coupon.name` and this file does not
+ * claim to know the number: nothing in this repo records it, and it has not
+ * been exercised against the API from here. The cap below is chosen for the
+ * job the string does — one phrase on one invoice line — where 60 characters is
+ * already generous, and it is enforced at this boundary so that whatever
+ * Stripe's limit turns out to be, a length refusal reaches the operator as a
+ * field error on the control they typed into rather than as a thrown request.
+ *
+ * That distinction is the whole point of checking here. A name Stripe rejects
+ * arrives as an exception out of `createCoupon`, which this module cannot
+ * distinguish from a lost response, so it falls to {@link MINT_INCOMPLETE} —
+ * sending an operator to hunt the dashboard for a coupon that was never
+ * created. That is the exact false alarm that message exists to prevent, and it
+ * would fire on every grant until someone changed this file.
+ */
+const MAX_LABEL_LENGTH = 60;
+
+/**
+ * What Stripe puts on the tenant's invoice beside the discount.
+ *
+ * NOT BUILT FROM THE TENANT ID, and the length is the smaller half of why.
+ * `Coupon.name` is customer-visible — it renders on the invoice line and in the
+ * dashboard — and a namespaced internal id (`mark8ly:<uuid>`) serves neither
+ * audience it reaches: the tenant reads an opaque identifier for themselves,
+ * and an operator hunting a half-finished grant already has the `co_…` this
+ * console recorded and the message that names it. Stripping the prefix and
+ * using the bare product id changes nothing about that — it is the same UUID
+ * one colon shorter.
+ *
+ * So the label comes from the caller, who is the only party that knows what the
+ * tenant should read, and it is trimmed and length-checked before it is sent.
+ */
+function couponName(label: string): string {
+  return label.trim();
+}
+
 function validate(input: TenantPricingOverrideInput): void {
+  const label = couponName(input.label);
+  if (label === "") {
+    throw new OverrideRefused(
+      "Give the discount a short name. The tenant sees it on their invoice.",
+      "label",
+    );
+  }
+  if (label.length > MAX_LABEL_LENGTH) {
+    throw new OverrideRefused(
+      `That name is too long for an invoice line — keep it to ${MAX_LABEL_LENGTH} characters or fewer.`,
+      "label",
+    );
+  }
+
   if (input.reason.trim() === "") {
     throw new OverrideRefused(
       "Say why this tenant is being given a different price. The reason is recorded against the grant.",
@@ -236,20 +298,26 @@ function validate(input: TenantPricingOverrideInput): void {
 }
 
 /**
- * Deterministic per (tenant, mode, terms), and namespaced by this caller the
- * way `mintKey` in `promo-actions.ts` is.
+ * Deterministic per (tenant, mode, terms, label), and namespaced by this caller
+ * the way `mintKey` in `promo-actions.ts` is.
  *
  * DETERMINISTIC IS THE POINT, and it is the same point: a retry after a timeout
  * — where the coupon may already exist in Stripe and the response was lost —
  * replays the key and gets the same coupon back rather than minting a second.
  *
- * THE TERMS ARE IN THE KEY, which is where this differs from the promo path.
- * There the key is (definition, mode) because a definition's terms are fixed
- * once authored. Here the terms come in with the request, and a key that
- * ignored them would make a re-grant with DIFFERENT terms — a tenant moved from
- * 10% to 20% within Stripe's 24-hour idempotency window — either replay the old
- * coupon or fail with Stripe's "same key, different parameters" error. Neither
- * is a thing to explain to an operator.
+ * THE KEY COVERS EVERY FIELD OF THE REQUEST — the terms and the label — which
+ * is the rule that makes it safe, and where this differs from the promo path.
+ * Stripe refuses a repeated key whose parameters differ, so a key that ignored
+ * any field sent alongside it would turn a corrected retry into an error this
+ * module cannot tell from a lost response.
+ *
+ * `promo-actions.ts` keys on (definition, mode) because a definition's terms
+ * are fixed once authored, so the definition id already stands for them. Here
+ * every parameter arrives with the request, so every parameter is in the key: a
+ * tenant moved from 10% to 20%, or a corrected label, inside Stripe's 24-hour
+ * idempotency window would otherwise either replay the first coupon or fail
+ * with Stripe's "same key, different parameters" error. Neither is a thing to
+ * explain to an operator.
  *
  * Spelled field by field rather than serialised: `JSON.stringify` would put key
  * order into the key, so a caller building the object differently would mint a
@@ -264,7 +332,10 @@ function mintKey(input: TenantPricingOverrideInput): string {
       ? `percent_off:${discount.percentOff}`
       : `amount_off:${discount.amountOffMinor}:${discount.currency}`;
   const months = discount.durationInMonths ?? "";
-  return `tenant-override:${MINT_KEY_VERSION}:${input.tenantId}:${input.mode}:${terms}:${discount.duration}:${months}`;
+  // The label goes LAST, and it is the only free-text field here. Trailing
+  // position means an operator's phrase cannot be mistaken for a field
+  // separator's worth of some other value, however it is punctuated.
+  return `tenant-override:${MINT_KEY_VERSION}:${input.tenantId}:${input.mode}:${terms}:${discount.duration}:${months}:${couponName(input.label)}`;
 }
 
 /**
@@ -323,11 +394,12 @@ export async function grantTenantPricingOverride(
           input.mode,
           {
             discount: input.discount,
-            // The label. `stripe-write.ts` cannot derive it — that module does
+            // The operator's label, trimmed and already length-checked by
+            // `validate`. `stripe-write.ts` cannot derive it — that module does
             // not know what a tenant is — and without one the coupon shows in
-            // the dashboard as a bare `co_…`, which is exactly the state
-            // "minted, not applied" leaves someone searching through.
-            name: `Override ${input.tenantId}`,
+            // the dashboard as a bare `co_…`. See `couponName` for why this is
+            // NOT the tenant id.
+            name: couponName(input.label),
             // `maxRedemptions` is DELIBERATELY NOT FORWARDED, and this surface
             // offers no control for it. Stripe's cap counts redemptions of the
             // Coupon across the account; this coupon is scoped to one customer
