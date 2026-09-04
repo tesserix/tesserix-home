@@ -654,14 +654,48 @@ describe("the closed list", () => {
     expect(sql).not.toContain("stage NOT IN");
   });
 
-  it("orders by when the deal closed, falling back to the last write on a row with no close date", async () => {
+  it("orders by when the deal closed, newest first, falling back to the last write on a row with no close date", async () => {
     // `closed_at` is nullable in 0019 with no CHECK tying it to the stage,
     // and the keyset cursor is built from the sort key — a NULL there does
     // not merely sort oddly, it throws instead of paging.
+    //
+    // Descending because the tab is read retrospectively (#565): "what did
+    // we close, and what did we lose" are both questions about recent deals,
+    // and at a hundred rows a page an ascending list kept them off page one.
     query.mockResolvedValue([]);
     await closedOpportunities({}, 50);
     const [sql] = queuePageCall();
+    expect(sql).toContain("ORDER BY COALESCE(o.closed_at, o.updated_at) DESC, o.id DESC");
+  });
+
+  it("advances past a forward cursor down the list, counting the rows above inclusively", async () => {
+    // Descending, so the page AFTER the cursor is the one whose sort key is
+    // strictly SMALLER — and "preceding" means the rows above it, which are
+    // the larger ones. Both operators are the mirror of the ascending
+    // queues', and getting only one of them right pages correctly while
+    // reporting the wrong range.
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50, forwardCursor());
+    expect(queuePageCall()[0]).toContain("(COALESCE(o.closed_at, o.updated_at), o.id) < (");
+    expect(queueCountCall()[0]).toContain(
+      "count(*) FILTER (WHERE (COALESCE(o.closed_at, o.updated_at), o.id) >= (",
+    );
+  });
+
+  it("flips the comparison and the ORDER BY for a backward cursor, against its descending order", async () => {
+    // A backward read mirrors the forward one, and the forward one here is
+    // already descending — so the two flips cancel and the fetch runs
+    // ASCENDING. The anchor is the first row of the page being left, which
+    // stays on that page, so it is excluded from both the page predicate and
+    // the preceding count.
+    query.mockResolvedValue([]);
+    await closedOpportunities({}, 50, backwardCursor());
+    const [sql] = queuePageCall();
+    expect(sql).toContain("(COALESCE(o.closed_at, o.updated_at), o.id) > (");
     expect(sql).toContain("ORDER BY COALESCE(o.closed_at, o.updated_at) ASC, o.id ASC");
+    expect(queueCountCall()[0]).toContain(
+      "count(*) FILTER (WHERE (COALESCE(o.closed_at, o.updated_at), o.id) > (",
+    );
   });
 
   it("selects the close date and the lost reason — what a closed deal is read for", async () => {

@@ -345,6 +345,12 @@ interface QueuePageQuery<TRaw extends { id: string }, TRow> {
   /** SQL expression this queue orders by. A module constant, never caller
    *  input — it is spliced into the statement, not bound. */
   sortKey: string;
+  /** Which way `sortKey` runs. Required rather than defaulting to "asc" so
+   *  that a reader of any call site can see the order the list is displayed
+   *  in without leaving the call — the readability objection `keyset-cursor.ts`
+   *  raises against a shared direction argument, answered by never letting the
+   *  argument be implicit. */
+  direction: "asc" | "desc";
   /** Prefix for cursor-rejection messages, so a thrown error names the
    *  queue that rejected it. */
   label: string;
@@ -377,14 +383,16 @@ interface QueuePageQuery<TRaw extends { id: string }, TRow> {
  * directions only agree on where a tie splits if `id` decides it.
  *
  * Reading backwards mirrors every part of the forward read at once — anchor,
- * comparison, ORDER BY and the preceding count — and the mirroring is
- * deliberately kept in this one ascending implementation rather than shared
- * with `listOrganisations`. See `keyset-cursor.ts` for why the SQL stays
- * split even though the cursor itself does not.
+ * comparison, ORDER BY and the preceding count. Mirroring a DESCENDING list
+ * therefore reads ascending: the two directions cancel, which is what `flip`
+ * below composes. `listOrganisations` keeps its own copy of this shape all
+ * the same — see `keyset-cursor.ts` for why the SQL stays split even though
+ * the cursor itself does not.
  */
 async function queuePage<TRaw extends { id: string }, TRow>({
   columns,
   sortKey,
+  direction,
   label,
   buildWhere,
   toRow,
@@ -399,21 +407,33 @@ async function queuePage<TRaw extends { id: string }, TRow>({
   // row rather than its last, flip the comparison, flip the ORDER BY, and
   // re-reverse the rows afterwards (see `trimBackwardPage`).
   const backwards = decoded?.direction === "before";
+  const descending = direction === "desc";
+  // The page predicate and the ORDER BY each depend on BOTH directions, and
+  // depend on them the same way: reading backwards mirrors the list, so a
+  // backward read of a descending list runs ascending — the two flips
+  // cancel. The preceding count does NOT follow this boolean; see below.
+  const flip = descending !== backwards;
 
   const countParams: unknown[] = [];
   const countWhere = buildWhere(countParams);
-  // Rows ahead of this page, in the queue's own ascending order.
+  // Rows ahead of this page, in the list's own display order.
   //
   // Forward, the cursor IS the last row of the previous page, so it counts
-  // as preceding (`<=`) and the page predicate below excludes it. Backward,
-  // the cursor is the first row of the page being LEFT — it sorts after this
-  // page, so it must not be counted (`<`), and what the count then returns is
-  // this page plus everything ahead of it. The page's own length is
-  // subtracted once the rows are in hand.
+  // as preceding (the operator includes equality) and the page predicate
+  // below excludes it. Backward, the cursor is the first row of the page
+  // being LEFT — it sorts after this page, so it must not be counted, and
+  // what the count then returns is this page plus everything ahead of it.
+  // The page's own length is subtracted once the rows are in hand.
   let precedingSelect = "0";
   if (decoded) {
     const [timestampParam, idParam] = cursorPlaceholders(decoded, countParams);
-    const comparison = backwards ? "<" : "<=";
+    // This operator's DIRECTION follows the list's sort alone — the rows
+    // ahead of an ascending page are the smaller ones, ahead of a descending
+    // page the larger — while its EQUALITY follows the cursor's alone. So it
+    // is not `flip`: ascending-backward and descending-forward share a `flip`
+    // and want opposite operators here.
+    const ahead = descending ? ">" : "<";
+    const comparison = backwards ? ahead : `${ahead}=`;
     precedingSelect = `count(*) FILTER (WHERE (${sortKey}, o.id) ${comparison} (${timestampParam}, ${idParam}))`;
   }
 
@@ -421,14 +441,14 @@ async function queuePage<TRaw extends { id: string }, TRow>({
   let where = buildWhere(params);
   if (decoded) {
     const [timestampParam, idParam] = cursorPlaceholders(decoded, params);
-    where += `\n        AND (${sortKey}, o.id) ${backwards ? "<" : ">"} (${timestampParam}, ${idParam})`;
+    where += `\n        AND (${sortKey}, o.id) ${flip ? "<" : ">"} (${timestampParam}, ${idParam})`;
   }
   params.push(limit + 1);
   const limitParam = `$${params.length}`;
-  // Flipped with the comparison, or the LIMIT would keep the rows furthest
-  // from the anchor — the first page of the whole queue, not the one before
-  // this cursor.
-  const order = backwards ? "DESC" : "ASC";
+  // The same `flip` as the comparison, and for the same reason: were the two
+  // to disagree, the LIMIT would keep the rows furthest from the anchor —
+  // the far end of the whole list, not the page adjacent to this cursor.
+  const order = flip ? "DESC" : "ASC";
 
   // Independent reads over two disjoint parameter lists — concurrent rather
   // than two sequential round trips for every page view.
@@ -491,6 +511,7 @@ export async function dueOpportunities(
   return queuePage<RawQueueRow, QueueRow>({
     columns: QUEUE_COLUMNS,
     sortKey: "o.next_action_at",
+    direction: "asc",
     label: "dueOpportunities",
     // The queue's own predicates stay first, filters spliced after, so the
     // partial index (crm_opp_due_idx) stays eligible.
@@ -533,6 +554,7 @@ export async function driftingOpportunities(
   return queuePage<RawQueueRow, QueueRow>({
     columns: QUEUE_COLUMNS,
     sortKey: DRIFTING_SORT_KEY,
+    direction: "asc",
     label: "driftingOpportunities",
     // Filter parameters are pushed before staleDays so the filter clauses
     // keep the low placeholder numbers whether or not a filter is active.
@@ -639,13 +661,12 @@ const CLOSED_COLUMNS = `o.id, o.organisation_id, g.name AS organisation_name,
             ${CLOSED_SORT_KEY} AS closed_sort`;
 
 /**
- * Won and lost deals, oldest-closed-first, filtered and paged like a queue.
+ * Won and lost deals, newest-closed-first, filtered and paged like a queue.
  *
- * Ascending because `queuePage` reads one direction: its cursor comparison,
- * ORDER BY, preceding count and backward mirror are all written for an
- * ascending list, and a newest-first list would be a second implementation of
- * that mirroring rather than a flag. Forward paging therefore walks toward
- * the most recently closed deal.
+ * Descending because the tab is read retrospectively — "what did we close,
+ * and what did we lose" are both questions about recent deals — while the two
+ * work queues ask "what needs doing", which is oldest-first (#565). Forward
+ * paging therefore walks back through the year.
  *
  * Neither partial index in 0019 applies here — both are `WHERE … stage NOT IN
  * ('won','lost')`, and this query wants exactly their complement, so it was
@@ -661,6 +682,7 @@ export async function closedOpportunities(
   return queuePage<RawClosedRow, ClosedRow>({
     columns: CLOSED_COLUMNS,
     sortKey: CLOSED_SORT_KEY,
+    direction: "desc",
     label: "closedOpportunities",
     // The list's own predicate stays first, filters spliced after — the same
     // shape the queues use. A `stage` filter here narrows won/lost to one of
@@ -3161,8 +3183,15 @@ function organisationSortOrder(sort: OrganisationSort): string {
  *
  * A cursor also carries the direction it points in, so the same `?cursor=`
  * param serves Previous and Next and a shared link cannot lose which one it
- * was. This function stays the descending implementation it always was;
- * `queuePage` stays the ascending one. See `keyset-cursor.ts`.
+ * was. This function and `queuePage` stay separate implementations, but not
+ * because of direction: `queuePage` takes a required `direction` and
+ * `closedOpportunities` runs it descending. They differ in what they read and
+ * how they page — this one selects from `crm_organisations`, joins a lateral
+ * for the primary contact, builds its filters with
+ * `organisationFilterClauses`, and carries a second OFFSET regime for sorted
+ * views; `queuePage` selects from `crm_opportunities` joined to their
+ * organisations, filters with `filterClause`, and pages only by cursor. See
+ * `keyset-cursor.ts`.
  */
 export async function listOrganisations(
   filter: OrganisationFilter,

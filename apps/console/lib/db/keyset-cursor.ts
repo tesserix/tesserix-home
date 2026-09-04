@@ -17,9 +17,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * surface's own DISPLAY order.
  *
  * "after"/"before" and not "asc"/"desc", "next"/"prev" or a boolean: this
- * codec cannot know how its caller sorts. `listOrganisations` reads newest
- * first and the queues read oldest first, so a cursor that claimed a sort
- * order would be lying to one of them. What a cursor honestly knows is that
+ * codec cannot know how its caller sorts. `listOrganisations` and
+ * `closedOpportunities` read newest first while the two work queues read
+ * oldest first, so a cursor that claimed a sort order would be lying to one
+ * of them. What a cursor honestly knows is that
  * the page being asked for lies after — or before — the row it names, and
  * each caller resolves that against the order it alone declares.
  */
@@ -88,12 +89,18 @@ export function isMalformedCursorError(caught: unknown): boolean {
  * nothing about which way a surface sorts, so sharing it cannot make either
  * surface lie about its order.
  *
- * The SQL is deliberately NOT shared: `listOrganisations` orders
- * `created_at DESC, id DESC` while both queues order ascending on their own
- * sort key. So the queues share one ascending implementation (`queuePage`)
- * and `listOrganisations` keeps its own descending one, rather than both
- * routing through a helper taking a `direction` argument — under which no
- * reader could tell what a page means without also finding the argument.
+ * The SQL is deliberately NOT shared, and the split is by TABLE and paging
+ * regime rather than by direction: `listOrganisations` pages
+ * `crm_organisations`, and the branch of it that uses a cursor at all is the
+ * one whose sort is fixed at `created_at DESC` — a caller-chosen sort switches
+ * that surface to OFFSET and mints no cursor. `queuePage` pages
+ * `crm_opportunities` joined to their organisations, always by cursor, under a
+ * sort key each list fixes for itself. `queuePage` does take a
+ * direction — `closedOpportunities` reads descending and both work queues
+ * ascending — but it is a REQUIRED argument, so every call site states its
+ * own order where a reader is already looking. That is the answer to the
+ * objection an optional one would deserve: a reader who cannot see the
+ * direction cannot tell what a page means.
  */
 export function encodeKeysetCursor(
   timestamp: string,
