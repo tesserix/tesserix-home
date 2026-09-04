@@ -720,3 +720,219 @@ export async function readRevisionRows(
   );
   return rows.map(toCatalogRow);
 }
+
+// ---------------------------------------------------------------------------
+// Test-vs-live content divergence (tesserix-home#527)
+// ---------------------------------------------------------------------------
+
+/**
+ * One served catalog row, tagged with the mode that serves it. The tuple is
+ * exactly what {@link readModeDivergence} compares — see that function for why
+ * `plan`, `period` and `tier` are in it.
+ */
+export interface ModeCatalogRow {
+  readonly mode: StripeMode;
+  readonly lookupKey: string;
+  readonly plan: string;
+  readonly period: string;
+  readonly tier: string;
+  readonly currency: string;
+  readonly unitAmountMinor: number;
+  readonly taxBehavior: TaxBehavior;
+}
+
+/** How many rows each mode currently serves for the compared source. */
+export interface ModeRowCounts {
+  readonly test: number;
+  readonly live: number;
+}
+
+/**
+ * THREE outcomes, not two, and the third is the whole point.
+ *
+ * `not_published` is a mode with no current row in
+ * `plan_catalog_publications` — a state `live` was in for long stretches of
+ * this project's life, and one that is emphatically NOT "the modes agree".
+ * Collapsing it into `identical` (zero differences, because there was nothing
+ * to differ) is the same defect mark8ly's `Result.Compared`/`Result.Differences`
+ * split exists to prevent: "reporting zero differences when the console could
+ * not be reached would make an outage indistinguishable from a clean run."
+ * Here the unread side is a mode rather than a service, and the consequence is
+ * identical — a surface claiming agreement on evidence it never had.
+ */
+export type ModeDivergence =
+  | {
+      readonly outcome: "not_published";
+      /** The modes with no current publication. Never empty in this variant. */
+      readonly unpublishedModes: readonly StripeMode[];
+    }
+  | { readonly outcome: "identical"; readonly rows: ModeRowCounts }
+  | {
+      readonly outcome: "diverged";
+      readonly rows: ModeRowCounts;
+      /** The symmetric difference: every served tuple present in one mode and
+       *  not the other, tagged with the mode that has it. */
+      readonly differences: readonly ModeCatalogRow[];
+    };
+
+interface ModeDivergenceRowRaw {
+  mode: StripeMode;
+  lookup_key: string;
+  plan: string;
+  period: string;
+  tier: string;
+  currency: string;
+  /** `::text` in the query, so a `bigint` never becomes a JSON number that
+   *  `JSON.parse` could round. Same reason {@link AmountRow} takes a string. */
+  unit_amount_minor: string;
+  tax_behavior: TaxBehavior;
+}
+
+interface DivergenceSummaryRow {
+  /** `count(*)` is `bigint`, so both drivers hand it back as a string. */
+  test_rows: string;
+  live_rows: string;
+  /** `jsonb`, already parsed by `pg` and pglite — never a string needing a
+   *  second `JSON.parse`. Same note as {@link LatestRunRow.differences}. */
+  differences: unknown;
+}
+
+function toModeCatalogRow(row: ModeDivergenceRowRaw): ModeCatalogRow {
+  return {
+    mode: row.mode,
+    lookupKey: row.lookup_key,
+    plan: row.plan,
+    period: row.period,
+    tier: row.tier,
+    currency: row.currency,
+    unitAmountMinor: toMinorUnits(row.unit_amount_minor, row.lookup_key, row.currency),
+    taxBehavior: row.tax_behavior,
+  };
+}
+
+/**
+ * Do `test` and `live` currently SERVE the same catalog?
+ *
+ * # Why this read exists
+ *
+ * tesserix-home#328 skipped a week-long live-mode observation window on one
+ * argument: mark8ly's parity comparison is console-catalog against compiled
+ * Go catalog, neither side is mode-dependent, and the console serves the same
+ * catalog either way — so test-mode evidence stands in for live. That argument
+ * is CONDITIONAL on the two modes agreeing, and nothing checked it. mark8ly
+ * cannot: it reads one mode (`CONSOLE_CATALOG_MODE`) and is structurally
+ * incapable of comparing them. The console holds both publications in one
+ * table, so this is where the check belongs.
+ *
+ * # CONTENT, never `revision_id`
+ *
+ * The tempting one-line version — "do both modes name the same revision?" —
+ * was already wrong when this was written. Measured against production on
+ * 2026-09-04: `live` named `fb9c1667-…`, `test` named the `00000000-…-0001`
+ * baseline, and the two served IDENTICAL content (78 rows each, symmetric
+ * difference 0). #327 P2b's first live publish moved live's publication
+ * history without changing a served byte. A revision-keyed check would have
+ * fired a false positive on day one, and a check that cries wolf on day one
+ * is one people learn to ignore — which costs the report the only thing it
+ * has, per 0034's `not_bootstrapped` reasoning.
+ *
+ * # What is in the compared tuple
+ *
+ * `(lookup_key, plan, period, tier, currency, unit_amount_minor,
+ * tax_behavior)`. The four beyond `readCatalogAmounts`'s narrow projection are
+ * there deliberately: tesserix/mark8ly#631 added `plan`, `period` and `tier`
+ * to the Go-side `Diff` because they are the fields the serving lookup keys
+ * on, and comparing amounts alone would leave them unwatched. The join is the
+ * one `readCatalogAmounts` and `readCatalogRows` already use, so "what does
+ * this mode read as" cannot mean one thing here and another there.
+ *
+ * # A mode with no publication short-circuits, and never reaches the diff
+ *
+ * The publication read runs FIRST and returns before the difference query is
+ * issued. Not an optimisation — it is what makes the distinction structural
+ * rather than a matter of reading the result carefully: there is no path on
+ * which an unpublished mode produces a difference count at all, so nothing
+ * downstream can mistake its zero for agreement. `readCatalogAmounts` is right
+ * to return `[]` for such a mode (it answers "what does this mode read as?",
+ * and the answer is genuinely nothing); this function answers "do the two
+ * agree?", which has no answer at all when one side was never published.
+ *
+ * Both modes published but neither serving a row for `source` reports
+ * `identical` with `rows` of `{ test: 0, live: 0 }`. That is honest — the
+ * publications exist and hold nothing for this source — and the counts are
+ * carried so a caller can say so rather than imply a catalog was compared.
+ *
+ * # `source` is required, no default
+ *
+ * Same discipline, and the same reason, as every other read in this module:
+ * `UNIQUE (revision_id, source, lookup_key)` stops keeping `lookup_key`
+ * unique within a revision the moment a second source exists, so an
+ * unfiltered diff would compare two products' rows as if they were one.
+ */
+export async function readModeDivergence(source: CatalogSource): Promise<ModeDivergence> {
+  const publishedRows = await tesserixQuery<{ mode: StripeMode }>(
+    `SELECT mode FROM plan_catalog_publications WHERE superseded_at IS NULL`,
+  );
+  const published = new Set(publishedRows.map((row) => row.mode));
+  const unpublishedModes = STRIPE_MODES.filter((mode) => !published.has(mode));
+  if (unpublishedModes.length > 0) {
+    return { outcome: "not_published", unpublishedModes };
+  }
+
+  const [summary] = await tesserixQuery<DivergenceSummaryRow>(
+    // One statement, and one row out of it whatever the data says: the counts
+    // are scalar subqueries and the differences are aggregated, so an empty
+    // symmetric difference still returns a row carrying both totals. A query
+    // returning only the differing rows would make "agreed" and "the query
+    // returned nothing" the same result set.
+    `WITH served AS (
+         SELECT pub.mode, p.lookup_key, p.plan, p.period, p.tier,
+                a.currency,
+                -- ::text so the value survives jsonb as a string. to_jsonb of
+                -- a bigint yields a JSON number, and JSON.parse rounds one
+                -- past 2^53; toMinorUnits' guard only sees a string.
+                a.unit_amount_minor::text AS unit_amount_minor,
+                a.tax_behavior
+           FROM plan_catalog_publications pub
+           JOIN plan_catalog_prices  p ON p.revision_id = pub.revision_id
+           JOIN plan_catalog_amounts a ON a.price_id = p.id
+          WHERE pub.superseded_at IS NULL AND p.source = $1
+       ),
+       test_served AS (
+         SELECT lookup_key, plan, period, tier, currency, unit_amount_minor, tax_behavior
+           FROM served WHERE mode = $2
+       ),
+       live_served AS (
+         SELECT lookup_key, plan, period, tier, currency, unit_amount_minor, tax_behavior
+           FROM served WHERE mode = $3
+       ),
+       -- EXCEPT ALL in both directions, not one: a row test serves and live
+       -- does not, and a row live serves and test does not, are both
+       -- divergence, and a one-directional EXCEPT would report a mode that is
+       -- a strict subset of the other as agreeing.
+       diff AS (
+         SELECT $2::text AS mode, t.*
+           FROM (SELECT * FROM test_served EXCEPT ALL SELECT * FROM live_served) t
+         UNION ALL
+         SELECT $3::text AS mode, l.*
+           FROM (SELECT * FROM live_served EXCEPT ALL SELECT * FROM test_served) l
+       )
+     SELECT (SELECT count(*) FROM test_served) AS test_rows,
+            (SELECT count(*) FROM live_served) AS live_rows,
+            COALESCE(
+              (SELECT jsonb_agg(to_jsonb(diff) ORDER BY diff.lookup_key, diff.currency, diff.mode)
+                 FROM diff),
+              '[]'::jsonb
+            ) AS differences`,
+    [source, "test" satisfies StripeMode, "live" satisfies StripeMode],
+  );
+
+  const rows: ModeRowCounts = {
+    test: Number(summary.test_rows),
+    live: Number(summary.live_rows),
+  };
+  const differences = (summary.differences as ModeDivergenceRowRaw[]).map(toModeCatalogRow);
+  return differences.length === 0
+    ? { outcome: "identical", rows }
+    : { outcome: "diverged", rows, differences };
+}
