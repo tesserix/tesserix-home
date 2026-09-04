@@ -98,6 +98,17 @@ func (h *Handler) read(w http.ResponseWriter, r *http.Request) {
 // must never be rendered as an outage, and an outage must never be rendered as
 // "no metrics". The second mistake is the more dangerous one — it tells an
 // operator a number does not exist when it exists and cannot be reached.
+//
+// Three things now answer 501, and they are the same fact at three scopes:
+// this deployment federates nothing (ErrNoProducts), it federates something
+// but not this product (ErrUnknownSource), or it federates this product and
+// the product says it measures nothing (ErrNotInstrumented). All three are
+// "not switched on", none is a failure, and each carries its own MESSAGE so
+// whoever reads it fixes the right thing.
+//
+// The 503s are the two ways a read genuinely fails, kept apart by their code:
+// SERVICE_UNAVAILABLE for a product that could not be reached, and
+// EXTERNAL_SERVICE_ERROR for one that was reached and broke the contract.
 func (h *Handler) writeReadError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, service.ErrNotInstrumented):
@@ -109,7 +120,27 @@ func (h *Handler) writeReadError(w http.ResponseWriter, r *http.Request, err err
 	case errors.Is(err, service.ErrNoProducts):
 		httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
 	case errors.Is(err, service.ErrUnknownSource):
-		httpx.WriteError(w, r, httpx.BadRequest(err.Error()), h.log)
+		// 501, NOT 400 (#546). This route is scoped to FEDERATION_PRODUCTS, so
+		// a slug outside it means "this deployment is not configured to read
+		// that product's metrics" — which is what NotImplemented says and what
+		// the console renders calmly, rather than the outage-shaped page a 400
+		// produced for a deployment working exactly as configured. One product
+		// federated and another not is the LIKELIER production state, and an
+		// operator reaching it from the console's own rail was being told
+		// something was broken.
+		//
+		// This service cannot separate that from a typo'd slug — see
+		// ErrUnknownSource — and inventing a registry of known-but-unfederated
+		// products to try would be a second copy of the console's vocabulary,
+		// drifting, for a distinction only a hand-edited URL can produce. The
+		// MESSAGE still names the slug, so whoever typed `kroa` sees `kroa`.
+		httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
+	case errors.Is(err, service.ErrEmptyMetrics):
+		// Reached and answering, so NOT the "could not be reached" default:
+		// this product is deviating from §3.1, and telling an operator it is
+		// unreachable points them at a network path that is fine.
+		httpx.WriteError(w, r, httpx.ExternalService(
+			"the product answered with an empty metrics map, which §3.1 forbids"), h.log)
 	default:
 		// Deliberately not err.Error(): a transport failure's text carries
 		// hostnames, which is why the federation package sanitizes at all.

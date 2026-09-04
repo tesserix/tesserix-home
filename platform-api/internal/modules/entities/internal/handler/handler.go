@@ -129,11 +129,29 @@ func (h *Handler) writeReadError(w http.ResponseWriter, r *http.Request, err err
 	case errors.Is(err, service.ErrNotInstrumented):
 		httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
 	case errors.Is(err, service.ErrUnknownSource), errors.Is(err, service.ErrTypeNotServed):
-		// Both are 400 — the caller asked for something that does not exist —
-		// but they carry DIFFERENT messages, because "kora has no tenants" and
-		// "there is no product called kroa" send whoever hit it to check
-		// different things.
-		httpx.WriteError(w, r, httpx.BadRequest(err.Error()), h.log)
+		// 501, NOT 400 (#546), and still two DIFFERENT messages — because
+		// "kora has no tenants" and "there is no product called kroa" send
+		// whoever hit it to check different things. Only the status changed;
+		// the distinction the previous comment protected is untouched.
+		//
+		// Both are refusals of scope, not of syntax. The request was
+		// well-formed and the console built it from its own rail; what it
+		// names is simply not wired up in THIS deployment —
+		// FEDERATION_PRODUCTS omits the slug, or FEDERATION_<SLUG>_ENTITIES
+		// omits the type. NotImplemented is that sentence ("nothing here was
+		// ever configured to produce it"), and it is the status the console
+		// renders calmly. A 400 rendered a working configuration as an
+		// outage.
+		//
+		// The status can no longer separate a typo'd slug from an unfederated
+		// product, and that is not a distinction being thrown away: the
+		// service never had it. s.types is the FEDERATED map; there is no
+		// KNOWN-product set anywhere in this API, and building one would put a
+		// drifting copy of the console's registry here to answer a question
+		// only a hand-edited URL asks. A malformed REQUEST is still a 400 —
+		// missing source, bad limit, bad page, unknown parameter — so 400 kept
+		// the meaning it can actually enforce.
+		httpx.WriteError(w, r, httpx.NotImplemented(err.Error()), h.log)
 	default:
 		// The product's §4.4 code is passed through where there is one. That
 		// code is a stable machine-readable identifier by contract, and it is

@@ -29,7 +29,26 @@ const productPath = "/admin/kpis"
 var ErrNotInstrumented = errors.New("kpis: the product reports no metrics")
 
 // ErrUnknownSource is a filter naming a product this deployment cannot call.
+//
+// It covers TWO situations this service cannot tell apart, and the handler's
+// comment records why that is honest rather than lazy: s.slugs is the
+// FEDERATED set, and nothing here knows the KNOWN set. "mark8ly, which this
+// deployment does not federate" and "kroa, which is not a product at all" are
+// both simply absent from the list.
 var ErrUnknownSource = errors.New("kpis: unknown source")
+
+// ErrEmptyMetrics is a product answering 200 with `{}`.
+//
+// Its own sentinel because it is its own fact: the product was REACHED and it
+// answered — it is deviating from §3.1, which requires 501 rather than an
+// empty map. Without this, the handler's switch fell through to its default
+// and told the operator the product could not be reached, which sends them to
+// check a network path that is fine (#546).
+//
+// Deliberately NOT folded into ErrNotInstrumented: rendering the deviation as
+// "this product reports no metrics" would hide it behind a legitimate-looking
+// answer, which is the reason the check below exists at all.
+var ErrEmptyMetrics = errors.New("kpis: the product returned an empty metrics map")
 
 // ErrNoProducts is the answer when this deployment federates nothing at all.
 // Distinct from ErrNotInstrumented: "no product is configured" and "this
@@ -115,7 +134,7 @@ func (s *Service) Read(ctx context.Context, op federation.Operator, source strin
 	// deviating, and reporting that as "not instrumented" would hide the
 	// deviation behind a legitimate-looking answer.
 	if len(envelope.Data) == 0 {
-		return nil, fmt.Errorf("decoding %s kpis: empty metrics map — §3.1 requires 501 not_implemented instead", source)
+		return nil, fmt.Errorf("%w: %s — §3.1 requires 501 not_implemented instead", ErrEmptyMetrics, source)
 	}
 	return envelope.Data, nil
 }

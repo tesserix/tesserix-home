@@ -109,6 +109,11 @@ func TestReadRefusesAnEmptyMetricsMap(t *testing.T) {
 	if errors.Is(err, ErrNotInstrumented) {
 		t.Error("an empty map was reported as not-instrumented, hiding a §3.1 deviation")
 	}
+	// A sentinel, not a bare fmt.Errorf: without one the handler's switch fell
+	// through to its default and called a reachable product unreachable.
+	if !errors.Is(err, ErrEmptyMetrics) {
+		t.Fatalf("err = %v, want ErrEmptyMetrics", err)
+	}
 }
 
 // Before §8.6, §3.1 specified a bare map at the top level. Decoding that shape

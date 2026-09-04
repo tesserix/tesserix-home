@@ -79,23 +79,27 @@ import { EntityIndex } from "./entity-index";
  * read this product's records. Nothing is broken and there is nothing to
  * retry, so it renders as unavailable rather than as a failure.
  *
- * # Neither is an unfederated product, which is a 400 (#546)
+ * # Neither is an unfederated product, which the API now says with a 501 (#546)
  *
- * platform-api's entities module answers 501 (`ErrNotInstrumented`) only when
- * `len(s.types) == 0`, and that map has a key per FEDERATED PRODUCT, not per
- * product that declared a type: `main.go` writes `types[slug] =
- * product.Entities` for every slug `Registry.Slugs()` returns, and the value
- * may be empty — the `Get` beside it is a lookup in the same map `Slugs()`
- * enumerates, so it never skips one. So the 501 means "this deployment
- * federates nothing at all", and a deployment federating one product with
- * `FEDERATION_<SLUG>_ENTITIES` unset still has `len(types) == 1`: it answers
- * 400 `ErrTypeNotServed`, never 501.
+ * `ErrUnknownSource` and `ErrTypeNotServed` are both 501 now, each with its
+ * own message, so the 501 copy above covers them and the gate below is a
+ * fallback for a console serving against an older platform-api. The paragraph
+ * that follows describes what it was written against.
  *
- * Every other refusal is a 400 too: `ErrUnknownSource` for a slug this
- * deployment does not federate, `ErrTypeNotServed` for one it federates that
- * did not declare this type. `resolveState` renders a 400 as a failure, so the
- * likelier deployment read as an outage — and the 501 path does NOT already
- * cover these. Deleting the gate below as redundant would put that page back.
+ * platform-api's entities module USED TO answer 501 only for
+ * `ErrNotInstrumented` — `len(s.types) == 0`, and that map has a key per
+ * FEDERATED PRODUCT, not per product that declared a type: `main.go` writes
+ * `types[slug] = product.Entities` for every slug `Registry.Slugs()` returns,
+ * and the value may be empty. So that 501 meant "this deployment federates
+ * nothing at all", and a deployment federating one product with
+ * `FEDERATION_<SLUG>_ENTITIES` unset still had `len(types) == 1`: it answered
+ * 400 `ErrTypeNotServed`. `ErrUnknownSource`, for a slug this deployment does
+ * not federate, was a 400 too. `resolveState` renders a 400 as a failure, so
+ * the likelier deployment read as an outage.
+ *
+ * That is what the gate below covers, and it is the only thing that covers it
+ * against an older API — deleting it as redundant would put that page back for
+ * any deployment whose platform-api has not rolled the change out yet.
  *
  * # This surface's gate is EXACT, where `[product]/page.tsx`'s is not
  *
