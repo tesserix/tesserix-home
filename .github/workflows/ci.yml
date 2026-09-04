@@ -47,6 +47,15 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: tesserix-home
   CONSOLE_IMAGE_NAME: tesserix-console
+  # Kargo's `services` Warehouse does not watch GHCR. It watches an Artifact
+  # Registry *remote (pull-through) repository* that mirrors GHCR — see the
+  # warm step at the end of build-and-push for why that matters. Not secret;
+  # same values as the sibling tesserix-k8s workflows hardcode.
+  GCP_PROJECT_ID: tesseracthub-480811
+  MIRROR_HOST: asia-south1-docker.pkg.dev
+  MIRROR_REPO: tesseracthub-480811/ghcr-remote/tesserix
+  WIF_PROVIDER: projects/849928263410/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  SA_EMAIL: github-actions@tesseracthub-480811.iam.gserviceaccount.com
 
 permissions:
   contents: read
@@ -62,6 +71,7 @@ jobs:
       packages: write
       security-events: write
       actions: read # upload-sarif@v3 reads the run's metadata (else it 403s on push)
+      id-token: write # WIF for the GAR mirror warm step at the end of this job
     steps:
       - uses: actions/checkout@v4
 
@@ -278,6 +288,79 @@ jobs:
         with:
           sarif_file: trivy-console-results.sarif
           category: console
+
+      # --- Warm the GAR pull-through mirror (#494) ---
+      #
+      # Both images are now in GHCR, but Kargo's `services` Warehouse does not
+      # subscribe to GHCR. It subscribes to
+      # asia-south1-docker.pkg.dev/tesseracthub-480811/ghcr-remote/tesserix/...,
+      # an Artifact Registry *remote (pull-through) repository*. A pull-through
+      # cache fetches a tag only when something asks for it, and until the first
+      # ArgoCD/node pull nothing does — so the Warehouse keeps listing the
+      # previous tag as newest ("Freight composed of the newest artifacts
+      # already exists") and every deploy stalled 20-30 minutes.
+      #
+      # One authenticated registry-v2 manifest GET per image pulls the tag
+      # through; the Warehouse's next 5-minute poll then discovers it. Verified
+      # by hand on main-86011e1: absent from `gcloud artifacts docker tags list`
+      # before the GET, 200 from the GET, present immediately after.
+      #
+      # `gcloud artifacts docker images describe` is NOT a substitute — it
+      # answers "Image not found" without triggering a fetch. Only a real
+      # manifest request populates the cache, and only with the OCI/Docker
+      # manifest+index media types in Accept.
+      - name: Authenticate to Google Cloud (WIF)
+        id: gcp-auth
+        if: github.ref == 'refs/heads/main'
+        # Never fail the build: the images are pushed and correct by this point,
+        # the warm is only a latency optimisation. A failure here still shows as
+        # a red step in the run, and the warm step below reports the resulting
+        # HTTP status per image.
+        continue-on-error: true
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SA_EMAIL }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          token_format: access_token
+
+      - name: Warm GAR mirror for pushed tags
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        env:
+          # Every image this job pushes. Keep in step with the two `Build and
+          # push` steps above — an image added there and not here goes back to
+          # stalling Kargo, silently.
+          IMAGES: ${{ env.IMAGE_NAME }} ${{ env.CONSOLE_IMAGE_NAME }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+        run: |
+          set -uo pipefail
+          # Only the immutable main-<sha7> tag is warmed. `latest` moves and is
+          # not what the Warehouse discovers on.
+          failed=0
+          for image in $IMAGES; do
+            url="https://${MIRROR_HOST}/v2/${MIRROR_REPO}/${image}/manifests/${TAG}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' \
+              --max-time 60 \
+              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json' \
+              "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "warmed ${image}:${TAG} -> HTTP ${code}"
+            else
+              # A warning annotation, not a failure: visible in the run summary
+              # so a 401/403 (WIF or IAM regression) or 404 (tag genuinely not
+              # in GHCR) is noticed rather than absorbed, without failing a
+              # build whose images already shipped.
+              echo "::warning title=GAR mirror warm failed::${image}:${TAG} -> HTTP ${code} (${url}); Kargo may take 20-30min to discover this tag. See issue #494."
+              failed=$((failed + 1))
+            fi
+          done
+          if [ "$failed" -gt 0 ]; then
+            echo "${failed} image(s) not warmed; deploy latency only, images are pushed."
+          fi
+          exit 0
 
   console-e2e:
     runs-on: ubuntu-latest
