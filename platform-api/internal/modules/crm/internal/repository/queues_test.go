@@ -221,6 +221,66 @@ func TestTheBandsAndUnsetPartitionEveryRow(t *testing.T) {
 	}
 }
 
+// erasedWorld holds the two shapes an erased contact can leave behind: an
+// organisation whose ONLY contact is erased, and one where an erased contact
+// still holds the primary slot beside a live colleague.
+//
+// Both erased contacts keep a follower count the live erasure path would have
+// nulled. That is what makes these tests bite on the predicate rather than on
+// erasure's column list: with `c2.erased_at IS NULL` removed they both fail,
+// and they would both still pass if the queue read nothing but
+// `followers_count`.
+func erasedWorld(t *testing.T) *world {
+	w := newWorld(t)
+	// The only contact, erased. There is no primary contact left, so this is
+	// unset — the bucket that already exists for an organisation with nothing
+	// to show — and NOT the 10k+ band its erased contact's count would place
+	// it in.
+	w.org(orgSpec{name: "erased-only", contacts: []contactSpec{
+		{followers: ptr(15000), primary: true, erased: true, createdAt: w.base.Add(-2 * day)},
+	}})
+	// The erased contact is BOTH flagged primary and the older of the two, so
+	// it wins every clause of primaryContactOrder. Only the erasure predicate
+	// can hand the slot to the live contact — and it must, or this row is
+	// filtered on someone who asked to be forgotten while the live contact's
+	// 500 followers are invisible.
+	w.org(orgSpec{name: "erased-primary", contacts: []contactSpec{
+		{followers: ptr(50000), primary: true, erased: true, createdAt: w.base.Add(-2 * day)},
+		{followers: ptr(500), createdAt: w.base.Add(-day)},
+	}})
+	for i, name := range []string{"erased-only", "erased-primary"} {
+		w.opportunity(oppSpec{org: name, label: name, nextActionAt: w.ago(time.Duration(10-i) * day)})
+	}
+	return w
+}
+
+func TestAnErasedContactIsNotTheOrganisationsPrimaryContact(t *testing.T) {
+	w := erasedWorld(t)
+	for _, tc := range []struct {
+		name string
+		// bucket is a band, or the unset option when empty.
+		bucket domain.Match
+		want   []string
+	}{
+		{"under1k", domain.Is(string(domain.FollowersUnder1k)), []string{"erased-primary"}},
+		{"k1to10k", domain.Is(string(domain.Followers1kTo10k)), nil},
+		// Neither erased count (15000, 50000) may reach this band.
+		{"over10k", domain.Is(string(domain.FollowersOver10k)), nil},
+		{"unset", domain.Unset(), []string{"erased-only"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := repository.Due(w.ctx, w.pool,
+				domain.Filter{Followers: tc.bucket}, 50, "")
+			if err != nil {
+				t.Fatalf("Due: %v", err)
+			}
+			if got := labels(page.Opportunities); !equal(got, tc.want) {
+				t.Errorf("rows = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTheBandEdgesAreInclusiveOnBothSides(t *testing.T) {
 	// Asserted as a SET — sorted, then compared exactly. An earlier version of
 	// this test used strings.Contains over the joined labels and would have

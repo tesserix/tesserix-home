@@ -78,6 +78,16 @@ beforeAll(async () => {
     "../../../web/db/migrations/0022_crm_suppressions_normalize.sql",
   );
   await db.exec(readFileSync(normalizeMigrationPath, "utf-8"));
+  // 0024 adds `crm_contacts.erased_at` — the column primary-contact selection
+  // now reads (#301). Without it the erasure describe at the end of this file
+  // would fail on a missing column rather than on the behaviour it pins, and
+  // every other query here would be running against a narrower contacts table
+  // than production has.
+  const erasedAtMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0024_crm_contacts_erased_at.sql",
+  );
+  await db.exec(readFileSync(erasedAtMigrationPath, "utf-8"));
   // Task 3/4: derived `country` column the filter tests below need.
   const countryMigrationPath = path.resolve(
     __dirname,
@@ -1882,5 +1892,169 @@ describe("paging backwards through listOrganisations", () => {
     const all = await listOrganisations({ search: "Backward Org" }, 100);
     expect(all.nextCursor).toBeNull();
     expect(all.previousCursor).toBeNull();
+  });
+});
+
+/**
+ * An erased contact is not the organisation's primary contact (#301).
+ *
+ * Erasure (`crm-erasure.ts`) redacts a contact in place and leaves the row
+ * behind, so the organisation keeps its history — but it leaves `is_primary`
+ * alone, and until this change every queue filter, every browse filter and
+ * the browse row's own contact columns still resolved to the erased row.
+ *
+ * The fixtures below give each erased contact a `followers_count` and an
+ * `email`, which the live erasure path nulls. That is deliberate, and it is
+ * what makes these tests discriminate: they fail if the queries stop reading
+ * `erased_at`, and they would pass whatever the queries did if the fixture
+ * relied on erasure having emptied those columns for them. The two paths were
+ * written separately and neither mentioned the other, which is how #301
+ * happened; a test that leans on one to prove the other repeats the mistake.
+ *
+ * Declared last, like the two describes above it: it seeds queue rows, and
+ * earlier describes assert exact result sets from the seeds they own.
+ */
+describe("an erased contact is not the primary contact", () => {
+  const erasedOnlyDueOppId = "eeeeeeee-1111-1111-1111-111111111111";
+  const erasedPrimaryDueOppId = "eeeeeeee-2222-2222-2222-222222222222";
+  let erasedOnlyOrgId: string;
+  let erasedPrimaryOrgId: string;
+
+  beforeAll(async () => {
+    // One contact, erased. No primary contact is left, so this organisation
+    // has no follower count to show and belongs in Unknown — the band that
+    // already exists for a row with a blank follower cell.
+    const erasedOnly = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Erasure Test Only Contact Org"],
+    );
+    erasedOnlyOrgId = erasedOnly.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts
+         (organisation_id, name, is_primary, followers_count, email, erased_at)
+       VALUES ($1, $2, true, $3, $4, now())`,
+      [erasedOnlyOrgId, "[erased]", 15000, "erased-only@example.com"],
+    );
+
+    // The erased contact is flagged primary AND the older of the two, so it
+    // wins every clause of `primaryContactOrder`. Only the erasure predicate
+    // can hand the slot to the live contact — and it has to, or this row is
+    // filtered on someone who asked to be forgotten while the live contact's
+    // 500 followers and address are invisible to every filter.
+    const erasedPrimary = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Erasure Test Live Secondary Org"],
+    );
+    erasedPrimaryOrgId = erasedPrimary.rows[0].id;
+    await db.query(
+      `INSERT INTO crm_contacts
+         (organisation_id, name, is_primary, followers_count, email, created_at, erased_at)
+       VALUES ($1, $2, true, $3, $4, $5::timestamptz, now())`,
+      [
+        erasedPrimaryOrgId,
+        "[erased]",
+        50000,
+        "erased-primary@example.com",
+        daysAgo(30),
+      ],
+    );
+    await db.query(
+      `INSERT INTO crm_contacts
+         (organisation_id, name, is_primary, followers_count, email, created_at)
+       VALUES ($1, $2, false, $3, $4, $5::timestamptz)`,
+      [
+        erasedPrimaryOrgId,
+        "Live Colleague",
+        500,
+        "live@example.com",
+        daysAgo(1),
+      ],
+    );
+
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, next_action_at, created_at)
+       VALUES
+         ($1, $3, 'new', 'erasure-fixture', $5::timestamptz, $6::timestamptz),
+         ($2, $4, 'new', 'erasure-fixture', $5::timestamptz, $6::timestamptz)`,
+      [
+        erasedOnlyDueOppId,
+        erasedPrimaryDueOppId,
+        erasedOnlyOrgId,
+        erasedPrimaryOrgId,
+        daysAgo(1),
+        daysAgo(60),
+      ],
+    );
+  });
+
+  it("keeps an erased contact's follower count out of every band, in the queue", async () => {
+    // 15000 and 50000 are both 10k+; neither may put its organisation there.
+    const over10k = (await dueOpportunities({ followers: "over10k" }, 100)).rows.map((r) => r.id);
+    expect(over10k).not.toContain(erasedOnlyDueOppId);
+    expect(over10k).not.toContain(erasedPrimaryDueOppId);
+  });
+
+  it("puts an organisation whose only contact is erased in the unknown band", async () => {
+    const unknown = (await dueOpportunities({ followers: UNKNOWN_FOLLOWERS }, 100)).rows.map(
+      (r) => r.id,
+    );
+    expect(unknown).toContain(erasedOnlyDueOppId);
+    // The one with a live contact has a count to show, so it is NOT unknown —
+    // "no primary contact" and "a primary contact with no number" stay
+    // distinct outcomes.
+    expect(unknown).not.toContain(erasedPrimaryDueOppId);
+  });
+
+  it("selects the live contact as primary when the erased one is flagged and older", async () => {
+    const under1k = (await dueOpportunities({ followers: "under1k" }, 100)).rows.map((r) => r.id);
+    expect(under1k).toContain(erasedPrimaryDueOppId);
+    expect(under1k).not.toContain(erasedOnlyDueOppId);
+  });
+
+  it("applies the same selection to the browse surface's follower filter", async () => {
+    const scope = { search: "Erasure Test" } as const;
+    const under1k = (await listOrganisations({ ...scope, followers: "under1k" }, 100)).rows;
+    const over10k = (await listOrganisations({ ...scope, followers: "over10k" }, 100)).rows;
+    const unknown = (
+      await listOrganisations({ ...scope, followers: UNKNOWN_FOLLOWERS }, 100)
+    ).rows;
+    expect(under1k.map((r) => r.id)).toEqual([erasedPrimaryOrgId]);
+    expect(over10k.map((r) => r.id)).toEqual([]);
+    expect(unknown.map((r) => r.id)).toEqual([erasedOnlyOrgId]);
+  });
+
+  it("displays the live contact, and blanks the row whose only contact is erased", async () => {
+    // The filters above and these columns must resolve the SAME contact —
+    // that is the invariant `primaryContactOrder` exists for, and a filter
+    // that skipped erased contacts while the columns did not would have
+    // reinstated it in a new place.
+    const rows = (await listOrganisations({ search: "Erasure Test" }, 100)).rows;
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(erasedPrimaryOrgId)?.contactName).toBe("Live Colleague");
+    expect(byId.get(erasedPrimaryOrgId)?.contactEmail).toBe("live@example.com");
+    expect(byId.get(erasedOnlyOrgId)?.contactName).toBeNull();
+    expect(byId.get(erasedOnlyOrgId)?.contactEmail).toBeNull();
+    // Still counted: the count says how many contacts the file holds, not
+    // which of them the columns resolved to.
+    expect(byId.get(erasedOnlyOrgId)?.contactCount).toBe(1);
+    expect(byId.get(erasedPrimaryOrgId)?.contactCount).toBe(2);
+  });
+
+  it("does not match hasEmail through an erased contact's address", async () => {
+    const withEmail = (
+      await listOrganisations({ search: "Erasure Test", hasEmail: true }, 100)
+    ).rows.map((r) => r.id);
+    // The live contact's address matches; the erased-only organisation has
+    // nobody left to reach.
+    expect(withEmail).toEqual([erasedPrimaryOrgId]);
+  });
+
+  it("still lists the erased contact on the organisation's own detail page", async () => {
+    // "Primary for queue purposes" and "in the record" are different
+    // questions. The detail page answers the second: the contact is redacted
+    // there, not hidden, or the file loses a row its activity trail refers to.
+    const detail = await organisationDetail(erasedPrimaryOrgId);
+    expect(detail?.contacts.map((c) => c.name)).toEqual(["[erased]", "Live Colleague"]);
   });
 });

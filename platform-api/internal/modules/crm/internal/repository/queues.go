@@ -556,6 +556,21 @@ func followerClause(followers domain.Match, args *[]any) (string, error) {
 // share, so the "which contact is the primary" half cannot differ between
 // them. `existence` is EXISTS or NOT EXISTS; `test` is the extra predicate on
 // the chosen contact, empty for the unset branch.
+//
+// `c2.erased_at IS NULL` keeps an ERASED contact out of that selection (#301).
+// Erasure redacts a contact in place — the row survives, so the organisation
+// keeps its history — but `is_primary` survives the redaction too, so without
+// this predicate the erased row stays the contact every follower band resolves
+// to. An organisation whose primary contact exercised erasure was filtered on
+// a person who asked to be forgotten, and — where a LIVE second contact
+// existed — on the wrong person entirely: the live contact's follower count
+// was invisible while the erased row held the primary slot.
+//
+// An organisation whose ONLY contact is erased therefore has no primary
+// contact and lands in the unset band, which already exists to hold exactly
+// that shape of row. The console's `notErased` in `crm-repo.ts` carries the
+// same predicate: both implementations are live against the same schema and
+// must not disagree on a compliance-adjacent surface.
 func primaryContactExists(existence, test string) string {
 	return fmt.Sprintf(`%s (
             SELECT 1 FROM crm_contacts c
@@ -563,6 +578,7 @@ func primaryContactExists(existence, test string) string {
                AND c.id = (
                  SELECT c2.id FROM crm_contacts c2
                   WHERE c2.organisation_id = g.id
+                    AND c2.erased_at IS NULL
                   ORDER BY %s
                   LIMIT 1
                )

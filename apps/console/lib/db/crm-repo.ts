@@ -187,6 +187,7 @@ function primaryContactFollowerClause(
            AND c.id = (
              SELECT c2.id FROM crm_contacts c2
               WHERE c2.organisation_id = ${orgAlias}.id
+                AND ${notErased("c2")}
               ORDER BY ${primaryContactOrder("c2")}
               LIMIT 1
            )
@@ -220,6 +221,7 @@ function primaryContactFollowerUnknownClause(orgAlias: string): string {
            AND c.id = (
              SELECT c2.id FROM crm_contacts c2
               WHERE c2.organisation_id = ${orgAlias}.id
+                AND ${notErased("c2")}
               ORDER BY ${primaryContactOrder("c2")}
               LIMIT 1
            )
@@ -1196,6 +1198,44 @@ function primaryContactOrder(alias: string): string {
   return `${prefix}is_primary DESC, ${prefix}created_at ASC, ${prefix}id ASC`;
 }
 
+/**
+ * The predicate that keeps an ERASED contact out of primary-contact
+ * selection (#301).
+ *
+ * Erasure (`crm-erasure.ts`) redacts a contact in place — it does not delete
+ * the row, and deliberately so: the organisation keeps its history and its
+ * activity trail. But `is_primary` survives that redaction, so without this
+ * predicate the erased row stays the contact every queue and browse filter
+ * resolves to. An organisation whose primary contact exercised erasure was
+ * then filtered on a person who asked to be forgotten, and — where a LIVE
+ * second contact existed — on the wrong person entirely: the live contact's
+ * follower count and email were invisible to the filters while the erased
+ * row held the primary slot.
+ *
+ * Applied to every subquery that picks ONE contact to stand for the
+ * organisation — the two follower clauses, `hasEmail`, and the three display
+ * columns in `listOrganisations` — and to none that read the organisation's
+ * contacts as a record: `organisationDetail` still lists the erased contact,
+ * because "who is primary for queue purposes" and "what does this
+ * organisation's file contain" are different questions and only the first is
+ * about erasure. `contact_count` likewise still counts it.
+ *
+ * An organisation whose ONLY contact is erased therefore has no primary
+ * contact at all, and falls into the Unknown follower band — which already
+ * exists to hold exactly that shape of row (see
+ * `primaryContactFollowerUnknownClause`).
+ *
+ * `platform-api`'s `primaryContactExists` carries the same predicate; the two
+ * implementations are both live against the same schema and must not disagree
+ * on a compliance-adjacent surface.
+ *
+ * @param alias the table alias in the calling query, or "" when unaliased.
+ */
+function notErased(alias: string): string {
+  const prefix = alias === "" ? "" : `${alias}.`;
+  return `${prefix}erased_at IS NULL`;
+}
+
 /** `null` for "no such organisation" — the caller (the page) turns that into
  *  `notFound()`, the same contract `fetchTicketDetail` uses. */
 export async function organisationDetail(organisationId: string): Promise<OrganisationDetail | null> {
@@ -1229,6 +1269,12 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       instagram_handle: string | null;
       is_primary: boolean;
     }>(
+      // Erased contacts stay in this list, deliberately — see notErased().
+      // This orders the WHOLE contact list rather than picking one contact to
+      // stand for the organisation, and the detail page is the organisation's
+      // file: a contact who exercised erasure is redacted there ('[erased]',
+      // no identifiers), not hidden, or the record would silently lose a row
+      // the activity trail still refers to.
       `SELECT id, name, email, phone, instagram_handle, is_primary
          FROM crm_contacts
         WHERE organisation_id = $1
@@ -2291,6 +2337,12 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffPage> 
        FROM crm_opportunities o
        JOIN crm_organisations g ON g.id = o.organisation_id
        LEFT JOIN LATERAL (
+         -- No erased_at test, unlike the primary-contact subqueries this
+         -- ordering is otherwise shared with (see notErased()): erasure nulls
+         -- the email, so the IS NOT NULL test already excludes an erased
+         -- contact, and a second predicate here could only change this result
+         -- if erasure stopped nulling it — at which point the erasure path,
+         -- not this query, is the thing that broke.
          SELECT email FROM crm_contacts
           WHERE organisation_id = g.id AND email IS NOT NULL
           ORDER BY ${primaryContactOrder("")}
@@ -2662,6 +2714,7 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
            AND c.id = (
              SELECT c2.id FROM crm_contacts c2
               WHERE c2.organisation_id = g.id
+                AND ${notErased("c2")}
               ORDER BY ${primaryContactOrder("c2")}
               LIMIT 1
            )
@@ -2815,16 +2868,22 @@ export async function listOrganisations(
       `SELECT g.id, g.name, g.location, g.website_url, g.created_at,
               (SELECT c.name FROM crm_contacts c
                 WHERE c.organisation_id = g.id
+                  AND ${notErased("c")}
                 ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_name,
               (SELECT c.email FROM crm_contacts c
                 WHERE c.organisation_id = g.id
+                  AND ${notErased("c")}
                 ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_email,
               (SELECT c.instagram_handle FROM crm_contacts c
                 WHERE c.organisation_id = g.id
+                  AND ${notErased("c")}
                 ORDER BY ${primaryContactOrder("c")}
                 LIMIT 1) AS contact_handle,
+              -- Counts every contact, erased ones included: the count says how
+              -- many contacts the organisation's file holds, not which of them
+              -- the three columns above resolved to. See notErased().
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
               (SELECT count(*) FROM crm_opportunities o
