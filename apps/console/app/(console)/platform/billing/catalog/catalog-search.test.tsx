@@ -351,6 +351,7 @@ describe("a search never changes a count", () => {
       <CatalogSurface
         mode="test"
         observation={<p>Satisfied — 7/7 days clean, both pairs</p>}
+        divergence={<p>Test and live serve the same catalog</p>}
         browse={<p>the published catalog</p>}
         authoring={<AuthoringPanel {...authoringProps()} />}
         promoCodes={<p>the promo codes</p>}
@@ -380,6 +381,7 @@ describe("a search never changes a count", () => {
       <CatalogSurface
         mode="test"
         observation={<p>Satisfied — 7/7 days clean, both pairs</p>}
+        divergence={<p>Test and live serve the same catalog</p>}
         browse={<p>the published catalog</p>}
         authoring={<AuthoringPanel {...authoringProps()} />}
         promoCodes={<p>the promo codes</p>}

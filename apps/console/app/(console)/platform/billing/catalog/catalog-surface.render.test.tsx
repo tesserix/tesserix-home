@@ -45,6 +45,7 @@ function renderSurface(over: Partial<Parameters<typeof CatalogSurface>[0]> = {})
     <CatalogSurface
       mode="test"
       observation={<p>Satisfied — 7/7 days clean, both pairs</p>}
+      divergence={<p>Test and live serve the same catalog</p>}
       browse={<p>the published catalog</p>}
       authoring={<p>the authoring panel</p>}
       promoCodes={<p>the promo codes panel</p>}
@@ -90,6 +91,9 @@ describe("CatalogSurface — both panels are reachable, one at a time", () => {
     fireEvent.click(draftTab());
 
     expect(screen.getByText("Satisfied — 7/7 days clean, both pairs")).toBeInTheDocument();
+    // #527's line rides above the tabs for the same reason: whether test still
+    // evidences live is a fact about the catalog both tabs are about.
+    expect(screen.getByText("Test and live serve the same catalog")).toBeInTheDocument();
     const modes = screen.getByRole("tablist", { name: "Stripe mode" });
     expect(within(modes).getByRole("tab", { name: "test" })).toHaveAttribute(
       "aria-selected",

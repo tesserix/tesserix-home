@@ -18,10 +18,12 @@ import {
   readCatalogRows,
   readLatestRuns,
   readLivePublication,
+  readModeDivergence,
   readRevisionRows,
   readWindowStatus,
   type CatalogRow,
   type LivePublication,
+  type ModeDivergence,
   type PairLatestRun,
   type ParityWindowStatus,
 } from "@/lib/db/plan-catalog-repo";
@@ -70,6 +72,7 @@ import { PromoCodesPanel } from "./promo-codes-panel";
 import type { PromoCodeView } from "./promo-codes-panel";
 import { listPromoCodes, readStripeCoupons } from "@/lib/db/promo-codes-repo";
 import { ObservationStrip } from "./observation-strip";
+import { ModeDivergenceLine } from "./mode-divergence-line";
 // Type-only, deliberately: `publish-outcome.tsx` carries a load-bearing
 // `"use client"`, and these two are the display shapes this page maps its
 // server-side rows INTO — never a value this server component calls.
@@ -133,12 +136,22 @@ import type {
  *   exactly why it is isolated: a Stripe outage must degrade to "the orphan
  *   check is unavailable" and touch nothing else on the page.
  *
+ * The heading's "seven" is the count that section was written at, and it is
+ * no longer the count: #521's `readPromoCodes` made it eight and #527's
+ * `readDivergence` makes it NINE. The last is the odd one out and worth
+ * naming — every other read here is scoped to the `?mode=` the operator is
+ * looking at, and that one is a question ABOUT both modes ("does test still
+ * serve what live serves?"), so it takes no mode and its answer does not move
+ * when the toggle does. It is still a sibling in the same array for the same
+ * reason as the rest: an operator whose catalog read failed must still learn
+ * whether test's parity evidence stands for live, and vice versa.
+ *
  * Two further reads sit OUTSIDE the `allSettled` array, because each depends
- * on one of the seven having named an id first: `readDraftRows` (on
+ * on one of the nine having named an id first: `readDraftRows` (on
  * `readDraft`) and `readOperations` (on `readAttempt`). They are the same
  * shape as each other and settle independently in their own `try`/`catch`,
- * which is what makes the total NINE reads and nine narrowing functions —
- * seven siblings and two dependents — not seven.
+ * which is what makes the total ELEVEN reads and eleven narrowing
+ * functions — nine siblings and two dependents.
  *
  * # Reads tesserix-postgres directly, like `audit-log`, unlike `billing`
  *
@@ -199,6 +212,12 @@ export const OPERATIONS_SURFACE = "the publish attempt's operations";
  *  them. One surface name for both tables, because an operator loses the
  *  same thing whichever of the two failed — the tab has nothing to show. */
 export const PROMO_CODES_SURFACE = "promo codes";
+
+/** #527's read. Named for the COMPARISON rather than for either mode: what an
+ *  operator loses when it fails is the answer to "does test still evidence
+ *  live", and naming one mode would suggest that mode's catalog is the thing
+ *  that could not be read. */
+export const DIVERGENCE_SURFACE = "the test-vs-live catalog comparison";
 
 /** Query params this page reads. Matches `TenantSearchParams`'s shape —
  *  `string | string[] | undefined` is what Next actually hands a page. */
@@ -297,6 +316,9 @@ export function operationsReadError(caught: unknown): SurfaceError | null {
 export function promoCodesReadError(caught: unknown): SurfaceError | null {
   return dbReadError(caught, PROMO_CODES_SURFACE);
 }
+export function divergenceReadError(caught: unknown): SurfaceError | null {
+  return dbReadError(caught, DIVERGENCE_SURFACE);
+}
 
 /** Thrown by each guarded read below when the console has no database
  *  connection configured at all — distinct from a query that ran and failed,
@@ -362,6 +384,23 @@ async function readPromoCodes(): Promise<PromoCodeView[]> {
       })),
     })),
   );
+}
+
+/**
+ * #527's read: do `test` and `live` currently serve the same catalog?
+ *
+ * MODE-INDEPENDENT, and deliberately not passed `mode` — it is a question
+ * ABOUT both modes, so a `?mode=` switch must not change its answer. Same
+ * `SINGLE_SOURCE` assumption every other read on this page makes.
+ *
+ * `not_published` is an ordinary answer, never a failure: a mode with no
+ * current publication is the state `live` was in for most of this project's
+ * life. It is not `null`, and it is not an empty result — see
+ * `readModeDivergence` for why it must not be able to read as agreement.
+ */
+async function readDivergence(): Promise<ModeDivergence> {
+  if (!isDatabaseConfigured()) notConfigured();
+  return readModeDivergence(SINGLE_SOURCE);
 }
 
 async function readRuns(): Promise<PairLatestRun[]> {
@@ -547,6 +586,7 @@ export default async function PlanCatalog({
     attemptResult,
     orphansResult,
     promoCodesResult,
+    divergenceResult,
   ] = await Promise.allSettled([
     readWindow(),
     readCatalog(mode),
@@ -559,6 +599,10 @@ export default async function PlanCatalog({
     // reintroduce.
     readOrphans(mode),
     readPromoCodes(),
+    // Its own slot, like every other read here: a failed comparison must not
+    // blank the catalog table or the observation window, and neither of those
+    // failing may take this line down with them.
+    readDivergence(),
   ]);
 
   const window = windowResult.status === "fulfilled" ? windowResult.value : null;
@@ -583,6 +627,22 @@ export default async function PlanCatalog({
     // Genuinely can be empty: no promo code has been authored yet, which is
     // the state this surface ships in.
     rows: promoCodes,
+    filtered: false,
+  });
+
+  const divergence = divergenceResult.status === "fulfilled" ? divergenceResult.value : null;
+  const divergenceState: SurfaceState = resolveState({
+    isLoading: false,
+    error:
+      divergenceResult.status === "rejected"
+        ? divergenceReadError(divergenceResult.reason)
+        : null,
+    // `readModeDivergence` always resolves to an outcome — including
+    // `not_published`, which is an ANSWER and not an absence — so a fulfilled
+    // read is always one row and can only be `ready`. The `empty` branch is
+    // unreachable in practice and is written this way so the surface cannot
+    // start reporting "nothing here yet" if that ever changes.
+    rows: divergence ? [divergence] : [],
     filtered: false,
   });
 
@@ -779,6 +839,9 @@ export default async function PlanCatalog({
             runsState={runsState}
             windowDays={OBSERVATION_WINDOW_DAYS}
           />
+        }
+        divergence={
+          <ModeDivergenceLine divergence={divergence} divergenceState={divergenceState} />
         }
         draftRows={draftRows}
         catalog={catalog}

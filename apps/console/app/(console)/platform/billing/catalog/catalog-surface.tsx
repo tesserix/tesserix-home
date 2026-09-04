@@ -95,6 +95,17 @@ export interface CatalogSurfaceProps {
    *  reads. Above the tabs because the parity check's verdict is a fact about
    *  the whole page — both tabs are about the catalog it watches. */
   readonly observation: ReactNode;
+  /**
+   * The test-vs-live content comparison (#527), built by `page.tsx` from its
+   * own read.
+   *
+   * Its own section rather than a line inside `observation`: the observation
+   * window is a fact about ONE mode's catalog against Stripe, and this is a
+   * fact about the two modes against each other. Filing the second under the
+   * first's `aria-label` would announce it as part of a window it has nothing
+   * to do with.
+   */
+  readonly divergence: ReactNode;
   readonly browse: ReactNode;
   readonly authoring: ReactNode;
   /**
@@ -134,6 +145,7 @@ export interface CatalogSurfaceProps {
 export function CatalogSurface({
   mode,
   observation,
+  divergence,
   browse,
   authoring,
   promoCodes,
@@ -164,6 +176,13 @@ export function CatalogSurface({
           the fold. */}
       <section className="flex flex-col gap-3" aria-label="Observation window">
         {observation}
+      </section>
+
+      {/* Beside the observation window, above the tabs, for the same reason
+          the window is: whether test still evidences live is a fact about the
+          whole page, not about either tab. */}
+      <section className="flex flex-col gap-3" aria-label="Test and live catalog">
+        {divergence}
       </section>
 
       <div className="flex items-center justify-end">

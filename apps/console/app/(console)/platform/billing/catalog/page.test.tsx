@@ -40,6 +40,7 @@ const readCatalogRows = vi.fn();
 const readLatestRuns = vi.fn();
 const readLivePublication = vi.fn();
 const readRevisionRows = vi.fn();
+const readModeDivergence = vi.fn();
 
 vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/plan-catalog-repo")>()),
@@ -48,6 +49,7 @@ vi.mock("@/lib/db/plan-catalog-repo", async (importOriginal) => ({
   readLatestRuns: (...args: unknown[]) => readLatestRuns(...args),
   readLivePublication: (...args: unknown[]) => readLivePublication(...args),
   readRevisionRows: (...args: unknown[]) => readRevisionRows(...args),
+  readModeDivergence: (...args: unknown[]) => readModeDivergence(...args),
 }));
 
 const currentDraft = vi.fn();
@@ -115,6 +117,7 @@ vi.mock("./actions", async (importOriginal) => ({
 import PlanCatalog, {
   ATTEMPT_SURFACE,
   CATALOG_SURFACE,
+  DIVERGENCE_SURFACE,
   OPERATIONS_SURFACE,
   ORPHANS_SURFACE,
   PUBLICATION_SURFACE,
@@ -122,6 +125,7 @@ import PlanCatalog, {
   WINDOW_SURFACE,
   attemptReadError,
   catalogReadError,
+  divergenceReadError,
   operationsReadError,
   orphansReadError,
   publicationReadError,
@@ -187,6 +191,14 @@ describe("read errors — independent surfaces, independent narrowings", () => {
   it("names the publication's own surface in the migrations-pending copy", () => {
     const error = publicationReadError(undefinedTable());
     expect(error?.unavailable?.message).toBe(migrationsPendingMessage(PUBLICATION_SURFACE));
+  });
+
+  // #527's read. Named for the comparison rather than for a mode, because
+  // what an operator loses when it fails is the ANSWER to "does test still
+  // evidence live", not either mode's catalog.
+  it("names the test-vs-live comparison's own surface in the migrations-pending copy", () => {
+    const error = divergenceReadError(undefinedTable());
+    expect(error?.unavailable?.message).toBe(migrationsPendingMessage(DIVERGENCE_SURFACE));
   });
 
   it("leaves a genuine failure alone, rather than dressing it up as unmigrated", () => {
@@ -359,6 +371,13 @@ describe("the mounted authoring surface", () => {
     readCatalogRows.mockResolvedValue([PUBLISHED_ROW]);
     readLatestRuns.mockResolvedValue(RUNS);
     readLivePublication.mockResolvedValue(null);
+    // #527's read, and its ordinary answer in this estate: `live` has never
+    // been published, so there is nothing to compare — which is an ANSWER,
+    // not a failure and not agreement.
+    readModeDivergence.mockResolvedValue({
+      outcome: "not_published",
+      unpublishedModes: ["live"],
+    });
     // The ordinary state of both new reads: nobody has published this mode,
     // and Stripe holds no archived-but-active Price. Neither is a failure.
     latestPublishAttempt.mockResolvedValue(null);
@@ -601,6 +620,38 @@ describe("the mounted authoring surface", () => {
     // editor built on nothing, and never dressed up as "no draft yet".
     expect(screen.queryByRole("button", { name: /start a draft/i })).toBeNull();
     expect(screen.getByText(/something went wrong/i)).toBeInTheDocument();
+  });
+
+  it("renders the test-vs-live line, and never lets it read as agreement when live is unpublished", async () => {
+    // #527. The estate's ordinary state: `test` publishes and `live` does
+    // not, so there is nothing to compare — and this line has to say so
+    // WITHOUT saying the two agree. `setUpSuccessfulReads` seeds exactly that
+    // answer.
+    setUpSuccessfulReads();
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    expect(screen.getByRole("heading", { name: "Test and live catalog" })).toBeInTheDocument();
+    expect(screen.getByText("Not compared")).toBeInTheDocument();
+    expect(screen.getByText(/this is not agreement/i)).toBeInTheDocument();
+    expect(screen.queryByText(/serve the same catalog/i)).toBeNull();
+  });
+
+  it("narrows a failed test-vs-live read independently — the catalog table still renders", async () => {
+    setUpSuccessfulReads();
+    readModeDivergence.mockRejectedValue(new PlatformApiError("connection reset", 503));
+    signIn(["billing"]);
+
+    await renderCatalogPage();
+
+    // The comparison could not be read, so the page states neither verdict.
+    // Silently defaulting to either one is the whole failure #527 exists to
+    // prevent, and a failure here must not blank the catalog beside it.
+    expect(screen.queryByText("Not compared")).toBeNull();
+    expect(screen.queryByText(/serve the same catalog/i)).toBeNull();
+    expect(screen.getByRole("tablist", { name: "Plan catalog, by plan" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Observation window" })).toBeInTheDocument();
   });
 
   it("shows the live warning on the mounted surface, with the reason stated — never hidden", async () => {
