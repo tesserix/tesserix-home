@@ -140,22 +140,27 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 				[]auth.Capability{auth.CapSupport, auth.CapProductSupport}, h.log, handler))
 	}
 
-	// A reply is the one write a product may make, and the two principals earn
-	// it differently: an operator by holding the surface AND the verb, a
-	// machine by holding product-support alone.
+	// Writes stay OPERATOR-ONLY, replies included.
 	//
-	// The machine is NOT made to hold `respond`. That verb means "may answer
-	// merchants anywhere" — granting an estate-wide verb to obtain a
-	// product-scoped write is the exact over-grant #152 exists to avoid.
-	reply := func(handler http.HandlerFunc) http.Handler {
-		return auth.Authenticate(verifier, h.log, byPrincipal(
-			auth.RequireCapability(auth.CapProductSupport, h.log, handler),
-			auth.RequireCapability(auth.CapSupport, h.log,
-				auth.RequireCapability(auth.CapRespond, h.log, handler)),
-		))
-	}
-
-	// A transition on its own stays OPERATOR-ONLY, unchanged by #152. mark8ly
+	// A product machine deliberately does NOT reach the reply route yet, even
+	// though `product-support` is meant to carry that write, and the reason is
+	// authorship rather than authorisation.
+	//
+	// service.Reply records every reply as domain.AuthorOperator signed
+	// "Tesserix Support" (see Actor.displayName). That is correct while the
+	// only caller is the console — a merchant is talking to the platform and
+	// the platform is what the reply should say — and displayName's own
+	// comment records the assumption it rests on: "a merchant's own replies do
+	// not come through here". Admitting a machine BREAKS that assumption,
+	// because a product's machine relays a MERCHANT. apps/web's route writes
+	// author_type "merchant" with the merchant's own name and id
+	// (app/api/internal/platform-tickets/[id]/replies/route.ts).
+	//
+	// So opening this route without first giving a reply an author would file
+	// every merchant's words under the support team's name, on a thread that
+	// merchant reads. Refusing is the safe half of the change; the author
+	// contract is its own piece of work, and #152 step 2 cannot repoint
+	// mark8ly's replies until it lands., unchanged by #152. mark8ly
 	// cannot re-status a ticket through apps/web today and does not gain the
 	// ability by moving; a merchant-side reopen is decided by the server on
 	// reply, never asserted by the caller.
@@ -172,7 +177,7 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	mux.Handle("GET /v1/tickets", read(h.list))
 	mux.Handle("GET /v1/tickets/summary", read(h.summary))
 	mux.Handle("GET /v1/tickets/{id}", read(h.detail))
-	mux.Handle("POST /v1/tickets/{id}/replies", reply(h.reply))
+	mux.Handle("POST /v1/tickets/{id}/replies", write(h.reply))
 	mux.Handle("PATCH /v1/tickets/{id}", write(h.setStatus))
 }
 
@@ -580,22 +585,4 @@ func refusalMessage(err error) string {
 		return message[len(prefix):]
 	}
 	return message
-}
-
-// byPrincipal sends a request to the machine gate when the caller holds
-// product-support, and to the operator gate otherwise.
-//
-// A branch rather than a widened capability list, because the two paths are
-// genuinely different policies — one capability versus a surface AND a verb —
-// and RequireAnyCapability over all three would admit an operator holding
-// `support` without `respond`, quietly loosening the write gate that #261 put
-// there.
-func byPrincipal(machine, operator http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p, ok := auth.FromContext(r.Context()); ok && p.Has(auth.CapProductSupport) {
-			machine.ServeHTTP(w, r)
-			return
-		}
-		operator.ServeHTTP(w, r)
-	})
 }

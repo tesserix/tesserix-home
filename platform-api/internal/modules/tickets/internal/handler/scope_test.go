@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -144,48 +145,72 @@ func TestScopeForRefusesARequestThatWasNeverAuthenticated(t *testing.T) {
 	}
 }
 
-// byPrincipal decides WHICH gate a reply is measured against. Sending a
-// machine down the operator branch would demand `respond` of it; sending an
-// operator down the machine branch would drop the `respond` requirement #261
-// put there.
-func TestByPrincipalRoutesEachCallerToItsOwnGate(t *testing.T) {
-	mark := func(who string) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(who))
-		})
-	}
+// A machine must NOT reach the reply route yet.
+//
+// Not an authorisation gap — `product-support` is intended to carry this write
+// — but an AUTHORSHIP one: service.Reply records every reply as
+// domain.AuthorOperator signed "Tesserix Support", which is right for the
+// console and wrong for a product relaying a merchant. Admitting a machine
+// before a reply has an author would file a merchant's words under the support
+// team's name, on the thread that merchant reads.
+//
+// Pinned as a test rather than left to the route table because the fix is to
+// OPEN this route, and whoever opens it must change this test deliberately and
+// meet the author contract on the way past.
+func TestAMachineIsRefusedTheReplyRouteUntilARepliesHaveAnAuthor(t *testing.T) {
+	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
+		Subject:   machineSubj,
+		ClientID:  "some-machine-client",
+		Audience:  []string{testProject},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"product-support"},
+	}}, testProject)
 
-	for _, tc := range []struct {
-		name  string
-		roles []string
-		want  string
-	}{
-		{"a machine takes the machine gate", []string{"product-support"}, "machine"},
-		{"an operator takes the operator gate", []string{"read", "support"}, "operator"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			byPrincipal(mark("machine"), mark("operator")).
-				ServeHTTP(rec, requestAs(t, operatorSubj, tc.roles...))
+	mux := http.NewServeMux()
+	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
 
-			if rec.Body.String() != tc.want {
-				t.Errorf("routed to %q, want %q", rec.Body.String(), tc.want)
-			}
-		})
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/tickets/3f2a1c94-0000-4000-8000-000000000001/replies",
+		strings.NewReader(`{"content":"hello"}`))
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a product-support machine got %d on the reply route, want 403 — "+
+			"opening this route requires giving a reply an author first", rec.Code)
 	}
 }
 
-func TestByPrincipalSendsAnUnauthenticatedRequestToTheOperatorGate(t *testing.T) {
-	// Which then refuses it for having no principal. The machine branch must
-	// never be the fallback, because it is the one with the weaker check.
-	reached := ""
-	rec := httptest.NewRecorder()
-	byPrincipal(
-		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "machine" }),
-		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = "operator" }),
-	).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/tickets", nil))
+// The reads it IS allowed reach the handler, so the refusal above is about the
+// reply route specifically and not about machines being locked out generally.
+func TestAMachineIsAdmittedToTheReadRoutes(t *testing.T) {
+	verifier := auth.NewVerifier(stubParser{claims: &auth.Claims{
+		Subject:   machineSubj,
+		ClientID:  "some-machine-client",
+		Audience:  []string{testProject},
+		Issuer:    "https://auth.tesserix.app",
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+		Roles:     []string{"product-support"},
+	}}, testProject)
 
-	if reached != "operator" {
-		t.Errorf("an unauthenticated request reached the %q gate", reached)
+	mux := http.NewServeMux()
+	(&Handler{log: discardLog(), scope: registry(t, machineSubj, "mark8ly")}).Routes(mux, verifier)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/tickets", nil)
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+
+	// The capability gate is what is under test. It passes the request to a
+	// handler with no pool behind it, so anything other than 401/403 means the
+	// gate admitted the caller, which is the assertion.
+	func() {
+		defer func() { _ = recover() }()
+		mux.ServeHTTP(rec, req)
+	}()
+
+	if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+		t.Errorf("a product-support machine was refused a READ with %d", rec.Code)
 	}
 }
