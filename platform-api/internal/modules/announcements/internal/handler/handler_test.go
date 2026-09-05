@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,5 +124,90 @@ func TestAProductParameterIsRejectedRatherThanHonoured(t *testing.T) {
 	}
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("got %d, want 400 naming the unknown parameter", rec.Code)
+	}
+}
+
+// ---- the authoring gates ------------------------------------------------
+//
+// The reason #150 exists: apps/web's authoring API has NO capability check,
+// so the first operator granted a narrow role keeps the ability to broadcast
+// to every merchant. These are the assertions that stop that being true here.
+
+func send(t *testing.T, mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+tokenShaped)
+	rec := httptest.NewRecorder()
+	func() {
+		defer func() { _ = recover() }()
+		mux.ServeHTTP(rec, req)
+	}()
+	return rec
+}
+
+// The whole point: the SURFACE alone does not carry the irrevocable verb.
+func TestAnOperatorWithoutMassSendCannotAuthor(t *testing.T) {
+	mux := muxFor(t, mapped(t), "read", "platform", "support", "crm", "billing")
+
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/announcements/all", ""},
+		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
+		{http.MethodPatch, "/v1/announcements/3f2a1c94-0000-4000-8000-000000000001", `{"publish":true}`},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			if rec := send(t, mux, tc.method, tc.path, tc.body); rec.Code != http.StatusForbidden {
+				t.Errorf("got %d, want 403 — `platform` must not carry `mass-send`", rec.Code)
+			}
+		})
+	}
+}
+
+// And the verb alone does not open the surface either.
+func TestMassSendWithoutThePlatformSurfaceIsRefused(t *testing.T) {
+	mux := muxFor(t, mapped(t), "read", "mass-send")
+
+	if rec := send(t, mux, http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("got %d, want 403 — a verb layers on a surface rather than replacing it", rec.Code)
+	}
+}
+
+func TestAnOperatorHoldingBothReachesTheHandler(t *testing.T) {
+	mux := muxFor(t, mapped(t), "read", "platform", "mass-send")
+
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/announcements/all", ""},
+		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
+	} {
+		rec := send(t, mux, tc.method, tc.path, tc.body)
+		if rec.Code == http.StatusForbidden || rec.Code == http.StatusUnauthorized {
+			t.Errorf("%s %s refused an authorised operator with %d", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+// A product's machine must not reach the authoring surface. Its capability is
+// for READING what to display, and `read-announcements` deliberately carries
+// no authority to write.
+func TestAProductMachineCannotAuthor(t *testing.T) {
+	mux := muxFor(t, mapped(t), "read-announcements")
+
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/announcements/all", ""},
+		{http.MethodPost, "/v1/announcements", `{"title":"t","body":"b"}`},
+		{http.MethodPatch, "/v1/announcements/3f2a1c94-0000-4000-8000-000000000001", `{"publish":true}`},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			if rec := send(t, mux, tc.method, tc.path, tc.body); rec.Code != http.StatusForbidden {
+				t.Errorf("a product machine got %d on %s, want 403", rec.Code, tc.path)
+			}
+		})
+	}
+}
+
+// The product read is unchanged by all of the above — an operator holding the
+// authoring pair still does not hold the machine capability, and vice versa.
+func TestTheProductReadStillRequiresItsOwnCapability(t *testing.T) {
+	if rec := get(t, muxFor(t, mapped(t), "read", "platform", "mass-send"), "/v1/announcements"); rec.Code != http.StatusForbidden {
+		t.Errorf("an operator reached the product read with %d, want 403", rec.Code)
 	}
 }
