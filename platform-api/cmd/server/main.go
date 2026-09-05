@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/aiusage"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/announcements"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/audit"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/billing"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/conversions"
@@ -126,6 +127,11 @@ func run(log *slog.Logger) error {
 	// skips the guard.
 	httpx.RegisterModule(mux, verifier, "tickets", func(m *http.ServeMux) {
 		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope})
+	})
+	httpx.RegisterModule(mux, verifier, "announcements", func(m *http.ServeMux) {
+		announcements.Register(m, announcements.Config{
+			Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope,
+		})
 	})
 	httpx.RegisterModule(mux, verifier, "crm", func(m *http.ServeMux) {
 		crm.Register(m, crm.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
