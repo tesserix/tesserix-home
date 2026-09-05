@@ -471,6 +471,16 @@ export async function deleteOpportunity(
       // UNDERSTATES what it moved is worse than one with no count at all —
       // the same reasoning `deleteOrganisation` gives for counting from
       // `RETURNING` rather than from a separate SELECT.
+      //
+      // NOT EXERCISED BY ANY TEST, and it cannot be with the harness this
+      // repo has: the two suites that reach this function
+      // (`crm-opportunity-delete.integration.test.ts`,
+      // `crm-activities-opportunity-fk.integration.test.ts`) run on pglite,
+      // a single embedded session, so there is no second connection to race
+      // and nothing for the lock to block. Deleting this line was tried and
+      // left both suites — and `crm-erasure.integration.test.ts` with them —
+      // entirely green. Whoever removes it will get the same all-clear;
+      // review it against the reasoning above, not against a test run.
       `SELECT o.id, o.organisation_id, o.product, org.name AS organisation_name
          FROM crm_opportunities o
          JOIN crm_organisations org ON org.id = o.organisation_id

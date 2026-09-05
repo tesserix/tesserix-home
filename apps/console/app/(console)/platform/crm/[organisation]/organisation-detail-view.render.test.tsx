@@ -1,17 +1,19 @@
-import { render, screen } from "@testing-library/react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { ActivityRow } from "@/lib/db/crm-repo";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActivityRow, OpportunityRow } from "@/lib/db/crm-repo";
 
 /**
- * The activity timeline is capped at `ACTIVITY_LIMIT` rows. Before #249 the
- * cap was silent: an operator who scrolled to the bottom of a long history
- * saw exactly what they would have seen at the actual bottom, and read the
- * record as complete. These tests are about the one sentence that tells them
- * otherwise — and about it staying absent when the history really does end.
+ * The client half of the organisation detail tabs: what an operator is shown
+ * and what a click does, with every server action stubbed. Each `describe`
+ * below carries the reason its own suite exists.
  */
 
+// `refresh` is shared rather than per-render so a test can assert the view
+// asked for one. `vi.hoisted` because `vi.mock`'s factory is hoisted above
+// this file's other statements and would otherwise read it before it exists.
+const { refresh } = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ refresh, push: vi.fn() }),
 }));
 
 // Every action reachable from this tab, stubbed: `./actions` is a "use
@@ -23,6 +25,7 @@ vi.mock("./actions", () => ({
   changeStage: vi.fn(),
   createOpportunityAction: vi.fn(),
   deleteOrganisationAction: vi.fn(),
+  deleteOpportunityAction: vi.fn(),
   eraseContactAction: vi.fn(),
   scheduleNextAction: vi.fn(),
   addActivity: vi.fn(),
@@ -30,9 +33,11 @@ vi.mock("./actions", () => ({
   copyAndLogDm: vi.fn(),
 }));
 
-import { ActivityTab } from "./organisation-detail-view";
+import { deleteOpportunityAction } from "./actions";
+import { ActivityTab, OpportunitiesTab } from "./organisation-detail-view";
 
 const ORG_ID = "11111111-1111-4111-8111-111111111111";
+const OPPORTUNITY_ID = "22222222-2222-4222-8222-222222222222";
 
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -101,5 +106,112 @@ describe("ActivityTab", () => {
 
     expect(screen.getByText("No activity recorded yet.")).toBeInTheDocument();
     expect(screen.queryByText(/older activity is not shown/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The opportunity delete control (#251).
+ *
+ * A mis-clicked duplicate deal had no disposal at all before this; marking it
+ * `lost` was the only way to get rid of it, and that pollutes every close-rate
+ * number computed off the stage. These tests are about the two things that
+ * make the control safe to ship: it is not reachable by a session that cannot
+ * use it, and one click on it deletes nothing.
+ */
+describe("OpportunitiesTab delete control", () => {
+  const PRODUCTS = [{ context: "mark8ly", name: "Mark8ly" }] as const;
+
+  beforeEach(() => {
+    vi.mocked(deleteOpportunityAction).mockReset();
+    vi.mocked(deleteOpportunityAction).mockResolvedValue({ ok: true });
+    refresh.mockClear();
+  });
+
+  function opportunity(): OpportunityRow {
+    return {
+      id: OPPORTUNITY_ID,
+      product: "mark8ly",
+      stage: "qualified",
+      owner: null,
+      nextActionAt: null,
+      nextActionNote: null,
+      lastContactedAt: null,
+      isStarred: false,
+      closedAt: null,
+      lostReason: null,
+      createdAt: "2026-08-01T09:00:00.000Z",
+    };
+  }
+
+  function renderTab(canHardDelete: boolean) {
+    render(
+      <OpportunitiesTab
+        organisationId={ORG_ID}
+        opportunities={[opportunity()]}
+        products={PRODUCTS}
+        canHardDelete={canHardDelete}
+      />,
+    );
+  }
+
+  const deleteControl = () => screen.getByRole("button", { name: /^delete deal/i });
+
+  it("is absent for a session without hard-delete", () => {
+    renderTab(false);
+
+    expect(screen.queryByRole("button", { name: /^delete deal/i })).not.toBeInTheDocument();
+  });
+
+  it("is present, and names the deal it would delete, for a session that holds it", () => {
+    renderTab(true);
+
+    // Named, not an icon: the accessible name has to say which deal, because
+    // an organisation's cards differ only by their product.
+    expect(deleteControl()).toHaveAccessibleName(/mark8ly/i);
+  });
+
+  // The whole point of the control being a dialog rather than a stage option.
+  it("deletes nothing on the first click", () => {
+    renderTab(true);
+
+    fireEvent.click(deleteControl());
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(deleteOpportunityAction).not.toHaveBeenCalled();
+  });
+
+  it("says what survives the delete", () => {
+    renderTab(true);
+    fireEvent.click(deleteControl());
+
+    const description = screen.getByRole("dialog").textContent ?? "";
+    expect(description).toMatch(/organisation/i);
+    expect(description).toMatch(/contacts/i);
+    expect(description).toMatch(/other deals/i);
+    expect(description).toMatch(/timeline/i);
+  });
+
+  it("deletes the opportunity the control belongs to, once confirmed", async () => {
+    renderTab(true);
+    fireEvent.click(deleteControl());
+    fireEvent.click(screen.getByRole("button", { name: /^delete deal$/i }));
+
+    await waitFor(() => expect(deleteOpportunityAction).toHaveBeenCalledWith(OPPORTUNITY_ID));
+    // Unconditional: the action revalidates nothing when the deal was already
+    // gone, so without this the card would survive its own delete.
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("tells the operator when the delete fails, and keeps the dialog open", async () => {
+    vi.mocked(deleteOpportunityAction).mockResolvedValue({
+      ok: false,
+      message: "You do not have permission to delete this.",
+    });
+    renderTab(true);
+    fireEvent.click(deleteControl());
+    fireEvent.click(screen.getByRole("button", { name: /^delete deal$/i }));
+
+    expect(await screen.findByText(/do not have permission/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
