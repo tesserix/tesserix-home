@@ -39,7 +39,7 @@ import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
  * `createPrice`, `addCurrencyOption`, `updatePriceTaxBehavior`,
  * `archivePrice` — plus `createCoupon`, the one operation tesserix-home#521
  * needs and the only one on this surface that is not a Product or a Price.
- * And no more, so an eighth cannot arrive quietly:
+ * And no more, so a ninth cannot arrive quietly:
  *
  *  - The `Stripe` instances below are PRIVATE to this module and are never
  *    returned, exported, or attached to anything that is. Handing one back
@@ -47,6 +47,33 @@ import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
  *  - Every method returns only the small shape its caller needs (`{ id }`),
  *    never the raw SDK object graph a caller could hold onto and write
  *    through.
+ *
+ * # The eighth method, and why it was admitted
+ *
+ * `deleteCoupon` (tesserix-home#581) is the eighth. The paragraph above used
+ * to end "so an EIGHTH cannot arrive quietly", and it now says ninth — the
+ * bar was raised rather than lowered, because this one was argued for and
+ * admitted, not slipped past. Three things are true of it that are true of
+ * nothing else proposed for this surface:
+ *
+ *  - It is the INVERSE of `createCoupon`, on the SAME object. It opens no new
+ *    area of the Stripe API: same resource, same ids, opposite verb.
+ *  - It returns `{ id }` like everything else here, so it widens what a
+ *    caller can HOLD by exactly nothing.
+ *  - The alternative was not "no delete". It was an operator deleting coupons
+ *    by hand in the Stripe dashboard, against a live billing account, with
+ *    nothing in the console's audit trail — which is the outcome the
+ *    discipline above exists to prevent, not an instance of it.
+ *
+ * The discipline stands unchanged for the ninth. The test file names all eight
+ * methods individually, so the next one fails a test before it fails a review.
+ *
+ * NOTE ON WHAT DELETING A COUPON DOES, because the name oversells it: per
+ * Stripe's own API reference, "deleting a coupon does not affect any customers
+ * who have already applied the coupon; it means that new customers can't
+ * redeem the coupon". Removing a discount already attached to a customer is
+ * `DELETE /v1/customers/:id/discount`, a customer-scoped call this console
+ * cannot make and this surface does not offer.
  *
  * # Amount conversion is the CALLER's job
  *
@@ -64,6 +91,10 @@ import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
  * Stripe request option. The console's idempotency keys are namespaced by
  * the caller (see Task B) — inventing one here would be a second, competing
  * source of the same key.
+ *
+ * `deleteCoupon` is the one method that takes no key, and it is not an
+ * oversight — Stripe's idempotency layer covers POST requests, and that call
+ * is a DELETE. See its doc on {@link StripeCatalogWriter}.
  */
 
 export const WRITE_KEY_ENV: Record<StripeMode, string> = {
@@ -100,7 +131,7 @@ function announcedMode(key: string): StripeMode | null {
 }
 
 // Module-private and NEVER returned. Returning it hands every caller the
-// full write API and makes the six-method surface decorative. Keyed on
+// full write API and makes the named surface above decorative. Keyed on
 // mode AND on the key's value — see `../stripe-read.ts`'s `clients` for why
 // a single slot is wrong: it would evict one mode's client on every call
 // that alternates modes.
@@ -148,7 +179,8 @@ export interface StripePriceRef {
   readonly id: string;
 }
 
-/** The shape `createCoupon` hands back — the `co_...` and nothing else. */
+/** The shape `createCoupon` and `deleteCoupon` hand back — the `co_...` and
+ *  nothing else. */
 export interface StripeCouponRef {
   readonly id: string;
 }
@@ -284,13 +316,14 @@ export interface CreatePriceSpec {
 }
 
 /**
- * The entire Stripe WRITE surface this estate has. Six methods: the three
+ * The entire Stripe WRITE surface this estate has. Eight methods: the three
  * matching mark8ly's own Go bootstrap (`billing/stripe/product.go`,
  * `billing/stripe/price.go`) one-for-one — `findProductByPlan`,
  * `createProduct`, `createPrice` — plus `addCurrencyOption`,
  * `updatePriceTaxBehavior`, and `archivePrice` — the three in-place and
- * archive operations the publish plan (design spec §4) needs. See the
- * module header before adding a seventh.
+ * archive operations the publish plan (design spec §4) needs — plus the
+ * coupon pair, `createCoupon` and `deleteCoupon`. See the module header
+ * before adding a ninth.
  */
 export interface StripeCatalogWriter {
   /**
@@ -468,6 +501,52 @@ export interface StripeCatalogWriter {
     spec: CreateCouponSpec,
     idempotencyKey: string,
   ): Promise<StripeCouponRef>;
+
+  /**
+   * Deletes the Coupon at `couponId`. The inverse of `createCoupon`, on the
+   * same object — see the module header for why this eighth method was
+   * admitted where others were not.
+   *
+   * # What it achieves, stated narrowly
+   *
+   * Per Stripe's API reference for `DELETE /v1/coupons/:id`: "deleting a
+   * coupon does not affect any customers who have already applied the coupon;
+   * it means that new customers can't redeem the coupon." So the state this
+   * reaches is *this coupon can never be redeemed again* — NOT *nobody is
+   * being discounted by it*. A caller whose user-facing copy says the second
+   * thing is saying something this method did not do. Detaching an applied
+   * discount is `DELETE /v1/customers/:id/discount`, which is customer-scoped
+   * and belongs to whoever holds the Stripe customer id; tesserix-home#581
+   * records that it is mark8ly's call to make, not this console's.
+   *
+   * # NO IDEMPOTENCY KEY, and that is deliberate
+   *
+   * Every other method here takes one and forwards it, so the omission would
+   * otherwise read as forgotten. Stripe's idempotency layer covers POST
+   * requests; this is a DELETE, and there is no request option to forward a
+   * key through. The safety a key would buy is bought instead by the
+   * already-deleted rule below: a repeat of this call reaches the same
+   * answer as the first.
+   *
+   * # AN ALREADY-DELETED COUPON IS SUCCESS
+   *
+   * Stripe raises `resource_missing` for a coupon that is not there, and this
+   * method resolves rather than rethrowing in that ONE case, returning the id
+   * it was given. The goal state holds either way, and the caller this
+   * matters to is tesserix-home#581's revoke path, which retires its own
+   * database row BEFORE calling here: reporting failure would strand a
+   * retired row behind a step that can never pass, on every subsequent retry,
+   * forever.
+   *
+   * The match is on Stripe's structured `code` field and nothing else. NOT on
+   * the error class — `resource_missing` is one of many codes carried by a
+   * `StripeInvalidRequestError`, so the class cannot tell them apart — and
+   * NOT on message text, which is English
+   * Stripe is free to reword. Every other failure propagates: an auth failure
+   * or a network error means the coupon may still be live, and a caller told
+   * "deleted" would have no way to learn otherwise.
+   */
+  deleteCoupon(mode: StripeMode, couponId: string): Promise<StripeCouponRef>;
 }
 
 /**
@@ -544,6 +623,33 @@ function checkedDiscount(discount: PromoCodeDiscount): PromoCodeDiscount {
   }
 
   return discount;
+}
+
+/**
+ * Is this the error Stripe raises for an object that is not there?
+ *
+ * Reads the `code` field the SDK puts on a `StripeError` — the one Stripe
+ * documents at https://docs.stripe.com/error-codes — and compares it to the
+ * single value `deleteCoupon` treats as an already-reached goal state. It
+ * asks nothing else of the error: not its class, not its `type`, not its
+ * message.
+ *
+ * STRUCTURAL, not `instanceof`. The check needs exactly one documented field,
+ * and reading it directly means the answer does not depend on the error
+ * having come from the same copy of the `stripe` package this module holds —
+ * a condition nothing here can verify, and one that fails silently rather
+ * than loudly when it stops being true.
+ *
+ * The narrowness is the point. Anything without this exact code is not the
+ * already-deleted case and must reach the caller: an expired key, a rate
+ * limit and a dropped socket all leave the coupon possibly live.
+ */
+function isResourceMissing(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "resource_missing"
+  );
 }
 
 export const stripeCatalogWriter: StripeCatalogWriter = {
@@ -699,5 +805,31 @@ export const stripeCatalogWriter: StripeCatalogWriter = {
       { idempotencyKey },
     );
     return { id: created.id };
+  },
+
+  async deleteCoupon(mode, couponId) {
+    // The client is resolved OUTSIDE the try, so a missing or contradictory
+    // write credential throws `StripeWriteUnavailableError` and is never
+    // reached by the `resource_missing` catch below. Wrapping it would let a
+    // configuration failure be read as a request failure — and this catch
+    // reports one specific request failure as SUCCESS.
+    const coupons = client(mode).coupons;
+
+    try {
+      // No second argument at all. `coupons.del` takes optional params and
+      // request options, and this call needs neither: there are no delete
+      // params, and an idempotency key has nowhere to go on a DELETE — see
+      // the interface doc.
+      const deleted = await coupons.del(couponId);
+      return { id: deleted.id };
+    } catch (error) {
+      // The ONE error this method absorbs. `resource_missing` here means the
+      // coupon is already gone, which is the state the call was asking for.
+      // The id comes from the argument because a raised error carries no
+      // response body to read one off; it is the same id the success path
+      // returns.
+      if (isResourceMissing(error)) return { id: couponId };
+      throw error;
+    }
   },
 };

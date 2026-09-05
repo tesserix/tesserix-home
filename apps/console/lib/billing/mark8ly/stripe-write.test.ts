@@ -12,8 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * client that leaks its `Stripe` instance, or accepts a key for the wrong
  * mode, does not read the wrong account — it WRITES to it.
  *
- *  - Exactly four methods, named individually, so a fifth cannot arrive
- *    quietly.
+ *  - Exactly eight methods, named individually, so a ninth cannot arrive
+ *    quietly. (This sentence read "four" until 2026-09-06, four methods after
+ *    that stopped being true. The count that matters is the one the first
+ *    test below asserts — it is the only copy that goes stale loudly.)
  *  - The `Stripe` instances are module-private and never returned.
  *  - A key whose prefix contradicts its mode is refused before any request —
  *    the read-side version of this mistake cost an hour on 2026-08-27 and
@@ -29,6 +31,7 @@ const stripeMock = vi.hoisted(() => {
   const productsList = vi.fn();
   const productsCreate = vi.fn();
   const couponsCreate = vi.fn();
+  const couponsDel = vi.fn();
   const constructedWith: Array<{ key: string; config: unknown }> = [];
   return {
     pricesCreate,
@@ -36,6 +39,7 @@ const stripeMock = vi.hoisted(() => {
     productsList,
     productsCreate,
     couponsCreate,
+    couponsDel,
     constructedWith,
   };
 });
@@ -44,7 +48,7 @@ vi.mock("stripe", () => ({
   default: class FakeStripe {
     readonly prices = { create: stripeMock.pricesCreate, update: stripeMock.pricesUpdate };
     readonly products = { list: stripeMock.productsList, create: stripeMock.productsCreate };
-    readonly coupons = { create: stripeMock.couponsCreate };
+    readonly coupons = { create: stripeMock.couponsCreate, del: stripeMock.couponsDel };
     constructor(key: string, config: unknown) {
       stripeMock.constructedWith.push({ key, config });
     }
@@ -90,13 +94,16 @@ beforeEach(() => {
   stripeMock.pricesUpdate.mockResolvedValue({ id: "price_updated" });
   stripeMock.productsList.mockReturnValue(productPagesOf());
   stripeMock.couponsCreate.mockResolvedValue({ id: "co_new" });
+  // What `coupons.del` actually resolves to: Stripe's `DeletedCoupon`, which
+  // is the id, the object type and `deleted: true` — not the Coupon.
+  stripeMock.couponsDel.mockResolvedValue({ id: "co_new", object: "coupon", deleted: true });
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it("exposes exactly seven methods, named individually so this fails on the next change", () => {
+it("exposes exactly eight methods, named individually so this fails on the next change", () => {
   // Named individually, not counted, so this fails on the NEXT method added
   // rather than merely on a count changing — see the module header.
   // `updatePriceCurrencyOptions` is deliberately absent: §1.6a proved an
@@ -107,6 +114,7 @@ it("exposes exactly seven methods, named individually so this fails on the next 
     "createCoupon",
     "createPrice",
     "createProduct",
+    "deleteCoupon",
     "findProductByPlan",
     "updatePriceTaxBehavior",
   ]);
@@ -644,6 +652,118 @@ describe("createCoupon passes through what it is given, and nothing it was not",
     expect(await createCoupon({ discount: percentOff })).toEqual({ id: "co_abc" });
   });
 });
+/* ------------------------------------------------------------------------ *
+ * deleteCoupon
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A Stripe API error as the SDK hands it to a caller: an `Error` carrying the
+ * structured `code` field Stripe documents. `deleteCoupon` discriminates on
+ * that field and on nothing else — not on the class (every
+ * `invalid_request_error` shares one) and not on the message text.
+ */
+function stripeApiError(code: string | undefined, message: string): Error {
+  const error = new Error(message);
+  return Object.assign(error, { type: "StripeInvalidRequestError", code });
+}
+
+describe("deleteCoupon", () => {
+  it("deletes the coupon id it is given", async () => {
+    await stripeCatalogWriter.deleteCoupon("test", "co_abc");
+
+    expect(stripeMock.couponsDel).toHaveBeenCalledWith("co_abc");
+  });
+
+  it("sends NO idempotency key, because Stripe accepts one on POST only", async () => {
+    // Every other method on this surface takes one and forwards it. This is a
+    // DELETE, and Stripe's idempotency layer covers POST requests; sending
+    // one here would be a request option Stripe has no use for. Asserted
+    // rather than left implicit so a later "consistency" edit that adds one
+    // has to argue with a test.
+    await stripeCatalogWriter.deleteCoupon("test", "co_abc");
+
+    expect(stripeMock.couponsDel.mock.calls[0]).toEqual(["co_abc"]);
+  });
+
+  it("returns only the id, not the raw SDK object", async () => {
+    stripeMock.couponsDel.mockResolvedValue({
+      id: "co_abc",
+      object: "coupon",
+      deleted: true,
+    });
+
+    expect(await stripeCatalogWriter.deleteCoupon("test", "co_abc")).toEqual({ id: "co_abc" });
+  });
+
+  it("treats an ALREADY-DELETED coupon as success, not failure", async () => {
+    // Stripe raises `resource_missing` for a coupon that is not there. The
+    // goal state — this coupon can never be redeemed again — holds either
+    // way, and a caller that retires its own row first (the revoke path)
+    // would otherwise be stranded behind a step that can never pass.
+    stripeMock.couponsDel.mockRejectedValue(
+      stripeApiError("resource_missing", "No such coupon: 'co_gone'"),
+    );
+
+    expect(await stripeCatalogWriter.deleteCoupon("test", "co_gone")).toEqual({ id: "co_gone" });
+  });
+
+  it("returns the id it was GIVEN when the coupon was already deleted", async () => {
+    // There is no response body to read an id off in that case, so the id
+    // comes from the argument. It is the same id either way, which is what
+    // makes the two paths' return values interchangeable to a caller.
+    stripeMock.couponsDel.mockRejectedValue(
+      stripeApiError("resource_missing", "No such coupon: 'co_gone'"),
+    );
+
+    const deleted = await stripeCatalogWriter.deleteCoupon("live", "co_gone");
+
+    expect(deleted.id).toBe("co_gone");
+  });
+
+  it("propagates a Stripe error whose code is NOT resource_missing", async () => {
+    // The half that must not be swallowed. An auth failure means the console
+    // deleted nothing and does not know it; reporting success would let a
+    // caller retire a row against a coupon still live in the account.
+    stripeMock.couponsDel.mockRejectedValue(
+      stripeApiError("api_key_expired", "Expired API Key provided"),
+    );
+
+    await expect(stripeCatalogWriter.deleteCoupon("test", "co_abc")).rejects.toThrow(
+      /Expired API Key/,
+    );
+  });
+
+  it("propagates an error carrying no code at all", async () => {
+    // A network failure, or anything else that is not a structured Stripe API
+    // error. Nothing about it says the coupon is gone.
+    stripeMock.couponsDel.mockRejectedValue(new Error("socket hang up"));
+
+    await expect(stripeCatalogWriter.deleteCoupon("test", "co_abc")).rejects.toThrow(
+      /socket hang up/,
+    );
+  });
+
+  it("does not match on the message text of an error with a different code", async () => {
+    // The failure this guards against is a discriminator that greps English:
+    // a message mentioning "No such coupon" on an error Stripe did NOT code
+    // `resource_missing` is not the already-deleted case.
+    stripeMock.couponsDel.mockRejectedValue(
+      stripeApiError("rate_limit", "No such coupon: 'co_abc' (rate limited)"),
+    );
+
+    await expect(stripeCatalogWriter.deleteCoupon("test", "co_abc")).rejects.toThrow(/rate limited/);
+  });
+
+  it("fails with StripeWriteUnavailableError, before any delete, when the mode's key is absent", async () => {
+    vi.stubEnv("STRIPE_WRITE_KEY_TEST", "");
+
+    await expect(stripeCatalogWriter.deleteCoupon("test", "co_abc")).rejects.toThrow(
+      StripeWriteUnavailableError,
+    );
+    expect(stripeMock.couponsDel).not.toHaveBeenCalled();
+  });
+});
+
 // No per-mode key test here: `mode isolation` below already asserts it, and
 // the module's client cache is keyed on (mode, key) and outlives a single
 // test file's `beforeEach` — a second call that constructs the live client
