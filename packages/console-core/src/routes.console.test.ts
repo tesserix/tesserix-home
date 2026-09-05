@@ -454,10 +454,13 @@ describe("pending reflects what the console actually serves", () => {
     // mark8ly's own migration vocabulary — so it must stay pending. A change
     // that cleared `pending` across the whole mark8ly block would go red here.
     expect(isPending("mark8ly.migrationFastPath")).toBe(true);
-    // The second control, added with `mark8ly.emailTemplates` (#588): a
-    // declared id whose page needs two other repos first. Same reason as the
-    // fast path — no page, and no generic surface can serve it.
-    expect(isPending("mark8ly.emailTemplates")).toBe(true);
+    // `mark8ly.emailTemplates` was the second control here while its page was
+    // waiting on two other repos (#588). It is no longer one: the console
+    // serves `/mark8ly/email-templates` and its editor, so the claim `pending`
+    // makes — "the console does not serve this" — would now be false. It is
+    // asserted the other way round instead, beside the three generic surfaces
+    // below, so clearing the flag stays a decision rather than a reflex.
+    expect(isPending("mark8ly.emailTemplates")).toBe(false);
   });
 
   it("reports kora.audit as retired rather than pending", () => {

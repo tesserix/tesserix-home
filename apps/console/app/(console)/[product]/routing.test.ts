@@ -175,4 +175,30 @@ describe("the [product]/[entity] segment against Next's own route precedence", (
   it("does not match a three-segment path, being a two-segment route", () => {
     expect(resolve("/mark8ly/tenants/some-tenant-id")).toBeNull();
   });
+
+  // #588 put the first STATIC child under a dynamic product segment:
+  // `/mark8ly/email-templates` is a real page while `/mark8ly/tenants` is the
+  // generic entity index. That is the one arrangement neither block above had
+  // measured — `/kora/foods` is a static child of a STATIC parent — so it is
+  // measured here rather than assumed from Next's precedence rules.
+  it("keeps the email template list on its own page, not on the generic entity index", () => {
+    expect(resolve("/mark8ly/email-templates")?.page).toBe("/mark8ly/email-templates");
+  });
+
+  it("still sends the other mark8ly entity paths to the generic page", () => {
+    // The control for the row above: adding a static sibling must not have
+    // pulled `tenants` and `users` off the generic index.
+    expect(resolve("/mark8ly/tenants")?.page).toBe("/[product]/[entity]");
+    expect(resolve("/mark8ly/users")?.page).toBe("/[product]/[entity]");
+  });
+
+  it("resolves an editor path to the template detail page, colon and all", () => {
+    // The id is `<source>:<key>` because two registries can hold the same key.
+    // Next hands the segment over decoded, so the colon reaches `params.id`
+    // rather than being read as anything structural.
+    expect(resolve("/mark8ly/email-templates/mark8ly:orderdoc_invoice")).toEqual({
+      page: "/mark8ly/email-templates/[id]",
+      params: { id: "mark8ly:orderdoc_invoice" },
+    });
+  });
 });

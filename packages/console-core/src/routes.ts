@@ -414,29 +414,36 @@ export const ROUTES = {
   // authoring a template is not sending one, so the test-send ACTION must
   // assert `mass-send` itself rather than the whole editor being gated on it.
   //
-  // PENDING, AND NOT AS A FORMALITY. The id is declared ahead of the page for
-  // the security reason the block above `mark8ly.overview` states — an
-  // undeclared `/mark8ly/*` path falls back to the entry ticket every operator
-  // holds — but the page needs two other repos first: mark8ly must serve the
-  // templates on the platform admin contract, and platform-api needs an
-  // `emailtemplates` module to fan out to it. The flag comes off in the change
-  // that builds the page, not before.
+  // NO LONGER PENDING. The id was declared ahead of the page for the security
+  // reason the block above `mark8ly.overview` states — an undeclared
+  // `/mark8ly/*` path falls back to the entry ticket every operator holds —
+  // and the two upstream pieces it was waiting on have landed: mark8ly serves
+  // the registry on the platform admin contract, and platform-api's
+  // `emailtemplates` module fans out to it. The console serves the list at
+  // `/mark8ly/email-templates` and the editor at
+  // `/mark8ly/email-templates/<source>:<key>`, which `routeForPath` claims for
+  // this id by prefix, the way `/platform/tickets/<id>` is claimed by
+  // `platform.tickets`.
   //
-  // AND THE FIRST PAGE WILL BE HALF THE REGISTRY, which is why this comment
-  // says so rather than leaving the next reader to find it. mark8ly keeps
-  // templates in TWO services with mirrored tables, and federation reaches only
-  // one: `FEDERATION_MARK8LY_BASE_URL` points at marketplace-api-admin, so the
-  // auth mails — `password_reset`, `invitation`, `login_otp` — stay in apps/web
-  // until mark8ly's platform-api is federated as its own product (decided, and
-  // its own piece of work: that service has no HMAC middleware, no nonce store
-  // and no conformance declaration, and the four Go services share no module to
-  // borrow them from). Two editors therefore coexist for a while. That is the
-  // one thing this route's `web` path is still good for, and the reason it is
-  // recorded.
+  // AND THE PAGE IS HALF THE REGISTRY, which is why this comment says so
+  // rather than leaving the next reader to find it. mark8ly keeps templates in
+  // TWO services with mirrored tables, and federation reaches only one:
+  // `FEDERATION_MARK8LY_BASE_URL` points at marketplace-api-admin, so the auth
+  // mails — `password_reset`, `invitation`, `login_otp`, `welcome`,
+  // `email_verification`, `new_device_login` — stay in apps/web until mark8ly's
+  // platform-api is federated as its own product (mark8ly#720; that service has
+  // no HMAC middleware, no nonce store and no conformance declaration, and the
+  // four Go services share no module to borrow them from). Two editors
+  // therefore coexist for a while, and the console page SAYS SO on the page
+  // itself — an operator who searches for `password_reset`, finds nothing and
+  // concludes it does not exist has been misled by omission. That is the one
+  // thing this route's `web` path is still good for, and the reason it is
+  // recorded. Note `pending`'s own rule still binds renderers here: nothing
+  // links to the `web` path, because apps/web reaches these rows by the
+  // cross-DB write path this surface exists to stop using.
   "mark8ly.emailTemplates": {
     web: "/admin/apps/mark8ly/notifications/templates",
     console: "/mark8ly/email-templates",
-    pending: true,
     capability: "platform",
     product: "mark8ly",
   },

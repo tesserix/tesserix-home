@@ -136,15 +136,18 @@ describe("mark8lyNav", () => {
     expect(isPending("mark8ly.migrationFastPath")).toBe(true);
   });
 
-  it("shows the email template editor as pending too", () => {
-    // #588. The rail entry exists so mark8ly's IA is complete, but the surface
-    // needs mark8ly to serve the templates on the platform admin contract and
-    // platform-api to grow a module for them — and federation does not reach
-    // mark8ly's platform-api service at all today, which is an open design
-    // call rather than a task. Clearing this before the page exists points the
-    // rail and the palette at a 404, and would also invite a link to apps/web,
-    // whose cross-DB write path this surface exists to replace.
-    expect(isPending("mark8ly.emailTemplates")).toBe(true);
+  it("links the email template editor rather than showing it as pending", () => {
+    // #588, and the inverse of the assertion this replaces. The rail entry was
+    // a SOON badge while the surface waited on mark8ly to serve the templates
+    // on the platform admin contract and on platform-api to grow a module for
+    // them. Both landed, and the console serves `/mark8ly/email-templates`, so
+    // `pending` would now render a built surface inert behind a badge — the
+    // same failure the audit-log and generic-surface assertions guard.
+    //
+    // What has NOT changed is the ban on linking the `web` path: apps/web
+    // still serves the auth half of the registry over the cross-DB write path
+    // this surface exists to replace, and nothing renders a link there.
+    expect(isPending("mark8ly.emailTemplates")).toBe(false);
   });
 
   it("links the three generic surfaces rather than showing them as pending", () => {
