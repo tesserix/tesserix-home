@@ -14,6 +14,11 @@ import {
   CalloutTitle,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -351,16 +356,32 @@ function AuthorForm({ form, setForm, replacing, codeRef, onCreated }: AuthorForm
 
         <div className="flex flex-col gap-1">
           <Label htmlFor="promo-discount-kind">Discount</Label>
-          <select
-            id="promo-discount-kind"
-            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          {/* The design system's `Select`, not a native `<select>`: a native
+           *  one renders an OS-drawn popup that ignores the console's theme,
+           *  which is what was rejected on the live page (#592). The same
+           *  reasoning `create-secret-form.tsx` records.
+           *
+           *  `id` on the trigger, and NO `aria-label`: the trigger is a
+           *  `<button>`, which is labelable, so `<Label htmlFor>` above is a
+           *  real association. An `aria-label` would OVERRIDE that visible
+           *  label rather than add to it.
+           *
+           *  "none" stays a sentinel rather than becoming `value=""` — Radix
+           *  forbids an empty `SelectItem` value, and this option is a real
+           *  choice (a trial-extension-only code), not an absent one. */}
+          <Select
             value={form.kind}
-            onChange={(event) => field("kind", event.target.value as DiscountKind)}
+            onValueChange={(next) => field("kind", next as DiscountKind)}
           >
-            <option value="none">No discount (trial extension only)</option>
-            <option value="percent_off">Percent off</option>
-            <option value="amount_off">Amount off</option>
-          </select>
+            <SelectTrigger id="promo-discount-kind">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No discount (trial extension only)</SelectItem>
+              <SelectItem value="percent_off">Percent off</SelectItem>
+              <SelectItem value="amount_off">Amount off</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {form.kind === "percent_off" ? (
@@ -399,18 +420,22 @@ function AuthorForm({ form, setForm, replacing, codeRef, onCreated }: AuthorForm
           <>
             <div className="flex flex-col gap-1">
               <Label htmlFor="promo-duration">Duration</Label>
-              <select
-                id="promo-duration"
-                className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+              {/* Design system `Select` — see the Discount picker above. */}
+              <Select
                 value={form.duration}
-                onChange={(event) =>
-                  field("duration", event.target.value as PromoCodeDiscount["duration"])
+                onValueChange={(next) =>
+                  field("duration", next as PromoCodeDiscount["duration"])
                 }
               >
-                <option value="once">once</option>
-                <option value="repeating">repeating</option>
-                <option value="forever">forever</option>
-              </select>
+                <SelectTrigger id="promo-duration">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="once">once</SelectItem>
+                  <SelectItem value="repeating">repeating</SelectItem>
+                  <SelectItem value="forever">forever</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {form.duration === "repeating" ? (
               <div className="flex flex-col gap-1">

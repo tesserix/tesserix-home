@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // `./promo-actions` reaches `promo-codes-repo.ts` and `stripe-write.ts` (both
 // `server-only`, one of them `stripe`) — mocked so this suite exercises the
@@ -71,8 +72,29 @@ function type(label: RegExp | string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
-function pick(label: RegExp | string, value: string) {
-  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+/** The visible option text for each wire value. The two pickers differ: a
+ *  duration's label IS its value, while a discount kind's is prose. Call sites
+ *  keep passing the wire value, because that is what the assertions are about. */
+const OPTION_LABEL: Record<string, string | RegExp> = {
+  none: /No discount/,
+  percent_off: "Percent off",
+  amount_off: "Amount off",
+  once: "once",
+  repeating: "repeating",
+  forever: "forever",
+};
+
+/**
+ * Drives the design system's `Select` — a Radix combobox, not a native
+ * `<select>`, so `fireEvent.change` has nothing to change (#592). Open the
+ * trigger, then click the option by its visible label, exactly as an operator
+ * does. Radix needs the Pointer Capture and `scrollIntoView` stubs in
+ * `vitest.setup.ts` to get this far.
+ */
+async function pick(label: RegExp | string, value: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByLabelText(label));
+  await user.click(await screen.findByRole("option", { name: OPTION_LABEL[value] ?? value }));
 }
 
 beforeEach(() => {
@@ -93,9 +115,9 @@ describe("authoring a definition", () => {
 
     type("Code", "launch50");
     type(/Trial extension/, "30");
-    pick("Discount", "percent_off");
+    await pick("Discount", "percent_off");
     type("Percent off", "50");
-    pick("Duration", "repeating");
+    await pick("Duration", "repeating");
     type("Months", "3");
     type(/Redemption cap/, "100");
 
@@ -125,7 +147,7 @@ describe("authoring a definition", () => {
     renderPanel();
 
     type("Code", "TENOFF");
-    pick("Discount", "amount_off");
+    await pick("Discount", "amount_off");
     type(/Amount off/, "1000");
     type("Currency", "usd");
 
@@ -179,13 +201,13 @@ describe("authoring a definition", () => {
  * ------------------------------------------------------------------------ */
 
 describe("the repeating-discount-meets-trial-extension warning", () => {
-  it("fires when a repeating discount meets a trial extension, with the arithmetic", () => {
+  it("fires when a repeating discount meets a trial extension, with the arithmetic", async () => {
     renderPanel();
 
     type(/Trial extension/, "30");
-    pick("Discount", "percent_off");
+    await pick("Discount", "percent_off");
     type("Percent off", "50");
-    pick("Duration", "repeating");
+    await pick("Duration", "repeating");
     type("Months", "3");
 
     const warning = screen.getByText(/Stripe starts a repeating discount at the first charge/);
@@ -194,26 +216,26 @@ describe("the repeating-discount-meets-trial-extension warning", () => {
     expect(warning).toHaveTextContent("30 days after the trial would otherwise have ended");
   });
 
-  it("does not fire for a repeating discount with no trial extension", () => {
+  it("does not fire for a repeating discount with no trial extension", async () => {
     renderPanel();
 
-    pick("Discount", "percent_off");
+    await pick("Discount", "percent_off");
     type("Percent off", "50");
-    pick("Duration", "repeating");
+    await pick("Duration", "repeating");
     type("Months", "3");
 
     expect(screen.queryByText(/Stripe starts a repeating discount/)).toBeNull();
   });
 
-  it("does not fire for a trial extension with a `once` or `forever` discount", () => {
+  it("does not fire for a trial extension with a `once` or `forever` discount", async () => {
     renderPanel();
 
     type(/Trial extension/, "30");
-    pick("Discount", "percent_off");
+    await pick("Discount", "percent_off");
     type("Percent off", "50");
     expect(screen.queryByText(/Stripe starts a repeating discount/)).toBeNull();
 
-    pick("Duration", "forever");
+    await pick("Duration", "forever");
     expect(screen.queryByText(/Stripe starts a repeating discount/)).toBeNull();
   });
 
@@ -230,9 +252,9 @@ describe("the repeating-discount-meets-trial-extension warning", () => {
 
     type("Code", "LATER");
     type(/Trial extension/, "30");
-    pick("Discount", "percent_off");
+    await pick("Discount", "percent_off");
     type("Percent off", "50");
-    pick("Duration", "repeating");
+    await pick("Duration", "repeating");
     type("Months", "3");
 
     await act(async () => {
