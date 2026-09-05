@@ -45,6 +45,7 @@ func TestAliasesAreTheSameValuesNotCopies(t *testing.T) {
 		// here now so the next one cannot.
 		{"CapReadPromoCatalog", auth.CapReadPromoCatalog, authcore.CapReadPromoCatalog},
 		{"CapProductSupport", auth.CapProductSupport, authcore.CapProductSupport},
+		{"CapReadAnnouncements", auth.CapReadAnnouncements, authcore.CapReadAnnouncements},
 	}
 	for _, p := range pairs {
 		if p.alias != p.src {
