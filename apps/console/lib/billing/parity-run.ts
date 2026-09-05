@@ -7,9 +7,14 @@
 import "server-only";
 
 import { compareCatalogToStripe } from "@/lib/billing/parity";
-import { policyFor, type CatalogSource } from "@/lib/billing/source-policy";
-import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
-import { readCatalogAmounts, readLivePublication, type ParityRun } from "@/lib/db/plan-catalog-repo";
+import { CATALOG_SOURCES, policyFor, type CatalogSource } from "@/lib/billing/source-policy";
+import { STRIPE_MODES, stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
+import {
+  readCatalogAmounts,
+  readLivePublication,
+  recordParityRun,
+  type ParityRun,
+} from "@/lib/db/plan-catalog-repo";
 
 // PER (MODE, SOURCE). `performParityCheck` takes both axes and neither has a
 // default, because a run that does not name the catalog it read cannot be
@@ -229,4 +234,110 @@ export async function performParityCheck(
       publicationId: null,
     };
   }
+}
+
+/**
+ * What one full run of every (mode, source) pair produced.
+ *
+ * `runs` holds only the pairs whose row was WRITTEN — a pair whose write threw
+ * has no evidence behind it and is reported through `unrecordable` instead, so
+ * a caller cannot mistake it for a pair that answered.
+ *
+ * The two flags are facts about the run, not a verdict on it: which alarm they
+ * raise belongs to the caller, because the two callers raise it differently.
+ * The route turns them into 500 / 502 / 200 and the CronJob's script into exit
+ * codes — the same split {@link performParityCheck} stops one step short of.
+ */
+export interface AllParityPairsResult {
+  readonly runs: readonly ParityRun[];
+  /** At least one pair's row could not be written. The one failure this design
+   *  cannot record, and the worse of the two: see {@link runAllParityPairs}. */
+  readonly unrecordable: boolean;
+  /** At least one RECORDED pair came back `failed` — a row exists saying the
+   *  check could not run. */
+  readonly checkFailed: boolean;
+}
+
+/**
+ * Run every (mode, source) pair, record one row each, and report what happened.
+ *
+ * # Why this is a module function and not a loop in each caller
+ *
+ * The same argument {@link performParityCheck} makes, one level up. Two
+ * callers run the whole cross product — the operator route
+ * (`app/api/internal/parity-check/route.ts`) and the catalog surface's audited
+ * re-run action — and the invariants below are the kind that are lost by
+ * being restated: a copy that returned early on the first failure would keep
+ * passing its own tests while writing fewer rows into the same 7-day window
+ * that P2 revokes mark8ly's Stripe write key on.
+ *
+ * # Every (mode, source) pair, and they are independent
+ *
+ * One call runs every pair of `STRIPE_MODES` x `CATALOG_SOURCES` and writes a
+ * row for each. Pairs and not modes since tesserix-home#392: a run recorded
+ * against one catalog says nothing about another, so a mode-keyed run would
+ * leave a second source's drift compared against nothing while the window
+ * still read as satisfied.
+ *
+ * A failure in one pair must not cost the others their rows: live has no
+ * restricted key provisioned yet, and a runner that gave up on the first error
+ * would silently stop test's window too — turning one absent secret into a
+ * hole in every day of it rather than in live's half.
+ *
+ * # Every failure path writes a `failed` row
+ *
+ * This is the one invariant worth stating above everything else. A check that
+ * silently does nothing when Stripe is unreachable leaves a DAY-SHAPED HOLE in
+ * the 7-day window, and a hole is indistinguishable from a clean day to
+ * anybody reading `plan_catalog_parity_runs` afterwards. #327 — and mark8ly
+ * #303/#304/#305 behind it — gate on that window. {@link performParityCheck}'s
+ * catch is what guarantees it; the only failure that does NOT produce a row is
+ * a database that cannot take one, which is what `unrecordable` reports.
+ *
+ * # The CronJob's script still owns its own loop
+ *
+ * `scripts/parity-check.ts` does not call this, and that is a deliberate limit
+ * rather than an oversight to fix later: its per-pair JSON log line is the only
+ * signal a 3am run produces, and one of those lines carries the CLASS AND
+ * SQLSTATE of a failed write (`describeWriteFailure`) — a thrown value that
+ * does not survive this function's return. Giving it back would mean either
+ * leaking a `pg` message the route deliberately refuses to return, or a
+ * callback parameter no other caller wants. Both callers of this function are
+ * HTTP-shaped and answer with a status code; the script is not, and the
+ * decision that actually matters — the four outcomes — is already shared
+ * through {@link performParityCheck}.
+ */
+export async function runAllParityPairs(): Promise<AllParityPairsResult> {
+  const runs: ParityRun[] = [];
+  // Accumulated rather than returned early. Returning on the first problem is
+  // the bug this shape exists to prevent: it would cost every LATER pair its
+  // row, and a missing row reads as a clean day to whoever looks next week.
+  let unrecordable = false;
+  let checkFailed = false;
+
+  // Nested rather than a precomputed list of pairs: two loops over the two
+  // constant arrays is the whole cross product, and it keeps the order fixed
+  // as mode-major (test's sources, then live's) for every caller's log lines
+  // and response body alike.
+  for (const mode of STRIPE_MODES) {
+    for (const source of CATALOG_SOURCES) {
+      // Never throws — every failure comes back as a `failed` run to record.
+      const run = await performParityCheck(mode, source);
+
+      try {
+        await recordParityRun(run);
+      } catch {
+        // The one failure this design cannot record: with the database
+        // unreachable there is nowhere to put the evidence. Noted and carried
+        // on with, so the remaining pairs still get their rows.
+        unrecordable = true;
+        continue;
+      }
+
+      if (run.outcome === "failed") checkFailed = true;
+      runs.push(run);
+    }
+  }
+
+  return { runs, unrecordable, checkFailed };
 }

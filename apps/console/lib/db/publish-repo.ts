@@ -815,8 +815,11 @@ export async function operationsForAttempt(attemptId: string): Promise<PublishOp
 /**
  * Retire whatever is currently live for `mode` and promote `revisionId` in
  * its place — the write `executePublish` deliberately does not make, and
- * which its caller (not yet wired; a later task) MUST make in the same
- * transaction-shaped step immediately after a `"succeeded"` outcome.
+ * which its caller makes in the same transaction-shaped step immediately
+ * after a `"succeeded"` outcome. That caller is `publishAction`
+ * (`app/(console)/platform/billing/catalog/actions.ts`), which gates this on
+ * `"succeeded"` and on nothing weaker: see its header for why a partial
+ * success must leave the catalog pointing at the previous revision.
  *
  * # One transaction, retire-then-insert, exactly 0035's own prescription
  *

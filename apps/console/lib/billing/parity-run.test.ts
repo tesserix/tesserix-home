@@ -10,16 +10,26 @@ vi.mock("@/lib/billing/stripe-read", async (importOriginal) => ({
   stripePriceReader: { listPrices: vi.fn(async () => []) },
 }));
 
-import { stripePriceReader, StripeReadUnavailableError } from "@/lib/billing/stripe-read";
-import { readCatalogAmounts, readLivePublication } from "@/lib/db/plan-catalog-repo";
+import {
+  stripePriceReader,
+  StripeReadUnavailableError,
+  STRIPE_MODES,
+  type StripeMode,
+} from "@/lib/billing/stripe-read";
+import { readCatalogAmounts, readLivePublication, recordParityRun } from "@/lib/db/plan-catalog-repo";
 import * as parityModule from "@/lib/billing/parity";
 // The source axis every call below names explicitly. `performParityCheck` has
 // no default for it (tesserix-home#392), so there is no shorter way to write
 // these calls — which is the point: a run that does not name its catalog
 // cannot be filed against one.
-import { CATALOG_SOURCES, SINGLE_SOURCE } from "@/lib/billing/source-policy";
+import { CATALOG_SOURCES, SINGLE_SOURCE, type CatalogSource } from "@/lib/billing/source-policy";
 import type { CatalogAmount, StripePriceLike } from "@/lib/billing/parity";
-import { MAX_ERROR_LENGTH, performParityCheck, sanitizeReason } from "./parity-run";
+import {
+  MAX_ERROR_LENGTH,
+  performParityCheck,
+  runAllParityPairs,
+  sanitizeReason,
+} from "./parity-run";
 
 // A fixture id, not a real publication — `readLivePublication` is mocked, so
 // nothing here has to be a valid uuid, only distinct enough to prove the id
@@ -439,5 +449,125 @@ describe("sanitizeReason", () => {
 
   it("describes a thrown non-Error rather than losing it", () => {
     expect(sanitizeReason({ nope: true })).toContain("Unknown error");
+  });
+});
+
+describe("runAllParityPairs", () => {
+  /**
+   * The loop both HTTP-shaped callers share, and the three properties that are
+   * lost the moment somebody rewrites it.
+   *
+   * A row per pair, on every path: a check that silently does nothing leaves a
+   * DAY-SHAPED HOLE in the 7-day window, and a hole reads as a clean day to
+   * whoever opens `plan_catalog_parity_runs` next week — which is what #327
+   * and P2's Stripe write-key revocation rest on.
+   *
+   * One pair's failure costs no other pair its row: live has no restricted key
+   * provisioned yet, so an early return would turn one absent secret into a
+   * hole in EVERY day of the window rather than in live's half.
+   *
+   * And the two flags are the callers' only handle on which alarm to raise, so
+   * they have to be right in isolation and together.
+   */
+
+  /** How many rows one call must write. Derived, never the literal 2: the
+   *  point of tesserix-home#392 is that the runner covers the whole cross
+   *  product, and a hardcoded count would keep passing the day a second source
+   *  is added and not iterated. */
+  const PAIR_COUNT = STRIPE_MODES.length * CATALOG_SOURCES.length;
+
+  /** Every (mode, source) pair, mode-major — the order the loop fixes and the
+   *  order every caller's log lines and response body inherit. */
+  const EXPECTED_PAIRS: ReadonlyArray<{ mode: StripeMode; source: CatalogSource }> =
+    STRIPE_MODES.flatMap((mode) => CATALOG_SOURCES.map((source) => ({ mode, source })));
+
+  const recordedPairs = () =>
+    vi.mocked(recordParityRun).mock.calls.map(([run]) => ({ mode: run.mode, source: run.source }));
+
+  function failMode(failing: StripeMode, cause: Error) {
+    vi.mocked(stripePriceReader.listPrices).mockImplementation(async (mode) => {
+      if (mode === failing) throw cause;
+      return matching;
+    });
+  }
+
+  it("records one row for every pair, in mode-major order", async () => {
+    const result = await runAllParityPairs();
+
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(recordedPairs()).toEqual(EXPECTED_PAIRS);
+    expect(result.runs.map((run) => ({ mode: run.mode, source: run.source }))).toEqual(
+      EXPECTED_PAIRS,
+    );
+    expect(result).toMatchObject({ unrecordable: false, checkFailed: false });
+  });
+
+  it("does not return early when a pair fails — the later pairs still get rows", async () => {
+    // `test` is the FIRST mode iterated, so failing it is what an early return
+    // would swallow live's rows behind. That ordering is the whole point of
+    // the assertion: reversing it would let a broken loop still look right.
+    failMode("test", new Error("stripe down"));
+
+    const result = await runAllParityPairs();
+
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(recordedPairs()).toEqual(EXPECTED_PAIRS);
+    expect(result.checkFailed).toBe(true);
+    expect(result.unrecordable).toBe(false);
+    // The failed pair's row is evidence too, and the clean ones are still
+    // reported: a caller that hid them would send an operator looking for a
+    // fault in a pair that had just answered correctly.
+    expect(result.runs).toHaveLength(PAIR_COUNT);
+    expect(result.runs.filter((run) => run.outcome === "failed")).toHaveLength(
+      CATALOG_SOURCES.length,
+    );
+    expect(result.runs.some((run) => run.outcome === "clean")).toBe(true);
+  });
+
+  it("carries on past a row that cannot be written", async () => {
+    // The one failure this design cannot record. It must not also cost the
+    // REMAINING pairs their rows — that would turn one unreachable moment into
+    // a hole across the whole cross product.
+    vi.mocked(recordParityRun).mockRejectedValueOnce(new Error("db down"));
+
+    const result = await runAllParityPairs();
+
+    expect(recordParityRun).toHaveBeenCalledTimes(PAIR_COUNT);
+    expect(recordedPairs()).toEqual(EXPECTED_PAIRS);
+    expect(result.unrecordable).toBe(true);
+    // Only the pairs whose evidence actually landed come back. A pair reported
+    // as a result without a row behind it would let a caller answer 200 for a
+    // day the table has no record of.
+    expect(result.runs).toHaveLength(PAIR_COUNT - 1);
+    expect(result.runs.map((run) => ({ mode: run.mode, source: run.source }))).toEqual(
+      EXPECTED_PAIRS.slice(1),
+    );
+  });
+
+  it("sets both flags when one pair fails and another cannot be recorded", async () => {
+    // The two are independent facts about the same invocation, and the callers
+    // rank them (the route answers 500 over 502, the script exits 2 over 1).
+    // That ranking is only meaningful if both flags can be true at once.
+    failMode("live", new Error("stripe down"));
+    vi.mocked(recordParityRun).mockRejectedValueOnce(new Error("db down"));
+
+    const result = await runAllParityPairs();
+
+    expect(result.unrecordable).toBe(true);
+    expect(result.checkFailed).toBe(true);
+  });
+
+  it("names the pair on every row it writes", async () => {
+    // A row filed under the wrong mode makes #327's gate satisfiable by one
+    // mode answering twice; under the wrong source it does the same thing one
+    // axis over. Both axes travel with the run, on failures as much as on
+    // clean answers.
+    failMode("live", new Error("stripe down"));
+
+    await runAllParityPairs();
+
+    for (const [index, { mode, source }] of EXPECTED_PAIRS.entries()) {
+      expect(vi.mocked(recordParityRun).mock.calls[index][0]).toMatchObject({ mode, source });
+    }
   });
 });

@@ -5,7 +5,8 @@
 // carry this comment for, and the one PR #539 shipped without.
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useState, useTransition } from "react";
+import { Button } from "@tesserix/web";
 import {
   dayVerdict,
   ObservationWindow,
@@ -14,7 +15,15 @@ import {
   type SurfaceTone,
 } from "./catalog-views";
 import type { SurfaceState } from "@/components/kit/surface-state";
+// Type-only, deliberately: `plan-catalog-repo.ts` is `server-only` and one
+// import from `pg`, and a VALUE import of either shape from here would drag
+// that graph into the browser bundle — which `tsc` and `vitest` both pass and
+// only `next build` catches (`publish-view.tsx` carries the identical note).
+// The re-run ACTION below is the exception that is safe, and the reason
+// server actions are the right bridge: `"use server"` makes `./actions` a
+// reference the client calls, never a module it bundles.
 import type { PairLatestRun, ParityWindowStatus } from "@/lib/db/plan-catalog-repo";
+import { rerunParityCheckAction } from "./actions";
 
 /**
  * The observation window, collapsed to one line.
@@ -121,6 +130,94 @@ export function summarizeWindow(status: ParityWindowStatus, windowDays: number):
 }
 
 /* ------------------------------------------------------------------------ *
+ * The re-run control
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Run the parity check now.
+ *
+ * # Why it lives in the header row
+ *
+ * A red window is the state this control exists for, and the strip's header
+ * is the line an operator reads first — often the only line, since a
+ * satisfied window is collapsed. Putting the control inside the disclosure
+ * body would mean an operator whose window has gone red has to open a
+ * disclosure to find out they can do anything about it, which is the same
+ * class of defect as the reason being stored and never shown.
+ *
+ * # The outcome is announced, not implied
+ *
+ * A failed re-run that looks identical to a successful one leaves the
+ * operator with a red window and no idea whether they just learned anything.
+ * So the action's four outcomes each get their own sentence, and the two that
+ * mean "the check did not answer" are `role="alert"` rather than
+ * `role="status"` — the distinction `draft-editor.tsx` already draws between
+ * a warning and a save failure.
+ *
+ * The region is pointed at by the button's own `aria-describedby`, the same
+ * association `publish-view.tsx`'s typed-mode status carries: a screen-reader
+ * operator hears the result attached to the control they pressed rather than
+ * as a disconnected announcement somewhere on the page.
+ */
+function RerunControl() {
+  const [pending, startTransition] = useTransition();
+  const [status, setStatus] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
+  const statusId = useId();
+
+  const message = pending ? "Re-running the parity check…" : status?.message;
+  // Pending reads as a status, never an alert: a run in flight is progress,
+  // not a problem.
+  const tone = pending ? "ok" : status?.tone;
+
+  const run = () => {
+    // Cleared on press rather than left behind: the previous run's answer is
+    // not this run's, and a stale sentence beside a spinner is worse than no
+    // sentence.
+    setStatus(null);
+    startTransition(async () => {
+      const result = await rerunParityCheckAction();
+      setStatus(
+        result.ok
+          ? {
+              tone: "ok",
+              message: `Parity check re-run: ${result.pairs} ${
+                result.pairs === 1 ? "pair" : "pairs"
+              } checked.`,
+            }
+          : { tone: "error", message: result.message },
+      );
+    });
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={pending}
+        aria-describedby={statusId}
+        onClick={run}
+      >
+        Re-run parity check
+      </Button>
+      {/* Always mounted, and empty until there is something to say: a live
+          region added to the DOM at the same moment its text arrives is not
+          reliably announced. `role` switches with the outcome, which is what
+          decides whether a screen reader interrupts. */}
+      <span
+        id={statusId}
+        role={tone === "error" ? "alert" : "status"}
+        aria-live="polite"
+        className={`text-xs ${tone === "error" ? "text-destructive" : "text-muted-foreground"}`}
+      >
+        {message}
+      </span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------ *
  * The strip
  * ------------------------------------------------------------------------ */
 
@@ -190,7 +287,10 @@ export function ObservationStrip({
   if (summary === null) {
     return (
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium">Observation window</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-medium">Observation window</h2>
+          <RerunControl />
+        </div>
         {body}
       </div>
     );
@@ -226,6 +326,7 @@ export function ObservationStrip({
             {expanded ? "▾" : "▸"}
           </span>
         </button>
+        <RerunControl />
       </div>
       <div id={bodyId} hidden={!expanded}>
         {body}

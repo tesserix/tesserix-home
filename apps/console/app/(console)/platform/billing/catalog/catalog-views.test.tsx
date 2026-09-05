@@ -570,6 +570,71 @@ describe("CatalogViews", () => {
     expect(screen.getAllByText(/no parity check has run yet/i).length).toBeGreaterThan(0);
   });
 
+  it("shows a failed run's stored reason, not just that it failed", () => {
+    // The badge alone sends an operator to `psql` to find out what broke, on
+    // the surface #327's revocation is decided from. A `failed` run stores no
+    // differences, so this string is the whole of what that run has to say.
+    const reason = "Stripe request failed: connect ETIMEDOUT 3.33.240.13:443";
+    const runs: PairLatestRun[] = [
+      {
+        mode: "test",
+        source: SINGLE_SOURCE,
+        run: {
+          outcome: "failed",
+          ranAt: "2026-08-27T02:00:00Z",
+          differenceCount: 0,
+          differences: [],
+          error: reason,
+        },
+      },
+      { mode: "live", source: SINGLE_SOURCE, run: null },
+    ];
+
+    renderWindow({
+      runs,
+      runsState: resolveState({ isLoading: false, error: null, rows: runs, filtered: false }),
+    });
+
+    expect(screen.getByText(reason)).toBeInTheDocument();
+  });
+
+  it("renders no reason line for an outcome that is not `failed`", () => {
+    // 0033's `..._error_belongs_to_failed` CHECK makes `error` null on every
+    // non-failed row, so there is nothing to show — and a bare "Reason:" label
+    // with nothing after it would read as lost detail rather than as its
+    // absence.
+    const runs: PairLatestRun[] = [
+      {
+        mode: "test",
+        source: SINGLE_SOURCE,
+        run: {
+          outcome: "differences",
+          ranAt: "2026-08-27T02:00:00Z",
+          differenceCount: 1,
+          differences: [
+            {
+              kind: "amount_mismatch",
+              lookupKey: "mark8ly_pro_annual_developed_v1",
+              currency: "usd",
+              catalogUnitAmountMinor: 118_800,
+              stripeUnitAmountMinor: 118_900,
+              zeroDecimalSuspect: false,
+            } satisfies Difference,
+          ],
+          error: null,
+        },
+      },
+      { mode: "live", source: SINGLE_SOURCE, run: null },
+    ];
+
+    renderWindow({
+      runs,
+      runsState: resolveState({ isLoading: false, error: null, rows: runs, filtered: false }),
+    });
+
+    expect(screen.queryByText(/reason:/i)).not.toBeInTheDocument();
+  });
+
   it("renders an error without crashing", () => {
     renderViews({
       catalogState: resolveState({

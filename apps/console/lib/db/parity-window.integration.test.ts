@@ -401,6 +401,32 @@ describe("readLatestRuns", () => {
     );
   });
 
+  it("carries the stored failure reason, the only account a failed run ever gives", async () => {
+    // A `failed` run stores no differences — 0033 leaves `difference_count`
+    // unconstrained for it precisely because no comparison happened — so
+    // `error` is the ENTIRE evidence that run produced. Dropping it from the
+    // read leaves the console able to say only "something failed", on the
+    // surface that gates #327's write-key revocation.
+    const reason = "Stripe request failed: connect ETIMEDOUT 3.33.240.13:443";
+    await record("live", "failed", 0, { error: reason });
+
+    const runs = await readLatestRuns();
+
+    expect(runOf(runs, "live")?.error).toBe(reason);
+  });
+
+  it("reports a non-failed run's reason as null rather than omitting the field", async () => {
+    // 0033's `..._error_belongs_to_failed` CHECK ties `error IS NOT NULL` to
+    // `outcome = 'failed'` in BOTH directions, so `null` here is the stored
+    // value and not a missing column. Asserted so a mapping that dropped the
+    // field entirely (`undefined`) could not pass as "no reason".
+    await record("test", "clean", 0);
+
+    const run = runOf(await readLatestRuns(), "test");
+
+    expect(run?.error).toBeNull();
+  });
+
   it("carries the stored differences report, so a red day can be read without psql", async () => {
     await record("live", "differences", 0, { differenceCount: 2 });
 

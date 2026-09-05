@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+
+// `actions.ts` reaches `parity-run.ts` and `publish-repo.ts` — both
+// `server-only`, both one import from `pg` and `stripe` — through the re-run
+// action this strip now calls. Mocked for the same reason
+// `draft-editor.render.test.tsx` mocks it: this suite is the CLIENT half, and
+// a jsdom test has no business resolving a database driver. Unlike that
+// suite's mock, this one IS invoked — the re-run tests below press the
+// button.
+const rerunParityCheckAction = vi.fn();
+vi.mock("./actions", () => ({
+  rerunParityCheckAction: () => rerunParityCheckAction(),
+}));
 
 import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import { resolveState } from "@/components/kit/surface-state";
@@ -253,5 +265,131 @@ describe("ObservationStrip", () => {
 
     expect(screen.getByText("could not read the observation window")).toBeVisible();
     expect(screen.queryByRole("button", { name: /satisfied/i })).toBeNull();
+  });
+});
+
+/**
+ * The re-run control (#580 T3).
+ *
+ * The failure this exists to answer: a red window whose only recourse was to
+ * wait for the nightly CronJob. It sits in the HEADER row, beside the
+ * disclosure, deliberately — an operator whose window is red must be able to
+ * act on it without first hunting inside a collapsed body.
+ */
+describe("the re-run control", () => {
+  const rerun = () => screen.getByRole("button", { name: "Re-run parity check" });
+
+  beforeEach(() => {
+    rerunParityCheckAction.mockReset();
+    rerunParityCheckAction.mockResolvedValue({ ok: true, outcome: "answered", pairs: 2 });
+  });
+
+  it("renders beside the heading, not inside the disclosure body", () => {
+    renderStrip(SATISFIED);
+
+    // Visible while the window is COLLAPSED — the state most operators
+    // arrive in, and the one the body is hidden in.
+    expect(strip()).toHaveAttribute("aria-expanded", "false");
+    expect(rerun()).toBeVisible();
+    expect(rerun()).toBeEnabled();
+  });
+
+  it("renders even when there is no summary to disclose", () => {
+    // A window read that failed is a window an operator most wants to retry.
+    render(
+      <ObservationStrip
+        windowStatus={null}
+        windowState={resolveState({
+          isLoading: false,
+          error: { message: "could not read the observation window" },
+          rows: [],
+          filtered: false,
+        })}
+        runs={noRuns}
+        runsState={resolveState({ isLoading: false, error: null, rows: noRuns, filtered: false })}
+        windowDays={7}
+      />,
+    );
+
+    expect(rerun()).toBeVisible();
+  });
+
+  it("disables itself while the run is in flight, and says so", async () => {
+    // A parity run reads two Stripe accounts; without this an operator with
+    // no feedback presses it again and starts a second one.
+    let release: (value: unknown) => void = () => {};
+    rerunParityCheckAction.mockReturnValue(new Promise((resolve) => (release = resolve)));
+
+    renderStrip(SATISFIED);
+    fireEvent.click(rerun());
+
+    await waitFor(() => expect(rerun()).toBeDisabled());
+    expect(screen.getByRole("status")).toHaveTextContent(/Re-running/);
+
+    release({ ok: true, outcome: "answered", pairs: 2 });
+    await waitFor(() => expect(rerun()).toBeEnabled());
+  });
+
+  it("announces a run that answered", async () => {
+    renderStrip(SATISFIED);
+
+    fireEvent.click(rerun());
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("2 pairs checked"),
+    );
+  });
+
+  it("announces a run that did not answer, in its own words", async () => {
+    // The defect this whole issue is about, one layer up: a failed re-run
+    // that looks identical to a successful one.
+    rerunParityCheckAction.mockResolvedValue({
+      ok: false,
+      outcome: "check-failed",
+      pairs: 2,
+      failed: 1,
+      message: "The check could not complete for 1 of 2 pairs.",
+    });
+
+    renderStrip(WITH_A_DIRTY_DAY);
+
+    fireEvent.click(rerun());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The check could not complete for 1 of 2 pairs.",
+      ),
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("announces a refusal the operator can read", async () => {
+    rerunParityCheckAction.mockResolvedValue({
+      ok: false,
+      outcome: "not-run",
+      message: "You don't have permission to edit the plan catalog.",
+    });
+
+    renderStrip(SATISFIED);
+
+    fireEvent.click(rerun());
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/don't have permission/),
+    );
+  });
+
+  it("names its status region from the button, so a screen reader hears the outcome", async () => {
+    renderStrip(SATISFIED);
+    const describedBy = rerun().getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+
+    fireEvent.click(rerun());
+
+    await waitFor(() => {
+      const region = document.getElementById(describedBy as string);
+      expect(region).toHaveTextContent("2 pairs checked");
+      expect(region).toHaveAttribute("aria-live", "polite");
+    });
   });
 });
