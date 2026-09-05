@@ -1270,6 +1270,68 @@ describe("organisationDetail", () => {
     expect(sql).toContain("ORDER BY occurred_at DESC, id DESC");
   });
 
+  // #252 §A. The browse list ranks organisations on this number, but opening
+  // one dropped it: the detail page's contact query selected everything about
+  // a contact EXCEPT the figure the operator had just filtered on.
+  //
+  // A missing count is carried through as null rather than coalesced to 0.
+  // The two are different claims — 51 of the 259 production contacts have no
+  // recorded value, and `crm-filters.ts`'s `UNKNOWN_LABEL` documents why that
+  // band must not read as a measured zero.
+  it("selects each contact's followers_count, and carries an unrecorded one through as null", async () => {
+    query
+      .mockResolvedValueOnce([
+        {
+          id: "g1",
+          name: "Bondi Baker",
+          website_url: null,
+          location: null,
+          country: null,
+          category: [],
+          tags: [],
+          converted_product: null,
+          converted_label: null,
+          converted_at: null,
+          created_at: new Date("2026-01-01T00:00:00Z"),
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: "c1",
+          name: "Priya",
+          email: null,
+          phone: null,
+          instagram_handle: "@bondibaker",
+          is_primary: true,
+          followers_count: 12400,
+          source: null,
+          sourced_at: null,
+          lawful_basis: null,
+        },
+        {
+          id: "c2",
+          name: "Sam",
+          email: null,
+          phone: null,
+          instagram_handle: null,
+          is_primary: false,
+          followers_count: null,
+          source: null,
+          sourced_at: null,
+          lawful_basis: null,
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const detail = await organisationDetail("g1");
+
+    const [contactSql] = query.mock.calls[1];
+    expect(contactSql).toContain("followers_count");
+    expect(detail?.contacts[0].followersCount).toBe(12400);
+    expect(detail?.contacts[1].followersCount).toBeNull();
+  });
+
   it("scopes contacts, opportunities and activities to the organisation", async () => {
     query.mockResolvedValueOnce([
       {

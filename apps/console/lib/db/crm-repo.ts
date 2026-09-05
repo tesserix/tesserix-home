@@ -1300,6 +1300,18 @@ export interface ContactRow {
   instagramHandle: string | null;
   isPrimary: boolean;
   /**
+   * The scraped follower count (#252 §A) — the CRM's only quantitative
+   * qualification signal, and what the organisations browse list bands and
+   * sorts on.
+   *
+   * Nullable, and never coalesced to 0 on the way out: a null here means no
+   * count was ever collected for this contact, which is a different claim
+   * from a measured zero. `crm-filters.ts`'s `UNKNOWN_LABEL` carries the
+   * argument in full; the short version is that an operator reading
+   * "0 followers" would qualify a lead out on a number nobody recorded.
+   */
+  followersCount: number | null;
+  /**
    * Provenance (#248) — what we hold, when we got it, and why we may.
    *
    * Read here rather than left to a database query because the detail page
@@ -1477,6 +1489,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       phone: string | null;
       instagram_handle: string | null;
       is_primary: boolean;
+      followers_count: number | null;
       source: string | null;
       sourced_at: unknown;
       lawful_basis: string | null;
@@ -1488,7 +1501,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       // no identifiers), not hidden, or the record would silently lose a row
       // the activity trail still refers to.
       `SELECT id, name, email, phone, instagram_handle, is_primary,
-              source, sourced_at, lawful_basis
+              followers_count, source, sourced_at, lawful_basis
          FROM crm_contacts
         WHERE organisation_id = $1
         ORDER BY ${primaryContactOrder("")}`,
@@ -1563,6 +1576,7 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       phone: row.phone,
       instagramHandle: row.instagram_handle,
       isPrimary: row.is_primary,
+      followersCount: row.followers_count,
       source: row.source,
       sourcedAt: toIso(row.sourced_at),
       lawfulBasis: row.lawful_basis,

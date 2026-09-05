@@ -39,6 +39,7 @@ import {
   LawfulBasisHint,
   LawfulBasisSelect,
 } from "@/components/kit/lawful-basis-select";
+import { formatFollowers, followersTitle } from "../followers";
 import { ActivityComposer } from "./activity-composer";
 import { TemplateComposer } from "./template-composer";
 import { ErrorNote } from "./error-note";
@@ -1096,12 +1097,39 @@ function ContactRowItem({
             {contact.email ? <span>{contact.email}</span> : null}
             {contact.phone ? <span>{contact.phone}</span> : null}
             {contact.instagramHandle ? <span>{contact.instagramHandle}</span> : null}
+            <ContactFollowers count={contact.followersCount} />
           </div>
           <ContactProvenance contact={contact} />
         </>
       )}
     </li>
   );
+}
+
+/**
+ * The contact's follower count (#252 §A), abbreviated, on the same muted line
+ * as the email and handle.
+ *
+ * On this page because the browse list bands and sorts organisations on this
+ * number: an operator arrives here having filtered on it, and until now
+ * opening a row dropped the one figure they were selecting for. Beside the
+ * identifiers rather than in the provenance block below because it describes
+ * the contact's reach, not our lawful basis for holding their details.
+ *
+ * A count of null renders NOTHING — not a `0`, and not a placeholder — which
+ * is what the other entries on this line already do when absent. Those rows
+ * have no recorded value, and `crm-filters.ts`'s `UNKNOWN_LABEL` explains why
+ * that must not be shown as a measured zero: an operator would qualify a lead
+ * out on a number nobody collected. (The browse list shows an em-dash instead
+ * for the same absence, because a table cell has to occupy its column.)
+ *
+ * `formatFollowers` and `followersTitle` are shared with that list so the two
+ * surfaces cannot round the same contact differently.
+ */
+function ContactFollowers({ count }: { count: number | null }) {
+  if (count === null) return null;
+
+  return <span title={followersTitle(count)}>{formatFollowers(count)}</span>;
 }
 
 /**

@@ -65,7 +65,11 @@ const DETAIL_WITH_CONTACT = {
     createdAt: "2026-01-01T00:00:00.000Z",
   },
   contacts: [
-    { id: "contact-1", name: "Priya Raman", email: null, phone: null, instagramHandle: null, isPrimary: true },
+    // `followersCount` spelled out despite the `as unknown as` cast below:
+    // `ContactFollowers` distinguishes null from a measured 0, so a fixture
+    // that merely omitted the field would hand it `undefined` and render a
+    // count this contact does not have.
+    { id: "contact-1", name: "Priya Raman", email: null, phone: null, instagramHandle: null, isPrimary: true, followersCount: null },
   ],
   opportunities: [],
   activities: [],
