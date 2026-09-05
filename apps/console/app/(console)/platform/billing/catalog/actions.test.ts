@@ -38,6 +38,15 @@ vi.mock("@/lib/billing/orphans", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/billing/orphans")>()),
   findOrphans: vi.fn(),
 }));
+// The whole run loop, stood in for. Its own invariants — every pair gets a
+// row, one pair's failure costs no other pair its row — are `parity-run.ts`'s
+// to prove and `parity-run.test.ts` proves them; what this suite is about is
+// the three answers the action gives an operator for the three shapes that
+// function can return.
+vi.mock("@/lib/billing/parity-run", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/billing/parity-run")>()),
+  runAllParityPairs: vi.fn(),
+}));
 // Same discipline `crm/[organisation]/actions.test.ts` applies (Ruling 15):
 // `auditedOperation` itself is NOT mocked — only its two leaf dependencies
 // are, so a passing test here is evidence about the real audit control this
@@ -61,12 +70,15 @@ import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-r
 import { stripePriceReader } from "@/lib/billing/stripe-read";
 import { executePublish } from "@/lib/billing/publish-executor";
 import { findOrphans } from "@/lib/billing/orphans";
+import { runAllParityPairs, type AllParityPairsResult } from "@/lib/billing/parity-run";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
 import { MARK8LY_LOOKUP_KEY_PREFIX, type CatalogAmount, type StripePriceLike } from "@/lib/billing/parity";
+import { SINGLE_SOURCE } from "@/lib/billing/source-policy";
 import {
   discardDraftAction,
   planPublishAction,
   publishAction,
+  rerunParityCheckAction,
   setAmountAction,
   startDraftAction,
 } from "./actions";
@@ -716,5 +728,131 @@ describe("planPublishAction", () => {
     expect(stripePriceReader.listPrices).toHaveBeenCalledWith("live");
     expect(readCatalogAmounts).toHaveBeenCalledWith("live", expect.anything());
     expect(readRevisionAmounts).toHaveBeenCalledWith("draft-1", expect.anything());
+  });
+});
+
+/**
+ * The re-run control's server half (#580 T3).
+ *
+ * The operator affordance the route promised and nothing called. What these
+ * tests pin is the part a client `fetch` to that route would have thrown
+ * away: the capability gate, the audit row, and — the reason the action
+ * exists rather than an `ok`/`not ok` boolean — the three outcomes the route
+ * draws as 500 / 502 / 200, kept apart here too.
+ */
+describe("rerunParityCheckAction", () => {
+  function runs(...outcomes: readonly ("clean" | "failed")[]): AllParityPairsResult["runs"] {
+    return outcomes.map((outcome) => ({
+      mode: "test" as const,
+      source: SINGLE_SOURCE,
+      outcome,
+      differences: [],
+      error: outcome === "failed" ? "Error: stripe unreachable" : null,
+      publicationId: null,
+    }));
+  }
+
+  it("runs every pair, audits what the run produced, and revalidates the surface", async () => {
+    signIn(["billing"]);
+    vi.mocked(runAllParityPairs).mockResolvedValue({
+      runs: runs("clean", "clean"),
+      unrecordable: false,
+      checkFailed: false,
+    });
+
+    const result = await rerunParityCheckAction();
+
+    expect(result).toEqual({ ok: true, outcome: "answered", pairs: 2 });
+    expect(runAllParityPairs).toHaveBeenCalledTimes(1);
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.parity.rerun",
+      target: "all pairs",
+      summary: { pairs: 2, failed: 0, unrecordable: 0 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
+  });
+
+  it("refuses without billing, before the check is run, and audits the refusal", async () => {
+    signIn(undefined);
+
+    const result = await rerunParityCheckAction();
+
+    expect(result).toEqual({
+      ok: false,
+      outcome: "not-run",
+      message: NO_PERMISSION,
+    });
+    expect(runAllParityPairs).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+    expect(lastAuditInsert()).toEqual({
+      action: "capability.refused",
+      target: "all pairs",
+      summary: { billing: 1 },
+    });
+  });
+
+  it("refuses before anything runs when no database is configured — the stored row IS the deliverable", async () => {
+    vi.mocked(isDatabaseConfigured).mockReturnValue(false);
+    signIn(["billing"]);
+
+    const result = await rerunParityCheckAction();
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.outcome).toBe("unrecordable");
+    expect(runAllParityPairs).not.toHaveBeenCalled();
+    expect(getCurrentSession).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("reports a recorded pair that could not complete as its own outcome, not as a clean run", async () => {
+    // The route's 502: rows exist, so the surface must re-read to show the
+    // stored reason T1 now renders — but the check did not answer, and an
+    // operator told "done" would take a red window for a transient blip.
+    signIn(["billing"]);
+    vi.mocked(runAllParityPairs).mockResolvedValue({
+      runs: runs("clean", "failed"),
+      unrecordable: false,
+      checkFailed: true,
+    });
+
+    const result = await rerunParityCheckAction();
+
+    expect(result).toEqual({
+      ok: false,
+      outcome: "check-failed",
+      pairs: 2,
+      failed: 1,
+      message: expect.stringContaining("1 of 2"),
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.parity.rerun",
+      target: "all pairs",
+      summary: { pairs: 2, failed: 1, unrecordable: 0 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
+  });
+
+  it("reports an unwritten row as the worse outcome, outranking a failed pair", async () => {
+    // The route's 500, and its ordering: a `failed` row is evidence, a
+    // missing row is a gap that reads as agreement.
+    signIn(["billing"]);
+    vi.mocked(runAllParityPairs).mockResolvedValue({
+      runs: runs("failed"),
+      unrecordable: true,
+      checkFailed: true,
+    });
+
+    const result = await rerunParityCheckAction();
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.outcome).toBe("unrecordable");
+    expect(lastAuditInsert()).toEqual({
+      action: "billing.catalog.parity.rerun",
+      target: "all pairs",
+      summary: { pairs: 1, failed: 1, unrecordable: 1 },
+    });
+    // Rows for the pairs that DID record still landed, so the surface is
+    // stale until it re-reads.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/billing/catalog");
   });
 });

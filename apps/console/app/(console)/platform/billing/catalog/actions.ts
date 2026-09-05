@@ -28,6 +28,8 @@ import { checkGuards, type GuardRule, type GuardVerdict } from "@/lib/billing/pu
 import { executePublish, scopeObserved } from "@/lib/billing/publish-executor";
 import { findOrphans, type Orphan } from "@/lib/billing/orphans";
 import { stripePriceReader, type StripeMode } from "@/lib/billing/stripe-read";
+import { runAllParityPairs } from "@/lib/billing/parity-run";
+import { isDatabaseConfigured } from "@/lib/db/tesserix";
 
 /**
  * The catalog's write path, in two halves.
@@ -167,6 +169,11 @@ async function withDraftWrite<T>(
 
 const CATALOG_SURFACE_PATH = "/platform/billing/catalog";
 
+/** A re-run has no one subject: it checks every (mode, source) pair. Named
+ *  rather than left blank so the audit row — and the `capability.refused`
+ *  row a refusal writes — says what was attempted. */
+const RERUN_TARGET = "all pairs";
+
 /**
  * Start a new draft, copying `mode`'s currently published revision.
  * `createDraftFrom` refuses (loudly, via a thrown `Error` mapped to
@@ -243,6 +250,147 @@ export async function discardDraftAction(revisionId: string): Promise<DraftActio
   if (!result.ok) return result;
   revalidatePath(CATALOG_SURFACE_PATH);
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------------ *
+ * Re-running the parity check
+ * ------------------------------------------------------------------------ */
+
+/**
+ * What one operator-triggered parity run produced, in the three answers the
+ * operator has to be able to tell apart.
+ *
+ * The same distinction `app/api/internal/parity-check/route.ts` draws as
+ * 500 / 502 / 200, and for the same reason: "the rows could not be written",
+ * "the check could not run" and "the check ran and answered" are three
+ * different facts about the observation window #327 gates on, and flattening
+ * them to ok/not-ok would let a run that recorded nothing read like one that
+ * found nothing.
+ *
+ * `not-run` is the fourth, and it is about the CALLER rather than the check:
+ * the capability was refused, or the audit trail was unavailable, so nothing
+ * was attempted. Its `message` says which.
+ */
+export type ParityRerunResult =
+  | { readonly ok: true; readonly outcome: "answered"; readonly pairs: number }
+  | {
+      readonly ok: false;
+      readonly outcome: "check-failed";
+      readonly pairs: number;
+      readonly failed: number;
+      readonly message: string;
+    }
+  | { readonly ok: false; readonly outcome: "unrecordable"; readonly message: string }
+  | { readonly ok: false; readonly outcome: "not-run"; readonly message: string };
+
+/**
+ * Deliberately says nothing about the database itself. Same discipline
+ * {@link planPublishAction}'s failure message applies: a `pg` error names the
+ * role and echoes the host, and none of that text is an operator's to read.
+ */
+const RERUN_UNRECORDABLE_MESSAGE =
+  "That re-run could not be recorded, so it does not count as a run. Try again shortly.";
+
+/**
+ * Re-run the parity check for every (mode, source) pair, now, on an
+ * operator's say-so.
+ *
+ * # Why a server action and not a `fetch` to the route
+ *
+ * `POST /api/internal/parity-check` does this work and has done since P1a —
+ * and had no caller, because calling it from `observation-strip.tsx` would
+ * have been the only client `fetch` in this console AND would have skipped
+ * the audit trail every other write on this surface records. The route keeps
+ * its own life as the operator-session-guarded HTTP entry point; this is the
+ * console's, and both get the run itself from `runAllParityPairs` so there is
+ * one definition of what a run is (see that function's header).
+ *
+ * # The database check is here, ahead of the audited path
+ *
+ * `auditedOperation` refuses on its own when the database is not configured
+ * — {@link withDraftWrite}'s `AuditUnavailableError` branch — so this check
+ * is not what makes the action safe. What it is for is the ANSWER: that
+ * branch says "not saved", and the fact worth telling an operator here is
+ * that a run which cannot be recorded is not a run at all, which is exactly
+ * the `unrecordable` outcome the route answers 501 for. Without this, the
+ * one case where NOTHING could be written would be reported as the one case
+ * where the caller was at fault.
+ *
+ * # Every other refusal keeps `withDraftWrite`'s shape
+ *
+ * Gated on `billing` alone, the same capability the route's `authorize()`
+ * checks and for the same stated reason: this reads the estate's pricing and
+ * writes a record about it, which is the billing surface's business.
+ * `publish-catalog` is not checked — nothing here writes to Stripe;
+ * `stripe-read.ts` exposes one method and holds its `Stripe` instances
+ * privately.
+ */
+export async function rerunParityCheckAction(): Promise<ParityRerunResult> {
+  if (!isDatabaseConfigured()) {
+    return { ok: false, outcome: "unrecordable", message: RERUN_UNRECORDABLE_MESSAGE };
+  }
+
+  const result = await withDraftWrite(
+    RERUN_TARGET,
+    // `runAllParityPairs` never throws for a pair that failed or a row that
+    // could not be written — both come back as flags on the result, which is
+    // why the audit row below can describe a partial run rather than
+    // recording nothing about it.
+    () => runAllParityPairs(),
+    (run) => ({
+      action: "billing.catalog.parity.rerun",
+      // What the run PRODUCED, which is what an auditor asking "did the
+      // window move, and on what evidence" needs: how many pairs recorded a
+      // row, how many of those rows say the check could not run, and whether
+      // any pair's row is missing entirely.
+      summary: {
+        pairs: run.runs.length,
+        failed: run.runs.filter((pair) => pair.outcome === "failed").length,
+        unrecordable: run.unrecordable ? 1 : 0,
+      },
+      target: RERUN_TARGET,
+    }),
+  );
+
+  // A refusal, or an audit trail that was unavailable — either way the check
+  // never ran, so there is nothing new for the surface to re-read.
+  if (!result.ok) return { ok: false, outcome: "not-run", message: result.message };
+
+  const { runs, unrecordable } = result.value;
+  const failed = runs.filter((pair) => pair.outcome === "failed").length;
+
+  // The rows that DID land are what the surface renders — including a
+  // `failed` pair's stored reason, which is the whole point of pressing this
+  // — so it re-reads on every outcome that got this far, not only the clean
+  // one.
+  revalidatePath(CATALOG_SURFACE_PATH);
+
+  if (unrecordable) {
+    // Outranks `check-failed` below, the same ordering the route's 500 takes
+    // over its 502: a `failed` row is evidence, a missing row is a gap that
+    // reads as agreement, and the worse of the two is what the operator must
+    // be told.
+    return { ok: false, outcome: "unrecordable", message: RERUN_UNRECORDABLE_MESSAGE };
+  }
+
+  if (failed > 0) {
+    return {
+      ok: false,
+      outcome: "check-failed",
+      pairs: runs.length,
+      failed,
+      // Points at the reason rather than restating it: T1 put each failed
+      // pair's stored, redacted reason on this very surface, and it is
+      // longer and more specific than anything worth inlining here.
+      message: `The check could not complete for ${failed} of ${runs.length} pairs. Their reason is shown with the pair below.`,
+    };
+  }
+
+  // `differences` and `not_bootstrapped` land here alongside `clean`, exactly
+  // as the route answers 200 for all three: the check RAN and answered, and
+  // what it found is the window's business to display, not this action's to
+  // relabel as a failure.
+  return { ok: true, outcome: "answered", pairs: runs.length };
 }
 
 // ---------------------------------------------------------------------------
