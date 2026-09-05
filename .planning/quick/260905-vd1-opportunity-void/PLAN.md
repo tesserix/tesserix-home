@@ -79,7 +79,7 @@ not an outage. And `PLATFORM_API_ORIGIN` is unset in production
 today and no operator can even see it. **T6, separate PR.**
 
 **Keep migration `0048`.** It is already applied. `contact_id` beside it was
-already `SET NULL` (`0019:148`), and `0019:141-146`'s header says an activity is
+already `SET NULL` (`0019:152`), and `0019:143-146`'s header says an activity is
 "attached to the organisation, optionally scoped to a deal", which `CASCADE`
 contradicted. Reverting would spend a hand-applied production migration to make
 the schema worse and re-falsify that header.
