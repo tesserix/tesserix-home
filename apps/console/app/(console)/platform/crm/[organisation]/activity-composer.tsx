@@ -71,7 +71,14 @@ function toLocalInputValue(at: Date): string {
  */
 function schedulable(opportunities: readonly OpportunityRow[]): readonly OpportunityRow[] {
   return opportunities.filter(
-    (o) => isOpenStage(o.stage) && (!requiresProduct(o.stage) || o.product !== null),
+    (o) =>
+      isOpenStage(o.stage) &&
+      (!requiresProduct(o.stage) || o.product !== null) &&
+      // The third conjunct of `CLOCK_ELIGIBLE_SQL` (#251). A voided deal is
+      // still listed on this page, so without this it would be offered here
+      // — and `setNextAction` refuses it by name, which is the "control that
+      // cannot succeed" this predicate exists to avoid offering.
+      o.voidedAt === null,
   );
 }
 

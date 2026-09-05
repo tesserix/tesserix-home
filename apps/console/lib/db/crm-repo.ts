@@ -1450,6 +1450,26 @@ export interface OpportunityRow {
   closedAt: string | null;
   lostReason: string | null;
   createdAt: string;
+  /**
+   * When the deal was taken out of the funnel (#251), or null while it is
+   * live.
+   *
+   * Carried on the row rather than left to the caller to infer, because
+   * every consumer of this DTO needs the same answer and none of them can
+   * derive it: a voided deal keeps its `stage`, so nothing else on this row
+   * distinguishes it. `organisationDetail` is the one read that returns
+   * voided deals at all — the queues, Closed and the handoff list exclude
+   * them — which is what makes a Restore control possible.
+   */
+  voidedAt: string | null;
+  /**
+   * The operator's own words for why, or null.
+   *
+   * Null on a live deal (migration 0049's CHECK forbids a reason without a
+   * `voided_at`), and null on a voided deal whose operator gave none — the
+   * reason is optional, so its absence is not a defect to render around.
+   */
+  voidedReason: string | null;
 }
 
 export interface ActivityRow {
@@ -1657,6 +1677,8 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       closed_at: unknown;
       lost_reason: string | null;
       created_at: unknown;
+      voided_at: unknown;
+      voided_reason: string | null;
     }>(
       // Voided deals stay in this list, deliberately — the same reasoning
       // `notErased()` records for erased contacts just above (#251). This
@@ -1666,8 +1688,12 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       // be nothing for a Restore control to hang off. `advanceStageOnQuery`
       // and `setNextAction` refuse a voided row with
       // `VoidedOpportunityError` precisely because it is visible here.
+      // `voided_at` and `voided_reason` are selected here and nowhere else,
+      // for the same reason: this is the only read that returns a voided
+      // deal, so it is the only one with anything to say about it.
       `SELECT id, product, stage, owner, next_action_at, next_action_note,
-              last_contacted_at, is_starred, closed_at, lost_reason, created_at
+              last_contacted_at, is_starred, closed_at, lost_reason, created_at,
+              voided_at, voided_reason
          FROM crm_opportunities
         WHERE organisation_id = $1
         ORDER BY created_at DESC`,
@@ -1739,6 +1765,8 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       closedAt: toIso(row.closed_at),
       lostReason: row.lost_reason,
       createdAt: toIsoRequired(row.created_at),
+      voidedAt: toIso(row.voided_at),
+      voidedReason: row.voided_reason,
     })),
     activities: activityRows.slice(0, ACTIVITY_LIMIT).map((row) => ({
       id: row.id,
