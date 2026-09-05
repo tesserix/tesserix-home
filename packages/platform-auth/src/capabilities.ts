@@ -196,6 +196,26 @@ export const CAPABILITIES = [
    * which is the correct answer, and not a bug in the route.
    */
   "product-support",
+
+  /**
+   * Read the PUBLISHED platform announcements addressed to a product
+   * (tesserix-home#152). Held by a Zitadel service user, never an operator.
+   *
+   * SEPARATE from `product-support`, on the same reasoning that keeps
+   * `read-promo-catalog` out of `read-plan-catalog`: the two answer different
+   * questions and a machine may legitimately need one without the other. A
+   * product that shows a maintenance banner has no business reading its
+   * merchants' support tickets, and folding the two together would widen a
+   * grant already made.
+   *
+   * WHICH product's announcements a holder sees is not encoded here — it comes
+   * from the subject->product registry, exactly as it does for tickets.
+   *
+   * DEPLOY PRECONDITION, same shape as the other machine capabilities: the
+   * role must exist on the Platform Console project AND be granted before the
+   * route ships, or it answers 403 to every caller.
+   */
+  "read-announcements",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
@@ -250,6 +270,7 @@ export const MACHINE_CAPABILITIES = [
   "read-plan-catalog",
   "read-promo-catalog",
   "product-support",
+  "read-announcements",
 ] as const satisfies readonly Capability[];
 
 function isCapability(value: string): value is Capability {

@@ -89,6 +89,14 @@ const (
 	// registry answers WHICH. It is NOT derived from Principal.Kind — verify.go
 	// forbids authorising on that.
 	CapProductSupport Capability = "product-support"
+
+	// CapReadAnnouncements reads the PUBLISHED announcements addressed to a
+	// product (#152). Held by a Zitadel service user, never an operator.
+	//
+	// Separate from CapProductSupport for the reason read-promo-catalog is
+	// separate from read-plan-catalog: different contracts, granted to
+	// different readers. See capabilities.ts, the authority this mirrors.
+	CapReadAnnouncements Capability = "read-announcements"
 )
 
 // Capabilities is every known role key, in the order capabilities.ts declares
@@ -100,6 +108,7 @@ var Capabilities = []Capability{
 	CapRespond, CapRotateCredentials, CapAdjustBalance,
 	CapExecuteRefund, CapMassSend, CapHardDelete, CapPublishCatalog,
 	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport,
+	CapReadAnnouncements,
 }
 
 // Surfaces say where a principal works.
@@ -118,7 +127,9 @@ var Verbs = []Capability{
 // machine holds neither concept, so forcing it into one would misstate what
 // it is rather than clarify it. Mirrors MACHINE_CAPABILITIES in
 // capabilities.ts.
-var Machines = []Capability{CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport}
+var Machines = []Capability{
+	CapReadPlanCatalog, CapReadPromoCatalog, CapProductSupport, CapReadAnnouncements,
+}
 
 func known(c Capability) bool {
 	return slices.Contains(Capabilities, c)

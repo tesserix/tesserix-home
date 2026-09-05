@@ -43,6 +43,7 @@ const (
 	CapReadPlanCatalog   = authcore.CapReadPlanCatalog
 	CapReadPromoCatalog  = authcore.CapReadPromoCatalog
 	CapProductSupport    = authcore.CapProductSupport
+	CapReadAnnouncements = authcore.CapReadAnnouncements
 
 	KindOperator = authcore.KindOperator
 	KindService  = authcore.KindService

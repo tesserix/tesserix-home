@@ -139,6 +139,8 @@ describe("the capability set is a contract with Zitadel", () => {
       // capability string cannot carry a product and this one does not
       // pretend to.
       "product-support",
+      // #152. A machine capability, so adding it locks no operator out.
+      "read-announcements",
     ]);
   });
 
@@ -314,5 +316,30 @@ describe("product-support capability", () => {
     expect(SURFACE_CAPABILITIES).not.toContain("product-support");
     expect(RISK_CAPABILITIES).not.toContain("product-support");
     expect(MACHINE_CAPABILITIES).toContain("product-support");
+  });
+});
+
+describe("read-announcements capability", () => {
+  it("maps the role to its capability", () => {
+    expect(toCapabilities(["read-announcements"])).toContain("read-announcements");
+  });
+
+  it("is not implied by product-support, in either direction", () => {
+    // A product showing a maintenance banner has no business in its
+    // merchants' ticket queue, and a support caller need not read broadcasts.
+    expect(hasCapability(["product-support"], "read-announcements")).toBe(false);
+    expect(hasCapability(["read-announcements"], "product-support")).toBe(false);
+  });
+
+  it("does not grant any operator surface", () => {
+    for (const surface of SURFACE_CAPABILITIES) {
+      expect(hasCapability(["read-announcements"], surface)).toBe(false);
+    }
+  });
+
+  it("is classified as a machine capability", () => {
+    expect(SURFACE_CAPABILITIES).not.toContain("read-announcements");
+    expect(RISK_CAPABILITIES).not.toContain("read-announcements");
+    expect(MACHINE_CAPABILITIES).toContain("read-announcements");
   });
 });
