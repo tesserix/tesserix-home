@@ -161,6 +161,9 @@ beforeAll(async () => {
     // absence would fail assertion (6) on an INSERT rather than on its claim.
     "0041_crm_erased_identifiers.sql",
     "0043_crm_templates.sql",
+    // `voided_at`, read by `CLOCK_ELIGIBLE_SQL` — the predicate step 4 of
+    // `recordTemplatedDm` substitutes in.
+    "0049_crm_opportunities_voided.sql",
   ]) {
     const migrationPath = path.resolve(__dirname, "../../../web/db/migrations", migration);
     await db.exec(readFileSync(migrationPath, "utf-8"));
@@ -469,6 +472,64 @@ describe("recordTemplatedDm — the write is one transaction", () => {
     );
     expect(opp.rows[0].stage).toBe("new");
     expect(opp.rows[0].last_contacted_at).toBeNull();
+  });
+
+  /**
+   * A DM names no deal, so step 4 moves the clocks of EVERY eligible deal on
+   * the organisation. `CLOCK_ELIGIBLE_SQL` is what "eligible" means, and it
+   * now excludes a voided one (#251) — otherwise sending a cold intro to a
+   * business would quietly reschedule a deal an operator had taken out of the
+   * funnel, and put it back on Due with nothing they did looking like the
+   * cause.
+   *
+   * The fixture's own `new` opportunity is the control: it must still be
+   * touched, and still advance to `contacted`, so this cannot pass because
+   * the statement missed the organisation.
+   */
+  it("does not move a voided deal's clocks, or advance its stage", async () => {
+    const voided = await db.query<{ id: string }>(
+      `INSERT INTO crm_opportunities
+         (organisation_id, product, stage, voided_at, voided_reason)
+       VALUES ($1, 'mark8ly', 'new', now(), 'Duplicate') RETURNING id`,
+      [orgId],
+    );
+    const voidedId = voided.rows[0].id;
+
+    const result = await recordTemplatedDm({
+      organisationId: orgId,
+      contactId,
+      templateId,
+      bodyIfEdited: null,
+      actor: ACTOR_EMAIL,
+    });
+
+    // Only the live deal was touched — `opportunitiesTouched` is counted from
+    // the statement's own RETURNING, so it is the clock predicate reporting
+    // on itself.
+    expect(result.opportunitiesTouched).toBe(1);
+    expect(result.stagesAdvanced).toBe(1);
+
+    const rows = await db.query<{
+      stage: string;
+      next_action_at: Date | null;
+      last_contacted_at: Date | null;
+    }>(
+      `SELECT stage, next_action_at, last_contacted_at
+         FROM crm_opportunities WHERE id = $1`,
+      [voidedId],
+    );
+    expect(rows.rows[0].last_contacted_at).toBeNull();
+    expect(rows.rows[0].next_action_at).toBeNull();
+    // Step 5 advances only the rows step 4 returned, so a voided deal never
+    // reaches `advanceStageOnQuery` — which would refuse it anyway.
+    expect(rows.rows[0].stage).toBe("new");
+
+    const live = await db.query<{ stage: string; last_contacted_at: Date | null }>(
+      `SELECT stage, last_contacted_at FROM crm_opportunities WHERE id = $1`,
+      [opportunityId],
+    );
+    expect(live.rows[0].stage).toBe("contacted");
+    expect(live.rows[0].last_contacted_at).not.toBeNull();
   });
 });
 

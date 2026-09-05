@@ -89,6 +89,12 @@ export default async function OrganisationDetailPage({
   // have until the Zitadel cutover actually carries roles.
   const session = await getCurrentSession();
   const canHardDelete = !requiresCapability() || hasCapability(session?.roles, "hard-delete");
+  // The void and restore controls on the Opportunities tab. `crm`, not
+  // `hard-delete`: a void destroys nothing and a restore puts it back, which
+  // is the distinction `voidOpportunityAction` draws server-side — this is
+  // the same gate, applied early so an operator without it is not walked
+  // through a confirmation that will be refused.
+  const canCrm = !requiresCapability() || hasCapability(session?.roles, "crm");
 
   if (!detail) {
     return (
@@ -243,7 +249,7 @@ export default async function OrganisationDetailPage({
               organisationId={organisation.id}
               opportunities={opportunities}
               products={products}
-              canHardDelete={canHardDelete}
+              canCrm={canCrm}
             />
           ),
         },

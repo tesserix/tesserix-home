@@ -23,6 +23,7 @@ import {
 } from "@tesserix/web";
 import { DestructiveConfirmDialog } from "@/components/kit/destructive-confirm-dialog";
 import { CRM_STAGES, requiresProduct, type CrmStage } from "@/lib/crm";
+import { MAX_VOID_REASON_LENGTH } from "@/lib/crm-void-reason";
 import type {
   ActivityRow,
   ContactRow,
@@ -49,10 +50,11 @@ import {
   setPrimaryContactAction,
   changeStage,
   createOpportunityAction,
-  deleteOpportunityAction,
   deleteOrganisationAction,
   eraseContactAction,
   scheduleNextAction,
+  voidOpportunityAction,
+  restoreOpportunityAction,
 } from "./actions";
 
 const STAGE_LABELS: Record<CrmStage, string> = {
@@ -416,20 +418,18 @@ export function DeleteOrganisationButton({
  * for a product the estate no longer lists, which is a deal that still has to
  * be identifiable rather than blank.
  *
- * Null when the deal has no product at all. That is not an error state: it is
- * every deal before `qualified`, and it is exactly the shape of the
- * mis-clicked duplicate the delete control below exists for. Callers render
- * the absence in their own words.
+ * Null when the deal has no product at all. That is not an error state — it
+ * is every deal before `qualified` — so callers render the absence in their
+ * own words rather than being handed a placeholder.
  *
  * Not a copy of `productLabel` in `../product-label.ts`, whose own comment
  * warns against exactly that — and the two differ in both halves. It returns
  * the string "Unassigned" for a null product, which is the right answer in a
- * queue column but the wrong one here: this card says "No product yet" in
- * its heading and "no product yet" mid-sentence in the delete control's
- * copy, so the caller has to word the absence and this returns null. And it
- * reads `ESTATE` directly, which this file — a client component — instead
- * takes as the `products` prop `page.tsx` already passes it. If those two
- * differences ever collapse, delete this one and import that.
+ * queue column but the wrong one here: the card below says "No product yet"
+ * in its heading, so the caller has to word the absence and this returns
+ * null. And it reads `ESTATE` directly, which this file — a client component
+ * — instead takes as the `products` prop `page.tsx` already passes it. If
+ * those two differences ever collapse, delete this one and import that.
  */
 function opportunityProductLabel(
   opportunity: OpportunityRow,
@@ -440,27 +440,43 @@ function opportunityProductLabel(
 }
 
 /**
- * Delete one deal (#251).
+ * The deal as the operator can see it, for a control's accessible name.
+ *
+ * An organisation's cards carry identical controls and differ only by their
+ * product, so a bare "Void" names nothing a screen-reader operator could act
+ * on. A productless deal is genuinely indistinguishable from another
+ * productless deal on the same organisation — that is true of the whole card,
+ * not just these controls — so this says what is known rather than inventing
+ * an identity.
+ */
+function dealLabelFor(productLabel: string | null): string {
+  return productLabel ?? "no product yet";
+}
+
+/**
+ * Take one deal out of the funnel (#251).
  *
  * Deliberately NOT a fourth entry in the stage `<select>` above: a
- * destructive option one keystroke away from "Won" in a list an operator
- * flicks through is the mis-click hazard this issue exists to remove, not one
- * to add. It is its own button, behind its own confirmation.
+ * destructive-looking option one keystroke away from "Won" in a list an
+ * operator flicks through is the mis-click hazard this issue exists to
+ * remove, not one to add. It is its own button, behind its own confirmation.
  *
  * No typed-name gate, unlike the organisation delete and the contact erasure.
- * Those destroy a whole business record or a person's details; this removes
- * one deal and leaves the organisation, its contacts, its other deals and
- * this deal's activities standing. `DestructiveConfirmDialog` supports a
- * caller with no gate (`statusId` is optional), and the confirmation's job
- * here is to make the operator read what they are about to do — which the
- * copy has to actually tell them, since "delete" reads like "delete the
- * business" to someone who has not been told otherwise.
+ * Those destroy a whole business record or a person's details; this destroys
+ * nothing at all and `RestoreOpportunityButton` below undoes it. The tool
+ * deletes (`components/tools-admin/tools-manager.tsx`) sit in the same class
+ * and do not type-gate either. `DestructiveConfirmDialog` supports a caller
+ * with no gate — `statusId` is optional — and the confirmation's job here is
+ * to make the operator read what a void actually does, which most of them
+ * have never seen before.
  *
- * Rendered only when the session holds `hard-delete` — same reasoning as
- * `EraseContactButton`: a control that walks an operator through a
- * confirmation and then refuses is worse than no control.
+ * Gated on `crm`, matching `voidOpportunityAction`: a control that walks an
+ * operator through a confirmation and then refuses is worse than no control.
+ * Its caller applies the same rule a second time and withholds it from a
+ * grandfathered row, which `voidOpportunity` refuses for a reason no
+ * capability check covers.
  */
-function DeleteOpportunityButton({
+function VoidOpportunityButton({
   opportunity,
   productLabel,
 }: {
@@ -472,27 +488,34 @@ function DeleteOpportunityButton({
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
 
-  // The deal as the operator can see it. A productless deal is genuinely
-  // indistinguishable from another productless deal on the same organisation
-  // — that is true of the whole card, not just this control — so this says
-  // what is known rather than inventing an identity.
-  const dealLabel = productLabel ?? "no product yet";
+  const dealLabel = dealLabelFor(productLabel);
+  const reasonId = `void-reason-${opportunity.id}`;
+
+  const reset = () => {
+    setError(null);
+    setReason("");
+  };
 
   const submit = () => {
     setError(null);
     startTransition(async () => {
-      const result = await deleteOpportunityAction(opportunity.id);
+      // Trimmed to null rather than sent as "": the column takes a reason or
+      // nothing, and whitespace is nothing. `voidOpportunity` trims what it
+      // does store, so this measures the same string the cap applies to.
+      const result = await voidOpportunityAction(opportunity.id, reason.trim() || null);
       if (!result.ok) {
         setError(result.message);
         return;
       }
       setOpen(false);
-      // Unconditional, and this is the reason: `deleteOpportunityAction`
-      // learns which organisation to revalidate from the deleted row, so a
-      // call that found nothing to delete — another session got there first —
-      // revalidates nothing. Without a refresh here that operator's card
-      // stays on screen after a delete that reported success.
+      reset();
+      // Unconditional, and this is the reason: an already-voided deal is a
+      // reported no-op, not a failure, and it revalidates the same paths —
+      // but the card the operator clicked from is the one showing a live
+      // deal the database says is already voided, so it is exactly the card
+      // that needs re-reading.
       router.refresh();
     });
   };
@@ -504,36 +527,109 @@ function DeleteOpportunityButton({
         size="sm"
         variant="outline"
         // The visible label says what the button does; the accessible name
-        // adds which deal, because an organisation's cards carry identical
-        // controls and differ only by their product. Kept as a prefix of the
-        // accessible name so speaking the visible words still activates it.
-        aria-label={`Delete deal: ${dealLabel}`}
+        // adds which deal. Kept as a prefix so speaking the visible words
+        // still activates it.
+        aria-label={`Void deal: ${dealLabel}`}
         onClick={() => setOpen(true)}
       >
-        Delete deal
+        Void deal
       </Button>
       <DestructiveConfirmDialog
         open={open}
         onOpenChange={(next) => {
           setOpen(next);
-          if (!next) setError(null);
+          if (!next) reset();
         }}
-        title={`Delete the ${dealLabel} deal?`}
-        // Says what SURVIVES, not just what goes. Deleting a deal is not
-        // deleting a business, and an operator who reads "delete" on a CRM
-        // record has every reason to assume the worse of the two until told
-        // otherwise. The activities are the least obvious of the four: they
-        // stay on the organisation's timeline, no longer scoped to any deal
-        // (migration 0048's `ON DELETE SET NULL`).
-        description="This removes only this deal. The organisation, its contacts and its other deals are untouched, and everything logged against this deal stays on the organisation's timeline. This cannot be undone."
-        confirmLabel="Delete deal"
-        confirmId={`delete-opportunity-confirm-button-${opportunity.id}`}
+        title={`Void the ${dealLabel} deal?`}
+        // Says what a void DOES and what SURVIVES — the same discipline the
+        // organisation delete and the contact erasure follow, and it is more
+        // literally true here than in either of those: nothing is destroyed.
+        // The activity trail is the least obvious of the three facts and the
+        // one an operator is most likely to fear losing, so it is named.
+        description={`This takes the deal out of every work queue and stops it counting towards close rates. Nothing is deleted — its whole activity trail stays attached to it, and you can restore it later.`}
+        confirmLabel="Void deal"
+        confirmId={`void-opportunity-confirm-button-${opportunity.id}`}
         loading={pending}
         onConfirm={submit}
       >
+        <div className="space-y-1">
+          <Label htmlFor={reasonId}>Reason (optional)</Label>
+          <Input
+            id={reasonId}
+            value={reason}
+            disabled={pending}
+            // The same cap `voidOpportunityAction` enforces, from the same
+            // constant, so the field refuses the 501st character rather than
+            // the round trip refusing the whole reason after the operator
+            // has written it. The action still checks — this is the
+            // convenience, not the rule.
+            maxLength={MAX_VOID_REASON_LENGTH}
+            placeholder="Duplicate of the other deal"
+            onChange={(event) => setReason(event.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Kept on the deal and on the organisation&apos;s timeline, for whoever reads
+            this next.
+          </p>
+        </div>
         <ErrorNote message={error} />
       </DestructiveConfirmDialog>
     </>
+  );
+}
+
+/**
+ * Put a voided deal back in the funnel (#251).
+ *
+ * No confirmation: restoring destroys nothing and undoes nothing an operator
+ * cannot immediately void again, so a dialog here would be friction with no
+ * decision behind it. The void has one because a void is the surprising
+ * direction.
+ *
+ * No reason field either. A second void with a different reason is a
+ * reported no-op that silently keeps the FIRST reason, so the only place a
+ * reason can be given is the void that actually records one — offering the
+ * field twice would imply an edit this path cannot perform.
+ */
+function RestoreOpportunityButton({
+  opportunity,
+  productLabel,
+}: {
+  opportunity: OpportunityRow;
+  productLabel: string | null;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const dealLabel = dealLabelFor(productLabel);
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await restoreOpportunityAction(opportunity.id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      router.refresh();
+    });
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        aria-label={`Restore deal: ${dealLabel}`}
+        disabled={pending}
+        onClick={submit}
+      >
+        {pending ? "Restoring…" : "Restore deal"}
+      </Button>
+      <ErrorNote message={error} />
+    </div>
   );
 }
 
@@ -552,12 +648,12 @@ function OpportunityCard({
   organisationId,
   opportunity,
   products,
-  canHardDelete,
+  canCrm,
 }: {
   organisationId: string;
   opportunity: OpportunityRow;
   products: readonly ProductOption[];
-  canHardDelete: boolean;
+  canCrm: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -573,6 +669,7 @@ function OpportunityCard({
   const isGrandfathered = requiresProduct(opportunity.stage) && !opportunity.product;
   const targetNeedsProduct = requiresProduct(stage) || isGrandfathered;
   const productLabel = opportunityProductLabel(opportunity, products);
+  const isVoided = opportunity.voidedAt !== null;
 
   const submitStage = () => {
     setError(null);
@@ -620,17 +717,54 @@ function OpportunityCard({
           {opportunity.owner ? (
             <span className="text-sm text-muted-foreground">· {opportunity.owner}</span>
           ) : null}
+          {/* The voided state as a WORD, not a colour or a struck-through
+              card: the stage badge beside it still reads "Qualified", and
+              nothing else on the row contradicts it. */}
+          {isVoided ? <Badge variant="outline">Voided</Badge> : null}
         </div>
-        {canHardDelete ? (
-          <DeleteOpportunityButton opportunity={opportunity} productLabel={productLabel} />
+        {/* No Void control on a grandfathered row. `voidOpportunity` refuses
+            one with `MissingProductError` (crm-void.ts) — 0021's CHECK is
+            re-evaluated by the void's own UPDATE — so offering the button
+            would walk the operator through a confirmation and then refuse,
+            the exact thing `VoidOpportunityButton`'s own docstring above
+            declines to do. The callout below says so instead. Restore is
+            unaffected: a grandfathered row cannot become voided in the first
+            place, so `isVoided` and `isGrandfathered` are never both true
+            for a deal this console voided. */}
+        {canCrm ? (
+          isVoided ? (
+            <RestoreOpportunityButton opportunity={opportunity} productLabel={productLabel} />
+          ) : isGrandfathered ? null : (
+            <VoidOpportunityButton opportunity={opportunity} productLabel={productLabel} />
+          )
         ) : null}
       </div>
+
+      {isVoided ? (
+        // Not `destructive`: a voided deal is a corrected record, not a
+        // fault. Says why the controls below refuse — `advanceStageOnQuery`
+        // and `setNextAction` raise `VoidedOpportunityError` for this row,
+        // and they are still on screen because this page is the
+        // organisation's file rather than a work queue.
+        <Callout className="mt-3">
+          <CalloutDescription>
+            This deal is out of every work queue and is not counted towards close rates.
+            Its activity is still recorded against it. Restore it before changing its
+            stage or scheduling a next action.
+            {opportunity.voidedReason ? ` Reason given: ${opportunity.voidedReason}` : ""}
+          </CalloutDescription>
+        </Callout>
+      ) : null}
 
       {isGrandfathered ? (
         <Callout variant="destructive" className="mt-3">
           <CalloutDescription>
             This opportunity was migrated from the old CRM without a product. It cannot be
             edited — including scheduling a next action — until a product is assigned below.
+            It cannot be voided either, for the same reason. Assign the product this deal
+            was genuinely for: the organisation&rsquo;s product list and the product filter
+            both count voided deals, so a product picked only to unblock a void would stay
+            on this business&rsquo;s record as a deal that never happened.
           </CalloutDescription>
         </Callout>
       ) : null}
@@ -892,14 +1026,16 @@ export function OpportunitiesTab({
   organisationId,
   opportunities,
   products,
-  canHardDelete,
+  canCrm,
 }: {
   organisationId: string;
   opportunities: readonly OpportunityRow[];
   products: readonly ProductOption[];
-  /** Whether the session holds `hard-delete` — see `page.tsx`. Threaded to
-   *  each card, which is where the delete control lives. */
-  canHardDelete: boolean;
+  /** Whether the session holds `crm` — see `page.tsx`. Threaded to each card,
+   *  which is where the void and restore controls live. Not `hard-delete`:
+   *  a void destroys nothing, and `voidOpportunityAction` gates on `crm` for
+   *  that reason. */
+  canCrm: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -913,7 +1049,7 @@ export function OpportunitiesTab({
             organisationId={organisationId}
             opportunity={opportunity}
             products={products}
-            canHardDelete={canHardDelete}
+            canCrm={canCrm}
           />
         ))
       )}

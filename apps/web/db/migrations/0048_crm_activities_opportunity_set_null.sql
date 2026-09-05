@@ -1,42 +1,49 @@
 -- 0048_crm_activities_opportunity_set_null.sql
 --
--- Deleting an opportunity must not delete what we said to the business
+-- `crm_activities.opportunity_id` becomes `ON DELETE SET NULL`, so the
+-- constraint agrees with what the table's own header says it holds
 -- (tesserix-home#251).
---
--- ══ WHY NOW ══
---
--- An opportunity has no delete of any kind today, so `ON DELETE CASCADE` on
--- `crm_activities.opportunity_id` has never actually fired: nothing in the
--- console issues a `DELETE FROM crm_opportunities`. #251 adds one, because the
--- only disposal a mis-clicked duplicate deal currently has is marking it
--- `lost`, which requires inventing a `lost_reason` and then pollutes every
--- close-rate and loss-analysis number computed off the stage. The moment that
--- delete exists, CASCADE stops being dormant and starts destroying history: a
--- deal worked for three DMs and then found to be a duplicate would take the
--- whole record of those DMs with it. That is unrecoverable, and it is the one
--- outcome the delete is not supposed to have.
 --
 -- ══ SET NULL IS WHAT THE SCHEMA ALREADY SAYS ══
 --
--- 0019's own header over this table reads: the event log is "always attached
--- to the organisation, optionally scoped to a deal or a person: 'everything we
--- have ever said to this business' survives across deals". The column is
--- nullable and always has been, `contact_id` beside it is already
--- `ON DELETE SET NULL`, and a null `opportunity_id` is a routine shape rather
--- than an edge case — `crm-outreach.ts` writes one for every DM (a DM goes to
--- the business, not to a deal), `crm-writes.ts` writes one for every change to
--- the organisation's own fields, and `organisationTimeline` in `crm-repo.ts`
--- already types the column `string | null` on the way out.
+-- 0019's header over this table (0019:143-146) reads: the event log is
+-- "always attached to the organisation, optionally scoped to a deal or a
+-- person: 'everything we have ever said to this business' survives across
+-- deals". Under CASCADE that last clause was false the moment a deal went
+-- away — the deal's whole trail would go with it.
 --
--- So CASCADE was the outlier, contradicting the sentence directly above it.
--- This migration makes the constraint agree with the comment.
+-- Everything else about the column already agrees with the header and only
+-- the referential action did not. It is nullable and always has been; a null
+-- `opportunity_id` is the routine shape rather than an edge case
+-- (`crm-outreach.ts` writes one for every DM, because a DM goes to the
+-- business rather than to a deal, and `crm-writes.ts` writes one for every
+-- change to the organisation's own fields); `organisationTimeline` in
+-- `crm-repo.ts` already types the column `string | null` on the way out; and
+-- `contact_id` beside it (0019:152) was already `ON DELETE SET NULL` for the
+-- same reason. CASCADE was the outlier, contradicting the sentence directly
+-- above it.
+--
+-- ══ THE ACTION IS DORMANT, AND THAT IS WHY IT IS CHEAP TO FIX NOW ══
+--
+-- No code in this tree deletes a single opportunity, and #251 settled on a
+-- VOID — a `voided_at` column, 0049 — rather than a delete, so nothing is
+-- about to. The one path that removes opportunity rows at all is
+-- `deleteOrganisation`, which deletes them wholesale by `organisation_id` on
+-- its way to deleting the organisation; there the activities are destroyed by
+-- `crm_activities.organisation_id`'s own CASCADE regardless of what this
+-- constraint says.
+--
+-- So this changes no observable behaviour today, and that is the argument for
+-- doing it rather than against: the cost of correcting a referential action
+-- is exactly zero while no delete exists, and it is a debate about live data
+-- the first time one does. What it buys is that a future delete of a single
+-- deal detaches its history instead of destroying it, without whoever writes
+-- that delete having to notice the constraint first.
 --
 -- ══ NO DATA CHANGES ══
 --
 -- Re-pointing a foreign key's delete action rewrites no rows: every existing
--- activity keeps the `opportunity_id` it has. Only the behaviour of a FUTURE
--- `DELETE FROM crm_opportunities` differs, and there are no such deletes in
--- the tree yet (#251 Task 2 adds the first).
+-- activity keeps the `opportunity_id` it has.
 --
 -- One second-order effect, and it is the intended one: `crm_activities_opp_-
 -- recent_idx` is partial on `WHERE opportunity_id IS NOT NULL`, so a detached

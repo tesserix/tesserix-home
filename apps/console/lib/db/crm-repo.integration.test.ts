@@ -104,6 +104,14 @@ beforeAll(async () => {
     "../../../web/db/migrations/0027_crm_contacts_metadata.sql",
   );
   await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
+  // 0049 adds `crm_opportunities.voided_at`, which every queue read and the
+  // browse list's open-deal count now test (#251). Without it here the reads
+  // would fail on a missing column rather than on which rows they return.
+  const voidedMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0049_crm_opportunities_voided.sql",
+  );
+  await db.exec(readFileSync(voidedMigrationPath, "utf-8"));
   dbHolder.db = db;
 
   const orgResult = await db.query<{ id: string }>(
@@ -2511,5 +2519,149 @@ describe("listOrganisations sorted by a column the caller names", () => {
       "Sort Fixture Loud Secondary",
       "Sort Fixture Delta",
     ]);
+  });
+});
+
+/**
+ * A voided deal leaves every WORK surface, and stays on every DISCOVERY one
+ * (#251).
+ *
+ * Declared last, with its own organisation, for the reason the two describes
+ * above give: earlier describes assert exact result sets from the seeds they
+ * own, and this one adds rows to the global queues.
+ *
+ * Each pair below is a live row and a voided row that differ in NOTHING else,
+ * so an assertion cannot pass because the fixture was mis-seeded — the live
+ * row is the control that proves the query would have returned the voided one
+ * had the predicate not excluded it. Dropping `AND o.voided_at IS NULL` from
+ * the query under test is what each of these fails on.
+ */
+describe("voided opportunities and the surfaces that must not show them", () => {
+  const VOID_OWNER = "Void Fixture Owner";
+  const SCOPE = { search: "Void Fixture" } as const;
+  const DUE_LIVE = "0170ded0-1111-1111-1111-111111111111";
+  const DUE_VOIDED = "0170ded0-2222-2222-2222-222222222222";
+  const DRIFT_LIVE = "0170ded0-3333-3333-3333-333333333333";
+  const DRIFT_VOIDED = "0170ded0-4444-4444-4444-444444444444";
+  const CLOSED_LIVE = "0170ded0-5555-5555-5555-555555555555";
+  const CLOSED_VOIDED = "0170ded0-6666-6666-6666-666666666666";
+  let voidOrgId: string;
+
+  beforeAll(async () => {
+    const org = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Void Fixture Co"],
+    );
+    voidOrgId = org.rows[0].id;
+
+    await db.query(
+      `INSERT INTO crm_opportunities
+         (id, organisation_id, stage, product, owner, next_action_at,
+          last_contacted_at, created_at, closed_at, updated_at, voided_at, voided_reason)
+       VALUES
+         -- Due: overdue next action, open stage. One live, one voided.
+         ($1, $7, 'contacted', NULL, $8, $9::timestamptz, NULL, $10::timestamptz,
+          NULL, now(), NULL, NULL),
+         ($2, $7, 'contacted', NULL, $8, $9::timestamptz, NULL, $10::timestamptz,
+          NULL, now(), now(), 'Duplicate'),
+         -- Drifting: no next action, quiet since well past the stale window.
+         ($3, $7, 'new', NULL, $8, NULL, $11::timestamptz, $11::timestamptz,
+          NULL, now(), NULL, NULL),
+         ($4, $7, 'new', NULL, $8, NULL, $11::timestamptz, $11::timestamptz,
+          NULL, now(), now(), 'Duplicate'),
+         -- Closed: won, which voidOpportunity deliberately permits — a
+         -- duplicated won deal is the close-rate pollution #251 exists for.
+         ($5, $7, 'won', 'mark8ly', $8, NULL, NULL, $10::timestamptz,
+          $12::timestamptz, $12::timestamptz, NULL, NULL),
+         -- A DIFFERENT product from its live twin, so the two assertions
+         -- about the products array and the product filter below are about
+         -- the voided row alone.
+         ($6, $7, 'won', 'kora', $8, NULL, NULL, $10::timestamptz,
+          $12::timestamptz, $12::timestamptz, now(), 'Duplicate of the other win')`,
+      [
+        DUE_LIVE,
+        DUE_VOIDED,
+        DRIFT_LIVE,
+        DRIFT_VOIDED,
+        CLOSED_LIVE,
+        CLOSED_VOIDED,
+        voidOrgId,
+        VOID_OWNER,
+        daysAgo(2),
+        daysAgo(60),
+        daysAgo(90),
+        daysAgo(7),
+      ],
+    );
+  });
+
+  it("keeps a voided deal off the Due queue, and its live twin on it", async () => {
+    const ids = (await dueOpportunities({ owner: VOID_OWNER }, 50)).rows.map((r) => r.id);
+    expect(ids).toContain(DUE_LIVE);
+    expect(ids).not.toContain(DUE_VOIDED);
+  });
+
+  it("keeps a voided deal off the Drifting queue, and its live twin on it", async () => {
+    const ids = (await driftingOpportunities({ owner: VOID_OWNER }, 14, 50)).rows.map(
+      (r) => r.id,
+    );
+    expect(ids).toContain(DRIFT_LIVE);
+    expect(ids).not.toContain(DRIFT_VOIDED);
+  });
+
+  it("keeps a voided WON deal off the Closed list, so it stops polluting close rate", async () => {
+    // The decisive one. `voidOpportunity` accepts a won deal on purpose, so
+    // if this list still counted it the void would change nothing an
+    // operator reads.
+    const page = await closedOpportunities({ owner: VOID_OWNER }, 50);
+    expect(page.rows.map((r) => r.id)).toEqual([CLOSED_LIVE]);
+    // `total` comes from the same predicate; a void that only trimmed the
+    // page would still report two closed deals under the heading.
+    expect(page.total).toBe(1);
+  });
+
+  it("excludes a voided deal from the browse list's open-deal count", async () => {
+    const rows = (await listOrganisations(SCOPE, 50)).rows;
+    const org = rows.find((r) => r.id === voidOrgId);
+    // Four non-terminal rows were seeded; two of them are voided.
+    expect(org?.openOpportunities).toBe(2);
+  });
+
+  it("still lists the organisation's products, and still finds it by product", async () => {
+    // Deliberately NOT excluded: "this organisation has a mark8ly deal" stays
+    // true of a voided one, and the product filter is how an operator finds
+    // the business whose only deal they just voided.
+    const rows = (await listOrganisations(SCOPE, 50)).rows;
+    // `kora` is carried by the voided deal alone.
+    expect(rows.find((r) => r.id === voidOrgId)?.products).toEqual(["kora", "mark8ly"]);
+
+    const filtered = await listOrganisations({ ...SCOPE, product: "kora" }, 50);
+    expect(filtered.rows.map((r) => r.id)).toContain(voidOrgId);
+  });
+
+  it("still shows a voided deal on the organisation's own file", async () => {
+    // The detail page is the record, not a queue — and T5's restore control
+    // has nothing to attach to if the row is not here.
+    const detail = await organisationDetail(voidOrgId);
+    expect(detail?.opportunities.map((o) => o.id)).toContain(CLOSED_VOIDED);
+  });
+
+  it("carries the void's own two columns through to the detail DTO", async () => {
+    // Presence in the list is not enough. `toIso` maps an absent column to
+    // `null` exactly as it maps an absent value, so dropping `voided_at` and
+    // `voided_reason` from `organisationDetail`'s SELECT would leave the
+    // assertion above green while every voided deal rendered as live: a Void
+    // button instead of the badge and Restore, and a stage control that
+    // walks the operator into a `VoidedOpportunityError`.
+    const detail = await organisationDetail(voidOrgId);
+    const voided = detail?.opportunities.find((o) => o.id === CLOSED_VOIDED);
+    expect(voided?.voidedAt).toEqual(expect.any(String));
+    expect(voided?.voidedReason).toBe("Duplicate of the other win");
+
+    // The live twin, so the two assertions above are about the void and not
+    // about a mapping that returns the same thing for every row.
+    const live = detail?.opportunities.find((o) => o.id === CLOSED_LIVE);
+    expect(live?.voidedAt).toBeNull();
+    expect(live?.voidedReason).toBeNull();
   });
 });

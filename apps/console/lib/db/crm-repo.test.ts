@@ -43,11 +43,13 @@ import { encodeKeysetCursor } from "./keyset-cursor";
 beforeEach(() => {
   query.mockReset();
   // A plausible default current-row for the write tests below: a real
-  // organisation_id/product pair, stage "contacted" (product not required).
+  // organisation_id/product pair, stage "contacted" (product not required),
+  // and `voided_at: null` for live — the write paths select that column too
+  // (#251), and a fixture missing it is a row the real SELECT cannot return.
   // Tests that care about a specific current stage override with
   // `mockResolvedValueOnce` before calling in.
   query.mockResolvedValue([
-    { stage: "contacted", organisation_id: "g1", product: null },
+    { stage: "contacted", organisation_id: "g1", product: null, voided_at: null },
   ]);
 });
 
@@ -779,7 +781,7 @@ describe("advanceStage", () => {
   // It cannot be reconstructed afterwards.
   it("writes a stage_change activity on every transition", async () => {
     query.mockResolvedValueOnce([
-      { stage: "contacted", organisation_id: "g1", product: null },
+      { stage: "contacted", organisation_id: "g1", product: null, voided_at: null },
     ]);
     const result = await advanceStage({
       opportunityId: "o1",
@@ -813,7 +815,7 @@ describe("advanceStage", () => {
   // first test while filling the timeline with noise.
   it("does not write a stage_change when the stage is unchanged", async () => {
     query.mockResolvedValueOnce([
-      { stage: "contacted", organisation_id: "g1", product: null },
+      { stage: "contacted", organisation_id: "g1", product: null, voided_at: null },
     ]);
     const result = await advanceStage({ opportunityId: "o1", to: "contacted", actor: "ava" });
     const sqlText = query.mock.calls.map(([sql]) => sql).join("\n");
@@ -824,7 +826,7 @@ describe("advanceStage", () => {
 
   it("sets closed_at when moving to won", async () => {
     query.mockResolvedValueOnce([
-      { stage: "qualified", organisation_id: "g1", product: "mark8ly" },
+      { stage: "qualified", organisation_id: "g1", product: "mark8ly", voided_at: null },
     ]);
     await advanceStage({ opportunityId: "o1", to: "won", product: "mark8ly", actor: "ava" });
     const [updateSql] = query.mock.calls[1];
@@ -833,7 +835,7 @@ describe("advanceStage", () => {
 
   it("sets closed_at and lost_reason when moving to lost", async () => {
     query.mockResolvedValueOnce([
-      { stage: "qualified", organisation_id: "g1", product: "mark8ly" },
+      { stage: "qualified", organisation_id: "g1", product: "mark8ly", voided_at: null },
     ]);
     await advanceStage({
       opportunityId: "o1",
@@ -854,7 +856,7 @@ describe("advanceStage", () => {
   // the fix for it, recorded honestly via the ordinary stage_change path.
   it("clears closed_at and lost_reason when leaving a terminal stage (Ruling 14)", async () => {
     query.mockResolvedValueOnce([
-      { stage: "lost", organisation_id: "g1", product: "mark8ly" },
+      { stage: "lost", organisation_id: "g1", product: "mark8ly", voided_at: null },
     ]);
     await advanceStage({
       opportunityId: "o1",
@@ -875,7 +877,7 @@ describe("advanceStage", () => {
 
   it("moving lost -> won clears lost_reason but still sets closed_at", async () => {
     query.mockResolvedValueOnce([
-      { stage: "lost", organisation_id: "g1", product: "mark8ly" },
+      { stage: "lost", organisation_id: "g1", product: "mark8ly", voided_at: null },
     ]);
     await advanceStage({
       opportunityId: "o1",
@@ -893,7 +895,7 @@ describe("advanceStage", () => {
 
   it("always sets updated_at, since crm_opportunities has no update trigger", async () => {
     query.mockResolvedValueOnce([
-      { stage: "contacted", organisation_id: "g1", product: null },
+      { stage: "contacted", organisation_id: "g1", product: null, voided_at: null },
     ]);
     await advanceStage({ opportunityId: "o1", to: "qualified", product: "mark8ly", actor: "ava" });
     const [updateSql] = query.mock.calls[1];
@@ -907,7 +909,7 @@ describe("advanceStage", () => {
   // "product changed" path with no stage transition attached.
   it("lets a same-stage write through when it supplies the missing product, but logs no stage_change", async () => {
     query.mockResolvedValueOnce([
-      { stage: "qualified", organisation_id: "g1", product: null },
+      { stage: "qualified", organisation_id: "g1", product: null, voided_at: null },
     ]);
     const result = await advanceStage({
       opportunityId: "o1",
@@ -927,7 +929,7 @@ describe("advanceStage", () => {
   // timeline).
   it("logs an activity for a stage-unchanged product change, not tagged stage_change", async () => {
     query.mockResolvedValueOnce([
-      { stage: "qualified", organisation_id: "g1", product: "kora" },
+      { stage: "qualified", organisation_id: "g1", product: "kora", voided_at: null },
     ]);
     await advanceStage({
       opportunityId: "o1",
@@ -953,7 +955,7 @@ describe("advanceStage", () => {
 describe("setNextAction", () => {
   it("schedules a next action", async () => {
     query.mockResolvedValueOnce([
-      { stage: "contacted", product: null },
+      { stage: "contacted", product: null, voided_at: null },
     ]);
     await setNextAction({
       opportunityId: "o1",
@@ -973,7 +975,7 @@ describe("setNextAction", () => {
   // from Postgres reaching the operator.
   it("refuses to touch a grandfathered row instead of letting Postgres reject the UPDATE", async () => {
     query.mockResolvedValueOnce([
-      { stage: "qualified", product: null },
+      { stage: "qualified", product: null, voided_at: null },
     ]);
     await expect(
       setNextAction({ opportunityId: "o1", at: null, note: null, actor: "ava" }),
@@ -984,7 +986,7 @@ describe("setNextAction", () => {
 
   it("allows a grandfathered row once it already carries a product", async () => {
     query.mockResolvedValueOnce([
-      { stage: "won", product: "mark8ly" },
+      { stage: "won", product: "mark8ly", voided_at: null },
     ]);
     await setNextAction({ opportunityId: "o1", at: null, note: null, actor: "ava" });
     expect(query).toHaveBeenCalledTimes(2);

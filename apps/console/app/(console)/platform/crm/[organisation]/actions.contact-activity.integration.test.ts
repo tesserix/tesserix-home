@@ -56,6 +56,9 @@ const MIGRATIONS = [
   "0018_console_audit_log.sql",
   "0019_crm_schema.sql",
   "0022_crm_suppressions_normalize.sql",
+  // `voided_at`, which `CLOCK_ELIGIBLE_SQL` and the two work queues all read
+  // (#251).
+  "0049_crm_opportunities_voided.sql",
 ];
 
 let db: PGlite;

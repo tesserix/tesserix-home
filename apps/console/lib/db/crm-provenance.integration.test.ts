@@ -75,6 +75,10 @@ beforeAll(async () => {
     "0027_crm_contacts_metadata.sql",
     // The erasure register `commitImport` checks every row against (#226).
     "0041_crm_erased_identifiers.sql",
+    // Not a write this suite exercises: `organisationDetail`, which the last
+    // case below calls to read provenance back, selects `voided_at` and
+    // `voided_reason` off every opportunity (#251).
+    "0049_crm_opportunities_voided.sql",
   ]) {
     const migrationPath = path.resolve(__dirname, "../../../web/db/migrations", migration);
     await db.exec(readFileSync(migrationPath, "utf-8"));

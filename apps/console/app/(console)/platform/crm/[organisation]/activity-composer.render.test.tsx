@@ -32,6 +32,8 @@ function opportunity(overrides: Partial<OpportunityRow> & { id: string }): Oppor
     closedAt: null,
     lostReason: null,
     createdAt: "2026-01-01T00:00:00.000Z",
+    voidedAt: null,
+    voidedReason: null,
     ...overrides,
   };
 }
@@ -357,6 +359,27 @@ describe("ActivityComposer", () => {
       // Settle FIRST, then assert the absence. `addActivity` having been
       // called is not the same as the resulting render having landed, and a
       // negative assertion taken mid-flight passes for the wrong reason.
+      await expectComposerStillUsable();
+      expect(screen.queryByRole("group", { name: /follow-up/i })).toBeNull();
+    });
+
+    // The third conjunct of `CLOCK_ELIGIBLE_SQL` (#251): `setNextAction`
+    // refuses a voided deal with `VoidedOpportunityError`, and a voided deal
+    // is still listed on this page, so it would otherwise reach this prompt.
+    it("does not offer a deal that has been voided", async () => {
+      const user = setupUser();
+      const voided = opportunity({
+        id: "eeee5555-0000-0000-0000-000000000000",
+        stage: "qualified",
+        product: "mark8ly",
+        voidedAt: "2026-09-01T10:00:00.000Z",
+      });
+      renderComposer([voided]);
+
+      await chooseKind(user, "Call");
+      await log(user);
+
+      await waitFor(() => expect(addActivity).toHaveBeenCalled());
       await expectComposerStillUsable();
       expect(screen.queryByRole("group", { name: /follow-up/i })).toBeNull();
     });
