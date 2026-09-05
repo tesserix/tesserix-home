@@ -243,7 +243,6 @@ export default async function OrganisationDetailPage({
               organisationId={organisation.id}
               opportunities={opportunities}
               products={products}
-              canHardDelete={canHardDelete}
             />
           ),
         },
