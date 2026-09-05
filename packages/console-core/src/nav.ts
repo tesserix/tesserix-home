@@ -118,10 +118,11 @@ export const koraNav: readonly NavEntry[] = [
  * `/admin/apps/mark8ly/notifications/templates` — the product's transactional
  * email copy, reached through platform-api's federation rather than through
  * apps/web's cross-database grant, for the reason routes.ts states on the id.
- * It is `pending`: the surface needs work in mark8ly and platform-api first,
- * and one of those is an open design call. So this entry is a SOON badge
- * today, and the badge is the honest thing to render — the IA says the surface
- * belongs to mark8ly, and the flag says the console does not serve it yet.
+ * It was a SOON badge while the surface waited on mark8ly and platform-api;
+ * both have landed, so it is an ordinary link now. It still reaches only the
+ * MARKETPLACE half of mark8ly's registry — the auth mails live in a service
+ * federation does not reach (mark8ly#720) — and the page itself says so, which
+ * is where that belongs rather than on a rail entry with no room for it.
  */
 export const mark8lyNav: readonly NavEntry[] = [
   // Overview first, and `layout-dashboard` to match `kora.overview`: it is the
@@ -146,12 +147,10 @@ export const mark8lyNav: readonly NavEntry[] = [
   // it is not one: it is the product's own email copy, not a
   // `/mark8ly/<type>` entity read.
   //
-  // PENDING, like the queue below it, and for the same kind of reason — the
-  // console has no page yet. Two pending entries in a row is why this one
-  // still sits ABOVE the queue rather than being appended after it: the order
-  // above is Overview, then the entity surfaces in registry order, and this is
-  // the next surface in the product's IA, not the newest arrival. When both
-  // pages land the order stops being about `pending` at all.
+  // Not pending any more — the console serves it (#588). Its position never
+  // depended on that: the order is Overview, then the entity surfaces in
+  // registry order, then this, because that is the product's IA. The queue
+  // below is still `pending` and still last.
   //
   // `mail` rather than a new key. It is the icon `platform.leadTemplates` and
   // `platform.crmTemplates` already carry for "email copy an operator edits",

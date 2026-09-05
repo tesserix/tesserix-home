@@ -48,6 +48,24 @@ export interface PlatformApiErrorOptions extends ErrorOptions {
    * replace.
    */
   noOperatorToken?: boolean;
+  /**
+   * The platform API's own `error.code` — `NOT_IMPLEMENTED`,
+   * `VALIDATION_FAILED`, `EXTERNAL_SERVICE_ERROR`, `SERVICE_UNAVAILABLE`,
+   * `BAD_REQUEST`, … — carried structurally instead of only being spelled into
+   * `message`.
+   *
+   * It exists because the STATUS does not separate the answers an operator
+   * must act on differently. `httpx.ExternalService` and `httpx.Unavailable`
+   * are both 503: one means the product answered and refused, the other means
+   * it was never reached, and the operator's next step differs. Recovering
+   * that from the message text would be a parser over another service's
+   * sentence, which is exactly the kind of coupling this field removes.
+   *
+   * Optional, and every existing reader ignores it: `toSurfaceError` still
+   * decides on `status` alone, so nothing that worked before behaves
+   * differently.
+   */
+  code?: string;
 }
 
 /** Carries the HTTP status when there was one. A 501 means the endpoint is
@@ -56,11 +74,15 @@ export interface PlatformApiErrorOptions extends ErrorOptions {
 export class PlatformApiError extends Error {
   readonly status?: number;
   readonly noOperatorToken: boolean;
+  /** The envelope's `error.code`, when the failure carried one. See
+   *  `PlatformApiErrorOptions.code` for why the status is not enough. */
+  readonly code?: string;
 
   constructor(message: string, status?: number, options?: PlatformApiErrorOptions) {
     super(message, options);
     this.name = "PlatformApiError";
     this.status = status;
     this.noOperatorToken = options?.noOperatorToken === true;
+    this.code = options?.code;
   }
 }
