@@ -19,7 +19,7 @@ export const metadata = { title: "Announcements" };
  * different gate that could disagree with that one.
  */
 export default async function AnnouncementsPage() {
-  let announcements = await fetchAnnouncements().catch(() => null);
+  const announcements = await fetchAnnouncements().catch(() => null);
 
   if (announcements === null) {
     // The platform API is the only source — this surface never existed in
