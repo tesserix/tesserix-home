@@ -1123,13 +1123,24 @@ function ContactRowItem({
  * out on a number nobody collected. (The browse list shows an em-dash instead
  * for the same absence, because a table cell has to occupy its column.)
  *
+ * THE WORD "followers" IS RENDERED, unlike in the list's cell, and visibly
+ * rather than as `sr-only` text. On the list a column header names the
+ * number; here it sits between an email and an `@handle` with nothing to say
+ * what it counts, and that ambiguity is not specific to assistive
+ * technology — a sighted operator reading `12k` beside a handle has the same
+ * question. `sr-only` is the right tool where the visual context already
+ * carries the meaning, as in `ProductsCell`'s "+2 more"; it is the wrong one
+ * here, where restoring the label for screen readers alone would leave
+ * everyone else guessing. `title` still holds the exact figure, which is the
+ * precision the abbreviation drops, not the identity of the number.
+ *
  * `formatFollowers` and `followersTitle` are shared with that list so the two
  * surfaces cannot round the same contact differently.
  */
 function ContactFollowers({ count }: { count: number | null }) {
   if (count === null) return null;
 
-  return <span title={followersTitle(count)}>{formatFollowers(count)}</span>;
+  return <span title={followersTitle(count)}>{formatFollowers(count)} followers</span>;
 }
 
 /**

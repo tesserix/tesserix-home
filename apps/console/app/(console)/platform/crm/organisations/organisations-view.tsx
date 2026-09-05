@@ -170,8 +170,11 @@ function ProductsCell({ products }: { products: readonly string[] }) {
 
 /**
  * The primary contact's follower count — the CRM's only quantitative
- * qualification signal, and until now visible on no surface at all even
- * though the filter bands on it.
+ * qualification signal, and for a long time visible on no surface at all even
+ * though the filter bands on it. It now reads here and on the organisation
+ * detail page, which is the pair an operator moves between: they band and
+ * sort on this column, then open a row to confirm the figure against the
+ * contact it belongs to.
  *
  * An absent count renders as the same muted em-dash the other empty cells in
  * this file use, never as `0`: the rows behind it have no recorded value,

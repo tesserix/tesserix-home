@@ -10,10 +10,11 @@ import type { ContactRow } from "@/lib/db/crm-repo";
  * detail page showed every field about a contact except that one, which
  * meant the figure could not be confirmed against the contact it belongs to.
  *
- * The assertions below are the two halves of what makes the number usable:
- * it is compact enough to sit on a line beside the email and handle, with
- * the exact figure still reachable; and an unrecorded count is absent rather
- * than rendered as `0`.
+ * The assertions below are the three things that make the number usable:
+ * it says what it counts, since no column header does so here; it is compact
+ * enough to sit on a line beside the email and handle, with the exact figure
+ * still reachable; and an unrecorded count is absent rather than rendered as
+ * `0`.
  */
 
 vi.mock("next/navigation", () => ({
@@ -63,18 +64,28 @@ function rowFor(name: string): HTMLElement {
 }
 
 describe("contact follower count", () => {
+  // The number names what it counts in its own text, not only in `title`.
+  // No column header does that job on this page, and `title` is neither
+  // keyboard-reachable nor reliably announced — so without this an operator
+  // meets an unlabelled figure sitting between an email and an `@handle`.
+  it("says what the number counts, in text rather than only on hover", () => {
+    renderContacts([contact({ id: "c1", name: "Priya", followersCount: 12_400 })]);
+
+    expect(within(rowFor("Priya")).getByText("12k followers")).toBeTruthy();
+  });
+
   it("renders a recorded count compactly, with the exact figure still reachable", () => {
     renderContacts([contact({ id: "c1", name: "Priya", followersCount: 12_400 })]);
 
     const row = rowFor("Priya");
     const followers = within(row).getByTitle(`${(12_400).toLocaleString()} followers`);
-    expect(followers.textContent).toBe("12k");
+    expect(followers.textContent).toBe("12k followers");
   });
 
   it("keeps the tenth of a thousand while it still means something", () => {
     renderContacts([contact({ id: "c1", name: "Priya", followersCount: 1240 })]);
 
-    expect(within(rowFor("Priya")).getByTitle(/followers$/).textContent).toBe("1.2k");
+    expect(within(rowFor("Priya")).getByTitle(/followers$/).textContent).toBe("1.2k followers");
   });
 
   // The non-negotiable. These rows have no recorded value, which is not the
@@ -86,10 +97,11 @@ describe("contact follower count", () => {
 
     const row = rowFor("Sam");
     expect(within(row).queryByTitle(/followers$/)).toBeNull();
-    // Not merely "no title": the zero itself must be absent from the row.
-    // `Sourced: 2026-05-01` is why this asks for the exact text `0` rather
-    // than for any digit.
-    expect(within(row).queryByText("0")).toBeNull();
+    // Not merely "no title": no follower text may reach the row either, or a
+    // count rendered without its `title` would slip past the check above.
+    // Matching on the word rather than on `0` alone is what survives the
+    // label — `0 followers` is not the exact text `0`.
+    expect(within(row).queryByText(/followers/)).toBeNull();
   });
 
   // A genuine zero is a measurement and reads as one — the distinction the
@@ -97,6 +109,6 @@ describe("contact follower count", () => {
   it("renders a measured zero", () => {
     renderContacts([contact({ id: "c3", name: "Nil", followersCount: 0 })]);
 
-    expect(within(rowFor("Nil")).getByTitle("0 followers").textContent).toBe("0");
+    expect(within(rowFor("Nil")).getByTitle("0 followers").textContent).toBe("0 followers");
   });
 });

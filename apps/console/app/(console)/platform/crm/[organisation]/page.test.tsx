@@ -65,11 +65,34 @@ const DETAIL_WITH_CONTACT = {
     createdAt: "2026-01-01T00:00:00.000Z",
   },
   contacts: [
-    // `followersCount` spelled out despite the `as unknown as` cast below:
-    // `ContactFollowers` distinguishes null from a measured 0, so a fixture
-    // that merely omitted the field would hand it `undefined` and render a
-    // count this contact does not have.
-    { id: "contact-1", name: "Priya Raman", email: null, phone: null, instagramHandle: null, isPrimary: true, followersCount: null },
+    // Every nullable field is spelled out despite the `as unknown as` cast
+    // below, because the cast silences the compiler and each omission then
+    // fails differently at runtime:
+    //
+    //   `followersCount` THROWS — `ContactFollowers` tests `=== null`, so
+    //   `undefined` falls through to `followersTitle(undefined)` and
+    //   `undefined.toLocaleString()`.
+    //
+    //   `source` / `sourcedAt` / `lawfulBasis` FAIL SILENTLY — the labels in
+    //   `crm-provenance.ts` also guard on `=== null`, so `undefined` slips
+    //   past and they return `undefined`, which React renders as nothing.
+    //   The provenance block would read blank here while every real row
+    //   reads "Not recorded", and no assertion would notice.
+    //
+    // The silent half is the reason to list them: a fixture that only fixes
+    // what crashes still lies about what the page shows.
+    {
+      id: "contact-1",
+      name: "Priya Raman",
+      email: null,
+      phone: null,
+      instagramHandle: null,
+      isPrimary: true,
+      followersCount: null,
+      source: null,
+      sourcedAt: null,
+      lawfulBasis: null,
+    },
   ],
   opportunities: [],
   activities: [],
