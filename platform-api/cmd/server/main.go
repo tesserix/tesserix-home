@@ -26,6 +26,7 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/billing"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/conversions"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/crm"
+	"github.com/tesserix/tesserix-home/platform-api/internal/modules/emailtemplates"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/entities"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/health"
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/inbox"
@@ -296,6 +297,28 @@ func run(log *slog.Logger) error {
 			// failed source when the honest answer is that the product has no
 			// funnel. Same distinction the outbox and tenants blocks draw.
 			Slugs:    cfg.Federation.SlugsImplementing("onboarding"),
+			Verifier: verifier,
+			Log:      log,
+		})
+	})
+
+	httpx.RegisterModule(mux, verifier, "emailtemplates", func(m *http.ServeMux) {
+		emailtemplates.Register(m, emailtemplates.Config{
+			Fed: fed,
+			// SlugsImplementing, not Slugs: a transactional email registry is
+			// not universal. A product that keeps none does not answer 501 —
+			// it does not mount the route at all — so asking it would 404 and
+			// read to an operator as a failed source. Same distinction the
+			// outbox and onboarding blocks draw.
+			//
+			// NOTHING DECLARES THIS YET. FEDERATION_MARK8LY_ENDPOINTS is
+			// `outbox,onboarding,billing,inbox,conversions` in the cluster, so
+			// this surface answers 501 until `email-templates` is added to it —
+			// which is deliberate, and the honest order: the declaration is
+			// what says mark8ly's half of the contract is deployed, and it is
+			// a configuration change made after that deploy rather than an
+			// assumption baked in here.
+			Slugs:    cfg.Federation.SlugsImplementing("email-templates"),
 			Verifier: verifier,
 			Log:      log,
 		})

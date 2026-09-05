@@ -1,0 +1,42 @@
+{
+  "success": true,
+  "data": {
+    "templates": [
+      {
+        "id": "mark8ly:dunning_day_5",
+        "source": "mark8ly",
+        "key": "dunning_day_5",
+        "state": "unauthored",
+        "sends_from": "embedded",
+        "has_embedded_default": true,
+        "subject": "Payment failed for {{.StoreName}}"
+      },
+      {
+        "id": "mark8ly:giftcard_delivery",
+        "source": "mark8ly",
+        "key": "giftcard_delivery",
+        "state": "draft",
+        "sends_from": "embedded",
+        "has_embedded_default": true,
+        "subject": "Your gift card from {{.StoreName}}",
+        "version": 7,
+        "updated_at": "2026-08-20T16:45:00Z"
+      },
+      {
+        "id": "mark8ly:orderdoc_invoice",
+        "source": "mark8ly",
+        "key": "orderdoc_invoice",
+        "state": "published",
+        "sends_from": "row",
+        "has_embedded_default": true,
+        "subject": "Order {{.OrderNumber}}",
+        "version": 3,
+        "updated_at": "2026-08-01T09:30:00Z",
+        "updated_by": "op_previous"
+      }
+    ],
+    "failures": []
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

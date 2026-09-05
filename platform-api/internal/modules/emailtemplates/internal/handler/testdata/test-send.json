@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "test_send": {
+      "id": "mark8ly:orderdoc_invoice",
+      "source": "mark8ly",
+      "key": "orderdoc_invoice",
+      "to": "ops@tesserix.app",
+      "sent": true
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

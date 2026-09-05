@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the Idempotency-Key header is required for this write"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

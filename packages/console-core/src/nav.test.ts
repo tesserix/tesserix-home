@@ -95,6 +95,7 @@ describe("mark8lyNav", () => {
       "Overview",
       "Tenants",
       "Users",
+      "Email templates",
       "Migration fast-path review",
     ]);
   });
@@ -133,6 +134,17 @@ describe("mark8lyNav", () => {
     // points the rail and the palette at a 404. This is a deliberate hold, and
     // this test is what makes flipping it a decision rather than a reflex.
     expect(isPending("mark8ly.migrationFastPath")).toBe(true);
+  });
+
+  it("shows the email template editor as pending too", () => {
+    // #588. The rail entry exists so mark8ly's IA is complete, but the surface
+    // needs mark8ly to serve the templates on the platform admin contract and
+    // platform-api to grow a module for them — and federation does not reach
+    // mark8ly's platform-api service at all today, which is an open design
+    // call rather than a task. Clearing this before the page exists points the
+    // rail and the palette at a 404, and would also invite a link to apps/web,
+    // whose cross-DB write path this surface exists to replace.
+    expect(isPending("mark8ly.emailTemplates")).toBe(true);
   });
 
   it("links the three generic surfaces rather than showing them as pending", () => {

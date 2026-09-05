@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "data": {
+    "template": {
+      "id": "mark8ly:orderdoc_invoice",
+      "source": "mark8ly",
+      "key": "orderdoc_invoice",
+      "state": "published",
+      "sends_from": "row",
+      "has_embedded_default": true,
+      "subject": "Order {{.OrderNumber}}",
+      "version": 3,
+      "updated_at": "2026-08-01T09:30:00Z",
+      "updated_by": "op_previous",
+      "html_body": "\u003cp\u003e{{.OrderNumber}}\u003c/p\u003e",
+      "text_body": "{{.OrderNumber}}",
+      "variables": [
+        {
+          "name": "OrderNumber",
+          "type": "string",
+          "required": true
+        }
+      ]
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

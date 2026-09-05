@@ -200,6 +200,41 @@ func (c *Client) Post(
 	op Operator,
 	opts PostOptions,
 ) ([]byte, error) {
+	return c.write(ctx, http.MethodPost, slug, path, body, op, opts)
+}
+
+// Put performs one federated write to a named resource.
+//
+// Everything Post's documentation says applies here unchanged — the idempotency
+// key is required for the same reason, and the honest limit on what it buys is
+// the same. It is a separate method rather than a `method` parameter on Post
+// because the two verbs are the ones the contract uses and a free-form method
+// argument would let a caller send a DELETE through a helper whose whole
+// docstring is about writes.
+//
+// The verb is the product's choice, not ours: mark8ly serves the email
+// template registry as PUT /admin/email-templates/{key} because the write is
+// an upsert of a named row, and a client that turned that into a POST would
+// simply 404 (gin routes on the method).
+func (c *Client) Put(
+	ctx context.Context,
+	slug, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
+	return c.write(ctx, http.MethodPut, slug, path, body, op, opts)
+}
+
+// write is what Post and Put share, so the idempotency guard and the headers
+// cannot drift between two verbs that differ only in the method.
+func (c *Client) write(
+	ctx context.Context,
+	method, slug, path string,
+	body []byte,
+	op Operator,
+	opts PostOptions,
+) ([]byte, error) {
 	if opts.IdempotencyKey == "" {
 		return nil, fmt.Errorf("%w: %s/%s", ErrIdempotencyKeyRequired, slug, path)
 	}
@@ -207,7 +242,7 @@ func (c *Client) Post(
 		"Idempotency-Key": opts.IdempotencyKey,
 		"Content-Type":    "application/json",
 	}
-	return c.do(ctx, http.MethodPost, slug, path, body, op, headers)
+	return c.do(ctx, method, slug, path, body, op, headers)
 }
 
 // do is the one path every federated call takes.

@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "the product rejected this template: check the subject and both bodies for unbalanced {{ }} or an unparseable template expression"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

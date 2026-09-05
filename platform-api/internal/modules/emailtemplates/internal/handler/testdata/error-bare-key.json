@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "emailtemplates: malformed template id: \"orderdoc_invoice\" names no product — ids on this surface are \u003csource\u003e:\u003ckey\u003e"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

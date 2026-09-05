@@ -353,6 +353,94 @@ export const ROUTES = {
     product: "mark8ly",
   },
 
+  // mark8ly's TRANSACTIONAL email registry: the order-confirmation, invitation
+  // and password-reset mails the PRODUCT itself sends, and the copy an operator
+  // edits when one of them is wrong.
+  //
+  // The rows STAY in mark8ly's own databases — that is #151's decision, so the
+  // runtime send path never depends on tesserix-home. The console does NOT
+  // reach them the way apps/web does. Ownership of the data and the transport
+  // to it are separate questions, and conflating the two is what an earlier
+  // draft of this plan got wrong: apps/web holds a cross-database grant and
+  // writes mark8ly's tables directly, while the console reaches every other
+  // product's records through platform-api's HMAC-signed federation fan-out and
+  // has no connection to any product database at all. The cluster says so —
+  // `deployment/console` carries none of the six `MARK8LY_DB_*` vars the old
+  // admin has. This surface reads the federated
+  // `/admin/email-templates` contract, like every other product read here.
+  //
+  // ══ THIS IS THE THIRD "TEMPLATES" ROUTE. HERE IS WHICH ONE IT IS ══
+  //
+  // The other two are on the PLATFORM rail and are both estate surfaces:
+  //   - `platform.leadTemplates` is the platform API's MARKETING email
+  //     registry (`GET /lead-templates`, with a `test-send`), estate-owned,
+  //     rendered by apps/mobile today.
+  //   - `platform.crmTemplates` is operator-authored CRM OUTREACH COPY with no
+  //     send path of any kind — an operator copies the rendered text and pastes
+  //     it into Instagram by hand.
+  //
+  // THIS id is neither. It is ONE PRODUCT'S transactional registry: rows in
+  // mark8ly's own tables, rendered by mark8ly's Go send path
+  // (`marketplace-api/internal/emailtemplates/loader.go`), which is a real send
+  // path that fires with no operator present. Two consequences a reader needs,
+  // and neither is true of the other two ids: a key exists here only because a
+  // Go call site renders it — which is why the surface has no "create" — and a
+  // template left in `draft` is invisible to that loader, so saving one
+  // silently reverts sending to the embedded default.
+  //
+  // Three surfaces, three ids, two rails. Collapsing any pair would give one id
+  // two meanings across renderers, the failure the twenty lines above
+  // `platform.crmTemplates` already record.
+  //
+  // `mark8ly.*` rather than `platform.*` for the same reason: the rows are the
+  // product's, so the surface belongs on the product's rail.
+  //
+  // `web` IS recorded here, unlike every other `mark8ly.*` route. apps/web
+  // serves exactly this surface at
+  // `app/admin/apps/mark8ly/notifications/templates` over the same tables, so
+  // there is a genuine predecessor to name (see RouteEntry.web). The other
+  // mark8ly ids omit it because their federated reads postdate apps/web. Note
+  // what `pending` says about that field: a renderer must not link there
+  // either, because apps/web is being retired and its transport is the
+  // cross-DB write path this surface exists to stop using.
+  //
+  // No `mobile`: expo-router has no screen for it, and a path written here to
+  // look complete would claim one that was never built.
+  //
+  // `platform`, matching every other `mark8ly.*` route: this is an
+  // estate-operator read and write of one product's records. NOT `mass-send`,
+  // even though the surface carries a test-send — `platform.leadTemplates`
+  // records the same decision in the same words, and it applies verbatim here:
+  // authoring a template is not sending one, so the test-send ACTION must
+  // assert `mass-send` itself rather than the whole editor being gated on it.
+  //
+  // PENDING, AND NOT AS A FORMALITY. The id is declared ahead of the page for
+  // the security reason the block above `mark8ly.overview` states — an
+  // undeclared `/mark8ly/*` path falls back to the entry ticket every operator
+  // holds — but the page needs two other repos first: mark8ly must serve the
+  // templates on the platform admin contract, and platform-api needs an
+  // `emailtemplates` module to fan out to it. The flag comes off in the change
+  // that builds the page, not before.
+  //
+  // AND THE FIRST PAGE WILL BE HALF THE REGISTRY, which is why this comment
+  // says so rather than leaving the next reader to find it. mark8ly keeps
+  // templates in TWO services with mirrored tables, and federation reaches only
+  // one: `FEDERATION_MARK8LY_BASE_URL` points at marketplace-api-admin, so the
+  // auth mails — `password_reset`, `invitation`, `login_otp` — stay in apps/web
+  // until mark8ly's platform-api is federated as its own product (decided, and
+  // its own piece of work: that service has no HMAC middleware, no nonce store
+  // and no conformance declaration, and the four Go services share no module to
+  // borrow them from). Two editors therefore coexist for a while. That is the
+  // one thing this route's `web` path is still good for, and the reason it is
+  // recorded.
+  "mark8ly.emailTemplates": {
+    web: "/admin/apps/mark8ly/notifications/templates",
+    console: "/mark8ly/email-templates",
+    pending: true,
+    capability: "platform",
+    product: "mark8ly",
+  },
+
   // Platform rail. The console owns their identity so the rail can be built
   // from one source; none of the surfaces is built here yet.
   // Served at the console root: the estate map plus the internal tools

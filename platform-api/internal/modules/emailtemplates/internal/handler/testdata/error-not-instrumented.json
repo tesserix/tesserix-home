@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_IMPLEMENTED",
+    "message": "emailtemplates: no products serve an email template registry"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

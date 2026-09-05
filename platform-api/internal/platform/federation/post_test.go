@@ -295,3 +295,85 @@ func TestPostWithAnUnparseableErrorBodyStillFails(t *testing.T) {
 		t.Errorf("ErrorCode = %q; an unparseable body has no code to report", code)
 	}
 }
+
+// Put is Post's sibling and shares its guard rails through Client.write. The
+// tests below pin the three properties that would silently break if the two
+// verbs ever stopped sharing that path: the method actually sent, the
+// idempotency refusal, and the signature covering the body.
+
+func TestPutSendsThePutMethodAndSignsItsBody(t *testing.T) {
+	const secret = "shh"
+	body := []byte(`{"subject":"Order {{.OrderNumber}}"}`)
+	var gotMethod string
+	var verified bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		received, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("reading body: %v", err)
+		}
+		// The method is one of the eight canonical fields, so a client that
+		// signed "POST" and sent a PUT would 401 with nothing local to see.
+		want, err := Sign(secret, SignatureInput{
+			Method:     r.Method,
+			Path:       r.URL.Path,
+			RawQuery:   r.URL.RawQuery,
+			Body:       received,
+			Timestamp:  r.Header.Get("X-Platform-Timestamp"),
+			Nonce:      r.Header.Get("X-Platform-Nonce"),
+			Operator:   r.Header.Get("X-Platform-Operator"),
+			Capability: r.Header.Get("X-Platform-Capability"),
+		})
+		if err != nil {
+			t.Errorf("server-side Sign: %v", err)
+		}
+		verified = want == r.Header.Get("X-Platform-Signature")
+		_, _ = w.Write([]byte(`{"data":{"key":"orderdoc_invoice"}}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: secret}}), srv.Client())
+
+	if _, err := c.Put(context.Background(), "mark8ly",
+		"/admin/email-templates/orderdoc_invoice", body, operator(), postOpts()); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT — the product routes on it and would 404", gotMethod)
+	}
+	if !verified {
+		t.Error("the signature did not cover the PUT it sent")
+	}
+}
+
+func TestPutRefusesWithoutAnIdempotencyKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("a write without an idempotency key must not leave the process")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+
+	_, err := c.Put(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), PostOptions{})
+	if !errors.Is(err, ErrIdempotencyKeyRequired) {
+		t.Fatalf("err = %v, want ErrIdempotencyKeyRequired", err)
+	}
+}
+
+func TestPutCarriesTheProductsErrorCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_template","message":"subject: mismatched template braces"}`))
+	}))
+	defer srv.Close()
+
+	c := NewClient(NewRegistry([]Product{{Slug: "mark8ly", BaseURL: srv.URL, Secret: "s"}}), srv.Client())
+
+	_, err := c.Put(context.Background(), "mark8ly", "/x", []byte(`{}`), operator(), postOpts())
+	code, ok := ErrorCode(err)
+	if !ok || code != "invalid_template" {
+		t.Fatalf("ErrorCode = %q,%v; a refusal's code is the only actionable thing it carries", code, ok)
+	}
+}

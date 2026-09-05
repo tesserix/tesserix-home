@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "the template could not be rendered for a test send — a variable it uses was not supplied"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

@@ -1,0 +1,15 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "the request carries query parameters this endpoint does not read",
+    "details": {
+      "accepted": [
+        "source"
+      ],
+      "sorce": "mark8ly"
+    }
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
