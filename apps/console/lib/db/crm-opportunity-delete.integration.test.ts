@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Integration coverage for `deleteOpportunity` (tesserix-home#251). Real
@@ -41,7 +41,9 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { deleteOpportunity } = await import("./crm-erasure");
+const { deleteOpportunity, OpportunityActivityTrailUnsafeError } = await import(
+  "./crm-erasure",
+);
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../../web/db/migrations");
 
@@ -200,5 +202,106 @@ describe("deleteOpportunity", () => {
     await expect(
       deleteOpportunity("00000000-0000-0000-0000-000000000000"),
     ).resolves.toBeNull();
+  });
+});
+
+/**
+ * The guard that refuses the delete when 0048 has not been applied here.
+ *
+ * 0048 goes onto production BY HAND while deploys are automatic, so there is
+ * a real window in which this code runs against 0019's CASCADE. What happens
+ * in that window is not a visible failure: the delete succeeds, the FK
+ * destroys every activity scoped to the deal, and the audit row reports those
+ * destroyed rows as `activities_detached` — after the operator was shown a
+ * dialog promising they would survive. Nothing above the database can notice.
+ *
+ * Its own pglite instance, migrated with 0019 ALONE, because that is the only
+ * way to have the pre-migration schema: the suite above shares one database
+ * that already has 0048, and a constraint cannot be un-applied for one test
+ * without leaving the rest of the file running against a schema it does not
+ * claim. `dbHolder` is repointed for the duration and restored afterwards.
+ */
+describe("deleteOpportunity against a database missing migration 0048", () => {
+  let legacy: PGlite;
+  let legacyOrgId: string;
+  let legacyOpportunityId: string;
+
+  // Built and thrown away per test, not shared: the second test APPLIES 0048
+  // to this instance, so a shared one would leave the first test passing only
+  // while it happens to run first.
+  beforeEach(async () => {
+    legacy = new PGlite();
+    // 0019 and nothing else: `crm_activities.opportunity_id` is still
+    // ON DELETE CASCADE here, which is what production looks like between a
+    // deploy and the hand-applied migration.
+    await legacy.exec(readFileSync(path.join(MIGRATIONS_DIR, MIGRATIONS[0]), "utf-8"));
+    dbHolder.db = legacy;
+    const org = await legacy.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Bondi Baker"],
+    );
+    legacyOrgId = org.rows[0].id;
+    const opportunity = await legacy.query<{ id: string }>(
+      `INSERT INTO crm_opportunities (organisation_id, product, stage)
+       VALUES ($1, 'mark8ly', 'qualified') RETURNING id`,
+      [legacyOrgId],
+    );
+    legacyOpportunityId = opportunity.rows[0].id;
+    await legacy.query(
+      `INSERT INTO crm_activities (organisation_id, opportunity_id, kind, actor, body)
+       VALUES ($1, $2, 'stage_change', $3, 'new → qualified'),
+              ($1, $2, 'dm_sent', $3, 'First DM about Mark8ly')`,
+      [legacyOrgId, legacyOpportunityId, "operator@tesserix.app"],
+    );
+  });
+
+  afterEach(async () => {
+    dbHolder.db = db;
+    await legacy.close();
+  });
+
+  it("refuses the delete, and deletes nothing at all", async () => {
+    await expect(deleteOpportunity(legacyOpportunityId)).rejects.toBeInstanceOf(
+      OpportunityActivityTrailUnsafeError,
+    );
+
+    // The deal is still there — this is the assertion that separates
+    // "refused" from "succeeded and happened to throw afterwards".
+    const opportunities = await legacy.query<{ id: string }>(
+      `SELECT id FROM crm_opportunities WHERE id = $1`,
+      [legacyOpportunityId],
+    );
+    expect(opportunities.rows).toEqual([{ id: legacyOpportunityId }]);
+
+    // And so is the trail the CASCADE would have taken with it.
+    const activities = await legacy.query<{ body: string; opportunity_id: string | null }>(
+      `SELECT body, opportunity_id FROM crm_activities
+        WHERE organisation_id = $1 ORDER BY body`,
+      [legacyOrgId],
+    );
+    expect(activities.rows).toEqual([
+      { body: "First DM about Mark8ly", opportunity_id: legacyOpportunityId },
+      { body: "new → qualified", opportunity_id: legacyOpportunityId },
+    ]);
+  });
+
+  it("does not refuse the same delete once 0048 has been applied", async () => {
+    // The negative control. Without it the test above would still pass if the
+    // guard refused every delete on every schema, which would be a different
+    // bug and an equally silent one.
+    await legacy.exec(readFileSync(path.join(MIGRATIONS_DIR, MIGRATIONS[1]), "utf-8"));
+
+    const result = await deleteOpportunity(legacyOpportunityId);
+
+    expect(result).toMatchObject({
+      opportunityId: legacyOpportunityId,
+      organisationId: legacyOrgId,
+      activitiesDetached: 2,
+    });
+    const activities = await legacy.query<{ opportunity_id: string | null }>(
+      `SELECT opportunity_id FROM crm_activities WHERE organisation_id = $1`,
+      [legacyOrgId],
+    );
+    expect(activities.rows).toEqual([{ opportunity_id: null }, { opportunity_id: null }]);
   });
 });

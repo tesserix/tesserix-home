@@ -396,6 +396,38 @@ export async function deleteOrganisation(
   });
 }
 
+/**
+ * Raised when the database this console is connected to would DESTROY a
+ * deal's activity trail on delete rather than detach it — that is, when
+ * migration 0048 has not been applied here.
+ *
+ * Its own class, not a bare `Error`, for the same reason as
+ * `ErasureHashKeyMissingError` (crm-erasure-hash.ts): the action layer has
+ * to tell "this deployment is missing a migration, nothing was changed, get
+ * it applied" apart from "the database rejected the write", because the two
+ * send an operator to completely different people. Mapped to operator-facing
+ * copy by `mapOpportunityDeleteFailure` in the CRM actions; this message is
+ * for logs and is never shown.
+ *
+ * Why the check exists at all: 0048 is applied to production BY HAND while
+ * deploys are automatic, so there is a real window in which this code runs
+ * against 0019's original `ON DELETE CASCADE`. In that window a delete
+ * succeeds, cascades, and destroys every activity scoped to the deal — after
+ * a dialog promised the operator they would survive, and while writing an
+ * audit row that reports them as `activities_detached`. Silent, permanent,
+ * and misreported. Refusing is the only outcome that is none of those.
+ */
+export class OpportunityActivityTrailUnsafeError extends Error {
+  constructor() {
+    super(
+      "crm_activities.opportunity_id is not ON DELETE SET NULL in this database; " +
+        "migration 0048 has not been applied here, so deleting an opportunity would " +
+        "destroy its activity trail instead of detaching it.",
+    );
+    this.name = "OpportunityActivityTrailUnsafeError";
+  }
+}
+
 export interface DeletedOpportunity {
   opportunityId: string;
   organisationId: string;
@@ -444,9 +476,19 @@ export interface DeletedOpportunity {
  * the constraint, so a future revert of 0048 would silently start destroying
  * history again with every test still green.
  *
+ * Because it rests on that constraint, it CHECKS for it: the delete is
+ * refused, with nothing changed, against a database where the constraint is
+ * still 0019's CASCADE — see `OpportunityActivityTrailUnsafeError`. The
+ * check sits after the "already gone" return rather than at the top of the
+ * transaction: an id that matches no row has no activity trail to destroy,
+ * so there is nothing there to refuse.
+ *
  * Two statements rather than one `DELETE ... RETURNING`: the organisation
  * name, the product and the activity count all have to be read while the row
  * and its children still exist.
+ *
+ * @throws {OpportunityActivityTrailUnsafeError} when migration 0048 has not
+ * been applied to this database.
  */
 export async function deleteOpportunity(
   opportunityId: string,
@@ -473,14 +515,18 @@ export async function deleteOpportunity(
       // `RETURNING` rather than from a separate SELECT.
       //
       // NOT EXERCISED BY ANY TEST, and it cannot be with the harness this
-      // repo has: the two suites that reach this function
-      // (`crm-opportunity-delete.integration.test.ts`,
-      // `crm-activities-opportunity-fk.integration.test.ts`) run on pglite,
-      // a single embedded session, so there is no second connection to race
-      // and nothing for the lock to block. Deleting this line was tried and
-      // left both suites — and `crm-erasure.integration.test.ts` with them —
-      // entirely green. Whoever removes it will get the same all-clear;
-      // review it against the reasoning above, not against a test run.
+      // repo has: the one suite that reaches this function
+      // (`crm-opportunity-delete.integration.test.ts`) runs on pglite, a
+      // single embedded session, so there is no second connection to race
+      // and nothing for the lock to block. Every other file naming
+      // `deleteOpportunity` either mocks it (`actions.test.ts`,
+      // `organisation-detail-view.render.test.tsx`) or never imports it at
+      // all and issues its own raw `DELETE`
+      // (`crm-activities-opportunity-fk.integration.test.ts`, which pins the
+      // constraint, not this function). Deleting this line was tried and
+      // left that suite entirely green. Whoever removes it will get the same
+      // all-clear; review it against the reasoning above, not against a test
+      // run.
       `SELECT o.id, o.organisation_id, o.product, org.name AS organisation_name
          FROM crm_opportunities o
          JOIN crm_organisations org ON org.id = o.organisation_id
@@ -499,6 +545,40 @@ export async function deleteOpportunity(
       `SELECT count(*)::int AS count FROM crm_activities WHERE opportunity_id = $1`,
       [opportunityId],
     );
+
+    // Refuse if this database would CASCADE rather than SET NULL.
+    //
+    // 0048 is applied to production by hand while deploys are automatic (see
+    // `OpportunityActivityTrailUnsafeError`), so "the migration is in the
+    // repository" is not evidence that it is in the database in front of
+    // this process. Only the catalogue is. The query shape is the one
+    // `crm-activities-opportunity-fk.integration.test.ts` already uses to
+    // assert the constraint set.
+    //
+    // Fails CLOSED, deliberately: a row count other than exactly one is a
+    // refusal too, not a pass. Zero means the foreign key is not there to
+    // reason about; two means a second constraint exists alongside this one,
+    // and Postgres applies EVERY matching action — a CASCADE hiding beside a
+    // SET NULL deletes the rows and the SET NULL on already-deleted rows is
+    // unobservable. If this SELECT itself throws, the throw propagates and
+    // rolls the transaction back, which is the same refusal by another route.
+    //
+    // One extra catalogue query per delete, on a path gated behind
+    // `hard-delete` and reached by hand: paid deliberately.
+    const activityFk = await query<{ confdeltype: string }>(
+      `SELECT con.confdeltype
+         FROM pg_constraint con
+         JOIN pg_class cls ON cls.oid = con.conrelid
+         JOIN pg_attribute att
+           ON att.attrelid = cls.oid AND att.attnum = ANY (con.conkey)
+        WHERE cls.relname = 'crm_activities'
+          AND con.contype = 'f'
+          AND att.attname = 'opportunity_id'`,
+    );
+    // 'n' is SET NULL; 'c' — what 0019 shipped — is CASCADE.
+    if (activityFk.length !== 1 || activityFk[0].confdeltype !== "n") {
+      throw new OpportunityActivityTrailUnsafeError();
+    }
 
     await query(`DELETE FROM crm_opportunities WHERE id = $1`, [opportunityId]);
 

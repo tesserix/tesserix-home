@@ -55,6 +55,7 @@ import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
   deleteOpportunity as deleteOpportunityRow,
+  OpportunityActivityTrailUnsafeError,
 } from "@/lib/db/crm-erasure";
 import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { AuditWriteError } from "@/lib/db/audit-repo";
@@ -681,23 +682,44 @@ export async function deleteOrganisationAction(
 }
 
 /**
- * The same post-commit hazard `mapDeleteAuditFailure` covers, worded for the
- * opportunity rather than the organisation.
+ * The two exceptions `deleteOpportunityRow` can raise that an operator can
+ * do something about, allowlisted one type at a time — never "anything that
+ * is an Error is safe to show" (see `withCrmWrite`).
  *
- * A sibling function rather than a shared one: the difference between the two
- * messages is the only thing an operator reads, and "the organisation is
- * gone" after deleting one deal from a business that still exists would send
- * them looking for a company that was never touched. A parameterised noun
- * would collapse two claims that must stay distinguishable into one string
- * builder, which is how they would come to drift.
+ * The `AuditWriteError` case is the same post-commit hazard
+ * `mapDeleteAuditFailure` covers, worded for the opportunity rather than the
+ * organisation. A sibling function rather than a shared one: the difference
+ * between the two messages is the only thing an operator reads, and "the
+ * organisation is gone" after deleting one deal from a business that still
+ * exists would send them looking for a company that was never touched. A
+ * parameterised noun would collapse two claims that must stay
+ * distinguishable into one string builder, which is how they would come to
+ * drift. It is worded to hold in both cases `deleteOpportunityRow` can
+ * return — a deal this call deleted, or `null` because it was already gone.
+ * "Was deleted" would be a lie in the second case.
  *
- * Worded to hold in both cases `deleteOpportunityRow` can return — a deal
- * this call deleted, or `null` because it was already gone. "Was deleted"
- * would be a lie in the second case.
+ * `OpportunityActivityTrailUnsafeError` is the opposite timing: the delete
+ * was refused before it ran, so this is the one delete failure where
+ * "nothing changed" is a promise rather than a hope, and saying so is what
+ * stops an operator retrying it all afternoon. It names the missing
+ * migration as a database the console is ahead of, because the person who
+ * can fix it is whoever applies migrations by hand — not the operator
+ * reading this. The constraint, the column and the SQL stay in the
+ * exception's own message, which goes to the logs and not to the screen.
  */
-function mapOpportunityDeleteAuditFailure(
+function mapOpportunityDeleteFailure(
   cause: unknown,
 ): { ok: false; message: string } | undefined {
+  if (cause instanceof OpportunityActivityTrailUnsafeError) {
+    return {
+      ok: false,
+      message:
+        "That deal was not deleted and nothing was changed. This console's database is " +
+        "missing an update that keeps a deal's activity history when the deal is removed, " +
+        "and deleting without it would destroy that history. Please report this so the " +
+        "update can be applied, then try again.",
+    };
+  }
   if (cause instanceof AuditWriteError) {
     return {
       ok: false,
@@ -746,7 +768,7 @@ export async function deleteOpportunityAction(
         ? `${outcome.organisationName} — ${outcome.product ?? "(no product)"} (${outcome.opportunityId})`
         : opportunityId,
     }),
-    mapOpportunityDeleteAuditFailure);
+    mapOpportunityDeleteFailure);
   if (!result.ok) return result;
   if (result.value) {
     revalidatePath(`/platform/crm/${result.value.organisationId}`);

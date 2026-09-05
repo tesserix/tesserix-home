@@ -419,6 +419,16 @@ export function DeleteOrganisationButton({
  * every deal before `qualified`, and it is exactly the shape of the
  * mis-clicked duplicate the delete control below exists for. Callers render
  * the absence in their own words.
+ *
+ * Not a copy of `productLabel` in `../product-label.ts`, whose own comment
+ * warns against exactly that — and the two differ in both halves. It returns
+ * the string "Unassigned" for a null product, which is the right answer in a
+ * queue column but the wrong one here: this card says "No product yet" in
+ * its heading and "no product yet" mid-sentence in the delete control's
+ * copy, so the caller has to word the absence and this returns null. And it
+ * reads `ESTATE` directly, which this file — a client component — instead
+ * takes as the `products` prop `page.tsx` already passes it. If those two
+ * differences ever collapse, delete this one and import that.
  */
 function opportunityProductLabel(
   opportunity: OpportunityRow,
