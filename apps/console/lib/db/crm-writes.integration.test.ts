@@ -99,6 +99,14 @@ beforeAll(async () => {
     "../../../web/db/migrations/0027_crm_contacts_metadata.sql",
   );
   await db.exec(readFileSync(metadataMigrationPath, "utf-8"));
+
+  // 0049 adds `crm_opportunities.voided_at`. `linkConversion` — which the
+  // converted_* test below calls — now reads it.
+  const voidedMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0049_crm_opportunities_voided.sql",
+  );
+  await db.exec(readFileSync(voidedMigrationPath, "utf-8"));
 });
 
 afterAll(async () => {

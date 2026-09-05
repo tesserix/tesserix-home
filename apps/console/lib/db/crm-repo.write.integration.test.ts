@@ -58,6 +58,7 @@ const {
   linkConversion,
   AlreadyLinkedError,
   wonWithoutConversion,
+  VoidedOpportunityError,
 } = await import("./crm-repo");
 
 let db: PGlite;
@@ -69,6 +70,12 @@ let freshConversionOrgId: string;
 let alreadyLinkedOrgId: string;
 let migratedWonOrgId: string;
 let migratedWonOppId: string;
+let voidedWonOrgId: string;
+let voidedWonOppId: string;
+let voidedMigratedOrgId: string;
+let voidedMigratedOppId: string;
+let liveWonOrgId: string;
+let liveWonOppId: string;
 
 beforeAll(async () => {
   db = new PGlite();
@@ -105,6 +112,14 @@ beforeAll(async () => {
     "../../../web/db/migrations/0041_crm_erased_identifiers.sql",
   );
   await db.exec(readFileSync(erasedIdentifiersMigrationPath, "utf-8"));
+
+  // 0049 adds `crm_opportunities.voided_at`, which `linkConversion`,
+  // `setNextAction` and `advanceStageOnQuery` all now read (#251).
+  const voidedMigrationPath = path.resolve(
+    __dirname,
+    "../../../web/db/migrations/0049_crm_opportunities_voided.sql",
+  );
+  await db.exec(readFileSync(voidedMigrationPath, "utf-8"));
 
   // Migration 0020 (not replayed here — its only job is backfilling
   // `leads`) drops the CHECK so grandfathered rows can be inserted; 0021
@@ -182,6 +197,57 @@ beforeAll(async () => {
     [migratedWonOrgId],
   );
   migratedWonOppId = migratedWon.rows[0].id;
+
+  // #251, the two fixtures `linkConversion` and the handoff queue are tested
+  // against below. Seeded HERE, while the CHECK is still dropped, because
+  // both are `won`: a `won` row with a null product cannot be inserted under
+  // the CHECK at all, and voiding one afterwards would be an UPDATE the CHECK
+  // re-evaluates and rejects. That is the same history the real grandfathered
+  // rows have, and the reason `voidOpportunity` refuses them.
+  const voidedWonOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+    ["Voided Won Co"],
+  );
+  voidedWonOrgId = voidedWonOrg.rows[0].id;
+  const voidedWon = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities
+       (organisation_id, stage, product, closed_at, voided_at, voided_reason)
+     VALUES ($1, 'won', 'mark8ly', now() - interval '30 days', now(), 'Duplicate win')
+     RETURNING id`,
+    [voidedWonOrgId],
+  );
+  voidedWonOppId = voidedWon.rows[0].id;
+
+  // The control for the handoff queue: the same shape, not voided.
+  const liveWonOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+    ["Live Won Co"],
+  );
+  liveWonOrgId = liveWonOrg.rows[0].id;
+  const liveWon = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities
+       (organisation_id, stage, product, closed_at)
+     VALUES ($1, 'won', 'mark8ly', now() - interval '30 days')
+     RETURNING id`,
+    [liveWonOrgId],
+  );
+  liveWonOppId = liveWon.rows[0].id;
+
+  // A voided row in the MIGRATED shape — won, no product — which is what the
+  // product-backfill UPDATE inside `linkConversion` goes looking for.
+  const voidedMigratedOrg = await db.query<{ id: string }>(
+    `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+    ["Voided Migrated Co"],
+  );
+  voidedMigratedOrgId = voidedMigratedOrg.rows[0].id;
+  const voidedMigrated = await db.query<{ id: string }>(
+    `INSERT INTO crm_opportunities
+       (organisation_id, stage, product, closed_at, voided_at, voided_reason)
+     VALUES ($1, 'won', NULL, now() - interval '500 days', now(), 'Never happened')
+     RETURNING id`,
+    [voidedMigratedOrgId],
+  );
+  voidedMigratedOppId = voidedMigrated.rows[0].id;
 
   // Re-add the CHECK as NOT VALID — 0021's actual shape. This does not
   // scan/reject the grandfathered row already inserted above, but DOES
@@ -795,5 +861,168 @@ describe("commitImport writes the scrape columns", () => {
     );
     expect(rows.rows.map((row) => row.metadata)).toEqual([{}, {}]);
     expect(result.droppedMetadataCells).toBe(2);
+  });
+});
+
+/**
+ * A voided deal, against the four writes that could otherwise reach one
+ * (#251).
+ *
+ * `linkConversion` is the reason this describe is here rather than in a
+ * mocked suite, and it is the silent one. Hiding a voided won deal from
+ * `wonWithoutConversion` does NOT protect it: `linkConversion` does not use
+ * the row the queue handed out — it re-finds a won deal from
+ * `organisation_id + product + stage`, and its backfill UPDATE re-finds one
+ * from `organisation_id + stage + product IS NULL`. Both would still select a
+ * voided deal, stamp the organisation's conversion from it, and then leave
+ * `AlreadyLinkedError` permanently blocking the real deal. Nothing throws and
+ * nothing looks wrong; only these assertions say so.
+ */
+describe("the writes that must not reach a voided deal", () => {
+  const queueIds = async () =>
+    (await wonWithoutConversion(100)).rows.map((row) => row.opportunityId);
+
+  it("keeps a voided won deal out of the handoff queue, and its live twin in it", async () => {
+    const ids = await queueIds();
+    expect(ids).toContain(liveWonOppId);
+    expect(ids).not.toContain(voidedWonOppId);
+  });
+
+  it("does not hang a conversion off a voided won deal", async () => {
+    // The organisation still links — a conversion is a fact about the
+    // business, and refusing it because its only won deal was voided would
+    // block a real handoff. What must not happen is the NOTE being attached
+    // to the voided deal, which is the visible half of having selected it.
+    await linkConversion({
+      organisationId: voidedWonOrgId,
+      product: "mark8ly",
+      ref: "tenant_voided_probe",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    const note = await db.query<{ opportunity_id: string | null }>(
+      `SELECT opportunity_id FROM crm_activities WHERE organisation_id = $1`,
+      [voidedWonOrgId],
+    );
+    expect(note.rows).toHaveLength(1);
+    expect(note.rows[0].opportunity_id).toBeNull();
+  });
+
+  it("does not backfill a product onto a voided, product-less won deal", async () => {
+    // The backfill UPDATE is the one write migration 0021's CHECK was shaped
+    // to permit, and the only thing that can put a product on a migrated won
+    // row. Aiming it at a voided deal would invent exactly the attribution
+    // the lead migration declined to invent, on a deal already declared a
+    // mistake.
+    await linkConversion({
+      organisationId: voidedMigratedOrgId,
+      product: "kora",
+      ref: "user_voided_probe",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    const opp = await db.query<{ product: string | null }>(
+      `SELECT product FROM crm_opportunities WHERE id = $1`,
+      [voidedMigratedOppId],
+    );
+    expect(opp.rows[0].product).toBeNull();
+
+    const note = await db.query<{ opportunity_id: string | null }>(
+      `SELECT opportunity_id FROM crm_activities WHERE organisation_id = $1`,
+      [voidedMigratedOrgId],
+    );
+    expect(note.rows).toHaveLength(1);
+    expect(note.rows[0].opportunity_id).toBeNull();
+  });
+
+  describe("the two organisation-detail writes refuse a voided deal outright", () => {
+    let voidedOppId: string;
+    let liveOppId: string;
+
+    beforeAll(async () => {
+      const org = await db.query<{ id: string }>(
+        `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+        ["Voided Edit Co"],
+      );
+      // `contacted` with a product: voidable under 0021's CHECK by a plain
+      // UPDATE, and a legal source stage for a move to `qualified`.
+      const seed = async () =>
+        (
+          await db.query<{ id: string }>(
+            `INSERT INTO crm_opportunities (organisation_id, stage, product)
+             VALUES ($1, 'contacted', 'mark8ly') RETURNING id`,
+            [org.rows[0].id],
+          )
+        ).rows[0].id;
+      voidedOppId = await seed();
+      liveOppId = await seed();
+      await db.query(
+        `UPDATE crm_opportunities SET voided_at = now(), voided_reason = 'Duplicate' WHERE id = $1`,
+        [voidedOppId],
+      );
+    });
+
+    it("refuses to schedule a next action on it, and writes nothing", async () => {
+      await expect(
+        setNextAction({
+          opportunityId: voidedOppId,
+          at: new Date().toISOString(),
+          note: "chase",
+          actor: "ava",
+        }),
+      ).rejects.toBeInstanceOf(VoidedOpportunityError);
+
+      // The column the Due queue reads is still null. The queue filter hides
+      // a voided deal; it does not stop `next_action_at` being written.
+      const opp = await db.query<{ next_action_at: Date | null }>(
+        `SELECT next_action_at FROM crm_opportunities WHERE id = $1`,
+        [voidedOppId],
+      );
+      expect(opp.rows[0].next_action_at).toBeNull();
+    });
+
+    it("still schedules one on its live twin — the guard is not a blanket refusal", async () => {
+      await setNextAction({
+        opportunityId: liveOppId,
+        at: new Date().toISOString(),
+        note: "chase",
+        actor: "ava",
+      });
+      const opp = await db.query<{ next_action_at: Date | null }>(
+        `SELECT next_action_at FROM crm_opportunities WHERE id = $1`,
+        [liveOppId],
+      );
+      expect(opp.rows[0].next_action_at).not.toBeNull();
+    });
+
+    it("refuses to move its stage, leaving no stage_change behind", async () => {
+      // "Void it, then someone moves it to won" would produce a
+      // won-and-voided row, and `advanceStage` would write `closed_at` and a
+      // `stage_change` activity — the funnel's own source of truth — for a
+      // deal declared never to have happened.
+      await expect(
+        advanceStage({
+          opportunityId: voidedOppId,
+          to: "won",
+          product: "mark8ly",
+          actor: "ava",
+        }),
+      ).rejects.toBeInstanceOf(VoidedOpportunityError);
+
+      const opp = await db.query<{ stage: string; closed_at: Date | null }>(
+        `SELECT stage, closed_at FROM crm_opportunities WHERE id = $1`,
+        [voidedOppId],
+      );
+      expect(opp.rows[0].stage).toBe("contacted");
+      expect(opp.rows[0].closed_at).toBeNull();
+
+      const activities = await db.query<{ id: string }>(
+        `SELECT id FROM crm_activities WHERE opportunity_id = $1`,
+        [voidedOppId],
+      );
+      expect(activities.rows).toHaveLength(0);
+    });
   });
 });

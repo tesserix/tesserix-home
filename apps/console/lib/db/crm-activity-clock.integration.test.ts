@@ -44,7 +44,14 @@ const { logActivity, dueOpportunities, driftingOpportunities, SuppressedContactE
 
 const { NEXT_ACTION_DAYS } = await import("../crm");
 
-const MIGRATIONS = ["0019_crm_schema.sql", "0022_crm_suppressions_normalize.sql"];
+// 0049 adds `voided_at`/`voided_reason`. `CLOCK_ELIGIBLE_SQL` reads the first
+// of them, so without this migration every clock statement below would fail on
+// a missing column rather than on the rows it selects.
+const MIGRATIONS = [
+  "0019_crm_schema.sql",
+  "0022_crm_suppressions_normalize.sql",
+  "0049_crm_opportunities_voided.sql",
+];
 
 let db: PGlite;
 
@@ -522,5 +529,75 @@ describe("the operator's own date", () => {
     await logActivity({ organisationId: orgId, kind: "email_received", actor: "ava" });
 
     expect(await daysUntilNextAction(oppId)).toBe(-9);
+  });
+});
+
+/**
+ * A voided deal's clocks do not move (#251).
+ *
+ * The organisation-wide branch is the dangerous one, and is why this lives
+ * here rather than in a shape test. An activity that names NO deal — every DM
+ * the composer sends, every call logged against the business — bumps the
+ * clocks of every eligible deal on that organisation. Without the void
+ * conjunct in `CLOCK_ELIGIBLE_SQL` a voided deal would silently pick up a
+ * fresh `next_action_at` and reappear on Due, with nothing the operator did
+ * looking like the cause: they logged a call, not a restore.
+ *
+ * A live sibling is seeded in both tests as the control. It is what proves the
+ * statement ran and reached this organisation at all, so "the voided row did
+ * not move" cannot pass because nothing moved.
+ */
+describe("a voided deal and the drift clock", () => {
+  const voidOpportunityRow = async (id: string) => {
+    await db.query(
+      `UPDATE crm_opportunities SET voided_at = now(), voided_reason = 'Duplicate' WHERE id = $1`,
+      [id],
+    );
+  };
+
+  it("leaves a voided deal alone when the activity names no deal at all", async () => {
+    const orgId = await seedOrganisation("Bondi Baker");
+    const live = await seedOpportunity(orgId, { stage: "new" });
+    const voided = await seedOpportunity(orgId, { stage: "new" });
+    await voidOpportunityRow(voided);
+
+    await logActivity({ organisationId: orgId, kind: "call", actor: "ava" });
+
+    expect(await lastContactedAt(live)).not.toBeNull();
+    expect(await lastContactedAt(voided)).toBeNull();
+    // `next_action_at` is the column that decides which queue a lead is in.
+    // A void that only kept `last_contacted_at` still would have put the
+    // deal back on Due.
+    expect(await nextActionAt(voided)).toBeNull();
+    expect(
+      await dueOpportunities({}, 50).then((p) => p.rows.map((r) => r.id)),
+    ).not.toContain(voided);
+    // The activity itself is still recorded — a void is not a reason to
+    // lose the record that someone called the business.
+    expect(await activityCount(orgId)).toBe(1);
+  });
+
+  it("leaves a voided deal alone when the activity names it explicitly", async () => {
+    // Naming a voided deal does not un-void it, exactly as naming a won one
+    // does not make it live. Reachable from the UI: `organisationDetail`
+    // keeps voided deals on the organisation's file on purpose.
+    const orgId = await seedOrganisation("Bondi Baker");
+    const live = await seedOpportunity(orgId, { stage: "new" });
+    const voided = await seedOpportunity(orgId, { stage: "new" });
+    await voidOpportunityRow(voided);
+
+    await logActivity({
+      organisationId: orgId,
+      opportunityId: voided,
+      kind: "call",
+      actor: "ava",
+    });
+
+    expect(await lastContactedAt(voided)).toBeNull();
+    expect(await nextActionAt(voided)).toBeNull();
+    // Untouched by the by-id branch, which names one row — the control here
+    // is that the by-id statement is the one that ran.
+    expect(await lastContactedAt(live)).toBeNull();
+    expect(await activityCount(orgId)).toBe(1);
   });
 });

@@ -515,9 +515,18 @@ export async function dueOpportunities(
     label: "dueOpportunities",
     // The queue's own predicates stay first, filters spliced after, so the
     // partial index (crm_opp_due_idx) stays eligible.
+    //
+    // `voided_at IS NULL` is one of those own predicates and belongs ahead of
+    // the filters for the same reason (#251). It only ever NARROWS the row
+    // set, so this query's predicate still implies `crm_opp_due_idx`'s
+    // partial one and the index stays usable unmodified — the argument
+    // migration 0049's header rests on when it declines to touch either
+    // index. A voided deal is one an operator has said should never have
+    // been in the funnel; leaving it Due would keep asking them to work it.
     buildWhere: (params) =>
       `o.next_action_at <= now()
-        AND o.stage NOT IN ('won', 'lost')${filterClause(filter, params)}`,
+        AND o.stage NOT IN ('won', 'lost')
+        AND o.voided_at IS NULL${filterClause(filter, params)}`,
     toRow: toQueueRow,
     // Non-null on every returned row: the predicate above requires it.
     sortValue: (row) => row.next_action_at,
@@ -544,7 +553,12 @@ export async function dueOpportunities(
  *  alone deliberately — the partial predicate (next_action_at IS NULL AND
  *  stage NOT IN ('won','lost')) is what makes the index selective, and at
  *  259 rows a plain sort of the remainder costs nothing. An expression
- *  index would be premature tuning today. */
+ *  index would be premature tuning today.
+ *
+ *  A voided deal is excluded here too, ahead of the filters and for the
+ *  same index reason `dueOpportunities` records (#251). Drifting is the
+ *  queue that says "nobody has touched this lately", and a deal an operator
+ *  has declared should never have been in the funnel is not a lapse. */
 export async function driftingOpportunities(
   filter: QueueFilter,
   staleDays: number,
@@ -563,6 +577,7 @@ export async function driftingOpportunities(
       params.push(staleDays);
       return `o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
+        AND o.voided_at IS NULL
         AND ${DRIFTING_SORT_KEY}
               <= now() - make_interval(days => $${params.length}::int)${filterSql}`;
     },
@@ -688,7 +703,17 @@ export async function closedOpportunities(
     // shape the queues use. A `stage` filter here narrows won/lost to one of
     // them rather than contradicting the predicate, which is what the same
     // filter would do on either work queue.
-    buildWhere: (params) => `o.stage IN ('won', 'lost')${filterClause(filter, params)}`,
+    //
+    // A VOIDED DEAL IS EXCLUDED, and this exclusion is the one that carries
+    // the point of #251 rather than merely tidying a queue. `voidOpportunity`
+    // deliberately accepts a won or lost deal — a duplicated won row is
+    // exactly the close-rate pollution the issue exists to remove — so if
+    // this list still counted it, the void would have changed nothing an
+    // operator reads. Everything a voided deal was is still on the
+    // organisation's own file (`organisationDetail`), which keeps it.
+    buildWhere: (params) =>
+      `o.stage IN ('won', 'lost')
+        AND o.voided_at IS NULL${filterClause(filter, params)}`,
     toRow: toClosedRow,
     sortValue: (row) => row.closed_sort,
     limit,
@@ -722,6 +747,40 @@ export class MissingProductError extends Error {
       `Opportunity ${opportunityId} was migrated without a product and must be assigned one (via a stage update) before it can be edited.`,
     );
     this.name = "MissingProductError";
+  }
+}
+
+/**
+ * Thrown when a write tries to move a VOIDED deal (#251).
+ *
+ * A void says the deal should never have been in the funnel. Every read in
+ * this module now excludes one, so a voided deal cannot be reached from Due,
+ * Drifting, Closed or the handoff queue — but `organisationDetail` keeps it,
+ * deliberately, because that page is the organisation's file and the restore
+ * control has to hang off something. So the detail page is a live surface
+ * showing a row whose stage and next-action controls must not fire, and this
+ * is what they raise instead.
+ *
+ * Two writes need it, and they share ONE error type rather than declaring one
+ * each. The refusal is the same fact about the same row — this deal is out of
+ * the funnel — and the remedy is the same single action: restore it, then
+ * make the edit. Two types would put that one fact in two places that can
+ * stop agreeing in a single commit, and would oblige every surface that
+ * renders it to learn both; the shape of the failure, not the name of the
+ * function that hit it, is what a caller branches on. Which write was
+ * attempted is already in the caller's own frame.
+ *
+ * The refusals are TYPED and not silent no-ops. A no-op would report success
+ * for a stage move that did not happen, which is the one thing
+ * `advanceStageOnQuery`'s whole design refuses to allow — its `AdvanceStageResult`
+ * exists precisely so a caller can never assume a write occurred.
+ */
+export class VoidedOpportunityError extends Error {
+  constructor(readonly opportunityId: string) {
+    super(
+      `Opportunity ${opportunityId} is voided and cannot be edited. Restore it first.`,
+    );
+    this.name = "VoidedOpportunityError";
   }
 }
 
@@ -840,8 +899,9 @@ export async function advanceStageOnQuery(
     stage: CrmStage;
     organisation_id: string;
     product: string | null;
+    voided_at: string | null;
   }>(
-    `SELECT stage, organisation_id, product
+    `SELECT stage, organisation_id, product, voided_at
        FROM crm_opportunities
       WHERE id = $1
         FOR UPDATE`,
@@ -850,6 +910,22 @@ export async function advanceStageOnQuery(
   const current = rows[0];
   if (!current) {
     throw new Error(`advanceStage: opportunity ${opportunityId} not found`);
+  }
+  // Read from the same locked row as everything below, so no concurrent void
+  // can land between the check and the UPDATE (#251).
+  //
+  // A voided deal does not move. "Void it, then someone moves it to won"
+  // would produce a won-and-voided row, and every predicate this module just
+  // gained would then have to reconcile a stage that says the deal closed
+  // with a column that says it never happened. Worse, `advanceStage` writes
+  // `closed_at` and a `stage_change` activity on that transition — the
+  // funnel's own source of truth — so the contradiction would not stay in
+  // one row. Refusing here is the cheapest place to keep the two consistent.
+  //
+  // Reachable in practice: `organisationDetail` deliberately keeps voided
+  // deals visible, so the stage control is on screen for one.
+  if (current.voided_at !== null) {
+    throw new VoidedOpportunityError(opportunityId);
   }
 
   const stageChanging = current.stage !== to;
@@ -954,6 +1030,10 @@ export interface SetNextActionInput {
  * between a clear prompt and a raw constraint-violation error reaching the
  * operator. crm_opportunities has no `updated_at` trigger, so the write
  * sets it explicitly.
+ *
+ * That same read now also refuses a VOIDED deal, with
+ * `VoidedOpportunityError` — see the guard itself for why the queue's own
+ * exclusion is not enough.
  */
 export async function setNextAction(input: SetNextActionInput): Promise<void> {
   // `actor` is part of the interface for parity with `advanceStage` and
@@ -963,13 +1043,32 @@ export async function setNextAction(input: SetNextActionInput): Promise<void> {
   const { opportunityId, at, note } = input;
 
   await tesserixTx(async (query) => {
-    const rows = await query<{ stage: CrmStage; product: string | null }>(
-      `SELECT stage, product FROM crm_opportunities WHERE id = $1 FOR UPDATE`,
+    const rows = await query<{
+      stage: CrmStage;
+      product: string | null;
+      voided_at: string | null;
+    }>(
+      `SELECT stage, product, voided_at FROM crm_opportunities WHERE id = $1 FOR UPDATE`,
       [opportunityId],
     );
     const current = rows[0];
     if (!current) {
       throw new Error(`setNextAction: opportunity ${opportunityId} not found`);
+    }
+    // From the same locked read as the product guard below, and ahead of it:
+    // a voided deal is refused whether or not it also lacks a product, and
+    // "restore it first" is the one instruction that applies to both.
+    //
+    // Without this, scheduling a next action on a voided deal would succeed
+    // and write `next_action_at`. `dueOpportunities` would still hide the
+    // row, so nothing visible would break HERE — but the column itself would
+    // then say "this is due" about a deal declared never to have happened,
+    // and it is read by more than this query: `organisationDetail` renders
+    // it, and the platform-API implementation of the same queues has no void
+    // predicate yet (T6). A queue filter hides that state; it does not stop
+    // it being written (#251).
+    if (current.voided_at !== null) {
+      throw new VoidedOpportunityError(opportunityId);
     }
     if (requiresProduct(current.stage) && !current.product) {
       throw new MissingProductError(opportunityId);
@@ -1144,9 +1243,21 @@ export async function assertNoSuppressedContact(
  * "nobody has touched this lately" has nothing to say about it. The by-id
  * branch now agrees with that too — naming a won deal explicitly does not make
  * it live again.
+ *
+ * A VOIDED DEAL IS EXCLUDED, third and for a third reason (#251). This is the
+ * clock predicate that matters most for a void, because of the
+ * by-ORGANISATION branch: an activity that names no deal — every DM the
+ * composer sends, every organisation-level note — bumps the clocks of EVERY
+ * eligible deal on that organisation. Without this conjunct, logging a call to
+ * a business would silently reschedule a deal that had been voided, giving it
+ * a fresh `next_action_at` and putting it back on Due. Nothing an operator did
+ * would look like the cause. The by-id branch needs it as well: naming a
+ * voided deal explicitly does not un-void it, exactly as naming a won one does
+ * not make it live.
  */
 export const CLOCK_ELIGIBLE_SQL = `stage NOT IN ('won', 'lost')
-          AND (stage IN ('new', 'contacted') OR product IS NOT NULL)`;
+          AND (stage IN ('new', 'contacted') OR product IS NOT NULL)
+          AND voided_at IS NULL`;
 
 /**
  * Move both queue clocks — `last_contacted_at`, which Drifting reads, and
@@ -1520,6 +1631,14 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       lost_reason: string | null;
       created_at: unknown;
     }>(
+      // Voided deals stay in this list, deliberately — the same reasoning
+      // `notErased()` records for erased contacts just above (#251). This
+      // page is the organisation's FILE, not a work queue: the queues,
+      // Closed and the handoff list all exclude a voided deal, and if this
+      // list excluded it too the deal would be unreachable and there would
+      // be nothing for a Restore control to hang off. `advanceStageOnQuery`
+      // and `setNextAction` refuse a voided row with
+      // `VoidedOpportunityError` precisely because it is visible here.
       `SELECT id, product, stage, owner, next_action_at, next_action_note,
               last_contacted_at, is_starred, closed_at, lost_reason, created_at
          FROM crm_opportunities
@@ -2613,6 +2732,14 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffPage> 
           LIMIT 1
        ) c ON true
       WHERE o.stage = 'won'
+        -- A voided won deal is not waiting to be handed off (#251): the
+        -- operator has said it should never have been won, so asking anyone
+        -- to find its conversion is asking them to attribute a tenant to a
+        -- deal that is on the record as a mistake. See linkConversion, which
+        -- repeats this conjunct -- hiding the row here is not enough,
+        -- because that function finds its won deal by organisation and
+        -- product rather than from the row this queue handed out.
+        AND o.voided_at IS NULL
         AND (
           g.converted_at IS NULL
           OR g.converted_product IS DISTINCT FROM o.product
@@ -2744,9 +2871,22 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
     // at all): the note is still worth writing at the organisation level,
     // and inventing an association with some other product's deal would be
     // worse than none.
+    //
+    // `AND voided_at IS NULL` is NOT redundant with `wonWithoutConversion`'s
+    // own exclusion (#251), and this is the one place a void is silently
+    // load-bearing. This lookup does not read the row the handoff queue
+    // handed out — it re-finds a won deal from `organisation_id + product +
+    // stage`. So hiding a voided won deal from the queue does not stop it
+    // being selected here, by a manual link or by a suggestion confirmed for
+    // the same organisation and product. The consequence is not a cosmetic
+    // mis-attribution: the conversion gets stamped on the ORGANISATION from a
+    // deal declared never to have happened, and `AlreadyLinkedError` above
+    // then blocks the real deal from ever linking — permanently, since
+    // nothing clears `converted_at`.
     const opportunityRows = await query<{ id: string }>(
       `SELECT id FROM crm_opportunities
         WHERE organisation_id = $1 AND product = $2 AND stage = 'won'
+          AND voided_at IS NULL
         ORDER BY closed_at DESC NULLS LAST
         LIMIT 1`,
       [organisationId, product],
@@ -2784,6 +2924,13 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
     // looking at is the row that clears. Any others stay in the queue and
     // hit Ruling 30's guard — the same visible refusal a second product's
     // deal already gets, not a new failure mode.
+    //
+    // `AND voided_at IS NULL` in the inner SELECT, for the reason the lookup
+    // above gives (#251) and one more of its own: this statement WRITES a
+    // product onto the row it picks. Letting it pick a voided deal would
+    // fabricate exactly the attribution the lead migration declined to
+    // invent, onto a deal already declared a mistake, and would then hang
+    // the conversion note off it.
     const filledRows =
       opportunityRows.length > 0
         ? []
@@ -2796,6 +2943,7 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
                  WHERE organisation_id = $1
                    AND stage = 'won'
                    AND product IS NULL
+                   AND voided_at IS NULL
                  ORDER BY closed_at ASC NULLS LAST, id ASC
                  LIMIT 1
               )
@@ -2954,6 +3102,14 @@ function organisationFilterClauses(filter: OrganisationFilter, params: unknown[]
     // EXISTS, never a join: product lives on crm_opportunities and one
     // organisation can have several, so a join fans one org into a row per
     // matching opportunity and renders it twice.
+    //
+    // NO `voided_at IS NULL` here, and that is a decision rather than an
+    // oversight (#251). "This organisation has a Mark8ly deal" stays true of
+    // a voided one, and this filter is how an operator FINDS a business —
+    // including the one whose only deal they just voided and now want to
+    // open. The `open_opportunities` count in `listOrganisations` does
+    // exclude them, because that one is read as work in play; these two
+    // predicates answer different questions about the same rows.
     if (filter.product === UNASSIGNED_PRODUCT) {
       clauses.push(
         `EXISTS (SELECT 1 FROM crm_opportunities o WHERE o.organisation_id = g.id AND o.product IS NULL)`,
@@ -3304,9 +3460,23 @@ export async function listOrganisations(
               -- the lateral resolved to. See notErased().
               (SELECT count(*) FROM crm_contacts c
                 WHERE c.organisation_id = g.id) AS contact_count,
+              -- Voided deals excluded (#251): this number is read as "how
+              -- much is in play here", the same question the two work
+              -- queues answer, and a deal taken out of the funnel is not in
+              -- play. Counting it would leave the browse list disagreeing
+              -- with Due and Drifting about the same organisation.
               (SELECT count(*) FROM crm_opportunities o
                 WHERE o.organisation_id = g.id
-                  AND o.stage NOT IN ('won', 'lost')) AS open_opportunities,
+                  AND o.stage NOT IN ('won', 'lost')
+                  AND o.voided_at IS NULL) AS open_opportunities,
+              -- NO void test here, deliberately. This array answers "which
+              -- products has this organisation ever had a deal on", which
+              -- stays true of a voided one -- the deal happened, and the
+              -- void says it should not have been in the funnel, not that
+              -- the product was never discussed. It feeds discovery (the
+              -- product chips, and the product filter built in
+              -- organisationFilterClauses, which declines the test for the
+              -- same reason), not work.
               (SELECT array_agg(DISTINCT o.product) FROM crm_opportunities o
                 WHERE o.organisation_id = g.id
                   AND o.product IS NOT NULL) AS products
