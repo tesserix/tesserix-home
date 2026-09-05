@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "no template is stored or registered under this key — keys are owned by the product's code"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

@@ -1,0 +1,14 @@
+{
+  "success": true,
+  "data": {
+    "templates": [],
+    "failures": [
+      {
+        "source": "mark8ly",
+        "message": "responded 500"
+      }
+    ]
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

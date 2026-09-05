@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "EXTERNAL_SERVICE_ERROR",
+    "message": "the email provider rejected the test send"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

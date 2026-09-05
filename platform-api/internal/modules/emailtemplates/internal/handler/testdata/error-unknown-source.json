@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "emailtemplates: unknown source: nosuch"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

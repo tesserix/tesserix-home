@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "to is required: a test send needs a recipient"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}

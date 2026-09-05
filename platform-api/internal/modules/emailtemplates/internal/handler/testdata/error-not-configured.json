@@ -1,0 +1,9 @@
+{
+  "success": false,
+  "error": {
+    "code": "NOT_IMPLEMENTED",
+    "message": "the product has no email sending configured, so a test send cannot be made"
+  },
+  "timestamp": "<timestamp>",
+  "request_id": "<request-id>"
+}
