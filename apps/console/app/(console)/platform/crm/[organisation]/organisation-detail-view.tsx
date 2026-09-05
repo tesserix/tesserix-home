@@ -48,6 +48,7 @@ import {
   setPrimaryContactAction,
   changeStage,
   createOpportunityAction,
+  deleteOpportunityAction,
   deleteOrganisationAction,
   eraseContactAction,
   scheduleNextAction,
@@ -405,6 +406,137 @@ export function DeleteOrganisationButton({
 }
 
 /**
+ * What to call a deal on screen.
+ *
+ * A `crm_opportunities` row has no name of its own — the product is the only
+ * operator-visible thing that tells one of an organisation's deals from
+ * another — and `product` holds a context key (`"mark8ly"`), not a label, so
+ * the estate is consulted for the readable name. Falls back to the raw key
+ * for a product the estate no longer lists, which is a deal that still has to
+ * be identifiable rather than blank.
+ *
+ * Null when the deal has no product at all. That is not an error state: it is
+ * every deal before `qualified`, and it is exactly the shape of the
+ * mis-clicked duplicate the delete control below exists for. Callers render
+ * the absence in their own words.
+ *
+ * Not a copy of `productLabel` in `../product-label.ts`, whose own comment
+ * warns against exactly that — and the two differ in both halves. It returns
+ * the string "Unassigned" for a null product, which is the right answer in a
+ * queue column but the wrong one here: this card says "No product yet" in
+ * its heading and "no product yet" mid-sentence in the delete control's
+ * copy, so the caller has to word the absence and this returns null. And it
+ * reads `ESTATE` directly, which this file — a client component — instead
+ * takes as the `products` prop `page.tsx` already passes it. If those two
+ * differences ever collapse, delete this one and import that.
+ */
+function opportunityProductLabel(
+  opportunity: OpportunityRow,
+  products: readonly ProductOption[],
+): string | null {
+  if (!opportunity.product) return null;
+  return products.find((p) => p.context === opportunity.product)?.name ?? opportunity.product;
+}
+
+/**
+ * Delete one deal (#251).
+ *
+ * Deliberately NOT a fourth entry in the stage `<select>` above: a
+ * destructive option one keystroke away from "Won" in a list an operator
+ * flicks through is the mis-click hazard this issue exists to remove, not one
+ * to add. It is its own button, behind its own confirmation.
+ *
+ * No typed-name gate, unlike the organisation delete and the contact erasure.
+ * Those destroy a whole business record or a person's details; this removes
+ * one deal and leaves the organisation, its contacts, its other deals and
+ * this deal's activities standing. `DestructiveConfirmDialog` supports a
+ * caller with no gate (`statusId` is optional), and the confirmation's job
+ * here is to make the operator read what they are about to do — which the
+ * copy has to actually tell them, since "delete" reads like "delete the
+ * business" to someone who has not been told otherwise.
+ *
+ * Rendered only when the session holds `hard-delete` — same reasoning as
+ * `EraseContactButton`: a control that walks an operator through a
+ * confirmation and then refuses is worse than no control.
+ */
+function DeleteOpportunityButton({
+  opportunity,
+  productLabel,
+}: {
+  opportunity: OpportunityRow;
+  /** From `opportunityProductLabel` — null for a deal with no product. */
+  productLabel: string | null;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  // The deal as the operator can see it. A productless deal is genuinely
+  // indistinguishable from another productless deal on the same organisation
+  // — that is true of the whole card, not just this control — so this says
+  // what is known rather than inventing an identity.
+  const dealLabel = productLabel ?? "no product yet";
+
+  const submit = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteOpportunityAction(opportunity.id);
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setOpen(false);
+      // Unconditional, and this is the reason: `deleteOpportunityAction`
+      // learns which organisation to revalidate from the deleted row, so a
+      // call that found nothing to delete — another session got there first —
+      // revalidates nothing. Without a refresh here that operator's card
+      // stays on screen after a delete that reported success.
+      router.refresh();
+    });
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        // The visible label says what the button does; the accessible name
+        // adds which deal, because an organisation's cards carry identical
+        // controls and differ only by their product. Kept as a prefix of the
+        // accessible name so speaking the visible words still activates it.
+        aria-label={`Delete deal: ${dealLabel}`}
+        onClick={() => setOpen(true)}
+      >
+        Delete deal
+      </Button>
+      <DestructiveConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setError(null);
+        }}
+        title={`Delete the ${dealLabel} deal?`}
+        // Says what SURVIVES, not just what goes. Deleting a deal is not
+        // deleting a business, and an operator who reads "delete" on a CRM
+        // record has every reason to assume the worse of the two until told
+        // otherwise. The activities are the least obvious of the four: they
+        // stay on the organisation's timeline, no longer scoped to any deal
+        // (migration 0048's `ON DELETE SET NULL`).
+        description="This removes only this deal. The organisation, its contacts and its other deals are untouched, and everything logged against this deal stays on the organisation's timeline. This cannot be undone."
+        confirmLabel="Delete deal"
+        confirmId={`delete-opportunity-confirm-button-${opportunity.id}`}
+        loading={pending}
+        onConfirm={submit}
+      >
+        <ErrorNote message={error} />
+      </DestructiveConfirmDialog>
+    </>
+  );
+}
+
+/**
  * One opportunity's stage control.
  *
  * A grandfathered opportunity — migrated to qualified/won/lost with no
@@ -419,10 +551,12 @@ function OpportunityCard({
   organisationId,
   opportunity,
   products,
+  canHardDelete,
 }: {
   organisationId: string;
   opportunity: OpportunityRow;
   products: readonly ProductOption[];
+  canHardDelete: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -437,6 +571,7 @@ function OpportunityCard({
 
   const isGrandfathered = requiresProduct(opportunity.stage) && !opportunity.product;
   const targetNeedsProduct = requiresProduct(stage) || isGrandfathered;
+  const productLabel = opportunityProductLabel(opportunity, products);
 
   const submitStage = () => {
     setError(null);
@@ -479,14 +614,15 @@ function OpportunityCard({
             {STAGE_LABELS[opportunity.stage]}
           </Badge>
           <span className="text-sm text-muted-foreground">
-            {opportunity.product
-              ? products.find((p) => p.context === opportunity.product)?.name ?? opportunity.product
-              : "No product yet"}
+            {productLabel ?? "No product yet"}
           </span>
           {opportunity.owner ? (
             <span className="text-sm text-muted-foreground">· {opportunity.owner}</span>
           ) : null}
         </div>
+        {canHardDelete ? (
+          <DeleteOpportunityButton opportunity={opportunity} productLabel={productLabel} />
+        ) : null}
       </div>
 
       {isGrandfathered ? (
@@ -755,10 +891,14 @@ export function OpportunitiesTab({
   organisationId,
   opportunities,
   products,
+  canHardDelete,
 }: {
   organisationId: string;
   opportunities: readonly OpportunityRow[];
   products: readonly ProductOption[];
+  /** Whether the session holds `hard-delete` — see `page.tsx`. Threaded to
+   *  each card, which is where the delete control lives. */
+  canHardDelete: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -772,6 +912,7 @@ export function OpportunitiesTab({
             organisationId={organisationId}
             opportunity={opportunity}
             products={products}
+            canHardDelete={canHardDelete}
           />
         ))
       )}

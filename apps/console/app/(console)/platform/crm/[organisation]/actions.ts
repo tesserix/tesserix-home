@@ -54,6 +54,8 @@ import { isSafeWebsiteUrl, UNSAFE_WEBSITE_URL_MESSAGE } from "@/lib/db/crm-url";
 import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
+  deleteOpportunity as deleteOpportunityRow,
+  OpportunityActivityTrailUnsafeError,
 } from "@/lib/db/crm-erasure";
 import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { AuditWriteError } from "@/lib/db/audit-repo";
@@ -676,6 +678,106 @@ export async function deleteOrganisationAction(
   // Not just the queue: a deleted organisation that is still listed on the
   // browse surface links to a detail page that no longer exists.
   revalidatePath("/platform/crm/organisations");
+  return { ok: true };
+}
+
+/**
+ * The two exceptions `deleteOpportunityRow` can raise that an operator can
+ * do something about, allowlisted one type at a time — never "anything that
+ * is an Error is safe to show" (see `withCrmWrite`).
+ *
+ * The `AuditWriteError` case is the same post-commit hazard
+ * `mapDeleteAuditFailure` covers, worded for the opportunity rather than the
+ * organisation. A sibling function rather than a shared one: the difference
+ * between the two messages is the only thing an operator reads, and "the
+ * organisation is gone" after deleting one deal from a business that still
+ * exists would send them looking for a company that was never touched. A
+ * parameterised noun would collapse two claims that must stay
+ * distinguishable into one string builder, which is how they would come to
+ * drift. It is worded to hold in both cases `deleteOpportunityRow` can
+ * return — a deal this call deleted, or `null` because it was already gone.
+ * "Was deleted" would be a lie in the second case.
+ *
+ * `OpportunityActivityTrailUnsafeError` is the opposite timing: the delete
+ * was refused before it ran, so this is the one delete failure where
+ * "nothing changed" is a promise rather than a hope, and saying so is what
+ * stops an operator retrying it all afternoon. It names the missing
+ * migration as a database the console is ahead of, because the person who
+ * can fix it is whoever applies migrations by hand — not the operator
+ * reading this. The constraint, the column and the SQL stay in the
+ * exception's own message, which goes to the logs and not to the screen.
+ */
+function mapOpportunityDeleteFailure(
+  cause: unknown,
+): { ok: false; message: string } | undefined {
+  if (cause instanceof OpportunityActivityTrailUnsafeError) {
+    return {
+      ok: false,
+      message:
+        "That deal was not deleted and nothing was changed. This console's database is " +
+        "missing an update that keeps a deal's activity history when the deal is removed, " +
+        "and deleting without it would destroy that history. Please report this so the " +
+        "update can be applied, then try again.",
+    };
+  }
+  if (cause instanceof AuditWriteError) {
+    return {
+      ok: false,
+      message:
+        "The opportunity is gone, but that action was not recorded in the audit log. Please report this.",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Delete one opportunity (#251): the disposal a mis-clicked duplicate deal
+ * has never had. See `deleteOpportunity` in crm-erasure.ts for why this is a
+ * delete rather than marking the deal `lost`, and for what it deliberately
+ * leaves standing.
+ *
+ * Gated on `hard-delete`, same as `deleteOrganisationAction` — holding `crm`
+ * is what lets an operator move a deal through its stages, and this destroys
+ * the deal instead. A missing opportunity resolves to `{ ok: true }` (already
+ * gone is success) with a zeroed audit summary rather than a guess at what an
+ * absent deal held.
+ *
+ * Takes only the opportunity id: the organisation to revalidate comes back
+ * from the delete itself, so this cannot be called with a mismatched pair.
+ */
+export async function deleteOpportunityAction(
+  opportunityId: string,
+): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    opportunityId,
+    { capability: "hard-delete" },
+    () => deleteOpportunityRow(opportunityId),
+    (outcome) => ({
+      action: "crm.opportunity.delete",
+      // `deleted` distinguishes a call that removed a deal from one that
+      // found nothing, the same distinction `crm.contact.erase` draws.
+      summary: outcome
+        ? { deleted: 1, activities_detached: outcome.activitiesDetached }
+        : { deleted: 0, activities_detached: 0 },
+      // Ruling 20-style, and doing more work here than the organisation's
+      // target does: an opportunity has no name of its own, so the id alone
+      // would name a row that no longer exists to be joined back to. Whose
+      // deal it was and what it was for are the two facts that make the row
+      // readable on its own.
+      target: outcome
+        ? `${outcome.organisationName} — ${outcome.product ?? "(no product)"} (${outcome.opportunityId})`
+        : opportunityId,
+    }),
+    mapOpportunityDeleteFailure);
+  if (!result.ok) return result;
+  if (result.value) {
+    revalidatePath(`/platform/crm/${result.value.organisationId}`);
+    // The Due and Drifting queues are lists of opportunities, so a deleted
+    // deal stays on them until this runs. Not
+    // `/platform/crm/organisations`: that surface renders organisations and
+    // their primary contacts, and nothing about a deal.
+    revalidatePath("/platform/crm");
+  }
   return { ok: true };
 }
 
