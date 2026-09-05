@@ -35,10 +35,18 @@ type ListPayload struct {
 	Announcements []Announcement `json:"announcements"`
 }
 
-// Service reads announcements over a pool.
-type Service struct{ pool *pgxpool.Pool }
+// Service reads announcements over a pool, and previews their audience over
+// whatever TenantSource the composition root supplies.
+type Service struct {
+	pool *pgxpool.Pool
+	// tenants may be nil where the audience preview is not wired. Audience is
+	// the only method that touches it.
+	tenants TenantSource
+}
 
-func New(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+func New(pool *pgxpool.Pool, tenants TenantSource) *Service {
+	return &Service{pool: pool, tenants: tenants}
+}
 
 // Active reads what a product should show a merchant in the given lifecycle
 // status.

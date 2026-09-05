@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tesserix/tesserix-home/platform-api/internal/modules/announcements/internal/service"
@@ -72,6 +73,9 @@ func (h *Handler) Routes(mux *http.ServeMux, verifier *auth.Verifier) {
 	// of which are withheld from products on purpose. `/v1/tickets/summary` is
 	// the precedent — a different view of the same rows gets its own path.
 	mux.Handle("GET /v1/announcements/all", authoring(h.listAuthored))
+	// The preview belongs to authoring, not to reading: it exists so an
+	// operator can see who a send would reach BEFORE making it.
+	mux.Handle("GET /v1/announcements/audience", authoring(h.audience))
 	mux.Handle("POST /v1/announcements", authoring(h.create))
 	mux.Handle("PATCH /v1/announcements/{id}", authoring(h.update))
 }
@@ -278,4 +282,52 @@ func (h *Handler) readKey(r *http.Request, principal *auth.Principal, operation 
 		return nil, nil
 	}
 	return &key, nil
+}
+
+var audienceParameters = []string{"products", "statuses"}
+
+// audience previews who an announcement would reach.
+//
+// `products` and `statuses` are comma-separated, and an ABSENT one means
+// "every" — matching the read query's NULL branches, where an untargeted
+// broadcast reaches everything. An empty preview for an untargeted
+// announcement would be the most misleading answer this endpoint could give.
+func (h *Handler) audience(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	if err := httpx.RejectUnknownParameters(query, audienceParameters); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		h.fail(w, r, errNoPrincipal)
+		return
+	}
+
+	payload, err := h.svc.Audience(r.Context(),
+		// The federated call is signed as the OPERATOR who asked, not as the
+		// platform: products record who looked, and #150's preview is a read
+		// on someone's behalf like any other.
+		service.Operator{ID: principal.Subject, Capability: string(auth.CapMassSend)},
+		splitList(query.Get("products")), splitList(query.Get("statuses")))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, payload, h.log)
+}
+
+// splitList reads a comma-separated parameter, dropping blanks.
+//
+// A blank entry is a trailing comma, not a request to match the empty product
+// — and since an empty LIST means "every", letting a stray comma through would
+// turn a targeted preview into an estate-wide one.
+func splitList(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
