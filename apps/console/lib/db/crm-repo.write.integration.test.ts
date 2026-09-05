@@ -874,9 +874,14 @@ describe("commitImport writes the scrape columns", () => {
  * the row the queue handed out — it re-finds a won deal from
  * `organisation_id + product + stage`, and its backfill UPDATE re-finds one
  * from `organisation_id + stage + product IS NULL`. Both would still select a
- * voided deal, stamp the organisation's conversion from it, and then leave
- * `AlreadyLinkedError` permanently blocking the real deal. Nothing throws and
- * nothing looks wrong; only these assertions say so.
+ * voided deal.
+ *
+ * What selecting one costs is narrower than "the conversion goes wrong". The
+ * organisation UPDATE runs first and takes only the input, so the
+ * organisation links either way and `AlreadyLinkedError` is untouched by
+ * these two predicates. What they decide is where the Ruling 31 note lands
+ * and whether a product is invented on a deal already declared a mistake.
+ * Nothing throws and nothing looks wrong; only these assertions say so.
  */
 describe("the writes that must not reach a voided deal", () => {
   const queueIds = async () =>
@@ -901,12 +906,61 @@ describe("the writes that must not reach a voided deal", () => {
       actor: "ava@tesserix.app",
     });
 
+    // The ruling the comment above names, made executable rather than
+    // narrated: the organisation's conversion IS recorded.
+    const org = await db.query<{ converted_ref: string | null }>(
+      `SELECT converted_ref FROM crm_organisations WHERE id = $1`,
+      [voidedWonOrgId],
+    );
+    expect(org.rows[0].converted_ref).toBe("tenant_voided_probe");
+
     const note = await db.query<{ opportunity_id: string | null }>(
       `SELECT opportunity_id FROM crm_activities WHERE organisation_id = $1`,
       [voidedWonOrgId],
     );
     expect(note.rows).toHaveLength(1);
     expect(note.rows[0].opportunity_id).toBeNull();
+  });
+
+  it("still hangs one off a LIVE won deal of the same product", async () => {
+    // The positive control for the lookup's predicate, and the reason it
+    // exists: with only the negative test above, mutating that SELECT's void
+    // conjunct to a constant-false leaves the whole suite green, because no
+    // other fixture reaches this lookup with a live won deal whose product
+    // matches. A blanket-null lookup would silently stop EVERY conversion
+    // note attaching to its deal — Ruling 31's timeline entry landing on the
+    // organisation only, on every handoff.
+    //
+    // Its own organisation, seeded here rather than reusing `liveWonOrgId`:
+    // linking a conversion takes that row out of `wonWithoutConversion`, and
+    // the queue assertion above must not depend on which test ran first.
+    const linkOrg = await db.query<{ id: string }>(
+      `INSERT INTO crm_organisations (name) VALUES ($1) RETURNING id`,
+      ["Live Won Link Co"],
+    );
+    const linkOrgId = linkOrg.rows[0].id;
+    const linkOpp = await db.query<{ id: string }>(
+      `INSERT INTO crm_opportunities
+         (organisation_id, stage, product, closed_at)
+       VALUES ($1, 'won', 'mark8ly', now() - interval '10 days')
+       RETURNING id`,
+      [linkOrgId],
+    );
+
+    await linkConversion({
+      organisationId: linkOrgId,
+      product: "mark8ly",
+      ref: "tenant_live_probe",
+      method: "manual",
+      actor: "ava@tesserix.app",
+    });
+
+    const note = await db.query<{ opportunity_id: string | null }>(
+      `SELECT opportunity_id FROM crm_activities WHERE organisation_id = $1`,
+      [linkOrgId],
+    );
+    expect(note.rows).toHaveLength(1);
+    expect(note.rows[0].opportunity_id).toBe(linkOpp.rows[0].id);
   });
 
   it("does not backfill a product onto a voided, product-less won deal", async () => {

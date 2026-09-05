@@ -295,12 +295,18 @@ export async function recordTemplatedDm(
     // not none of them, and "none" is how every imported organisation ended up
     // permanently Drifting.
     //
-    // GRANDFATHERED AND TERMINAL ROWS ARE EXCLUDED by `CLOCK_ELIGIBLE_SQL`,
-    // which is imported rather than spelled out here — the predicate used to
-    // be written out in this statement and again, twice and inconsistently, in
-    // `advanceContactClock`. It is one constant now for the reason its own
-    // comment gives: the copy that lacked the 0021 guard aborted the whole
-    // transaction and took the activity row with it.
+    // GRANDFATHERED, TERMINAL AND VOIDED ROWS ARE EXCLUDED by
+    // `CLOCK_ELIGIBLE_SQL` — three exclusions for three unrelated reasons,
+    // each one stated on the constant itself. The third (#251) is what stops
+    // this statement, whose UPDATE names no deal and so touches every eligible
+    // one on the organisation, from quietly rescheduling a deal an operator
+    // took out of the funnel.
+    //
+    // The constant is imported rather than spelled out here: the predicate
+    // used to be written out in this statement and again, twice and
+    // inconsistently, in `advanceContactClock`. It is one constant now for the
+    // reason its own comment gives — the copy that lacked the 0021 guard
+    // aborted the whole transaction and took the activity row with it.
     //
     // A DEFAULT, NOT A RULE, on this path too (#502). This statement used to
     // assign `now() + 4 days` unconditionally, which silently overwrote an

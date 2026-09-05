@@ -526,7 +526,7 @@ export async function dueOpportunities(
     buildWhere: (params) =>
       `o.next_action_at <= now()
         AND o.stage NOT IN ('won', 'lost')
-        AND o.voided_at IS NULL${filterClause(filter, params)}`,
+        AND ${notVoided("o")}${filterClause(filter, params)}`,
     toRow: toQueueRow,
     // Non-null on every returned row: the predicate above requires it.
     sortValue: (row) => row.next_action_at,
@@ -577,7 +577,7 @@ export async function driftingOpportunities(
       params.push(staleDays);
       return `o.next_action_at IS NULL
         AND o.stage NOT IN ('won', 'lost')
-        AND o.voided_at IS NULL
+        AND ${notVoided("o")}
         AND ${DRIFTING_SORT_KEY}
               <= now() - make_interval(days => $${params.length}::int)${filterSql}`;
     },
@@ -713,7 +713,7 @@ export async function closedOpportunities(
     // organisation's own file (`organisationDetail`), which keeps it.
     buildWhere: (params) =>
       `o.stage IN ('won', 'lost')
-        AND o.voided_at IS NULL${filterClause(filter, params)}`,
+        AND ${notVoided("o")}${filterClause(filter, params)}`,
     toRow: toClosedRow,
     sortValue: (row) => row.closed_sort,
     limit,
@@ -1257,7 +1257,7 @@ export async function assertNoSuppressedContact(
  */
 export const CLOCK_ELIGIBLE_SQL = `stage NOT IN ('won', 'lost')
           AND (stage IN ('new', 'contacted') OR product IS NOT NULL)
-          AND voided_at IS NULL`;
+          AND ${notVoided("")}`;
 
 /**
  * Move both queue clocks — `last_contacted_at`, which Drifting reads, and
@@ -1565,6 +1565,33 @@ function primaryContactOrder(alias: string): string {
 function notErased(alias: string): string {
   const prefix = alias === "" ? "" : `${alias}.`;
   return `${prefix}erased_at IS NULL`;
+}
+
+/**
+ * The soft-delete predicate for opportunities (#251), in the shape
+ * `notErased` above uses for contacts and for the same reason: written out by
+ * hand it is a conjunct nobody can find, and the whole risk of a void is a
+ * query that was missed.
+ *
+ * A voided deal is one an operator has said should never have been in the
+ * funnel. It keeps every row it had — nothing is deleted, and `restoreOpportunity`
+ * puts it back — but it leaves every surface that answers "what is in play"
+ * (both work queues, the Closed list, the browse list's `open_opportunities`),
+ * every clock that would reschedule it (`CLOCK_ELIGIBLE_SQL`), and every write
+ * that would attribute something to it (`wonWithoutConversion`, and both of
+ * `linkConversion`'s deal lookups).
+ *
+ * Not every query takes it, and each one that declines says so where it
+ * declines: `organisationDetail`, `listOrganisations`' `products` array, and
+ * `organisationFilterClauses`' product EXISTS all keep voided deals on
+ * purpose. Use this helper only where the answer is "excluded"; adding it
+ * somewhere new is a decision, not a tidy-up.
+ *
+ * @param alias the table alias in the calling query, or "" when unaliased.
+ */
+function notVoided(alias: string): string {
+  const prefix = alias === "" ? "" : `${alias}.`;
+  return `${prefix}voided_at IS NULL`;
 }
 
 /** `null` for "no such organisation" — the caller (the page) turns that into
@@ -2739,7 +2766,7 @@ export async function wonWithoutConversion(limit: number): Promise<HandoffPage> 
         -- repeats this conjunct -- hiding the row here is not enough,
         -- because that function finds its won deal by organisation and
         -- product rather than from the row this queue handed out.
-        AND o.voided_at IS NULL
+        AND ${notVoided("o")}
         AND (
           g.converted_at IS NULL
           OR g.converted_product IS DISTINCT FROM o.product
@@ -2873,20 +2900,32 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
     // worse than none.
     //
     // `AND voided_at IS NULL` is NOT redundant with `wonWithoutConversion`'s
-    // own exclusion (#251), and this is the one place a void is silently
-    // load-bearing. This lookup does not read the row the handoff queue
-    // handed out — it re-finds a won deal from `organisation_id + product +
-    // stage`. So hiding a voided won deal from the queue does not stop it
-    // being selected here, by a manual link or by a suggestion confirmed for
-    // the same organisation and product. The consequence is not a cosmetic
-    // mis-attribution: the conversion gets stamped on the ORGANISATION from a
-    // deal declared never to have happened, and `AlreadyLinkedError` above
-    // then blocks the real deal from ever linking — permanently, since
-    // nothing clears `converted_at`.
+    // own exclusion (#251). This lookup does not read the row the handoff
+    // queue handed out — it re-finds a won deal from `organisation_id +
+    // product + stage`. So hiding a voided won deal from the queue does not
+    // stop it being selected here, by a manual link or by a suggestion
+    // confirmed for the same organisation and product.
+    //
+    // WHAT THIS CONJUNCT DOES, AND WHAT IT DOES NOT. The organisation UPDATE
+    // above has already run, and it takes `(organisationId, product, ref)`
+    // alone — the deal selected here is not an input to it. So dropping this
+    // conjunct changes neither the organisation's conversion nor whether
+    // `AlreadyLinkedError` fires; what stops a voided deal being OFFERED for
+    // linking is `wonWithoutConversion`, which keeps it out of the queue.
+    // What this conjunct alone decides is where the Ruling 31 note lands — on
+    // a deal declared never to have happened, or on the organisation only —
+    // and, because a match here skips the backfill below, whether a live
+    // product-less won deal gets its product written at all.
+    //
+    // The ORGANISATION still links when its only won deal is voided, and that
+    // is deliberate: a conversion is a fact about the business, and businesses
+    // convert without a CRM deal behind them. Do NOT "fix" this by moving the
+    // void test above the organisation UPDATE — that would refuse a real
+    // handoff, which is the opposite of the ruling.
     const opportunityRows = await query<{ id: string }>(
       `SELECT id FROM crm_opportunities
         WHERE organisation_id = $1 AND product = $2 AND stage = 'won'
-          AND voided_at IS NULL
+          AND ${notVoided("")}
         ORDER BY closed_at DESC NULLS LAST
         LIMIT 1`,
       [organisationId, product],
@@ -2943,7 +2982,7 @@ export async function linkConversion(input: LinkConversionInput): Promise<Linked
                  WHERE organisation_id = $1
                    AND stage = 'won'
                    AND product IS NULL
-                   AND voided_at IS NULL
+                   AND ${notVoided("")}
                  ORDER BY closed_at ASC NULLS LAST, id ASC
                  LIMIT 1
               )
@@ -3468,7 +3507,7 @@ export async function listOrganisations(
               (SELECT count(*) FROM crm_opportunities o
                 WHERE o.organisation_id = g.id
                   AND o.stage NOT IN ('won', 'lost')
-                  AND o.voided_at IS NULL) AS open_opportunities,
+                  AND ${notVoided("o")}) AS open_opportunities,
               -- NO void test here, deliberately. This array answers "which
               -- products has this organisation ever had a deal on", which
               -- stays true of a voided one -- the deal happened, and the
