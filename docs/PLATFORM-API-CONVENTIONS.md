@@ -599,6 +599,33 @@ as a row filter so the row does not match, then return a sentinel the handler
 turns into a 422 naming what the operator must fix. The alternative is a
 Postgres constraint-violation string on a 500.
 
+### 9b. The Go side does not know a deal can be voided **(crm)**
+
+Migration 0049 added `crm_opportunities.voided_at` and `.voided_reason`, and
+the console's own repository excludes a voided deal from Due, Drifting, Closed,
+the browse list's open-deal count and the handoff queue, and refuses to
+reschedule or move one (`notVoided()` and `VoidedOpportunityError` in
+`apps/console/lib/db/crm-repo.ts`).
+
+**None of that exists in `platform-api`.** `internal/modules/crm` contains no
+reference to `voided_at` at all: its queue SQL does not carry the predicate and
+its next-action write does not carry the guard. The columns are simply unread.
+
+That gap is invisible today and becomes live the moment `PLATFORM_API_ORIGIN`
+is set. `fetchDueQueue`, `fetchDriftingQueue` and `saveNextAction`
+(`apps/console/lib/crm-queues.ts`) each fall through to the local repository
+**only while the variable is unset**; with it set, every one of them goes to
+the Go service instead. So at the cutover, voided deals reappear on Due and
+Drifting, and a next action can be scheduled on one — the console's UI would
+still render the Voided badge from `organisationDetail`, which is not routed
+through the API, while the queues beside it disagree.
+
+**So this is a precondition of the cutover, not a follow-up to it**: carry the
+predicate into the queue SQL and the guard into the next-action write, with a
+typed refusal the handler turns into a 422 (§9a's shape), *before*
+`PLATFORM_API_ORIGIN` is set anywhere. Reading the CRM through an API that
+cannot see a void is worse than not reading it through the API at all.
+
 ---
 
 ## 10. The console's migration
@@ -684,7 +711,12 @@ useful.
    bug rather than a configuration gap.
 5. Set `PLATFORM_API_ORIGIN` on the console deployment.
 
-**Step 5 is the only one left**, and it is configuration rather than code.
+**Step 5 is the only one left for tickets**, and it is configuration rather
+than code. It is no longer the only one left overall: the same variable
+switches the CRM queues and the next-action write over too, and **§9b is a
+code precondition of setting it** — the Go module has no notion of a voided
+deal, so flipping this on today would put voided deals back on Due and
+Drifting and let one be rescheduled. Ship §9b first.
 
 Until step 5, `apps/console/dev/admin-stub.mjs` keeps its four ticket routes.
 It sheds them when the switch is on by default — #271 is explicit that the stub

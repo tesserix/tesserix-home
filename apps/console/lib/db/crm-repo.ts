@@ -1597,9 +1597,10 @@ function notErased(alias: string): string {
  * funnel. It keeps every row it had — nothing is deleted, and `restoreOpportunity`
  * puts it back — but it leaves every surface that answers "what is in play"
  * (both work queues, the Closed list, the browse list's `open_opportunities`),
- * every clock that would reschedule it (`CLOCK_ELIGIBLE_SQL`), and every write
- * that would attribute something to it (`wonWithoutConversion`, and both of
- * `linkConversion`'s deal lookups).
+ * every clock that would reschedule it (`CLOCK_ELIGIBLE_SQL`), the handoff
+ * queue that would ask someone to attribute a tenant to it
+ * (`wonWithoutConversion`), and the write that would do the attributing
+ * (both of `linkConversion`'s deal lookups).
  *
  * Not every query takes it, and each one that declines says so where it
  * declines: `organisationDetail`, `listOrganisations`' `products` array, and
@@ -1688,9 +1689,13 @@ export async function organisationDetail(organisationId: string): Promise<Organi
       // be nothing for a Restore control to hang off. `advanceStageOnQuery`
       // and `setNextAction` refuse a voided row with
       // `VoidedOpportunityError` precisely because it is visible here.
-      // `voided_at` and `voided_reason` are selected here and nowhere else,
-      // for the same reason: this is the only read that returns a voided
-      // deal, so it is the only one with anything to say about it.
+      // `voided_reason` is selected here and nowhere else, and `voided_at`
+      // is selected nowhere else that RENDERS one: this is the only read
+      // that returns a voided deal, so it is the only one with anything to
+      // say about it. The other three reads of `voided_at` — `advanceStage`
+      // and `setNextAction` above, and `lockForVoidWrite` in crm-void.ts —
+      // are locked reads inside a write, and they take the column to REFUSE
+      // on it, never to show it.
       `SELECT id, product, stage, owner, next_action_at, next_action_note,
               last_contacted_at, is_starred, closed_at, lost_reason, created_at,
               voided_at, voided_reason

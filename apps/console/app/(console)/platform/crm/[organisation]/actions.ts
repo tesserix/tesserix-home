@@ -128,11 +128,16 @@ function mapVoidedOpportunity(cause: unknown): { ok: false; message: string } | 
 
 /**
  * Both typed refusals an opportunity write can raise, for the two actions
- * that can raise both.
+ * whose repo call can raise either.
  *
- * `advanceStageOnQuery` and `setNextAction` each check voided-ness and then
- * the product from one locked read, so `changeStage` and `scheduleNextAction`
- * inherit both exceptions. `recordTemplatedDm` also calls
+ * `setNextAction` checks voided-ness and then the product from one locked
+ * read, so `scheduleNextAction` inherits both exceptions.
+ * `advanceStageOnQuery` raises only `VoidedOpportunityError` — its product
+ * rule is `assertAdvanceStageInput` (crm-repo.ts), which validates the
+ * ARGUMENT before any row is read and throws a plain `Error`, so no
+ * `MissingProductError` reaches `changeStage`. It is mapped through this
+ * pair anyway because the two actions share one refusal mapper, and a
+ * mapper that never fires costs nothing. `recordTemplatedDm` also calls
  * `advanceStageOnQuery`, but only for the deals its own UPDATE returned, and
  * that UPDATE filters on `CLOCK_ELIGIBLE_SQL` — which excludes a voided row
  * — so the DM path cannot reach the throw and does not need this.

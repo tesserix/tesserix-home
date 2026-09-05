@@ -2645,4 +2645,23 @@ describe("voided opportunities and the surfaces that must not show them", () => 
     const detail = await organisationDetail(voidOrgId);
     expect(detail?.opportunities.map((o) => o.id)).toContain(CLOSED_VOIDED);
   });
+
+  it("carries the void's own two columns through to the detail DTO", async () => {
+    // Presence in the list is not enough. `toIso` maps an absent column to
+    // `null` exactly as it maps an absent value, so dropping `voided_at` and
+    // `voided_reason` from `organisationDetail`'s SELECT would leave the
+    // assertion above green while every voided deal rendered as live: a Void
+    // button instead of the badge and Restore, and a stage control that
+    // walks the operator into a `VoidedOpportunityError`.
+    const detail = await organisationDetail(voidOrgId);
+    const voided = detail?.opportunities.find((o) => o.id === CLOSED_VOIDED);
+    expect(voided?.voidedAt).toEqual(expect.any(String));
+    expect(voided?.voidedReason).toBe("Duplicate of the other win");
+
+    // The live twin, so the two assertions above are about the void and not
+    // about a mapping that returns the same thing for every row.
+    const live = detail?.opportunities.find((o) => o.id === CLOSED_LIVE);
+    expect(live?.voidedAt).toBeNull();
+    expect(live?.voidedReason).toBeNull();
+  });
 });

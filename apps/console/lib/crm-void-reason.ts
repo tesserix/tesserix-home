@@ -8,9 +8,9 @@
  *
  * Rejected rather than truncated. The reason exists for the next human to
  * read, and a silently clipped explanation is worse than none: it reads as
- * complete and stops mid-sentence. `truncateImportFilename` (`crm.ts`)
- * truncates because a filename is a label the operator did not author;
- * this is their own words. `MAX_LABEL_LENGTH` in
+ * complete and stops mid-sentence. `boundFilename` (`crm.ts`) truncates
+ * because a filename is a label the operator did not author; this is their
+ * own words. `MAX_LABEL_LENGTH` in
  * `tenant-pricing-override-write.ts` is the precedent followed here — cap,
  * refuse, and say the number.
  *

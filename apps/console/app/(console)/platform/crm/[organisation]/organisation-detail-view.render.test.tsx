@@ -322,4 +322,38 @@ describe("OpportunitiesTab void control", () => {
       expect(screen.queryByRole("button", { name: /^restore deal/i })).not.toBeInTheDocument();
     });
   });
+
+  // The ~155 rows the lead backfill grandfathered in at a product-requiring
+  // stage with no product. `voidOpportunity` refuses one with
+  // `MissingProductError` because 0021's CHECK is re-evaluated by the void's
+  // own UPDATE, so the control must not be on screen for it.
+  describe("a grandfathered card", () => {
+    const GRANDFATHERED = { product: null, stage: "qualified" } as const;
+
+    it("offers no void, because confirming one would always be refused", () => {
+      renderTab(true, opportunity(GRANDFATHERED));
+
+      expect(screen.queryByRole("button", { name: /^void deal/i })).not.toBeInTheDocument();
+    });
+
+    it("says voiding is blocked, and why, in the callout it already shows", () => {
+      renderTab(true, opportunity(GRANDFATHERED));
+
+      expect(screen.getByText(/migrated from the old CRM without a product/i))
+        .toBeInTheDocument();
+      expect(screen.getByText(/cannot be voided either/i)).toBeInTheDocument();
+      // Not "assign any product to unblock the void": the products array and
+      // the product filter both keep voided deals, so a product chosen as a
+      // workaround would be fabricated attribution that outlives the void.
+      expect(screen.getByText(/deal that never happened/i)).toBeInTheDocument();
+    });
+
+    it("still offers the void once the row has a product", () => {
+      // The positive control: without it the assertions above would pass on a
+      // card that lost its void control for any reason at all.
+      renderTab(true, opportunity({ product: "mark8ly", stage: "qualified" }));
+
+      expect(voidControl()).toBeInTheDocument();
+    });
+  });
 });

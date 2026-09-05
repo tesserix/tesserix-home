@@ -4,9 +4,22 @@ slug: opportunity-delete
 date: 2026-09-05
 issue: "#251 (the disposal half)"
 kind: quick
+superseded_by: 260905-vd1
 ---
 
 # An opportunity can be deleted, and a worked deal keeps its trail
+
+> **Superseded by `260905-vd1-opportunity-void`.** This plan shipped as #576
+> and was then replaced: the issue owner argued on #251 for a reversible void
+> rather than a hard delete, and that argument won. Nothing had used the
+> delete — zero `crm.opportunity.delete` audit rows — so the replacement was a
+> clean swap rather than a data migration. The reasoning below that rejected
+> `void` treated it as a fourth `crm_stage` ENUM value; the void that shipped
+> is a nullable `voided_at` column (migration 0049) instead, which is why the
+> objections recorded here do not apply to it. Kept for that record, and
+> because the same product-CHECK hazard it identified is the one the void
+> still has to refuse by name. Present tense below describes the state as it
+> was on 2026-09-05, not now.
 
 An opportunity has no delete of any kind. Clicking "New opportunity" twice
 leaves a permanent duplicate whose only disposal is marking it `lost` — which

@@ -472,6 +472,9 @@ function dealLabelFor(productLabel: string | null): string {
  *
  * Gated on `crm`, matching `voidOpportunityAction`: a control that walks an
  * operator through a confirmation and then refuses is worse than no control.
+ * Its caller applies the same rule a second time and withholds it from a
+ * grandfathered row, which `voidOpportunity` refuses for a reason no
+ * capability check covers.
  */
 function VoidOpportunityButton({
   opportunity,
@@ -719,10 +722,19 @@ function OpportunityCard({
               nothing else on the row contradicts it. */}
           {isVoided ? <Badge variant="outline">Voided</Badge> : null}
         </div>
+        {/* No Void control on a grandfathered row. `voidOpportunity` refuses
+            one with `MissingProductError` (crm-void.ts) — 0021's CHECK is
+            re-evaluated by the void's own UPDATE — so offering the button
+            would walk the operator through a confirmation and then refuse,
+            the exact thing `VoidOpportunityButton`'s own docstring above
+            declines to do. The callout below says so instead. Restore is
+            unaffected: a grandfathered row cannot become voided in the first
+            place, so `isVoided` and `isGrandfathered` are never both true
+            for a deal this console voided. */}
         {canCrm ? (
           isVoided ? (
             <RestoreOpportunityButton opportunity={opportunity} productLabel={productLabel} />
-          ) : (
+          ) : isGrandfathered ? null : (
             <VoidOpportunityButton opportunity={opportunity} productLabel={productLabel} />
           )
         ) : null}
@@ -749,6 +761,10 @@ function OpportunityCard({
           <CalloutDescription>
             This opportunity was migrated from the old CRM without a product. It cannot be
             edited — including scheduling a next action — until a product is assigned below.
+            It cannot be voided either, for the same reason. Assign the product this deal
+            was genuinely for: the organisation&rsquo;s product list and the product filter
+            both count voided deals, so a product picked only to unblock a void would stay
+            on this business&rsquo;s record as a deal that never happened.
           </CalloutDescription>
         </Callout>
       ) : null}
