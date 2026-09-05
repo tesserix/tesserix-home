@@ -166,10 +166,17 @@ without the check the console mints first and learns second.
 Blocked on #660 shipping the endpoint and the contract amendment landing. T1
 and T2 are not.
 
-### T4 — removal
+### T4 — removal — DONE, as `20260906-tpo2-tenant-pricing-override-revoke`
 
 `#331`: "Removal is as audited as application." Same seam, same dialog shape,
 same mandatory reason. Detach is #660's counterpart operation.
+
+Filed separately as `#581` once the missing writer was measured, and planned
+and built there. One correction this entry earned: **"detach" is not something
+the console can do, and deleting the Coupon is not a quiet substitute for it.**
+Deleting a Stripe Coupon does not affect customers who already hold it, so the
+console's half is retire-the-row plus delete-the-coupon, and the detach stays
+#660's — see that plan's opening section.
 
 ## Out of scope, stated so it is not smuggled in
 
