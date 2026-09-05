@@ -56,9 +56,28 @@ import type { TxQuery } from "./tesserix";
 
 interface OpportunityVoidState {
   organisation_id: string;
+  organisation_name: string;
   stage: CrmStage;
   product: string | null;
   voided_at: string | null;
+}
+
+/**
+ * Which deal this was, in the words an audit reader can use without joining
+ * anything. An opportunity has no name of its own — it is identified by
+ * whose business it belongs to and what it was for — so the caller's audit
+ * `target` needs the organisation's name and the product beside the id. Read
+ * here, under the same lock as the write, rather than by the action layer in
+ * a second query: a name fetched separately is a name that could have moved
+ * between the two reads, and the audit row would then describe a state that
+ * never existed. Returned on the no-op outcomes too, because a refusal row
+ * naming the deal is worth exactly as much as a success one.
+ */
+export interface VoidedOpportunityIdentity {
+  opportunityId: string;
+  organisationId: string;
+  organisationName: string;
+  product: string | null;
 }
 
 /**
@@ -75,10 +94,16 @@ async function lockForVoidWrite(
   operation: string,
 ): Promise<OpportunityVoidState> {
   const rows = await query<OpportunityVoidState>(
-    `SELECT organisation_id, stage, product, voided_at
-       FROM crm_opportunities
-      WHERE id = $1
-        FOR UPDATE`,
+    // `FOR UPDATE OF o` — the lock this needs is on the deal. Without the
+    // `OF`, the join would lock the organisation row as well, and every
+    // concurrent write to any of that organisation's other deals would then
+    // queue behind this one.
+    `SELECT o.organisation_id, o.stage, o.product, o.voided_at,
+            org.name AS organisation_name
+       FROM crm_opportunities o
+       JOIN crm_organisations org ON org.id = o.organisation_id
+      WHERE o.id = $1
+        FOR UPDATE OF o`,
     [opportunityId],
   );
   const current = rows[0];
@@ -96,6 +121,19 @@ function normaliseReason(reason: string | null): string | null {
   return trimmed ? trimmed : null;
 }
 
+/** The locked read, in the shape the caller's audit row names the deal by. */
+function identify(
+  opportunityId: string,
+  current: OpportunityVoidState,
+): VoidedOpportunityIdentity {
+  return {
+    opportunityId,
+    organisationId: current.organisation_id,
+    organisationName: current.organisation_name,
+    product: current.product,
+  };
+}
+
 export interface VoidOpportunityInput {
   opportunityId: string;
   /** Free text, optional — `crm_opp_void_reason_requires_void` is an
@@ -109,7 +147,7 @@ export interface VoidOpportunityInput {
  *  honestly instead of assuming one occurred. `{ voided: false }` is the
  *  already-voided case: a valid, zero-effect outcome, not an error. Same
  *  shape and same reasoning as `AdvanceStageResult` in `crm-repo.ts`. */
-export interface VoidOpportunityResult {
+export interface VoidOpportunityResult extends VoidedOpportunityIdentity {
   voided: boolean;
 }
 
@@ -129,13 +167,14 @@ export async function voidOpportunity(
 
   return tesserixTx(async (query) => {
     const current = await lockForVoidWrite(query, opportunityId, "voidOpportunity");
+    const identity = identify(opportunityId, current);
 
     // Checked before the product guard on purpose: an already-voided deal
     // needs no UPDATE, so it evaluates no CHECK, so a grandfathered row
     // that somehow reached the voided set stays idempotently voidable
     // rather than erroring on a call that would have changed nothing.
     if (current.voided_at !== null) {
-      return { voided: false };
+      return { ...identity, voided: false };
     }
     if (requiresProduct(current.stage) && !current.product) {
       throw new MissingProductError(opportunityId);
@@ -160,7 +199,7 @@ export async function voidOpportunity(
       ],
     );
 
-    return { voided: true };
+    return { ...identity, voided: true };
   });
 }
 
@@ -170,7 +209,7 @@ export interface RestoreOpportunityInput {
 }
 
 /** `{ restored: false }` is the already-live case — a no-op, not an error. */
-export interface RestoreOpportunityResult {
+export interface RestoreOpportunityResult extends VoidedOpportunityIdentity {
   restored: boolean;
 }
 
@@ -197,9 +236,10 @@ export async function restoreOpportunity(
 
   return tesserixTx(async (query) => {
     const current = await lockForVoidWrite(query, opportunityId, "restoreOpportunity");
+    const identity = identify(opportunityId, current);
 
     if (current.voided_at === null) {
-      return { restored: false };
+      return { ...identity, restored: false };
     }
     if (requiresProduct(current.stage) && !current.product) {
       throw new MissingProductError(opportunityId);
@@ -224,6 +264,6 @@ export async function restoreOpportunity(
       ],
     );
 
-    return { restored: true };
+    return { ...identity, restored: true };
   });
 }

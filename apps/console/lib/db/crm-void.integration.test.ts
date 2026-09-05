@@ -151,7 +151,16 @@ describe("voidOpportunity", () => {
       actor: ACTOR,
     });
 
-    expect(result).toEqual({ voided: true });
+    // The identity comes back alongside the outcome so the action layer can
+    // name the deal in its audit row — an opportunity has no name of its
+    // own — read under the same lock as the write.
+    expect(result).toEqual({
+      voided: true,
+      opportunityId: id,
+      organisationId: orgId,
+      organisationName: "Bondi Baker",
+      product: null,
+    });
     const after = await readOpportunity(id);
     expect(after.voided_at).not.toBeNull();
     expect(after.voided_reason).toBe("Duplicate of the other Bondi deal");
@@ -195,6 +204,20 @@ describe("voidOpportunity", () => {
     expect((await readOpportunity(blank)).voided_reason).toBeNull();
   });
 
+  it("returns the product it read, so the caller can name a deal that has one", async () => {
+    // The `null` product above is the mis-click case; this is the other
+    // half of the audit target the action layer builds from this result.
+    const id = await insertOpportunity("qualified", "mark8ly");
+
+    const result = await voidOpportunity({ opportunityId: id, reason: null, actor: ACTOR });
+
+    expect(result).toMatchObject({
+      voided: true,
+      product: "mark8ly",
+      organisationName: "Bondi Baker",
+    });
+  });
+
   it("treats a second void as a no-op, leaving the first void's record intact", async () => {
     const id = await insertOpportunity("new", null);
     await voidOpportunity({ opportunityId: id, reason: "First reason", actor: ACTOR });
@@ -209,7 +232,13 @@ describe("voidOpportunity", () => {
     // A no-op is a valid, zero-effect outcome, not an error — but the
     // caller must be able to say honestly that nothing happened, or a
     // second click reads in the audit log as a second void.
-    expect(result).toEqual({ voided: false });
+    expect(result).toEqual({
+      voided: false,
+      opportunityId: id,
+      organisationId: orgId,
+      organisationName: "Bondi Baker",
+      product: null,
+    });
     const afterSecond = await readOpportunity(id);
     expect(afterSecond.voided_at?.getTime()).toBe(afterFirst.voided_at?.getTime());
     expect(afterSecond.voided_reason).toBe("First reason");
@@ -254,7 +283,13 @@ describe("restoreOpportunity", () => {
 
     const result = await restoreOpportunity({ opportunityId: id, actor: ACTOR });
 
-    expect(result).toEqual({ restored: true });
+    expect(result).toEqual({
+      restored: true,
+      opportunityId: id,
+      organisationId: orgId,
+      organisationName: "Bondi Baker",
+      product: null,
+    });
     const after = await readOpportunity(id);
     // Both, not just `voided_at`: `crm_opp_void_reason_requires_void` would
     // reject a restore that left the reason behind, and a live deal
@@ -277,7 +312,13 @@ describe("restoreOpportunity", () => {
 
     const result = await restoreOpportunity({ opportunityId: id, actor: ACTOR });
 
-    expect(result).toEqual({ restored: false });
+    expect(result).toEqual({
+      restored: false,
+      opportunityId: id,
+      organisationId: orgId,
+      organisationName: "Bondi Baker",
+      product: null,
+    });
     expect((await readOpportunity(id)).updated_at.getTime()).toBe(before.updated_at.getTime());
     expect(await readActivities(id)).toHaveLength(0);
   });

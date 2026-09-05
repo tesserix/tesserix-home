@@ -21,6 +21,11 @@ vi.mock("@/lib/db/crm-writes", async (importOriginal) => ({
   createOpportunity: vi.fn(),
   updateOrganisation: vi.fn(),
 }));
+vi.mock("@/lib/db/crm-void", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db/crm-void")>()),
+  voidOpportunity: vi.fn(),
+  restoreOpportunity: vi.fn(),
+}));
 vi.mock("@/lib/db/crm-erasure", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-erasure")>()),
   eraseContact: vi.fn(),
@@ -56,7 +61,9 @@ import {
   MissingProductError,
   AlreadyLinkedError,
   SuppressedContactError,
+  VoidedOpportunityError,
 } from "@/lib/db/crm-repo";
+import { voidOpportunity, restoreOpportunity } from "@/lib/db/crm-void";
 import { saveNextAction as setNextAction } from "@/lib/crm-queues";
 import {
   createContact,
@@ -78,7 +85,13 @@ import {
   eraseContactAction,
   deleteOrganisationAction,
   updateOrganisationAction,
+  voidOpportunityAction,
+  restoreOpportunityAction,
 } from "./actions";
+// Not from `actions.ts`: that module is `"use server"` and may export only
+// async functions, which is also why the control (T5) reads the cap from
+// here for its own `maxLength`.
+import { MAX_VOID_REASON_LENGTH } from "@/lib/crm-void-reason";
 
 const ORG_ID = "8b6a7a4a-0000-0000-0000-000000000000";
 const OPP_ID = "5f0b2c34-0000-0000-0000-000000000000";
@@ -1241,6 +1254,273 @@ describe("deleteOrganisationAction", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(deleteOrganisation).not.toHaveBeenCalled();
+  });
+});
+
+describe("voidOpportunityAction", () => {
+  /** What `voidOpportunity` returns for the fixture deal, in one place. */
+  const VOIDED = {
+    voided: true,
+    opportunityId: OPP_ID,
+    organisationId: ORG_ID,
+    organisationName: "Glebe Flowers",
+    product: "mark8ly",
+  };
+
+  it("gates the void on crm, not hard-delete", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue(VOIDED);
+
+    await voidOpportunityAction(OPP_ID, null);
+
+    const options = vi.mocked(withCrmWrite).mock.calls[0][1];
+    // A void destroys nothing and is reversible, so it is an ordinary CRM
+    // correction — the same distinction `updateContactAction` draws. Gating
+    // it on `hard-delete` is what pushed operators onto destructive paths
+    // for everyday mistakes in the first place (#251).
+    expect(options).toEqual(expect.objectContaining({ capability: "crm" }));
+  });
+
+  it("refuses a session carrying no roles at all", async () => {
+    // Not a hypothetical: a session can arrive with `roles` undefined, and
+    // the gate has to fail closed on it rather than treating "no roles
+    // stated" as "no roles required".
+    signIn(undefined);
+
+    const result = await voidOpportunityAction(OPP_ID, "Duplicate");
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(voidOpportunity).not.toHaveBeenCalled();
+  });
+
+  it("voids, audits crm.opportunity.void, and revalidates the detail page and the queues", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue(VOIDED);
+
+    const result = await voidOpportunityAction(OPP_ID, "Duplicate of the other deal");
+
+    expect(result).toEqual({ ok: true });
+    expect(voidOpportunity).toHaveBeenCalledWith({
+      opportunityId: OPP_ID,
+      reason: "Duplicate of the other deal",
+      actor: "ava@tesserix.app",
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.void",
+      // An opportunity has no name of its own: whose business it was and
+      // what it was for are what make the row readable. The reason is NOT
+      // here — `AuditSummary` is counts only, and free operator text belongs
+      // on the deal and its activity, not in the audit log.
+      target: `Glebe Flowers — mark8ly (${OPP_ID})`,
+      // A void has no collateral to count. `voided: 1` says one deal left
+      // the funnel and nothing else is claimed.
+      summary: { voided: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+    // The Due and Drifting queues are lists of opportunities and a voided
+    // deal has just left them.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+  });
+
+  it("says so in the audit target when the deal had no product", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue({ ...VOIDED, product: null });
+
+    await voidOpportunityAction(OPP_ID, null);
+
+    // "(no product)" rather than an empty gap, so the row cannot be misread
+    // as a truncation. The mis-clicked duplicate #251 is about is exactly
+    // this row: `new`, no product.
+    expect(lastAuditInsert().target).toBe(`Glebe Flowers — (no product) (${OPP_ID})`);
+  });
+
+  it("reports an already-voided deal as a zero-count void, not as a change", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue({ ...VOIDED, voided: false });
+
+    const result = await voidOpportunityAction(OPP_ID, "Duplicate");
+
+    // A second click is not a failure — the deal is out of the funnel,
+    // which is what the operator asked for.
+    expect(result).toEqual({ ok: true });
+    // But the audit row must not claim a second void happened.
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.void",
+      target: `Glebe Flowers — mark8ly (${OPP_ID})`,
+      summary: { voided: 0 },
+    });
+    // Revalidated anyway: a no-op means the page the operator acted from
+    // showed a live deal the database says is already voided, so this is
+    // precisely the case where a refresh is owed.
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+  });
+
+  it("refuses a grandfathered row with the repo's own message, not the generic one", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockRejectedValue(new MissingProductError(OPP_ID));
+
+    const result = await voidOpportunityAction(OPP_ID, "Bad import");
+
+    expect(result.ok).toBe(false);
+    // The 0021 CHECK is re-evaluated on the void's UPDATE, so this is a real
+    // refusal an operator can act on — degrading it to "That change was not
+    // saved." tells them nothing about what to do next.
+    expect(result.ok === false && result.message).toMatch(/product/i);
+    expect(result.ok === false && result.message).not.toBe("That change was not saved.");
+  });
+
+  it("refuses a reason longer than the cap, before any session or database work", async () => {
+    signIn(["crm"]);
+
+    const result = await voidOpportunityAction(OPP_ID, "x".repeat(MAX_VOID_REASON_LENGTH + 1));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/too long/i);
+    expect(voidOpportunity).not.toHaveBeenCalled();
+    expect(tesserixQuery).not.toHaveBeenCalled();
+  });
+
+  it("accepts a reason exactly at the cap", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue(VOIDED);
+    const reason = "x".repeat(MAX_VOID_REASON_LENGTH);
+
+    const result = await voidOpportunityAction(OPP_ID, reason);
+
+    expect(result).toEqual({ ok: true });
+    expect(voidOpportunity).toHaveBeenCalledWith(
+      expect.objectContaining({ reason }),
+    );
+  });
+
+  it("measures the cap against the trimmed reason, which is what gets stored", async () => {
+    signIn(["crm"]);
+    vi.mocked(voidOpportunity).mockResolvedValue(VOIDED);
+
+    const result = await voidOpportunityAction(OPP_ID, `  ${"x".repeat(MAX_VOID_REASON_LENGTH)}  `);
+
+    // `voidOpportunity` trims before storing, so padding is not length.
+    expect(result).toEqual({ ok: true });
+  });
+});
+
+describe("restoreOpportunityAction", () => {
+  const RESTORED = {
+    restored: true,
+    opportunityId: OPP_ID,
+    organisationId: ORG_ID,
+    organisationName: "Glebe Flowers",
+    product: "mark8ly",
+  };
+
+  it("gates the restore on crm, not hard-delete", async () => {
+    signIn(["crm"]);
+    vi.mocked(restoreOpportunity).mockResolvedValue(RESTORED);
+
+    await restoreOpportunityAction(OPP_ID);
+
+    const options = vi.mocked(withCrmWrite).mock.calls[0][1];
+    expect(options).toEqual(expect.objectContaining({ capability: "crm" }));
+  });
+
+  it("refuses a session carrying no roles at all", async () => {
+    signIn(undefined);
+
+    const result = await restoreOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(restoreOpportunity).not.toHaveBeenCalled();
+  });
+
+  it("restores, audits crm.opportunity.restore, and revalidates", async () => {
+    signIn(["crm"]);
+    vi.mocked(restoreOpportunity).mockResolvedValue(RESTORED);
+
+    const result = await restoreOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(restoreOpportunity).toHaveBeenCalledWith({
+      opportunityId: OPP_ID,
+      actor: "ava@tesserix.app",
+    });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.restore",
+      target: `Glebe Flowers — mark8ly (${OPP_ID})`,
+      summary: { restored: 1 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+    // A restored deal rejoins the queues it left.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+  });
+
+  it("reports an already-live deal as a zero-count restore", async () => {
+    signIn(["crm"]);
+    vi.mocked(restoreOpportunity).mockResolvedValue({ ...RESTORED, restored: false });
+
+    const result = await restoreOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.restore",
+      target: `Glebe Flowers — mark8ly (${OPP_ID})`,
+      summary: { restored: 0 },
+    });
+  });
+
+  it("refuses a grandfathered row with the repo's own message", async () => {
+    signIn(["crm"]);
+    vi.mocked(restoreOpportunity).mockRejectedValue(new MissingProductError(OPP_ID));
+
+    const result = await restoreOpportunityAction(OPP_ID);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/product/i);
+    expect(result.ok === false && result.message).not.toBe("That change was not saved.");
+  });
+});
+
+describe("the voided-deal refusal reaching the operator", () => {
+  // `VoidedOpportunityError` is raised by `advanceStageOnQuery` and
+  // `setNextAction` (crm-repo.ts), and by nothing else a CRM action reaches:
+  // the DM path moves a stage only for deals `CLOCK_ELIGIBLE_SQL` returned,
+  // and that predicate already excludes a voided row. So these are the two
+  // actions that owe it a mapping — the detail page keeps voided deals
+  // visible, so both controls are on screen for one.
+  it("tells the operator to restore the deal when a stage change is refused", async () => {
+    signIn(["crm"]);
+    vi.mocked(advanceStage).mockRejectedValue(new VoidedOpportunityError(OPP_ID));
+
+    const result = await changeStage({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      to: "contacted",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/restore it first/i);
+    expect(result.ok === false && result.message).not.toBe("That change was not saved.");
+  });
+
+  it("tells the operator to restore the deal when a next action is refused", async () => {
+    signIn(["crm"]);
+    vi.mocked(setNextAction).mockRejectedValue(new VoidedOpportunityError(OPP_ID));
+
+    const result = await scheduleNextAction({
+      organisationId: ORG_ID,
+      opportunityId: OPP_ID,
+      at: null,
+      note: null,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toMatch(/restore it first/i);
+    expect(result.ok === false && result.message).not.toBe("That change was not saved.");
   });
 });
 

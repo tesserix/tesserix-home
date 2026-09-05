@@ -12,6 +12,7 @@ import {
   MissingProductError,
   AlreadyLinkedError,
   SuppressedContactError,
+  VoidedOpportunityError,
   type AdvanceStageResult,
 } from "@/lib/db/crm-repo";
 import { listTemplates, templateContext } from "@/lib/db/crm-templates";
@@ -55,6 +56,12 @@ import {
   eraseContact as eraseContactRow,
   deleteOrganisation as deleteOrganisationRow,
 } from "@/lib/db/crm-erasure";
+import {
+  voidOpportunity as voidOpportunityRow,
+  restoreOpportunity as restoreOpportunityRow,
+  type VoidedOpportunityIdentity,
+} from "@/lib/db/crm-void";
+import { isVoidReasonTooLong, voidReasonTooLongMessage } from "@/lib/crm-void-reason";
 import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { AuditWriteError } from "@/lib/db/audit-repo";
 import { withCrmWrite, type CrmActionResult } from "@/lib/crm-write";
@@ -88,10 +95,11 @@ function unknownProductMessage(value: string): string {
 }
 
 /**
- * `MissingProductError` is the one exception this surface maps to its own
- * message rather than the shared wrapper's generic "not saved": it is
- * already a clear, operator-facing prompt (migration 0021's grandfathered-row
- * case), not a caught database error. Passed to `withCrmWrite` as `mapError`
+ * `MissingProductError` is the first of this surface's allowlisted
+ * exceptions — mapped to its own message rather than the shared wrapper's
+ * generic "not saved" because it is already a clear, operator-facing prompt
+ * (migration 0021's grandfathered-row case), not a caught database error.
+ * Passed to `withCrmWrite` as `mapError`
  * so the allowlisting stays explicit and per-caller, rather than the shared
  * wrapper guessing which exceptions are safe to show.
  */
@@ -100,6 +108,43 @@ function mapMissingProduct(cause: unknown): { ok: false; message: string } | und
     return { ok: false, message: cause.message };
   }
   return undefined;
+}
+
+/**
+ * The voided-deal refusal (#251), allowlisted the same way and for the same
+ * reason: `VoidedOpportunityError`'s message names the one thing the
+ * operator can do — restore the deal — and the generic "That change was not
+ * saved." names nothing. Unmapped, a refusal the console deliberately makes
+ * REACHABLE (the detail page keeps voided deals visible, so their stage and
+ * next-action controls are on screen) would read as a transport failure and
+ * be retried.
+ */
+function mapVoidedOpportunity(cause: unknown): { ok: false; message: string } | undefined {
+  if (cause instanceof VoidedOpportunityError) {
+    return { ok: false, message: cause.message };
+  }
+  return undefined;
+}
+
+/**
+ * Both typed refusals an opportunity write can raise, for the two actions
+ * that can raise both.
+ *
+ * `advanceStageOnQuery` and `setNextAction` each check voided-ness and then
+ * the product from one locked read, so `changeStage` and `scheduleNextAction`
+ * inherit both exceptions. `recordTemplatedDm` also calls
+ * `advanceStageOnQuery`, but only for the deals its own UPDATE returned, and
+ * that UPDATE filters on `CLOCK_ELIGIBLE_SQL` — which excludes a voided row
+ * — so the DM path cannot reach the throw and does not need this.
+ *
+ * Composed from the two single-type mappers rather than re-testing both
+ * types here, so there is one place per exception that decides what an
+ * operator is shown.
+ */
+function mapOpportunityWriteRefusal(
+  cause: unknown,
+): { ok: false; message: string } | undefined {
+  return mapMissingProduct(cause) ?? mapVoidedOpportunity(cause);
 }
 
 export interface ChangeStageInput {
@@ -161,7 +206,7 @@ export async function changeStage(input: ChangeStageInput): Promise<CrmActionRes
       // not a sentinel meaning "something went wrong".
       return { action: "crm.stage.change", summary: { transitions: 0 } };
     },
-    mapMissingProduct);
+    mapOpportunityWriteRefusal);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -188,7 +233,7 @@ export async function scheduleNextAction(
         actor: actor.email,
       }),
     () => ({ action: "crm.next_action.set", summary: { scheduled: 1 } }),
-    mapMissingProduct);
+    mapOpportunityWriteRefusal);
   if (!result.ok) return result;
   revalidatePath(`/platform/crm/${input.organisationId}`);
   return { ok: true };
@@ -1203,6 +1248,122 @@ export async function copyAndLogDm(input: CopyAndLogDmInput): Promise<CrmActionR
   return { ok: true };
 }
 
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * TAKING A DEAL OUT OF THE FUNNEL (#251)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * How both void actions name the deal in their audit row.
+ *
+ * An opportunity has no name of its own, so the id alone names a row nobody
+ * can read without joining back to it — and whose business it was and what
+ * it was for are the two facts that make the row legible on its own. The
+ * shape is the one the reverted opportunity delete used, kept because the
+ * argument for it is about what an opportunity IS, not about what the
+ * action did to it.
+ *
+ * "(no product)" rather than a gap: the mis-clicked duplicate this feature
+ * exists for is exactly the deal with no product, and an empty stretch there
+ * reads as a truncated row.
+ *
+ * The reason is deliberately absent. `AuditSummary` is counts only, and the
+ * reason is free operator text that already lives on the deal and in its
+ * activity — copying it into `console_audit_log` would put it in a third
+ * table, with a longer retention, that no CRM erasure path reaches.
+ */
+function voidAuditTarget(identity: VoidedOpportunityIdentity): string {
+  return `${identity.organisationName} — ${identity.product ?? "(no product)"} (${identity.opportunityId})`;
+}
+
+/**
+ * Take a deal out of the funnel, reversibly (#251).
+ *
+ * Gated on `crm`, NOT `hard-delete`: a void destroys nothing and a restore
+ * puts it back, so this is an ordinary correction — the same distinction
+ * `updateContactAction` draws below, and for the same reason. Requiring the
+ * erasure capability to undo a mis-click is what pushes operators onto
+ * destructive paths. `hard-delete` still gates `eraseContactAction` and
+ * `deleteOrganisationAction`; this simply does not consume it.
+ *
+ * Takes only the opportunity id and the reason: the organisation to
+ * revalidate comes back from the write itself, read under the same lock, so
+ * this cannot be called with a mismatched pair.
+ */
+export async function voidOpportunityAction(
+  opportunityId: string,
+  reason: string | null,
+): Promise<CrmActionResult> {
+  // Before any session or database work, like `changeStage`'s own argument
+  // checks: a reason that cannot be stored is not worth a capability check
+  // or an audit row.
+  if (isVoidReasonTooLong(reason)) {
+    return { ok: false, message: voidReasonTooLongMessage() };
+  }
+
+  const result = await withCrmWrite(
+    // The upfront target is what `auditedOperation` records when it has no
+    // outcome to describe — the capability-refusal row (#409). The
+    // organisation id there would name a row that still exists and was not
+    // the subject of the action.
+    opportunityId,
+    { capability: "crm" },
+    (actor) =>
+      voidOpportunityRow({ opportunityId, reason, actor: actor.email }),
+    (outcome) => ({
+      action: "crm.opportunity.void",
+      // `voided: 0` is the already-voided case: a valid, zero-effect
+      // outcome, and the audit log must not read as though a second click
+      // voided the deal twice. Nothing else is counted — a void has no
+      // collateral, and a fabricated count is worse than no count.
+      summary: { voided: outcome.voided ? 1 : 0 },
+      target: voidAuditTarget(outcome),
+    }),
+    // The grandfathered rows (0021's CHECK, re-evaluated on the void's own
+    // UPDATE) are precisely the ones an operator most wants to void, so
+    // their refusal has to arrive as the repo's own prompt rather than as
+    // "That change was not saved."
+    mapMissingProduct);
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${result.value.organisationId}`);
+  // The Due and Drifting queues are lists of opportunities, and a voided
+  // deal has just left them. Revalidated on the no-op outcome too: a void
+  // that changed nothing means the page the operator acted from showed a
+  // live deal the database says is already voided, which is exactly when a
+  // refresh is owed.
+  revalidatePath("/platform/crm");
+  return { ok: true };
+}
+
+/**
+ * Put a voided deal back in the funnel (#251).
+ *
+ * `crm` for the same reason as the void: undoing an undo is not an erasure.
+ * The affordance exists on the detail page because `organisationDetail`
+ * deliberately keeps voided deals visible there.
+ */
+export async function restoreOpportunityAction(
+  opportunityId: string,
+): Promise<CrmActionResult> {
+  const result = await withCrmWrite(
+    opportunityId,
+    { capability: "crm" },
+    (actor) => restoreOpportunityRow({ opportunityId, actor: actor.email }),
+    (outcome) => ({
+      action: "crm.opportunity.restore",
+      summary: { restored: outcome.restored ? 1 : 0 },
+      target: voidAuditTarget(outcome),
+    }),
+    // Reachable only for a row voided outside this module — a deal this
+    // console voided has already proven it satisfies the CHECK — but see
+    // `restoreOpportunity` for why that argument does not make the guard,
+    // or this mapping, dead.
+    mapMissingProduct);
+  if (!result.ok) return result;
+  revalidatePath(`/platform/crm/${result.value.organisationId}`);
+  revalidatePath("/platform/crm");
+  return { ok: true };
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * CONTACT CORRECTIONS (#247)
