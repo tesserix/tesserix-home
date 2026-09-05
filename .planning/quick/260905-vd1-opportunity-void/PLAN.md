@@ -37,7 +37,7 @@ I told the user most of my earlier cost objections were specific to making
 **The fifth does not.**
 
 `crm_opp_product_required_when_qualified` is `CHECK (stage IN ('new','contacted')
-OR product IS NOT NULL) NOT VALID` (`0021:114-118`). `NOT VALID` skips only the
+OR product IS NOT NULL) NOT VALID` (`0021:119-122`). `NOT VALID` skips only the
 initial scan — Postgres re-evaluates it on the new row of **every UPDATE**. A
 `DELETE` does not evaluate CHECKs, which is exactly why the hard delete was
 immune and why `crm-opportunity-delete.integration.test.ts:140` could bank on
@@ -63,7 +63,7 @@ consistent, since a row that could not be voided cannot be in the voided set.
 
 ## What is NOT needed, corrected from my earlier claim
 
-**No index work.** `crm_opp_due_idx` and `crm_opp_drifting_idx` (`0019:131-136`)
+**No index work.** `crm_opp_due_idx` and `crm_opp_drifting_idx` (`0019:132-137`)
 are partial on `stage NOT IN ('won','lost')`. Adding `AND voided_at IS NULL`
 NARROWS the query's row set, so the query predicate still implies the index
 predicate and both indexes remain eligible unmodified. No rebuild, no REINDEX,
