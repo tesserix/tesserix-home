@@ -125,8 +125,9 @@ export const mark8lyNav: readonly NavEntry[] = [
   // must stay separate), but they are the same KIND of thing to an operator
   // scanning a rail, and the RAIL an entry sits on is what says whose tenants
   // these are — the icon was never carrying that distinction. Same choice as
-  // `scroll-text` and `key-round` on the platform rail, and made on the same
-  // ground: a shared icon that reads correctly, not a renderer edit avoided.
+  // `key-round` and `inbox` on the platform rail, each of which sits on three
+  // entries, and made on the same ground: a shared icon that reads correctly,
+  // not a renderer edit avoided.
   { name: "Tenants", route: "mark8ly.tenants", icon: "globe" },
   // `users` for the same reason `kora.users` carries it.
   { name: "Users", route: "mark8ly.users", icon: "users" },
@@ -173,8 +174,13 @@ export const platformNav: readonly NavEntry[] = [
       // Tickets + 1 — #134's fix — and inserting between them would reopen a
       // discoverability bug to satisfy a grouping preference.
       //
-      // `inbox` is an existing IconKey, and the right one: this rail entry
-      // is literally `/admin/inbox`.
+      // `inbox` is an existing IconKey and the right one: this entry IS the
+      // queue of things waiting on a human. NOT `/admin/inbox` — that is the
+      // per-product §3.2 contract, cited correctly by
+      // `mark8ly.migrationFastPath` on its own rail. routes.ts is explicit
+      // that implementing it makes a product a SOURCE in this surface rather
+      // than earning it a rail entry, and records that apps/web never had an
+      // estate-wide queue at all.
       { name: "Inbox", route: "platform.inbox", icon: "inbox" },
       { name: "Apps", route: "platform.apps", icon: "cloud" },
       // Directly after Apps, and deliberately NOT between Tickets and
