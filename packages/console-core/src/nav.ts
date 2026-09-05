@@ -94,9 +94,9 @@ export const koraNav: readonly NavEntry[] = [
  * and contains nothing resembling this queue. This rail is console-native.
  *
  * `inbox` icon rather than a new key: the queue IS `/admin/inbox`'s
- * `migration_fast_path` kind, and IconKey is consumed as `Record<IconKey, …>`
- * in web, mobile and console, so adding a key is a compile error in three
- * apps for one rail entry.
+ * `migration_fast_path` kind, so the shared icon says something true about
+ * it. Not a cost argument — a new key is one entry in one registry, and
+ * icons.ts says why.
  *
  * THE THREE ENTRIES ADDED SINCE ARE NOT §2.3's OTHER TWO. Overview, Tenants
  * and Users are the generic `[product]` surfaces: `/mark8ly` reads §3.1
@@ -124,9 +124,9 @@ export const mark8lyNav: readonly NavEntry[] = [
   // are different route ids for different surfaces (routes.ts says why they
   // must stay separate), but they are the same KIND of thing to an operator
   // scanning a rail, and the RAIL an entry sits on is what says whose tenants
-  // these are — the icon was never carrying that distinction. Same trade as
-  // `scroll-text` and `key-round` on the platform rail: no new IconKey, which
-  // would be a compile error in web, mobile and console until each maps it.
+  // these are — the icon was never carrying that distinction. Same choice as
+  // `scroll-text` and `key-round` on the platform rail, and made on the same
+  // ground: a shared icon that reads correctly, not a renderer edit avoided.
   { name: "Tenants", route: "mark8ly.tenants", icon: "globe" },
   // `users` for the same reason `kora.users` carries it.
   { name: "Users", route: "mark8ly.users", icon: "users" },
@@ -173,8 +173,8 @@ export const platformNav: readonly NavEntry[] = [
       // Tickets + 1 — #134's fix — and inserting between them would reopen a
       // discoverability bug to satisfy a grouping preference.
       //
-      // `inbox` is an existing IconKey, so no renderer changes: adding a key
-      // is a compile error in web, mobile and console until each maps it.
+      // `inbox` is an existing IconKey, and the right one: this rail entry
+      // is literally `/admin/inbox`.
       { name: "Inbox", route: "platform.inbox", icon: "inbox" },
       { name: "Apps", route: "platform.apps", icon: "cloud" },
       // Directly after Apps, and deliberately NOT between Tickets and
@@ -185,11 +185,9 @@ export const platformNav: readonly NavEntry[] = [
       // Here reads correctly anyway — Apps says which products exist, Tenants
       // says who is on them. The two directories belong together.
       //
-      // `globe` rather than a new "building" key: IconKey is consumed as
-      // `Record<IconKey, ...>` in every renderer, so adding one is a compile
-      // error in web, mobile and console until each maps it — three apps
-      // changed for an icon. `globe` is the closest existing sense: the
-      // estate-wide view of who is on the platform, not one product's.
+      // `globe` rather than a new "building" key, on sense rather than cost:
+      // it is the estate-wide view of who is on the platform, not one
+      // product's. (A new key costs one registry entry — see icons.ts.)
       { name: "Tenants", route: "platform.tenants", icon: "globe" },
       { name: "Tickets", route: "platform.tickets", icon: "life-buoy" },
       // No "Support analytics" entry: it is a tab on Tickets now (#133), so a
@@ -207,10 +205,10 @@ export const platformNav: readonly NavEntry[] = [
       // findable-in-the-wrong-place. v1 returns staff and operators only,
       // which makes it an operational surface on its own terms.
       //
-      // `users` icon rather than a new "search"/"user-search" key: IconKey is
-      // consumed as `Record<IconKey, ...>` in every renderer, so adding a key
-      // is a compile error in web, mobile and console until each maps one —
-      // three apps changed for an entry that does not render a page yet.
+      // `users` icon rather than a new "search"/"user-search" key: this
+      // surface returns people, which is what `users` says. A dedicated key
+      // would read better and is affordable — one registry entry, see
+      // icons.ts — but `users` is not saying anything false meanwhile.
       { name: "Identity lookup", route: "platform.identityLookup", icon: "users" },
       { name: "Live chat", route: "platform.liveChat", icon: "message-square" },
       { name: "Announcements", route: "platform.announcements", icon: "megaphone" },
@@ -312,11 +310,10 @@ export const platformNav: readonly NavEntry[] = [
       // tab is genuinely a work queue, which argued for Operate — but
       // splitting the two §8.2 reads across two groups would put two doors on
       // one capability, and #133 settled that argument the other way.
-      // `bar-chart` rather than a new "credit-card" key. IconKey is consumed
-      // as `Record<IconKey, ...>` in web, mobile and console, so adding one is
-      // a compile error in three apps until each maps it — the same trade the
-      // Tenants and Organisations entries above record. `bar-chart` is the
-      // closest existing sense: the business read of the estate.
+      // `bar-chart` rather than a new "credit-card" key: this surface is the
+      // business read of the estate, which is what `bar-chart` already says
+      // on `platform.aiUsage`. Not a cost argument — a new key is one
+      // registry entry, see icons.ts.
       { name: "Billing", route: "platform.billing", icon: "bar-chart" },
       // Directly after Billing and ahead of the CRM cluster, because that is
       // the order the funnel question sits in: the CRM is the pipeline before
@@ -329,24 +326,51 @@ export const platformNav: readonly NavEntry[] = [
       // answer where prospective tenants are dropping out, which is revenue
       // work in exactly the sense this group was created for.
       //
-      // `users` duplicates the CRM item's icon, a wart already recorded on
-      // Organisations: IconKey is consumed as `Record<IconKey, ...>` in web,
-      // mobile and console, so a dedicated "funnel" key is three renderers
-      // changed for one rail entry. The duplicate icon is the cheaper wrong
-      // thing.
+      // `users` is the only `users` left in Growth: the two CRM entries
+      // below took `list-checks` and `globe` when they were told apart. A
+      // dedicated "funnel" key would still read better and is affordable —
+      // one registry entry, see icons.ts — it is simply not this change.
       { name: "Onboarding", route: "platform.onboarding", icon: "users" },
-      { name: "CRM", route: "platform.crm", icon: "users" },
+      // "Follow-ups", not "CRM". Every other entry in this group names what
+      // you do or what you see; "CRM" named the system all of them
+      // collectively are, which left it indistinguishable from Organisations
+      // one row below — the console's operator asked whether both were
+      // needed. They are different surfaces: this is the work (Due,
+      // Drifting, Handoff and Closed, ordered by urgency, with next-action
+      // affordances) and Organisations is the directory you browse. The page
+      // already calls itself this — apps/console/app/(console)/platform/crm/
+      // page.tsx heads its docblock "The CRM follow-up queue".
+      //
+      // "Work queue" was the alternative and is worse in this group: the
+      // Billing trials tab and Do-not-contact are work queues too, so it
+      // names the genre rather than this surface.
+      //
+      // `list-checks` rather than the `users` this shared with Organisations:
+      // one icon on both is the other half of why they read as one thing
+      // twice, and this queue is a list of leads each needing a next action.
+      // The keys already declared and unused — `activity`, `gauge`,
+      // `heart-pulse` — are metric and health glyphs that say nothing about
+      // work to be done, so this is a new key rather than one of those.
+      { name: "Follow-ups", route: "platform.crm", icon: "list-checks" },
       // Second, not last: an imported lead sits on neither queue for its
       // first fourteen days (Due needs a next action, Drifting needs a
       // quiet period), so browse is the only way to reach it in the
       // meantime.
       //
-      // `users` duplicates the CRM item's icon, which is a wart — but
-      // IconKey is consumed as `Record<IconKey, ...>` in web, mobile and
-      // console (icons.ts:14-16), so a dedicated "building" key is three
-      // renderers changed for one rail entry, one of them apps/web. The
-      // duplicate icon is the cheaper wrong thing.
-      { name: "Organisations", route: "platform.crmOrganisations", icon: "users" },
+      // `globe` rather than the `users` this used to share with the entry
+      // above. It is the icon `platform.tenants` and `mark8ly.tenants`
+      // already carry for "a directory of organisations", and those two share
+      // it on exactly the reasoning that applies here: same KIND of surface,
+      // and the rail an entry sits on is what says whose organisations these
+      // are. Growth is the pre-signup pipeline, so nobody reads this row as
+      // the tenant directory.
+      //
+      // The note that used to sit here priced a dedicated key at "three
+      // renderers changed, one of them apps/web". That was false, and it was
+      // the whole justification for the duplicate icon: `apps/console` is the
+      // only package that depends on console-core, so the cost was always one
+      // registry entry. See icons.ts.
+      { name: "Organisations", route: "platform.crmOrganisations", icon: "globe" },
       { name: "Do-not-contact", route: "platform.crmSuppressions", icon: "shield" },
       // `mail` for the same reason `platform.leadTemplates` carries it: this is
       // outreach copy. The two are different route ids for different surfaces
@@ -354,10 +378,9 @@ export const platformNav: readonly NavEntry[] = [
       // scanning the rail, so an icon that disagreed would be the confusing
       // part.
       { name: "Templates", route: "platform.crmTemplates", icon: "mail" },
-      // `inbox` rather than a new "upload" key, for the reason already
-      // recorded on "Identity lookup" above: IconKey is consumed as
-      // `Record<IconKey, ...>` in web, mobile and console, so a new key is
-      // three apps changed for one rail entry.
+      // `inbox` rather than a new "upload" key: leads arriving in bulk are
+      // the same shape of thing `inbox` marks elsewhere on this rail. Not a
+      // cost argument — a new key is one registry entry, see icons.ts.
       { name: "Import leads", route: "platform.crmImport", icon: "inbox" },
     ],
   },
