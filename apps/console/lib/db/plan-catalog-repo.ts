@@ -560,6 +560,10 @@ interface LatestRunRow {
   ran_at: string | Date;
   difference_count: number;
   differences: unknown;
+  /** `text` and nullable in 0033, whose `..._error_belongs_to_failed` CHECK
+   *  makes it non-null exactly when `outcome = 'failed'` — so `null` here is a
+   *  stored value, never a missing column. */
+  error: string | null;
 }
 
 /** One (mode, source) pair's most recent run, or `null` when the pair has
@@ -570,6 +574,12 @@ export interface LatestParityRun {
   readonly ranAt: string;
   readonly differenceCount: number;
   readonly differences: readonly Difference[];
+  /** Why the run failed, as `parity-run.ts` stored it — already redacted of
+   *  Stripe keys and truncated to `MAX_ERROR_LENGTH` there, so a reader may
+   *  put it on screen as-is. Non-null exactly when `outcome === "failed"`,
+   *  per 0033's `..._error_belongs_to_failed` CHECK; a failed run stores no
+   *  differences, so this is the only account it gives of itself. */
+  readonly error: string | null;
 }
 
 /** One (mode, source) pair's answer — always present, per
@@ -593,6 +603,7 @@ function toLatestParityRun(row: LatestRunRow): LatestParityRun {
     // `differences` is jsonb; both `pg` and pglite parse it into real
     // objects already, never a string that would need a second `JSON.parse`.
     differences: row.differences as Difference[],
+    error: row.error,
   };
 }
 
@@ -628,7 +639,7 @@ function toLatestParityRun(row: LatestRunRow): LatestParityRun {
  */
 export async function readLatestRuns(): Promise<PairLatestRun[]> {
   const rows = await tesserixQuery<LatestRunRow>(
-    `SELECT DISTINCT ON (mode, source) mode, source, outcome, ran_at, difference_count, differences
+    `SELECT DISTINCT ON (mode, source) mode, source, outcome, ran_at, difference_count, differences, error
        FROM plan_catalog_parity_runs
       ORDER BY mode, source, ran_at DESC`,
   );

@@ -658,6 +658,32 @@ function LatestRunSummary({
           </span>
         ) : null}
       </div>
+      {/*
+        The stored reason, which for a `failed` run is the ENTIRE evidence it
+        produced: no comparison happened, so `differences` is empty and the
+        summary list below renders nothing. Without this line the card says
+        only that something failed, on the surface #327's write-key revocation
+        is decided from.
+
+        Both halves of the condition are checked rather than just the outcome:
+        `error` is typed `string | null` here, and rendering a "Reason:" label
+        with nothing after it would read as detail lost in transit rather than
+        as its absence. 0033's `..._error_belongs_to_failed` CHECK means the
+        two agree in the database, so this is belt-and-braces at the render,
+        not a case that is expected to occur.
+
+        `break-words` because `parity-run.ts` caps the reason at
+        `MAX_ERROR_LENGTH` (512) and redacts keys, but nothing there breaks up
+        a long unspaced token — a URL or a stack frame would otherwise widen
+        the card past its column. The text itself arrives already sanitised,
+        so it is rendered verbatim.
+      */}
+      {run.outcome === "failed" && run.error !== null ? (
+        <p className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">Reason: </span>
+          <span className="break-words font-mono">{run.error}</span>
+        </p>
+      ) : null}
       {summary.length > 0 ? (
         <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
           {summary.map((row) => (
