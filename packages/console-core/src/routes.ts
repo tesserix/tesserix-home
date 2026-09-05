@@ -407,7 +407,7 @@ export const ROUTES = {
   "platform.liveChat": { web: "/admin/support/live-chat", mobile: "/platform/live-chat", pending: true, capability: "respond" },
   // `mass-send` names announcements explicitly, and they are irrevocable once
   // sent. Offering the composer to someone who cannot send is a dead end.
-  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", pending: true, capability: "mass-send" },
+  "platform.announcements": { web: "/admin/platform-announcements", mobile: "/platform/announcements", capability: "mass-send" },
   // Cross-product identity lookup (#134): find one staff member or operator
   // across the estate, from one box, with an audit row per use.
   //

@@ -1198,3 +1198,113 @@ export async function fetchOnboardingSessions(
   );
   return parseOnboardingSessions(data, meta);
 }
+
+// ---- announcements (#150) ------------------------------------------------
+//
+// PLATFORM-API ONLY, with no apps/web fallback, unlike the ticket functions
+// above. Those have one because the console read tickets from apps/web before
+// the module existed; announcements were never a console surface at all, so
+// there is no older path to fall back TO. A fallback here would be a route
+// nobody has ever called, written on the assumption it might be needed.
+
+/** Every announcement, drafts and expired included. Authoring view. */
+export async function fetchAnnouncements(): Promise<
+  import("./announcements").Announcement[]
+> {
+  const data = (await platformRequest("announcements", "/v1/announcements/all")) as {
+    announcements?: import("./announcements").Announcement[];
+  };
+  return data.announcements ?? [];
+}
+
+/**
+ * Who a send would reach.
+ *
+ * Empty `products`/`statuses` mean "every", matching the audience_filter's
+ * NULL branches — so the untargeted case previews the whole estate rather
+ * than nothing.
+ */
+export async function fetchAnnouncementAudience(
+  products: string[],
+  statuses: string[],
+): Promise<import("./announcements").Audience> {
+  const query = new URLSearchParams();
+  if (products.length > 0) query.set("products", products.join(","));
+  if (statuses.length > 0) query.set("statuses", statuses.join(","));
+  const suffix = query.toString();
+
+  return (await platformRequest(
+    "announcement audience",
+    `/v1/announcements/audience${suffix ? `?${suffix}` : ""}`,
+  )) as import("./announcements").Audience;
+}
+
+export interface AnnouncementDraft {
+  title: string;
+  body: string;
+  severity: import("./announcements").Severity;
+  products: string[];
+  statuses: string[];
+  starts_at?: string;
+  ends_at?: string | null;
+  /** The SEND. Absent means a draft — authoring and sending are separate acts. */
+  publish: boolean;
+}
+
+export async function createAnnouncement(
+  draft: AnnouncementDraft,
+): Promise<import("./announcements").Announcement> {
+  const audience_filter: Record<string, unknown> = {};
+  // Only set a key when it NARROWS. An empty array would be matched by
+  // `@> to_jsonb($1)` containment as "targets nothing" rather than
+  // "untargeted", which silently sends to nobody.
+  if (draft.products.length > 0) audience_filter.products = draft.products;
+  if (draft.statuses.length > 0) audience_filter.statuses = draft.statuses;
+
+  const data = (await platformRequest("announcement create", "/v1/announcements", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      // A retried submission must land once. Publishing is irrevocable, so a
+      // double-post is a double broadcast.
+      "idempotency-key": idempotencyKey(),
+    },
+    body: JSON.stringify({
+      title: draft.title,
+      body: draft.body,
+      severity: draft.severity,
+      audience_filter,
+      starts_at: draft.starts_at,
+      ends_at: draft.ends_at,
+      publish: draft.publish,
+    }),
+  })) as { announcement: import("./announcements").Announcement };
+  return data.announcement;
+}
+
+/**
+ * Publish or expire an announcement.
+ *
+ * `ends_at` is sent only when the caller means to change it: the API reads
+ * whether the KEY was present, so including it as undefined and including it
+ * as null are different requests — the second clears the end date.
+ */
+export async function patchAnnouncement(
+  id: string,
+  change: { publish?: boolean; ends_at?: string | null },
+): Promise<import("./announcements").Announcement> {
+  const body: Record<string, unknown> = {};
+  if (change.publish !== undefined) body.publish = change.publish;
+  if ("ends_at" in change) body.ends_at = change.ends_at;
+
+  const data = (await platformRequest(
+    "announcement update",
+    `/v1/announcements/${encodeURIComponent(id)}`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "idempotency-key": idempotencyKey() },
+      body: JSON.stringify(body),
+    },
+  )) as { announcement: import("./announcements").Announcement };
+  return data.announcement;
+}
