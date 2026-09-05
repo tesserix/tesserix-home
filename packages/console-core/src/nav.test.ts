@@ -323,6 +323,31 @@ describe("platformNav", () => {
     expect(names.indexOf("Organisations")).toBeLessThan(names.indexOf("Import leads"));
   });
 
+  it("tells the CRM's two surfaces apart, by name and by icon", () => {
+    // The console's operator read "CRM" and "Organisations" as one thing
+    // listed twice and asked whether both were needed. They are different
+    // surfaces — `platform.crm` is the follow-up work, ordered by urgency;
+    // `platform.crmOrganisations` is the directory you browse — and the rail
+    // has exactly two ways to say so.
+    //
+    // NAME: "CRM" was the system's name, not a task, and every sibling in
+    // Growth (Billing, Onboarding, Organisations, Do-not-contact, Templates,
+    // Import leads) names what you do or what you see.
+    const items = navItems(platformNav);
+    const queue = items.find((item) => item.route === "platform.crm");
+    const directory = items.find(
+      (item) => item.route === "platform.crmOrganisations",
+    );
+    expect(queue).toBeDefined();
+    expect(directory).toBeDefined();
+    expect(queue!.name).not.toBe("CRM");
+
+    // ICON: both carried `users`, so the rail drew them identically. Asserted
+    // as "not equal" rather than pinning the two keys, because which icon
+    // each takes is a design call — that they differ is the fix.
+    expect(queue!.icon).not.toBe(directory!.icon);
+  });
+
   it("links the CRM's templates rather than showing them as pending", () => {
     // The console serves this page. `pending` would render it inert behind a
     // SOON badge — a built surface unreachable from the rail, the same failure

@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Cloud, Database, Gauge, Globe, HeartPulse, Inbox,
-  KeyRound, LayoutDashboard, LifeBuoy, Mail, Megaphone, MessageSquare,
+  KeyRound, LayoutDashboard, LifeBuoy, ListChecks, Mail, Megaphone, MessageSquare,
   ScrollText, Settings, Shield, Users,
 } from "lucide-react";
 import type { IconKey } from "@tesserix/console-core";
@@ -23,6 +23,7 @@ const REGISTRY: Record<IconKey, React.ComponentType<{ className?: string }>> = {
   "mail": Mail,
   "shield": Shield,
   "key-round": KeyRound,
+  "list-checks": ListChecks,
   "users": Users,
 };
 
