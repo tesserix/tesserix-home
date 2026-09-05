@@ -29,11 +29,14 @@ import { CATALOG_SOURCES } from "@/lib/billing/source-policy";
 import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
 import type { StripeMode } from "@/lib/billing/stripe-read";
 import { splitTenantId, type EstateTenant } from "@/lib/tenants";
-import { grantTenantPricingOverrideAction } from "./actions";
+import {
+  grantTenantPricingOverrideAction,
+  revokeTenantPricingOverrideAction,
+} from "./actions";
 
 /**
- * Giving one tenant a price nobody else gets, from its row in the directory —
- * tesserix-home#331, T2.
+ * Giving one tenant a price nobody else gets, and taking it back, from its row
+ * in the directory — tesserix-home#331 T2, and #581.
  *
  * The write lives in `lib/tenant-pricing-override-write.ts` behind
  * `./actions.ts`; this file is the affordance and the copy, on the surface
@@ -62,14 +65,37 @@ import { grantTenantPricingOverrideAction } from "./actions";
  * it is a deliberate edit with a failing test attached, rather than a stale
  * paragraph nobody notices.
  *
+ * ══ AND A SUCCESSFUL RETIREMENT IS NOT A REMOVED DISCOUNT ══
+ *
+ * The second dialog is #581's. `revokeTenantPricingOverride` retires this
+ * console's row — which frees 0047's partial unique index, so a corrected
+ * override becomes grantable, and that is the point of the whole issue — and
+ * deletes the Coupon. Per Stripe's own reference, deleting a Coupon "does not
+ * affect any customers who have already applied" it: detaching an applied
+ * discount is `DELETE /v1/customers/:id/discount`, customer-scoped, and only
+ * mark8ly can make that call (#660).
+ *
+ * So {@link overrideRetiredMessage} states what was retired, that a correction
+ * can now be granted, and that the detach is mark8ly's and has not happened —
+ * and a test asserts the words it must never contain, for
+ * {@link overrideMintedMessage}'s reason.
+ *
+ * Nothing this console has minted can have been attached today, because the
+ * attach does not exist; a revoke here is therefore complete in fact. The copy
+ * deliberately does not depend on that, so the day #660's caller lands nothing
+ * here starts lying.
+ *
  * ══ THIS CONTROL IS NOT MOUNTED ON THE DIRECTORY YET ══
  *
  * `tenant-directory.tsx` does not render it, and that is the plan's decision
  * rather than an omission: it rejects "build console-first and let it fail at
  * the attach step" because that makes minted-but-never-applied reachable in
  * production, and this console deploys on merge. Mounting it is T3's last
- * step, alongside rewriting the message above. Until then this file is
- * complete, tested, and unreachable — the state the plan asked for.
+ * step, alongside rewriting {@link overrideMintedMessage}. #581 did not change
+ * that: it added the retire dialog to the same unmounted file, on the reasoning
+ * that a revoke for a grant nothing can reach is no more reachable than the
+ * grant. Until T3 lands this file is complete, tested, and unreachable — the
+ * state both plans asked for.
  */
 
 /* ------------------------------------------------------------------------ *
@@ -126,6 +152,71 @@ export function overrideMintedMessage(
 }
 
 /**
+ * {@link OVERRIDE_NOT_CONFIRMED}'s counterpart, and it is a separate sentence
+ * because it sends the operator to two places rather than one.
+ *
+ * Reached on the same condition — the server action CALL rejected, so the seam
+ * never mapped an error of its own — and it makes the same refusal to say
+ * nothing happened: the request may have arrived and retired the row, and it
+ * may have gone on to delete the coupon. Both halves are named because either
+ * can be the state left behind, which is `RETIRE_INCOMPLETE`'s own reasoning in
+ * the seam.
+ */
+export const OVERRIDE_REVOKE_NOT_CONFIRMED =
+  "That request could not be confirmed. Check this tenant's override, and the Stripe dashboard, before trying again — the override may already have been retired and its coupon deleted.";
+
+/**
+ * What the operator is told after a retirement the seam accepted.
+ *
+ * THREE FACTS, IN THIS ORDER, the same discipline {@link overrideMintedMessage}
+ * keeps: what this console did, what the operator can now do, and what is still
+ * owed by somebody else.
+ *
+ * 1. The row is retired and — in the `couponDeleted` case — the Coupon is gone.
+ *    The id and the mode are named for {@link overrideMintedMessage}'s reasons,
+ *    unchanged: the id is the operator's only handle on the object, and the
+ *    mode says which of two real accounts was touched.
+ * 2. A corrected override can now be granted. This is the affordance #581
+ *    exists to restore — 0047's partial unique index counts a row with
+ *    `removed_at IS NULL` as live, and there is no longer one.
+ * 3. If mark8ly had attached this coupon, detaching it has not happened here.
+ *    Stripe's reference is explicit that deleting a Coupon "does not affect any
+ *    customers who have already applied" it, and the customer-scoped call that
+ *    would is mark8ly's (#660).
+ *
+ * "removed", "cancelled", "refunded", "revoked" and "no longer discounted" are
+ * absent on purpose and a test asserts their absence rather than the sentence,
+ * because the failure to guard against is a future rewording that sounds
+ * friendlier and means the tenant stopped being charged less.
+ *
+ * When the Coupon survived, fact 1 says so and names where to go — the register
+ * `RETIRE_INCOMPLETE` and `MINT_INCOMPLETE` set: name the object that is left
+ * over and send the operator somewhere specific.
+ */
+export function overrideRetiredMessage(
+  tenantName: string,
+  couponId: string,
+  mode: StripeMode,
+  couponDeleted: boolean,
+): string {
+  // TWO OBJECTS, NAMED SEPARATELY IN BOTH ARMS. The console retires its own
+  // ROW and deletes a COUPON, and those are the two of a revoke's three steps
+  // it owns — the third, detaching an applied discount, is mark8ly's and is the
+  // sentence this function closes on. "Coupon X was retired and deleted" reads
+  // as one act on one object and loses exactly the distinction the failed-delete
+  // arm below depends on being able to draw.
+  const retired = couponDeleted
+    ? `${tenantName}'s override was retired in ${mode} mode and coupon ${couponId} was deleted. `
+    : `${tenantName}'s override was retired in ${mode} mode, but coupon ${couponId} was not deleted ` +
+      `and is still live in the ${mode} Stripe account — delete it from the Stripe dashboard. `;
+  return (
+    retired +
+    "A corrected override can now be granted. " +
+    "If mark8ly had attached this coupon to a subscription, detaching it is mark8ly's step and has not happened here."
+  );
+}
+
+/**
  * Why the action is unavailable for a tenant belonging to a product this
  * console does not mint for.
  *
@@ -164,6 +255,20 @@ function consequence(tenantName: string, mode: StripeMode | ""): string {
   return (
     `A coupon with these terms will be created in ${where} and recorded against ${tenantName}. ` +
     "It is not applied to anything by this step, and this console cannot yet apply it."
+  );
+}
+
+/** The retire dialog's counterpart of {@link consequence}, and it spends its
+ *  last sentence the same way: on what confirming does NOT do. The first
+ *  sentence is the operator's reason for being here — a correction becomes
+ *  grantable — and the second is the one an operator must not close the dialog
+ *  without having read. */
+function revokeConsequence(tenantName: string, mode: StripeMode | ""): string {
+  const where = mode === "" ? "a Stripe account" : `the ${mode} Stripe account`;
+  return (
+    `This console's record of ${tenantName}'s override will be retired and the coupon it minted ` +
+    `will be deleted in ${where}, so a corrected override can be granted. ` +
+    "It does not detach a discount already applied to their subscription — that is a separate step in mark8ly."
   );
 }
 
@@ -301,8 +406,42 @@ export function overrideSubmittable(form: OverrideForm): boolean {
   );
 }
 
-/** The `field` names this dialog has an input for. Whether that input is on
- *  screen is a separate question — see {@link overrideFieldPlacement}. */
+/**
+ * The retire dialog's whole form: which account the override was minted in, and
+ * why it is being retired.
+ *
+ * `mode` is asked rather than looked up because nothing this control holds
+ * knows the answer — `EstateTenant` carries no override, and the seam reads the
+ * live row itself, per mode. Unchosen for {@link OverrideForm}'s reason
+ * inverted: retiring the `test` row leaves a `live` discount in place while
+ * reporting a revoke, which is the seam's own argument for never defaulting it.
+ */
+export interface OverrideRevokeForm {
+  readonly mode: StripeMode | "";
+  readonly reason: string;
+}
+
+export const EMPTY_OVERRIDE_REVOKE_FORM: OverrideRevokeForm = {
+  mode: "",
+  reason: "",
+};
+
+/**
+ * Whether the retire dialog's confirm button is enabled.
+ *
+ * Both conditions are ones `revokeTenantPricingOverride` would refuse anyway —
+ * a mode is required by its input and `validateRevoke` refuses a blank reason —
+ * so an enabled button in either state would only ever produce a round trip and
+ * a refusal. {@link overrideSubmittable}'s reasoning, on a shorter form.
+ */
+export function overrideRevokeSubmittable(form: OverrideRevokeForm): boolean {
+  return form.mode !== "" && form.reason.trim() !== "";
+}
+
+/** The `field` names the MINT dialog has an input for. Whether that input is on
+ *  screen is a separate question — see {@link overrideFieldPlacement}. The
+ *  retire dialog has one field and reads `field` directly; see its `reasonError`
+ *  in the component. */
 const OVERRIDE_FIELDS = [
   "label",
   "reason",
@@ -372,13 +511,19 @@ export interface TenantPricingOverrideActionProps {
    * lifecycle control's `onSubmit` takes, for the same reason.
    */
   onSubmit?: typeof grantTenantPricingOverrideAction;
+  /** The retire half's counterpart of {@link onSubmit}, injected for the same
+   *  reason: the seam's revoke has two success shapes and a refusal, and the
+   *  render tests drive all three. */
+  onRevoke?: typeof revokeTenantPricingOverrideAction;
 }
 
 const ACTION_LABEL = "Pricing override";
+const REVOKE_LABEL = "Retire override";
 
 export function TenantPricingOverrideAction({
   tenant,
   onSubmit = grantTenantPricingOverrideAction,
+  onRevoke = revokeTenantPricingOverrideAction,
 }: TenantPricingOverrideActionProps) {
   const router = useRouter();
   const fieldId = useId();
@@ -386,7 +531,22 @@ export function TenantPricingOverrideAction({
   const [form, setForm] = useState<OverrideForm>(EMPTY_OVERRIDE_FORM);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ message: string; field?: string } | null>(null);
+  // ONE notice for both dialogs, and that is not a shortcut: only one of them
+  // can be open at a time, so the second outcome an operator sees is always
+  // about the more recent act. Two would leave a stale mint line sitting under
+  // a retirement of the coupon it named.
   const [notice, setNotice] = useState<string | null>(null);
+
+  // The retire dialog's own state, kept apart from the mint's rather than
+  // shared. A refusal from one dialog rendered inside the other would point at
+  // an input that belongs to a different request, and `pending` is separate so
+  // an in-flight mint cannot grey out a dialog it is not running in.
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [revokeForm, setRevokeForm] = useState<OverrideRevokeForm>(EMPTY_OVERRIDE_REVOKE_FORM);
+  const [revokePending, setRevokePending] = useState(false);
+  const [revokeError, setRevokeError] = useState<{ message: string; field?: string } | null>(
+    null,
+  );
 
   // The PRODUCT that owns this tenant, taken from the namespaced id rather
   // than from `tenant.source`, so the product checked and the tenant id the
@@ -399,15 +559,30 @@ export function TenantPricingOverrideAction({
     // as the deliberate gap it is.
     return (
       <div className="flex flex-col gap-1">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled
-          aria-describedby={`${fieldId}-unavailable`}
-        >
-          {ACTION_LABEL}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled
+            aria-describedby={`${fieldId}-unavailable`}
+          >
+            {ACTION_LABEL}
+          </Button>
+          {/* Disabled for the same reason and under the same notice: this
+              console never minted for this product, so there is no row of its
+              own to retire and no coupon of its own to delete. An enabled
+              retire here could only ever refuse. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled
+            aria-describedby={`${fieldId}-unavailable`}
+          >
+            {REVOKE_LABEL}
+          </Button>
+        </div>
         <span id={`${fieldId}-unavailable`} className="text-xs text-muted-foreground">
           {overrideUnavailableNotice(source)}
         </span>
@@ -470,27 +645,102 @@ export function TenantPricingOverrideAction({
     }
   };
 
+  const revokeReset = () => {
+    setRevokeForm(EMPTY_OVERRIDE_REVOKE_FORM);
+    setRevokeError(null);
+  };
+
+  const revokeClose = () => {
+    setRevokeOpen(false);
+    revokeReset();
+  };
+
+  // Read, never re-derived from the message text — {@link overrideFieldPlacement}'s
+  // rule, applied to a dialog small enough not to need the function. `reason`
+  // is the only field `validateRevoke` names; anything else goes to form level,
+  // which is where a refusal the seam grows later lands rather than nowhere.
+  const revokeReasonError = revokeError?.field === "reason" ? revokeError.message : undefined;
+  const revokeFormError =
+    revokeError && revokeError.field !== "reason" ? revokeError.message : null;
+
+  const submitRevoke = async () => {
+    // Narrowed rather than asserted through, `submit`'s reason: an unchosen
+    // mode is the condition that disables the button, so this is unreachable
+    // from the UI, and a cast past it would be the one place a retirement could
+    // be aimed at an account nobody picked.
+    if (revokeForm.mode === "") return;
+
+    setRevokeError(null);
+    setRevokePending(true);
+    try {
+      const result = await onRevoke({
+        tenantId: tenant.id,
+        mode: revokeForm.mode,
+        reason: revokeForm.reason,
+      });
+      if (!result.ok) {
+        setRevokeError({ message: result.message, field: result.field });
+        return;
+      }
+      setNotice(
+        overrideRetiredMessage(
+          tenant.name,
+          result.couponId,
+          revokeForm.mode,
+          result.couponDeleted,
+        ),
+      );
+      setRevokeOpen(false);
+      revokeReset();
+      router.refresh();
+    } catch {
+      setRevokeError({ message: OVERRIDE_REVOKE_NOT_CONFIRMED });
+    } finally {
+      setRevokePending(false);
+    }
+  };
+
   return (
     <div className="flex flex-col items-start gap-1">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        // Every row renders a control with the same visible text, so a query by
-        // that text alone cannot address a particular tenant's — the same fix
-        // the lifecycle control and `ToolsManager` apply to theirs.
-        aria-label={`${ACTION_LABEL} for ${tenant.name}`}
-        onClick={() => {
-          // Seeded at open time, not mount time: rows are keyed on the
-          // namespaced id, so this component is reconciled rather than
-          // remounted and an abandoned previous open would otherwise leak in.
-          reset();
-          setNotice(null);
-          setOpen(true);
-        }}
-      >
-        {ACTION_LABEL}
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          // Every row renders a control with the same visible text, so a query
+          // by that text alone cannot address a particular tenant's — the same
+          // fix the lifecycle control and `ToolsManager` apply to theirs.
+          aria-label={`${ACTION_LABEL} for ${tenant.name}`}
+          onClick={() => {
+            // Seeded at open time, not mount time: rows are keyed on the
+            // namespaced id, so this component is reconciled rather than
+            // remounted and an abandoned previous open would otherwise leak in.
+            reset();
+            setNotice(null);
+            setOpen(true);
+          }}
+        >
+          {ACTION_LABEL}
+        </Button>
+
+        {/* Not disabled on "this tenant has no override": this control does not
+            know. `EstateTenant` carries no override and nothing here reads
+            0047 — the seam does, and answers with `nothingToRevoke`, which says
+            more than a greyed-out button could. */}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          aria-label={`Retire pricing override for ${tenant.name}`}
+          onClick={() => {
+            revokeReset();
+            setNotice(null);
+            setRevokeOpen(true);
+          }}
+        >
+          {REVOKE_LABEL}
+        </Button>
+      </div>
 
       {notice ? (
         // A WARNING callout, not the muted confirmation line the lifecycle
@@ -756,6 +1006,124 @@ export function TenantPricingOverrideAction({
               disabled={pending || !overrideSubmittable(form)}
             >
               {pending ? "Please wait…" : "Mint coupon"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={revokeOpen}
+        onOpenChange={(next) => (next ? setRevokeOpen(true) : revokeClose())}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Retire the pricing override for {tenant.name}?</DialogTitle>
+            <DialogDescription>
+              {revokeConsequence(tenant.name, revokeForm.mode)}
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            id={`${fieldId}-revoke-form`}
+            className="flex flex-col gap-4"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitRevoke();
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${fieldId}-revoke-mode`}>
+                Stripe account the override was minted in
+              </Label>
+              {/* Native, for the mint dialog's stated reasons. Labelled by the
+                  account the coupon is IN rather than "Stripe account": the two
+                  dialogs ask about different moments, and an operator who reads
+                  this as "where to retire it" has been told nothing wrong, but
+                  one who has a coupon in each mode needs the distinction. */}
+              <select
+                id={`${fieldId}-revoke-mode`}
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={revokeForm.mode}
+                disabled={revokePending}
+                onChange={(event) =>
+                  setRevokeForm((current) => ({
+                    ...current,
+                    mode: event.target.value as StripeMode | "",
+                  }))
+                }
+              >
+                <option value="" disabled>
+                  Choose an account…
+                </option>
+                <option value="test">test</option>
+                <option value="live">live</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Retiring the test override leaves a live one in place, and the other way round.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor={`${fieldId}-revoke-reason`}>Why (internal)</Label>
+              <Textarea
+                id={`${fieldId}-revoke-reason`}
+                value={revokeForm.reason}
+                rows={3}
+                disabled={revokePending}
+                placeholder="Why this tenant's different price is being taken back."
+                aria-invalid={revokeReasonError ? true : undefined}
+                aria-describedby={
+                  revokeReasonError ? `${fieldId}-revoke-reason-error` : undefined
+                }
+                onChange={(event) =>
+                  setRevokeForm((current) => ({ ...current, reason: event.target.value }))
+                }
+              />
+              {/* The same audience line the mint dialog's reason carries, minus
+                  its last clause: this reason is recorded against nothing here.
+                  The seam validates it and stores it nowhere — 0047's header —
+                  and saying "recorded against the retirement" would describe a
+                  row this console does not write. */}
+              <p className="text-xs text-muted-foreground">
+                Never sent to Stripe and never shown to the tenant.
+              </p>
+              {revokeReasonError ? (
+                <span
+                  id={`${fieldId}-revoke-reason-error`}
+                  role="alert"
+                  className="text-sm text-destructive"
+                >
+                  {revokeReasonError}
+                </span>
+              ) : null}
+            </div>
+
+            {revokeFormError ? (
+              <Callout role="alert" variant="destructive">
+                <CalloutDescription>{revokeFormError}</CalloutDescription>
+              </Callout>
+            ) : null}
+          </form>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={revokePending}
+              onClick={revokeClose}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form={`${fieldId}-revoke-form`}
+              // Not `destructive`, the mint button's reasoning unchanged: this
+              // takes no merchant offline, and it is the step that unblocks a
+              // correction rather than one that ends anything.
+              disabled={revokePending || !overrideRevokeSubmittable(revokeForm)}
+            >
+              {revokePending ? "Please wait…" : REVOKE_LABEL}
             </Button>
           </DialogFooter>
         </DialogContent>
