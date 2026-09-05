@@ -50,6 +50,11 @@ describe("consolePath", () => {
     // federated `/admin/kpis` and `/admin/entities/{type}`, and expo-router
     // has no screen for any of them. apps/web's mark8ly rail is eight screens
     // over mark8ly's own tables, which is a different surface, not these.
+    // "mark8ly.emailTemplates" is excluded for the second reason ONLY, and it
+    // is the only mark8ly id where that is the whole story: apps/web does serve
+    // this surface and the route records the path, but expo-router has no
+    // screen for it. A `mobile` path written here to satisfy this loop would
+    // claim one that was never built.
     for (const id of ROUTE_IDS) {
       if (
         id === "platform.dashboard" ||
@@ -58,6 +63,7 @@ describe("consolePath", () => {
         id === "mark8ly.overview" ||
         id === "mark8ly.tenants" ||
         id === "mark8ly.users" ||
+        id === "mark8ly.emailTemplates" ||
         id === "platform.onboarding" ||
         id === "platform.onboardingSessions" ||
         id === "platform.profile"
@@ -429,7 +435,7 @@ describe("pending reflects what the console actually serves", () => {
     expect(consolePath("platform.outbox")).toBe("/platform/outbox");
   });
 
-  it("has all three generic mark8ly surfaces built, and the fast path still pending", () => {
+  it("has all three generic mark8ly surfaces built, and the other two still pending", () => {
     // `app/(console)/[product]/page.tsx` serves `/mark8ly` and
     // `app/(console)/[product]/[entity]/page.tsx` serves the two entity
     // indexes — none has a mark8ly page file of its own, which is the point of
@@ -448,6 +454,10 @@ describe("pending reflects what the console actually serves", () => {
     // mark8ly's own migration vocabulary — so it must stay pending. A change
     // that cleared `pending` across the whole mark8ly block would go red here.
     expect(isPending("mark8ly.migrationFastPath")).toBe(true);
+    // The second control, added with `mark8ly.emailTemplates` (#588): a
+    // declared id whose page needs two other repos first. Same reason as the
+    // fast path — no page, and no generic surface can serve it.
+    expect(isPending("mark8ly.emailTemplates")).toBe(true);
   });
 
   it("reports kora.audit as retired rather than pending", () => {

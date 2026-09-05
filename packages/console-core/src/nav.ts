@@ -60,7 +60,8 @@ export const koraNav: readonly NavEntry[] = [
 
 /**
  * Mark8ly's product rail: an overview, one entry per §3.4 entity type the
- * product declares, and the CSM migration fast-path review queue.
+ * product declares, the transactional email template registry, and the CSM
+ * migration fast-path review queue.
  *
  * WHY THIS WAS ONE ENTRY UNTIL NOW — and why the record below is still true
  * of the surfaces it is about. Everything from here to the `inbox` note is
@@ -111,6 +112,16 @@ export const koraNav: readonly NavEntry[] = [
  * because a rail entry advertises a door: routes.ts declared the ids ahead of
  * the pages on purpose (so the capability gate applied from the first day),
  * and the pages landed afterwards. This is the change that opens the doors.
+ *
+ * EMAIL TEMPLATES IS NOT §2.3's THIRD EITHER (#588, part of the #586 epic). It
+ * is the console's own take on apps/web's
+ * `/admin/apps/mark8ly/notifications/templates` — the product's transactional
+ * email copy, reached through platform-api's federation rather than through
+ * apps/web's cross-database grant, for the reason routes.ts states on the id.
+ * It is `pending`: the surface needs work in mark8ly and platform-api first,
+ * and one of those is an open design call. So this entry is a SOON badge
+ * today, and the badge is the honest thing to render — the IA says the surface
+ * belongs to mark8ly, and the flag says the console does not serve it yet.
  */
 export const mark8lyNav: readonly NavEntry[] = [
   // Overview first, and `layout-dashboard` to match `kora.overview`: it is the
@@ -131,6 +142,31 @@ export const mark8lyNav: readonly NavEntry[] = [
   { name: "Tenants", route: "mark8ly.tenants", icon: "globe" },
   // `users` for the same reason `kora.users` carries it.
   { name: "Users", route: "mark8ly.users", icon: "users" },
+  // Then the transactional email registry. After the entity surfaces because
+  // it is not one: it is the product's own email copy, not a
+  // `/mark8ly/<type>` entity read.
+  //
+  // PENDING, like the queue below it, and for the same kind of reason — the
+  // console has no page yet. Two pending entries in a row is why this one
+  // still sits ABOVE the queue rather than being appended after it: the order
+  // above is Overview, then the entity surfaces in registry order, and this is
+  // the next surface in the product's IA, not the newest arrival. When both
+  // pages land the order stops being about `pending` at all.
+  //
+  // `mail` rather than a new key. It is the icon `platform.leadTemplates` and
+  // `platform.crmTemplates` already carry for "email copy an operator edits",
+  // and this is that same KIND of surface. Those two sit on the PLATFORM rail
+  // and this one sits on mark8ly's, so nothing on this rail shares the glyph —
+  // the confusable-name problem routes.ts records for the three ids is a naming
+  // problem, and a differentiating icon here would not touch it while making
+  // the rail disagree with the console's own vocabulary for email copy. (A new
+  // key costs one registry entry — see icons.ts — so this is a sense argument,
+  // not a cost one.)
+  //
+  // "Email templates", not "Templates": on a product rail the bare word would
+  // read as "mark8ly's templates" generically, and mark8ly has storefront
+  // themes too.
+  { name: "Email templates", route: "mark8ly.emailTemplates", icon: "mail" },
   // Last. It was first when it was the only entry; it moves to the end
   // because it is the one entry still `pending`, and a rail whose first row
   // is an unclickable SOON badge reads as a rail that does not work. No

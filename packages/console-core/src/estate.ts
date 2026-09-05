@@ -214,20 +214,29 @@ export const ESTATE: readonly EstateProduct[] = [
     // an operator the product moved when most of it did not.
     //
     // KNOWN COLLISION, recorded rather than papered over. Because `migrated`
-    // is false, EstateMap renders "4 rail entries · still in apps/web" — and
-    // these four are console-native, not apps/web's. The card understates
-    // mark8ly's eight web entries in order to state the console's four.
+    // is false, EstateMap renders "5 rail entries · still in apps/web" — and
+    // these five are console-native, not apps/web's. The card understates
+    // mark8ly's eight web entries in order to state the console's five.
     // Deriving from the rail was asked for by #405 and #406 both, and it is
     // the right mechanism; the stale half is EstateMap's suffix, which
     // assumes a product's rail lives in exactly one of two places. Fixing
     // that is a separate change to apps/console — out of scope here, and
     // named so the next reader finds a known wart rather than a fresh bug.
-    entries: 4,
+    //
+    // WHAT CHANGED FOURTH (tesserix-home#588). The rail grew from 4 to 5 —
+    // Email templates, mark8ly's transactional email copy. The literal follows
+    // the rail again, which is the mechanism working: the number is CHECKED
+    // against `mark8lyNav.length` in estate.test.ts, not transcribed.
+    //
+    // It counts a PENDING entry, exactly as the 1 before #137 did: `entries`
+    // is the size of the rail the console renders, and a SOON badge is a row
+    // on it. Everything the collision note above says still holds, one higher.
+    entries: 5,
     migrated: false,
     // Counted from `mark8lyNav`, not from apps/web's eight — see
     // `entriesFrom`'s own doc for why this had to become explicit rather than
     // being inferred from `migrated`. This is what stops the estate map
-    // rendering "4 rail entries · still in apps/web" being read as a count of
+    // rendering "5 rail entries · still in apps/web" being read as a count of
     // apps/web's rail, which it is not.
     entriesFrom: "console-core",
     // NO LONGER THE WHOLE SET THE RAIL RENDERS FROM, and left as it is
