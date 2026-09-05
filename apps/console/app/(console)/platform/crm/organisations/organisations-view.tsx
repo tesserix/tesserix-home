@@ -24,6 +24,7 @@ import {
 } from "@/components/kit/filter-bar";
 import { ResultPager } from "@/components/kit/result-pager";
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
+import { formatFollowers, followersTitle } from "../followers";
 import { COUNTRY_LABELS } from "@/lib/db/crm-country";
 import { UNKNOWN_LABEL } from "@/lib/db/crm-filters";
 import type {
@@ -168,31 +169,12 @@ function ProductsCell({ products }: { products: readonly string[] }) {
 }
 
 /**
- * Compact follower count for the table cell — `1.2k`, `15k`, `1.2M` — so the
- * column stays as narrow as the numeric cells elsewhere in the console while
- * still ranking rows at a glance.
- *
- * Re-authored rather than imported: `formatFollowers` in
- * `apps/web/app/admin/apps/mark8ly/leads/page.tsx` is the same four lines over
- * the same kind of number, but it belongs to another app over a different
- * table and reaching across that boundary would couple two surfaces that only
- * happen to agree. (`lib/ai-usage.ts`'s `tokenFormatter` is not it: it is
- * named for tokens and capitalises the K.)
- *
- * The decimal is dropped from five figures up because at that size the tenth
- * of a thousand is noise the operator cannot act on, and the exact number is
- * a hover away in `title` regardless.
- */
-function formatFollowers(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
-  return String(n);
-}
-
-/**
  * The primary contact's follower count — the CRM's only quantitative
- * qualification signal, and until now visible on no surface at all even
- * though the filter bands on it.
+ * qualification signal, and for a long time visible on no surface at all even
+ * though the filter bands on it. It now reads here and on the organisation
+ * detail page, which is the pair an operator moves between: they band and
+ * sort on this column, then open a row to confirm the figure against the
+ * contact it belongs to.
  *
  * An absent count renders as the same muted em-dash the other empty cells in
  * this file use, never as `0`: the rows behind it have no recorded value,
@@ -208,7 +190,7 @@ function formatFollowers(n: number): string {
 function FollowersCell({ count }: { count: number | null }) {
   if (count === null) return <span className="text-muted-foreground">—</span>;
 
-  return <span title={`${count.toLocaleString()} followers`}>{formatFollowers(count)}</span>;
+  return <span title={followersTitle(count)}>{formatFollowers(count)}</span>;
 }
 
 /**
