@@ -25,6 +25,7 @@ vi.mock("@/lib/db/crm-erasure", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/db/crm-erasure")>()),
   eraseContact: vi.fn(),
   deleteOrganisation: vi.fn(),
+  deleteOpportunity: vi.fn(),
 }));
 // `withCrmWrite` itself is wrapped, not replaced: the erasure tests below
 // need to inspect the exact arguments actions.ts passes it (the `hard-delete`
@@ -64,7 +65,7 @@ import {
   updateOrganisation,
   DuplicateContactError,
 } from "@/lib/db/crm-writes";
-import { eraseContact, deleteOrganisation } from "@/lib/db/crm-erasure";
+import { eraseContact, deleteOrganisation, deleteOpportunity } from "@/lib/db/crm-erasure";
 import { ErasureHashKeyMissingError } from "@/lib/db/crm-erasure-hash";
 import { withCrmWrite } from "@/lib/crm-write";
 import { tesserixQuery, isDatabaseConfigured } from "@/lib/db/tesserix";
@@ -77,6 +78,7 @@ import {
   createOpportunityAction,
   eraseContactAction,
   deleteOrganisationAction,
+  deleteOpportunityAction,
   updateOrganisationAction,
 } from "./actions";
 
@@ -1241,6 +1243,148 @@ describe("deleteOrganisationAction", () => {
       message: "You don't have permission to edit the CRM.",
     });
     expect(deleteOrganisation).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteOpportunityAction", () => {
+  /** What `deleteOpportunity` returns for the fixture deal, in one place. */
+  const DELETED = {
+    opportunityId: OPP_ID,
+    organisationId: ORG_ID,
+    organisationName: "Glebe Flowers",
+    product: "mark8ly",
+    activitiesDetached: 2,
+  };
+
+  it("gates opportunity delete on hard-delete", async () => {
+    signIn(undefined);
+    await deleteOpportunityAction(OPP_ID);
+    const options = vi.mocked(withCrmWrite).mock.calls[0][1];
+    // Not `crm`: holding the CRM surface capability is what lets an operator
+    // move a deal through its stages, and this destroys the deal instead.
+    expect(options).toEqual(expect.objectContaining({ capability: "hard-delete" }));
+  });
+
+  it("audits the opportunity by its own id, not the organisation's", async () => {
+    await deleteOpportunityAction(OPP_ID);
+    const target = vi.mocked(withCrmWrite).mock.calls[0][0];
+    // The upfront target is what `auditedOperation` records when `describe`
+    // has nothing to add — the refusal row (#409) and the already-gone row.
+    // The organisation id there would name a row that still exists and was
+    // not the subject of the action.
+    expect(target).toBe(OPP_ID);
+  });
+
+  it("counts what it detached, and identifies the deal in target not summary", async () => {
+    await deleteOpportunityAction(OPP_ID);
+    const describe = vi.mocked(withCrmWrite).mock.calls[0][3];
+
+    const description = describe(DELETED);
+
+    expect(description.action).toBe("crm.opportunity.delete");
+    // `deleted: 1` distinguishes a call that removed a deal from one that
+    // found nothing; `activities_detached` is the count that makes the row
+    // evidence of what survived. `AuditSummary` is counts only, so the
+    // organisation name and the product — the two things that make this row
+    // readable without joining back to a row that no longer exists — go in
+    // the free-string `target`.
+    expect(description.summary).toEqual({ deleted: 1, activities_detached: 2 });
+    expect(description.target).toBe(`Glebe Flowers — mark8ly (${OPP_ID})`);
+  });
+
+  it("says so in the audit target when the deal had no product", async () => {
+    // The mis-clicked duplicate #251 is about has a null product. "(no
+    // product)" rather than an empty gap, so the row cannot be misread as a
+    // truncation.
+    await deleteOpportunityAction(OPP_ID);
+    const describe = vi.mocked(withCrmWrite).mock.calls[0][3];
+
+    const description = describe({ ...DELETED, product: null });
+
+    expect(description.target).toBe(`Glebe Flowers — (no product) (${OPP_ID})`);
+  });
+
+  it("deletes, audits crm.opportunity.delete, and revalidates the detail page and the queues", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOpportunity).mockResolvedValue(DELETED);
+
+    const result = await deleteOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({ ok: true });
+    expect(deleteOpportunity).toHaveBeenCalledWith(OPP_ID);
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.delete",
+      target: `Glebe Flowers — mark8ly (${OPP_ID})`,
+      summary: { deleted: 1, activities_detached: 2 },
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/platform/crm/${ORG_ID}`);
+    // The Due and Drifting queues are lists of opportunities, so a deleted
+    // deal stays on them until this runs.
+    expect(revalidatePath).toHaveBeenCalledWith("/platform/crm");
+  });
+
+  it("reports a missing opportunity as already gone rather than as a failure", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOpportunity).mockResolvedValue(null);
+
+    const result = await deleteOpportunityAction(OPP_ID);
+
+    expect(result.ok).toBe(true);
+    // Zeroes, not a guess at what an absent deal might have held.
+    expect(lastAuditInsert()).toEqual({
+      action: "crm.opportunity.delete",
+      target: OPP_ID,
+      summary: { deleted: 0, activities_detached: 0 },
+    });
+    // Nothing changed, so nothing to revalidate — and this call never learnt
+    // an organisation id to revalidate a detail page for.
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("tells the operator the deal is gone but was not recorded, when the audit write fails", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOpportunity).mockResolvedValue(DELETED);
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await deleteOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The opportunity is gone, but that action was not recorded in the audit log. Please report this.",
+    });
+    // Guards the guard: the delete genuinely ran and committed — this is not
+    // an earlier bail-out — but the audit row for it does not exist.
+    expect(deleteOpportunity).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("uses the same honest copy when the audit write fails for a deal that no longer existed", async () => {
+    signIn(["hard-delete"]);
+    vi.mocked(deleteOpportunity).mockResolvedValue(null);
+    vi.mocked(tesserixQuery).mockRejectedValue(new Error("connection terminated"));
+
+    const result = await deleteOpportunityAction(OPP_ID);
+
+    // "is gone" holds whether this call removed it or found it already
+    // absent; "was deleted" would be a lie in the second case.
+    expect(result).toEqual({
+      ok: false,
+      message:
+        "The opportunity is gone, but that action was not recorded in the audit log. Please report this.",
+    });
+  });
+
+  it("refuses an operator who holds crm but not hard-delete", async () => {
+    signIn(["crm"]);
+
+    const result = await deleteOpportunityAction(OPP_ID);
+
+    expect(result).toEqual({
+      ok: false,
+      message: "You don't have permission to edit the CRM.",
+    });
+    expect(deleteOpportunity).not.toHaveBeenCalled();
   });
 });
 

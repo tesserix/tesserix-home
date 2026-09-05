@@ -23,6 +23,13 @@ import {
  *   bad import, the wrong company). It is a true cascade: the organisation,
  *   its contacts, its opportunities and its activities all go.
  *
+ * `deleteOpportunity` (#251) is a third operation and answers neither of
+ * those. It is not a DPDP request at all: it removes a MIS-CLICKED DEAL from
+ * a business we still hold and still intend to sell to. It lives here because
+ * this is the file where deleting CRM records is done, and it deletes the
+ * least of anything here — one opportunity row, with the organisation, its
+ * contacts, its other deals and its whole activity log left standing.
+ *
  * Kept in its own file rather than crm-repo.ts (already past 1,500 lines) or
  * crm-writes.ts (the create path) — this is neither.
  */
@@ -385,6 +392,112 @@ export async function deleteOrganisation(
       name: orgRows[0].name,
       contactsDeleted: deletedContacts.length,
       opportunitiesDeleted: deletedOpportunities.length,
+    };
+  });
+}
+
+export interface DeletedOpportunity {
+  opportunityId: string;
+  organisationId: string;
+  /**
+   * The organisation's name and the deal's product, read BEFORE the delete
+   * and returned so the caller's audit row can name what was destroyed.
+   *
+   * `crm_opportunities` has no name of its own — a deal is identified by
+   * whose it was and what it was for — so an audit row carrying only the
+   * opportunity id names a row that, by the time anyone reads the row, no
+   * longer exists to be joined back to. `product` is genuinely nullable
+   * (null until `qualified`, and null is exactly the shape of the
+   * mis-clicked duplicate this delete exists to remove), so the caller must
+   * render the absence rather than assume a value.
+   */
+  organisationName: string;
+  product: string | null;
+  /**
+   * How many `crm_activities` rows stopped being scoped to this deal.
+   *
+   * DETACHED, not deleted: migration 0048 made
+   * `crm_activities.opportunity_id` `ON DELETE SET NULL`, so every one of
+   * these rows survives on the organisation timeline with a null
+   * `opportunity_id`. The count exists so the audit row can say how much
+   * history the delete moved, which is the fact an operator asking "what did
+   * that button do to my DMs?" needs.
+   */
+  activitiesDetached: number;
+}
+
+/**
+ * Delete one opportunity, keeping everything else.
+ *
+ * The disposal a mis-clicked duplicate deal has never had (#251). Marking it
+ * `lost` was the only alternative, and that requires inventing a
+ * `lost_reason` and then pollutes every close-rate and loss-analysis number
+ * computed off the stage — a mis-click becomes indistinguishable from a real
+ * loss, permanently.
+ *
+ * Deliberately NOT a cascade, unlike `deleteOrganisation` above: the
+ * organisation, its contacts, its other opportunities and its activity log
+ * are all untouched. The activities that WERE scoped to this deal are
+ * detached rather than deleted, and that is left entirely to 0048's
+ * `ON DELETE SET NULL` — no `UPDATE crm_activities` here. Doing it by hand
+ * would work, but it would also mean the shipped code no longer depends on
+ * the constraint, so a future revert of 0048 would silently start destroying
+ * history again with every test still green.
+ *
+ * Two statements rather than one `DELETE ... RETURNING`: the organisation
+ * name, the product and the activity count all have to be read while the row
+ * and its children still exist.
+ */
+export async function deleteOpportunity(
+  opportunityId: string,
+): Promise<DeletedOpportunity | null> {
+  return tesserixTx(async (query) => {
+    const rows = await query<{
+      id: string;
+      organisation_id: string;
+      product: string | null;
+      organisation_name: string;
+    }>(
+      // `FOR UPDATE OF o` — the opportunity row only, not the organisation
+      // row the join brings in, which this call has no business locking.
+      //
+      // It is what makes the count below exact. Inserting a
+      // `crm_activities` row that references this opportunity makes Postgres
+      // take a FOR KEY SHARE lock on the referenced row, and FOR KEY SHARE
+      // conflicts with FOR UPDATE — so between the count and the delete, no
+      // other session can add an activity to this deal. Without it the FK
+      // would still detach such a row (nothing is lost either way), but it
+      // would go uncounted, and an audit row for an irreversible action that
+      // UNDERSTATES what it moved is worse than one with no count at all —
+      // the same reasoning `deleteOrganisation` gives for counting from
+      // `RETURNING` rather than from a separate SELECT.
+      `SELECT o.id, o.organisation_id, o.product, org.name AS organisation_name
+         FROM crm_opportunities o
+         JOIN crm_organisations org ON org.id = o.organisation_id
+        WHERE o.id = $1
+        FOR UPDATE OF o`,
+      [opportunityId],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const [detached] = await query<{ count: number }>(
+      // `::int` because pg returns bigint as a string, and this count is
+      // handed to `AuditSummary`, which rejects anything that is not a
+      // number rather than coercing it.
+      `SELECT count(*)::int AS count FROM crm_activities WHERE opportunity_id = $1`,
+      [opportunityId],
+    );
+
+    await query(`DELETE FROM crm_opportunities WHERE id = $1`, [opportunityId]);
+
+    return {
+      opportunityId: rows[0].id,
+      organisationId: rows[0].organisation_id,
+      organisationName: rows[0].organisation_name,
+      product: rows[0].product,
+      activitiesDetached: detached.count,
     };
   });
 }
