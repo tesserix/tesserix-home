@@ -46,3 +46,28 @@ type Announcement struct {
 	// EndsAt is nil for an announcement with no scheduled end.
 	EndsAt *time.Time
 }
+
+// Authored is one announcement as an OPERATOR sees it.
+//
+// A different shape from Announcement, not a superset by accident. The three
+// extra fields are exactly the ones withheld from products, and each is
+// withheld for a stated reason: `AudienceFilter` names the other products a
+// broadcast targets, `CreatedBy` identifies staff to a customer, and
+// `IsPublished` is always true in what a product receives.
+//
+// An operator authoring a broadcast needs all three — they are the targeting,
+// the attribution and the draft state. Serving both audiences one shape would
+// mean either leaking to products or blinding operators.
+type Authored struct {
+	Announcement
+	// AudienceFilter is the raw JSONB, passed through rather than parsed. The
+	// schema comment calls it "intentionally permissive so we can grow filters
+	// without a migration", and a Go struct here would be the migration that
+	// comment exists to avoid.
+	AudienceFilter map[string]any
+	IsPublished    bool
+	// CreatedBy is the operator's Zitadel subject, or empty for rows authored
+	// before the column was populated.
+	CreatedBy string
+	UpdatedAt time.Time
+}

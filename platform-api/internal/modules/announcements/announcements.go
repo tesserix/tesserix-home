@@ -29,6 +29,19 @@ import (
 	"github.com/tesserix/tesserix-home/platform-api/internal/platform/productscope"
 )
 
+// The interface the composition root satisfies, re-exported because `service`
+// is under internal/ and cmd cannot name it there.
+//
+// ALIASES, not new declarations: a redeclared interface would be a second
+// definition free to drift from the one the module actually uses.
+type (
+	// TenantSource counts an announcement's audience. See its definition for
+	// why the counting rules are behind an interface at all.
+	TenantSource = service.TenantSource
+	// Operator is who a federated count is made on behalf of.
+	Operator = service.Operator
+)
+
 // Config is what the module needs from the composition root.
 type Config struct {
 	Pool     *pgxpool.Pool
@@ -38,9 +51,16 @@ type Config struct {
 	// registry resolves nobody, which refuses every caller rather than serving
 	// one an unscoped answer.
 	Scope *productscope.Registry
+	// Tenants counts an announcement's audience. May be nil where the preview
+	// is not wired; only the audience route touches it.
+	//
+	// An INTERFACE satisfied in cmd/server rather than the tenants module
+	// imported directly — this module depends on the kernel and its own
+	// internals, and nothing else.
+	Tenants service.TenantSource
 }
 
 // Register mounts the module's routes.
 func Register(mux *http.ServeMux, cfg Config) {
-	handler.New(service.New(cfg.Pool), cfg.Log, cfg.Scope).Routes(mux, cfg.Verifier)
+	handler.New(service.New(cfg.Pool, cfg.Tenants), cfg.Log, cfg.Scope).Routes(mux, cfg.Verifier)
 }

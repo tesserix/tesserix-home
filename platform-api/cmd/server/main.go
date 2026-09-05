@@ -128,11 +128,6 @@ func run(log *slog.Logger) error {
 	httpx.RegisterModule(mux, verifier, "tickets", func(m *http.ServeMux) {
 		tickets.Register(m, tickets.Config{Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope})
 	})
-	httpx.RegisterModule(mux, verifier, "announcements", func(m *http.ServeMux) {
-		announcements.Register(m, announcements.Config{
-			Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope,
-		})
-	})
 	httpx.RegisterModule(mux, verifier, "crm", func(m *http.ServeMux) {
 		crm.Register(m, crm.Config{Pool: pool.Pool, Verifier: verifier, Log: log})
 	})
@@ -320,6 +315,21 @@ func run(log *slog.Logger) error {
 		})
 	})
 
+	httpx.RegisterModule(mux, verifier, "announcements", func(m *http.ServeMux) {
+		announcements.Register(m, announcements.Config{
+			Pool: pool.Pool, Verifier: verifier, Log: log, Scope: cfg.ProductScope,
+			// The audience preview. Satisfied HERE rather than by importing
+			// the tenants module, which internal/modules/doc.go forbids —
+			// see the type's own comment.
+			Tenants: tenantCounter{
+				fed: fed, reg: cfg.Federation,
+				// The page each product is asked for. A product returning
+				// exactly this many is reported as "more than N" rather than
+				// as a total, because the federated contract carries no count.
+				limit: 500,
+			},
+		})
+	})
 	httpx.RegisterModule(mux, verifier, "tenants", func(m *http.ServeMux) {
 		tenants.Register(m, tenants.Config{
 			Fed: fed,
