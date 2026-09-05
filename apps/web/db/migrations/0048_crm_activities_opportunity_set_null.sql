@@ -25,10 +25,11 @@
 --
 -- ══ THE ACTION IS DORMANT, AND THAT IS WHY IT IS CHEAP TO FIX NOW ══
 --
--- Nothing in the console issues a `DELETE FROM crm_opportunities`, and #251
--- settled on a VOID — a `voided_at` column, 0049 — rather than a delete, so
--- nothing is about to. The one path that does remove opportunity rows is
--- `deleteOrganisation`, and there the activities are destroyed by
+-- No code in this tree deletes a single opportunity, and #251 settled on a
+-- VOID — a `voided_at` column, 0049 — rather than a delete, so nothing is
+-- about to. The one path that removes opportunity rows at all is
+-- `deleteOrganisation`, which deletes them wholesale by `organisation_id` on
+-- its way to deleting the organisation; there the activities are destroyed by
 -- `crm_activities.organisation_id`'s own CASCADE regardless of what this
 -- constraint says.
 --
