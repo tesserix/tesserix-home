@@ -40,9 +40,11 @@ vi.mock("./tesserix", async (importOriginal) => {
   };
 });
 
-const { readLiveTenantOverrideCoupon, recordTenantOverrideCoupon } = await import(
-  "./tenant-pricing-overrides-repo"
-);
+const {
+  readLiveTenantOverrideCoupon,
+  recordTenantOverrideCoupon,
+  retireTenantOverrideCoupon,
+} = await import("./tenant-pricing-overrides-repo");
 
 const MIGRATION = path.resolve(
   __dirname,
@@ -249,5 +251,128 @@ describe("tenant-pricing-overrides-repo", () => {
         grantedBy: "op-1",
       }),
     ).rejects.toThrow(/one_live_per_tenant/);
+  });
+
+  it("retires a live override, setting both halves of the retirement", async () => {
+    const recorded = await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_live_1",
+      grantedBy: "op-1",
+    });
+
+    const retired = await retireTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      removedBy: "op-2",
+    });
+
+    // The same row, not a new one: the id has to carry over, because the
+    // retired row is what still names the Stripe coupon the caller then goes
+    // and deletes.
+    expect(retired).toMatchObject({
+      id: recorded.id,
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_live_1",
+      grantedBy: "op-1",
+      removedBy: "op-2",
+    });
+    // Both halves, or 0047's `removal_is_whole` biconditional would have
+    // rejected the UPDATE outright.
+    expect(retired?.removedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("retires per (tenant, mode), leaving the other mode alone", async () => {
+    await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_live_1",
+      grantedBy: "op-1",
+    });
+    await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "test",
+      stripeCouponId: "co_test_1",
+      grantedBy: "op-1",
+    });
+
+    await retireTenantOverrideCoupon({ tenantId: TENANT, mode: "live", removedBy: "op-2" });
+
+    // A `test` coupon id is meaningless against the live account (0047), so
+    // retiring one account's override must not touch the other's.
+    expect(await readLiveTenantOverrideCoupon(TENANT, "live")).toBeNull();
+    expect((await readLiveTenantOverrideCoupon(TENANT, "test"))?.stripeCouponId).toBe(
+      "co_test_1",
+    );
+  });
+
+  it("returns null when there is no live override to retire", async () => {
+    // Null is an answer, not a failure — nothing was minted for this tenant in
+    // this mode, so there is nothing to retire and no error to raise.
+    expect(
+      await retireTenantOverrideCoupon({
+        tenantId: OTHER_TENANT,
+        mode: "live",
+        removedBy: "op-2",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null for an already-retired override, keeping the first retirement", async () => {
+    await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_live_1",
+      grantedBy: "op-1",
+    });
+
+    const first = await retireTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      removedBy: "op-2",
+    });
+    const second = await retireTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      removedBy: "op-3",
+    });
+
+    // The `removed_at IS NULL` in the WHERE is what makes this true: the loser
+    // of a double revoke matches zero rows rather than overwriting the operator
+    // and timestamp the first one recorded.
+    expect(second).toBeNull();
+
+    const rows = await db.query<{ removed_by: string; removed_at: Date }>(
+      `SELECT removed_by, removed_at FROM tenant_pricing_override_coupons`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].removed_by).toBe("op-2");
+    expect(rows.rows[0].removed_at.toISOString()).toBe(first?.removedAt);
+  });
+
+  it("frees the tenant for a corrected grant once the override is retired", async () => {
+    // #581 end to end: a mis-keyed override is uncorrectable while its row
+    // stays live, because 0047's partial unique index counts it.
+    await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_wrong",
+      grantedBy: "op-1",
+    });
+
+    await retireTenantOverrideCoupon({ tenantId: TENANT, mode: "live", removedBy: "op-2" });
+
+    expect(await readLiveTenantOverrideCoupon(TENANT, "live")).toBeNull();
+    const corrected = await recordTenantOverrideCoupon({
+      tenantId: TENANT,
+      mode: "live",
+      stripeCouponId: "co_right",
+      grantedBy: "op-2",
+    });
+    expect(corrected.stripeCouponId).toBe("co_right");
+    expect((await readLiveTenantOverrideCoupon(TENANT, "live"))?.stripeCouponId).toBe(
+      "co_right",
+    );
   });
 });

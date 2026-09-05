@@ -86,9 +86,9 @@
 -- with a live row is actually being charged less, because the charge happens in
 -- another product's database. Only mark8ly can answer that.
 --
--- `removed_at` and `removed_by` are NOT WRITTEN BY THE GRANT PATH. #331's T1
--- only ever inserts; T4 (removal, the counterpart of mark8ly's detach) is what
--- sets them. They are declared now rather than in a later migration because the
+-- `removed_at` and `removed_by` are NOT WRITTEN BY THE GRANT PATH.
+-- `recordTenantOverrideCoupon` only ever inserts; `retireTenantOverrideCoupon`
+-- (tesserix-home#581) is the one writer that sets them. They are declared now rather than in a later migration because the
 -- uniqueness rule below is stated in terms of them, and getting the uniqueness
 -- rule right afterwards means altering a table that holds live pointers into a
 -- billing account.
@@ -157,7 +157,8 @@ CREATE TABLE IF NOT EXISTS tenant_pricing_override_coupons (
     granted_at timestamptz NOT NULL DEFAULT now(),
 
     -- The retirement half. Both NULL is a live override; both set is a retired
-    -- one. See the header — T4 writes these, the grant path never does.
+    -- one. See the header — `retireTenantOverrideCoupon` writes these, the
+    -- grant path never does.
     removed_by text,
     removed_at timestamptz,
 

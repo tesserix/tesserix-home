@@ -25,6 +25,18 @@ import { tesserixQuery } from "./tesserix";
  * not applied" and requires it be reported rather than hidden, which is only
  * possible because the mint is recorded.
  *
+ * ══ AND A RETIREMENT IS NOT A REMOVAL EITHER ══
+ *
+ * {@link retireTenantOverrideCoupon} is the table's second writer and the
+ * mirror of the paragraph above: it sets `removed_by`/`removed_at`, which says
+ * this console no longer counts the mint. It does NOT say the tenant stopped
+ * being charged less. Detaching a discount already applied to a customer is a
+ * customer-scoped Stripe call that only mark8ly can make (#660), and deleting
+ * the Coupon — the console's other half of a revoke — explicitly does not
+ * affect customers who already hold it. So a retired row claims LESS than is
+ * true in exactly the way a live one claims more, and the surface reporting
+ * either has to say so.
+ *
  * ══ THE AT-MOST-ONE RULE IS THE CHEAP HALF ══
  *
  * {@link readLiveTenantOverrideCoupon} plus 0047's partial unique index stop
@@ -44,8 +56,8 @@ export interface TenantOverrideCoupon {
   stripeCouponId: string;
   grantedBy: string;
   grantedAt: string;
-  /** Null while the override is live. Set by #331's T4, never by the grant
-   *  path. */
+  /** Null while the override is live. Set by
+   *  {@link retireTenantOverrideCoupon}, never by the grant path. */
   removedBy: string | null;
   removedAt: string | null;
 }
@@ -151,4 +163,60 @@ export async function recordTenantOverrideCoupon(
     [input.tenantId, input.mode, input.stripeCouponId, input.grantedBy],
   );
   return toRow(rows[0]);
+}
+
+export interface RetireTenantOverrideCouponInput {
+  /** The NAMESPACED tenant id. */
+  tenantId: string;
+  mode: StripeMode;
+  removedBy: string;
+}
+
+/**
+ * Retire this console's record of the tenant's live override coupon in one
+ * Stripe account, and return the retired row — or null if there was no live one.
+ *
+ * THE ONLY WRITER OF `removed_by`/`removed_at`. The grant path only ever
+ * inserts, per 0047's header, so the retirement half of a row is set here or
+ * nowhere.
+ *
+ * ══ `removed_at IS NULL` IN THE WHERE IS THE SAFETY, NOT DECORATION ══
+ *
+ * It is the same predicate {@link readLiveTenantOverrideCoupon} matches, and
+ * for the first half of the same reason: 0047's partial unique index counts a
+ * row live exactly when `removed_at IS NULL`, so this write and that index
+ * cannot disagree about which row is the one to retire.
+ *
+ * The second half is concurrency. Two operators revoking the same override at
+ * once both match the row on `(tenant_id, mode)`; only the first sees it with
+ * `removed_at` still null. The loser updates zero rows and gets null back,
+ * rather than overwriting the operator and timestamp the winner recorded — and
+ * a retirement attributed to whoever clicked last is a worse answer than no
+ * second retirement at all, because #331 asks for removal to be as audited as
+ * application.
+ *
+ * ══ NULL IS AN ANSWER, NOT AN ERROR ══
+ *
+ * Nothing live to retire is a state the caller can be in legitimately: the
+ * override was already revoked, or was never minted in this mode. This function
+ * reports it rather than throwing, and the write seam turns it into an
+ * operator-facing refusal with a message — the same shape
+ * {@link readLiveTenantOverrideCoupon} returning null already has.
+ *
+ * WHAT THIS DOES NOT DO: it does not delete the Stripe Coupon, and it cannot
+ * detach a discount from a customer — that call is customer-scoped and lives in
+ * mark8ly (#660). A retired row means this console no longer counts the
+ * override, so a corrected one can be granted. See this module's header.
+ */
+export async function retireTenantOverrideCoupon(
+  input: RetireTenantOverrideCouponInput,
+): Promise<TenantOverrideCoupon | null> {
+  const rows = await tesserixQuery<TenantOverrideCouponDbRow>(
+    `UPDATE tenant_pricing_override_coupons
+        SET removed_by = $3, removed_at = now()
+      WHERE tenant_id = $1 AND mode = $2 AND removed_at IS NULL
+      RETURNING ${COLUMNS}`,
+    [input.tenantId, input.mode, input.removedBy],
+  );
+  return rows.length === 0 ? null : toRow(rows[0]);
 }

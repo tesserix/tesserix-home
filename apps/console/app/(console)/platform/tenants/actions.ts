@@ -7,8 +7,11 @@ import {
 } from "@/lib/tenant-lifecycle-write";
 import {
   grantTenantPricingOverride,
+  revokeTenantPricingOverride,
+  type PricingOverrideRevokeResult,
   type PricingOverrideWriteResult,
   type TenantPricingOverrideInput,
+  type TenantPricingOverrideRevokeInput,
 } from "@/lib/tenant-pricing-override-write";
 
 /**
@@ -66,4 +69,31 @@ export async function grantTenantPricingOverrideAction(
   input: TenantPricingOverrideInput,
 ): Promise<PricingOverrideWriteResult> {
   return grantTenantPricingOverride(input);
+}
+
+/**
+ * Retiring one tenant's pricing override, as a server action (#581).
+ *
+ * A third shell, owning nothing for the reason the two above own nothing:
+ * `lib/tenant-pricing-override-write` opens with `import "server-only"`, and
+ * the dialog that calls it is a client component. The seam owns the session,
+ * both capability checks, the reason's validation, the retirement, the Stripe
+ * delete and the error mapping.
+ *
+ * The revalidatePath argument on {@link setTenantLifecycleAction} applies
+ * unchanged, and the caller runs `router.refresh()` instead.
+ *
+ * Nothing here audits. `revokeTenantPricingOverride` writes the console's own
+ * `billing.tenant.override.retire` row inside `auditedOperation`, exactly as
+ * the grant writes `.mint` — a row for what this service did, which is retire
+ * its record and delete its Stripe object. The act that is mark8ly's is the
+ * other one: detaching a discount already applied to the customer (#660), which
+ * this call does not make and no row here describes. A successful return means
+ * the console's record is retired and its coupon can no longer be redeemed, not
+ * that the tenant stopped being charged less.
+ */
+export async function revokeTenantPricingOverrideAction(
+  input: TenantPricingOverrideRevokeInput,
+): Promise<PricingOverrideRevokeResult> {
+  return revokeTenantPricingOverride(input);
 }

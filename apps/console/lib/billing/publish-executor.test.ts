@@ -201,6 +201,11 @@ function makeFakeWriter(opts: {
     async createCoupon(): Promise<never> {
       throw new Error("the publish path does not mint coupons");
     },
+    // Same, for the coupon pair's other half (#581): the publish path neither
+    // mints nor deletes Coupons.
+    async deleteCoupon(): Promise<never> {
+      throw new Error("the publish path does not delete coupons");
+    },
   } as StripeCatalogWriter;
 }
 
@@ -443,6 +448,9 @@ describe("executePublish", () => {
       async createCoupon() {
         throw new Error("not used by this fixture");
       },
+      async deleteCoupon() {
+        throw new Error("not used by this fixture");
+      },
     };
 
     const deps = makeDeps({
@@ -649,6 +657,9 @@ function makeRecordingWriter(specs: CreatePriceSpec[]): StripeCatalogWriter {
     // Never reached from a publish plan; see the fixture above.
     async createCoupon(): Promise<never> {
       throw new Error("the publish path does not mint coupons");
+    },
+    async deleteCoupon(): Promise<never> {
+      throw new Error("the publish path does not delete coupons");
     },
   };
 }

@@ -17,6 +17,7 @@ import { auditedOperation } from "@/lib/db/audit-repo";
 import {
   readLiveTenantOverrideCoupon,
   recordTenantOverrideCoupon,
+  retireTenantOverrideCoupon,
 } from "@/lib/db/tenant-pricing-overrides-repo";
 // TYPE-ONLY, and that is what keeps it cheap: `promo-codes-repo` is
 // `server-only` and reaches `pg`, and this module has no business dragging the
@@ -471,5 +472,223 @@ export async function grantTenantPricingOverride(
       };
     }
     return { ok: false, message: MINT_INCOMPLETE };
+  }
+}
+
+/**
+ * What the revoke half returns.
+ *
+ * ITS OWN TYPE, and not {@link PricingOverrideWriteResult}, because the success
+ * side of a revoke has two shapes and that one cannot say which happened: the
+ * row is retired and the Coupon is gone, or the row is retired and the Coupon
+ * is still live in Stripe. Both are successes — the retirement is the state
+ * change that unblocks a correction — and the operator-facing sentence for them
+ * differs, so the control has to be able to tell them apart.
+ *
+ * `couponId` is on BOTH success arms deliberately. In the first it is what was
+ * deleted; in the second it is the one object left over, and an operator told
+ * only "the coupon is still there" has nothing to look up.
+ *
+ * The grant's result comment warns against a discriminant that would invite the
+ * control to branch on how this module is built. `couponDeleted` is not that:
+ * it is a fact about the Stripe account, not about which internal threw, and
+ * the control branches on it to choose between two true sentences.
+ */
+export type PricingOverrideRevokeResult =
+  | { readonly ok: true; readonly couponId: string; readonly couponDeleted: boolean }
+  | { readonly ok: false; readonly message: string; readonly field?: string };
+
+/** What a revoke needs. Every field is required and none is defaulted. */
+export interface TenantPricingOverrideRevokeInput {
+  /** The NAMESPACED tenant id (`<source>:<id>`), the same string the grant
+   *  takes and 0047 stores whole. */
+  readonly tenantId: string;
+  /** Which Stripe account the override was minted in. NEVER defaulted, for
+   *  the grant's reason inverted: retiring the `test` row leaves a `live`
+   *  discount in place while reporting a revoke. */
+  readonly mode: StripeMode;
+  /**
+   * Free text, mandatory.
+   *
+   * SAME DESTINATION AS THE GRANT'S, and today that destination is nowhere:
+   * {@link TenantPricingOverrideInput.reason} is passed to mark8ly by a T3 that
+   * does not exist yet, and this one belongs to that federated call's detach
+   * counterpart (#660), which does not exist either. Taken and validated here,
+   * stored by nothing — 0047's header keeps the decision record on mark8ly's
+   * side, and giving the revoke a console-side home for its reason would make
+   * the two halves asymmetric on the way to contradicting it. Never sent to
+   * Stripe: `deleteCoupon` has nowhere to put it and an operator's private
+   * justification is not something to hand a billing account.
+   */
+  readonly reason: string;
+}
+
+const NO_PERMISSION_REVOKE =
+  "You don't have permission to remove a tenant's pricing override.";
+
+/**
+ * Deliberately does NOT say "nothing happened", for {@link MINT_INCOMPLETE}'s
+ * reason read in the other direction.
+ *
+ * This is the message for a failure of the RETIREMENT — the first of the two
+ * steps. `retireTenantOverrideCoupon` returning normally is the only signal
+ * this module gets that the UPDATE committed; a thrown connection error leaves
+ * the row in a state this process cannot read back, so claiming the override is
+ * untouched would be a guess. The retry it points at is safe either way: if the
+ * retirement did commit, the next attempt finds no live row and refuses with
+ * {@link nothingToRevoke}, which names that outcome exactly.
+ */
+const RETIRE_INCOMPLETE =
+  "The override could not be retired. Check this tenant's override before retrying — it may already have been retired, and its coupon may still be live in Stripe.";
+
+/**
+ * The refusal for a tenant with nothing live to retire.
+ *
+ * Two paths reach it and both are legitimate rather than exceptional: the read
+ * found no live row, or the read found one and the UPDATE's `removed_at IS
+ * NULL` did not, because a concurrent revoke won. The second is the case that
+ * makes this a refusal and not an error — `retireTenantOverrideCoupon`'s
+ * "NULL IS AN ANSWER, NOT AN ERROR" — and the message covers both without
+ * claiming to know which, since from the operator's seat the outcome is the
+ * same: this console holds no live override for this tenant in this mode.
+ */
+function nothingToRevoke(mode: StripeMode): string {
+  return (
+    `This tenant has no live pricing override in ${mode} mode, so nothing was retired. ` +
+    "It may already have been revoked, or the coupon may have been minted in the other mode."
+  );
+}
+
+function validateRevoke(input: TenantPricingOverrideRevokeInput): void {
+  if (input.reason.trim() === "") {
+    throw new OverrideRefused(
+      "Say why this tenant's pricing override is being removed.",
+      "reason",
+    );
+  }
+}
+
+/**
+ * Retire this console's record of a tenant's pricing override, and delete the
+ * Coupon it minted.
+ *
+ * # WHAT A SUCCESS HERE MEANS, AND WHAT IT DOES NOT
+ *
+ * The mirror of this module's header. A success means: this console no longer
+ * counts the override, so a corrected one can be granted, and the Coupon can
+ * never be redeemed again. It does NOT mean the tenant stopped being charged
+ * less. Per Stripe's own reference, quoted in full on `deleteCoupon`, deleting
+ * a Coupon "does not affect any customers who have already applied" it;
+ * detaching an applied discount is a customer-scoped call only mark8ly can make
+ * (#660). Nothing returned from here says otherwise, and the copy built on it
+ * must not either.
+ *
+ * # RETIRE FIRST, DELETE SECOND
+ *
+ * Both steps can fail, and the order picks which residue an operator is left
+ * with. Deleting first and failing before the retirement would leave a live row
+ * naming a deleted coupon — 0047's partial unique index still blocking the
+ * correction, which is precisely the condition #581 exists to remove. Retiring
+ * first and failing before the delete leaves one unattached Coupon in Stripe,
+ * named by a retired row and by the result below. That residue is recoverable
+ * and nameable; the other is not.
+ *
+ * The capability checks and BOTH capabilities are the grant's, unchanged and
+ * for its stated reason — see `grantTenantPricingOverride`. Checked inside
+ * `auditedOperation` so a refusal is a `capability.refused` row.
+ */
+export async function revokeTenantPricingOverride(
+  input: TenantPricingOverrideRevokeInput,
+): Promise<PricingOverrideRevokeResult> {
+  try {
+    const session = await getCurrentSession();
+    const actor = session?.sub ?? "unknown";
+
+    const retired = await auditedOperation({
+      actor,
+      target: `${input.tenantId} (${input.mode})`,
+      operation: async () => {
+        await checkOperatorCapabilityLive(session, "billing");
+        await checkOperatorCapabilityLive(session, "publish-catalog");
+
+        validateRevoke(input);
+
+        // Read before the UPDATE rather than relying on it returning null.
+        // The UPDATE alone would answer this correctly — that is what its null
+        // means — and the read is kept because the two nulls say different
+        // things: no live row at all, versus a live row another revoke retired
+        // between these two statements. They share a message today, and this is
+        // the branch to change on the day they should not.
+        const live = await readLiveTenantOverrideCoupon(input.tenantId, input.mode);
+        if (live === null) {
+          throw new OverrideRefused(nothingToRevoke(input.mode));
+        }
+
+        const row = await retireTenantOverrideCoupon({
+          tenantId: input.tenantId,
+          mode: input.mode,
+          removedBy: actor,
+        });
+        // Null here means the read above raced a concurrent revoke and lost.
+        // Refused rather than treated as done: the winner's retirement is the
+        // one on record, and this call has no coupon of its own to delete.
+        if (row === null) {
+          throw new OverrideRefused(nothingToRevoke(input.mode));
+        }
+        return row;
+      },
+      describe: (row) => ({
+        // `.retire`, not `.revoke`. What this service did is retire its record
+        // and delete its object; removing the discount from the customer is
+        // mark8ly's act and mark8ly's row. `.mint` is the sibling, named on the
+        // same principle.
+        action: "billing.tenant.override.retire",
+        summary: { retired: 1, [`mode_${input.mode}`]: 1 },
+        target: `${input.tenantId} (${input.mode}) ${row.stripeCouponId}`,
+      }),
+    });
+
+    // ═══ THE DELETE IS OUTSIDE `auditedOperation`, ON PURPOSE ═══
+    //
+    // Do not tidy it back inside. `auditedOperation` writes its row only after
+    // `operation()` returns, and propagates anything that is not a recognised
+    // refusal while writing NOTHING. A `deleteCoupon` failure inside it would
+    // therefore throw past the audit write and destroy the record of a
+    // retirement that genuinely happened and is genuinely committed — the one
+    // fact in this operation that most needs accounting for.
+    //
+    // Out here the row is already written, so a Stripe failure costs the delete
+    // and nothing else.
+    try {
+      await stripeCatalogWriter.deleteCoupon(input.mode, retired.stripeCouponId);
+    } catch {
+      // EVERY failure of this call, including `StripeWriteUnavailableError`,
+      // which is fatal on the mint path because nothing had happened yet and is
+      // not fatal here because the retirement is committed and audited. The
+      // cause is deliberately not inspected: from the operator's seat there is
+      // one outcome — the Coupon may still be live — and one next step, which
+      // the result below carries by naming it.
+      //
+      // Not a failure result. The correction this revoke exists to unblock is
+      // now grantable, and reporting `ok: false` would deny a state change this
+      // console made and invite a retry that can only ever refuse.
+      return { ok: true, couponId: retired.stripeCouponId, couponDeleted: false };
+    }
+
+    // Includes Stripe's already-deleted case, which `deleteCoupon` resolves
+    // rather than raising: the goal state holds, so nothing here re-handles it.
+    return { ok: true, couponId: retired.stripeCouponId, couponDeleted: true };
+  } catch (cause) {
+    if (cause instanceof CapabilityError) {
+      return { ok: false, message: NO_PERMISSION_REVOKE };
+    }
+    if (cause instanceof OverrideRefused) {
+      return { ok: false, message: cause.message, field: cause.field };
+    }
+    // No `StripeWriteUnavailableError` branch, and no `StripeCouponTermsError`
+    // one: the only Stripe call this function makes is the delete above, whose
+    // own catch absorbs everything it can throw. A branch here would be
+    // unreachable code claiming to handle a case it never sees.
+    return { ok: false, message: RETIRE_INCOMPLETE };
   }
 }

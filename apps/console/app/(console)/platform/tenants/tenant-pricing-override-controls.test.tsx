@@ -15,19 +15,24 @@ vi.mock("next/navigation", () => ({
 // `undefined` in this file's module graph.
 vi.mock("./actions", () => ({
   grantTenantPricingOverrideAction: vi.fn(),
+  revokeTenantPricingOverrideAction: vi.fn(),
   setTenantLifecycleAction: vi.fn(),
 }));
 
 import { sourceLabel } from "@/lib/audit";
 import type { EstateTenant } from "@/lib/tenants";
-import { grantTenantPricingOverrideAction } from "./actions";
+import { grantTenantPricingOverrideAction, revokeTenantPricingOverrideAction } from "./actions";
 import {
   EMPTY_OVERRIDE_FORM,
+  EMPTY_OVERRIDE_REVOKE_FORM,
   OVERRIDE_NOT_CONFIRMED,
+  OVERRIDE_REVOKE_NOT_CONFIRMED,
   TenantPricingOverrideAction,
   overrideDiscount,
   overrideFieldPlacement,
   overrideMintedMessage,
+  overrideRetiredMessage,
+  overrideRevokeSubmittable,
   overrideSubmittable,
   overrideUnavailableNotice,
   type OverrideForm,
@@ -415,6 +420,248 @@ describe("when the mint is refused", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(OVERRIDE_NOT_CONFIRMED);
     expect(OVERRIDE_NOT_CONFIRMED.toLowerCase()).not.toContain("nothing");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * What the operator is told after a retirement
+ * ------------------------------------------------------------------------ */
+
+describe("the retirement copy never says the discount is gone", () => {
+  const deleted = overrideRetiredMessage("Acme Stores", "co_abc123", "live", true);
+  const undeleted = overrideRetiredMessage("Acme Stores", "co_abc123", "live", false);
+
+  it("never claims the discount was removed, cancelled, refunded or revoked", () => {
+    // The words, not the sentence, exactly as the mint message's own absence
+    // test argues: the failure to guard against is a friendlier rewrite that
+    // means something untrue. Deleting a Coupon does not detach a discount
+    // already applied to a customer, so every one of these would be a claim
+    // this console has no way to make.
+    for (const forbidden of [
+      "removed",
+      "cancelled",
+      "no longer discounted",
+      "refunded",
+      "revoked",
+    ]) {
+      expect(deleted.toLowerCase()).not.toContain(forbidden);
+      expect(undeleted.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it("names the coupon, the mode and the tenant when the coupon was deleted", () => {
+    // The mint message names all three for reasons that hold unchanged here:
+    // the coupon id is the operator's only handle on the object, and the mode
+    // is the choice that decides which account was touched.
+    expect(deleted).toContain("co_abc123");
+    expect(deleted).toContain("live mode");
+    expect(deleted).toContain("Acme Stores");
+  });
+
+  it("attributes the retirement to the override and the deletion to the coupon", () => {
+    // BOTH ARMS, because the distinction is what the failed-delete arm depends
+    // on: it has to be able to say the override was retired AND the coupon was
+    // not deleted, in one sentence, without contradicting itself. Collapsing
+    // the two objects into one act — "coupon retired and deleted" — reads as a
+    // single thing happening to a single object, and the arm below then has no
+    // vocabulary left to split them.
+    for (const message of [deleted, undeleted]) {
+      expect(message).toMatch(/override was retired/);
+      expect(message).toMatch(/coupon co_abc123 was (not )?deleted/);
+    }
+  });
+
+  it("says a corrected override can now be granted", () => {
+    // The operator's actual next affordance, and the whole point of #581 —
+    // 0047's partial unique index no longer counts a live row for this tenant.
+    expect(deleted).toContain("corrected override can now be granted");
+    expect(undeleted).toContain("corrected override can now be granted");
+  });
+
+  it("says detaching an applied discount is mark8ly's step and has not happened", () => {
+    for (const message of [deleted, undeleted]) {
+      expect(message).toContain("mark8ly");
+      expect(message).toContain("has not happened here");
+    }
+  });
+
+  it("names the coupon as still live in Stripe, and where to look, when it was not deleted", () => {
+    // The `RETIRE_INCOMPLETE`/`MINT_INCOMPLETE` register: name the object that
+    // is left over and send the operator somewhere specific.
+    expect(undeleted).toContain("still live in the live Stripe account");
+    expect(undeleted).toContain("Stripe dashboard");
+    // And the deleted case must NOT say it, asserted by absence — one sentence
+    // covering both outcomes would be false for one of them.
+    expect(deleted).not.toContain("still live");
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * The pure function over the retire form
+ * ------------------------------------------------------------------------ */
+
+describe("nothing on the retire form is defaulted either", () => {
+  it("ships an empty form with no mode and no reason", () => {
+    expect(EMPTY_OVERRIDE_REVOKE_FORM.mode).toBe("");
+    expect(EMPTY_OVERRIDE_REVOKE_FORM.reason).toBe("");
+  });
+
+  it("refuses to submit without a mode, and without a reason", () => {
+    const complete = { ...EMPTY_OVERRIDE_REVOKE_FORM, mode: "live" as const, reason: "Mis-keyed." };
+    expect(overrideRevokeSubmittable(complete)).toBe(true);
+    expect(overrideRevokeSubmittable({ ...complete, mode: "" })).toBe(false);
+    expect(overrideRevokeSubmittable({ ...complete, reason: "   " })).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * The retire dialog
+ * ------------------------------------------------------------------------ */
+
+const RETIRE_REASON = "Minted against the wrong tenant.";
+
+async function openRetireDialog(tenant: EstateTenant = TENANT) {
+  const user = userEvent.setup();
+  render(<TenantPricingOverrideAction tenant={tenant} />);
+  await user.click(
+    screen.getByRole("button", { name: `Retire pricing override for ${tenant.name}` }),
+  );
+  return user;
+}
+
+/** Fills the two controls the retire dialog has, through the UI. */
+async function fillRetire(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(screen.getByLabelText("Stripe account the override was minted in"), "live");
+  await user.type(screen.getByLabelText("Why (internal)"), RETIRE_REASON);
+}
+
+describe("the retire dialog", () => {
+  it("keeps the confirm button disabled until a mode and a reason are given", async () => {
+    const user = await openRetireDialog();
+    const confirm = screen.getByRole("button", { name: "Retire override" });
+    expect(confirm).toBeDisabled();
+    await user.selectOptions(
+      screen.getByLabelText("Stripe account the override was minted in"),
+      "live",
+    );
+    // A mode alone is not enough — the reason is mandatory, and the seam
+    // refuses without it, so an enabled button here would only ever produce a
+    // round trip and a refusal.
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByLabelText("Why (internal)"), RETIRE_REASON);
+    expect(confirm).toBeEnabled();
+  });
+
+  it("sends the namespaced tenant id, the chosen mode and the reason", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      couponDeleted: true,
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    expect(revokeTenantPricingOverrideAction).toHaveBeenCalledWith({
+      tenantId: "mark8ly:42",
+      mode: "live",
+      reason: RETIRE_REASON,
+    });
+  });
+
+  it("tells the operator what was retired, what can now be granted, and what mark8ly still owes", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      couponDeleted: true,
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent(
+      overrideRetiredMessage("Acme Stores", "co_abc123", "live", true),
+    );
+    // The same warning tone the mint outcome carries, and for the same reason:
+    // this is not a success in the sense an operator means by the word, and
+    // the colour is what reaches someone who skims the sentence. Asserted as
+    // the classes `variant="warning"` produces because `@tesserix/web`'s barrel
+    // does not export `calloutVariants`.
+    expect(notice).toHaveClass("border-accent", "bg-accent", "text-accent-foreground");
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("warns that the coupon is still live in Stripe when the delete did not happen", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      couponDeleted: false,
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent(
+      overrideRetiredMessage("Acme Stores", "co_abc123", "live", false),
+    );
+    // The two success shapes must not render the same sentence — one of them
+    // would then be false, which is the whole reason the seam returns the flag.
+    expect(notice).toHaveTextContent("still live in the live Stripe account");
+  });
+});
+
+describe("when the retirement is refused", () => {
+  it("shows the seam's own message, verbatim, at form level", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: false,
+      message:
+        "This tenant has no live pricing override in live mode, so nothing was retired.",
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This tenant has no live pricing override in live mode, so nothing was retired.",
+    );
+    // At form level, asserted by where it is NOT: pinning every refusal to the
+    // reason box would tell an operator to fix a field that is fine.
+    expect(screen.getByLabelText("Why (internal)")).not.toHaveAttribute("aria-invalid");
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("attaches a refused reason to the reason box", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: false,
+      message: "Say why this tenant's pricing override is being removed.",
+      field: "reason",
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    const box = screen.getByLabelText("Why (internal)");
+    expect(box).toHaveAttribute("aria-invalid", "true");
+    const described = box.getAttribute("aria-describedby");
+    expect(described).not.toBeNull();
+    expect(document.getElementById(described as string)).toHaveTextContent(
+      "Say why this tenant's pricing override is being removed.",
+    );
+  });
+
+  it("never claims nothing happened when the call itself failed", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockRejectedValue(new Error("offline"));
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(OVERRIDE_REVOKE_NOT_CONFIRMED);
+    // The request may have arrived and retired the row before the response was
+    // lost, so the message may not say it did not.
+    expect(OVERRIDE_REVOKE_NOT_CONFIRMED.toLowerCase()).not.toContain("nothing");
     expect(refresh).not.toHaveBeenCalled();
   });
 });
