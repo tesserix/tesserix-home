@@ -45,11 +45,19 @@ import { isDatabaseConfigured } from "@/lib/db/tesserix";
  * It cannot: `lib/billing/stripe-read.ts` exposes one method and holds its
  * `Stripe` instance privately. That is enforced there, not asserted here.
  *
- * # Not in this PR
+ * # The schedule is live, and this route is not it
  *
- * The Kubernetes CronJob that runs the script lives in `tesserix-k8s` and is a
- * separate change. Until it lands, nothing runs the check on a schedule and
- * the window has not started.
+ * The CronJob landed: `charts/apps/console/templates/parity-check-cronjob.yaml`
+ * in `tesserix-k8s`, gated on `parityCheck.enabled`, which `values-prod.yaml`
+ * sets true. It runs `scripts/parity-check.ts` nightly at 02:15 UTC in the
+ * `tesserix` namespace, and #327's observation window IS accruing off those
+ * rows.
+ *
+ * Worth stating plainly because the sentence that used to stand here said the
+ * opposite — that nothing ran on a schedule and the window had not started —
+ * and it stayed after the CronJob shipped. An operator reading it would
+ * conclude the go-live gate was not counting when it was. Whatever this route
+ * is for, it is not for starting the clock.
  */
 
 // A check whose whole output is "what is true right now". Caching it would be

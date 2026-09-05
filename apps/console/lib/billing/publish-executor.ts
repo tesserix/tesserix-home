@@ -77,11 +77,14 @@ import { readCatalogAmounts, readRevisionAmounts } from "@/lib/db/plan-catalog-r
  * check goes red by construction, on the shared window #327's write-key
  * revocation reads, until something promotes the published revision.
  *
- * Promotion (and orphan detection) is Task 7's, correctly deferred — this
- * module does not build it. But Task 7 MUST land the promotion write in the
- * SAME change that first gives this function a real caller; wiring
- * `executePublish` up from this header alone, without also promoting on
- * success, resets #327's window on the very first green publish.
+ * Promotion is not built here and never will be — this module's whole
+ * contract is "execute the plan", and a promotion is a claim about which
+ * revision the catalog now names. `publishAction`
+ * (`app/(console)/platform/billing/catalog/actions.ts`) is the caller that
+ * makes it: it calls `promotePublication` on a `"succeeded"` outcome and
+ * nothing else, and its own header spells out why a partial success must not
+ * promote. So a reader arriving from step 6 should follow that action, not
+ * go looking for the write in here.
  *
  * # Recovery is re-observe-and-re-plan, NOT draining a stored queue
  *
