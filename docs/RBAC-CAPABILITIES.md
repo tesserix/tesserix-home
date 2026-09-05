@@ -84,6 +84,21 @@ apps/web requires `?tenant_id=` on every internal ticket route because
 tenant's tickets", and product scoping alone reproduces that hole one level
 down.
 
+`read-announcements` (tesserix-home#152) is the fourth machine capability, and
+it guards `GET /v1/announcements` — the broadcasts a product shows its
+merchants. **NOT YET CREATED OR GRANTED IN ZITADEL**; until it is, that route
+answers 403 to every caller, which is the correct answer.
+
+Deliberately SEPARATE from `product-support`, on the reasoning that keeps
+`read-promo-catalog` out of `read-plan-catalog`: a product showing a
+maintenance banner has no business reading its merchants' support tickets, and
+folding them together would widen a grant already made. Which product's
+announcements a holder sees comes from the same subject->product registry.
+
+There is no `product` parameter on that route and no tenant: announcements are
+a broadcast filtered by the tenant's LIFECYCLE STATUS, so the tickets module's
+tenant rule does not apply and is deliberately not reused.
+
 **A reply says who it is from.** A machine's reply is recorded as the MERCHANT
 it names (`author_name`, optional `author_email` and `author_user_id`), never as
 the platform; an operator's stays "Tesserix Support" and may not supply an
