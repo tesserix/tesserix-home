@@ -19,9 +19,21 @@ export const dynamic = "force-dynamic";
  *
  * `params.id` is `<source>:<key>` — `mark8ly:orderdoc_invoice` — because two
  * products' registries can hold the same key and mark8ly's own second service
- * has MIRRORED tables (mark8ly#720). It arrives percent-decoded from Next, and
- * `fetchEmailTemplate` re-encodes it for the API path, so nothing here has to
- * split on a colon.
+ * has MIRRORED tables (mark8ly#720).
+ *
+ * IT ARRIVES PERCENT-ENCODED, and an earlier version of this comment claimed
+ * the opposite. Next does not decode `%3A` in a dynamic segment, so `params`
+ * yields the literal `mark8ly%3Agiftcard_delivery`. `fetchEmailTemplate` then
+ * percent-encodes for the API path, producing `mark8ly%253A...`; platform-api
+ * decodes once, finds no colon, and refuses it as a bare key — a 400 the
+ * console renders as "the request was refused as malformed". Every detail page
+ * failed this way in production while the list worked, because only this route
+ * carries an encoded id.
+ *
+ * So decode here, at the boundary where the raw segment enters, and pass a
+ * plain `<source>:<key>` inward. Decoding is done defensively: a key that
+ * cannot round-trip is passed through unchanged rather than throwing, since
+ * `decodeURIComponent` rejects a lone `%`.
  *
  * # For an unauthored key this shows mark8ly's embedded default
  *
@@ -37,12 +49,30 @@ export const dynamic = "force-dynamic";
  * reads the SESSION COOKIE synchronously, which is the split #285 preserves —
  * see `lib/auth/render-path-capabilities.test.ts`.
  */
+/**
+ * One percent-decode of a route segment, tolerating a segment that is not
+ * valid encoding.
+ *
+ * `decodeURIComponent` THROWS on a malformed sequence — a lone `%` is enough —
+ * and a thrown error in a server component is a 500 where the honest answer is
+ * a 404 for a key that does not exist. Passing the raw value through instead
+ * lets the request reach the API and be refused on its merits.
+ */
+export function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export default async function EmailTemplatePage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
+  const { id: rawId } = await params;
+  const id = decodeSegment(rawId);
 
   let detail: EmailTemplateDetail | null = null;
   let error: unknown = null;
