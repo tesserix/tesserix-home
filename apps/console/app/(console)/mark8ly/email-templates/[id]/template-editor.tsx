@@ -160,6 +160,8 @@ export function TemplateEditor({ detail, canSend }: TemplateEditorProps) {
         />
 
         <Variables variables={detail.variables} />
+
+        <Preview templateKey={detail.key} html={html} text={text} />
       </section>
 
       <section className="space-y-3 rounded border p-4">
@@ -231,6 +233,88 @@ export function TemplateEditor({ detail, canSend }: TemplateEditorProps) {
       </section>
 
       <TestSend id={detail.id} canSend={canSend} />
+    </div>
+  );
+}
+
+/**
+ * The bodies as written, rendered.
+ *
+ * # It is RAW, and the label says so
+ *
+ * `{{.OrderNumber}}` appears literally, because interpolating it here would
+ * mean reimplementing Go's `html/template` in JavaScript. The two would agree
+ * on the easy cases and disagree on exactly the ones a preview earns its keep
+ * for — conditionals, ranges, a missing key — and an operator cannot tell a
+ * confident wrong preview from a right one. Rendering truthfully needs the
+ * product to render it; that is the remaining half of #587.
+ *
+ * So this answers "is my markup right, does the layout hold" and does not
+ * pretend to answer "what does the merchant receive". The heading says which.
+ *
+ * # Why an iframe, and why the sandbox is empty
+ *
+ * The body is operator-authored HTML and can contain anything a template
+ * author typed. Rendering it inline would let it inherit console styling,
+ * escape its box, and run script in the console's own origin against a live
+ * operator session.
+ *
+ * `srcDoc` rather than a blob URL keeps it synchronous with the textarea, so
+ * the preview tracks typing with no lifecycle to leak.
+ */
+function Preview({
+  templateKey,
+  html,
+  text,
+}: {
+  templateKey: string;
+  html: string;
+  text: string;
+}) {
+  const [mode, setMode] = useState<"html" | "text">("html");
+
+  return (
+    <div className="rounded border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+        <div>
+          <span className="text-sm font-medium">Preview</span>{" "}
+          <span className="text-xs text-muted-foreground">
+            raw — variables are not filled in
+          </span>
+        </div>
+        <div className="flex gap-1" role="group" aria-label="Preview format">
+          {(["html", "text"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              aria-pressed={mode === m}
+              className={
+                mode === m
+                  ? "rounded bg-foreground px-2 py-0.5 text-xs uppercase text-background"
+                  : "rounded px-2 py-0.5 text-xs uppercase text-muted-foreground"
+              }
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === "html" ? (
+        <iframe
+          // The EMPTY string is deliberate and is the most restrictive value:
+          // it grants no capability at all. Do not "fix" it to
+          // allow-same-origin — that hands operator-authored HTML the
+          // console's own origin.
+          sandbox=""
+          srcDoc={html}
+          title={`${templateKey} preview`}
+          className="h-[420px] w-full rounded-b bg-white"
+        />
+      ) : (
+        <pre className="m-0 max-h-[420px] overflow-auto rounded-b p-3 text-xs">{text}</pre>
+      )}
     </div>
   );
 }

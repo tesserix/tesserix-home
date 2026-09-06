@@ -174,3 +174,48 @@ describe("the test send", () => {
     expect(screen.getByRole("button", { name: "Save and publish" })).toBeInTheDocument();
   });
 });
+
+describe("preview", () => {
+  it("renders the HTML body in a sandboxed frame that grants nothing", () => {
+    render(<TemplateEditor detail={PUBLISHED} canSend />);
+    const frame = screen.getByTitle("orderdoc_invoice preview");
+    expect(frame).toHaveAttribute("srcdoc", PUBLISHED.html_body);
+    // THE ROW THIS TEST EXISTS FOR. The body is operator-authored HTML; the
+    // empty sandbox is what stops it running script against a live operator
+    // session in the console's own origin. `allow-same-origin` here would be
+    // a real vulnerability, and it looks like a harmless fix.
+    expect(frame).toHaveAttribute("sandbox", "");
+  });
+
+  it("tracks the textarea, so the preview shows what is about to be saved", async () => {
+    const user = userEvent.setup();
+    render(<TemplateEditor detail={PUBLISHED} canSend />);
+    const body = screen.getByLabelText("HTML body");
+    await user.clear(body);
+    await user.type(body, "<p>edited</p>");
+    expect(screen.getByTitle("orderdoc_invoice preview")).toHaveAttribute(
+      "srcdoc",
+      "<p>edited</p>",
+    );
+  });
+
+  it("switches to the plain-text body", async () => {
+    const user = userEvent.setup();
+    render(<TemplateEditor detail={PUBLISHED} canSend />);
+    await user.click(screen.getByRole("button", { name: "text" }));
+    expect(screen.queryByTitle("orderdoc_invoice preview")).not.toBeInTheDocument();
+    // Scoped to the <pre>: the same string is also in the plain-text
+    // TEXTAREA, so an unscoped getByText matches two nodes and fails.
+    const pre = document.querySelector("pre");
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent).toBe(PUBLISHED.text_body);
+  });
+
+  it("says the preview is raw, so nobody reads it as what the customer gets", () => {
+    // The interpolated version needs the product to render it (#587). Until
+    // then the honest thing is to say `{{.OrderNumber}}` is not filled in,
+    // rather than let an operator assume a literal is a bug in their copy.
+    render(<TemplateEditor detail={PUBLISHED} canSend />);
+    expect(screen.getByText(/variables are not filled in/i)).toBeInTheDocument();
+  });
+});
