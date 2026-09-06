@@ -20,20 +20,7 @@ import { ResultPager } from "@/components/kit/result-pager";
 // `states`, not `surface-state`: this module carries a "use client"
 // directive, so `SurfaceStateView` resolves to the real component here.
 import { SurfaceStateView, type SurfaceState } from "@/components/kit/states";
-import { CLOSED_CURSOR_PARAM } from "./cursor-params";
-
-/**
- * A filter mutation drops this list's cursor: a narrowed filter invalidates
- * the position it names, and leaving it behind lands the list on a page of a
- * result set that no longer has one — indistinguishable, on screen, from
- * "nothing matches". Only this list's own cursor, because only this list is
- * on screen; the two queue cursors belong to the tab the operator left and
- * are carried across untouched, the same way `tabHref` carries every other
- * param.
- *
- * A module constant so the hook's memoised `push` keeps a stable identity.
- */
-const CLOSED_CURSOR_PARAMS = [CLOSED_CURSOR_PARAM] as const;
+import { ALL_CURSOR_PARAMS } from "./cursor-params";
 
 export interface ClosedItem {
   key: string;
@@ -96,7 +83,7 @@ export function ClosedView({
   previousHref,
   reauthReturnTo,
 }: ClosedViewProps) {
-  const { set, clear } = useUrlFilters(descriptors, CLOSED_CURSOR_PARAMS);
+  const { set, clear } = useUrlFilters(descriptors, ALL_CURSOR_PARAMS);
 
   return (
     <div className="flex flex-col gap-6">

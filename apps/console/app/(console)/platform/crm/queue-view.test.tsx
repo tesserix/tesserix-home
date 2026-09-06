@@ -8,11 +8,14 @@ const replace = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: vi.fn() }),
   usePathname: () => "/platform/crm",
-  // Both queues already paged, as if the operator worked their way down each
-  // one before touching a filter. Changing a filter must drop BOTH cursors:
-  // one filter bar narrows both result sets at once, so either survivor
-  // resumes a queue from a position its new result set may not have.
-  useSearchParams: () => new URLSearchParams("dueCursor=due-3&driftCursor=drift-7&owner=Asha"),
+  // Every list already paged, as if the operator worked their way down each
+  // one before touching a filter. Changing a filter must drop ALL THREE
+  // cursors: one filter bar drives all three tabs and `tabHref` carries every
+  // param across a tab switch, so any survivor resumes a list from a position
+  // its new result set may not have. `closedCursor` is here even though the
+  // Closed list is on another tab — that is exactly the case #567 was about.
+  useSearchParams: () =>
+    new URLSearchParams("dueCursor=due-3&driftCursor=drift-7&closedCursor=closed-2&owner=Asha"),
 }));
 
 const DESCRIPTORS: FilterDescriptor[] = [
@@ -74,7 +77,7 @@ const READY_GROUP: Partial<CrmQueueGroupProps> = {
 };
 
 describe("CrmQueueView filter changes", () => {
-  it("drops both queue cursors when a filter is changed, without losing the new filter value", () => {
+  it("drops every list cursor when a filter is changed, without losing the new filter value", () => {
     renderView();
 
     fireEvent.click(screen.getByLabelText("Stage"));
@@ -87,9 +90,12 @@ describe("CrmQueueView filter changes", () => {
     expect(params.get("stage")).toBe("new");
     expect(params.has("dueCursor")).toBe(false);
     expect(params.has("driftCursor")).toBe(false);
+    // The other tab's cursor too (#567): the filter bar is shared, so
+    // narrowing here invalidates the position Closed would resume from.
+    expect(params.has("closedCursor")).toBe(false);
   });
 
-  it("drops both queue cursors when filters are cleared", () => {
+  it("drops every list cursor when filters are cleared", () => {
     renderView();
 
     fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
@@ -98,6 +104,7 @@ describe("CrmQueueView filter changes", () => {
     const [nextUrl] = replace.mock.calls[0] as [string];
     expect(nextUrl).not.toContain("dueCursor");
     expect(nextUrl).not.toContain("driftCursor");
+    expect(nextUrl).not.toContain("closedCursor");
   });
 });
 
