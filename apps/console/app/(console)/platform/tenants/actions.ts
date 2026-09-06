@@ -61,9 +61,10 @@ export async function setTenantLifecycleAction(
  *
  * Nothing here audits the GRANT. `grantTenantPricingOverride` audits the
  * console's own act — it minted a Stripe object — and the grant's audit row is
- * mark8ly's, written inside the transaction that applies the coupon (#660,
- * T3). Until T3 exists, nothing applies it: a successful return means a coupon
- * was minted and recorded, not that the tenant is being charged less.
+ * mark8ly's, written inside the transaction that applies the coupon to each
+ * store. A successful return means a coupon was minted and recorded; whether
+ * the tenant is being charged less is the result's `attach` half, which
+ * carries mark8ly's per-store report.
  */
 export async function grantTenantPricingOverrideAction(
   input: TenantPricingOverrideInput,
@@ -86,11 +87,11 @@ export async function grantTenantPricingOverrideAction(
  * Nothing here audits. `revokeTenantPricingOverride` writes the console's own
  * `billing.tenant.override.retire` row inside `auditedOperation`, exactly as
  * the grant writes `.mint` — a row for what this service did, which is retire
- * its record and delete its Stripe object. The act that is mark8ly's is the
- * other one: detaching a discount already applied to the customer (#660), which
- * this call does not make and no row here describes. A successful return means
- * the console's record is retired and its coupon can no longer be redeemed, not
- * that the tenant stopped being charged less.
+ * its record and delete its Stripe object. Detaching the discount from the
+ * customer's subscriptions is mark8ly's act, and mark8ly's row, written inside
+ * the transaction that makes it. A successful return means the console's
+ * record is retired and its coupon can no longer be redeemed; whether the
+ * tenant stopped being charged less is the result's `detach` half.
  */
 export async function revokeTenantPricingOverrideAction(
   input: TenantPricingOverrideRevokeInput,

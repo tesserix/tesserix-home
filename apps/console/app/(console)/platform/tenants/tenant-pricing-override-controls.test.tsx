@@ -20,6 +20,9 @@ vi.mock("./actions", () => ({
 }));
 
 import { sourceLabel } from "@/lib/audit";
+// TYPE-ONLY, the discipline the control itself keeps: `tenant-discount-write`
+// is `server-only`, and `import type` is erased.
+import type { TenantDiscountResult } from "@/lib/tenant-discount-write";
 import type { EstateTenant } from "@/lib/tenants";
 import { grantTenantPricingOverrideAction, revokeTenantPricingOverrideAction } from "./actions";
 import {
@@ -70,33 +73,203 @@ const COMPLETE: OverrideForm = {
 };
 
 /* ------------------------------------------------------------------------ *
+ * mark8ly's reports, as the seam hands them over
+ * ------------------------------------------------------------------------ */
+
+/** Every store took the coupon. */
+const ALL_APPLIED: TenantDiscountResult = {
+  ok: true,
+  status: "ok",
+  requiresReconciliation: false,
+  stores: [
+    { storeId: "store-1", outcome: "applied" },
+    { storeId: "store-2", outcome: "already_applied" },
+  ],
+};
+
+/** One store took it, one store's transaction rolled back. `failureReason` is
+ *  mark8ly's own fixed sentence — `storeFailure` composes one of five from the
+ *  failure code and never from driver text. */
+const PARTIAL: TenantDiscountResult = {
+  ok: true,
+  status: "partial",
+  requiresReconciliation: false,
+  stores: [
+    { storeId: "store-1", outcome: "applied" },
+    {
+      storeId: "store-2",
+      outcome: "failed",
+      failureReason: "the stripe call failed and nothing was changed for this store; it can be retried",
+    },
+  ],
+};
+
+/** A card-less trialing store: mark8ly reports `ok`, and no discount is in
+ *  force anywhere. The case that makes counting outcomes, rather than reading
+ *  `status`, the honest summary. */
+const ALL_PENDING: TenantDiscountResult = {
+  ok: true,
+  status: "ok",
+  requiresReconciliation: false,
+  stores: [{ storeId: "store-1", outcome: "pending" }],
+};
+
+/** Stripe moved and mark8ly could not write the row explaining it. */
+const RECONCILE: TenantDiscountResult = {
+  ok: true,
+  status: "partial",
+  requiresReconciliation: true,
+  stores: [
+    { storeId: "store-1", outcome: "applied" },
+    {
+      storeId: "store-2",
+      outcome: "failed",
+      failureReason:
+        "stripe accepted the discount change but the audit row was not written, so the change was rolled back locally and stripe and this service now disagree; this store requires manual reconciliation",
+    },
+  ],
+};
+
+/** mark8ly never answered. */
+const UNREPORTED: TenantDiscountResult = {
+  ok: false,
+  message:
+    "The product could not be reached to put this coupon on this tenant's subscriptions, and whether it did cannot be told from here. Check the tenant's subscriptions in mark8ly before trying again.",
+};
+
+/** Every store gave the coupon back. */
+const ALL_DETACHED: TenantDiscountResult = {
+  ok: true,
+  status: "ok",
+  requiresReconciliation: false,
+  stores: [
+    { storeId: "store-1", outcome: "removed" },
+    { storeId: "store-2", outcome: "not_applied" },
+  ],
+};
+
+/** One store gave it back and one did not. */
+const PARTIAL_DETACH: TenantDiscountResult = {
+  ok: true,
+  status: "partial",
+  requiresReconciliation: false,
+  stores: [
+    { storeId: "store-1", outcome: "removed" },
+    {
+      storeId: "store-2",
+      outcome: "failed",
+      failureReason: "this store's subscription could not be read, so nothing was changed for it",
+    },
+  ],
+};
+
+/** The detach never reached mark8ly. */
+const UNREPORTED_DETACH: TenantDiscountResult = {
+  ok: false,
+  message:
+    "The product could not be reached to take this coupon off this tenant's subscriptions, and whether it did cannot be told from here. Check the tenant's subscriptions in mark8ly before trying again.",
+};
+
+/**
+ * Claims that a discount is IN FORCE.
+ *
+ * The forbidden list is kept, and what it means has changed: "applied" is now
+ * sayable, because mark8ly reports per store whether it applied the coupon and
+ * saying so where it is true is the whole point of this PR. What must never be
+ * said is that the tenant IS discounted when no store carries it — which is
+ * every one of these phrases, and none of them is a synonym of the outcome
+ * words a report lists.
+ */
+const CLAIMS_IN_FORCE = [
+  "in force",
+  "is applied to",
+  "is now active",
+  "is being charged less",
+  "is discounted",
+];
+
+/* ------------------------------------------------------------------------ *
  * What the operator is told after a mint
  * ------------------------------------------------------------------------ */
 
-describe("the success copy never says the discount is in force", () => {
-  const message = overrideMintedMessage("Acme Stores", "co_abc123", "live");
+describe("the mint copy says a discount is in force only where mark8ly said so", () => {
+  const applied = overrideMintedMessage("Acme Stores", "co_abc123", "live", ALL_APPLIED);
+  const partial = overrideMintedMessage("Acme Stores", "co_abc123", "live", PARTIAL);
+  const pending = overrideMintedMessage("Acme Stores", "co_abc123", "live", ALL_PENDING);
+  const unreported = overrideMintedMessage("Acme Stores", "co_abc123", "live", UNREPORTED);
 
-  it("does not claim the discount was granted, applied, or made active", () => {
-    // The words, not the sentence. A future rewording that sounds friendlier
-    // and means something untrue is the failure worth guarding, and asserting
-    // the exact string would pass any rewording that kept the length.
-    for (const forbidden of ["granted", "applied", "active", "discounted", "in force"]) {
-      expect(message.toLowerCase()).not.toContain(forbidden);
+  it("names the coupon, the mode and the tenant, whatever mark8ly reported", () => {
+    // Unchanged from the pre-attach copy and for its reasons: the coupon id is
+    // the operator's only handle on the object, and after the dialog closes
+    // this line is the only place the mode is still visible.
+    for (const message of [applied, partial, pending, unreported]) {
+      expect(message).toContain("co_abc123");
+      expect(message).toContain("live mode");
+      expect(message).toContain("Acme Stores");
     }
   });
 
-  it("says the tenant is still being charged list price", () => {
-    expect(message).toContain("not yet in effect");
-    expect(message).toContain("still being charged list price");
+  it("says the coupon is applied when every store took it, and counts them", () => {
+    // "Applied" IS sayable here — this is what T3 shipped. The guard below is
+    // what keeps it from being said anywhere else.
+    expect(applied).toMatch(/applied it to all 2 of their stores/);
   });
 
-  it("names the coupon, the mode and the tenant", () => {
-    // The coupon id is the operator's only handle on the object that now
-    // exists; the mode is the choice that silently does nothing if it is
-    // wrong, and after the dialog closes this line is the only place it shows.
-    expect(message).toContain("co_abc123");
-    expect(message).toContain("live mode");
-    expect(message).toContain("Acme Stores");
+  it("never claims a pending store is in force — it has no Stripe subscription", () => {
+    // mark8ly reports `status: "ok"` for this fan-out, because no store's
+    // transaction failed. Nothing is discounted all the same, which is why the
+    // copy counts outcomes rather than reading the status line.
+    for (const forbidden of CLAIMS_IN_FORCE) {
+      expect(pending.toLowerCase()).not.toContain(forbidden);
+    }
+    expect(pending).toContain("store-1");
+    expect(pending).toContain("pending");
+  });
+
+  it("names the stores that did not get it, and mark8ly's own reason", () => {
+    expect(partial).toMatch(/applied it to 1 of 2 stores/);
+    expect(partial).toContain("store-2");
+    // The failure reason is mark8ly's fixed vocabulary, not driver text — so
+    // it is shown rather than replaced with a sentence this console invented.
+    expect(partial).toContain("the stripe call failed and nothing was changed for this store");
+    // And the store that DID take it is not listed among the misses.
+    expect(partial).not.toMatch(/store-1 \(/);
+  });
+
+  it("says plainly that nothing is carrying it when nothing is", () => {
+    expect(pending).toMatch(/no store is carrying it/i);
+    expect(unreported).toContain(UNREPORTED.message);
+  });
+
+  it("never claims the discount is in force when mark8ly did not answer", () => {
+    // The minted-but-not-applied case. The coupon exists; whether any store
+    // carries it is unknown, and unknown must not read as done.
+    for (const forbidden of CLAIMS_IN_FORCE) {
+      expect(unreported.toLowerCase()).not.toContain(forbidden);
+    }
+  });
+
+  it("never says nothing happened, because the coupon exists either way", () => {
+    // NOT `partial`, and that is not a hole. mark8ly's own per-store sentence
+    // for a failed Stripe call contains "nothing was changed for this store",
+    // which is true of THAT store and is quoted verbatim by design. The claim
+    // guarded against is the console's own — that the operation as a whole did
+    // nothing — so the guard runs on the messages this console wrote alone.
+    for (const message of [applied, pending, unreported]) {
+      expect(message.toLowerCase()).not.toMatch(/nothing (was|happened)/);
+    }
+    // And on the console's own half of the partial one, up to mark8ly's quote.
+    expect(partial.slice(0, partial.indexOf("store-2")).toLowerCase()).not.toMatch(
+      /nothing (was|happened)/,
+    );
+  });
+
+  it("surfaces requires_reconciliation as its own fact, not as a failure", () => {
+    const message = overrideMintedMessage("Acme Stores", "co_abc123", "live", RECONCILE);
+    // Stripe moved and mark8ly could not record it. That is neither success
+    // nor failure, and it is the one outcome an operator must chase by hand.
+    expect(message).toMatch(/reconcil/i);
+    expect(message).toContain("mark8ly");
   });
 });
 
@@ -301,6 +474,7 @@ describe("a mint the seam accepted", () => {
     vi.mocked(grantTenantPricingOverrideAction).mockResolvedValue({
       ok: true,
       couponId: "co_abc123",
+      attach: ALL_APPLIED,
     });
     const user = await openDialog();
     await fillComplete(user);
@@ -324,13 +498,16 @@ describe("a mint the seam accepted", () => {
     vi.mocked(grantTenantPricingOverrideAction).mockResolvedValue({
       ok: true,
       couponId: "co_abc123",
+      attach: ALL_APPLIED,
     });
     const user = await openDialog();
     await fillComplete(user);
     await user.click(screen.getByRole("button", { name: "Mint coupon" }));
 
     const notice = await screen.findByRole("status");
-    expect(notice).toHaveTextContent(overrideMintedMessage("Acme Stores", "co_abc123", "live"));
+    expect(notice).toHaveTextContent(
+      overrideMintedMessage("Acme Stores", "co_abc123", "live", ALL_APPLIED),
+    );
     // THE TONE IS PART OF THE MESSAGE. This outcome is not a success in the
     // sense an operator means by the word, and the callout's colour is what
     // carries that to someone who skims the sentence. Asserted as the classes
@@ -428,72 +605,92 @@ describe("when the mint is refused", () => {
  * What the operator is told after a retirement
  * ------------------------------------------------------------------------ */
 
-describe("the retirement copy never says the discount is gone", () => {
-  const deleted = overrideRetiredMessage("Acme Stores", "co_abc123", "live", true);
-  const undeleted = overrideRetiredMessage("Acme Stores", "co_abc123", "live", false);
+describe("the retirement copy says what was retired and what is still discounted", () => {
+  const clean = overrideRetiredMessage("Acme Stores", "co_abc123", "live", true, ALL_DETACHED);
+  const undeleted = overrideRetiredMessage("Acme Stores", "co_abc123", "live", false, ALL_DETACHED);
+  const partial = overrideRetiredMessage("Acme Stores", "co_abc123", "live", true, PARTIAL_DETACH);
+  const unreported = overrideRetiredMessage(
+    "Acme Stores",
+    "co_abc123",
+    "live",
+    true,
+    UNREPORTED_DETACH,
+  );
 
-  it("never claims the discount was removed, cancelled, refunded or revoked", () => {
-    // The words, not the sentence, exactly as the mint message's own absence
-    // test argues: the failure to guard against is a friendlier rewrite that
-    // means something untrue. Deleting a Coupon does not detach a discount
-    // already applied to a customer, so every one of these would be a claim
-    // this console has no way to make.
-    for (const forbidden of [
-      "removed",
-      "cancelled",
-      "no longer discounted",
-      "refunded",
-      "revoked",
-    ]) {
-      expect(deleted.toLowerCase()).not.toContain(forbidden);
-      expect(undeleted.toLowerCase()).not.toContain(forbidden);
+  it("never claims a discount was cancelled or refunded", () => {
+    // The words, not the sentence, exactly as before: the failure to guard
+    // against is a friendlier rewrite that means something untrue. Taking a
+    // coupon off a subscription is not a cancellation and refunds nothing.
+    for (const forbidden of ["cancelled", "refunded", "revoked"]) {
+      for (const message of [clean, undeleted, partial, unreported]) {
+        expect(message.toLowerCase()).not.toContain(forbidden);
+      }
     }
-  });
-
-  it("names the coupon, the mode and the tenant when the coupon was deleted", () => {
-    // The mint message names all three for reasons that hold unchanged here:
-    // the coupon id is the operator's only handle on the object, and the mode
-    // is the choice that decides which account was touched.
-    expect(deleted).toContain("co_abc123");
-    expect(deleted).toContain("live mode");
-    expect(deleted).toContain("Acme Stores");
   });
 
   it("attributes the retirement to the override and the deletion to the coupon", () => {
     // BOTH ARMS, because the distinction is what the failed-delete arm depends
     // on: it has to be able to say the override was retired AND the coupon was
-    // not deleted, in one sentence, without contradicting itself. Collapsing
-    // the two objects into one act — "coupon retired and deleted" — reads as a
-    // single thing happening to a single object, and the arm below then has no
-    // vocabulary left to split them.
-    for (const message of [deleted, undeleted]) {
+    // not deleted, in one sentence, without contradicting itself.
+    for (const message of [clean, undeleted]) {
       expect(message).toMatch(/override was retired/);
       expect(message).toMatch(/coupon co_abc123 was (not )?deleted/);
     }
   });
 
+  it("names the coupon as still live in Stripe, and where to look, when it was not deleted", () => {
+    expect(undeleted).toContain("still live in the live Stripe account");
+    expect(undeleted).toContain("Stripe dashboard");
+    // And the deleted arm must NOT say it — one sentence covering both
+    // outcomes would be false for one of them.
+    expect(clean).not.toContain("still live");
+  });
+
   it("says a corrected override can now be granted", () => {
     // The operator's actual next affordance, and the whole point of #581 —
     // 0047's partial unique index no longer counts a live row for this tenant.
-    expect(deleted).toContain("corrected override can now be granted");
-    expect(undeleted).toContain("corrected override can now be granted");
-  });
-
-  it("says detaching an applied discount is mark8ly's step and has not happened", () => {
-    for (const message of [deleted, undeleted]) {
-      expect(message).toContain("mark8ly");
-      expect(message).toContain("has not happened here");
+    for (const message of [clean, undeleted, partial, unreported]) {
+      expect(message).toContain("corrected override can now be granted");
     }
   });
 
-  it("names the coupon as still live in Stripe, and where to look, when it was not deleted", () => {
-    // The `RETIRE_INCOMPLETE`/`MINT_INCOMPLETE` register: name the object that
-    // is left over and send the operator somewhere specific.
-    expect(undeleted).toContain("still live in the live Stripe account");
-    expect(undeleted).toContain("Stripe dashboard");
-    // And the deleted case must NOT say it, asserted by absence — one sentence
-    // covering both outcomes would be false for one of them.
-    expect(deleted).not.toContain("still live");
+  it("says mark8ly took the discount off, and from how many stores", () => {
+    expect(clean).toMatch(/took it off all 2 of their stores/);
+  });
+
+  it("says PLAINLY that the tenant is still discounted when the detach did not happen", () => {
+    // The sentence #331 exists for, inverted: an operator who believes a
+    // revoke removed a discount that is still on the subscription will tell
+    // the merchant they are back on list price.
+    expect(unreported).toMatch(/still discounted/i);
+    expect(unreported).toContain(UNREPORTED_DETACH.message);
+  });
+
+  it("names the stores that kept it, with mark8ly's own reason", () => {
+    expect(partial).toMatch(/took it off 1 of 2 stores/);
+    expect(partial).toContain("store-2");
+    expect(partial).toContain("this store's subscription could not be read");
+    expect(partial).toMatch(/still discounted/i);
+  });
+
+  it("does not say the tenant is still discounted when every store gave it back", () => {
+    // Asserted by absence, because a warning that fires on every revoke is one
+    // an operator stops reading before the revoke where it is true.
+    for (const message of [clean, undeleted]) {
+      expect(message.toLowerCase()).not.toContain("still discounted");
+    }
+  });
+
+  it("never says nothing happened — the retirement did", () => {
+    // `partial` is excluded for the mint block's reason: mark8ly's own
+    // sentence for a store whose subscription could not be read says "nothing
+    // was changed for it", about that store, and is quoted verbatim.
+    for (const message of [clean, undeleted, unreported]) {
+      expect(message.toLowerCase()).not.toMatch(/nothing (was|happened)/);
+    }
+    expect(partial.slice(0, partial.indexOf("store-2")).toLowerCase()).not.toMatch(
+      /nothing (was|happened)/,
+    );
   });
 });
 
@@ -558,6 +755,7 @@ describe("the retire dialog", () => {
       ok: true,
       couponId: "co_abc123",
       couponDeleted: true,
+      detach: ALL_DETACHED,
     });
     const user = await openRetireDialog();
     await fillRetire(user);
@@ -575,6 +773,7 @@ describe("the retire dialog", () => {
       ok: true,
       couponId: "co_abc123",
       couponDeleted: true,
+      detach: ALL_DETACHED,
     });
     const user = await openRetireDialog();
     await fillRetire(user);
@@ -582,7 +781,7 @@ describe("the retire dialog", () => {
 
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent(
-      overrideRetiredMessage("Acme Stores", "co_abc123", "live", true),
+      overrideRetiredMessage("Acme Stores", "co_abc123", "live", true, ALL_DETACHED),
     );
     // The same warning tone the mint outcome carries, and for the same reason:
     // this is not a success in the sense an operator means by the word, and
@@ -598,6 +797,7 @@ describe("the retire dialog", () => {
       ok: true,
       couponId: "co_abc123",
       couponDeleted: false,
+      detach: ALL_DETACHED,
     });
     const user = await openRetireDialog();
     await fillRetire(user);
@@ -605,7 +805,7 @@ describe("the retire dialog", () => {
 
     const notice = await screen.findByRole("status");
     expect(notice).toHaveTextContent(
-      overrideRetiredMessage("Acme Stores", "co_abc123", "live", false),
+      overrideRetiredMessage("Acme Stores", "co_abc123", "live", false, ALL_DETACHED),
     );
     // The two success shapes must not render the same sentence — one of them
     // would then be false, which is the whole reason the seam returns the flag.
@@ -663,5 +863,99 @@ describe("when the retirement is refused", () => {
     // lost, so the message may not say it did not.
     expect(OVERRIDE_REVOKE_NOT_CONFIRMED.toLowerCase()).not.toContain("nothing");
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * The fan-out, on screen
+ * ------------------------------------------------------------------------ */
+
+describe("what a partial fan-out looks like to the operator", () => {
+  it("puts the counts, the store that missed out and mark8ly's reason in the notice", async () => {
+    vi.mocked(grantTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      attach: PARTIAL,
+    });
+    const user = await openDialog();
+    await fillComplete(user);
+    await user.click(screen.getByRole("button", { name: "Mint coupon" }));
+
+    const notice = await screen.findByRole("status");
+    // The rendered copy, not the function's return value — a message that
+    // never reaches the callout is indistinguishable, on screen, from a
+    // fan-out that fully succeeded.
+    expect(notice).toHaveTextContent("applied it to 1 of 2 stores");
+    expect(notice).toHaveTextContent("store-2");
+    expect(notice).toHaveTextContent("the stripe call failed");
+  });
+
+  it("carries requires_reconciliation all the way to the notice", async () => {
+    vi.mocked(grantTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      attach: RECONCILE,
+    });
+    const user = await openDialog();
+    await fillComplete(user);
+    await user.click(screen.getByRole("button", { name: "Mint coupon" }));
+
+    // Stripe moved and mark8ly could not record it. It is not a failure and it
+    // is not a success, and it is the one outcome nobody will chase unless the
+    // console says so.
+    expect(await screen.findByRole("status")).toHaveTextContent(/reconcil/i);
+  });
+
+  it("tells the operator the tenant is still discounted when the detach failed", async () => {
+    vi.mocked(revokeTenantPricingOverrideAction).mockResolvedValue({
+      ok: true,
+      couponId: "co_abc123",
+      couponDeleted: true,
+      detach: UNREPORTED_DETACH,
+    });
+    const user = await openRetireDialog();
+    await fillRetire(user);
+    await user.click(screen.getByRole("button", { name: "Retire override" }));
+
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveTextContent(/still discounted/i);
+    // And it is still a success: the row is retired, so a correction is
+    // grantable and there is nothing here to retry.
+    expect(notice).toHaveTextContent("corrected override can now be granted");
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* ------------------------------------------------------------------------ *
+ * What each dialog says confirming will do
+ * ------------------------------------------------------------------------ */
+
+describe("the dialogs describe the whole operation, including the federated half", () => {
+  // `consequence` and `revokeConsequence` are module-private and rendered as
+  // each dialog's description. Nothing pinned them before T3, so both would
+  // have gone on describing a console that could not apply what it minted.
+  it("says the mint dialog will apply the coupon in mark8ly, per store", async () => {
+    const user = await openDialog();
+    await user.selectOptions(screen.getByLabelText("Stripe account"), "live");
+
+    const description = screen.getByText(/A coupon with these terms will be created/);
+    expect(description).toHaveTextContent("the live Stripe account");
+    expect(description).toHaveTextContent("mark8ly");
+    // The honest half: an attach can reach some stores and not others.
+    expect(description).toHaveTextContent(/store/i);
+    expect(description.textContent?.toLowerCase()).not.toContain("cannot yet apply");
+  });
+
+  it("says the retire dialog will ask mark8ly to take the discount off", async () => {
+    const user = await openRetireDialog();
+    await user.selectOptions(
+      screen.getByLabelText("Stripe account the override was minted in"),
+      "test",
+    );
+
+    const description = screen.getByText(/will be retired/);
+    expect(description).toHaveTextContent("the test Stripe account");
+    expect(description).toHaveTextContent("mark8ly");
+    expect(description.textContent?.toLowerCase()).not.toContain("separate step in mark8ly");
   });
 });

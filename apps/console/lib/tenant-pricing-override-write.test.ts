@@ -36,6 +36,16 @@ vi.mock("@/lib/db/tesserix", () => ({
   isDatabaseConfigured: () => true,
   tesserixQuery: vi.fn(async () => []),
 }));
+/**
+ * The federated call, mocked at its own module. It is a `server-only` seam
+ * over `platformRequestWithMeta`, and what it sends is asserted against the
+ * contract in `tenant-discount-write.test.ts`; what belongs HERE is when this
+ * seam calls it, with what, and what a failure of it does to the result.
+ */
+vi.mock("./tenant-discount-write", () => ({
+  applyTenantDiscount: vi.fn(),
+  removeTenantDiscount: vi.fn(),
+}));
 
 import { CapabilityError, getCurrentSession } from "@tesserix/platform-auth";
 import { checkOperatorCapabilityLive } from "@/lib/auth/operator";
@@ -51,6 +61,11 @@ import {
   retireTenantOverrideCoupon,
 } from "@/lib/db/tenant-pricing-overrides-repo";
 import type { PromoCodeDiscount } from "@/lib/db/promo-codes-repo";
+import {
+  applyTenantDiscount,
+  removeTenantDiscount,
+  type TenantDiscountResult,
+} from "./tenant-discount-write";
 import {
   grantTenantPricingOverride,
   revokeTenantPricingOverride,
@@ -84,9 +99,26 @@ function signedIn() {
   vi.mocked(checkOperatorCapabilityLive).mockResolvedValue(undefined as never);
 }
 
+/** mark8ly's report for a tenant with one store that took the coupon. */
+const APPLIED: TenantDiscountResult = {
+  ok: true,
+  status: "ok",
+  requiresReconciliation: false,
+  stores: [{ storeId: "store-1", outcome: "applied" }],
+};
+
+/** The same store, with the coupon taken back off. */
+const DETACHED: TenantDiscountResult = {
+  ok: true,
+  status: "ok",
+  requiresReconciliation: false,
+  stores: [{ storeId: "store-1", outcome: "removed" }],
+};
+
 /** A tenant with nothing minted, and a Stripe call that succeeds. */
 function mintable(couponId = "co_live_1") {
   signedIn();
+  vi.mocked(applyTenantDiscount).mockResolvedValue(APPLIED);
   vi.mocked(readLiveTenantOverrideCoupon).mockResolvedValue(null);
   vi.mocked(stripeCatalogWriter.createCoupon).mockResolvedValue({ id: couponId });
   vi.mocked(recordTenantOverrideCoupon).mockImplementation(async (input) => ({
@@ -102,12 +134,12 @@ function mintable(couponId = "co_live_1") {
 }
 
 describe("granting a tenant a pricing override", () => {
-  it("mints a coupon, records it, and returns the id T3 attaches", async () => {
+  it("mints a coupon, records it, and returns the id it hands to mark8ly", async () => {
     mintable("co_live_abc");
 
     const result = await grantTenantPricingOverride(GRANT);
 
-    expect(result).toEqual({ ok: true, couponId: "co_live_abc" });
+    expect(result).toEqual({ ok: true, couponId: "co_live_abc", attach: APPLIED });
     expect(recordTenantOverrideCoupon).toHaveBeenCalledWith({
       tenantId: TENANT,
       mode: "live",
@@ -416,6 +448,128 @@ describe("granting a tenant a pricing override", () => {
   });
 });
 
+describe("the grant asks mark8ly to apply the coupon", () => {
+  it("sends the recorded coupon, the tenant id WHOLE, the mode and the reason", async () => {
+    mintable("co_live_abc");
+
+    await grantTenantPricingOverride(GRANT);
+
+    expect(applyTenantDiscount).toHaveBeenCalledWith({
+      tenantId: TENANT,
+      mode: "live",
+      couponId: "co_live_abc",
+      // The reason reaches mark8ly and nowhere else: it is what the product
+      // writes into the audit row inside each store's transaction, which is
+      // the row read later by someone asking why.
+      reason: GRANT.reason,
+    });
+  });
+
+  it("attaches only AFTER the row is recorded, and outside `auditedOperation`", async () => {
+    mintable("co_live_abc");
+    const order: string[] = [];
+    vi.mocked(recordTenantOverrideCoupon).mockImplementation(async (input) => {
+      order.push("record");
+      return {
+        id: "row-1",
+        tenantId: input.tenantId,
+        mode: input.mode,
+        stripeCouponId: input.stripeCouponId,
+        grantedBy: input.grantedBy,
+        grantedAt: "2026-09-04T00:00:00.000Z",
+        removedBy: null,
+        removedAt: null,
+      };
+    });
+    vi.mocked(applyTenantDiscount).mockImplementation(async () => {
+      order.push("attach");
+      return APPLIED;
+    });
+
+    await grantTenantPricingOverride(GRANT);
+
+    // mint -> record -> attach. Recording first is what makes the residue of a
+    // failed attach nameable: a coupon this console can still find.
+    expect(order).toEqual(["record", "attach"]);
+    // And the audit row for the mint is written either way, which is what
+    // keeping the attach outside `auditedOperation` buys.
+    expect(auditRows()).toEqual([
+      ["op-1", "billing.tenant.override.mint", `${TENANT} (live) co_live_abc`],
+    ]);
+  });
+
+  it("carries the whole report back, so a partial fan-out is not rounded to success", async () => {
+    mintable("co_live_abc");
+    const partial: TenantDiscountResult = {
+      ok: true,
+      status: "partial",
+      requiresReconciliation: true,
+      stores: [
+        { storeId: "store-1", outcome: "applied" },
+        { storeId: "store-2", outcome: "failed", failureReason: "the stripe call failed" },
+      ],
+    };
+    vi.mocked(applyTenantDiscount).mockResolvedValue(partial);
+
+    const result = await grantTenantPricingOverride(GRANT);
+
+    // Verbatim. Summarising it here would decide, in the seam, which of the
+    // three facts in it the operator is allowed to see.
+    expect(result).toEqual({ ok: true, couponId: "co_live_abc", attach: partial });
+  });
+
+  it("is still a successful grant when the attach fails, and says which half did not happen", async () => {
+    mintable("co_live_abc");
+    const refused: TenantDiscountResult = {
+      ok: false,
+      message: "The product could not be reached to put this coupon on this tenant's subscriptions.",
+    };
+    vi.mocked(applyTenantDiscount).mockResolvedValue(refused);
+
+    const result = await grantTenantPricingOverride(GRANT);
+
+    // A failed attach is NOT a failed grant: the coupon exists in a real
+    // Stripe account and this console has recorded it. Reporting `ok: false`
+    // would deny both, and invite a retry that can only ever refuse on 0047's
+    // partial unique index.
+    expect(result).toEqual({ ok: true, couponId: "co_live_abc", attach: refused });
+  });
+
+  it("does not turn a recorded mint into a failed grant when the attach THROWS", async () => {
+    mintable("co_live_abc");
+    // The call seam catches everything it can name. This is the case it
+    // cannot: a bug in it, or a rejection from the module boundary itself.
+    vi.mocked(applyTenantDiscount).mockRejectedValue(new TypeError("headers is not iterable"));
+
+    const result = await grantTenantPricingOverride(GRANT);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.couponId).toBe("co_live_abc");
+    expect(result.attach.ok).toBe(false);
+    if (result.attach.ok) throw new Error("unreachable");
+    // The thrown text is written for a run log and names internals.
+    expect(result.attach.message).not.toContain("headers is not iterable");
+  });
+
+  it("never asks mark8ly to apply a coupon that was not minted", async () => {
+    mintable();
+    vi.mocked(stripeCatalogWriter.createCoupon).mockRejectedValue(new Error("connection reset"));
+
+    await grantTenantPricingOverride(GRANT);
+
+    expect(applyTenantDiscount).not.toHaveBeenCalled();
+  });
+
+  it("never asks mark8ly to apply a coupon for a refused grant", async () => {
+    mintable();
+
+    await grantTenantPricingOverride({ ...GRANT, reason: "   " });
+
+    expect(applyTenantDiscount).not.toHaveBeenCalled();
+  });
+});
+
 const REVOKE: TenantPricingOverrideRevokeInput = {
   tenantId: TENANT,
   mode: "live",
@@ -447,6 +601,7 @@ function revocable(couponId = "co_live_1") {
     removedAt: "2026-09-06T00:00:00.000Z",
   });
   vi.mocked(stripeCatalogWriter.deleteCoupon).mockResolvedValue({ id: couponId });
+  vi.mocked(removeTenantDiscount).mockResolvedValue(DETACHED);
 }
 
 describe("revoking a tenant pricing override", () => {
@@ -455,7 +610,12 @@ describe("revoking a tenant pricing override", () => {
 
     const result = await revokeTenantPricingOverride(REVOKE);
 
-    expect(result).toEqual({ ok: true, couponId: "co_live_abc", couponDeleted: true });
+    expect(result).toEqual({
+      ok: true,
+      couponId: "co_live_abc",
+      couponDeleted: true,
+      detach: DETACHED,
+    });
     expect(retireTenantOverrideCoupon).toHaveBeenCalledWith({
       tenantId: TENANT,
       mode: "live",
@@ -502,7 +662,12 @@ describe("revoking a tenant pricing override", () => {
     // The retirement HAPPENED. Reporting total failure here would deny a state
     // change this console made and audited, and would invite a retry that can
     // only ever refuse — there is no live row left to retire.
-    expect(result).toEqual({ ok: true, couponId: "co_live_abc", couponDeleted: false });
+    expect(result).toEqual({
+      ok: true,
+      couponId: "co_live_abc",
+      couponDeleted: false,
+      detach: DETACHED,
+    });
   });
 
   it("still writes the audit row when the Stripe delete fails, because the retirement is what it accounts for", async () => {
@@ -529,7 +694,12 @@ describe("revoking a tenant pricing override", () => {
 
     // Fatal on the mint path, where nothing had happened yet. Not fatal here:
     // by the time it is raised the retirement is committed and audited.
-    expect(result).toEqual({ ok: true, couponId: "co_live_abc", couponDeleted: false });
+    expect(result).toEqual({
+      ok: true,
+      couponId: "co_live_abc",
+      couponDeleted: false,
+      detach: DETACHED,
+    });
   });
 
   it("treats an already-deleted coupon as a plain success, adding no handling of its own", async () => {
@@ -541,7 +711,12 @@ describe("revoking a tenant pricing override", () => {
 
     const result = await revokeTenantPricingOverride(REVOKE);
 
-    expect(result).toEqual({ ok: true, couponId: "co_live_abc", couponDeleted: true });
+    expect(result).toEqual({
+      ok: true,
+      couponId: "co_live_abc",
+      couponDeleted: true,
+      detach: DETACHED,
+    });
   });
 
   it("refuses a tenant with no live override, and touches nothing", async () => {
@@ -586,7 +761,7 @@ describe("revoking a tenant pricing override", () => {
     expect(stripeCatalogWriter.deleteCoupon).not.toHaveBeenCalled();
   });
 
-  it("never sends the reason to Stripe or stores it — its destination is #660's detach half", async () => {
+  it("never sends the reason to Stripe or stores it — its destination is mark8ly's detach", async () => {
     revocable("co_live_abc");
 
     await revokeTenantPricingOverride(REVOKE);
@@ -641,6 +816,115 @@ describe("revoking a tenant pricing override", () => {
     if (result.ok) throw new Error("unreachable");
     expect(result.message).not.toMatch(/nothing (was|happened)/i);
     expect(stripeCatalogWriter.deleteCoupon).not.toHaveBeenCalled();
+  });
+});
+
+describe("the revoke asks mark8ly to take the coupon off", () => {
+  it("sends the retired row's coupon, the tenant id WHOLE, the mode and the reason", async () => {
+    revocable("co_live_abc");
+
+    await revokeTenantPricingOverride(REVOKE);
+
+    expect(removeTenantDiscount).toHaveBeenCalledWith({
+      tenantId: TENANT,
+      mode: "live",
+      couponId: "co_live_abc",
+      reason: REVOKE.reason,
+    });
+  });
+
+  it("retires, then detaches, then deletes", async () => {
+    revocable("co_live_abc");
+    const order: string[] = [];
+    vi.mocked(retireTenantOverrideCoupon).mockImplementation(async () => {
+      order.push("retire");
+      return { ...liveRow("co_live_abc"), removedBy: "op-1", removedAt: "2026-09-06T00:00:00.000Z" };
+    });
+    vi.mocked(removeTenantDiscount).mockImplementation(async () => {
+      order.push("detach");
+      return DETACHED;
+    });
+    vi.mocked(stripeCatalogWriter.deleteCoupon).mockImplementation(async () => {
+      order.push("delete");
+      return { id: "co_live_abc" };
+    });
+
+    await revokeTenantPricingOverride(REVOKE);
+
+    // Decision 1 of the plan, and the file's own residue rule: a failed detach
+    // leaves an applied discount named by a retired row and by the result,
+    // which is recoverable and nameable. Deleting first would leave a live
+    // discount whose coupon object no longer exists.
+    expect(order).toEqual(["retire", "detach", "delete"]);
+  });
+
+  it("reports a failed detach as a success whose detach half did not happen", async () => {
+    revocable("co_live_abc");
+    const refused: TenantDiscountResult = {
+      ok: false,
+      message: "The product could not be reached to take this coupon off this tenant's subscriptions.",
+    };
+    vi.mocked(removeTenantDiscount).mockResolvedValue(refused);
+
+    const result = await revokeTenantPricingOverride(REVOKE);
+
+    // The retirement happened and is audited; the discount may still be on the
+    // subscription. Both are true at once, and the result has to carry both.
+    expect(result).toEqual({
+      ok: true,
+      couponId: "co_live_abc",
+      couponDeleted: true,
+      detach: refused,
+    });
+  });
+
+  it("still writes the retire audit row when the detach fails", async () => {
+    revocable("co_live_abc");
+    vi.mocked(removeTenantDiscount).mockResolvedValue({ ok: false, message: "unreachable" });
+
+    await revokeTenantPricingOverride(REVOKE);
+
+    // What keeping the detach outside `auditedOperation` buys, exactly as for
+    // the delete beside it: the row for a retirement that genuinely happened
+    // is written whatever the two federated steps do.
+    expect(auditRows()).toEqual([
+      ["op-1", "billing.tenant.override.retire", `${TENANT} (live) co_live_abc`],
+    ]);
+  });
+
+  it("does not turn a committed retirement into a failure when the detach THROWS", async () => {
+    revocable("co_live_abc");
+    vi.mocked(removeTenantDiscount).mockRejectedValue(new TypeError("headers is not iterable"));
+
+    const result = await revokeTenantPricingOverride(REVOKE);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.detach.ok).toBe(false);
+    if (result.detach.ok) throw new Error("unreachable");
+    expect(result.detach.message).not.toContain("headers is not iterable");
+    // And the delete still ran: the retirement is committed either way.
+    expect(stripeCatalogWriter.deleteCoupon).toHaveBeenCalled();
+  });
+
+  it("never asks mark8ly to detach for a tenant it did not retire", async () => {
+    signedIn();
+    vi.mocked(readLiveTenantOverrideCoupon).mockResolvedValue(null);
+
+    await revokeTenantPricingOverride(REVOKE);
+
+    expect(removeTenantDiscount).not.toHaveBeenCalled();
+  });
+
+  it("never asks mark8ly to detach when a concurrent revoke won the row", async () => {
+    revocable("co_live_abc");
+    vi.mocked(retireTenantOverrideCoupon).mockResolvedValue(null);
+
+    await revokeTenantPricingOverride(REVOKE);
+
+    // The winner's retirement is the one on record, and this call has neither
+    // a coupon of its own to delete nor a detach of its own to ask for.
+    expect(removeTenantDiscount).not.toHaveBeenCalled();
   });
 });
 
